@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.scannerwork/
+.vscode/
+.coverage
+coverage.xml
+.menezis/
+
+# Secrets & local configuration
+.env
+.env.*
+config.ini
+*.pem
+*.key
+*.crt
+CLAUDE.md
+TODO.md
+sonar-project.properties
