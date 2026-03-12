@@ -35,8 +35,8 @@ from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 initialize_share_data(workers=1)
 
-EMBEDDING_DIM = 64
-WORKSPACE = "test_e2e"
+EMBEDDING_DIM = 384
+WORKSPACE = "query_e2e"
 
 # Pre-computed embeddings (deterministic via seeded RNG)
 _rng = np.random.default_rng(42)
@@ -77,9 +77,12 @@ embedding_func = EmbeddingFunc(
 async def seeded_stores():
     """Set up graph + vector stores with test data, shared across all tests."""
 
+    # Ensure our workspace is active (not polluted by other test modules)
+    os.environ["MEMGRAPH_WORKSPACE"] = WORKSPACE
+
     # -- Graph storage --
     graph = MemgraphStorage(
-        namespace="test_e2e",
+        namespace="query_e2e",
         global_config={"workspace": WORKSPACE},
         embedding_func=None,
     )
