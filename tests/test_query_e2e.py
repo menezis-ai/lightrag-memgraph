@@ -11,6 +11,7 @@ Requires running Memgraph with MAGE (for vector_search).
 import asyncio
 import os
 
+import numpy as np
 import pytest
 
 pytestmark = pytest.mark.skipif(
@@ -27,6 +28,7 @@ from lightrag import operate
 from lightrag.base import QueryParam
 from lightrag.kg.memgraph_impl import MemgraphStorage
 from lightrag.kg.shared_storage import initialize_share_data
+from lightrag.utils import EmbeddingFunc
 
 from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
 from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
@@ -36,31 +38,39 @@ initialize_share_data(workers=1)
 EMBEDDING_DIM = 64
 WORKSPACE = "test_e2e"
 
+# Pre-computed embeddings (deterministic via seeded RNG)
+_rng = np.random.default_rng(42)
 
-class _FakeEmbeddingFunc:
-    """Fake embedding function that returns deterministic vectors."""
+ENTITY_EMBEDDINGS = {
+    "PARIS": _rng.random(EMBEDDING_DIM).astype(np.float32),
+    "FRANCE": _rng.random(EMBEDDING_DIM).astype(np.float32),
+    "EIFFEL_TOWER": _rng.random(EMBEDDING_DIM).astype(np.float32),
+    "NAPOLEON": _rng.random(EMBEDDING_DIM).astype(np.float32),
+}
 
-    embedding_dim = EMBEDDING_DIM
+REL_EMBEDDINGS = {
+    "PARIS-FRANCE": _rng.random(EMBEDDING_DIM).astype(np.float32),
+    "EIFFEL_TOWER-PARIS": _rng.random(EMBEDDING_DIM).astype(np.float32),
+    "NAPOLEON-FRANCE": _rng.random(EMBEDDING_DIM).astype(np.float32),
+}
 
-    @staticmethod
-    async def func(texts):
-        """Return pseudo-random embeddings based on text hash."""
-        import hashlib
-
-        results = []
-        for text in texts:
-            h = hashlib.sha256(text.encode()).digest()
-            vec = [float(b) / 255.0 for b in h[: EMBEDDING_DIM]]
-            # Pad/truncate to EMBEDDING_DIM
-            vec = (vec * ((EMBEDDING_DIM // len(vec)) + 1))[:EMBEDDING_DIM]
-            # Normalize
-            norm = sum(x * x for x in vec) ** 0.5
-            vec = [x / norm for x in vec]
-            results.append(vec)
-        return results
+# Query embedding = slight perturbation of PARIS embedding (high similarity)
+QUERY_EMBEDDING = ENTITY_EMBEDDINGS["PARIS"] + _rng.normal(0, 0.01, EMBEDDING_DIM).astype(
+    np.float32
+)
+QUERY_EMBEDDING = QUERY_EMBEDDING / np.linalg.norm(QUERY_EMBEDDING)
 
 
-embedding_func = _FakeEmbeddingFunc()
+async def _mock_embedding(texts: list[str]) -> np.ndarray:
+    """Return the query embedding for any text (used at query time)."""
+    return np.array([QUERY_EMBEDDING.tolist()] * len(texts))
+
+
+embedding_func = EmbeddingFunc(
+    embedding_dim=EMBEDDING_DIM,
+    max_token_size=8192,
+    func=_mock_embedding,
+)
 
 
 @pytest.fixture
@@ -124,7 +134,8 @@ async def seeded_stores():
     # Clean old VDB data
     label_ent = entities_vdb._label()
     async with _pool.get_session() as session:
-        await session.run(f"MATCH (n:`{label_ent}`) DETACH DELETE n")
+        result = await session.run(f"MATCH (n:`{label_ent}`) DETACH DELETE n")
+        await result.consume()
 
     entity_vdb_data = {}
     for name, desc in [
@@ -134,11 +145,15 @@ async def seeded_stores():
         ("NAPOLEON", "French emperor and military leader"),
     ]:
         eid = f"ent-{name.lower()}"
+        emb = ENTITY_EMBEDDINGS[name]
+        # Normalize for cosine similarity
+        emb = emb / np.linalg.norm(emb)
         entity_vdb_data[eid] = {
             "entity_name": name,
             "content": f"{name}\n{desc}",
             "source_id": "chunk1",
             "file_path": "test.txt",
+            "embedding": emb.tolist(),
         }
     await entities_vdb.upsert(entity_vdb_data)
 
@@ -158,7 +173,8 @@ async def seeded_stores():
     # Clean old VDB data
     label_rel = rels_vdb._label()
     async with _pool.get_session() as session:
-        await session.run(f"MATCH (n:`{label_rel}`) DETACH DELETE n")
+        result = await session.run(f"MATCH (n:`{label_rel}`) DETACH DELETE n")
+        await result.consume()
 
     rel_vdb_data = {}
     for src, tgt, desc, kw in [
@@ -167,12 +183,16 @@ async def seeded_stores():
         ("NAPOLEON", "FRANCE", "ruled", "emperor, ruler, history"),
     ]:
         rid = f"rel-{src.lower()}-{tgt.lower()}"
+        key = f"{src}-{tgt}"
+        emb = REL_EMBEDDINGS[key]
+        emb = emb / np.linalg.norm(emb)
         rel_vdb_data[rid] = {
             "src_id": src,
             "tgt_id": tgt,
             "content": f"{kw}\t{src}\n{tgt}\n{desc}",
             "source_id": "chunk1",
             "file_path": "test.txt",
+            "embedding": emb.tolist(),
         }
     await rels_vdb.upsert(rel_vdb_data)
 
@@ -274,7 +294,7 @@ class TestVDBDirect:
 
     async def test_entities_vdb_returns_entity_name(self, seeded_stores):
         results = await seeded_stores["entities_vdb"].query(
-            "Paris France", top_k=5
+            "", top_k=5, query_embedding=QUERY_EMBEDDING.tolist()
         )
         assert len(results) > 0, "Entities VDB returned 0 results"
         assert "entity_name" in results[0], (
@@ -283,7 +303,7 @@ class TestVDBDirect:
 
     async def test_relationships_vdb_returns_src_tgt(self, seeded_stores):
         results = await seeded_stores["rels_vdb"].query(
-            "capital country European", top_k=5
+            "", top_k=5, query_embedding=QUERY_EMBEDDING.tolist()
         )
         assert len(results) > 0, "Relationships VDB returned 0 results"
         r = results[0]

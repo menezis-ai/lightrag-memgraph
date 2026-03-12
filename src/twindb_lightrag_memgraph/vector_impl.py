@@ -240,7 +240,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 for eid, item in data.items()
             ]
             async with _pool.get_session() as session:
-                await session.run(
+                result = await session.run(
                     f"""
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
@@ -248,6 +248,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     """,
                     entries=entries,
                 )
+                await result.consume()
 
     async def delete_entity(self, entity_name: str) -> None:
         label = self._label()
