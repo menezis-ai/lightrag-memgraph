@@ -135,7 +135,13 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         return val
 
     def _record_to_entry(self, record) -> dict[str, Any]:
-        """Convert a vector search result record to a result entry."""
+        """Convert a vector search result record to a result entry.
+
+        All declared meta_fields are always present in the returned dict
+        (set to None when absent from the node) so that callers such as
+        LightRAG's operate._find_most_related_edges_from_entities can
+        access result["src_id"] without KeyError.
+        """
         entry = {
             "id": record["id"],
             "distance": 1.0 - record["similarity"],
@@ -143,8 +149,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         }
         props = record["props"]
         for field_name in self.meta_fields:
-            if field_name in props:
-                entry[field_name] = self._parse_meta_field(props[field_name])
+            val = props.get(field_name)
+            entry[field_name] = self._parse_meta_field(val) if val is not None else None
         return entry
 
     async def query(

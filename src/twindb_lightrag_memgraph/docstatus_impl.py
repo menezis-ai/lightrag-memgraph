@@ -144,6 +144,25 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     # ── BaseKVStorage interface ────────────────────────────────────────
 
+    @staticmethod
+    def _deserialize_props(props: dict) -> dict[str, Any]:
+        """Deserialize JSON-encoded fields back to Python objects.
+
+        Fields like chunks_list and metadata are stored as JSON strings
+        in Memgraph. LightRAG's adelete_by_doc_id expects chunks_list
+        to be a real list (it does ``set(data["chunks_list"])``), so we
+        must parse them here.
+        """
+        out = dict(props)
+        for key in ("chunks_list", "metadata"):
+            val = out.get(key)
+            if isinstance(val, str) and val:
+                try:
+                    out[key] = json.loads(val)
+                except json.JSONDecodeError:
+                    pass
+        return out
+
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         label = self._label()
         async with _pool.get_read_session() as session:
@@ -154,7 +173,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
-                return dict(record["props"])
+                return self._deserialize_props(record["props"])
             return None
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
@@ -170,7 +189,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             )
             out = []
             async for record in result:
-                out.append(dict(record["props"]))
+                out.append(self._deserialize_props(record["props"]))
             await result.consume()
             return out
 
