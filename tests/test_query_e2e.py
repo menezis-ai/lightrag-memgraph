@@ -8,8 +8,8 @@ individual batch methods.
 Requires running Memgraph with MAGE (for vector_search).
 """
 
+import asyncio
 import os
-import time
 
 import pytest
 
@@ -111,7 +111,12 @@ async def seeded_stores():
     # -- Entities VDB --
     entities_vdb = MemgraphVectorDBStorage(
         namespace="entities",
-        global_config={"workspace": WORKSPACE},
+        global_config={
+            "workspace": WORKSPACE,
+            "vector_db_storage_cls_kwargs": {
+                "cosine_better_than_threshold": 0.0,
+            },
+        },
         embedding_func=embedding_func,
         meta_fields={"entity_name", "source_id", "content", "file_path"},
     )
@@ -140,7 +145,12 @@ async def seeded_stores():
     # -- Relationships VDB --
     rels_vdb = MemgraphVectorDBStorage(
         namespace="relationships",
-        global_config={"workspace": WORKSPACE},
+        global_config={
+            "workspace": WORKSPACE,
+            "vector_db_storage_cls_kwargs": {
+                "cosine_better_than_threshold": 0.0,
+            },
+        },
         embedding_func=embedding_func,
         meta_fields={"src_id", "tgt_id", "source_id", "content", "file_path"},
     )
@@ -165,6 +175,9 @@ async def seeded_stores():
             "file_path": "test.txt",
         }
     await rels_vdb.upsert(rel_vdb_data)
+
+    # Let Memgraph vector index catch up (async indexing)
+    await asyncio.sleep(1)
 
     # -- Text chunks KV (mock-like) --
     text_chunks = MemgraphKVStorage(
