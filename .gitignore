@@ -20,3 +20,8 @@ config.ini
 CLAUDE.md
 TODO.md
 sonar-project.properties
+
+# Confidential — BNP only (excluded from public GitHub)
+src/twindb_lightrag_memgraph/intelligence/
+tests/test_intelligence/
+tests/test_ontology_integration.py
