@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "twindb-lightrag-memgraph"
-version = "0.2.6"
+version = "0.2.7"
 description = "Memgraph KV, Vector, and DocStatus storage backends for LightRAG"
 readme = "README.md"
 license = {text = "MIT"}
