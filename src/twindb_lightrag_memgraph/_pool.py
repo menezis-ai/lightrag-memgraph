@@ -286,8 +286,16 @@ async def _try_use_database(session, database: str) -> None:
     calls go through immediately.  If the server returns the Enterprise
     license error, the flag is set to ``False`` and all subsequent calls
     are silently skipped.
+
+    When *database* is ``"memgraph"`` (the Community default), the command
+    is skipped entirely — it is the default database and ``USE DATABASE``
+    is an Enterprise-only feature on Community edition.
     """
     global _enterprise_supported
+
+    # "memgraph" is the default database on Community — no need to switch.
+    if database == "memgraph":
+        return
 
     if _enterprise_supported is False:
         return  # Community edition — skip
@@ -301,7 +309,7 @@ async def _try_use_database(session, database: str) -> None:
                 database,
             )
     except Neo4jClientError as exc:
-        if "enterprise feature" in str(exc).lower():
+        if "enterprise" in str(exc).lower() or "license" in str(exc).lower():
             _enterprise_supported = False
             logger.info(
                 "Memgraph Community detected — USE DATABASE not available, "

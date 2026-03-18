@@ -157,7 +157,11 @@ def _patch_builtin_memgraph_storage():
             from neo4j.exceptions import ClientError as _ClientError
 
             async with self._real.session(**kwargs) as session:
-                if not self._use_routing and self._database:
+                if (
+                    not self._use_routing
+                    and self._database
+                    and self._database != "memgraph"
+                ):
                     if self._enterprise_supported is False:
                         pass  # Community — skip
                     else:
@@ -168,7 +172,10 @@ def _patch_builtin_memgraph_storage():
                             if self._enterprise_supported is None:
                                 self._enterprise_supported = True
                         except _ClientError as exc:
-                            if "enterprise feature" in str(exc).lower():
+                            if (
+                                "enterprise" in str(exc).lower()
+                                or "license" in str(exc).lower()
+                            ):
                                 self._enterprise_supported = False
                                 logger.info(
                                     "Memgraph Community detected (graph pool)"

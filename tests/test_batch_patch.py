@@ -933,10 +933,7 @@ class TestPatchedInitialize:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # bolt: first call is USE DATABASE
-                return AsyncMock()
-            if call_count == 2:
-                # CREATE INDEX
+                # First call is CREATE INDEX (USE DATABASE skipped for "memgraph")
                 raise Exception("Index already exists")
             return AsyncMock()
 

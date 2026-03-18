@@ -62,8 +62,8 @@ def _make_mock_driver(mock_session):
 class TestPoolGetSessionEnterprise:
     """Tests for _pool.get_session() on Enterprise (USE DATABASE succeeds)."""
 
-    async def test_use_database_sent_for_memgraph(self):
-        """USE DATABASE memgraph must be sent when Enterprise supports it."""
+    async def test_use_database_skipped_for_default_memgraph(self):
+        """USE DATABASE is skipped when database is 'memgraph' (Community default)."""
         mock_session = _make_mock_session(enterprise=True)
         mock_driver = _make_mock_driver(mock_session)
 
@@ -76,8 +76,7 @@ class TestPoolGetSessionEnterprise:
             async with get_session() as session:
                 pass
 
-        mock_session.run.assert_any_call("USE DATABASE memgraph")
-        assert _pool_module._enterprise_supported is True
+        mock_session.run.assert_not_called()
 
     async def test_use_database_sent_for_custom_name(self):
         """USE DATABASE custom_db must be sent for non-default names."""
@@ -115,8 +114,8 @@ class TestPoolGetSessionEnterprise:
 class TestPoolGetSessionCommunity:
     """Tests for _pool.get_session() on Community (USE DATABASE fails)."""
 
-    async def test_community_detected_on_first_session(self):
-        """First session detects Community and sets flag to False."""
+    async def test_community_skipped_for_default_memgraph(self):
+        """database='memgraph' skips USE DATABASE entirely — no Community probe."""
         mock_session = _make_mock_session(enterprise=False)
         mock_driver = _make_mock_driver(mock_session)
 
@@ -129,6 +128,24 @@ class TestPoolGetSessionCommunity:
             async with get_session() as session:
                 pass
 
+        # No USE DATABASE attempted — _enterprise_supported stays None
+        mock_session.run.assert_not_called()
+        assert _pool_module._enterprise_supported is None
+
+    async def test_community_detected_on_custom_database(self):
+        """First session with a custom database detects Community."""
+        mock_session = _make_mock_session(enterprise=False)
+        mock_driver = _make_mock_driver(mock_session)
+
+        with patch(
+            "twindb_lightrag_memgraph._pool.get_driver",
+            return_value=(mock_driver, "custom_db"),
+        ):
+            from twindb_lightrag_memgraph._pool import get_session
+
+            async with get_session():
+                pass
+
         assert _pool_module._enterprise_supported is False
 
     async def test_community_skips_use_database_after_detection(self):
@@ -138,7 +155,7 @@ class TestPoolGetSessionCommunity:
 
         with patch(
             "twindb_lightrag_memgraph._pool.get_driver",
-            return_value=(mock_driver, "memgraph"),
+            return_value=(mock_driver, "custom_db"),
         ):
             from twindb_lightrag_memgraph._pool import get_session
 
@@ -170,7 +187,7 @@ class TestPoolGetSessionCommunity:
 
         with patch(
             "twindb_lightrag_memgraph._pool.get_driver",
-            return_value=(mock_driver, "memgraph"),
+            return_value=(mock_driver, "custom_db"),
         ):
             from twindb_lightrag_memgraph._pool import get_session
 
@@ -208,8 +225,8 @@ def _get_wrapper_class():
 class TestSafeDriverWrapperEnterprise:
     """Tests for _SafeDriverWrapper.session() on Enterprise."""
 
-    async def test_use_database_memgraph(self):
-        """Wrapper must send USE DATABASE memgraph on Enterprise."""
+    async def test_use_database_skipped_for_default_memgraph(self):
+        """Wrapper skips USE DATABASE when database is 'memgraph' (Community default)."""
         wrapper_cls = _get_wrapper_class()
         mock_session = _make_mock_session(enterprise=True)
         mock_real_driver = _make_mock_driver(mock_session)
@@ -219,8 +236,7 @@ class TestSafeDriverWrapperEnterprise:
         async with wrapper.session(database="memgraph") as session:
             pass
 
-        mock_session.run.assert_called_once_with("USE DATABASE memgraph")
-        assert wrapper._enterprise_supported is True
+        mock_session.run.assert_not_called()
 
     async def test_use_database_custom(self):
         """Wrapper must send USE DATABASE for custom names."""
@@ -277,8 +293,8 @@ class TestSafeDriverWrapperEnterprise:
 class TestSafeDriverWrapperCommunity:
     """Tests for _SafeDriverWrapper.session() on Community."""
 
-    async def test_community_detected(self):
-        """Wrapper detects Community on first session."""
+    async def test_community_skipped_for_default_memgraph(self):
+        """Wrapper skips USE DATABASE entirely for database='memgraph'."""
         wrapper_cls = _get_wrapper_class()
         mock_session = _make_mock_session(enterprise=False)
         mock_real_driver = _make_mock_driver(mock_session)
@@ -286,6 +302,20 @@ class TestSafeDriverWrapperCommunity:
         wrapper = wrapper_cls(mock_real_driver, "memgraph", use_routing=False)
 
         async with wrapper.session(database="memgraph") as session:
+            pass
+
+        mock_session.run.assert_not_called()
+        assert wrapper._enterprise_supported is None
+
+    async def test_community_detected_on_custom_database(self):
+        """Wrapper detects Community on first session with custom database."""
+        wrapper_cls = _get_wrapper_class()
+        mock_session = _make_mock_session(enterprise=False)
+        mock_real_driver = _make_mock_driver(mock_session)
+
+        wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
+
+        async with wrapper.session(database="custom_db") as session:
             pass
 
         assert wrapper._enterprise_supported is False
@@ -296,16 +326,16 @@ class TestSafeDriverWrapperCommunity:
         mock_session = _make_mock_session(enterprise=False)
         mock_real_driver = _make_mock_driver(mock_session)
 
-        wrapper = wrapper_cls(mock_real_driver, "memgraph", use_routing=False)
+        wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
 
         # First session — probes and fails
-        async with wrapper.session(database="memgraph"):
+        async with wrapper.session(database="custom_db"):
             pass
 
         mock_session.run.reset_mock()
 
         # Second session — should skip
-        async with wrapper.session(database="memgraph"):
+        async with wrapper.session(database="custom_db"):
             pass
 
         mock_session.run.assert_not_called()
