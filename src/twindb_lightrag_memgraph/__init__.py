@@ -24,6 +24,10 @@ from ._hooks import clear_post_index_hooks, register_post_index_hook
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
+_NOT_INITIALIZED_MSG = (
+    "Memgraph driver is not initialized. Call 'await initialize()' first."
+)
+
 try:
     __version__ = _pkg_version("twindb-lightrag-memgraph")
 except Exception:
@@ -212,7 +216,7 @@ def _patch_builtin_memgraph_storage():
                         )
                     except Exception as e:
                         if "already exists" in str(e).lower():
-                            pass
+                            pass  # Expected on repeated initialize(); index is already created
                         elif _original_logger:
                             _original_logger.warning(
                                 "[MemgraphGraph:%s] Index creation failed: %s",
@@ -242,9 +246,7 @@ def _patch_builtin_memgraph_storage():
         if not node_ids:
             return {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
         query = (
             f"UNWIND $ids AS eid "
@@ -270,9 +272,7 @@ def _patch_builtin_memgraph_storage():
         if not node_ids:
             return {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
         query = (
             f"UNWIND $ids AS eid "
@@ -300,9 +300,7 @@ def _patch_builtin_memgraph_storage():
         if not pairs:
             return {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
         query = (
             f"UNWIND $pairs AS pair "
@@ -353,9 +351,7 @@ def _patch_builtin_memgraph_storage():
         if not node_ids:
             return {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
         query = (
             f"UNWIND $ids AS eid "
@@ -394,9 +390,7 @@ def _patch_builtin_memgraph_storage():
         if not node_ids:
             return {}, {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
         query = (
             f"UNWIND $ids AS eid "
@@ -435,9 +429,7 @@ def _patch_builtin_memgraph_storage():
         if not pairs:
             return {}, {}
         if self._driver is None:
-            raise RuntimeError(
-                "Memgraph driver is not initialized. Call 'await initialize()' first."
-            )
+            raise RuntimeError(_NOT_INITIALIZED_MSG)
         ws = self._get_workspace_label()
 
         edge_query = (
@@ -547,7 +539,7 @@ def _patch_operate_hot_paths():
         node_datas = [nodes_dict.get(nid) for nid in node_ids]
         node_degrees = [degrees_dict.get(nid, 0) for nid in node_ids]
 
-        if not all([n is not None for n in node_datas]):
+        if not all(n is not None for n in node_datas):
             _lr_logger.warning("Some nodes are missing, maybe the storage is damaged")
 
         node_datas = [

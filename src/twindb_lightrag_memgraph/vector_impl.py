@@ -68,7 +68,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         index_name = self._index_name()
         dim = self.embedding_func.embedding_dim
 
-        driver, database = await _pool.get_driver()
+        _, database = await _pool.get_driver()
         logger.info(
             "[MemgraphVec:%s] Initializing VECTOR storage on Memgraph "
             "(db=%s, label=%s, index=%s, dim=%d, metric=cosine)",
@@ -116,7 +116,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     )
                 else:
                     logger.warning(
-                        f"[MemgraphVec:{self.workspace}] " f"Vector index creation: {e}"
+                        f"[MemgraphVec:{self.workspace}] Vector index creation: {e}"
                     )
 
     async def finalize(self):

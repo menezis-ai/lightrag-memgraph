@@ -37,7 +37,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     async def initialize(self):
         label = self._label()
-        driver, database = await _pool.get_driver()
+        _, database = await _pool.get_driver()
         logger.info(
             "[MemgraphDocStatus:%s] Initializing DocStatus storage on Memgraph "
             "(db=%s, label=%s)",

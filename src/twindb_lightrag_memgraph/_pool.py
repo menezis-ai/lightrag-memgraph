@@ -33,6 +33,8 @@ from ._constants import (
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
+_MUST_BE_POSITIVE = "must be >= 1"
+
 _thread_lock = threading.Lock()
 _driver = None
 _database = None
@@ -56,7 +58,7 @@ def _read_pool_size() -> int:
     try:
         val = int(raw)
         if val < 1:
-            raise ValueError("must be >= 1")
+            raise ValueError(_MUST_BE_POSITIVE)
         return val
     except (ValueError, TypeError):
         return CONNECTION_POOL_SIZE
@@ -80,7 +82,7 @@ def _read_read_pool_size() -> int:
     try:
         val = int(raw)
         if val < 1:
-            raise ValueError("must be >= 1")
+            raise ValueError(_MUST_BE_POSITIVE)
         return val
     except (ValueError, TypeError):
         return DEFAULT_READ_POOL_SIZE
@@ -341,13 +343,13 @@ def _read_write_concurrency() -> int:
     try:
         val = int(raw)
         if val < 1:
-            raise ValueError("must be >= 1")
+            raise ValueError(_MUST_BE_POSITIVE)
         return val
     except (ValueError, TypeError):
         return DEFAULT_WRITE_CONCURRENCY
 
 
-async def _get_write_semaphore() -> asyncio.Semaphore:
+def _get_write_semaphore() -> asyncio.Semaphore:
     """Get or (re)create the write semaphore, respecting loop changes."""
     global _write_semaphore, _semaphore_loop_id
 
@@ -378,7 +380,7 @@ async def acquire_write_slot():
     Only write operations (upsert, delete, drop) should use this.
     Read operations must NOT acquire this so they remain unthrottled.
     """
-    sem = await _get_write_semaphore()
+    sem = _get_write_semaphore()
     async with sem:
         yield
 

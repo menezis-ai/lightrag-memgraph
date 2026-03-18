@@ -38,9 +38,9 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def initialize(self):
         label = self._label()
-        driver, database = await _pool.get_driver()
+        _, database = await _pool.get_driver()
         logger.info(
-            "[MemgraphKV:%s] Initializing KV storage on Memgraph " "(db=%s, label=%s)",
+            "[MemgraphKV:%s] Initializing KV storage on Memgraph (db=%s, label=%s)",
             self.workspace,
             database,
             label,
