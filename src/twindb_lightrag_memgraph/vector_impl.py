@@ -48,7 +48,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             embedding_func=embedding_func,
             meta_fields=meta_fields or set(),
         )
-        self._validate_embedding_func()
+        if hasattr(self, "_validate_embedding_func"):
+            self._validate_embedding_func()
 
         # Extract cosine_better_than_threshold from global_config
         # (same pattern as all other LightRAG vector backends)
@@ -169,20 +170,33 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
         index_name = self._index_name()
         async with _pool.get_read_session() as session:
-            result = await session.run(
-                f"""
-                CALL vector_search.search("{index_name}", $top_k, $embedding)
-                YIELD node, similarity
-                WITH node, similarity
-                WHERE similarity >= $threshold
-                RETURN node.id AS id, similarity, properties(node) AS props
-                """,
-                embedding=query_embedding,
-                top_k=top_k,
-                threshold=self.cosine_better_than_threshold,
-            )
-            results = [self._record_to_entry(record) async for record in result]
-            await result.consume()
+            try:
+                result = await session.run(
+                    f"""
+                    CALL vector_search.search("{index_name}", $top_k, $embedding)
+                    YIELD node, similarity
+                    WITH node, similarity
+                    WHERE similarity >= $threshold
+                    RETURN node.id AS id, similarity, properties(node) AS props
+                    """,
+                    embedding=query_embedding,
+                    top_k=top_k,
+                    threshold=self.cosine_better_than_threshold,
+                )
+                results = [self._record_to_entry(record) async for record in result]
+                await result.consume()
+            except Exception as e:
+                if "does not exist" in str(e).lower():
+                    logger.warning(
+                        "[MemgraphVec:%s/%s] Vector index '%s' does not exist "
+                        "— returning empty results. Run initialize() or index "
+                        "documents to create it.",
+                        self.workspace,
+                        self.namespace,
+                        index_name,
+                    )
+                    return []
+                raise
             logger.debug(
                 "[MemgraphVec:%s/%s] query(%r) → %d results (index=%s, "
                 "threshold=%.2f, top_k=%d)",

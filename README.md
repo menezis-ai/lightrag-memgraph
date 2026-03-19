@@ -15,6 +15,16 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 - `lightrag-hku >= 1.4.9, < 2.0.0`
 - `neo4j >= 5.0.0, < 7.0.0` (Bolt driver, compatible with Memgraph)
 
+### Tested compatibility matrix
+
+| | Memgraph MAGE 3.7.2 | Memgraph MAGE 3.8.0 | Memgraph MAGE latest |
+|---|:-:|:-:|:-:|
+| **LightRAG 1.4.9** | OK | OK | OK |
+| **LightRAG 1.4.9.11** | OK | OK | OK |
+| **LightRAG 1.4.10** | OK | OK | OK |
+
+CI runs this full matrix on every push/PR.
+
 ## Installation
 
 ```bash
@@ -228,17 +238,6 @@ MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_bench.py -v -s
 ```bash
 docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:latest
 ```
-
-### Test files
-
-| File | Needs Memgraph | What it tests |
-|------|:-:|---|
-| `test_register.py` | No | `register()` idempotency, registry patching, import resolution |
-| `test_kv.py` | Yes | All `MemgraphKVStorage` CRUD operations |
-| `test_vector.py` | Yes | All `MemgraphVectorDBStorage` operations including vector search |
-| `test_docstatus.py` | Yes | All `MemgraphDocStatusStorage` operations |
-| `test_prod_checklist.py` | Yes | BGE-M3 dim=1024, multi-workspace isolation, shared driver pool, full pipeline |
-| `test_bench.py` | Yes | Performance benchmarks (p50/p95/p99 latency, ops/sec) |
 
 Integration tests use the `@pytest.mark.integration` marker and are **auto-skipped** when `MEMGRAPH_URI` is not set (`conftest.py`).
 

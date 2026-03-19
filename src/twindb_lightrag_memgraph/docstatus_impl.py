@@ -97,8 +97,9 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             d["metadata"] = json.dumps(status.metadata, default=str)
         if status.chunks_list:
             d["chunks_list"] = json.dumps(status.chunks_list)
-        if status.multimodal_processed is not None:
-            d["multimodal_processed"] = status.multimodal_processed
+        multimodal = getattr(status, "multimodal_processed", None)
+        if multimodal is not None:
+            d["multimodal_processed"] = multimodal
         return d
 
     @staticmethod
@@ -127,7 +128,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             )
             status = DocStatus.PENDING
 
-        return DocProcessingStatus(
+        kwargs = dict(
             content_summary=props.get("content_summary", ""),
             content_length=props.get("content_length", 0),
             file_path=props.get("file_path", ""),
@@ -139,8 +140,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             chunks_list=chunks_list,
             error_msg=props.get("error_msg"),
             metadata=metadata or {},
-            multimodal_processed=props.get("multimodal_processed"),
         )
+        if hasattr(DocProcessingStatus, "multimodal_processed"):
+            kwargs["multimodal_processed"] = props.get("multimodal_processed")
+        return DocProcessingStatus(**kwargs)
 
     # ── BaseKVStorage interface ────────────────────────────────────────
 
