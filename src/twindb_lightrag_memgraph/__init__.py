@@ -170,9 +170,10 @@ def _patch_builtin_memgraph_storage():
                         pass  # Community — skip
                     else:
                         try:
-                            await session.run(
+                            _use_result = await session.run(
                                 f"USE DATABASE {self._database}"
                             )
+                            await _use_result.consume()
                             if self._enterprise_supported is None:
                                 self._enterprise_supported = True
                         except _ClientError as exc:
@@ -211,9 +212,10 @@ def _patch_builtin_memgraph_storage():
                 async with self._driver.session() as session:
                     try:
                         workspace_label = self._get_workspace_label()
-                        await session.run(
+                        _idx_result = await session.run(
                             f"CREATE INDEX ON :{workspace_label}(entity_id)"
                         )
+                        await _idx_result.consume()
                     except Exception as e:
                         if "already exists" in str(e).lower():
                             pass  # Expected on repeated initialize(); index is already created
@@ -224,7 +226,8 @@ def _patch_builtin_memgraph_storage():
                                 e,
                             )
 
-                    await session.run("RETURN 1")
+                    _ping = await session.run("RETURN 1")
+                    await _ping.consume()
                     if _original_logger:
                         _original_logger.info(
                             f"[MemgraphGraph:{self.workspace}] GRAPH storage "

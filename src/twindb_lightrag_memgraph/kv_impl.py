@@ -47,7 +47,8 @@ class MemgraphKVStorage(BaseKVStorage):
         )
         async with _pool.get_session() as session:
             try:
-                await session.run(f"CREATE INDEX ON :`{label}`(id)")
+                result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
+                await result.consume()
                 logger.info(f"[MemgraphKV:{self.workspace}] Index on :{label}(id)")
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -132,7 +133,7 @@ class MemgraphKVStorage(BaseKVStorage):
         ]
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                await session.run(
+                result = await session.run(
                     f"""
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
@@ -141,6 +142,7 @@ class MemgraphKVStorage(BaseKVStorage):
                     """,
                     entries=entries,
                 )
+                await result.consume()
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
@@ -168,12 +170,8 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def drop(self) -> dict[str, str]:
         label = self._label()
-        try:
-            async with _pool.acquire_write_slot():
-                async with _pool.get_session() as session:
-                    result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                    await result.consume()
-            return {"status": "success", "message": f"KV namespace {label} dropped"}
-        except Exception as e:
-            logger.error("KV drop failed for %s: %s", label, e)
-            return {"status": "error", "message": "Drop operation failed"}
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+                await result.consume()
+        return {"status": "success", "message": f"KV namespace {label} dropped"}

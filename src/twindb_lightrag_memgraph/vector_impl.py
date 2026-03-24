@@ -83,7 +83,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         async with _pool.get_session() as session:
             # Label index on id
             try:
-                await session.run(f"CREATE INDEX ON :`{label}`(id)")
+                result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
+                await result.consume()
             except Exception as e:
                 if "already exists" in str(e).lower():
                     logger.debug(
@@ -352,19 +353,15 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def drop(self) -> dict[str, str]:
         label = self._label()
-        try:
-            async with _pool.acquire_write_slot():
-                async with _pool.get_session() as session:
-                    result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+                await result.consume()
+                try:
+                    result = await session.run(
+                        f"DROP VECTOR INDEX `{self._index_name()}`"
+                    )
                     await result.consume()
-                    try:
-                        result = await session.run(
-                            f"DROP VECTOR INDEX `{self._index_name()}`"
-                        )
-                        await result.consume()
-                    except Exception:
-                        pass
-            return {"status": "success", "message": f"Vector namespace {label} dropped"}
-        except Exception as e:
-            logger.error("Vector drop failed for %s: %s", label, e)
-            return {"status": "error", "message": "Drop operation failed"}
+                except Exception:
+                    pass  # Index may not exist
+        return {"status": "success", "message": f"Vector namespace {label} dropped"}

@@ -12,30 +12,36 @@ from twindb_lightrag_memgraph._buffered_graph import _BufferedGraphProxy
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
+# Shared query tracker used by mock pool session
+_queries = []
+
+
+@asynccontextmanager
+async def _mock_pool_session():
+    """Mock for _pool.get_session() that tracks queries."""
+    session = AsyncMock()
+    original_run = session.run
+
+    async def tracking_run(query, **params):
+        _queries.append({"query": query, "params": params})
+        return await original_run(query, **params)
+
+    session.run = tracking_run
+    yield session
+
+
+@asynccontextmanager
+async def _mock_write_slot():
+    """Mock for _pool.acquire_write_slot() — passthrough."""
+    yield
+
 
 def _mock_graph(workspace="test_ws"):
     """Create a mock MemgraphStorage with session support."""
+    _queries.clear()
     graph = AsyncMock()
     graph.workspace = workspace
-
-    # Track Cypher queries run via session
-    queries = []
-
-    @asynccontextmanager
-    async def mock_session(**kwargs):
-        session = AsyncMock()
-        original_run = session.run
-
-        async def tracking_run(query, **params):
-            queries.append({"query": query, "params": params})
-            return await original_run(query, **params)
-
-        session.run = tracking_run
-        yield session
-
-    graph._driver = MagicMock()
-    graph._driver.session = mock_session
-    graph._queries = queries
+    graph._queries = _queries
     return graph
 
 
@@ -179,6 +185,19 @@ class TestDelegation:
 
 
 class TestFlush:
+    """Flush tests mock _pool.get_session and _pool.acquire_write_slot."""
+
+    _pool_patches = [
+        patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ),
+        patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ),
+    ]
+
     async def test_flush_nodes_uses_unwind(self):
         """Node flush should use UNWIND + MERGE Cypher."""
         graph = _mock_graph(workspace="ws")
@@ -188,7 +207,14 @@ class TestFlush:
             "Alice", {"entity_type": "Person", "entity_id": "Alice"}
         )
         await proxy.upsert_node("Bob", {"entity_type": "Person", "entity_id": "Bob"})
-        await proxy.flush()
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
 
         assert len(graph._queries) >= 1
         node_query = graph._queries[0]["query"]
@@ -207,7 +233,14 @@ class TestFlush:
         await proxy.upsert_node(
             "ACME", {"entity_type": "Organization", "entity_id": "ACME"}
         )
-        await proxy.flush()
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
 
         # 1 UNWIND MERGE + 2 type label queries (Person, Organization)
         assert len(graph._queries) >= 3
@@ -222,7 +255,14 @@ class TestFlush:
         # Need nodes first (edges use MATCH)
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
-        await proxy.flush()
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
 
         edge_queries = [q for q in graph._queries if "DIRECTED" in q["query"]]
         assert len(edge_queries) == 1
@@ -236,7 +276,14 @@ class TestFlush:
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
-        await proxy.flush()
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
 
         # Find node and edge query indices
         node_idx = None
@@ -267,10 +314,284 @@ class TestFlush:
         proxy = _BufferedGraphProxy(graph)
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
-        await proxy.flush()
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
 
         edge_queries = [q for q in graph._queries if "DIRECTED" in q["query"]]
         assert len(edge_queries) == 0
+
+
+# ── Result consumption ───────────────────────────────────────────────
+
+
+class TestResultConsumption:
+    """Verify that all session.run() results are consumed (await result.consume())."""
+
+    async def test_flush_nodes_consumes_all_results(self):
+        """Every session.run() in _flush_nodes must have its result consumed."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        consume_count = 0
+
+        @asynccontextmanager
+        async def tracking_session():
+            session = AsyncMock()
+            nonlocal consume_count
+
+            async def tracking_run(query, **params):
+                result = AsyncMock()
+                original_consume = result.consume
+
+                async def counting_consume():
+                    nonlocal consume_count
+                    consume_count += 1
+                    return await original_consume()
+
+                result.consume = counting_consume
+                return result
+
+            session.run = tracking_run
+            yield session
+
+        await proxy.upsert_node(
+            "Alice", {"entity_type": "Person", "entity_id": "Alice"}
+        )
+        await proxy.upsert_node(
+            "ACME", {"entity_type": "Organization", "entity_id": "ACME"}
+        )
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            tracking_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()
+
+        # 1 MERGE query + 2 type label queries = 3 consume() calls
+        assert consume_count == 3
+
+    async def test_flush_edges_consumes_result(self):
+        """session.run() in _flush_edges must have its result consumed."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        consume_called = False
+
+        @asynccontextmanager
+        async def tracking_session():
+            session = AsyncMock()
+            nonlocal consume_called
+
+            async def tracking_run(query, **params):
+                result = AsyncMock()
+
+                async def mark_consume():
+                    nonlocal consume_called
+                    consume_called = True
+
+                result.consume = mark_consume
+                return result
+
+            session.run = tracking_run
+            yield session
+
+        await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            tracking_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy._flush_edges()
+
+        assert consume_called, "result.consume() was never called in _flush_edges"
+
+
+# ── Write throttle integration ───────────────────────────────────────
+
+
+class TestWriteThrottle:
+    """Verify that flush uses acquire_write_slot (not direct driver access)."""
+
+    async def test_flush_nodes_acquires_write_slot(self):
+        """_flush_nodes must go through acquire_write_slot."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        slot_acquired = False
+
+        @asynccontextmanager
+        async def tracking_slot():
+            nonlocal slot_acquired
+            slot_acquired = True
+            yield
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            tracking_slot,
+        ):
+            await proxy.flush()
+
+        assert slot_acquired, "acquire_write_slot was not called during node flush"
+
+    async def test_flush_edges_acquires_write_slot(self):
+        """_flush_edges must go through acquire_write_slot."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        slot_count = 0
+
+        @asynccontextmanager
+        async def counting_slot():
+            nonlocal slot_count
+            slot_count += 1
+            yield
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+        await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            counting_slot,
+        ):
+            await proxy.flush()
+
+        # 1 slot for nodes + 1 slot for edges
+        assert slot_count == 2, f"Expected 2 write slot acquisitions, got {slot_count}"
+
+
+# ── Error handling ───────────────────────────────────────────────────
+
+
+class TestFlushErrorHandling:
+    """Verify that flush errors are logged and re-raised (not swallowed)."""
+
+    async def test_flush_node_failure_raises(self):
+        """If _flush_nodes raises, flush must propagate the exception."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+
+        @asynccontextmanager
+        async def failing_session():
+            session = AsyncMock()
+            session.run.side_effect = RuntimeError("Bolt connection lost")
+            yield session
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            failing_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            with pytest.raises(RuntimeError, match="Bolt connection lost"):
+                await proxy.flush()
+
+    async def test_flush_edge_failure_raises(self):
+        """If _flush_edges raises, flush must propagate the exception."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        call_count = 0
+
+        @asynccontextmanager
+        async def selective_session():
+            nonlocal call_count
+            call_count += 1
+            session = AsyncMock()
+            if call_count > 1:
+                # Second session (edges) fails
+                session.run.side_effect = RuntimeError("Edge write failed")
+            yield session
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+        await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            selective_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            with pytest.raises(RuntimeError, match="Edge write failed"):
+                await proxy.flush()
+
+    async def test_flush_failure_logs_error(self):
+        """flush must log an error with node/edge counts on failure."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+
+        @asynccontextmanager
+        async def failing_session():
+            session = AsyncMock()
+            session.run.side_effect = RuntimeError("fail")
+            yield session
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+        await proxy.upsert_node("Bob", {"entity_id": "Bob"})
+        await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            failing_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.logger"
+        ) as mock_logger:
+            with pytest.raises(RuntimeError):
+                await proxy.flush()
+
+            mock_logger.error.assert_called_once()
+            log_msg = mock_logger.error.call_args[0][0]
+            assert "FAILED" in log_msg
+
+
+# ── Uses shared pool (not direct driver) ─────────────────────────────
+
+
+class TestUsesPoolNotDriver:
+    """Verify flush goes through _pool.get_session, not self._real._driver."""
+
+    async def test_flush_does_not_touch_real_driver(self):
+        """_flush_nodes and _flush_edges must NOT access self._real._driver."""
+        graph = _mock_graph(workspace="ws")
+        # Put a sentinel on the driver that would fail if accessed
+        graph._driver = MagicMock()
+        graph._driver.session.side_effect = AssertionError(
+            "Direct driver access detected — must use _pool.get_session()"
+        )
+        proxy = _BufferedGraphProxy(graph)
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+        await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
+
+        with patch(
+            "twindb_lightrag_memgraph._buffered_graph.get_session",
+            _mock_pool_session,
+        ), patch(
+            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+            _mock_write_slot,
+        ):
+            await proxy.flush()  # Must NOT touch graph._driver
 
 
 # ── Double-patch registration ─────────────────────────────────────────
