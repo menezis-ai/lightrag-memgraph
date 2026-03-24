@@ -9,6 +9,8 @@ from the buffer, falling back to the real graph for data not yet buffered.
 
 import logging
 
+from ._pool import acquire_write_slot, get_session
+
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
 
@@ -83,14 +85,24 @@ class _BufferedGraphProxy:
         Nodes must flush before edges because upsert_edge uses MATCH
         (not MERGE) for source/target nodes.
         """
-        if self._node_buffer:
-            await self._flush_nodes()
-        if self._edge_buffer:
-            await self._flush_edges()
+        node_count = len(self._node_buffer)
+        edge_count = len(self._edge_buffer)
+        try:
+            if self._node_buffer:
+                await self._flush_nodes()
+            if self._edge_buffer:
+                await self._flush_edges()
+        except Exception:
+            logger.error(
+                "Buffered flush FAILED: %d nodes, %d edges",
+                node_count,
+                edge_count,
+            )
+            raise
         logger.debug(
             "Buffered flush: %d nodes, %d edges",
-            len(self._node_buffer),
-            len(self._edge_buffer),
+            node_count,
+            edge_count,
         )
 
     async def _flush_nodes(self):
@@ -101,30 +113,33 @@ class _BufferedGraphProxy:
             for name, data in self._node_buffer.items()
         ]
 
-        async with self._real._driver.session() as session:
-            await session.run(
-                f"""
-                UNWIND $entries AS e
-                MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
-                SET n += e.properties
-                """,
-                entries=entries,
-            )
-
-            # Set additional type labels — group by type to minimize queries.
-            # Cypher can't do SET n:$dynamic, so one query per distinct type.
-            by_type: dict[str, list[str]] = {}
-            for name, node_type in self._node_types.items():
-                by_type.setdefault(node_type, []).append(name)
-            for node_type, names in by_type.items():
-                await session.run(
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
                     f"""
-                    UNWIND $names AS name
-                    MATCH (n:`{workspace}` {{entity_id: name}})
-                    SET n:`{node_type}`
+                    UNWIND $entries AS e
+                    MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
+                    SET n += e.properties
                     """,
-                    names=names,
+                    entries=entries,
                 )
+                await result.consume()
+
+                # Set additional type labels — group by type to minimize queries.
+                # Cypher can't do SET n:$dynamic, so one query per distinct type.
+                by_type: dict[str, list[str]] = {}
+                for name, node_type in self._node_types.items():
+                    by_type.setdefault(node_type, []).append(name)
+                for node_type, names in by_type.items():
+                    result = await session.run(
+                        f"""
+                        UNWIND $names AS name
+                        MATCH (n:`{workspace}` {{entity_id: name}})
+                        SET n:`{node_type}`
+                        """,
+                        names=names,
+                    )
+                    await result.consume()
 
     async def _flush_edges(self):
         """Single UNWIND query for all buffered edges."""
@@ -138,14 +153,16 @@ class _BufferedGraphProxy:
             for (src, tgt), data in self._edge_buffer.items()
         ]
 
-        async with self._real._driver.session() as session:
-            await session.run(
-                f"""
-                UNWIND $entries AS e
-                MATCH (source:`{workspace}` {{entity_id: e.source_entity_id}})
-                MATCH (target:`{workspace}` {{entity_id: e.target_entity_id}})
-                MERGE (source)-[r:DIRECTED]-(target)
-                SET r += e.properties
-                """,
-                entries=entries,
-            )
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    f"""
+                    UNWIND $entries AS e
+                    MATCH (source:`{workspace}` {{entity_id: e.source_entity_id}})
+                    MATCH (target:`{workspace}` {{entity_id: e.target_entity_id}})
+                    MERGE (source)-[r:DIRECTED]-(target)
+                    SET r += e.properties
+                    """,
+                    entries=entries,
+                )
+                await result.consume()

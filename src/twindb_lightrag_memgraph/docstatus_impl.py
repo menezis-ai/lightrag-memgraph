@@ -48,7 +48,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         async with _pool.get_session() as session:
             for prop in ["id", "status", "file_path", "track_id"]:
                 try:
-                    await session.run(f"CREATE INDEX ON :`{label}`({prop})")
+                    result = await session.run(f"CREATE INDEX ON :`{label}`({prop})")
+                    await result.consume()
                 except Exception as e:
                     if "already exists" in str(e).lower():
                         logger.debug(
@@ -391,12 +392,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     async def drop(self) -> dict[str, str]:
         label = self._label()
-        try:
-            async with _pool.acquire_write_slot():
-                async with _pool.get_session() as session:
-                    result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                    await result.consume()
-            return {"status": "success", "message": f"DocStatus {label} dropped"}
-        except Exception as e:
-            logger.error("DocStatus drop failed for %s: %s", label, e)
-            return {"status": "error", "message": "Drop operation failed"}
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+                await result.consume()
+        return {"status": "success", "message": f"DocStatus {label} dropped"}

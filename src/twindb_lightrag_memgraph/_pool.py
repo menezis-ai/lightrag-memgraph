@@ -303,7 +303,8 @@ async def _try_use_database(session, database: str) -> None:
         return  # Community edition — skip
 
     try:
-        await session.run(f"USE DATABASE {database}")
+        result = await session.run(f"USE DATABASE {database}")
+        await result.consume()
         if _enterprise_supported is None:
             _enterprise_supported = True
             logger.debug(
