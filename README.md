@@ -63,10 +63,17 @@ All backends read their connection settings from environment variables (`os.envi
 | `MEMGRAPH_PASSWORD` | No | `""` | Auth password |
 | `MEMGRAPH_DATABASE` | No | `"memgraph"` | Database name passed to the Bolt driver. Enterprise supports multi-database. |
 | `MEMGRAPH_WORKSPACE` | No | `"base"` | Workspace prefix in node labels for multi-tenancy (e.g., `KV_{workspace}_chunks`) |
-| `MEMGRAPH_WRITE_CONCURRENCY` | No | `10` | Max concurrent write operations (upsert/delete/drop). Prevents Bolt pool saturation during bulk uploads. |
+| `MEMGRAPH_WRITE_CONCURRENCY` | No | `8` | Max concurrent write operations (upsert/delete/drop). Prevents Bolt pool saturation during bulk uploads. |
 | `MEMGRAPH_POOL_SIZE` | No | `50` | Write pool size (max Bolt connections for write operations) |
 | `MEMGRAPH_READ_POOL_SIZE` | No | `20` | Read pool size (dedicated read-only Bolt connections, isolated from writes) |
 | `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | No | `5.0` | Seconds to wait for a free connection before failing (applies to both pools) |
+| `MEMGRAPH_MEMORY_LIMIT` | No | `0` (unlimited) | LightRAG memory budget compared against Memgraph `memory_tracked`. Human-readable sizes: `2GiB`, `500MiB`. `0` = no limit. |
+| `MEMGRAPH_BUDGET_ENFORCE` | No | `off` | Pre-insert budget gate: `off` (no check), `warn` (log + proceed), `reject` (raise `MemoryBudgetExceeded`). |
+| `MEMGRAPH_VECTOR_SCALAR_KIND` | No | `f16` | Vector quantization: `f32` (full precision), `f16` (50% memory savings), `i8` (75% savings). Requires Memgraph >= 3.8. |
+| `MEMGRAPH_DELETE_BATCH_SIZE` | No | `10000` | Max nodes per transaction in `drop()` / batched delete. Prevents OOM on large datasets. |
+| `MEMGRAPH_TTL_SECONDS` | No | — (disabled) | When set, KV upserts add `:TTL` label + `ttl` property (Unix epoch expiry). Requires Memgraph Enterprise `ENABLE TTL`. |
+| `MEMGRAPH_TTL_LABELS` | No | `full_docs,text_chunks` | Comma-separated KV namespaces that get TTL. Only applies when `MEMGRAPH_TTL_SECONDS` is set. |
+| `MEMGRAPH_PURGE_FULL_DOCS` | No | `off` | When `on`, purge `full_docs` content after PROCESSED status. Reconstruct from chunks on demand. Saves ~35-45% storage. |
 
 ## How it works
 

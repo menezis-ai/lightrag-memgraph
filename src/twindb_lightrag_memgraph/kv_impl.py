@@ -121,8 +121,16 @@ class MemgraphKVStorage(BaseKVStorage):
             return missing
 
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
+        from ._ttl import compute_ttl_timestamp, get_ttl_namespaces, get_ttl_seconds
+
         label = self._label()
         now = datetime.now(timezone.utc).isoformat()
+
+        # Determine if this namespace gets TTL
+        ttl_seconds = get_ttl_seconds()
+        apply_ttl = ttl_seconds is not None and self.namespace in get_ttl_namespaces()
+        ttl_ts = compute_ttl_timestamp(ttl_seconds) if apply_ttl else None
+
         entries = [
             {
                 "id": k,
@@ -131,6 +139,16 @@ class MemgraphKVStorage(BaseKVStorage):
             }
             for k, v in data.items()
         ]
+
+        # Build SET clause — add ttl property when TTL is enabled
+        set_clause = "SET n.data = e.data, n.__updated_at = e.ts"
+        if apply_ttl:
+            set_clause += ", n.ttl = $ttl_ts"
+
+        params: dict[str, Any] = {"entries": entries}
+        if apply_ttl:
+            params["ttl_ts"] = ttl_ts
+
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 result = await session.run(
@@ -138,11 +156,22 @@ class MemgraphKVStorage(BaseKVStorage):
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
                     ON CREATE SET n.__created_at = e.ts
-                    SET n.data = e.data, n.__updated_at = e.ts
+                    {set_clause}
                     """,
-                    entries=entries,
+                    **params,
                 )
                 await result.consume()
+
+                # Add :TTL label for nodes that have ttl but not yet the label
+                if apply_ttl:
+                    result = await session.run(
+                        f"""
+                        MATCH (n:`{label}`)
+                        WHERE n.ttl IS NOT NULL AND NOT n:TTL
+                        SET n:TTL
+                        """,
+                    )
+                    await result.consume()
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
@@ -169,9 +198,11 @@ class MemgraphKVStorage(BaseKVStorage):
             return record["cnt"] == 0 if record else True
 
     async def drop(self) -> dict[str, str]:
+        from ._batched_ops import batched_delete
+
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                await result.consume()
-        return {"status": "success", "message": f"KV namespace {label} dropped"}
+        total = await batched_delete(label)
+        return {
+            "status": "success",
+            "message": f"KV namespace {label} dropped ({total} nodes)",
+        }

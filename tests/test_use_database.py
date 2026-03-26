@@ -8,11 +8,12 @@ Community:  USE DATABASE fails with "enterprise feature" error → detected
 OFFLINE — no Memgraph needed. All driver calls are mocked.
 """
 
-import twindb_lightrag_memgraph._pool as _pool_module
-from neo4j.exceptions import ClientError as Neo4jClientError
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from neo4j.exceptions import ClientError as Neo4jClientError
+
+import twindb_lightrag_memgraph._pool as _pool_module
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +36,7 @@ def _make_mock_session(*, enterprise=True):
     if enterprise:
         session.run = AsyncMock(return_value=AsyncMock())
     else:
+
         async def _run_side_effect(query, *args, **kwargs):
             if query.startswith("USE DATABASE"):
                 raise Neo4jClientError(

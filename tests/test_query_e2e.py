@@ -55,9 +55,9 @@ REL_EMBEDDINGS = {
 }
 
 # Query embedding = slight perturbation of PARIS embedding (high similarity)
-QUERY_EMBEDDING = ENTITY_EMBEDDINGS["PARIS"] + _rng.normal(0, 0.01, EMBEDDING_DIM).astype(
-    np.float32
-)
+QUERY_EMBEDDING = ENTITY_EMBEDDINGS["PARIS"] + _rng.normal(
+    0, 0.01, EMBEDDING_DIM
+).astype(np.float32)
 QUERY_EMBEDDING = QUERY_EMBEDDING / np.linalg.norm(QUERY_EMBEDDING)
 
 
@@ -101,12 +101,15 @@ async def seeded_stores():
         ("EIFFEL_TOWER", "Landmark", "Iconic iron lattice tower in Paris"),
         ("NAPOLEON", "Person", "French emperor and military leader"),
     ]:
-        await graph.upsert_node(name, {
-            "entity_id": name,
-            "entity_type": etype,
-            "description": desc,
-            "source_id": "chunk1",
-        })
+        await graph.upsert_node(
+            name,
+            {
+                "entity_id": name,
+                "entity_type": etype,
+                "description": desc,
+                "source_id": "chunk1",
+            },
+        )
 
     # Seed edges
     for src, tgt, desc, kw in [
@@ -114,12 +117,16 @@ async def seeded_stores():
         ("EIFFEL_TOWER", "PARIS", "located in", "landmark, location, tower"),
         ("NAPOLEON", "FRANCE", "ruled", "emperor, ruler, history"),
     ]:
-        await graph.upsert_edge(src, tgt, {
-            "weight": "1.0",
-            "description": desc,
-            "keywords": kw,
-            "source_id": "chunk1",
-        })
+        await graph.upsert_edge(
+            src,
+            tgt,
+            {
+                "weight": "1.0",
+                "description": desc,
+                "keywords": kw,
+                "source_id": "chunk1",
+            },
+        )
 
     # -- Entities VDB --
     entities_vdb = MemgraphVectorDBStorage(
@@ -233,8 +240,12 @@ async def _do_search(mode, stores, query="Paris France capital"):
     """Run _perform_kg_search for the given mode."""
     return await operate._perform_kg_search(
         query=query,
-        ll_keywords="Paris, France, capital" if mode in ("local", "hybrid", "mix") else "",
-        hl_keywords="capital, country, European" if mode in ("global", "hybrid", "mix") else "",
+        ll_keywords=(
+            "Paris, France, capital" if mode in ("local", "hybrid", "mix") else ""
+        ),
+        hl_keywords=(
+            "capital, country, European" if mode in ("global", "hybrid", "mix") else ""
+        ),
         knowledge_graph_inst=stores["graph"],
         entities_vdb=stores["entities_vdb"],
         relationships_vdb=stores["rels_vdb"],
@@ -247,29 +258,29 @@ async def _do_search(mode, stores, query="Paris France capital"):
 class TestLocalMode:
     async def test_local_returns_entities(self, seeded_stores):
         result = await _do_search("local", seeded_stores)
-        assert len(result["final_entities"]) > 0, (
-            f"Local mode returned 0 entities. Keys: {result.keys()}"
-        )
+        assert (
+            len(result["final_entities"]) > 0
+        ), f"Local mode returned 0 entities. Keys: {result.keys()}"
 
     async def test_local_returns_relations(self, seeded_stores):
         result = await _do_search("local", seeded_stores)
-        assert len(result["final_relations"]) > 0, (
-            f"Local mode returned 0 relations. Keys: {result.keys()}"
-        )
+        assert (
+            len(result["final_relations"]) > 0
+        ), f"Local mode returned 0 relations. Keys: {result.keys()}"
 
 
 class TestGlobalMode:
     async def test_global_returns_relations(self, seeded_stores):
         result = await _do_search("global", seeded_stores)
-        assert len(result["final_relations"]) > 0, (
-            f"Global mode returned 0 relations. VDB query may be empty."
-        )
+        assert (
+            len(result["final_relations"]) > 0
+        ), f"Global mode returned 0 relations. VDB query may be empty."
 
     async def test_global_returns_entities(self, seeded_stores):
         result = await _do_search("global", seeded_stores)
-        assert len(result["final_entities"]) > 0, (
-            f"Global mode returned 0 entities from relationship traversal."
-        )
+        assert (
+            len(result["final_entities"]) > 0
+        ), f"Global mode returned 0 entities from relationship traversal."
 
 
 class TestHybridMode:
@@ -300,9 +311,9 @@ class TestVDBDirect:
             "", top_k=5, query_embedding=QUERY_EMBEDDING.tolist()
         )
         assert len(results) > 0, "Entities VDB returned 0 results"
-        assert "entity_name" in results[0], (
-            f"Missing 'entity_name' in VDB result: {results[0].keys()}"
-        )
+        assert (
+            "entity_name" in results[0]
+        ), f"Missing 'entity_name' in VDB result: {results[0].keys()}"
 
     async def test_relationships_vdb_returns_src_tgt(self, seeded_stores):
         results = await seeded_stores["rels_vdb"].query(

@@ -101,7 +101,9 @@ class TestKVConsumeOnWrite:
             patch.object(pool, "get_session", tracker.make_session_factory()),
         ):
             await kv_store.initialize()
-        assert tracker.count == 1, f"Expected 1 consume() for CREATE INDEX, got {tracker.count}"
+        assert (
+            tracker.count == 1
+        ), f"Expected 1 consume() for CREATE INDEX, got {tracker.count}"
 
     async def test_drop_propagates_exception(self, kv_store):
         with (

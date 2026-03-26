@@ -129,19 +129,19 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             )
             status = DocStatus.PENDING
 
-        kwargs = dict(
-            content_summary=props.get("content_summary", ""),
-            content_length=props.get("content_length", 0),
-            file_path=props.get("file_path", ""),
-            status=status,
-            created_at=props.get("created_at", ""),
-            updated_at=props.get("updated_at", ""),
-            track_id=props.get("track_id"),
-            chunks_count=props.get("chunks_count"),
-            chunks_list=chunks_list,
-            error_msg=props.get("error_msg"),
-            metadata=metadata or {},
-        )
+        kwargs = {
+            "content_summary": props.get("content_summary", ""),
+            "content_length": props.get("content_length", 0),
+            "file_path": props.get("file_path", ""),
+            "status": status,
+            "created_at": props.get("created_at", ""),
+            "updated_at": props.get("updated_at", ""),
+            "track_id": props.get("track_id"),
+            "chunks_count": props.get("chunks_count"),
+            "chunks_list": chunks_list,
+            "error_msg": props.get("error_msg"),
+            "metadata": metadata or {},
+        }
         if hasattr(DocProcessingStatus, "multimodal_processed"):
             kwargs["multimodal_processed"] = props.get("multimodal_processed")
         return DocProcessingStatus(**kwargs)
@@ -391,9 +391,11 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             return None
 
     async def drop(self) -> dict[str, str]:
+        from ._batched_ops import batched_delete
+
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                await result.consume()
-        return {"status": "success", "message": f"DocStatus {label} dropped"}
+        total = await batched_delete(label)
+        return {
+            "status": "success",
+            "message": f"DocStatus {label} dropped ({total} nodes)",
+        }

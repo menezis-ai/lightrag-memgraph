@@ -57,9 +57,7 @@ class TestQueryMissingIndex:
         store = _make_store()
 
         mock_session = AsyncMock()
-        mock_session.run = AsyncMock(
-            side_effect=Exception("Connection refused")
-        )
+        mock_session.run = AsyncMock(side_effect=Exception("Connection refused"))
 
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)

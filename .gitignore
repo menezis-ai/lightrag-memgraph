@@ -13,6 +13,7 @@ coverage.xml
 # Secrets & local configuration
 .env
 .env.*
+!.env.example
 config.ini
 *.pem
 *.key

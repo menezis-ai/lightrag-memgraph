@@ -10,7 +10,7 @@ Each vector entry is a Cypher node:
 Vector index:
   CREATE VECTOR INDEX vec_{workspace}_{namespace}
   ON :Vec_{workspace}_{namespace}(embedding)
-  WITH CONFIG {"dimension": N, "capacity": VECTOR_INDEX_CAPACITY, "metric": "cos"}
+  WITH CONFIG {"dimension": N, "capacity": VECTOR_INDEX_CAPACITY, "metric": "cos", "scalar_kind": "f16"}
 
 Query:
   CALL vector_search.search("vec_...", $embedding, $top_k)
@@ -18,6 +18,7 @@ Query:
 """
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,14 @@ from lightrag.base import BaseVectorStorage
 from lightrag.utils import logger
 
 from . import _pool
-from ._constants import VECTOR_INDEX_CAPACITY, resolve_workspace, validate_identifier
+from ._constants import (
+    _VALID_SCALAR_KINDS,
+    DEFAULT_VECTOR_SCALAR_KIND,
+    MEMGRAPH_VECTOR_SCALAR_KIND_ENV,
+    VECTOR_INDEX_CAPACITY,
+    resolve_workspace,
+    validate_identifier,
+)
 
 
 @dataclass
@@ -97,18 +105,35 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                         e,
                     )
 
-            # Vector index
+            # Vector index (scalar_kind requires Memgraph >= 3.8)
+            scalar_kind = os.environ.get(
+                MEMGRAPH_VECTOR_SCALAR_KIND_ENV, DEFAULT_VECTOR_SCALAR_KIND
+            )
+            if scalar_kind not in _VALID_SCALAR_KINDS:
+                logger.warning(
+                    "[MemgraphVec:%s] Invalid scalar_kind %r, falling back to %s",
+                    self.workspace,
+                    scalar_kind,
+                    DEFAULT_VECTOR_SCALAR_KIND,
+                )
+                scalar_kind = DEFAULT_VECTOR_SCALAR_KIND
             try:
                 result = await session.run(
                     f"CREATE VECTOR INDEX `{index_name}` "
                     f"ON :`{label}`(embedding) "
                     f'WITH CONFIG {{"dimension": {dim}, '
-                    f'"capacity": {VECTOR_INDEX_CAPACITY}, "metric": "cos"}}'
+                    f'"capacity": {VECTOR_INDEX_CAPACITY}, '
+                    f'"metric": "cos", '
+                    f'"scalar_kind": "{scalar_kind}"}}'
                 )
                 await result.consume()
                 logger.info(
-                    f"[MemgraphVec:{self.workspace}] "
-                    f"Vector index '{index_name}' created (dim={dim})"
+                    "[MemgraphVec:%s] Vector index '%s' created "
+                    "(dim=%d, scalar_kind=%s)",
+                    self.workspace,
+                    index_name,
+                    dim,
+                    scalar_kind,
                 )
             except Exception as e:
                 if "already exists" in str(e).lower():
@@ -352,11 +377,13 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return out
 
     async def drop(self) -> dict[str, str]:
+        from ._batched_ops import batched_delete
+
         label = self._label()
+        total = await batched_delete(label)
+        # Drop vector index separately (may not exist)
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                await result.consume()
                 try:
                     result = await session.run(
                         f"DROP VECTOR INDEX `{self._index_name()}`"
@@ -364,4 +391,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     await result.consume()
                 except Exception:
                     pass  # Index may not exist
-        return {"status": "success", "message": f"Vector namespace {label} dropped"}
+        return {
+            "status": "success",
+            "message": f"Vector namespace {label} dropped ({total} nodes)",
+        }

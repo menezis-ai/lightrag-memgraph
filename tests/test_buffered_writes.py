@@ -207,12 +207,15 @@ class TestFlush:
             "Alice", {"entity_type": "Person", "entity_id": "Alice"}
         )
         await proxy.upsert_node("Bob", {"entity_type": "Person", "entity_id": "Bob"})
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -233,12 +236,15 @@ class TestFlush:
         await proxy.upsert_node(
             "ACME", {"entity_type": "Organization", "entity_id": "ACME"}
         )
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -255,12 +261,15 @@ class TestFlush:
         # Need nodes first (edges use MATCH)
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -276,12 +285,15 @@ class TestFlush:
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -314,12 +326,15 @@ class TestFlush:
         proxy = _BufferedGraphProxy(graph)
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -366,12 +381,15 @@ class TestResultConsumption:
             "ACME", {"entity_type": "Organization", "entity_id": "ACME"}
         )
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            tracking_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                tracking_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -404,12 +422,15 @@ class TestResultConsumption:
 
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            tracking_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                tracking_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy._flush_edges()
 
@@ -436,12 +457,15 @@ class TestWriteThrottle:
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            tracking_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                tracking_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -462,12 +486,15 @@ class TestWriteThrottle:
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            counting_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                counting_slot,
+            ),
         ):
             await proxy.flush()
 
@@ -494,12 +521,15 @@ class TestFlushErrorHandling:
 
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            failing_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                failing_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             with pytest.raises(RuntimeError, match="Bolt connection lost"):
                 await proxy.flush()
@@ -523,12 +553,15 @@ class TestFlushErrorHandling:
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            selective_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                selective_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             with pytest.raises(RuntimeError, match="Edge write failed"):
                 await proxy.flush()
@@ -548,15 +581,17 @@ class TestFlushErrorHandling:
         await proxy.upsert_node("Bob", {"entity_id": "Bob"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            failing_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.logger"
-        ) as mock_logger:
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                failing_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
+            patch("twindb_lightrag_memgraph._buffered_graph.logger") as mock_logger,
+        ):
             with pytest.raises(RuntimeError):
                 await proxy.flush()
 
@@ -584,12 +619,15 @@ class TestUsesPoolNotDriver:
         await proxy.upsert_node("Alice", {"entity_id": "Alice"})
         await proxy.upsert_edge("Alice", "Bob", {"weight": "1.0"})
 
-        with patch(
-            "twindb_lightrag_memgraph._buffered_graph.get_session",
-            _mock_pool_session,
-        ), patch(
-            "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
-            _mock_write_slot,
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                _mock_pool_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
         ):
             await proxy.flush()  # Must NOT touch graph._driver
 

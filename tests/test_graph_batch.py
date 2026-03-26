@@ -5,6 +5,7 @@ nodes and edges from Memgraph. Requires running Memgraph instance.
 """
 
 import os
+
 import pytest
 
 # Skip if no Memgraph URI
@@ -40,38 +41,55 @@ async def graph():
         await session.run(f"MATCH (n:`{ws}`) DETACH DELETE n")
 
     # Seed nodes
-    await g.upsert_node("ALICE", {
-        "entity_id": "ALICE",
-        "entity_type": "Person",
-        "description": "A researcher",
-        "source_id": "chunk1",
-    })
-    await g.upsert_node("BOB", {
-        "entity_id": "BOB",
-        "entity_type": "Person",
-        "description": "A developer",
-        "source_id": "chunk1",
-    })
-    await g.upsert_node("PROJECT_X", {
-        "entity_id": "PROJECT_X",
-        "entity_type": "Project",
-        "description": "A secret project",
-        "source_id": "chunk2",
-    })
+    await g.upsert_node(
+        "ALICE",
+        {
+            "entity_id": "ALICE",
+            "entity_type": "Person",
+            "description": "A researcher",
+            "source_id": "chunk1",
+        },
+    )
+    await g.upsert_node(
+        "BOB",
+        {
+            "entity_id": "BOB",
+            "entity_type": "Person",
+            "description": "A developer",
+            "source_id": "chunk1",
+        },
+    )
+    await g.upsert_node(
+        "PROJECT_X",
+        {
+            "entity_id": "PROJECT_X",
+            "entity_type": "Project",
+            "description": "A secret project",
+            "source_id": "chunk2",
+        },
+    )
 
     # Seed edges
-    await g.upsert_edge("ALICE", "BOB", {
-        "weight": "1.0",
-        "description": "colleagues",
-        "keywords": "work",
-        "source_id": "chunk1",
-    })
-    await g.upsert_edge("ALICE", "PROJECT_X", {
-        "weight": "0.8",
-        "description": "works on",
-        "keywords": "project",
-        "source_id": "chunk2",
-    })
+    await g.upsert_edge(
+        "ALICE",
+        "BOB",
+        {
+            "weight": "1.0",
+            "description": "colleagues",
+            "keywords": "work",
+            "source_id": "chunk1",
+        },
+    )
+    await g.upsert_edge(
+        "ALICE",
+        "PROJECT_X",
+        {
+            "weight": "0.8",
+            "description": "works on",
+            "keywords": "project",
+            "source_id": "chunk2",
+        },
+    )
 
     yield g
 
@@ -152,9 +170,7 @@ class TestGetNodesEdgesBatch:
 
 class TestGetNodesWithDegreesBatch:
     async def test_fused_query(self, graph):
-        nodes, degrees = await graph.get_nodes_with_degrees_batch(
-            ["ALICE", "BOB"]
-        )
+        nodes, degrees = await graph.get_nodes_with_degrees_batch(["ALICE", "BOB"])
         assert len(nodes) == 2
         assert nodes["ALICE"]["entity_type"] == "Person"
         assert degrees["ALICE"] == 2

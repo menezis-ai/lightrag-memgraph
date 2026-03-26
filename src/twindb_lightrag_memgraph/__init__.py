@@ -21,6 +21,18 @@ import logging
 from importlib.metadata import version as _pkg_version
 
 from ._hooks import clear_post_index_hooks, register_post_index_hook
+from ._memory import (
+    BudgetCheck,
+    InsertCostEstimate,
+    MemoryBudgetExceeded,
+    MemoryUsage,
+    check_memory_budget,
+    estimate_batch_insert_cost,
+    estimate_insert_cost,
+    get_memory_usage,
+    get_storage_info,
+    get_workspace_node_counts,
+)
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -87,6 +99,18 @@ def register() -> None:
 
     # 6. Post-indexation hook on LightRAG._insert_done
     _patch_insert_done()
+
+    # 7. Pre-insert memory budget gate
+    _patch_enqueue_budget_check()
+
+    # 8. Lazy full_docs purge (opt-in via MEMGRAPH_PURGE_FULL_DOCS=on)
+    from ._lazy_full_docs import is_enabled as _lazy_enabled
+
+    if _lazy_enabled():
+        from ._lazy_full_docs import purge_processed_full_docs
+
+        register_post_index_hook(purge_processed_full_docs)
+        logger.info("Lazy full_docs purge enabled — content purged after PROCESSED")
 
     _registered = True
     msg = (
@@ -704,3 +728,53 @@ def _patch_insert_done():
     _hooked_insert_done.__name__ = "hooked_insert_done"
     LightRAG._insert_done = _hooked_insert_done
     logger.info("Patched LightRAG._insert_done with post-indexation hooks")
+
+
+def _patch_enqueue_budget_check():
+    """Wrap ``apipeline_enqueue_documents`` with a memory budget gate.
+
+    Controlled by ``MEMGRAPH_BUDGET_ENFORCE``:
+    - ``"off"`` (default): no check, original behavior
+    - ``"warn"``: log WARNING if budget would be exceeded, proceed anyway
+    - ``"reject"``: raise :class:`MemoryBudgetExceeded`, block the insert
+    """
+    import os
+
+    from lightrag.lightrag import LightRAG
+
+    from . import _memory as _memory_mod
+    from ._constants import MEMGRAPH_BUDGET_ENFORCE_ENV
+
+    _original = LightRAG.apipeline_enqueue_documents
+
+    async def _enforce_budget(mode: str, input) -> None:
+        """Run the budget check and raise/warn depending on mode."""
+        texts = input if isinstance(input, list) else [input]
+        budget = await _memory_mod.check_memory_budget(texts=texts)
+        if not budget.fits:
+            if mode == "reject":
+                raise _memory_mod.MemoryBudgetExceeded(budget)
+            logger.warning(
+                "[Budget] Memory budget would be exceeded:\n%s",
+                budget.human_readable(),
+            )
+
+    async def _budget_gated_enqueue(
+        self, input, ids=None, file_paths=None, track_id=None
+    ):
+        mode = os.environ.get(MEMGRAPH_BUDGET_ENFORCE_ENV, "off").lower()
+        if mode in ("warn", "reject"):
+            try:
+                await _enforce_budget(mode, input)
+            except _memory_mod.MemoryBudgetExceeded:
+                raise
+            except Exception as exc:
+                logger.warning("[Budget] Budget check failed, proceeding: %s", exc)
+
+        return await _original(
+            self, input, ids=ids, file_paths=file_paths, track_id=track_id
+        )
+
+    _budget_gated_enqueue.__name__ = "budget_gated_enqueue"
+    LightRAG.apipeline_enqueue_documents = _budget_gated_enqueue
+    logger.info("Patched apipeline_enqueue_documents with memory budget gate")

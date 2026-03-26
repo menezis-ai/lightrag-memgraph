@@ -17,6 +17,12 @@ DEFAULT_MEMGRAPH_URI = "bolt://localhost:7687"
 CONNECTION_POOL_SIZE = 50
 VECTOR_INDEX_CAPACITY = 100_000
 
+# Vector quantization — Memgraph 3.8+ supports scalar_kind in vector indexes.
+# "f32" (default, full precision), "f16" (50% memory savings), "i8" (75% savings).
+MEMGRAPH_VECTOR_SCALAR_KIND_ENV = "MEMGRAPH_VECTOR_SCALAR_KIND"
+DEFAULT_VECTOR_SCALAR_KIND = "f16"
+_VALID_SCALAR_KINDS = frozenset({"f32", "f16", "i8"})
+
 # Write throttle — limits concurrent write operations (upsert, delete, drop)
 # to avoid saturating the Bolt pool during bulk uploads.
 MEMGRAPH_WRITE_CONCURRENCY_ENV = "MEMGRAPH_WRITE_CONCURRENCY"
@@ -30,6 +36,33 @@ DEFAULT_CONNECTION_ACQUIRE_TIMEOUT = 5.0  # seconds — fail fast, don't hang
 # Read pool — dedicated connection pool for read operations.
 MEMGRAPH_READ_POOL_SIZE_ENV = "MEMGRAPH_READ_POOL_SIZE"
 DEFAULT_READ_POOL_SIZE = 20
+
+# Batched delete — prevents OOM on large datasets by limiting transaction size.
+MEMGRAPH_DELETE_BATCH_SIZE_ENV = "MEMGRAPH_DELETE_BATCH_SIZE"
+DEFAULT_DELETE_BATCH_SIZE = 10_000
+
+# Memory budget — LightRAG-specific cap on how much Memgraph memory it may use.
+# Compared against memory_tracked (= graph_memory_tracked + vector_index_memory_tracked).
+# 0 = unlimited (budget check skipped even if BUDGET_ENFORCE is warn/reject).
+# Must be set explicitly when using BUDGET_ENFORCE, e.g. "2GiB".
+MEMGRAPH_MEMORY_LIMIT_ENV = "MEMGRAPH_MEMORY_LIMIT"
+DEFAULT_MEMORY_LIMIT_GIB = 0
+
+# Budget enforcement mode for pre-insert memory check.
+# Modes: off (default, no check), warn (log but proceed), reject (raise error).
+MEMGRAPH_BUDGET_ENFORCE_ENV = "MEMGRAPH_BUDGET_ENFORCE"
+
+# TTL — Memgraph Enterprise native TTL support.
+# When set, KV upserts add a :TTL label and ttl property (Unix epoch expiry).
+# Memgraph's background job deletes expired nodes automatically.
+MEMGRAPH_TTL_SECONDS_ENV = "MEMGRAPH_TTL_SECONDS"
+# Comma-separated list of KV namespace names that get TTL labels.
+MEMGRAPH_TTL_LABELS_ENV = "MEMGRAPH_TTL_LABELS"
+DEFAULT_TTL_LABELS = "full_docs,text_chunks"
+
+# Lazy full_docs — purge raw content after processing, reconstruct on demand.
+MEMGRAPH_PURGE_FULL_DOCS_ENV = "MEMGRAPH_PURGE_FULL_DOCS"
+# Values: "off" (default), "on" — purge full_docs content after PROCESSED status
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
