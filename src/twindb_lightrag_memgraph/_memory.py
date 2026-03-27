@@ -400,6 +400,94 @@ async def get_workspace_node_counts(workspace: str) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Per-database memory estimation (workaround for instance-wide SHOW STORAGE INFO)
+# ---------------------------------------------------------------------------
+
+
+_MEMGRAPH_EDGE_OVERHEAD = 64  # estimated per-edge fixed overhead in Memgraph
+
+
+async def estimate_database_usage(
+    *,
+    embedding_dim: int = 1536,
+) -> int:
+    """Estimate memory used by the **current database** only.
+
+    ``SHOW STORAGE INFO`` is instance-wide on Memgraph Enterprise — it
+    returns total memory across all databases.  When MEMGRAPH_MEMORY_LIMIT
+    is a per-database cap (e.g. 2 GiB per agent), comparing instance-wide
+    usage against that cap blocks inserts on empty databases.
+
+    This function queries actual nodes and edges in the current database
+    (scoped by ``USE DATABASE`` / session routing) and estimates their
+    memory footprint:
+
+    * KV / DocStatus nodes: ``sum(size(n.data))`` + per-node overhead
+    * Vec nodes: ``count * embedding_dim * scalar_bytes`` + per-node overhead
+    * Edges: ``count * per-edge overhead``
+
+    Returns:
+        Estimated memory in bytes for the current database.
+    """
+    bytes_per_scalar = _resolve_scalar_bytes()
+    total_bytes = 0
+
+    try:
+        async with _pool.get_read_session() as session:
+            # 1. Nodes with a 'data' property (KV, DocStatus): sum actual payload
+            result = await session.run(
+                "MATCH (n) WHERE n.data IS NOT NULL "
+                "RETURN count(n) AS cnt, "
+                "sum(size(n.data)) AS data_bytes"
+            )
+            record = await result.single()
+            await result.consume()
+            kv_count = record["cnt"] if record else 0
+            kv_data_bytes = record["data_bytes"] if record else 0
+
+            # 2. Vec nodes (have 'embedding' property but no 'data')
+            result = await session.run(
+                "MATCH (n) WHERE n.embedding IS NOT NULL AND n.data IS NULL "
+                "RETURN count(n) AS cnt"
+            )
+            record = await result.single()
+            await result.consume()
+            vec_count = record["cnt"] if record else 0
+
+            # 3. Other nodes (graph entities — no 'data', no 'embedding')
+            result = await session.run(
+                "MATCH (n) WHERE n.data IS NULL AND n.embedding IS NULL "
+                "RETURN count(n) AS cnt"
+            )
+            record = await result.single()
+            await result.consume()
+            other_count = record["cnt"] if record else 0
+
+            # 4. Edges
+            result = await session.run(
+                "MATCH ()-[r]->() RETURN count(r) AS cnt"
+            )
+            record = await result.single()
+            await result.consume()
+            edge_count = record["cnt"] if record else 0
+
+            total_bytes = (
+                kv_data_bytes
+                + kv_count * _MEMGRAPH_NODE_OVERHEAD
+                + vec_count * (int(embedding_dim * bytes_per_scalar) + _MEMGRAPH_NODE_OVERHEAD + 256)
+                + other_count * _MEMGRAPH_NODE_OVERHEAD
+                + edge_count * _MEMGRAPH_EDGE_OVERHEAD
+            )
+
+    except Exception as exc:
+        logger.warning("Per-database memory estimation failed: %s", exc)
+        # Fallback: return 0 so the insert is not blocked by a broken query.
+        return 0
+
+    return total_bytes
+
+
+# ---------------------------------------------------------------------------
 # Pre-insert size estimation (no Memgraph connection needed)
 # ---------------------------------------------------------------------------
 
@@ -562,8 +650,20 @@ async def check_memory_budget(
 ) -> BudgetCheck:
     """Check whether a document insert fits within the remaining memory budget.
 
-    Combines live memory introspection with pre-insert size estimation
-    to determine if the insert is safe.
+    Combines **per-database** memory estimation with pre-insert size
+    estimation to determine if the insert is safe.
+
+    .. note::
+
+       Memgraph's ``SHOW STORAGE INFO`` is instance-wide — it returns
+       total memory across *all* databases.  When each LightRAG agent
+       has its own database and ``MEMGRAPH_MEMORY_LIMIT`` is a
+       per-database cap, using instance-wide metrics would block inserts
+       on empty databases once *other* databases fill the instance.
+
+       This function uses :func:`estimate_database_usage` which queries
+       only nodes/edges in the current database (scoped via
+       ``USE DATABASE`` / session routing).
 
     Args:
         text: Single document text (mutually exclusive with ``texts``).
@@ -606,9 +706,6 @@ async def check_memory_budget(
             chunk_overlap=chunk_overlap,
         )
 
-    # Get live memory usage
-    usage = await get_memory_usage()
-
     # Resolve memory limit
     if memory_limit_bytes is None:
         env_limit = os.environ.get(MEMGRAPH_MEMORY_LIMIT_ENV, "")
@@ -623,22 +720,25 @@ async def check_memory_budget(
     if memory_limit_bytes <= 0:
         return BudgetCheck(
             fits=True,
-            used_bytes=usage.used_bytes,
+            used_bytes=0,
             limit_bytes=0,
             estimated_cost_bytes=cost.total_bytes,
             remaining_bytes=0,
             headroom_ratio=-1.0,
         )
 
+    # Per-database memory estimation (not instance-wide SHOW STORAGE INFO)
+    used_bytes = await estimate_database_usage(embedding_dim=embedding_dim)
+
     # Calculate budget
-    projected = usage.used_bytes + cost.total_bytes
+    projected = used_bytes + cost.total_bytes
     remaining = memory_limit_bytes - projected
     headroom = remaining / memory_limit_bytes
     fits = headroom >= safety_margin
 
     return BudgetCheck(
         fits=fits,
-        used_bytes=usage.used_bytes,
+        used_bytes=used_bytes,
         limit_bytes=memory_limit_bytes,
         estimated_cost_bytes=cost.total_bytes,
         remaining_bytes=max(0, remaining),

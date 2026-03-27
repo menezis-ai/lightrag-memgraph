@@ -21,6 +21,7 @@ from twindb_lightrag_memgraph._memory import (
     _parse_size,
     check_memory_budget,
     estimate_batch_insert_cost,
+    estimate_database_usage,
     estimate_insert_cost,
     get_memory_usage,
     get_storage_info,
@@ -368,69 +369,78 @@ class TestGetMemoryUsage:
 
 
 class TestCheckMemoryBudget:
+    """check_memory_budget uses per-database estimate_database_usage
+    (not instance-wide SHOW STORAGE INFO) so the limit is per-database."""
+
     async def test_fits_within_budget(self):
-        mock_usage = MemoryUsage(
-            used_bytes=1 * 1024**3,  # 1 GiB used
-            vertex_count=1000,
-            edge_count=2000,
-        )
         with patch(
-            "twindb_lightrag_memgraph._memory.get_memory_usage",
-            return_value=mock_usage,
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=1 * 1024**3,  # 1 GiB used in this database
         ):
             result = await check_memory_budget(
                 text="A" * 10_000,
                 embedding_dim=1536,
-                memory_limit_bytes=75 * 1024**3,
+                memory_limit_bytes=2 * 1024**3,  # 2 GiB per-database limit
             )
 
         assert isinstance(result, BudgetCheck)
         assert result.fits is True
-        assert result.headroom_ratio > 0.9  # 1 GiB / 75 GiB used
+        assert result.used_bytes == 1 * 1024**3
 
     async def test_exceeds_budget(self):
-        mock_usage = MemoryUsage(
-            used_bytes=74 * 1024**3,  # 74 GiB used, only 1 GiB left
-        )
-        # A 100 MiB document should still fit in 1 GiB, but...
-        # Let's push it right to the edge with a massive document
         with patch(
-            "twindb_lightrag_memgraph._memory.get_memory_usage",
-            return_value=mock_usage,
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=int(1.9 * 1024**3),  # 1.9 GiB used
         ):
             result = await check_memory_budget(
-                text="A" * 50_000_000,  # 50 MB document
+                text="A" * 50_000_000,  # ~50 MB document
                 embedding_dim=3072,
-                memory_limit_bytes=75 * 1024**3,
+                memory_limit_bytes=2 * 1024**3,  # 2 GiB limit
                 safety_margin=0.05,
             )
 
-        # The 5% safety margin on 75 GiB is ~3.75 GiB.
-        # We only have 1 GiB remaining, so after a large insert we should fail.
         assert result.fits is False
+
+    async def test_empty_database_allows_insert(self):
+        """Regression: an empty database (0 bytes used) must allow inserts
+        even if the Memgraph instance is 4+ GiB total."""
+        with patch(
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=0,  # database is empty
+        ):
+            result = await check_memory_budget(
+                text="A" * 10_000,
+                embedding_dim=1536,
+                memory_limit_bytes=2 * 1024**3,
+            )
+
+        assert result.fits is True
+        assert result.used_bytes == 0
 
     async def test_env_var_limit(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "10GiB")
-        mock_usage = MemoryUsage(used_bytes=5 * 1024**3)
 
         with patch(
-            "twindb_lightrag_memgraph._memory.get_memory_usage",
-            return_value=mock_usage,
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=5 * 1024**3,
         ):
             result = await check_memory_budget(text="A" * 1000)
 
         assert result.limit_bytes == 10 * 1024**3
 
     async def test_batch_budget_check(self):
-        mock_usage = MemoryUsage(used_bytes=1 * 1024**3)
-
         with patch(
-            "twindb_lightrag_memgraph._memory.get_memory_usage",
-            return_value=mock_usage,
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=500 * 1024**2,  # 500 MiB
         ):
             result = await check_memory_budget(
                 texts=["A" * 5000, "B" * 10000],
-                memory_limit_bytes=75 * 1024**3,
+                memory_limit_bytes=2 * 1024**3,
             )
 
         assert result.fits is True
@@ -441,21 +451,121 @@ class TestCheckMemoryBudget:
             await check_memory_budget(memory_limit_bytes=1024**3)
 
     async def test_human_readable(self):
-        mock_usage = MemoryUsage(used_bytes=1 * 1024**3)
-
         with patch(
-            "twindb_lightrag_memgraph._memory.get_memory_usage",
-            return_value=mock_usage,
+            "twindb_lightrag_memgraph._memory.estimate_database_usage",
+            new_callable=AsyncMock,
+            return_value=100 * 1024**2,  # 100 MiB
         ):
             result = await check_memory_budget(
                 text="A" * 10_000,
-                memory_limit_bytes=75 * 1024**3,
+                memory_limit_bytes=2 * 1024**3,
             )
 
         readable = result.human_readable()
         assert "OK" in readable
         assert "Current usage:" in readable
         assert "Headroom:" in readable
+
+
+# ---------------------------------------------------------------------------
+# estimate_database_usage tests (per-database memory estimation)
+# ---------------------------------------------------------------------------
+
+
+def _make_query_mock_session(query_results: dict[str, dict]):
+    """Create a mock session where run() returns different results per query pattern.
+
+    query_results maps a substring of the Cypher query to a dict of column->value.
+    """
+    mock_session = AsyncMock()
+
+    async def _run(query, **kwargs):
+        result = AsyncMock()
+        for pattern, row_data in query_results.items():
+            if pattern in query:
+                record = MagicMock()
+                record.__getitem__ = lambda self, key, _d=row_data: _d[key]
+                result.single = AsyncMock(return_value=record)
+                result.consume = AsyncMock()
+                return result
+        # No match — empty result
+        record = MagicMock()
+        record.__getitem__ = lambda self, key: 0
+        result.single = AsyncMock(return_value=record)
+        result.consume = AsyncMock()
+        return result
+
+    mock_session.run = _run
+    return mock_session
+
+
+class TestEstimateDatabaseUsage:
+    async def test_empty_database_returns_zero(self):
+        mock_session = _make_query_mock_session({
+            "n.data IS NOT NULL": {"cnt": 0, "data_bytes": 0},
+            "n.embedding IS NOT NULL": {"cnt": 0},
+            "n.data IS NULL AND n.embedding IS NULL": {"cnt": 0},
+            "()-[r]->()": {"cnt": 0},
+        })
+
+        with patch(
+            "twindb_lightrag_memgraph._memory._pool.get_read_session"
+        ) as mock_ctx:
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            usage = await estimate_database_usage(embedding_dim=1536)
+
+        assert usage == 0
+
+    async def test_kv_nodes_counted(self):
+        mock_session = _make_query_mock_session({
+            "n.data IS NOT NULL": {"cnt": 100, "data_bytes": 500_000},
+            "n.embedding IS NOT NULL": {"cnt": 0},
+            "n.data IS NULL AND n.embedding IS NULL": {"cnt": 0},
+            "()-[r]->()": {"cnt": 0},
+        })
+
+        with patch(
+            "twindb_lightrag_memgraph._memory._pool.get_read_session"
+        ) as mock_ctx:
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            usage = await estimate_database_usage(embedding_dim=1536)
+
+        # 500_000 data bytes + 100 * 128 node overhead
+        assert usage == 500_000 + 100 * 128
+
+    async def test_vec_nodes_counted(self):
+        mock_session = _make_query_mock_session({
+            "n.data IS NOT NULL": {"cnt": 0, "data_bytes": 0},
+            "n.embedding IS NOT NULL": {"cnt": 50},
+            "n.data IS NULL AND n.embedding IS NULL": {"cnt": 0},
+            "()-[r]->()": {"cnt": 0},
+        })
+
+        with patch(
+            "twindb_lightrag_memgraph._memory._pool.get_read_session"
+        ) as mock_ctx:
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            usage = await estimate_database_usage(embedding_dim=1536)
+
+        # 50 * (1536 * 2 bytes f16 + 128 overhead + 256 content snippet)
+        expected_vec = 50 * (1536 * 2 + 128 + 256)
+        assert usage == expected_vec
+
+    async def test_fallback_to_zero_on_error(self):
+        mock_session = AsyncMock()
+        mock_session.run = AsyncMock(side_effect=RuntimeError("Memgraph down"))
+
+        with patch(
+            "twindb_lightrag_memgraph._memory._pool.get_read_session"
+        ) as mock_ctx:
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            usage = await estimate_database_usage()
+
+        assert usage == 0  # fallback, don't block inserts
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from ._memory import (
     MemoryUsage,
     check_memory_budget,
     estimate_batch_insert_cost,
+    estimate_database_usage,
     estimate_insert_cost,
     get_memory_usage,
     get_storage_info,
