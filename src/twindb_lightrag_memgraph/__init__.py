@@ -542,13 +542,16 @@ def _patch_operate_hot_paths():
     _original_find_edges = operate._find_most_related_edges_from_entities
 
     async def _fused_get_node_data(
-        query, knowledge_graph_inst, entities_vdb, query_param
+        query, knowledge_graph_inst, entities_vdb, query_param,
+        query_embedding=None,
     ):
         _lr_logger.info(
             f"Query nodes: {query} (top_k:{query_param.top_k}, "
             f"cosine:{entities_vdb.cosine_better_than_threshold})"
         )
-        results = await entities_vdb.query(query, top_k=query_param.top_k)
+        results = await entities_vdb.query(
+            query, top_k=query_param.top_k, query_embedding=query_embedding,
+        )
         if not len(results):
             return [], []
 

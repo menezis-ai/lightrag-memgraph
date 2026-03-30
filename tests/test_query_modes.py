@@ -186,6 +186,39 @@ class TestMixMode:
         chunks_vdb.query.assert_awaited_once()
 
 
+class TestQueryEmbeddingForwarding:
+    """LightRAG >= 1.4.11 passes query_embedding= to _get_node_data."""
+
+    async def test_fused_get_node_data_accepts_query_embedding(self):
+        """_fused_get_node_data must accept and forward query_embedding."""
+        graph = _mock_graph()
+        graph.get_nodes_with_degrees_batch = AsyncMock(
+            return_value=(
+                {"ALICE": {"entity_type": "Person", "description": "A"}},
+                {"ALICE": 3},
+            )
+        )
+        graph.get_nodes_edges_batch = AsyncMock(return_value={"ALICE": []})
+        graph.get_edges_with_degrees_batch = AsyncMock(return_value=({}, {}))
+
+        entities_vdb = _mock_vdb(
+            results=[{"entity_name": "ALICE", "created_at": "2024-01-01"}]
+        )
+
+        fake_embedding = [0.1, 0.2, 0.3]
+
+        # Call the patched function directly with query_embedding kwarg
+        node_datas, relations = await operate._get_node_data(
+            "test", graph, entities_vdb, QueryParam(mode="local"),
+            query_embedding=fake_embedding,
+        )
+
+        # Verify the embedding was forwarded to the VDB
+        call_kwargs = entities_vdb.query.call_args
+        assert call_kwargs.kwargs.get("query_embedding") == fake_embedding
+        assert len(node_datas) == 1
+
+
 class TestBatchMethodsExist:
     """Verify that register() patches all required batch methods."""
 
