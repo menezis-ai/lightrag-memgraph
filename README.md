@@ -22,6 +22,8 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 | **LightRAG 1.4.9** | OK | OK | OK |
 | **LightRAG 1.4.9.11** | OK | OK | OK |
 | **LightRAG 1.4.10** | OK | OK | OK |
+| **LightRAG 1.4.11** | OK | OK | OK |
+| **LightRAG 1.4.12** | OK | OK | OK |
 
 CI runs this full matrix on every push/PR.
 
