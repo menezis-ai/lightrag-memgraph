@@ -26,6 +26,7 @@ from lightrag.base import BaseVectorStorage
 from lightrag.utils import logger
 
 from . import _pool
+from ._retry import retry_transient
 from ._constants import (
     _VALID_SCALAR_KINDS,
     DEFAULT_VECTOR_SCALAR_KIND,
@@ -280,39 +281,52 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 for eid, item in data.items()
             ]
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{label}` {{id: e.id}})
-                    SET n += e.props, n.embedding = e.embedding
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+                async def _do_upsert():
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{label}` {{id: e.id}})
+                        SET n += e.props, n.embedding = e.embedding
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_upsert)
 
     async def delete_entity(self, entity_name: str) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{label}`) WHERE n.entity_name = $name DETACH DELETE n",
-                    name=entity_name,
-                )
-                await result.consume()
+
+                async def _do_delete():
+                    result = await session.run(
+                        f"MATCH (n:`{label}`) WHERE n.entity_name = $name "
+                        f"DETACH DELETE n",
+                        name=entity_name,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_delete)
 
     async def delete_entity_relation(self, entity_name: str) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    MATCH (n:`{label}`)
-                    WHERE n.src_id = $name OR n.tgt_id = $name
-                    DETACH DELETE n
-                    """,
-                    name=entity_name,
-                )
-                await result.consume()
+
+                async def _do_delete():
+                    result = await session.run(
+                        f"""
+                        MATCH (n:`{label}`)
+                        WHERE n.src_id = $name OR n.tgt_id = $name
+                        DETACH DELETE n
+                        """,
+                        name=entity_name,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_delete)
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         label = self._label()
@@ -348,15 +362,19 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $ids AS target_id
-                    MATCH (n:`{label}` {{id: target_id}})
-                    DETACH DELETE n
-                    """,
-                    ids=list(ids),
-                )
-                await result.consume()
+
+                async def _do_delete():
+                    result = await session.run(
+                        f"""
+                        UNWIND $ids AS target_id
+                        MATCH (n:`{label}` {{id: target_id}})
+                        DETACH DELETE n
+                        """,
+                        ids=list(ids),
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_delete)
 
     async def get_vectors_by_ids(self, ids: list[str]) -> dict[str, list[float]]:
         label = self._label()

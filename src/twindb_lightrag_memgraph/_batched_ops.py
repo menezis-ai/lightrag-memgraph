@@ -10,6 +10,7 @@ import os
 
 from . import _pool
 from ._constants import DEFAULT_DELETE_BATCH_SIZE, MEMGRAPH_DELETE_BATCH_SIZE_ENV
+from ._retry import retry_transient
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -34,16 +35,20 @@ async def batched_delete(label: str, *, batch_size: int | None = None) -> int:
     while True:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{label}`) "
-                    f"WITH n LIMIT $batch "
-                    f"DETACH DELETE n "
-                    f"RETURN count(n) AS deleted",
-                    batch=bs,
-                )
-                record = await result.single()
-                await result.consume()
-                deleted = record["deleted"] if record else 0
+
+                async def _do_batch():
+                    result = await session.run(
+                        f"MATCH (n:`{label}`) "
+                        f"WITH n LIMIT $batch "
+                        f"DETACH DELETE n "
+                        f"RETURN count(n) AS deleted",
+                        batch=bs,
+                    )
+                    record = await result.single()
+                    await result.consume()
+                    return record["deleted"] if record else 0
+
+                deleted = await retry_transient(_do_batch)
                 total += deleted
                 if deleted < bs:
                     break
@@ -62,13 +67,17 @@ async def batched_delete_by_ids(
         chunk = ids[i : i + bs]
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"UNWIND $ids AS target_id "
-                    f"MATCH (n:`{label}` {{id: target_id}}) "
-                    f"DETACH DELETE n",
-                    ids=chunk,
-                )
-                await result.consume()
+
+                async def _do_chunk(c=chunk):
+                    result = await session.run(
+                        f"UNWIND $ids AS target_id "
+                        f"MATCH (n:`{label}` {{id: target_id}}) "
+                        f"DETACH DELETE n",
+                        ids=c,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_chunk)
         total += len(chunk)
     if total:
         logger.info("Batched ID delete on :%s — %d IDs processed", label, total)

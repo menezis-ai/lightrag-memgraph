@@ -60,6 +60,12 @@ MEMGRAPH_TTL_SECONDS_ENV = "MEMGRAPH_TTL_SECONDS"
 MEMGRAPH_TTL_LABELS_ENV = "MEMGRAPH_TTL_LABELS"
 DEFAULT_TTL_LABELS = "full_docs,text_chunks"
 
+# Retry — exponential backoff for Memgraph MVCC TransientError (GQL 50N42).
+MEMGRAPH_RETRY_MAX_ATTEMPTS_ENV = "MEMGRAPH_RETRY_MAX_ATTEMPTS"
+DEFAULT_RETRY_MAX_ATTEMPTS = 6
+MEMGRAPH_RETRY_BASE_DELAY_MS_ENV = "MEMGRAPH_RETRY_BASE_DELAY_MS"
+DEFAULT_RETRY_BASE_DELAY_MS = 50
+
 # Lazy full_docs — purge raw content after processing, reconstruct on demand.
 MEMGRAPH_PURGE_FULL_DOCS_ENV = "MEMGRAPH_PURGE_FULL_DOCS"
 # Values: "off" (default), "on" — purge full_docs content after PROCESSED status

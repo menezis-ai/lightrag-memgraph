@@ -27,7 +27,7 @@ jobs:
           pip install "lightrag-hku==${{ matrix.lightrag-version }}"
 
       - name: Run unit tests
-        run: pytest tests/test_register.py tests/test_record_to_entry.py tests/test_vector_missing_index.py tests/test_write_throttle.py tests/test_hooks.py tests/test_buffered_writes.py tests/test_batch_patch.py tests/test_pool_tuning.py tests/test_use_database.py tests/test_read_pool.py tests/test_delete_set_coercion.py tests/test_query_modes.py tests/test_consume_and_drop.py tests/test_memory.py tests/test_batched_delete.py tests/test_budget_enforce.py tests/test_ttl.py tests/test_lazy_full_docs.py -v
+        run: pytest tests/test_register.py tests/test_record_to_entry.py tests/test_vector_missing_index.py tests/test_write_throttle.py tests/test_hooks.py tests/test_buffered_writes.py tests/test_batch_patch.py tests/test_pool_tuning.py tests/test_use_database.py tests/test_read_pool.py tests/test_delete_set_coercion.py tests/test_query_modes.py tests/test_consume_and_drop.py tests/test_memory.py tests/test_batched_delete.py tests/test_budget_enforce.py tests/test_ttl.py tests/test_lazy_full_docs.py tests/test_retry.py -v
 
   integration-tests:
     runs-on: ubuntu-latest

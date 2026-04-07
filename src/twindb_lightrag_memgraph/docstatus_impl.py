@@ -18,6 +18,7 @@ from lightrag.utils import logger
 
 from . import _pool
 from ._constants import resolve_workspace, validate_identifier
+from ._retry import retry_transient
 
 
 @dataclass
@@ -235,29 +236,37 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{label}` {{id: e.id}})
-                    SET n += e.props
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+                async def _do_upsert():
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{label}` {{id: e.id}})
+                        SET n += e.props
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_upsert)
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $ids AS target_id
-                    MATCH (n:`{label}` {{id: target_id}})
-                    DETACH DELETE n
-                    """,
-                    ids=list(ids),
-                )
-                await result.consume()
+
+                async def _do_delete():
+                    result = await session.run(
+                        f"""
+                        UNWIND $ids AS target_id
+                        MATCH (n:`{label}` {{id: target_id}})
+                        DETACH DELETE n
+                        """,
+                        ids=list(ids),
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_delete)
 
     async def is_empty(self) -> bool:
         label = self._label()

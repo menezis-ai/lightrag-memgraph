@@ -10,6 +10,7 @@ from the buffer, falling back to the real graph for data not yet buffered.
 import logging
 
 from ._pool import acquire_write_slot, get_session
+from ._retry import retry_transient
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -115,15 +116,19 @@ class _BufferedGraphProxy:
 
         async with acquire_write_slot():
             async with get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
-                    SET n += e.properties
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+                async def _do_merge():
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
+                        SET n += e.properties
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_merge)
 
                 # Set additional type labels — group by type to minimize queries.
                 # Cypher can't do SET n:$dynamic, so one query per distinct type.
@@ -131,15 +136,19 @@ class _BufferedGraphProxy:
                 for name, node_type in self._node_types.items():
                     by_type.setdefault(node_type, []).append(name)
                 for node_type, names in by_type.items():
-                    result = await session.run(
-                        f"""
-                        UNWIND $names AS name
-                        MATCH (n:`{workspace}` {{entity_id: name}})
-                        SET n:`{node_type}`
-                        """,
-                        names=names,
-                    )
-                    await result.consume()
+
+                    async def _do_label(nt=node_type, ns=names):
+                        result = await session.run(
+                            f"""
+                            UNWIND $names AS name
+                            MATCH (n:`{workspace}` {{entity_id: name}})
+                            SET n:`{nt}`
+                            """,
+                            names=ns,
+                        )
+                        await result.consume()
+
+                    await retry_transient(_do_label)
 
     async def _flush_edges(self):
         """Single UNWIND query for all buffered edges."""
@@ -155,14 +164,18 @@ class _BufferedGraphProxy:
 
         async with acquire_write_slot():
             async with get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MATCH (source:`{workspace}` {{entity_id: e.source_entity_id}})
-                    MATCH (target:`{workspace}` {{entity_id: e.target_entity_id}})
-                    MERGE (source)-[r:DIRECTED]-(target)
-                    SET r += e.properties
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+                async def _do_edges():
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MATCH (source:`{workspace}` {{entity_id: e.source_entity_id}})
+                        MATCH (target:`{workspace}` {{entity_id: e.target_entity_id}})
+                        MERGE (source)-[r:DIRECTED]-(target)
+                        SET r += e.properties
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+                await retry_transient(_do_edges)
