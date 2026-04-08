@@ -4,6 +4,18 @@ Distribution complète incluant L1 (storage), L2 (server) et L3 (intelligence).
 
 ---
 
+## v0.4.4 — 2026-04-08
+
+### Fix
+- **Auto-create vector index on query** : si le vector index est absent au moment d'une requête (restart Memgraph, réplicat en retard, `initialize()` échoué), `query()` le recrée automatiquement via `_ensure_vector_index()` et retente la recherche. Plus de `[no-context]` silencieux sur index manquant.
+- **Retry sur création vector index** : `initialize()` utilise `retry_transient()` pour la création du vector index (TransientError possible sur grosses bases lors de l'indexation initiale).
+- **`_ensure_vector_index()` réutilisable** : méthode extraite, utilisable depuis `initialize()` et `query()`, avec gestion idempotente ("already exists" silencieux, erreurs réelles en ERROR + raise).
+
+### Tests
+- 449 tests (3 nouveaux — auto-create, fallback, initialize), 0 régression.
+
+---
+
 ## v0.4.3 — 2026-04-07
 
 ### Fix
