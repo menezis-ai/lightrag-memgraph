@@ -8,8 +8,11 @@ from neo4j.exceptions import TransientError
 
 from twindb_lightrag_memgraph import _pool
 from twindb_lightrag_memgraph._retry import (
+    _is_replica_error,
     _read_base_delay_ms,
     _read_max_attempts,
+    _read_replica_delay_ms,
+    _read_replica_retries,
     retry_transient,
 )
 
@@ -203,6 +206,103 @@ class TestConfigReaders:
     def test_base_delay_zero_clamps(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_RETRY_BASE_DELAY_MS", "0")
         assert _read_base_delay_ms() == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Replica retry profile tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestReplicaDetection:
+    def test_detects_sync_replica_error(self):
+        exc = TransientError(
+            "At least one SYNC replica has not confirmed committing last transaction"
+        )
+        assert _is_replica_error(exc) is True
+
+    def test_ignores_mvcc_error(self):
+        exc = TransientError("Cannot resolve conflicting transactions")
+        assert _is_replica_error(exc) is False
+
+
+class TestReplicaRetryProfile:
+    async def test_escalates_to_replica_profile(self):
+        calls = 0
+
+        async def _replica_then_ok():
+            nonlocal calls
+            calls += 1
+            if calls <= 2:
+                raise TransientError(
+                    "At least one SYNC replica has not confirmed "
+                    "committing last transaction"
+                )
+            return "ok"
+
+        with patch("twindb_lightrag_memgraph._retry.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await retry_transient(_replica_then_ok, max_attempts=3)
+
+        assert result == "ok"
+        assert calls == 3
+        assert mock_sleep.await_count == 2
+
+    async def test_replica_exhaustion_raises(self):
+        async def _always_replica():
+            raise TransientError(
+                "At least one SYNC replica has not confirmed "
+                "committing last transaction"
+            )
+
+        with patch("twindb_lightrag_memgraph._retry.asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(TransientError, match="SYNC replica"):
+                await retry_transient(_always_replica, max_attempts=2)
+
+    async def test_mvcc_then_replica_escalates(self):
+        calls = 0
+
+        async def _mixed():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TransientError("Cannot resolve conflicting transactions")
+            if calls == 2:
+                raise TransientError(
+                    "At least one SYNC replica has not confirmed "
+                    "committing last transaction"
+                )
+            return "ok"
+
+        with patch("twindb_lightrag_memgraph._retry.asyncio.sleep", new_callable=AsyncMock):
+            result = await retry_transient(_mixed, max_attempts=3)
+
+        assert result == "ok"
+        assert calls == 3
+
+
+class TestReplicaConfigReaders:
+    def test_replica_retries_default(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_REPLICA_RETRIES", raising=False)
+        assert _read_replica_retries() == 20
+
+    def test_replica_retries_from_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REPLICA_RETRIES", "30")
+        assert _read_replica_retries() == 30
+
+    def test_replica_retries_invalid(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REPLICA_RETRIES", "abc")
+        assert _read_replica_retries() == 20
+
+    def test_replica_delay_default(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_REPLICA_RETRY_DELAY_MS", raising=False)
+        assert _read_replica_delay_ms() == 2000
+
+    def test_replica_delay_from_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REPLICA_RETRY_DELAY_MS", "5000")
+        assert _read_replica_delay_ms() == 5000
+
+    def test_replica_delay_invalid(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REPLICA_RETRY_DELAY_MS", "nope")
+        assert _read_replica_delay_ms() == 2000
 
 
 # ═══════════════════════════════════════════════════════════════════════

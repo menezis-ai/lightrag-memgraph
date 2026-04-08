@@ -4,6 +4,16 @@ Distribution complète incluant L1 (storage), L2 (server) et L3 (intelligence).
 
 ---
 
+## v0.4.5 — 2026-04-08
+
+### Features
+- **Replica-aware retry profile** : détection automatique des erreurs SYNC replica ("At least one SYNC replica has not confirmed") dans `retry_transient()`. Escalade dynamique vers un profil dédié : 20 tentatives, 2s base delay, 30s cap (vs 6/50ms/2s pour MVCC). Configurable via `MEMGRAPH_REPLICA_RETRIES` (défaut 20) et `MEMGRAPH_REPLICA_RETRY_DELAY_MS` (défaut 2000ms).
+
+### Tests
+- 460 tests (11 nouveaux — détection réplicat, escalade profil, config readers), 0 régression.
+
+---
+
 ## v0.4.4 — 2026-04-08
 
 ### Fix
