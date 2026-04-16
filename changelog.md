@@ -14,6 +14,8 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 
 ### Tests
 - 191 tests unitaires (1 nouveau sur l'auto-create, tests ajustés pour les 6 indexes DocStatus et la parallélisation paginated), 0 régression.
+- **Probe e2e regression tests** (`tests/test_probe_e2e.py`, 7 nouveaux tests) — seed 10/100/500 docs contre un Memgraph réel, vérifie les 6 indexes via `SHOW INDEX INFO`, asserte les budgets de latence (150ms / 300ms / 1s), valide sort DESC, pagination sans overlap, filtre par status. Si un dev futur casse l'index `updated_at` ou re-sérialise count+fetch, CI rouge immédiat. Picked up automatiquement par le job `integration-tests` existant.
+- **260 tests au total** contre Memgraph réel (unit + integration + probe e2e), 0 régression.
 
 ---
 
