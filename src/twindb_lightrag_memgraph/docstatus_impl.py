@@ -8,6 +8,7 @@ Each doc status is a Cypher node:
               metadata (JSON), track_id, file_path, chunks_list (JSON)
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,7 +47,14 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             label,
         )
         async with _pool.get_session() as session:
-            for prop in ["id", "status", "file_path", "track_id"]:
+            for prop in [
+                "id",
+                "status",
+                "file_path",
+                "track_id",
+                "updated_at",
+                "created_at",
+            ]:
                 try:
                     result = await session.run(f"CREATE INDEX ON :`{label}`({prop})")
                     await result.consume()
@@ -343,33 +351,42 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             where_clause = "WHERE n.status = $status"
             params["status"] = status_filter.value
 
-        async with _pool.get_read_session() as session:
-            # Count total
-            count_result = await session.run(
-                f"MATCH (n:`{label}`) {where_clause} RETURN count(n) AS total",
-                **params,
-            )
-            count_record = await count_result.single()
-            await count_result.consume()
-            total = count_record["total"] if count_record else 0
+        # Run count and fetch in parallel on separate read sessions —
+        # cuts round-trip time roughly in half on large collections, which
+        # avoids nginx upstream timeouts (→ 502 Bad Gateway) on /documents/paginated.
+        async def _count() -> int:
+            async with _pool.get_read_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{label}`) {where_clause} RETURN count(n) AS total",
+                    **params,
+                )
+                record = await result.single()
+                await result.consume()
+                return record["total"] if record else 0
 
-            # Fetch page
-            result = await session.run(
-                f"""
-                MATCH (n:`{label}`) {where_clause}
-                RETURN n.id AS id, properties(n) AS props
-                ORDER BY n.{sort_field} {order}
-                SKIP $skip LIMIT $limit
-                """,
-                **params,
-                skip=skip,
-                limit=page_size,
-            )
-            docs = []
-            async for record in result:
-                docs.append((record["id"], self._deserialize_status(record["props"])))
-            await result.consume()
-            return docs, total
+        async def _fetch() -> list[tuple[str, DocProcessingStatus]]:
+            async with _pool.get_read_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}`) {where_clause}
+                    RETURN n.id AS id, properties(n) AS props
+                    ORDER BY n.{sort_field} {order}
+                    SKIP $skip LIMIT $limit
+                    """,
+                    **params,
+                    skip=skip,
+                    limit=page_size,
+                )
+                out: list[tuple[str, DocProcessingStatus]] = []
+                async for record in result:
+                    out.append(
+                        (record["id"], self._deserialize_status(record["props"]))
+                    )
+                await result.consume()
+                return out
+
+        docs, total = await asyncio.gather(_fetch(), _count())
+        return docs, total
 
     async def get_all_status_counts(self) -> dict[str, int]:
         return await self.get_status_counts()

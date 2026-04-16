@@ -295,27 +295,29 @@ class TestBackendReadPoolIntegration:
         assert len(read_calls) == 0
 
     async def test_docstatus_get_docs_paginated_uses_read_pool(self, doc_store):
-        """The 502-causing endpoint must use the read pool."""
+        """The 502-causing endpoint must use the read pool (parallel count + fetch)."""
         read_calls = []
 
         @asynccontextmanager
         async def mock_read():
             read_calls.append(1)
             session = AsyncMock()
-            # count query
+            # Session handles either count (single()) or page (iter) — support both
             count_result = AsyncMock()
             count_result.single = AsyncMock(return_value={"total": 0})
             count_result.consume = AsyncMock()
-            # page query — needs proper async iterator
             page_result = _AsyncEmpty()
             page_result.consume = AsyncMock()
+            # First run() call returns count, subsequent returns page.
+            # Either session gets exactly one run() since count and fetch are parallel.
             session.run = AsyncMock(side_effect=[count_result, page_result])
             yield session
 
         with patch.object(pool, "get_read_session", mock_read):
             await doc_store.get_docs_paginated()
 
-        assert len(read_calls) == 1
+        # Count and fetch run in parallel → 2 separate read sessions.
+        assert len(read_calls) == 2
 
     async def test_vector_query_uses_read_pool(self, vec_store):
         """Vector search (hot path) must use the read pool."""

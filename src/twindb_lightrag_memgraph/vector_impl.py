@@ -64,6 +64,49 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
     def _index_name(self) -> str:
         return f"vec_{self.workspace}_{self.namespace}"
 
+    async def _create_vector_index(self, session=None) -> None:
+        """Create the vector index. Idempotent: swallows 'already exists'.
+
+        Called from initialize() at startup and from query() as a fallback
+        when the index is missing at query time (Memgraph restart, replica
+        lag, initial creation failure).
+        """
+        label = self._label()
+        index_name = self._index_name()
+        dim = self.embedding_func.embedding_dim
+        query = (
+            f"CREATE VECTOR INDEX `{index_name}` "
+            f"ON :`{label}`(embedding) "
+            f'WITH CONFIG {{"dimension": {dim}, '
+            f'"capacity": {VECTOR_INDEX_CAPACITY}, "metric": "cos"}}'
+        )
+
+        async def _run(s):
+            result = await s.run(query)
+            await result.consume()
+            logger.info(
+                "[MemgraphVec:%s] Vector index '%s' created (dim=%d)",
+                self.workspace,
+                index_name,
+                dim,
+            )
+
+        try:
+            if session is not None:
+                await _run(session)
+            else:
+                async with _pool.get_session() as s:
+                    await _run(s)
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                logger.debug(
+                    "[MemgraphVec:%s] Vector index '%s' already exists",
+                    self.workspace,
+                    index_name,
+                )
+            else:
+                raise
+
     async def initialize(self):
         label = self._label()
         index_name = self._index_name()
@@ -97,29 +140,15 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                         e,
                     )
 
-            # Vector index
+            # Vector index — idempotent, reused by query() on fallback
             try:
-                result = await session.run(
-                    f"CREATE VECTOR INDEX `{index_name}` "
-                    f"ON :`{label}`(embedding) "
-                    f'WITH CONFIG {{"dimension": {dim}, '
-                    f'"capacity": {VECTOR_INDEX_CAPACITY}, "metric": "cos"}}'
-                )
-                await result.consume()
-                logger.info(
-                    f"[MemgraphVec:{self.workspace}] "
-                    f"Vector index '{index_name}' created (dim={dim})"
-                )
+                await self._create_vector_index(session)
             except Exception as e:
-                if "already exists" in str(e).lower():
-                    logger.debug(
-                        f"[MemgraphVec:{self.workspace}] "
-                        f"Vector index already exists"
-                    )
-                else:
-                    logger.warning(
-                        f"[MemgraphVec:{self.workspace}] Vector index creation: {e}"
-                    )
+                logger.warning(
+                    "[MemgraphVec:%s] Vector index creation: %s",
+                    self.workspace,
+                    e,
+                )
 
     async def finalize(self):
         pass  # Shared driver; closed globally via _pool.close_driver()
@@ -187,17 +216,40 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 results = [self._record_to_entry(record) async for record in result]
                 await result.consume()
             except Exception as e:
-                if "does not exist" in str(e).lower():
-                    logger.warning(
-                        "[MemgraphVec:%s/%s] Vector index '%s' does not exist "
-                        "— returning empty results. Run initialize() or index "
-                        "documents to create it.",
+                if "does not exist" not in str(e).lower():
+                    raise
+                logger.warning(
+                    "[MemgraphVec:%s/%s] Vector index '%s' missing "
+                    "— auto-creating and retrying query.",
+                    self.workspace,
+                    self.namespace,
+                    index_name,
+                )
+                try:
+                    await self._create_vector_index()
+                except Exception as create_err:
+                    logger.error(
+                        "[MemgraphVec:%s/%s] Auto-create failed: %s — "
+                        "returning empty results.",
                         self.workspace,
                         self.namespace,
-                        index_name,
+                        create_err,
                     )
                     return []
-                raise
+                result = await session.run(
+                    f"""
+                    CALL vector_search.search("{index_name}", $top_k, $embedding)
+                    YIELD node, similarity
+                    WITH node, similarity
+                    WHERE similarity >= $threshold
+                    RETURN node.id AS id, similarity, properties(node) AS props
+                    """,
+                    embedding=query_embedding,
+                    top_k=top_k,
+                    threshold=self.cosine_better_than_threshold,
+                )
+                results = [self._record_to_entry(record) async for record in result]
+                await result.consume()
             logger.debug(
                 "[MemgraphVec:%s/%s] query(%r) → %d results (index=%s, "
                 "threshold=%.2f, top_k=%d)",

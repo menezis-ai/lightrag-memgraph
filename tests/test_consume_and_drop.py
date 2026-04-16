@@ -194,8 +194,8 @@ class TestDocStatusConsumeOnWrite:
             patch.object(pool, "get_session", tracker.make_session_factory()),
         ):
             await ds_store.initialize()
-        # 4 CREATE INDEX (id, status, file_path, track_id)
-        assert tracker.count == 4, f"Expected 4 consume() calls, got {tracker.count}"
+        # 6 CREATE INDEX (id, status, file_path, track_id, updated_at, created_at)
+        assert tracker.count == 6, f"Expected 6 consume() calls, got {tracker.count}"
 
     async def test_drop_propagates_exception(self, ds_store):
         with (
