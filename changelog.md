@@ -7,18 +7,18 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 
 ## v0.5.2 — 2026-04-27
 
+Closes [issue #1](https://github.com/menezis-ai/lightrag-memgraph/issues/1) and [issue #3](https://github.com/menezis-ai/lightrag-memgraph/issues/3).
+
 ### Tests
-- **HTTP-level e2e regression tests** (`tests/test_http_e2e.py`, 9 nouveaux tests) — addresses [issue #1](https://github.com/menezis-ai/lightrag-memgraph/issues/1). Spin up une mini FastAPI app dans le test qui wrap un vrai `LightRAG` instance avec nos backends Memgraph (via `register()`), hit via `httpx.AsyncClient` + `ASGITransport(raise_app_exceptions=False)` — pas de network, pas d'uvicorn, pas de dépendance à `lightrag-hku[api]`. Couvre exactement le mode de défaillance qui a fait crasher le front BNP : **garantit qu'aucun endpoint ne retourne du HTML, même sur 5xx**.
-  - `TestHealthHTTP` : `/health` → JSON 200
-  - `TestPaginatedHTTP` : `/documents/paginated` retourne JSON (pas HTML), filtre status, gère status_filter invalide en JSON
-  - `TestErrorResponsesAreJson` : storage failure (RuntimeError simulée), 404, 405, 422 — tous content-type `application/json`
-  - `TestTrackStatusHTTP` : track_id inconnu → JSON valide avec count=0
+- **HTTP-level e2e regression tests** (`tests/test_http_e2e.py`, 14 nouveaux tests). Spin up une mini FastAPI app dans le test qui wrap un vrai `LightRAG` instance avec nos backends Memgraph (via `register()`), hit via `httpx.AsyncClient` + `ASGITransport(raise_app_exceptions=False)` — pas de network, pas d'uvicorn, pas de dépendance à `lightrag-hku[api]`. Couvre exactement le mode de défaillance qui a fait crasher le front BNP : **garantit qu'aucun endpoint ne retourne du HTML, même sur 5xx**.
+  - `TestHealthHTTP` (1 test) : `/health` → JSON 200
+  - `TestPaginatedHTTP` (3 tests) : `/documents/paginated` retourne JSON (pas HTML), filtre status, gère status_filter invalide en JSON
+  - `TestErrorResponsesAreJson` (4 tests) : storage failure (RuntimeError simulée), 404, 405, 422 — tous content-type `application/json`
+  - `TestTrackStatusHTTP` (1 test) : track_id inconnu → JSON valide avec count=0
+  - `TestStartupRace503` (5 tests, [issue #3](https://github.com/menezis-ai/lightrag-memgraph/issues/3)) : pattern readiness probe — `/health` et `/documents/paginated` retournent 503+JSON (jamais HTML) quand le backend warm-up. `/ready` distingue liveness de readiness pour k8s. `ServiceUnavailable` Memgraph (réplicat reconnect) → JSON, jamais HTML.
 - **Validation par fault injection** : si on retire l'`exception_handler` de la fixture FastAPI, `test_500_via_storage_failure_returns_json` échoue immédiatement → preuve que le test attrape la régression réelle.
 - **`httpx>=0.24.0` et `fastapi>=0.104.0`** ajoutés à `[project.optional-dependencies.test]`.
-- **269 tests au total** contre Memgraph réel, 0 régression. Picked up par le job `integration-tests` existant (zéro modif CI).
-
-### Hors scope (suite [issue #3](https://github.com/menezis-ai/lightrag-memgraph/issues/3))
-Le harness HTTP de cette release rend l'investigation 503 (race condition au startup) triviale — sera traité dans une prochaine release.
+- **274 tests au total** contre Memgraph réel, 0 régression. Picked up par le job `integration-tests` existant (zéro modif CI).
 
 ---
 

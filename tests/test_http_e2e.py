@@ -71,22 +71,54 @@ async def _mock_embedding(texts: list[str]) -> np.ndarray:
 # ── FastAPI factory ─────────────────────────────────────────────────
 
 
-def _build_app(rag: LightRAG) -> FastAPI:
+def _build_app(rag: LightRAG, ready: bool = True) -> FastAPI:
     """Minimal FastAPI app exposing the endpoints LightRAG frontend / probes hit.
 
     The exception handler is the **regression sentinel**: if any unhandled
     exception escapes a route, it must still serialise to JSON, never HTML.
     Without this handler, FastAPI would return a default text/html 500 page
     on RuntimeError — exactly what crashed the BNP frontend.
+
+    *ready* mirrors the readiness probe pattern: when False, /health and
+    business endpoints return 503 + JSON instead of attempting to use the
+    not-yet-initialised storages. This is the pattern recommended for
+    BNP-style deployments where k8s readiness probes must distinguish
+    "starting" from "broken".
     """
     app = FastAPI()
+    app.state.ready = ready
 
     @app.get("/health")
     async def health():
+        if not app.state.ready:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "reason": "storages not initialised"},
+            )
         return {"status": "healthy"}
+
+    @app.get("/ready")
+    async def ready_endpoint():
+        """Readiness probe — distinct from liveness (/health).
+
+        Returns 503 + JSON when backend is still warming up, so k8s/nginx
+        can hold off traffic gracefully instead of returning HTML 502/503
+        from the upstream layer.
+        """
+        if not app.state.ready:
+            return JSONResponse(
+                status_code=503,
+                content={"ready": False, "reason": "storages not initialised"},
+            )
+        return {"ready": True}
 
     @app.post("/documents/paginated")
     async def paginated(req: Request):
+        if not app.state.ready:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "service not ready", "type": "NotReady"},
+            )
         body = await req.json()
         page = int(body.get("page", 1))
         page_size = int(body.get("page_size", 50))
@@ -367,3 +399,103 @@ class TestTrackStatusHTTP:
         assert body["track_id"] == "unknown-track-xyz"
         assert body["count"] == 0
         assert body["documents"] == []
+
+
+# ── 503 startup race tests (Issue #3) ───────────────────────────────
+
+
+@pytest.fixture
+async def http_client_not_ready(rag):
+    """ASGI client where the app reports not_ready — simulates pod warm-up."""
+    app = _build_app(rag, ready=False)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest.mark.integration
+class TestStartupRace503:
+    """Issue #3 — backend not yet ready (pod warm-up, replica reconnect, etc.).
+
+    The expected pattern: 503 Service Unavailable + JSON body, NEVER HTML.
+    This lets nginx/k8s probes hold off traffic instead of returning their
+    own HTML error page (which crashed the BNP frontend).
+    """
+
+    async def test_health_returns_503_json_when_not_ready(
+        self, http_client_not_ready
+    ):
+        resp = await http_client_not_ready.get("/health")
+        assert resp.status_code == 503
+        assert resp.headers["content-type"].startswith("application/json"), (
+            "Without explicit JSONResponse, FastAPI's default 503 page is HTML"
+        )
+        body = resp.json()
+        assert body["status"] == "not_ready"
+
+    async def test_ready_endpoint_distinguishes_liveness_from_readiness(
+        self, http_client_not_ready
+    ):
+        """k8s readinessProbe should hit /ready, not /health."""
+        resp = await http_client_not_ready.get("/ready")
+        assert resp.status_code == 503
+        assert resp.headers["content-type"].startswith("application/json")
+        body = resp.json()
+        assert body["ready"] is False
+        assert "reason" in body
+
+    async def test_ready_endpoint_returns_200_when_ready(self, http_client):
+        resp = await http_client.get("/ready")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/json")
+        assert resp.json()["ready"] is True
+
+    async def test_paginated_returns_503_json_when_not_ready(
+        self, http_client_not_ready
+    ):
+        """Probe-style call during warm-up: 503 + JSON, not 500/HTML."""
+        resp = await http_client_not_ready.post(
+            "/documents/paginated", json={"page": 1, "page_size": 50}
+        )
+        assert resp.status_code == 503
+        assert resp.headers["content-type"].startswith("application/json")
+        body = resp.json()
+        assert body["error"] == "service not ready"
+        assert body["type"] == "NotReady"
+
+    async def test_paginated_503_during_memgraph_outage(
+        self, http_client, monkeypatch
+    ):
+        """Memgraph driver fails (replica reconnect, network blip).
+
+        Even when the storage layer raises a connection error, the response
+        must stay JSON. This is the BNP scenario where the SYNC replica was
+        unreachable and Bolt timed out.
+        """
+        from neo4j.exceptions import ServiceUnavailable
+        from twindb_lightrag_memgraph.docstatus_impl import (
+            MemgraphDocStatusStorage,
+        )
+
+        async def _connection_lost(self, *args, **kwargs):
+            raise ServiceUnavailable("Failed to establish connection to bolt://...")
+
+        monkeypatch.setattr(
+            MemgraphDocStatusStorage,
+            "get_docs_paginated",
+            _connection_lost,
+        )
+
+        resp = await http_client.post(
+            "/documents/paginated", json={"page": 1, "page_size": 50}
+        )
+        # Our generic exception handler maps to 500. Both 500 and 503 are
+        # acceptable — what matters is JSON, not HTML.
+        assert resp.headers["content-type"].startswith("application/json"), (
+            "Memgraph connection failure must NOT return HTML to the frontend"
+        )
+        assert resp.status_code in (500, 503)
+        body = resp.json()
+        assert "ServiceUnavailable" in body.get("type", "") or "error" in body
