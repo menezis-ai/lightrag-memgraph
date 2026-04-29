@@ -88,6 +88,10 @@ def register() -> None:
     # 6. Post-indexation hook on LightRAG._insert_done
     _patch_insert_done()
 
+    # 7. Append our version to lightrag.__version__ so the WebUI displays it
+    #    next to the LightRAG version string in the top-right corner.
+    _patch_version_string()
+
     _registered = True
     msg = (
         f"twindb-lightrag-memgraph v{__version__} — "
@@ -707,3 +711,29 @@ def _patch_insert_done():
     _hooked_insert_done.__name__ = "hooked_insert_done"
     LightRAG._insert_done = _hooked_insert_done
     logger.info("Patched LightRAG._insert_done with post-indexation hooks")
+
+
+def _patch_version_string():
+    """Append our package version to ``lightrag.__version__`` so the WebUI
+    displays it next to the LightRAG version in the top-right corner.
+
+    The LightRAG WebUI reads ``core_version`` from auth/health endpoints,
+    which is bound at import time as ``from lightrag import __version__``.
+    Patching the source attribute *before* ``lightrag_server`` imports it
+    propagates the change to the entire server (and thus the WebUI).
+
+    Idempotent: if already patched, do nothing. The marker prevents
+    appending twice on repeated ``register()`` calls in test or dev loops.
+    """
+    import lightrag
+
+    marker = f"+memgraph-{__version__}"
+    current = getattr(lightrag, "__version__", "")
+    if marker in current:
+        return  # already patched
+
+    lightrag.__version__ = f"{current}{marker}"
+    logger.info(
+        "Patched lightrag.__version__ → %s (visible in WebUI top-right)",
+        lightrag.__version__,
+    )

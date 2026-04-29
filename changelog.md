@@ -5,6 +5,16 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 
 ---
 
+## v0.5.3 — 2026-04-28
+
+### Features
+- **Patch version visible in LightRAG WebUI** : `register()` patche désormais `lightrag.__version__` pour y append `+memgraph-{version}`. Le WebUI LightRAG affiche `core_version` en haut à droite — donc la concat apparaît automatiquement (`v1.4.9.11+memgraph-0.5.3`) sans modif frontend ni LightRAG upstream. Permet aux ops/users d'identifier en un coup d'œil quelle version du patch tourne sur l'instance. Idempotent (une seule injection par process).
+
+### Tests
+- 274 tests intégration, 0 régression.
+
+---
+
 ## v0.5.2 — 2026-04-27
 
 Closes [issue #1](https://github.com/menezis-ai/lightrag-memgraph/issues/1) and [issue #3](https://github.com/menezis-ai/lightrag-memgraph/issues/3).
