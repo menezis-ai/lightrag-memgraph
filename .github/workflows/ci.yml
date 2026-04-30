@@ -38,8 +38,6 @@ jobs:
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
-        ports:
-          - 7687:7687
         options: >-
           --health-cmd "echo 'RETURN 1;' | mgconsole"
           --health-interval 5s
@@ -60,5 +58,5 @@ jobs:
 
       - name: Run integration tests
         env:
-          MEMGRAPH_URI: bolt://localhost:7687
+          MEMGRAPH_URI: bolt://memgraph:7687
         run: pytest tests/ --ignore=tests/test_bench.py --ignore=tests/test_intelligence --ignore=tests/test_ontology_integration.py -v
