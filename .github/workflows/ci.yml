@@ -30,7 +30,7 @@ jobs:
         run: pytest tests/test_register.py tests/test_record_to_entry.py tests/test_vector_missing_index.py tests/test_write_throttle.py tests/test_hooks.py tests/test_buffered_writes.py tests/test_batch_patch.py tests/test_pool_tuning.py tests/test_use_database.py tests/test_read_pool.py tests/test_delete_set_coercion.py tests/test_query_modes.py tests/test_consume_and_drop.py -v
 
   integration-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-docker
     strategy:
       matrix:
         lightrag-version: ["1.4.9", "1.4.9.11", "1.4.10", "1.4.11", "1.4.12"]
