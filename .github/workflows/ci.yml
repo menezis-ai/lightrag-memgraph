@@ -32,17 +32,24 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest-docker
     strategy:
+      # Bunker has 11 runners; 15 parallel jobs caused contention spikes
+      # that made memgraph:latest cold-start exceed health-retries window.
+      # Cap at 5 to keep memgraph cold-starts deterministic. GitHub-hosted
+      # runners are unaffected (they parallelise per-job VMs).
+      max-parallel: 5
       matrix:
         lightrag-version: ["1.4.9", "1.4.9.11", "1.4.10", "1.4.11", "1.4.12"]
         memgraph-version: ["3.7.2", "3.8.0", "latest"]
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
+        # 60 retries × 5s = 5 minutes max cold-start window. Needed for
+        # memgraph-mage:latest (3.9+) which is heavier than 3.7.2.
         options: >-
           --health-cmd "echo 'RETURN 1;' | mgconsole"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 60
     steps:
       - uses: actions/checkout@v4
 
