@@ -1,0 +1,314 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2026-02",
+    "domains_count": 8,
+    "terms_count": 50
+  },
+  "domains": [
+    "oracle", "network", "linux", "cloud",
+    "middleware", "security", "monitoring", "itil"
+  ],
+  "glossaire": [
+    {
+      "terme": "ORA-04030",
+      "synonymes": ["out of process memory", "PGA exhaustion", "heap memory overflow", "session memory limit"],
+      "definition": "Erreur Oracle indiquant un dépassement de mémoire PGA allouée au processus serveur",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "ORA-00600",
+      "synonymes": ["internal error", "kernel crash", "Oracle bug", "unexpected error"],
+      "definition": "Erreur interne Oracle nécessitant analyse de trace dump et possible patch",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "ORA-01555",
+      "synonymes": ["snapshot too old", "undo tablespace", "rollback segment", "read consistency"],
+      "definition": "Erreur Oracle de lecture consistante quand les données undo ont été recyclées",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "ORA-12154",
+      "synonymes": ["TNS could not resolve", "tnsnames.ora", "Oracle Net", "connection string"],
+      "definition": "Erreur de résolution TNS pour la connexion Oracle",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "RMAN",
+      "synonymes": ["Recovery Manager", "backup Oracle", "restauration base", "Oracle backup tool"],
+      "definition": "Utilitaire Oracle de sauvegarde et restauration des bases de données",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "Data Guard",
+      "synonymes": ["Oracle standby", "disaster recovery Oracle", "redo apply", "switchover failover"],
+      "definition": "Solution Oracle de haute disponibilité et disaster recovery",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "RAC",
+      "synonymes": ["Real Application Clusters", "Oracle cluster", "multi-instance", "cluster database"],
+      "definition": "Architecture Oracle multi-instances sur cluster de serveurs",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "ASM",
+      "synonymes": ["Automatic Storage Management", "diskgroup", "Oracle storage", "ASM instance"],
+      "definition": "Gestionnaire de stockage intégré Oracle pour les bases de données",
+      "domaine": "oracle"
+    },
+    {
+      "terme": "VLAN",
+      "synonymes": ["Virtual LAN", "réseau virtuel", "segmentation réseau", "802.1Q"],
+      "definition": "Réseau local virtuel permettant la segmentation logique du réseau physique",
+      "domaine": "network"
+    },
+    {
+      "terme": "F5",
+      "synonymes": ["load balancer", "répartiteur de charge", "BIG-IP", "LTM"],
+      "definition": "Appliance de répartition de charge (load balancing) et WAF",
+      "domaine": "network"
+    },
+    {
+      "terme": "BGP",
+      "synonymes": ["Border Gateway Protocol", "routage inter-AS", "peering", "autonomous system"],
+      "definition": "Protocole de routage inter-domaines entre systèmes autonomes",
+      "domaine": "network"
+    },
+    {
+      "terme": "OSPF",
+      "synonymes": ["Open Shortest Path First", "routage interne", "link-state", "area routing"],
+      "definition": "Protocole de routage interne à état de lien",
+      "domaine": "network"
+    },
+    {
+      "terme": "VPN",
+      "synonymes": ["Virtual Private Network", "tunnel chiffré", "IPSec", "site-to-site"],
+      "definition": "Réseau privé virtuel pour communication sécurisée entre sites",
+      "domaine": "network"
+    },
+    {
+      "terme": "DNS",
+      "synonymes": ["Domain Name System", "résolution de noms", "zone DNS", "BIND"],
+      "definition": "Système de résolution de noms de domaine en adresses IP",
+      "domaine": "network"
+    },
+    {
+      "terme": "firewall",
+      "synonymes": ["pare-feu", "règle de filtrage", "ACL réseau", "Palo Alto", "Checkpoint"],
+      "definition": "Équipement de sécurité réseau filtrant le trafic",
+      "domaine": "network"
+    },
+    {
+      "terme": "systemd",
+      "synonymes": ["init system", "service manager", "systemctl", "gestionnaire de services Linux"],
+      "definition": "Système d'initialisation et gestionnaire de services pour Linux",
+      "domaine": "linux"
+    },
+    {
+      "terme": "LVM",
+      "synonymes": ["Logical Volume Manager", "volume logique", "gestion de volumes", "lvextend"],
+      "definition": "Gestionnaire de volumes logiques Linux pour l'abstraction du stockage",
+      "domaine": "linux"
+    },
+    {
+      "terme": "crontab",
+      "synonymes": ["cron job", "tâche planifiée", "scheduler Linux", "ordonnanceur"],
+      "definition": "Planificateur de tâches récurrentes sous Linux/Unix",
+      "domaine": "linux"
+    },
+    {
+      "terme": "SELinux",
+      "synonymes": ["Security-Enhanced Linux", "mandatory access control", "MAC", "politique de sécurité"],
+      "definition": "Module de sécurité Linux pour le contrôle d'accès obligatoire",
+      "domaine": "linux"
+    },
+    {
+      "terme": "kernel panic",
+      "synonymes": ["crash noyau", "system crash", "kernel crash", "Linux panic"],
+      "definition": "Erreur fatale du noyau Linux nécessitant un redémarrage",
+      "domaine": "linux"
+    },
+    {
+      "terme": "OOM Killer",
+      "synonymes": ["Out of Memory", "mémoire insuffisante", "oom_score", "memory pressure"],
+      "definition": "Mécanisme Linux qui tue des processus quand la mémoire est épuisée",
+      "domaine": "linux"
+    },
+    {
+      "terme": "Kubernetes",
+      "synonymes": ["K8s", "orchestration conteneurs", "cluster K8s", "kubectl"],
+      "definition": "Plateforme d'orchestration de conteneurs",
+      "domaine": "cloud"
+    },
+    {
+      "terme": "Terraform",
+      "synonymes": ["Infrastructure as Code", "IaC", "HashiCorp", "terraform plan"],
+      "definition": "Outil d'Infrastructure as Code pour le provisionnement cloud",
+      "domaine": "cloud"
+    },
+    {
+      "terme": "pod",
+      "synonymes": ["unité de déploiement K8s", "container group", "Kubernetes pod", "workload"],
+      "definition": "Plus petite unité de déploiement dans Kubernetes",
+      "domaine": "cloud"
+    },
+    {
+      "terme": "autoscaling",
+      "synonymes": ["mise à l'échelle automatique", "HPA", "horizontal pod autoscaler", "scale out"],
+      "definition": "Ajustement automatique du nombre de réplicas selon la charge",
+      "domaine": "cloud"
+    },
+    {
+      "terme": "WebSphere",
+      "synonymes": ["WAS", "IBM WebSphere", "serveur d'application IBM", "WebSphere Application Server"],
+      "definition": "Serveur d'applications Java EE d'IBM",
+      "domaine": "middleware"
+    },
+    {
+      "terme": "WebLogic",
+      "synonymes": ["WLS", "Oracle WebLogic", "serveur d'application Oracle", "WebLogic Server"],
+      "definition": "Serveur d'applications Java EE d'Oracle",
+      "domaine": "middleware"
+    },
+    {
+      "terme": "MQ",
+      "synonymes": ["IBM MQ", "Message Queue", "file de messages", "MQSeries", "queue manager"],
+      "definition": "Système de messagerie asynchrone IBM pour l'intégration d'applications",
+      "domaine": "middleware"
+    },
+    {
+      "terme": "Apache",
+      "synonymes": ["httpd", "serveur web Apache", "Apache HTTP Server", "mod_ssl"],
+      "definition": "Serveur web HTTP open source",
+      "domaine": "middleware"
+    },
+    {
+      "terme": "Kafka",
+      "synonymes": ["Apache Kafka", "event streaming", "broker de messages", "topic Kafka"],
+      "definition": "Plateforme de streaming d'événements distribuée",
+      "domaine": "middleware"
+    },
+    {
+      "terme": "CVE",
+      "synonymes": ["Common Vulnerabilities and Exposures", "faille de sécurité", "vulnérabilité", "security advisory"],
+      "definition": "Identifiant standard pour les vulnérabilités de sécurité connues",
+      "domaine": "security"
+    },
+    {
+      "terme": "SSL",
+      "synonymes": ["TLS", "certificat SSL", "HTTPS", "chiffrement transport"],
+      "definition": "Protocole de chiffrement pour la sécurisation des communications",
+      "domaine": "security"
+    },
+    {
+      "terme": "LDAP",
+      "synonymes": ["Active Directory", "annuaire", "authentification centralisée", "directory service"],
+      "definition": "Protocole d'accès aux annuaires pour l'authentification et l'autorisation",
+      "domaine": "security"
+    },
+    {
+      "terme": "hardening",
+      "synonymes": ["durcissement", "sécurisation système", "baseline sécurité", "CIS benchmark"],
+      "definition": "Processus de renforcement de la sécurité d'un système",
+      "domaine": "security"
+    },
+    {
+      "terme": "PAM",
+      "synonymes": ["Privileged Access Management", "gestion accès privilégiés", "CyberArk", "bastion"],
+      "definition": "Solution de gestion des accès à privilèges",
+      "domaine": "security"
+    },
+    {
+      "terme": "Dynatrace",
+      "synonymes": ["APM", "monitoring applicatif", "observabilité", "performance monitoring"],
+      "definition": "Plateforme d'observabilité et monitoring de performance applicative",
+      "domaine": "monitoring"
+    },
+    {
+      "terme": "Grafana",
+      "synonymes": ["tableau de bord", "dashboard monitoring", "visualisation métriques", "Grafana dashboard"],
+      "definition": "Plateforme de visualisation de métriques et tableaux de bord",
+      "domaine": "monitoring"
+    },
+    {
+      "terme": "Prometheus",
+      "synonymes": ["collecteur de métriques", "time series", "PromQL", "alerting"],
+      "definition": "Système de monitoring et d'alerte basé sur des séries temporelles",
+      "domaine": "monitoring"
+    },
+    {
+      "terme": "Zabbix",
+      "synonymes": ["monitoring infrastructure", "supervision", "agent Zabbix", "SNMP monitoring"],
+      "definition": "Solution de supervision d'infrastructure IT",
+      "domaine": "monitoring"
+    },
+    {
+      "terme": "ELK",
+      "synonymes": ["Elasticsearch Logstash Kibana", "stack de logs", "log aggregation", "centralized logging"],
+      "definition": "Stack de collecte, indexation et visualisation de logs",
+      "domaine": "monitoring"
+    },
+    {
+      "terme": "P1",
+      "synonymes": ["incident critique", "priorité 1", "severity 1", "major incident", "incident majeur"],
+      "definition": "Incident de priorité maximale impactant la production (SLA < 30 min)",
+      "domaine": "itil"
+    },
+    {
+      "terme": "P2",
+      "synonymes": ["incident élevé", "priorité 2", "severity 2", "high priority incident"],
+      "definition": "Incident de haute priorité avec impact significatif (SLA < 2h)",
+      "domaine": "itil"
+    },
+    {
+      "terme": "change management",
+      "synonymes": ["gestion des changements", "RFC", "Request for Change", "CAB"],
+      "definition": "Processus ITIL de gestion des changements en production",
+      "domaine": "itil"
+    },
+    {
+      "terme": "CMDB",
+      "synonymes": ["Configuration Management Database", "base de configuration", "CI", "asset management"],
+      "definition": "Base de données de gestion de configuration des actifs IT",
+      "domaine": "itil"
+    },
+    {
+      "terme": "SLA",
+      "synonymes": ["Service Level Agreement", "accord de niveau de service", "engagement de service", "GTR"],
+      "definition": "Contrat définissant les niveaux de service attendus",
+      "domaine": "itil"
+    },
+    {
+      "terme": "RCA",
+      "synonymes": ["Root Cause Analysis", "analyse de cause racine", "post-mortem", "blameless"],
+      "definition": "Analyse des causes profondes d'un incident",
+      "domaine": "itil"
+    },
+    {
+      "terme": "ServiceNow",
+      "synonymes": ["SNOW", "ITSM", "ticketing", "gestion de tickets"],
+      "definition": "Plateforme ITSM de gestion des services IT",
+      "domaine": "itil"
+    },
+    {
+      "terme": "runbook",
+      "synonymes": ["procédure opérationnelle", "playbook", "guide d'exploitation", "mode opératoire"],
+      "definition": "Document décrivant les procédures de résolution d'incidents",
+      "domaine": "itil"
+    },
+    {
+      "terme": "failover",
+      "synonymes": ["basculement", "bascule automatique", "high availability", "HA"],
+      "definition": "Basculement automatique vers un système de secours en cas de panne",
+      "domaine": "itil"
+    },
+    {
+      "terme": "DR",
+      "synonymes": ["Disaster Recovery", "reprise après sinistre", "PRA", "plan de reprise d'activité"],
+      "definition": "Plan de reprise d'activité après un sinistre majeur",
+      "domaine": "itil"
+    }
+  ]
+}

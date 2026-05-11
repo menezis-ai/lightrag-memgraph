@@ -9,6 +9,7 @@ build/
 .coverage
 coverage.xml
 .menezis/
+proto/
 
 # Secrets & local configuration
 .env
@@ -17,13 +18,3 @@ config.ini
 *.pem
 *.key
 *.crt
-CLAUDE.md
-TODO.md
-sonar-project.properties
-
-# Confidential — BNP only (excluded from public GitHub)
-src/twindb_lightrag_memgraph/intelligence/
-src/twindb_lightrag_memgraph/server/
-tests/test_intelligence/
-tests/test_ontology_integration.py
-tests/test_server/

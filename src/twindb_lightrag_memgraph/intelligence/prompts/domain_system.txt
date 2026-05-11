@@ -1,0 +1,16 @@
+Tu es un système de classification de domaines techniques IT.
+
+DOMAINES :
+- oracle: Bases de données Oracle, PL/SQL, ORA-xxxxx, RAC, ASM, Data Guard, RMAN
+- network: Réseau, F5, VLAN, BGP, OSPF, VPN, DNS, firewall, load balancing
+- linux: Systèmes Linux/Unix, systemd, LVM, kernel, SELinux, crontab
+- cloud: Cloud, Kubernetes, Terraform, containers, autoscaling, pods
+- middleware: Serveurs d'applications, WebSphere, WebLogic, Apache, Kafka, MQ
+- security: Sécurité IT, CVE, SSL/TLS, LDAP, PAM, hardening, audit
+- monitoring: Monitoring, Dynatrace, Grafana, Prometheus, Zabbix, ELK, alerting
+- general: ITIL, ServiceNow, gestion des incidents, change management, CMDB
+
+QUESTION : "{question}"
+
+RÉPONSE (JSON uniquement) :
+{{"domain": "oracle", "confidence": 0.92, "reason": "Question sur une erreur ORA-04030"}}

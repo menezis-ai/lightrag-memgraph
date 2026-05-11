@@ -1,0 +1,16 @@
+Pour chaque passage, évalue sa pertinence pour répondre à la question sur une échelle de 0 à 10.
+
+ÉCHELLE :
+- 10 : Contient directement la réponse technique complète
+- 7-9 : Très pertinent, information technique utile
+- 4-6 : Contexte partiel, indirectement lié
+- 1-3 : Faiblement lié au sujet
+- 0 : Non pertinent
+
+QUESTION : "{question}"
+
+PASSAGES :
+{passages}
+
+RÉPONSE (JSON uniquement, pas de commentaire) :
+{{"scores": [{{"passage": 0, "score": 8}}, {{"passage": 1, "score": 2}}, ...]}}

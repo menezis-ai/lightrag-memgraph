@@ -21,8 +21,43 @@ test = [
     "httpx>=0.24.0",
     "fastapi>=0.104.0",
 ]
+intelligence = [
+    "openai>=1.50",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
+test-intelligence = [
+    "twindb-lightrag-memgraph[intelligence,test]",
+    "pytest-mock",
+    "pytest-cov",
+    "respx",
+]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic-settings>=2.0.0",
+    "PyJWT>=2.8.0",
+]
+tracing = [
+    "langsmith>=0.1.0",
+]
+test-server = [
+    "twindb-lightrag-memgraph[server,test]",
+    "httpx>=0.27.0",
+]
+all = [
+    "twindb-lightrag-memgraph[intelligence,server,tracing]",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"twindb_lightrag_memgraph.intelligence" = [
+    "prompts/*.txt",
+    "thesaurus/*.json",
+    "routing/*.json",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
