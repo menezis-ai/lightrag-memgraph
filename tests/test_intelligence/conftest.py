@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from twindb_lightrag_memgraph.intelligence.config import TwinRAGConfig
+from twindb_lightrag_memgraph.intelligence.features.workspace_router import (
+    TopologyContext, WorkspaceRouter)
 from twindb_lightrag_memgraph.intelligence.react.act import ChunkResult
 
 
@@ -95,22 +97,34 @@ def sample_chunks():
 
 @pytest.fixture
 def intent_in_scope_json():
-    return json.dumps({"intent": "IN_SCOPE", "confidence": 0.95, "reason": "Technical Oracle question"})
+    return json.dumps(
+        {
+            "intent": "IN_SCOPE",
+            "confidence": 0.95,
+            "reason": "Technical Oracle question",
+        }
+    )
 
 
 @pytest.fixture
 def intent_oos_json():
-    return json.dumps({"intent": "OUT_OF_SCOPE", "confidence": 0.97, "reason": "Weather question"})
+    return json.dumps(
+        {"intent": "OUT_OF_SCOPE", "confidence": 0.97, "reason": "Weather question"}
+    )
 
 
 @pytest.fixture
 def intent_greeting_json():
-    return json.dumps({"intent": "GREETING", "confidence": 0.99, "reason": "User greeting"})
+    return json.dumps(
+        {"intent": "GREETING", "confidence": 0.99, "reason": "User greeting"}
+    )
 
 
 @pytest.fixture
 def intent_malicious_json():
-    return json.dumps({"intent": "MALICIOUS", "confidence": 0.98, "reason": "Jailbreak attempt"})
+    return json.dumps(
+        {"intent": "MALICIOUS", "confidence": 0.98, "reason": "Jailbreak attempt"}
+    )
 
 
 @pytest.fixture
@@ -122,6 +136,54 @@ def reasoning_result_json():
             "domain_hint": "oracle",
             "coreference_resolved": False,
         }
+    )
+
+
+@pytest.fixture
+def routing_rules_json(tmp_path):
+    """Test routing_rules.json file."""
+    rules = {
+        "default_workspace": "commons",
+        "rules": [
+            {
+                "keywords": ["Oracle", "ORA-", "RMAN"],
+                "target_workspace": "commons_oracle",
+                "workspace_type": "public",
+                "confidence": 1.0,
+            },
+            {
+                "keywords": ["RedHat", "RHEL", "Linux"],
+                "target_workspace": "commons_linux",
+                "workspace_type": "public",
+                "confidence": 0.9,
+            },
+            {
+                "keywords": ["cib-app", "CIB"],
+                "target_workspace": "cib",
+                "workspace_type": "private",
+                "confidence": 0.95,
+            },
+        ],
+    }
+    path = tmp_path / "routing_rules.json"
+    path.write_text(json.dumps(rules))
+    return path
+
+
+@pytest.fixture
+def router(routing_rules_json):
+    """WorkspaceRouter loaded from test rules."""
+    return WorkspaceRouter.from_json(routing_rules_json)
+
+
+@pytest.fixture
+def topology_context_cib():
+    """TopologyContext for CIB workspace."""
+    return TopologyContext(
+        servers=["srv-cib-01"],
+        workspaces=["cib"],
+        workspaces_publics=["commons", "commons_oracle"],
+        topology_path="(App:RH)-[:RUNS_ON]->(srv-cib-01)",
     )
 
 
