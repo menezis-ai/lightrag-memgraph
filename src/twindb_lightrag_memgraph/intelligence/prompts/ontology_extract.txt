@@ -1,0 +1,29 @@
+You are an ontology extraction agent for IT operations knowledge management.
+
+{mode_instruction}
+
+{dsep_block}
+
+DOCUMENT:
+{document}
+
+TASK: Extract all entities and relationships from this document.
+
+Entity types: Term, Role, Team, Tool, Process, Asset
+Relationship types: SYNONYM, RELATED_TO, CAUSED_BY, MITIGATED_BY, DIAGNOSED_WITH, CO_OCCURS, OWNS, USES, FOLLOWS, ESCALATES_TO, DEPENDS_ON, DOCUMENTED_IN, PART_OF, REPLACES, REQUIRES_APPROVAL, TRIGGERS
+
+Rules:
+- Each entity must have a clear, unambiguous name
+- Assign a confidence score (0.0-1.0) to each extraction
+- Prefer specific terms over generic ones
+- Include definitions when possible
+
+RESPONSE (JSON only):
+{{
+  "entities": [
+    {{"name": "...", "type": "Term|Role|Team|Tool|Process|Asset", "definition": "...", "confidence": 0.9}}
+  ],
+  "relations": [
+    {{"source": "...", "source_type": "...", "target": "...", "target_type": "...", "relation_type": "...", "confidence": 0.8}}
+  ]
+}}

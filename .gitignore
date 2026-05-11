@@ -18,13 +18,3 @@ config.ini
 *.pem
 *.key
 *.crt
-
-# Pending merge from feat/merge-intelligence (passe 2 of forgejo-only chantier).
-# The Forgejo-only model makes these tracked, but the canonical history lives
-# on the feature branches — to be merged in a dedicated pass that preserves
-# git log, not snapshot-committed from a dirty working tree.
-src/twindb_lightrag_memgraph/intelligence/
-src/twindb_lightrag_memgraph/server/
-tests/test_intelligence/
-tests/test_ontology_integration.py
-tests/test_server/

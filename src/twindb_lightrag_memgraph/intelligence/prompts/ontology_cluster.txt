@@ -1,0 +1,26 @@
+You are a domain clustering agent for an IT operations ontology.
+
+Given a list of extracted entities, identify coherent domains.
+Do NOT use predefined categories. Domains must emerge from the data.
+
+ENTITIES:
+{entities_json}
+
+TASK: Group these entities into coherent domains based on their semantic proximity and operational context.
+
+Rules:
+- Each domain must have a descriptive name that reflects its content
+- Every entity should belong to at least one domain
+- A domain should contain at least 2 entities
+- Provide a brief description of each domain
+
+RESPONSE (JSON only):
+{{
+  "domains": [
+    {{
+      "domain_name": "...",
+      "description": "Short description of this domain",
+      "member_terms": ["entity1", "entity2", ...]
+    }}
+  ]
+}}
