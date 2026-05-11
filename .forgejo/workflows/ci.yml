@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e ".[test]"
+          pip install -e ".[intelligence,server,test]"
           pip install "lightrag-hku==${{ matrix.lightrag-version }}"
 
       - name: Run unit tests
@@ -59,7 +59,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e ".[test]"
+          pip install -e ".[intelligence,server,test]"
           pip install "lightrag-hku==${{ matrix.lightrag-version }}"
 
       - name: Run integration tests
