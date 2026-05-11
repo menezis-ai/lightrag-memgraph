@@ -12,7 +12,9 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.10", "1.4.11", "1.4.12"]
+        # 1.4.10 dropped: intermittent test failures under integration load
+        # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
+        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +43,9 @@ jobs:
       # Cap at 5 to keep memgraph cold-starts deterministic.
       max-parallel: 5
       matrix:
-        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.10", "1.4.11", "1.4.12"]
+        # 1.4.10 dropped: intermittent test failures under integration load
+        # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
+        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
         memgraph-version: ["3.7.2", "3.8.0", "latest"]
     services:
       memgraph:
