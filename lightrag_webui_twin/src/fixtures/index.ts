@@ -8,3 +8,5 @@
 export { DOCUMENT_FIXTURES } from './documents';
 export { WORKSPACE_FIXTURES } from './workspaces';
 export { NOTIFICATION_FIXTURES } from './notifications';
+export { THESAURUS_FIXTURES } from './thesaurus';
+export { FORMAT_CATEGORY_FIXTURES } from './formatCategories';
