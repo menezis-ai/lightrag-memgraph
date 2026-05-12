@@ -1,23 +1,44 @@
 /**
- * App shell — minimal scaffold for sprint 1.
+ * App shell — wires Topbar + DocumentsTab + RetrievalTab + Toast + Modals
+ * against the local fixtures so `bun dev` shows the full Twin WebUI shell.
  *
- * Wires the Topbar with fixture data so the dev server (`bun dev`) shows a
- * live preview of the proto's header. Tabs, popovers, theme toggle all work
- * against in-memory state — no network calls yet, those land in sprint 4
- * when phase-1 backend is ready.
+ * In sprint 4 the fixtures will be swapped out for real fetchers against
+ * LightRAG's `/documents`, `/retrieval`, `/notifications` endpoints (gated
+ * by the backend phase-1 contract).
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
+import { DocumentsTab } from './components/DocumentsTab';
+import { RetagModal, type RetagAction } from './components/RetagModal';
+import { RetrievalTab } from './components/RetrievalTab';
+import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
-import { TagChip } from './components/TagChip';
-import { DOCUMENT_FIXTURES, NOTIFICATION_FIXTURES, WORKSPACE_FIXTURES } from './fixtures';
+import {
+  ANSWER_TOKENS_FIXTURE,
+  DOCUMENT_FIXTURES,
+  FORMAT_CATEGORY_FIXTURES,
+  NOTIFICATION_FIXTURES,
+  RETRIEVAL_SOURCES_FIXTURE,
+  THESAURUS_FIXTURES,
+  WORKSPACE_FIXTURES,
+  makeSampleThreads,
+} from './fixtures';
+import type { Document } from './types/document';
 import type { Theme } from './types/topbar';
+import type { Toast } from './types/toast';
 
 function App() {
   const [tab, setTab] = useState('documents');
   const [theme, setTheme] = useState<Theme>('light');
   const [workspace, setWorkspace] = useState('cib');
   const [notifications, setNotifications] = useState([...NOTIFICATION_FIXTURES]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Modal state
+  const [addOpen, setAddOpen] = useState(false);
+  const [retagDoc, setRetagDoc] = useState<Document | null>(null);
+  const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -25,6 +46,37 @@ function App() {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const kbName = WORKSPACE_FIXTURES.find((w) => w.id === workspace)?.kb ?? '';
+
+  const pushToast = (t: Omit<Toast, 'id'>) => {
+    const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
+    setToasts((ts) => [...ts, { id, ...t }]);
+  };
+
+  const onAddToast = (title: string, sub?: string) =>
+    pushToast({ kind: 'done', title, sub });
+
+  const onRetagSubmit = (action: RetagAction) => {
+    const verb = action.adds.length > 0 ? 'applied' : 'removed';
+    const sample = action.adds[0] ?? action.removes[0];
+    pushToast({
+      kind: 'done',
+      title: 'Tag',
+      tagname: sample,
+      titleSuffix: action.bulk
+        ? `${verb} to ${action.targets.length} sources`
+        : verb,
+      sub: action.primary.source,
+      undo: { adds: action.adds, removes: action.removes },
+    });
+  };
+
+  const onAddSourceSubmit = (action: AddSourceAction) => {
+    pushToast({
+      kind: 'done',
+      title: 'Sources queued for ingestion',
+      sub: `${action.readyCount} added${action.tags.length ? ' · tags: ' + action.tags.join(', ') : ''}`,
+    });
+  };
 
   return (
     <>
@@ -44,21 +96,59 @@ function App() {
         }
         onClearNotifications={() => setNotifications([])}
       />
-      <main className="p-6">
-        <p className="text-sm text-text-secondary">
-          Sprint 1 scaffold — active tab: <code className="font-mono">{tab}</code> · workspace:{' '}
-          <code className="font-mono">{workspace}</code> · theme:{' '}
-          <code className="font-mono">{theme}</code>
-        </p>
-        <h2 className="mt-4 text-xl font-medium">Tag chips (sample)</h2>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {DOCUMENT_FIXTURES.flatMap((d) => d.tags)
-            .filter((t, i, arr) => arr.indexOf(t) === i)
-            .map((t) => (
-              <TagChip key={t} tag={t} />
-            ))}
-        </div>
+      <main>
+        {tab === 'documents' && (
+          <DocumentsTab
+            docs={DOCUMENT_FIXTURES}
+            thesaurus={THESAURUS_FIXTURES}
+            onOpenAdd={() => setAddOpen(true)}
+            onOpenRetag={(d) => setRetagDoc(d)}
+            onOpenBulkRetag={(ds) => setRetagBulk(ds)}
+            onAddToast={onAddToast}
+          />
+        )}
+        {tab === 'retrieval' && (
+          <RetrievalTab
+            thesaurus={THESAURUS_FIXTURES}
+            answerTokens={ANSWER_TOKENS_FIXTURE}
+            answerSources={RETRIEVAL_SOURCES_FIXTURE}
+            initialThreads={makeSampleThreads()}
+          />
+        )}
+        {(tab === 'tags' || tab === 'activity' || tab === 'api') && (
+          <div className="p-6 text-sm text-text-secondary">
+            Tab "{tab}" — coming in S3.
+          </div>
+        )}
       </main>
+
+      <AddSourceModal
+        open={addOpen}
+        thesaurus={THESAURUS_FIXTURES}
+        formatCategories={FORMAT_CATEGORY_FIXTURES}
+        onClose={() => setAddOpen(false)}
+        onSubmit={onAddSourceSubmit}
+      />
+      <RetagModal
+        open={retagDoc !== null || retagBulk !== null}
+        doc={retagDoc}
+        docs={retagBulk ?? undefined}
+        thesaurus={THESAURUS_FIXTURES}
+        onClose={() => {
+          setRetagDoc(null);
+          setRetagBulk(null);
+        }}
+        onSubmit={onRetagSubmit}
+      />
+      <ToastViewport
+        toasts={toasts}
+        onUndo={(t) =>
+          setToasts((ts) => ts.filter((x) => x.id !== t.id))
+        }
+        onDismiss={(t) =>
+          setToasts((ts) => ts.filter((x) => x.id !== t.id))
+        }
+      />
     </>
   );
 }

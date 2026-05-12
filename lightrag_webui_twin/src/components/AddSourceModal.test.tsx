@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AddSourceModal,
@@ -131,20 +131,32 @@ describe('AddSourceModal — tag autocomplete', () => {
 
   it('shows autocomplete rows filtered by input', async () => {
     render(<AddSourceModal {...defaultProps()} />);
+    // useModalA11y schedules a setTimeout(30ms) that auto-focuses the first
+    // input in the modal (the URL input, which is positioned before the tag
+    // input in the DOM). On slow CI runners, that timer fires mid-`type` and
+    // steals our keystrokes. Wait past it before we type into the tag input.
+    await new Promise((r) => setTimeout(r, 60));
     const input = screen.getByLabelText('Tag input');
+    input.focus();
     await userEvent.type(input, 'rman');
-    expect(screen.getByTestId('tag-sugg-rman')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId('tag-sugg-rman')).toBeInTheDocument(),
+    );
   });
 
   it('Enter on tag input adds the first suggestion', async () => {
     render(<AddSourceModal {...defaultProps()} />);
+    await new Promise((r) => setTimeout(r, 60));
     const input = screen.getByLabelText('Tag input');
-    await userEvent.type(input, 'rman{Enter}');
-    // Tag chip should now be present
-    const chips = document.querySelectorAll('.tag-chip');
-    expect(Array.from(chips).some((c) => c.textContent?.includes('rman'))).toBe(
-      true,
-    );
+    input.focus();
+    await userEvent.type(input, 'rman');
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      const chips = document.querySelectorAll('.tag-chip');
+      expect(
+        Array.from(chips).some((c) => c.textContent?.includes('rman')),
+      ).toBe(true);
+    });
   });
 });
 
