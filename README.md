@@ -21,11 +21,10 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 |---|:-:|:-:|:-:|
 | **LightRAG 1.4.9** | OK | OK | OK |
 | **LightRAG 1.4.9.11** | OK | OK | OK |
-| **LightRAG 1.4.10** | OK | OK | OK |
 | **LightRAG 1.4.11** | OK | OK | OK |
 | **LightRAG 1.4.12** | OK | OK | OK |
 
-CI runs this full matrix on every push/PR.
+CI runs this full matrix on every push/PR. LightRAG `1.4.10` was dropped from the matrix due to a transient timing regression that produces non-deterministic test failures under integration load; fixed upstream in `1.4.11+`. Re-enablement tracked in [issue #6](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/issues/6).
 
 ## Installation
 

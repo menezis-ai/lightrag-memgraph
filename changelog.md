@@ -5,6 +5,43 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 
 ---
 
+## v1.0.0 — 2026-05-12 — Major release
+
+**Première release "all-in-one"** du package complet. Marque la consolidation Forgejo-only avec storage backends (KV/Vector/DocStatus) + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module + sub-projet WebUI fork (`lightrag_webui_twin/`). La WebUI affichera désormais `core_version: v1.4.x+memgraph-1.0.0` via `register()` qui patche `lightrag.__version__`.
+
+### Distribution
+- **Forgejo-only** depuis 2026-05-11. GitHub remote (`origin = menezis-ai/lightrag-memgraph`) en cours d'archivage. Le repo complet (storage + intelligence + server + WebUI fork) vit désormais sur `bunker` (Forgejo à `192.168.1.61`). Le split dual L1/L2/L3 (GitHub public / ZIP BNP full) est retiré.
+- `.gitignore` : retrait du bloc "Confidential — BNP only". `CLAUDE.md` et `sonar-project.properties` deviennent trackés.
+
+### Intelligence + Server import
+- `src/twindb_lightrag_memgraph/intelligence/` importé depuis `feat/merge-intelligence@d58e47f` (37 files : engine, config, features F03-F06, ontology DSEP, react/, prompts/, routing/, thesaurus/).
+- `src/twindb_lightrag_memgraph/server/` importé depuis `feat/server@b06d49a` (7 files : app, auth, settings, chunk_routes, tracing).
+- `pyproject.toml` : ajout des groupes optional-deps `[intelligence]`, `[test-intelligence]`, `[server]`, `[tracing]`, `[test-server]`, `[all]` + `package-data` pour `intelligence/prompts/*.txt`, `intelligence/thesaurus/*.json`, `intelligence/routing/*.json`.
+- Smoke imports verts: `from twindb_lightrag_memgraph import intelligence, server`.
+
+### CI (Forgejo Actions)
+- Migration `.github/workflows/ci.yml` → `.forgejo/workflows/ci.yml` (rename Git-détecté, historique préservé).
+- Job `unit-tests` simplifié : `pytest tests/ --ignore=tests/test_bench.py` (marker-based, auto-skip `@pytest.mark.integration` quand `MEMGRAPH_URI` absent). Picks up automatiquement `tests/test_intelligence/` et `tests/test_server/`.
+- Job `webui-tests` ajouté : `bun install --frozen-lockfile && bun run typecheck && bun run test:run && bun run build` sur le sous-projet `lightrag_webui_twin/`. Bun pinné `1.3.6` (évite rate limit GitHub API sur `setup-bun@v2 latest`).
+- **LightRAG `1.4.10` dropped** du matrix : timing regression intermittente sous charge integration, fixé upstream en 1.4.11+. Tracking dans issue #6.
+- Branch protection sur `main`, `stable/0.5.x`, `stable/0.3.2-lts` : push direct interdit, patterns `CI / unit-tests*` / `CI / integration-tests*` / `CI / webui-tests*` obligatoires verts pour merge.
+
+### WebUI fork — `lightrag_webui_twin/` (sprints S1 + S2)
+Sub-projet Vite + Bun + React 19 + TS strict + Tailwind v3 qui porte le proto design `/Users/julien/Desktop/UI/` (JSX + Babel CDN, intouché) en codebase typé et testé. Objectif : Twin operator console pour le fork WebUI long-terme (citations cliquables, UI tag rétroactif, sous-graphe filtré, source isolation badge).
+
+- **Composants portés** : `Icon` (31 Tabler outlines), `SourceIcon`, `TagChip`, `Topbar` (+ `WorkspaceMenu`, `NotificationsPopover` privés), `ToastViewport`, `RetagModal` (P0 sprint 1 du fork — single + bulk + autocomplete thésaurus + preview impact), `AddSourceModal` (dropzone + URLs + tags), `DocumentsTab` (+ `DocRow` privé, status/search/tag filters, multi-select, bulk retag), `RetrievalTab` (+ `Turn` privé, threads + localStorage persistence + streamed answer + `{cite:N}` clickable + params panel).
+- **Hooks** : `useUrlParam` / `useUrlArrayParam` / `useUrlNumberParam` (URL-backed state), `useModalA11y` (focus trap + Escape + restore-previous-focus).
+- **Types et fixtures** = **contrat backend phase 1** : Document, Workspace, Notification, Toast, ThesaurusEntry, FormatCategory, FileUpload, LinkedSource, AnswerToken/Part, RetrievalSource, ChatMessage, RetrievalThread, QueryMode + fixtures correspondantes dans `src/fixtures/`.
+- **Design tokens** : `--twin-accent`, neutrals, light + dark dans `src/styles/tokens.css` (plain CSS vars). `tailwind.config.js` les expose en utility classes.
+- **Tests** : 114 Vitest tests across 11 files, ~1.6s. happy-dom 20.x + Bun → in-memory localStorage mock ajouté à `src/test/setup.ts`.
+- **Out of scope (S3+)** : tags / activity / api / graph tabs, TweaksPanel (568 LOC dev tooling), port progressif des 3000+ lignes CSS class-specific bodies, MSW handlers (S4 quand backend phase 1 ready).
+
+### Doc
+- `README.md` matrice compatibilité : 1.4.10 retiré.
+- `CLAUDE.md` : section CI matrix, section WebUI fork, commande unit-tests marker-based.
+
+---
+
 ## v0.5.3 — 2026-04-28
 
 ### Features
