@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AddSourceModal,
@@ -139,12 +139,16 @@ describe('AddSourceModal — tag autocomplete', () => {
   it('Enter on tag input adds the first suggestion', async () => {
     render(<AddSourceModal {...defaultProps()} />);
     const input = screen.getByLabelText('Tag input');
-    await userEvent.type(input, 'rman{Enter}');
-    // Tag chip should now be present
-    const chips = document.querySelectorAll('.tag-chip');
-    expect(Array.from(chips).some((c) => c.textContent?.includes('rman'))).toBe(
-      true,
-    );
+    // Type then Enter as two separate events so the autocomplete state has
+    // committed before the keystroke fires (avoids CI race on slow runners).
+    await userEvent.type(input, 'rman');
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      const chips = document.querySelectorAll('.tag-chip');
+      expect(
+        Array.from(chips).some((c) => c.textContent?.includes('rman')),
+      ).toBe(true);
+    });
   });
 });
 
