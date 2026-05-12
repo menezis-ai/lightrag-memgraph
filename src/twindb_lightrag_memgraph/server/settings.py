@@ -118,6 +118,16 @@ class LightRAGServerSettings(BaseSettings):
         description="Enable LangSmith tracing for LLM/embedding/rerank spans",
     )
 
+    # -- WebUI phase-1 surface --
+    enable_webui_routes: bool = Field(
+        default=True,
+        description=(
+            "Mount the WebUI phase-1 router (/documents, /workspaces, /tags, "
+            "/activity, /graph/*, etc.) backed by in-memory seed data. Set "
+            "False to expose only the LightRAG core endpoints."
+        ),
+    )
+
     # -- Auth --
     api_key: str | None = Field(
         default=None,
