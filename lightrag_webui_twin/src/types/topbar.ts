@@ -51,5 +51,6 @@ export const DEFAULT_TABS: readonly Tab[] = [
   { id: 'retrieval', label: 'Retrieval' },
   { id: 'tags', label: 'Tags' },
   { id: 'activity', label: 'Activity' },
+  { id: 'graph', label: 'Graph' },
   { id: 'api', label: 'API' },
 ];
