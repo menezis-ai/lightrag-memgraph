@@ -1,0 +1,30 @@
+/* Overrides on top of legacy.css.
+ *
+ * legacy.css is a verbatim copy of the proto's styles.css so future
+ * design-iteration syncs stay a single `cp`. Deviations live here.
+ */
+
+/* Tab root width fix.
+ *
+ * The shell `<main>` is `display: flex` (proto-faithful) and `.tab-pane`
+ * is `flex: 1`. Tab roots are flex children, and only the ones that
+ * declared `flex: 1` themselves (.activity, .kg, .swagger, .tags-screen)
+ * fill their parent's width. `.docs` and `.retrieval` were missing it,
+ * leaving a ~250px dead stripe on the right where the parent's
+ * `--color-background-tertiary` showed through. */
+.docs,
+.retrieval {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Retrieval — proto grid reserves 320px right column but `.params-panel`
+ * renders 224px → 96px dead stripe. Match the grid cell to the panel
+ * width and let the panel fill its cell. */
+.retrieval.has-history {
+  grid-template-columns: 240px minmax(0, 1fr) 240px;
+}
+.retrieval .params-panel {
+  width: 100%;
+  box-sizing: border-box;
+}

@@ -39,7 +39,11 @@ import {
 } from '../types/retrieval';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
-const THREADS_STORAGE_KEY = 'twin-rag.threads';
+// Versioned key — bumped to invalidate stale demo seeds when the fixture
+// shape changes (v2: full ANSWER_TOKENS_FIXTURE + citations on the first
+// seed thread; v1 had a "To restart RMAN…" stub that made the tab look
+// broken on first paint).
+const THREADS_STORAGE_KEY = 'twin-rag.threads.v2';
 const STREAM_TICK_MS = 70;
 
 export interface RetrievalTabProps {

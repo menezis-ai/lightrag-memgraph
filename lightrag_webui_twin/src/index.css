@@ -3,6 +3,7 @@
  * still win via specificity at use sites. */
 @import './styles/tokens.css';
 @import './styles/legacy.css';
+@import './styles/overrides.css';
 
 @tailwind base;
 @tailwind components;
