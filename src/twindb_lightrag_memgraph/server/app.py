@@ -152,10 +152,29 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         create_chunk_routes(_rag)
         logger.info("L2 patch applied (chunk/document routes)")
 
+        # -- L2 Patch: WebUI tag backend --
+        if settings.enable_webui_routes and settings.webui_tag_backend == "memgraph":
+            from .webui_router import WebuiStore, set_store
+            from .webui_tagstore import make_memgraph_store
+
+            workspace = settings.workspace or "default"
+            tag_backend = await make_memgraph_store(workspace=workspace)
+            store = WebuiStore.from_seed()
+            store._tag_backend = tag_backend  # noqa: SLF001 — module-internal swap
+            set_store(store)
+            logger.info(
+                "L2 patch applied (WebUI tag backend = Memgraph, workspace=%s)",
+                workspace,
+            )
+
         yield
 
         # -- Shutdown --
         _rag = None
+        if settings.enable_webui_routes and settings.webui_tag_backend == "memgraph":
+            from .webui_router import reset_store
+
+            reset_store()
         logger.info("LightRAG server shut down")
 
     app = FastAPI(
