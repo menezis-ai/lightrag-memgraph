@@ -1,12 +1,24 @@
 /**
- * App shell — wires Topbar + DocumentsTab + RetrievalTab + Toast + Modals
- * against the local fixtures so `bun dev` shows the full Twin WebUI shell.
+ * App shell — wires Topbar + tabs + modals against the TanStack Query layer.
  *
- * In sprint 4 the fixtures will be swapped out for real fetchers against
- * LightRAG's `/documents`, `/retrieval`, `/notifications` endpoints (gated
- * by the backend phase-1 contract).
+ * Data flow (S4a):
+ *   - Each resource has a typed query hook (`useDocuments`, `useTags`, ...)
+ *     that hits `/documents`, `/tags`, etc. via `apiFetch`.
+ *   - In dev, MSW intercepts those fetches and answers from the fixtures —
+ *     the contract template lives in `src/fixtures/`.
+ *   - Each `useQuery` is seeded with `initialData = FIXTURE` so the first
+ *     paint is instant. Fetched data replaces the fixture as soon as the
+ *     query resolves (background revalidation pattern).
+ *   - Components keep their prop-driven signature so unit tests pass arrays
+ *     directly without a QueryClient wrapper.
+ *
+ * Env switches:
+ *   - VITE_USE_MSW=false   → skip the MSW worker; fetches hit VITE_API_BASE_URL.
+ *   - VITE_API_BASE_URL=…  → real backend origin.
+ *   - VITE_AUTH_TOKEN=…    → bearer attached on every fetch.
  */
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { ActivityTab } from './components/ActivityTab';
 import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
@@ -26,6 +38,18 @@ import {
   TweaksPanel,
   useTweaks,
 } from './components/TweaksPanel';
+import {
+  useActivity,
+  useDocuments,
+  useGraphEntities,
+  useGraphRelations,
+  useNotifications,
+  useOpenApi,
+  useTagCategories,
+  useTags,
+  useThesaurus,
+  useWorkspaces,
+} from './api/queries';
 import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
@@ -57,11 +81,19 @@ const CURRENT_USER: TagCurrentUser = {
   role: 'admin / steward',
 };
 
-function App() {
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+function AppShell() {
   const [tab, setTab] = useState('documents');
   const [theme, setTheme] = useState<Theme>('light');
   const [workspace, setWorkspace] = useState('cib');
-  const [notifications, setNotifications] = useState([...NOTIFICATION_FIXTURES]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [tweaks, setTweak] = useTweaks({
@@ -75,12 +107,34 @@ function App() {
   const [retagDoc, setRetagDoc] = useState<Document | null>(null);
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
 
+  // Data — every tab is backed by a query, seeded with the corresponding
+  // fixture so first paint is instant even if the worker is still booting.
+  const docs = useDocuments();
+  const workspaces = useWorkspaces();
+  const notificationsQ = useNotifications();
+  const thesaurus = useThesaurus();
+  const tags = useTags();
+  const tagCategories = useTagCategories();
+  const activity = useActivity();
+  const openApi = useOpenApi();
+  const graphEntities = useGraphEntities();
+  const graphRelations = useGraphRelations();
+
+  // Notifications carry mutable client state (read/cleared) on top of the
+  // query data, so we mirror them locally and use the query result as the
+  // source of truth on first load + refetch.
+  const [notifications, setNotifications] = useState([...NOTIFICATION_FIXTURES]);
+  useEffect(() => {
+    if (notificationsQ.data) setNotifications([...notificationsQ.data]);
+  }, [notificationsQ.data]);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const kbName = WORKSPACE_FIXTURES.find((w) => w.id === workspace)?.kb ?? '';
+  const workspaceList = workspaces.data ?? WORKSPACE_FIXTURES;
+  const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
@@ -173,6 +227,19 @@ function App() {
     setTab(nextTab);
   };
 
+  // Resolved props — fall back to the local fixtures while the first fetch is
+  // in flight so the UI never shows an empty shell on cold start.
+  const docList = docs.data?.items ?? DOCUMENT_FIXTURES;
+  const thesaurusList = thesaurus.data ?? THESAURUS_FIXTURES;
+  const tagList = tags.data ?? TAG_FIXTURES;
+  const tagCategoryList = tagCategories.data ?? TAG_CATEGORY_FIXTURES;
+  const activityEvents = activity.data?.items ?? ACTIVITY_FIXTURES;
+  const activityNow = activity.data?.nowMs ?? ACTIVITY_NOW_MS;
+  const openApiGroups = openApi.data?.groups ?? OPENAPI_GROUPS;
+  const apiVersion = openApi.data?.version ?? API_VERSION;
+  const graphEntityList = graphEntities.data ?? GRAPH_ENTITY_FIXTURES;
+  const graphRelationList = graphRelations.data ?? GRAPH_RELATION_FIXTURES;
+
   return (
     <>
       <Topbar
@@ -183,7 +250,7 @@ function App() {
         workspace={workspace}
         kbName={kbName}
         onSwitchWorkspace={(w) => setWorkspace(w.id)}
-        workspaces={WORKSPACE_FIXTURES}
+        workspaces={workspaceList}
         notifications={notifications}
         unreadCount={unreadCount}
         onMarkAllRead={() =>
@@ -194,8 +261,8 @@ function App() {
       <main>
         {tab === 'documents' && (
           <DocumentsTab
-            docs={DOCUMENT_FIXTURES}
-            thesaurus={THESAURUS_FIXTURES}
+            docs={docList}
+            thesaurus={thesaurusList}
             onOpenAdd={() => setAddOpen(true)}
             onOpenRetag={(d) => setRetagDoc(d)}
             onOpenBulkRetag={(ds) => setRetagBulk(ds)}
@@ -204,7 +271,7 @@ function App() {
         )}
         {tab === 'retrieval' && (
           <RetrievalTab
-            thesaurus={THESAURUS_FIXTURES}
+            thesaurus={thesaurusList}
             answerTokens={ANSWER_TOKENS_FIXTURE}
             answerSources={RETRIEVAL_SOURCES_FIXTURE}
             initialThreads={makeSampleThreads()}
@@ -212,8 +279,8 @@ function App() {
         )}
         {tab === 'activity' && (
           <ActivityTab
-            events={ACTIVITY_FIXTURES}
-            nowMs={ACTIVITY_NOW_MS}
+            events={activityEvents}
+            nowMs={activityNow}
             density={tweaks.density === 'compact' ? 'compact' : 'comfortable'}
             live={tweaks.liveActivity}
             onPushToast={pushToast}
@@ -222,23 +289,23 @@ function App() {
         )}
         {tab === 'graph' && (
           <GraphTab
-            entities={GRAPH_ENTITY_FIXTURES}
-            relations={GRAPH_RELATION_FIXTURES}
+            entities={graphEntityList}
+            relations={graphRelationList}
             onNavigate={onNavigate}
           />
         )}
         {tab === 'api' && (
           <ApiTab
-            apiVersion={API_VERSION}
-            groups={OPENAPI_GROUPS}
+            apiVersion={apiVersion}
+            groups={openApiGroups}
             servers={API_SERVERS}
             baseUrl={API_BASE_URL}
           />
         )}
         {tab === 'tags' && (
           <TagsTab
-            tags={TAG_FIXTURES}
-            categories={TAG_CATEGORY_FIXTURES}
+            tags={tagList}
+            categories={tagCategoryList}
             currentUser={CURRENT_USER}
             onApprove={onTagApprove}
             onCommit={onTagCommit}
@@ -249,7 +316,7 @@ function App() {
 
       <AddSourceModal
         open={addOpen}
-        thesaurus={THESAURUS_FIXTURES}
+        thesaurus={thesaurusList}
         formatCategories={FORMAT_CATEGORY_FIXTURES}
         onClose={() => setAddOpen(false)}
         onSubmit={onAddSourceSubmit}
@@ -258,7 +325,7 @@ function App() {
         open={retagDoc !== null || retagBulk !== null}
         doc={retagDoc}
         docs={retagBulk ?? undefined}
-        thesaurus={THESAURUS_FIXTURES}
+        thesaurus={thesaurusList}
         onClose={() => {
           setRetagDoc(null);
           setRetagBulk(null);
@@ -317,6 +384,14 @@ function App() {
         </TweakSection>
       </TweaksPanel>
     </>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppShell />
+    </QueryClientProvider>
   );
 }
 
