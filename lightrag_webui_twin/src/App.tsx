@@ -8,17 +8,28 @@
  */
 
 import { useEffect, useState } from 'react';
+import { ActivityTab } from './components/ActivityTab';
 import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
+import { ApiTab } from './components/ApiTab';
 import { DocumentsTab } from './components/DocumentsTab';
+import { GraphTab } from './components/GraphTab';
 import { RetagModal, type RetagAction } from './components/RetagModal';
 import { RetrievalTab } from './components/RetrievalTab';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import {
+  ACTIVITY_FIXTURES,
+  ACTIVITY_NOW_MS,
   ANSWER_TOKENS_FIXTURE,
+  API_BASE_URL,
+  API_SERVERS,
+  API_VERSION,
   DOCUMENT_FIXTURES,
   FORMAT_CATEGORY_FIXTURES,
+  GRAPH_ENTITY_FIXTURES,
+  GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
+  OPENAPI_GROUPS,
   RETRIEVAL_SOURCES_FIXTURE,
   THESAURUS_FIXTURES,
   WORKSPACE_FIXTURES,
@@ -78,6 +89,21 @@ function App() {
     });
   };
 
+  const onNavigate = (nextTab: string, params?: Record<string, string>) => {
+    const search = new URLSearchParams(window.location.search);
+    Array.from(search.keys()).forEach((k) => search.delete(k));
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => search.set(k, v));
+    }
+    const qs = search.toString();
+    window.history.replaceState(
+      null,
+      '',
+      window.location.pathname + (qs ? '?' + qs : ''),
+    );
+    setTab(nextTab);
+  };
+
   return (
     <>
       <Topbar
@@ -115,9 +141,32 @@ function App() {
             initialThreads={makeSampleThreads()}
           />
         )}
-        {(tab === 'tags' || tab === 'activity' || tab === 'api') && (
+        {tab === 'activity' && (
+          <ActivityTab
+            events={ACTIVITY_FIXTURES}
+            nowMs={ACTIVITY_NOW_MS}
+            onPushToast={pushToast}
+            onNavigate={onNavigate}
+          />
+        )}
+        {tab === 'graph' && (
+          <GraphTab
+            entities={GRAPH_ENTITY_FIXTURES}
+            relations={GRAPH_RELATION_FIXTURES}
+            onNavigate={onNavigate}
+          />
+        )}
+        {tab === 'api' && (
+          <ApiTab
+            apiVersion={API_VERSION}
+            groups={OPENAPI_GROUPS}
+            servers={API_SERVERS}
+            baseUrl={API_BASE_URL}
+          />
+        )}
+        {tab === 'tags' && (
           <div className="p-6 text-sm text-text-secondary">
-            Tab "{tab}" — coming in S3.
+            Tab "tags" — coming in S3 slice 2.
           </div>
         )}
       </main>
