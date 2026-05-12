@@ -42,6 +42,11 @@ export const RETRIEVAL_SOURCES_FIXTURE: readonly RetrievalSource[] = [
 /**
  * Sample threads. Returns a fresh array each call so callers can mutate
  * without cross-test contamination.
+ *
+ * The first thread carries the FULL ANSWER_TOKENS_FIXTURE + sources so the
+ * Retrieval tab demos a complete, multi-paragraph answer with clickable
+ * citations on first paint — same content the streamed-send path produces
+ * when the user types a query.
  */
 export function makeSampleThreads(): RetrievalThread[] {
   return [
@@ -51,8 +56,15 @@ export function makeSampleThreads(): RetrievalThread[] {
       created: Date.now() - 3_600_000 * 6,
       updated: Date.now() - 3_600_000 * 6,
       messages: [
-        { role: 'user', text: 'How do I restart Oracle RMAN after a failed backup?' },
-        { role: 'assistant', tokens: ['To', ' restart', ' RMAN', '…'], sources: [] },
+        {
+          role: 'user',
+          text: 'How do I restart Oracle RMAN after a failed backup?',
+        },
+        {
+          role: 'assistant',
+          tokens: [...ANSWER_TOKENS_FIXTURE],
+          sources: [...RETRIEVAL_SOURCES_FIXTURE],
+        },
       ],
     },
     {
