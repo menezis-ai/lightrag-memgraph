@@ -30,19 +30,14 @@ The local `.venv` is Python 3.14. Be aware of two known footguns recorded in pro
 - `pytest-asyncio` is in auto mode (`asyncio_mode = "auto"` in `pyproject.toml`). Don't add `@pytest.mark.asyncio` decorators manually.
 
 ```bash
-# Unit tests only (no Memgraph) — what CI runs as the unit-tests job
-pytest tests/test_register.py tests/test_record_to_entry.py tests/test_vector_missing_index.py \
-       tests/test_write_throttle.py tests/test_hooks.py tests/test_buffered_writes.py \
-       tests/test_batch_patch.py tests/test_pool_tuning.py tests/test_use_database.py \
-       tests/test_read_pool.py tests/test_delete_set_coercion.py tests/test_query_modes.py \
-       tests/test_consume_and_drop.py -v
+# Unit tests only (no Memgraph) — what CI runs as the unit-tests job.
+# Marker-based: pytest scans tests/, conftest.py auto-skips @pytest.mark.integration
+# when MEMGRAPH_URI is unset. Picks up intelligence/ + server/ test trees too.
+pytest tests/ --ignore=tests/test_bench.py -v
 
 # All integration tests (real Memgraph required)
 docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:latest
-MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ \
-    --ignore=tests/test_bench.py \
-    --ignore=tests/test_intelligence \
-    --ignore=tests/test_ontology_integration.py -v
+MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
 
 # Single test
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_kv.py::TestMemgraphKVStorage::test_upsert_and_get -v
@@ -66,8 +61,13 @@ SonarQube is permanently available at `http://192.168.1.212:9000` (per project m
 ### CI matrix
 
 CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions, all jobs on the self-hosted `ubuntu-latest-docker` runner:
-- **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9 / 1.4.9.11 / 1.4.10 / 1.4.11 / 1.4.12 (no Memgraph)
+- **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9 / 1.4.9.11 / 1.4.11 / 1.4.12 (no Memgraph). Runs `pytest tests/ --ignore=tests/test_bench.py` — the `@pytest.mark.integration` auto-skip in `conftest.py` keeps storage/e2e tests out when `MEMGRAPH_URI` is unset.
 - **integration-tests**: LightRAG matrix × Memgraph 3.7.2 / 3.8.0 / latest, with a `memgraph` service container. `max-parallel: 5` to keep cold-start within the 60-retry health window. URI: `bolt://memgraph:7687`.
+- **webui-tests**: `bun install --frozen-lockfile && bun run typecheck && bun run test:run && bun run build` on the `lightrag_webui_twin/` Vite project (see "WebUI fork" below). Bun is pinned to `1.3.6` in the workflow — never use `latest` (api.github.com rate limit).
+
+LightRAG `1.4.10` is **dropped** from the matrix (issue #6) — intermittent test failures under integration load, fixed upstream in 1.4.11+.
+
+Branch protection on `main`, `stable/0.5.x`, `stable/0.3.2-lts` requires patterns `CI / unit-tests*`, `CI / integration-tests*`, `CI / webui-tests*` to be green before merge.
 
 A push triggers 1–15 min of CI (global directive §6). Run unit + integration locally first; do not push speculatively.
 
@@ -103,6 +103,24 @@ Pipeline: `F05 Intent → REASON (coref + F03 expansion) → ACT (search + F04 r
 LLM call pattern (project memory): `AsyncOpenAI(api_key=..., base_url=...)` with `response_format={"type": "json_object"}`. Patch target for tests is the **exact module import path** (e.g., `twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI`), not the original `openai.AsyncOpenAI`.
 
 User preference: config files in **JSON, not YAML** (no extra dependency, ecosystem consistency).
+
+### WebUI fork (`lightrag_webui_twin/`)
+
+Sibling Vite + Bun + React 19 + TypeScript strict + Tailwind v3 sub-project. Ports the design proto at `/Users/julien/Desktop/UI/` (untouched reference) into a typed, tested codebase that will eventually serve as the Twin operator console (citations cliquables, UI tag rétroactif, sous-graphe filtré par tag, source isolation badge).
+
+**Roadmap** — S1 (scaffold + 3 leaves + 2 hooks + typed fixtures) and S2 (3 modals + DocumentsTab + RetrievalTab) merged 2026-05-12. S3 (tags / activity / api / graph + CSS class-body port + TweaksPanel) and S4 (real network wiring against backend phase 1) remain. See memory `project_webui_fork.md` for the detailed plan, current state, and pitfalls archive.
+
+**Stack notes:**
+- Bun runs everything: `bun install`, `bun run dev`, `bun run typecheck`, `bun run test:run`, `bun run build`.
+- Vitest config is inline in `vite.config.ts`. `src/test/setup.ts` provisions an **in-memory localStorage** because happy-dom 20.x on Bun does not ship a Storage implementation.
+- Design tokens (`--twin-*`, light + dark) live in `src/styles/tokens.css` as plain CSS variables; `tailwind.config.js` exposes them as utility classes (`bg-twin-accent`, `text-twin-green-700`, etc.).
+- 114 unit tests across 11 test files, ~1.6s. Modals emit typed `*Action` payloads on submit (RetagAction, AddSourceAction) — the host (App.tsx) owns the toast queue and the network call. **No `window.*` globals**; thesaurus / workspaces / notifications are injected via props.
+- Typed fixtures in `src/fixtures/` are the **contract template for backend phase 1**: `/documents`, `/workspaces`, `/notifications`, `/tags`, `/retrieval` endpoints will honor these shapes.
+
+**Tests pitfalls** (also in `project_webui_fork.md`):
+- `userEvent.type(input, 'foo{Enter}')` races on slow CI — split into two calls + `waitFor`.
+- `useModalA11y`'s 30ms autofocus can steal mid-typing keystrokes from a non-first input — wait 60ms + force `.focus()` explicitly before typing.
+- ARIA live regions duplicate visible text; scope `getByText` to a specific container or use `data-testid`.
 
 ## Storage idioms (read these before touching impls)
 
