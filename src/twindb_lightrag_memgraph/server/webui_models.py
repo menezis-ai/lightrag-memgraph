@@ -243,3 +243,65 @@ class GraphRelation(_Base):
 
 class AckResponse(_Base):
     ok: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Tag mutation request bodies (S4c slice 2)
+# ---------------------------------------------------------------------------
+
+
+class TagRequestBody(_Base):
+    """POST /tags — propose a new tag for palier-3 review."""
+
+    tag: str
+    def_: str = Field(alias="def")
+    category: str
+    aliases: list[str] = Field(default_factory=list)
+    justification: str | None = None
+    actor: str | None = None
+    """Optional explicit actor for the audit event. Otherwise 'system'."""
+
+
+class TagEditBody(_Base):
+    """PATCH /tags/{name} — edit a tag in place (palier-3 only)."""
+
+    def_: str | None = Field(default=None, alias="def")
+    category: str | None = None
+    aliases: list[str] | None = None
+    deprecates: list[str] | None = None
+    actor: str | None = None
+
+
+class TagApproveBody(_Base):
+    """POST /tags/{name}/approve."""
+
+    actor: str | None = None
+
+
+class TagRejectBody(_Base):
+    """POST /tags/{name}/reject."""
+
+    reason: str
+    actor: str | None = None
+
+
+class TagDeprecateBody(_Base):
+    """POST /tags/{name}/deprecate."""
+
+    reason: str | None = None
+    actor: str | None = None
+
+
+class TagSynonymsBody(_Base):
+    """POST /tags/{name}/synonyms — replace alias list."""
+
+    aliases: list[str]
+    actor: str | None = None
+
+
+class TagDeleteBody(_Base):
+    """DELETE /tags/{name} body — migration strategy."""
+
+    strategy: Literal["migrate", "untag"] = "untag"
+    to: str | None = None
+    actor: str | None = None

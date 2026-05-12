@@ -118,6 +118,107 @@ export function unwrap<T>(data: { items: readonly T[] } | undefined): readonly T
   return data?.items ?? [];
 }
 
+// ---------------------------------------------------------------------------
+// Tag mutations (S4c slice 2)
+//
+// Every mutation invalidates ['tags'], ['activity'], and ['notifications'] —
+// the WebUI tab queries refetch on next access, so the user sees the new
+// tag state + the synthesized audit event + the unread notification badge
+// without any manual refresh.
+// ---------------------------------------------------------------------------
+
+function invalidateTagSideEffects(qc: ReturnType<typeof useQueryClient>): void {
+  qc.invalidateQueries({ queryKey: ['tags'] });
+  qc.invalidateQueries({ queryKey: ['activity'] });
+  qc.invalidateQueries({ queryKey: ['notifications'] });
+}
+
+export function useRequestTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.requestTag>[0]) =>
+      api.requestTag(body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useApproveTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, actor }: { name: string; actor?: string }) =>
+      api.approveTag(name, actor),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useRejectTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      reason,
+      actor,
+    }: {
+      name: string;
+      reason: string;
+      actor?: string;
+    }) => api.rejectTag(name, { reason, actor }),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useEditTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...body
+    }: { name: string } & Parameters<typeof api.editTag>[1]) =>
+      api.editTag(name, body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useDeprecateTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...body
+    }: { name: string } & Parameters<typeof api.deprecateTag>[1]) =>
+      api.deprecateTag(name, body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useUpdateTagSynonyms() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      aliases,
+      actor,
+    }: {
+      name: string;
+      aliases: readonly string[];
+      actor?: string;
+    }) => api.updateTagSynonyms(name, { aliases, actor }),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
+export function useDeleteTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...body
+    }: { name: string } & Parameters<typeof api.deleteTag>[1]) =>
+      api.deleteTag(name, body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
 // Helper: split a useDocuments() result into shape the DocumentsTab expects
 // (an array). DocumentsTab currently takes `docs: readonly Document[]`.
 export function asDocuments(

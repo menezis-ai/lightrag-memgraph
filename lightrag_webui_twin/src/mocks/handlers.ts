@@ -84,6 +84,130 @@ export const handlers = [
   http.get(`${ANY}/tags`, () => HttpResponse.json(TAG_FIXTURES)),
   http.get(`${ANY}/tags/categories`, () => HttpResponse.json(TAG_CATEGORY_FIXTURES)),
 
+  // Tag mutations — echo a minimal TagEntry shape so the WebUI mutation
+  // hooks resolve. The dev MSW doesn't try to mirror the backend state
+  // machine; it just acks the request. Real persistence happens on the
+  // FastAPI server when `VITE_USE_MSW=false`.
+  http.post(`${ANY}/tags`, async ({ request }) => {
+    const body = (await request.json()) as {
+      tag: string;
+      def: string;
+      category: string;
+    };
+    return HttpResponse.json(
+      {
+        tag: body.tag,
+        tier: 'requested',
+        category: body.category,
+        status: 'pending-review',
+        def: body.def,
+        aliases: [],
+        deprecates: [],
+        sources_count: 0,
+        chunks_count: 0,
+        query_freq_30d: 0,
+        created: { by: 'system', at: '2026-05-13' },
+        last_edit: { by: 'system', at: '2026-05-13', action: 'requested' },
+        related: [],
+        examples: [],
+      },
+      { status: 201 },
+    );
+  }),
+  http.post(`${ANY}/tags/:name/approve`, ({ params }) =>
+    HttpResponse.json({
+      tag: params.name,
+      tier: 3,
+      category: 'infra',
+      status: 'active',
+      def: '',
+      aliases: [],
+      deprecates: [],
+      sources_count: 0,
+      chunks_count: 0,
+      query_freq_30d: 0,
+      created: { by: 'system', at: '2026-05-13' },
+      last_edit: { by: 'system', at: '2026-05-13', action: 'approved' },
+      related: [],
+      examples: [],
+    }),
+  ),
+  http.post(`${ANY}/tags/:name/reject`, ({ params }) =>
+    HttpResponse.json({
+      tag: params.name,
+      tier: 'requested',
+      category: 'infra',
+      status: 'rejected',
+      def: '',
+      aliases: [],
+      deprecates: [],
+      sources_count: 0,
+      chunks_count: 0,
+      query_freq_30d: 0,
+      created: { by: 'system', at: '2026-05-13' },
+      last_edit: { by: 'system', at: '2026-05-13', action: 'rejected' },
+      related: [],
+      examples: [],
+    }),
+  ),
+  http.patch(`${ANY}/tags/:name`, async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      tag: params.name,
+      tier: 1,
+      category: (body.category as string) ?? 'infra',
+      status: 'active',
+      def: (body.def as string) ?? '',
+      aliases: (body.aliases as string[]) ?? [],
+      deprecates: [],
+      sources_count: 0,
+      chunks_count: 0,
+      query_freq_30d: 0,
+      created: { by: 'system', at: '2026-05-13' },
+      last_edit: { by: 'system', at: '2026-05-13', action: 'edited' },
+      related: [],
+      examples: [],
+    });
+  }),
+  http.post(`${ANY}/tags/:name/deprecate`, ({ params }) =>
+    HttpResponse.json({
+      tag: params.name,
+      tier: 1,
+      category: 'infra',
+      status: 'deprecated',
+      def: '',
+      aliases: [],
+      deprecates: [],
+      sources_count: 0,
+      chunks_count: 0,
+      query_freq_30d: 0,
+      created: { by: 'system', at: '2026-05-13' },
+      last_edit: { by: 'system', at: '2026-05-13', action: 'deprecated' },
+      related: [],
+      examples: [],
+    }),
+  ),
+  http.post(`${ANY}/tags/:name/synonyms`, async ({ params, request }) => {
+    const body = (await request.json()) as { aliases: string[] };
+    return HttpResponse.json({
+      tag: params.name,
+      tier: 1,
+      category: 'infra',
+      status: 'active',
+      def: '',
+      aliases: body.aliases,
+      deprecates: [],
+      sources_count: 0,
+      chunks_count: 0,
+      query_freq_30d: 0,
+      created: { by: 'system', at: '2026-05-13' },
+      last_edit: { by: 'system', at: '2026-05-13', action: 'synonyms updated' },
+      related: [],
+      examples: [],
+    });
+  }),
+  http.delete(`${ANY}/tags/:name`, () => HttpResponse.json({ ok: true })),
+
   // Activity
   http.get(`${ANY}/activity`, ({ request }) => {
     const url = new URL(request.url);

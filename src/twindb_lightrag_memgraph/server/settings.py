@@ -137,6 +137,22 @@ class LightRAGServerSettings(BaseSettings):
             "on first init when the workspace KV is empty."
         ),
     )
+    webui_activity_backend: str = Field(
+        default="memory",
+        description=(
+            "Persistence backend for the WebUI /activity audit feed. "
+            "'memory' (default) seeds an in-memory list. 'memgraph' "
+            "persists events as :WebuiActivity_{workspace} nodes."
+        ),
+    )
+    webui_notifications_backend: str = Field(
+        default="memory",
+        description=(
+            "Persistence backend for the WebUI /notifications surface. "
+            "'memory' (default) seeds an in-memory list. 'memgraph' "
+            "persists notifications as :WebuiNotification_{workspace} nodes."
+        ),
+    )
 
     # -- Auth --
     api_key: str | None = Field(

@@ -50,6 +50,81 @@ export const api = {
   listTagCategories: (init?: ApiRequestInit) =>
     apiFetch<readonly TagCategory[]>('/tags/categories', init),
 
+  // Tag mutations (S4c slice 2)
+  requestTag: (
+    body: {
+      tag: string;
+      def: string;
+      category: string;
+      aliases?: readonly string[];
+      justification?: string;
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) => apiFetch<TagEntry>('/tags', { ...init, method: 'POST', body }),
+  approveTag: (name: string, actor?: string, init?: ApiRequestInit) =>
+    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/approve`, {
+      ...init,
+      method: 'POST',
+      body: { actor },
+    }),
+  rejectTag: (
+    name: string,
+    body: { reason: string; actor?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/reject`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  editTag: (
+    name: string,
+    body: {
+      def?: string;
+      category?: string;
+      aliases?: readonly string[];
+      deprecates?: readonly string[];
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}`, {
+      ...init,
+      method: 'PATCH',
+      body,
+    }),
+  deprecateTag: (
+    name: string,
+    body: { reason?: string; actor?: string } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/deprecate`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  updateTagSynonyms: (
+    name: string,
+    body: { aliases: readonly string[]; actor?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/synonyms`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  deleteTag: (
+    name: string,
+    body: { strategy?: 'migrate' | 'untag'; to?: string; actor?: string } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ ok: boolean }>(`/tags/${encodeURIComponent(name)}`, {
+      ...init,
+      method: 'DELETE',
+      body,
+    }),
+
   // Activity audit feed
   listActivity: (
     q: { range?: string; kind?: string; sev?: string; actor?: string; q?: string } = {},

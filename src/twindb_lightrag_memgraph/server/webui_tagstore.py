@@ -39,10 +39,17 @@ logger = logging.getLogger(__name__)
 
 
 class TagStore(Protocol):
-    """Read-only tag governance store. Mutations land in a later slice."""
+    """Tag governance store. Read + mutation surface used by the WebUI router.
+
+    Mutations are async because the Memgraph implementation issues Cypher
+    writes; the in-memory variant matches the signature with no-op awaits.
+    """
 
     def list_tags(self) -> list[dict[str, Any]]: ...
     def list_categories(self) -> list[dict[str, Any]]: ...
+    async def get_tag(self, tag: str) -> dict[str, Any] | None: ...
+    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]: ...
+    async def delete_tag(self, tag: str) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +75,26 @@ class InMemoryTagStore:
 
     def list_categories(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._categories)
+
+    async def get_tag(self, tag: str) -> dict[str, Any] | None:
+        for entry in self._tags:
+            if entry["tag"] == tag:
+                return copy.deepcopy(entry)
+        return None
+
+    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]:
+        name = entry["tag"]
+        for i, existing in enumerate(self._tags):
+            if existing["tag"] == name:
+                self._tags[i] = copy.deepcopy(entry)
+                return copy.deepcopy(self._tags[i])
+        self._tags.append(copy.deepcopy(entry))
+        return copy.deepcopy(entry)
+
+    async def delete_tag(self, tag: str) -> bool:
+        before = len(self._tags)
+        self._tags = [t for t in self._tags if t["tag"] != tag]
+        return len(self._tags) < before
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +198,41 @@ class MemgraphTagStore:
 
     async def list_categories(self) -> list[dict[str, Any]]:
         return await self._read_many(self._cat_label)
+
+    async def get_tag(self, tag: str) -> dict[str, Any] | None:
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"MATCH (n:`{self._tag_label}` {{id: $id}}) RETURN n.data AS data",
+                id=tag,
+            )
+            record = await result.single()
+            await result.consume()
+        if not record or not record.get("data"):
+            return None
+        try:
+            return json.loads(record["data"])
+        except json.JSONDecodeError:
+            return None
+
+    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]:
+        if "tag" not in entry:
+            raise ValueError("upsert_tag requires entry['tag']")
+        await self._write_many(self._tag_label, "tag", [entry])
+        return copy.deepcopy(entry)
+
+    async def delete_tag(self, tag: str) -> bool:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{self._tag_label}` {{id: $id}}) "
+                    "WITH n, count(n) AS c "
+                    "DETACH DELETE n "
+                    "RETURN c",
+                    id=tag,
+                )
+                record = await result.single()
+                await result.consume()
+        return bool(record and record.get("c", 0) > 0)
 
     # -- Internals ---------------------------------------------------
 
