@@ -152,26 +152,46 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         create_chunk_routes(_rag)
         logger.info("L2 patch applied (chunk/document routes)")
 
-        # -- L2 Patch: WebUI tag backend --
-        if settings.enable_webui_routes and settings.webui_tag_backend == "memgraph":
+        # -- L2 Patch: WebUI store backends (S4c) --
+        if settings.enable_webui_routes:
             from .webui_router import WebuiStore, set_store
+            from .webui_activitystore import make_memgraph_activity_store
+            from .webui_notificationstore import make_memgraph_notification_store
             from .webui_tagstore import make_memgraph_store
 
             workspace = settings.workspace or "default"
-            tag_backend = await make_memgraph_store(workspace=workspace)
             store = WebuiStore.from_seed()
-            store._tag_backend = tag_backend  # noqa: SLF001 — module-internal swap
-            set_store(store)
-            logger.info(
-                "L2 patch applied (WebUI tag backend = Memgraph, workspace=%s)",
-                workspace,
-            )
+            backends_applied: list[str] = []
+            if settings.webui_tag_backend == "memgraph":
+                store._tag_backend = await make_memgraph_store(workspace=workspace)  # noqa: SLF001
+                backends_applied.append("tags")
+            if settings.webui_activity_backend == "memgraph":
+                store._activity_backend = await make_memgraph_activity_store(  # noqa: SLF001
+                    workspace=workspace
+                )
+                backends_applied.append("activity")
+            if settings.webui_notifications_backend == "memgraph":
+                store._notification_backend = await make_memgraph_notification_store(  # noqa: SLF001
+                    workspace=workspace
+                )
+                backends_applied.append("notifications")
+            if backends_applied:
+                set_store(store)
+                logger.info(
+                    "L2 patch applied (WebUI Memgraph backends: %s, workspace=%s)",
+                    ", ".join(backends_applied),
+                    workspace,
+                )
 
         yield
 
         # -- Shutdown --
         _rag = None
-        if settings.enable_webui_routes and settings.webui_tag_backend == "memgraph":
+        if settings.enable_webui_routes and (
+            settings.webui_tag_backend == "memgraph"
+            or settings.webui_activity_backend == "memgraph"
+            or settings.webui_notifications_backend == "memgraph"
+        ):
             from .webui_router import reset_store
 
             reset_store()

@@ -40,14 +40,21 @@ import {
 } from './components/TweaksPanel';
 import {
   useActivity,
+  useApproveTag,
+  useDeleteTag,
+  useDeprecateTag,
   useDocuments,
+  useEditTag,
   useGraphEntities,
   useGraphRelations,
   useNotifications,
   useOpenApi,
+  useRejectTag,
+  useRequestTag,
   useTagCategories,
   useTags,
   useThesaurus,
+  useUpdateTagSynonyms,
   useWorkspaces,
 } from './api/queries';
 import {
@@ -167,19 +174,94 @@ function AppShell() {
     });
   };
 
+  // Tag mutations — call the backend through TanStack Query. Each mutation
+  // invalidates ['tags']+['activity']+['notifications'] on success so the
+  // operator sees the new state + audit event + notification on refetch.
+  // The host still pushes a local toast so the action feels instant; the
+  // toast title mirrors what the backend would emit as `last_edit.action`.
+  const requestTag = useRequestTag();
+  const approveTag = useApproveTag();
+  const rejectTag = useRejectTag();
+  const editTag = useEditTag();
+  const deprecateTag = useDeprecateTag();
+  const updateSynonyms = useUpdateTagSynonyms();
+  const deleteTag = useDeleteTag();
+
   const onTagApprove = (action: TagApproveAction) => {
+    approveTag.mutate({ name: action.tag.tag, actor: CURRENT_USER.name });
     pushToast({
       kind: 'done',
       title: 'Tag',
       tagname: action.tag.tag,
       titleSuffix: 'approved',
-      sub: 'Added to thesaurus · tag.approved emitted',
-      undo: { tag: action.tag.tag },
+      sub: 'Added to thesaurus · Tier 3',
     });
   };
 
   const onTagCommit = (commit: TagActionCommit) => {
     const tagname = commit.tag?.tag ?? commit.name ?? '';
+    const actor = CURRENT_USER.name;
+    switch (commit.kind) {
+      case 'edit':
+        editTag.mutate({ name: tagname, actor });
+        break;
+      case 'suggest':
+        // No backend endpoint for "suggest" yet — surface as a request.
+        if (commit.tag) {
+          requestTag.mutate({
+            tag: commit.tag.tag,
+            def: commit.tag.def,
+            category: commit.tag.category,
+            actor,
+            justification: 'suggested edit',
+          });
+        }
+        break;
+      case 'synonyms':
+        if (commit.tag) {
+          updateSynonyms.mutate({
+            name: tagname,
+            aliases: commit.newSynonym
+              ? [...commit.tag.aliases, commit.newSynonym]
+              : commit.tag.aliases,
+            actor,
+          });
+        }
+        break;
+      case 'deprecate':
+        deprecateTag.mutate({ name: tagname, actor });
+        break;
+      case 'delete':
+        deleteTag.mutate({
+          name: tagname,
+          strategy: commit.migrate?.strategy ?? 'untag',
+          to: commit.migrate?.to,
+          actor,
+        });
+        break;
+      case 'reject':
+        rejectTag.mutate({
+          name: tagname,
+          reason: commit.reason || 'rejected',
+          actor,
+        });
+        break;
+      case 'edit-approve':
+        approveTag.mutate({ name: tagname, actor });
+        break;
+      case 'request':
+        if (commit.name) {
+          requestTag.mutate({
+            tag: commit.name,
+            def: commit.tag?.def ?? '',
+            category: commit.tag?.category ?? 'infra',
+            actor,
+          });
+        }
+        break;
+    }
+    // Local toast so the action feels instant; the synthesized backend event
+    // also lands on /activity which the Activity tab will surface on refetch.
     const verbMap: Record<TagActionCommit['kind'], string> = {
       edit: 'definition updated',
       suggest: 'edit suggested',
@@ -193,22 +275,12 @@ function AppShell() {
       'edit-approve': 'approved (edited)',
       request: 'requested for review',
     };
-    const subMap: Record<TagActionCommit['kind'], string> = {
-      edit: 'tag.edited emitted to Activity',
-      suggest: 'Awaiting palier-3 review',
-      synonyms: 'Query rewriting refreshed at gateway',
-      deprecate: `${commit.tag?.sources_count ?? 0} docs flagged · tag.deprecated emitted`,
-      delete: `${commit.tag?.sources_count ?? 0} docs updated · tag.deleted emitted`,
-      reject: commit.reason ?? 'tag.rejected emitted · author notified',
-      'edit-approve': 'Added to thesaurus · tag.approved emitted',
-      request: 'Queued for palier-3 approval · tag.request_new emitted',
-    };
     pushToast({
       kind: 'done',
       title: 'Tag',
       tagname,
       titleSuffix: verbMap[commit.kind],
-      sub: subMap[commit.kind],
+      sub: commit.reason ?? '',
     });
   };
 
