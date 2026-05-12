@@ -127,6 +127,16 @@ class LightRAGServerSettings(BaseSettings):
             "False to expose only the LightRAG core endpoints."
         ),
     )
+    webui_tag_backend: str = Field(
+        default="memory",
+        description=(
+            "Persistence backend for WebUI tag governance. 'memory' (default) "
+            "keeps tags + categories in the seed-loaded in-process store. "
+            "'memgraph' persists them as :WebuiTag_{workspace} / "
+            ":WebuiTagCategory_{workspace} nodes and bootstraps from the seed "
+            "on first init when the workspace KV is empty."
+        ),
+    )
 
     # -- Auth --
     api_key: str | None = Field(

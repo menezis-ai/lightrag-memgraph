@@ -43,6 +43,10 @@ from .webui_models import (
     ThesaurusEntry,
     Workspace,
 )
+from .webui_tagstore import (
+    InMemoryTagStore,
+    MemgraphTagStore,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +76,7 @@ class WebuiStore:
         openapi_version: str,
         graph_entities: list[dict[str, Any]],
         graph_relations: list[dict[str, Any]],
+        tag_backend: InMemoryTagStore | MemgraphTagStore | None = None,
     ) -> None:
         self._documents = documents
         self._workspaces = workspaces
@@ -85,6 +90,13 @@ class WebuiStore:
         self._openapi_version = openapi_version
         self._graph_entities = graph_entities
         self._graph_relations = graph_relations
+        # Default: in-memory backend seeded from the same lists held above.
+        # Pass a MemgraphTagStore instance to route reads through Memgraph.
+        self._tag_backend: InMemoryTagStore | MemgraphTagStore = (
+            tag_backend
+            if tag_backend is not None
+            else InMemoryTagStore(tags=tags, categories=tag_categories)
+        )
         self._lock = threading.Lock()
 
     # -- Construction ---------------------------------------------------
@@ -148,11 +160,17 @@ class WebuiStore:
     def list_thesaurus(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._thesaurus)
 
-    def list_tags(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self._tags)
+    async def list_tags(self) -> list[dict[str, Any]]:
+        backend = self._tag_backend
+        if isinstance(backend, MemgraphTagStore):
+            return await backend.list_tags()
+        return backend.list_tags()
 
-    def list_tag_categories(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self._tag_categories)
+    async def list_tag_categories(self) -> list[dict[str, Any]]:
+        backend = self._tag_backend
+        if isinstance(backend, MemgraphTagStore):
+            return await backend.list_categories()
+        return backend.list_categories()
 
     # -- Activity ------------------------------------------------------
 
@@ -273,12 +291,12 @@ async def list_thesaurus() -> list[dict[str, Any]]:
 
 @router.get("/tags", response_model=list[TagEntry])
 async def list_tags() -> list[dict[str, Any]]:
-    return get_store().list_tags()
+    return await get_store().list_tags()
 
 
 @router.get("/tags/categories", response_model=list[TagCategory])
 async def list_tag_categories() -> list[dict[str, Any]]:
-    return get_store().list_tag_categories()
+    return await get_store().list_tag_categories()
 
 
 @router.get("/activity", response_model=ActivityEnvelope)
