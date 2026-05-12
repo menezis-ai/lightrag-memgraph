@@ -247,6 +247,13 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # -- Chunk routes (auth-protected) --
     app.include_router(chunk_router, dependencies=[Depends(require_auth)])
 
+    # -- WebUI phase-1 surface (auth-protected) --
+    if settings.enable_webui_routes:
+        from .webui_router import router as webui_router
+
+        app.include_router(webui_router, dependencies=[Depends(require_auth)])
+        logger.info("L2 patch applied (WebUI phase-1 router)")
+
     return app
 
 
