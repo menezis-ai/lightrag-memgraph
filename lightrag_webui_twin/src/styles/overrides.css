@@ -28,3 +28,15 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+/* AddSourceModal dropzone — the proto'\''s `.dropzone` transitions border
+ * and background over 160ms on hover. The format-info tooltip is
+ * absolutely positioned below the info icon, extending past the dropzone'\''s
+ * bottom edge. When the mouse moves from the info icon down into the
+ * tooltip, it crosses the dropzone boundary, flipping `.dropzone:hover`
+ * off and replaying the transition. Result: visible "tremblement" of the
+ * dropzone border + background. Kill the transition so the hover state
+ * still applies but the toggle is instant. */
+.dropzone {
+  transition: none;
+}
