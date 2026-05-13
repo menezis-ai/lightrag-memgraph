@@ -32,13 +32,6 @@ import type { TagActionCommit } from './components/TagActionModal';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import {
-  TweakSection,
-  TweakSlider,
-  TweakToggle,
-  TweaksPanel,
-  useTweaks,
-} from './components/TweaksPanel';
-import {
   useActivity,
   useApproveTag,
   useDeleteTag,
@@ -102,12 +95,6 @@ function AppShell() {
   const [theme, setTheme] = useState<Theme>('light');
   const [workspace, setWorkspace] = useState('cib');
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [tweaks, setTweak] = useTweaks({
-    density: 'regular' as 'compact' | 'regular' | 'comfy',
-    fontSize: 14,
-    liveActivity: true,
-  });
 
   // Modal state
   const [addOpen, setAddOpen] = useState(false);
@@ -313,7 +300,7 @@ function AppShell() {
   const graphRelationList = graphRelations.data ?? GRAPH_RELATION_FIXTURES;
 
   return (
-    <>
+    <div className="app">
       <Topbar
         tab={tab}
         onTab={setTab}
@@ -330,60 +317,69 @@ function AppShell() {
         }
         onClearNotifications={() => setNotifications([])}
       />
-      <main>
-        {tab === 'documents' && (
-          <DocumentsTab
-            docs={docList}
-            thesaurus={thesaurusList}
-            onOpenAdd={() => setAddOpen(true)}
-            onOpenRetag={(d) => setRetagDoc(d)}
-            onOpenBulkRetag={(ds) => setRetagBulk(ds)}
-            onAddToast={onAddToast}
-          />
-        )}
-        {tab === 'retrieval' && (
-          <RetrievalTab
-            thesaurus={thesaurusList}
-            answerTokens={ANSWER_TOKENS_FIXTURE}
-            answerSources={RETRIEVAL_SOURCES_FIXTURE}
-            initialThreads={makeSampleThreads()}
-          />
-        )}
-        {tab === 'activity' && (
-          <ActivityTab
-            events={activityEvents}
-            nowMs={activityNow}
-            density={tweaks.density === 'compact' ? 'compact' : 'comfortable'}
-            live={tweaks.liveActivity}
-            onPushToast={pushToast}
-            onNavigate={onNavigate}
-          />
-        )}
-        {tab === 'graph' && (
-          <GraphTab
-            entities={graphEntityList}
-            relations={graphRelationList}
-            onNavigate={onNavigate}
-          />
-        )}
-        {tab === 'api' && (
-          <ApiTab
-            apiVersion={apiVersion}
-            groups={openApiGroups}
-            servers={API_SERVERS}
-            baseUrl={API_BASE_URL}
-          />
-        )}
-        {tab === 'tags' && (
-          <TagsTab
-            tags={tagList}
-            categories={tagCategoryList}
-            currentUser={CURRENT_USER}
-            onApprove={onTagApprove}
-            onCommit={onTagCommit}
-            onNavigate={onNavigate}
-          />
-        )}
+      <main
+        style={{
+          flex: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          position: 'relative',
+        }}
+      >
+        <div className="tab-pane" key={tab}>
+          {tab === 'documents' && (
+            <DocumentsTab
+              docs={docList}
+              thesaurus={thesaurusList}
+              onOpenAdd={() => setAddOpen(true)}
+              onOpenRetag={(d) => setRetagDoc(d)}
+              onOpenBulkRetag={(ds) => setRetagBulk(ds)}
+              onAddToast={onAddToast}
+            />
+          )}
+          {tab === 'retrieval' && (
+            <RetrievalTab
+              thesaurus={thesaurusList}
+              answerTokens={ANSWER_TOKENS_FIXTURE}
+              answerSources={RETRIEVAL_SOURCES_FIXTURE}
+              initialThreads={makeSampleThreads()}
+            />
+          )}
+          {tab === 'activity' && (
+            <ActivityTab
+              events={activityEvents}
+              nowMs={activityNow}
+              density="comfortable"
+              live={true}
+              onPushToast={pushToast}
+              onNavigate={onNavigate}
+            />
+          )}
+          {tab === 'graph' && (
+            <GraphTab
+              entities={graphEntityList}
+              relations={graphRelationList}
+              onNavigate={onNavigate}
+            />
+          )}
+          {tab === 'api' && (
+            <ApiTab
+              apiVersion={apiVersion}
+              groups={openApiGroups}
+              servers={API_SERVERS}
+              baseUrl={API_BASE_URL}
+            />
+          )}
+          {tab === 'tags' && (
+            <TagsTab
+              tags={tagList}
+              categories={tagCategoryList}
+              currentUser={CURRENT_USER}
+              onApprove={onTagApprove}
+              onCommit={onTagCommit}
+              onNavigate={onNavigate}
+            />
+          )}
+        </div>
       </main>
 
       <AddSourceModal
@@ -413,49 +409,7 @@ function AppShell() {
           setToasts((ts) => ts.filter((x) => x.id !== t.id))
         }
       />
-      <button
-        type="button"
-        className="tweaks-fab"
-        onClick={() => setTweaksOpen((o) => !o)}
-        aria-label="Open dev tweaks"
-        title="Dev tweaks (T)"
-        style={{
-          position: 'fixed',
-          right: 12,
-          top: 60,
-          zIndex: 2147483645,
-          width: 28,
-          height: 28,
-          borderRadius: 6,
-          border: '0.5px solid var(--color-border-secondary, #ddd)',
-          background: 'var(--color-background-primary, #fff)',
-          color: 'var(--color-text-secondary, #555)',
-          cursor: 'pointer',
-          fontSize: 14,
-        }}
-      >
-        ⚙
-      </button>
-      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} title="Twin tweaks">
-        <TweakSection label="Activity feed">
-          <TweakToggle
-            label="Live polling"
-            value={tweaks.liveActivity}
-            onChange={(v) => setTweak('liveActivity', v)}
-          />
-        </TweakSection>
-        <TweakSection label="Display">
-          <TweakSlider
-            label="Font size"
-            value={tweaks.fontSize}
-            min={11}
-            max={18}
-            unit="px"
-            onChange={(v) => setTweak('fontSize', v)}
-          />
-        </TweakSection>
-      </TweaksPanel>
-    </>
+    </div>
   );
 }
 

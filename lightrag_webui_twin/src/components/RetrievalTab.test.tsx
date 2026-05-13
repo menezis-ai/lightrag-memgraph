@@ -132,10 +132,10 @@ describe('RetrievalTab — send', () => {
 });
 
 describe('RetrievalTab — localStorage persistence', () => {
-  it('writes to twin-rag.threads when threads change', async () => {
+  it('writes to twin-rag.threads.v2 when threads change', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     // localStorage should be populated by the initial effect
-    const raw = window.localStorage.getItem('twin-rag.threads');
+    const raw = window.localStorage.getItem('twin-rag.threads.v2');
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw as string);
     expect(parsed).toHaveLength(2);
@@ -143,7 +143,7 @@ describe('RetrievalTab — localStorage persistence', () => {
 
   it('reads from localStorage on init when present', () => {
     window.localStorage.setItem(
-      'twin-rag.threads',
+      'twin-rag.threads.v2',
       JSON.stringify([
         {
           id: 'th_stored',
