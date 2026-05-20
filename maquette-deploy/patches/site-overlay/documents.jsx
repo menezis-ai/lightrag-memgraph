@@ -11,9 +11,32 @@ const STATUS_LABELS = {
 
 // Current user palier (matches MOCK_CURRENT_USER). Palier ≥ 3 can approve/
 // reject documents in the steward review queue (mirrors the tag governance
-// flow in tags.jsx).
-const _DOC_CURRENT_USER = (typeof window !== "undefined" && window.MOCK_CURRENT_USER) || { palier: 3, name: "claire.benoit" };
-const _docCanReview = _DOC_CURRENT_USER.palier >= 3;
+// flow in tags.jsx). Palier 2 (contributor) sees the queue read-only with
+// an "Awaiting palier-3 review" caption — same UX as the Tag Pending
+// requests block. Palier 1 (reader) doesn't see the section at all.
+//
+// Demo override: append `?palier=1|2|3` to the URL to switch perspective
+// without rebuilding MOCK_CURRENT_USER. Lets us show Vihn what the
+// contributor view looks like vs the steward view in the same session.
+const _DOC_MOCK_USER = (typeof window !== "undefined" && window.MOCK_CURRENT_USER) || { palier: 3, name: "claire.benoit" };
+// Demo override: ?palier=1|2|3 in the URL flips the perspective. Useful to
+// show Vihn the contributor view vs the steward view in the same session.
+// Each palier maps to a representative handle that owns the seeded pending
+// submissions (marc.berthier owns d13 = cft-vendor-api-spec-draft.pdf,
+// yann.dubois owns d14 = incident-2026-Q2-postmortem-draft) so the "your
+// submission" badge actually lights up in palier-2 mode.
+const _PALIER_HANDLE = { 1: "philippe.marchand", 2: "marc.berthier", 3: "claire.benoit" };
+const _palierOverride = (() => {
+  if (typeof window === "undefined") return null;
+  const p = new URLSearchParams(window.location.search).get("palier");
+  const n = parseInt(p, 10);
+  return (n === 1 || n === 2 || n === 3) ? n : null;
+})();
+const _docPalier = _palierOverride != null ? _palierOverride : _DOC_MOCK_USER.palier;
+const _docHandle = _palierOverride != null ? _PALIER_HANDLE[_palierOverride] : (_DOC_MOCK_USER.name || "claire.benoit").toLowerCase().replace(/\s+/g, ".");
+const _DOC_CURRENT_USER = { palier: _docPalier, name: _docHandle };
+const _docCanReview = _docPalier >= 3;
+const _docCanSeeQueue = _docPalier >= 2;
 
 window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd, onOpenRetag, onOpenBulkRetag, onAddToast, onLoadDemo }) {
   const sys = window.useReadOnly ? window.useReadOnly() : { effectiveReadOnly: false, readOnlyReason: "" };
@@ -209,33 +232,48 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
         </div>
       </div>
 
-      {pendingDocs.length > 0 && _docCanReview && (
+      {pendingDocs.length > 0 && _docCanSeeQueue && (
         <div className={"pending-section " + (pendingOpen ? "is-open" : "")}>
           <button className="pending-h" onClick={() => setPendingOpen(o => !o)}>
             <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
             <span className="pending-title">Pending review</span>
-            <span className="pending-counts"><b>{pendingDocs.length}</b> document{pendingDocs.length > 1 ? "s" : ""} awaiting steward sign-off</span>
+            <span className="pending-counts">
+              <b>{pendingDocs.length}</b> document{pendingDocs.length > 1 ? "s" : ""}{" "}
+              {_docCanReview ? "awaiting your sign-off" : "awaiting palier-3 review"}
+            </span>
             <Icon name="chevron-down" size={14} color="var(--color-text-tertiary)" style={{ transform: pendingOpen ? "none" : "rotate(-90deg)", transition: "transform .15s" }} />
           </button>
           {pendingOpen && (
             <div className="pending-grid">
-              {pendingDocs.map(d => (
-                <div key={d.id} className="pending-card requested">
-                  <div className="pending-card-h">
-                    <code className="pending-tagname">{d.source}</code>
-                    <span className="status-badge status-pending sm">Pending review</span>
+              {pendingDocs.map(d => {
+                const mine = d.review && d.review.requested_by === _DOC_CURRENT_USER.name;
+                return (
+                  <div key={d.id} className="pending-card requested">
+                    <div className="pending-card-h">
+                      <code className="pending-tagname">{d.source}</code>
+                      <span className="status-badge status-pending sm">Pending review</span>
+                      {mine && !_docCanReview && (
+                        <span className="status-badge sm" style={{ background: "var(--twin-accent-soft-bg)", color: "var(--twin-accent-soft-text)", marginLeft: 4 }}>your submission</span>
+                      )}
+                    </div>
+                    <div className="pending-justif">{d.review && d.review.justification}</div>
+                    <div className="pending-meta">
+                      Submitted by <b>{d.review && d.review.requested_by}</b> · {d.review && d.review.requested_at} · {d.chunks ? d.chunks + " chunks" : "—"} · tags <code>{(d.tags || []).join(", ") || "—"}</code>
+                    </div>
+                    {_docCanReview ? (
+                      <div className="pending-actions">
+                        <button className="primary-btn small" onClick={() => approveDoc(d)}>Approve</button>
+                        <button className="ghost-btn small" onClick={() => editAndApproveDoc(d)}>Edit &amp; approve</button>
+                        <button className="ghost-btn small danger" onClick={() => { setRejectDoc(d); setRejectReason(""); }}>Reject</button>
+                      </div>
+                    ) : (
+                      <div className="pending-actions">
+                        <span className="muted">Awaiting palier-3 review · you'll be notified when a steward signs off</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="pending-justif">{d.review && d.review.justification}</div>
-                  <div className="pending-meta">
-                    Submitted by <b>{d.review && d.review.requested_by}</b> · {d.review && d.review.requested_at} · {d.chunks ? d.chunks + " chunks" : "—"} · tags <code>{(d.tags || []).join(", ") || "—"}</code>
-                  </div>
-                  <div className="pending-actions">
-                    <button className="primary-btn small" onClick={() => approveDoc(d)}>Approve</button>
-                    <button className="ghost-btn small" onClick={() => editAndApproveDoc(d)}>Edit &amp; approve</button>
-                    <button className="ghost-btn small danger" onClick={() => { setRejectDoc(d); setRejectReason(""); }}>Reject</button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
