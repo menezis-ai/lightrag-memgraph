@@ -275,7 +275,7 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
           >
             <div className="modal-h">
               <h3 id="clear-title">Clear activity events</h3>
-              <div className="modal-h-sub">Palier 3 · admin action</div>
+              <div className="modal-h-sub">Steward · admin action</div>
               <button className="modal-x" onClick={() => setClearOpen(false)} aria-label="Close dialog"><Icon name="x" size={14} /></button>
             </div>
             <div className="modal-body">

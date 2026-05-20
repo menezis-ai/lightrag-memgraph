@@ -25,3 +25,61 @@
 body {
   font-size: 14px;
 }
+
+/* ── QW1: Topbar 3-col flex layout ──────────────────────────────────
+ * Proto centers `.tabs` via `position: absolute; left: 50%` while
+ * brand and topbar-right both claim `flex: 1`. When kb name is long
+ * or topbar-right is fully populated (sys indicator + workspace pill +
+ * bell + theme), the absolute tabs overlap the brand or the right
+ * cluster at 1366px. Replace with proper 3-col flow where tabs is the
+ * flex-grow:1 middle slot and brand/topbar-right reserve only their
+ * natural width. */
+.topbar .brand { flex: 0 0 auto; }
+.tabs {
+  position: static;
+  left: auto;
+  transform: none;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+.topbar-right { flex: 0 0 auto; margin-left: 0; }
+
+/* ── QW2: Query mode info tooltip ───────────────────────────────────
+ * Naive/local/global/hybrid/mix/bypass are LightRAG internals; raw
+ * exposure to operators creates jargon friction. Adds a click-anchored
+ * popover next to the "Query mode" label, listing one line per mode.
+ * Uses the proto's existing .tooltip + .tooltip-row primitives. */
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.field-label-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.info-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+.info-btn:hover,
+.info-btn[aria-expanded="true"] { color: var(--twin-accent); }
+.query-mode-tooltip {
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  min-width: 320px;
+}
+.query-mode-tooltip .tooltip-row { grid-template-columns: 60px 1fr; }
+.query-mode-tooltip .tooltip-row .desc {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}

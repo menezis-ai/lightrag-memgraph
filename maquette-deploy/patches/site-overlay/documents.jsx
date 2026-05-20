@@ -239,7 +239,7 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
             <span className="pending-title">Pending review</span>
             <span className="pending-counts">
               <b>{pendingDocs.length}</b> document{pendingDocs.length > 1 ? "s" : ""}{" "}
-              {_docCanReview ? "awaiting your sign-off" : "awaiting palier-3 review"}
+              {_docCanReview ? "awaiting your sign-off" : "awaiting steward review"}
             </span>
             <Icon name="chevron-down" size={14} color="var(--color-text-tertiary)" style={{ transform: pendingOpen ? "none" : "rotate(-90deg)", transition: "transform .15s" }} />
           </button>
@@ -268,7 +268,7 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
                       </div>
                     ) : (
                       <div className="pending-actions">
-                        <span className="muted">Awaiting palier-3 review · you'll be notified when a steward signs off</span>
+                        <span className="muted">Awaiting steward review · you'll be notified when a steward signs off</span>
                       </div>
                     )}
                   </div>

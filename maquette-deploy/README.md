@@ -95,6 +95,16 @@ Appended to the bundle's `styles.css` at build time. Covers:
   `lightrag_webui_twin/src/styles/overrides.css` (PR #27 on stable/0.5.x).
 - **Base font bump** — `body { font-size: 14px }` (was 13px). Operator
   feedback on 4K displays.
+- **QW1 Topbar 3-col flex** — proto pins `.tabs` with `position: absolute;
+  left: 50%` while `.brand` and `.topbar-right` both grab `flex: 1`. At
+  1366px with a long kb name + a fully-populated right cluster (sys
+  indicator + workspace pill + bell + theme) the absolute tabs overlap
+  the surrounding zones. Override drops the absolute positioning and
+  switches to a 3-col flow where tabs is the flex-grow middle slot.
+- **QW2 Query mode info button** — adds `.field-label-info / .info-btn /
+  .query-mode-tooltip` so the Retrieval params panel can render an
+  anchored popover next to the "Query mode" select (see
+  `patches/site-overlay/retrieval.jsx`).
 
 ### `patches/site-overlay/`
 Whole-file overlays that ship on top of the bundle's same-named files
@@ -114,7 +124,22 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
 - **`data.js`** — adds two pending-review documents (`d13`, `d14`) for
   demo purposes + two seeded `doc-review` activity events (approve +
   reject) at the top of `MOCK_ACTIVITY` so the audit trail is visible
-  on first load.
+  on first load. UX rewording sweep (QW5) also lands here: a few mock
+  strings that surfaced `palier 1/2/3` switch to the UI-facing
+  `Reader / Contributor / Steward` vocabulary the BNP audience reads.
+- **`retrieval.jsx`** *(QW2)* — adds the `QueryModeInfo` popover next
+  to the "Query mode" label so operators don't have to learn what
+  `naive / local / global / hybrid / mix / bypass` mean from context.
+- **`tags.jsx`** *(QW4 + QW5)* — adds the missing `Rejected` option to
+  the status filter and switches `palier 1/2/3` wording to
+  `Reader / Contributor / Steward` (incl. the role pill, pending-review
+  captions, request modal copy, and read-only hints). The internal
+  `palier` integer is preserved as the back-end / API contract; the
+  rename only touches what an operator reads on screen.
+- **`api.jsx`** *(QW5)* — `Scopes: ...(palier 2+)` becomes
+  `Scopes: ...(Contributor or Steward)`.
+- **`system-status.jsx`** *(QW5)* — the LLM-quota banner CTA now says
+  `Steward only` instead of `palier 3`.
 
 When the designer ships a new Sweden bundle, re-`cp` the same overlay
 files from `~/Downloads/design_twinrag_backend/` after applying the
