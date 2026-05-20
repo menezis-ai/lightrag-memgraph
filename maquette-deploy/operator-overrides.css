@@ -316,3 +316,20 @@ body {
   color: #fff;
   border-color: var(--twin-accent);
 }
+
+/* ── #36: Documents Scan vs Pipeline badge differentiation ──────────
+ * Proto rendered both Scan (failed count) and Pipeline (processing
+ * count) chips as accent-colored pills with no separator → two
+ * identical-looking dots side-by-side reading as "two alerts". Scan
+ * is actionable (something failed), Pipeline is informational (live
+ * processing count). Recolor Pipeline to neutral, keep Scan red, and
+ * add a vertical separator so the eye groups them as distinct
+ * concerns. */
+.docs-header-actions .btn:not(.btn-retry) .pipeline-badge {
+  background: var(--color-text-secondary);
+}
+.docs-header-actions > div:has(> .btn .pipeline-badge) {
+  border-left: 0.5px solid var(--color-border-tertiary);
+  padding-left: 10px;
+  margin-left: 4px;
+}
