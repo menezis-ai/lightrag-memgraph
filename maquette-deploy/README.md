@@ -82,10 +82,40 @@ Cloudflare → `maquette.sigilum.fr` `A` → `37.59.104.111` · proxy **off**
 (grey cloud — required so Caddy/Traefik can pass the ACME HTTP-01
 challenge for Let's Encrypt).
 
-## Known patches kept inside the Sweden bundle's source
+## Patch overlays
 
-Back-port of the **widescreen fill fix** appended to `styles.css`:
-`.docs` and `.retrieval` get `flex: 1; min-width: 0` so the Documents
-and Retrieval tabs span the full viewport width instead of leaving a
-~50% dead stripe on the right. Equivalent fix is also in the React port
-at `lightrag_webui_twin/src/styles/overrides.css` (PR #27).
+Operator-side deviations from the designer's Sweden bundle are versioned
+in this folder so the source bundle stays pristine. Two kinds:
+
+### `operator-overrides.css`
+Appended to the bundle's `styles.css` at build time. Covers:
+- **Widescreen fill fix** — `.docs` and `.retrieval` get `flex: 1; min-width: 0`
+  so they span the full viewport on wide displays (proto leaves a ~50%
+  dead stripe). Equivalent fix is also in the React port at
+  `lightrag_webui_twin/src/styles/overrides.css` (PR #27 on stable/0.5.x).
+- **Base font bump** — `body { font-size: 14px }` (was 13px). Operator
+  feedback on 4K displays.
+
+### `patches/site-overlay/`
+Whole-file overlays that ship on top of the bundle's same-named files
+(`COPY patches/site-overlay/ /srv/` runs after `COPY site/ /srv/`). Used
+when a feature is too logic-heavy for a CSS-only delta. Current overlays:
+
+- **`documents.jsx`** — adds the **steward review queue** at the top of
+  the Documents tab: cards for docs flagged `review.state == "pending-review"`,
+  with **Approve / Edit & approve / Reject** actions (palier-3 only). Reject
+  opens an inline modal with a required reason. Mirrors the tag-governance
+  flow in `tags.jsx`. Pending docs are excluded from the main grid + the
+  status pill counters so the visible totals stay coherent.
+- **`activity.jsx`** — adds the `doc-review` kind to the activity feed's
+  `KIND_META` (icon: `circle-check`, color: accent). Doc-review events
+  (approve/reject) emitted by the steward queue surface in the Activity
+  tab alongside tag mutations, retrievals, etc.
+- **`data.js`** — adds two pending-review documents (`d13`, `d14`) for
+  demo purposes + two seeded `doc-review` activity events (approve +
+  reject) at the top of `MOCK_ACTIVITY` so the audit trail is visible
+  on first load.
+
+When the designer ships a new Sweden bundle, re-`cp` the same overlay
+files from `~/Downloads/design_twinrag_backend/` after applying the
+relevant patches manually, OR re-derive them from a fresh bundle.
