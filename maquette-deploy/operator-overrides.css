@@ -333,3 +333,21 @@ body {
   padding-left: 10px;
   margin-left: 4px;
 }
+
+/* ── #46: API tab — MOCK banner above every rendered response ───────
+ * The Swagger-like response panel renders mock fixture JSON identically
+ * to a real call. Future devs / new stakeholders viewing the demo can
+ * believe the call hit a live backend. Banner sits above the response
+ * header in amber to make the fixture status unambiguous. */
+.swagger-mock-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 9%, var(--color-background-primary));
+  border-bottom: 0.5px solid color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 35%, var(--color-border-default));
+  color: var(--twin-amber-700, #6B4D00);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+.swagger-mock-banner b { font-weight: 600; }
