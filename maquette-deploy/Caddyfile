@@ -1,0 +1,33 @@
+# Caddyfile for the Twin RAG WebUI maquette static deploy.
+#
+# Two modes selected by the SITE_ADDR env var at `docker run`:
+#  - SITE_ADDR=":80"               → plain HTTP (raw IP demo)
+#  - SITE_ADDR="twin.erwin-labs"   → Caddy fetches Let's Encrypt cert
+#                                    automatically (needs DNS A record
+#                                    pointing to the host + ports 80+443
+#                                    reachable for ACME HTTP-01)
+
+{$SITE_ADDR::80} {
+	root * /srv
+	encode zstd gzip
+
+	# The HTML file has a space in its name — Babel-CDN-style prototype
+	# expects the URL `/Twin%20RAG%20WebUI.html` to work. Redirect root
+	# to it so visitors don't have to type the path.
+	@root path /
+	redir @root /Twin%20RAG%20WebUI.html 302
+
+	# *.jsx files must be served with a script MIME the browser accepts
+	# (Babel only fetches `type="text/babel"` scripts but the browser
+	# still validates Content-Type via strict-mime checks in some setups).
+	@jsx path *.jsx
+	header @jsx Content-Type "application/javascript; charset=utf-8"
+
+	file_server
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
