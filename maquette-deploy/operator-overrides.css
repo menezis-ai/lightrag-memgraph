@@ -258,3 +258,61 @@ body {
 .sys-banner-more-popover .sys-banner:last-child {
   border-bottom: 0;
 }
+
+/* ── Pending-card polish ────────────────────────────────────────────
+ * Two root causes flagged on the live maquette:
+ *   1. `.status-badge` has no base rule in the proto's styles.css —
+ *      only `.md` and the color modifiers exist. Spans inherit
+ *      `display: inline`, so the colored border wraps with each line
+ *      of badge text and produces the broken "Pending review" chip
+ *      visible on the Documents pending-card.
+ *   2. `.pending-card-h` uses flex with center-align → when the source
+ *      path wraps, the badge slides to the vertical middle of the
+ *      multi-line title, looking detached. Switching to top-aligned
+ *      flex with `flex: 0 0 auto` on badges anchors them properly.
+ * Side benefit: the base `.status-badge` rule fixes every other
+ * `.status-badge sm` chip across the proto (Tags tab status pills, etc.).
+ */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.status-badge.sm {
+  padding: 1px 7px;
+  font-size: 10px;
+}
+
+.pending-card-h {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.pending-tagname {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.pending-card-h .status-badge { flex: 0 0 auto; margin-top: 1px; }
+
+/* Soften the Approve CTA on the amber pending section — full-saturation
+ * accent reads as "submit transaction" which is louder than what a
+ * sign-off review action warrants. Use the accent-soft fill instead. */
+.pending-actions .primary-btn {
+  background: var(--twin-accent-soft-bg);
+  color: var(--twin-accent-soft-text);
+  border-color: var(--twin-accent-soft-border);
+}
+.pending-actions .primary-btn:hover {
+  background: var(--twin-accent);
+  color: #fff;
+  border-color: var(--twin-accent);
+}

@@ -165,6 +165,22 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
   topbar swallowing the upper half of the viewport in a stress demo
   (gateway-down + quota-exhausted + embedder-degraded + read-only +
   session-soon = 5 stacked banners possible).
+- **`documents.jsx` pending-card polish** *(visual feedback 2026-05-21)*
+  — the proto's pending-card on the Documents tab rendered a broken
+  `Pending review` badge that wrapped on two lines with a chunky amber
+  border, looking detached from the card chrome. Root cause: the proto
+  defines `.status-badge.status-pending` (colors only) and `.md`
+  (padding/font), but never the base `.status-badge` rule nor the `.sm`
+  modifier referenced throughout the codebase. Spans inherited
+  `display: inline`, so the colored border followed each text line.
+  Fix lands in `operator-overrides.css` (adds the missing base + `.sm`
+  rules — also straightens up every other `.status-badge sm` chip in
+  the proto, e.g. Tags tab). The pending-card itself drops the
+  redundant "Pending review" badge (the section header already says
+  it), keeps the "your submission" contextual chip for contributors,
+  reflows the header to keep the badge top-aligned regardless of source
+  path wrap, and softens the Approve CTA to `accent-soft` so it reads
+  as a sign-off action instead of a transactional submit.
 
 When the designer ships a new Sweden bundle, re-`cp` the same overlay
 files from `~/Downloads/design_twinrag_backend/` after applying the
