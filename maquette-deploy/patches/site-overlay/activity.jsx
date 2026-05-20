@@ -1,5 +1,21 @@
 // Activity tab — split timeline (left) + event detail (right)
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
+
+// Filter buckets: condense the 12 event kinds into 5 readable groups.
+// Sub-kinds remain accessible via the "Advanced" dropdown next to the
+// bucket pills. Each KIND_META key MUST belong to exactly one bucket.
+const ACTIVITY_BUCKETS = [
+  { id: "sources",   label: "Sources",   icon: "cloud-upload",
+    kinds: ["source-uploaded", "source-ready", "source-failed", "confluence", "sharepoint", "url"] },
+  { id: "tags",      label: "Tags",      icon: "tags",
+    kinds: ["tag-mutation", "doc-review"] },
+  { id: "retrieval", label: "Retrieval", icon: "search",
+    kinds: ["retrieval"] },
+  { id: "auth",      label: "Auth",      icon: "lock",
+    kinds: ["auth"] },
+  { id: "system",    label: "System",    icon: "settings",
+    kinds: ["pipeline-warning", "settings"] }
+];
 
 // CSV export helper — flattens MOCK_ACTIVITY rows (incl. nested meta) for spreadsheet triage.
 function exportActivityCsv(rows, range) {
@@ -76,6 +92,50 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
   const [selectedId, setSelectedId] = useState(window.MOCK_ACTIVITY[0].id);
   const [pendingCount, setPendingCount] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedRef = useRef(null);
+  useEffect(() => {
+    if (!advancedOpen) return;
+    const onDown = (e) => { if (advancedRef.current && !advancedRef.current.contains(e.target)) setAdvancedOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setAdvancedOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [advancedOpen]);
+  const ALL_BUCKET_KINDS = useMemo(() => ACTIVITY_BUCKETS.flatMap(b => b.kinds), []);
+  const bucketState = (b) => {
+    if (kinds.size === 0) return "on";
+    const hasAll = b.kinds.every(k => kinds.has(k));
+    const hasSome = b.kinds.some(k => kinds.has(k));
+    if (hasAll) return "on";
+    if (hasSome) return "partial";
+    return "off";
+  };
+  const toggleBucket = (b) => {
+    const next = new Set(kinds);
+    const st = bucketState(b);
+    if (kinds.size === 0) {
+      // Default "all on" → restrict to every bucket *except* this one
+      ACTIVITY_BUCKETS.forEach(bb => { if (bb.id !== b.id) bb.kinds.forEach(k => next.add(k)); });
+    } else if (st === "off") {
+      b.kinds.forEach(k => next.add(k));
+    } else {
+      // on or partial → remove this bucket's kinds
+      b.kinds.forEach(k => next.delete(k));
+    }
+    // Collapse to the canonical "all on" state when every kind is present
+    if (ALL_BUCKET_KINDS.every(k => next.has(k))) next.clear();
+    setKinds(next);
+  };
+  const toggleSubKind = (k) => {
+    const seed = kinds.size === 0 ? new Set(ALL_BUCKET_KINDS) : new Set(kinds);
+    if (seed.has(k)) seed.delete(k); else seed.add(k);
+    if (ALL_BUCKET_KINDS.every(kk => seed.has(kk))) seed.clear();
+    setKinds(seed);
+  };
   const [clearConfirm, setClearConfirm] = useState("");
   const clearModalRef = React.useRef(null);
   window.useModalA11y && window.useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
@@ -147,22 +207,61 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
             ))}
           </div>
 
-          <div className="activity-kinds">
-            {Object.entries(KIND_META).map(([k, m]) => {
-              const active = kinds.size === 0 || kinds.has(k);
-              const explicit = kinds.has(k);
+          <div className="activity-buckets" ref={advancedRef}>
+            {ACTIVITY_BUCKETS.map(b => {
+              const st = bucketState(b);
               return (
                 <button
-                  key={k}
-                  className={"kind-pill " + (explicit ? "is-explicit" : active ? "is-dim" : "is-off")}
-                  onClick={() => toggleKind(k)}
-                  title={m.label}
+                  key={b.id}
+                  className={"bucket-pill is-" + st}
+                  onClick={() => toggleBucket(b)}
+                  title={`${b.label} (${b.kinds.length} kind${b.kinds.length > 1 ? "s" : ""})`}
+                  aria-pressed={st !== "off"}
                 >
-                  <Icon name={m.icon} size={11} color={m.color} />
-                  {m.label}
+                  <Icon name={b.icon} size={11} />
+                  {b.label}
+                  {st === "partial" && <span className="bucket-partial-dot" aria-label="partial" />}
                 </button>
               );
             })}
+            <button
+              className={"bucket-pill is-advanced" + (advancedOpen ? " is-open" : "")}
+              onClick={() => setAdvancedOpen(o => !o)}
+              aria-expanded={advancedOpen}
+              aria-haspopup="dialog"
+              title="Filter by individual event kind"
+            >
+              Advanced
+              <Icon name="chevron-down" size={10} />
+            </button>
+            {advancedOpen && (
+              <div className="bucket-advanced-popover" role="dialog" aria-label="Filter by event kind">
+                <div className="bucket-advanced-h">Filter by individual kind</div>
+                {ACTIVITY_BUCKETS.map(b => (
+                  <div key={b.id} className="bucket-advanced-group">
+                    <div className="bucket-advanced-group-h">{b.label}</div>
+                    <ul>
+                      {b.kinds.map(k => {
+                        const m = KIND_META[k] || KIND_FALLBACK;
+                        const on = kinds.size === 0 || kinds.has(k);
+                        return (
+                          <li key={k}>
+                            <label className="bucket-advanced-row">
+                              <input type="checkbox" checked={on} onChange={() => toggleSubKind(k)} />
+                              <Icon name={m.icon} size={11} color={m.color} />
+                              <span>{m.label}</span>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+                <div className="bucket-advanced-f">
+                  <button className="link-btn" onClick={() => setKinds(new Set())}>Reset (all on)</button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="activity-secondary">

@@ -83,3 +83,178 @@ body {
   color: var(--color-text-secondary);
   font-size: 11px;
 }
+
+/* ── #43: Activity filter buckets ───────────────────────────────────
+ * Replaces the 11 .kind-pill row with 5 condensed bucket pills + an
+ * "Advanced" dropdown that exposes the individual sub-kinds. Distinct
+ * on/off visuals (solid fill vs outline) instead of the proto's opacity
+ * tricks (78% / 100% / 35%) which were indistinguishable in light mode.
+ */
+.activity-buckets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  position: relative;
+}
+.bucket-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+}
+.bucket-pill:hover { border-color: var(--twin-accent); color: var(--color-text-primary); }
+.bucket-pill.is-on {
+  background: var(--twin-accent-soft-bg);
+  border-color: var(--twin-accent-soft-border);
+  color: var(--twin-accent-soft-text);
+}
+.bucket-pill.is-partial {
+  background: var(--color-background-secondary);
+  border-color: var(--twin-accent-soft-border);
+  color: var(--color-text-primary);
+}
+.bucket-pill.is-off {
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border-color: var(--color-border-tertiary);
+}
+.bucket-partial-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--twin-accent);
+}
+.bucket-pill.is-advanced {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-style: dashed;
+}
+.bucket-pill.is-advanced.is-open {
+  background: var(--color-background-secondary);
+  border-style: solid;
+  border-color: var(--twin-accent);
+  color: var(--color-text-primary);
+}
+
+.bucket-advanced-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 50;
+  min-width: 320px;
+  max-width: 440px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  padding: 10px 12px 8px;
+  box-shadow: 0 4px 16px rgba(15,23,32,0.08);
+}
+.bucket-advanced-h {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.bucket-advanced-group + .bucket-advanced-group { margin-top: 8px; }
+.bucket-advanced-group-h {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin: 0 0 4px 2px;
+}
+.bucket-advanced-group ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 12px;
+}
+.bucket-advanced-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.bucket-advanced-row input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--twin-accent);
+}
+.bucket-advanced-row:hover { color: var(--color-text-primary); }
+.bucket-advanced-f {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 0.5px dashed var(--color-border-tertiary);
+  text-align: right;
+}
+
+/* ── #47: SystemStatusBanner cap (2 visible + "View N more") ────────
+ * Banner stack now caps to 2 visible (sorted error > warn > info). The
+ * "View N more" anchor lives at the bottom of the stack and reveals the
+ * rest in a popover scoped to the topbar. Keeps the productive viewport
+ * intact when 4-5 degraded states co-occur (gateway + quota + embedder +
+ * read-only + session-soon stress demo).
+ */
+.sys-banner-more {
+  position: relative;
+}
+.sys-banner-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 6px 14px;
+  margin: 4px 22px 6px;
+  border-radius: var(--border-radius-md);
+  border: 0.5px dashed var(--color-border-tertiary);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.sys-banner-more-btn:hover { color: var(--color-text-primary); border-color: var(--twin-accent); }
+.sys-banner-more-btn.is-open {
+  background: var(--color-background-secondary);
+  border-style: solid;
+  border-color: var(--twin-accent);
+  color: var(--color-text-primary);
+}
+.sys-banner-more-popover {
+  position: absolute;
+  top: 100%;
+  left: 22px;
+  right: 22px;
+  margin-top: 4px;
+  z-index: 60;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 8px 24px rgba(15,23,32,0.10);
+}
+.sys-banner-more-popover .sys-banner {
+  border-bottom: 0.5px solid var(--color-border-default);
+}
+.sys-banner-more-popover .sys-banner:last-child {
+  border-bottom: 0;
+}

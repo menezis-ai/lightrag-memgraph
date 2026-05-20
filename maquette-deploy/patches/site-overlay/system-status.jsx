@@ -145,48 +145,99 @@ window.relTimeShort = function relTimeShort(ts) {
 };
 
 // ─── Banner stack ────────────────────────────────────────────────────────
+// Cap visible to 2 (error > warn > info priority). 3rd+ collapsed behind a
+// "View N more" button that opens a popover with the same banner content.
+// Prevents the topbar from swallowing the upper half of the viewport when
+// multiple degraded states co-occur (gateway + quota + embedder + read-only
+// + session-soon → 5 stacked banners in the proto baseline).
+const _SYS_BANNER_PRIO = { error: 0, warn: 1, info: 2 };
+const _SYS_BANNER_CAP = 2;
+
+function _renderSysBanner(b, onDismissQuota) {
+  return (
+    <div key={b.kind} className={`sys-banner sys-${b.severity} k-${b.kind}`} role={b.severity === "error" ? "alert" : "status"}>
+      <span className="sys-banner-ico">
+        <Icon
+          name={b.severity === "error" ? "alert-triangle" : b.severity === "warn" ? "alert-triangle" : "info-circle"}
+          size={14}
+        />
+      </span>
+      <div className="sys-banner-body">
+        <div className="sys-banner-line1">
+          <span className="sys-banner-title">{b.title}</span>
+          <span className="sys-banner-sub">{b.body}</span>
+        </div>
+        {b.meta && <div className="sys-banner-meta">{b.meta}</div>}
+      </div>
+      <div className="sys-banner-actions">
+        {b.kind === "gateway-down" && (
+          <button className="sys-banner-btn"><Icon name="refresh" size={11} /> Retry now</button>
+        )}
+        {b.kind === "session-soon" && (
+          <button className="sys-banner-btn primary"><Icon name="refresh" size={11} /> Refresh session</button>
+        )}
+        {b.kind === "quota-exhausted" && (
+          <button className="sys-banner-btn" onClick={() => {
+            const p = new URLSearchParams(window.location.search);
+            p.set("tab", "settings"); p.set("sec", "providers");
+            window.history.pushState(null, "", window.location.pathname + "?" + p.toString());
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          }}><Icon name="arrow-right" size={11} /> Open Settings</button>
+        )}
+        {b.dismissible && (
+          <button className="sys-banner-btn ghost" onClick={() => onDismissQuota && onDismissQuota()} aria-label="Dismiss">
+            <Icon name="x" size={11} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 window.SystemStatusBanner = function SystemStatusBanner({ banners, onDismissQuota }) {
   if (!banners || banners.length === 0) return null;
+  const sorted = [...banners].sort(
+    (a, b) => (_SYS_BANNER_PRIO[a.severity] ?? 3) - (_SYS_BANNER_PRIO[b.severity] ?? 3)
+  );
+  const visible = sorted.slice(0, _SYS_BANNER_CAP);
+  const hidden  = sorted.slice(_SYS_BANNER_CAP);
+
+  const [extraOpen, setExtraOpen] = _useStateSys(false);
+  const extraRef = _useRefSys(null);
+  _useEffectSys(() => {
+    if (!extraOpen) return;
+    const onDown = (e) => { if (extraRef.current && !extraRef.current.contains(e.target)) setExtraOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setExtraOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [extraOpen]);
+
   return (
     <div className="sys-banner-stack" role="region" aria-label="System status">
-      {banners.map(b => (
-        <div key={b.kind} className={`sys-banner sys-${b.severity} k-${b.kind}`} role={b.severity === "error" ? "alert" : "status"}>
-          <span className="sys-banner-ico">
-            <Icon
-              name={b.severity === "error" ? "alert-triangle" : b.severity === "warn" ? "alert-triangle" : "info-circle"}
-              size={14}
-            />
-          </span>
-          <div className="sys-banner-body">
-            <div className="sys-banner-line1">
-              <span className="sys-banner-title">{b.title}</span>
-              <span className="sys-banner-sub">{b.body}</span>
+      {visible.map(b => _renderSysBanner(b, onDismissQuota))}
+      {hidden.length > 0 && (
+        <div className="sys-banner-more" ref={extraRef}>
+          <button
+            className={"sys-banner-more-btn" + (extraOpen ? " is-open" : "")}
+            onClick={() => setExtraOpen(o => !o)}
+            aria-expanded={extraOpen}
+            aria-haspopup="dialog"
+            title={`Show ${hidden.length} more banner${hidden.length > 1 ? "s" : ""}`}
+          >
+            <Icon name={extraOpen ? "chevron-up" : "chevron-down"} size={11} />
+            View {hidden.length} more {hidden.length === 1 ? "banner" : "banners"}
+          </button>
+          {extraOpen && (
+            <div className="sys-banner-more-popover" role="dialog" aria-label="Additional system banners">
+              {hidden.map(b => _renderSysBanner(b, onDismissQuota))}
             </div>
-            {b.meta && <div className="sys-banner-meta">{b.meta}</div>}
-          </div>
-          <div className="sys-banner-actions">
-            {b.kind === "gateway-down" && (
-              <button className="sys-banner-btn"><Icon name="refresh" size={11} /> Retry now</button>
-            )}
-            {b.kind === "session-soon" && (
-              <button className="sys-banner-btn primary"><Icon name="refresh" size={11} /> Refresh session</button>
-            )}
-            {b.kind === "quota-exhausted" && (
-              <button className="sys-banner-btn" onClick={() => {
-                const p = new URLSearchParams(window.location.search);
-                p.set("tab", "settings"); p.set("sec", "providers");
-                window.history.pushState(null, "", window.location.pathname + "?" + p.toString());
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }}><Icon name="arrow-right" size={11} /> Open Settings</button>
-            )}
-            {b.dismissible && (
-              <button className="sys-banner-btn ghost" onClick={() => onDismissQuota && onDismissQuota()} aria-label="Dismiss">
-                <Icon name="x" size={11} />
-              </button>
-            )}
-          </div>
+          )}
         </div>
-      ))}
+      )}
     </div>
   );
 };

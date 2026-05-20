@@ -149,6 +149,22 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
   same rename pattern applies. Also fixes three missed strings in
   `data.js` (n_p03 / n_p04 tag-request bell suffixes + n_005 tag
   mutation sub) that surfaced palier text in the bell popover.
+- **`activity.jsx`** *(issue #43, P0)* — replaces the 11 wrapping
+  `.kind-pill` row with 5 condensed bucket pills (`Sources / Tags /
+  Retrieval / Auth / System`) plus an `Advanced` dropdown that lets
+  power users still toggle individual sub-kinds. Bucket state is
+  tri-valued (`on`, `partial`, `off`) with distinct fills — replaces the
+  proto's opacity-only states (`78% / 100% / 35%`) that were
+  indistinguishable in light mode. URL `kind=` param semantics are
+  preserved (the new bucket UI drives the same kinds Set under the
+  hood).
+- **`system-status.jsx`** *(issue #47)* — caps the visible banner stack
+  to 2 (sorted error > warn > info). Surplus banners collapse behind a
+  `View N more ↓` button anchored at the bottom of the stack that
+  opens a scoped popover with the remaining banners. Prevents the
+  topbar swallowing the upper half of the viewport in a stress demo
+  (gateway-down + quota-exhausted + embedder-degraded + read-only +
+  session-soon = 5 stacked banners possible).
 
 When the designer ships a new Sweden bundle, re-`cp` the same overlay
 files from `~/Downloads/design_twinrag_backend/` after applying the
