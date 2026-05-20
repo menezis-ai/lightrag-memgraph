@@ -39,8 +39,16 @@ const KIND_META = {
   "source-failed":     { label: "Source failed",   icon: "alert-triangle",color: "var(--twin-red-vivid)" },
   "pipeline-warning":  { label: "Pipeline",        icon: "alert-triangle",color: "var(--twin-amber-vivid)" },
   "auth":              { label: "Auth",            icon: "lock",          color: "var(--color-text-secondary)" },
-  "settings":          { label: "Settings",        icon: "settings",      color: "var(--color-text-secondary)" }
+  "settings":          { label: "Settings",        icon: "settings",      color: "var(--color-text-secondary)" },
+  // External sync sources (Connections section in Settings)
+  "confluence":        { label: "Confluence sync", icon: "brand-confluence", color: "#1F8A7A" },
+  "sharepoint":        { label: "SharePoint sync", icon: "cloud",         color: "#5A7FB4" },
+  "url":               { label: "URL feed sync",   icon: "link",          color: "var(--color-text-secondary)" }
 };
+// Fallback so an unknown kind doesn't crash the whole tab — defensive
+// guard against future MOCK_ACTIVITY additions that forget to register
+// here.
+const KIND_FALLBACK = { label: "Event", icon: "circle-dot", color: "var(--color-text-secondary)" };
 const RANGES = [
   { id: "24h", label: "24h" },
   { id: "7d",  label: "7d"  },
@@ -304,7 +312,7 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
 };
 
 function ActivityRow({ e, selected, onClick }) {
-  const m = KIND_META[e.kind];
+  const m = KIND_META[e.kind] || KIND_FALLBACK;
   return (
     <button className={"activity-row " + (selected ? "is-selected" : "") + " sev-" + e.sev} onClick={onClick}>
       <span className="row-time">{e.rel}</span>
@@ -327,7 +335,7 @@ function ActivityRow({ e, selected, onClick }) {
 
 function ActivityDetail({ e, onPushToast }) {
   if (!e) return <aside className="activity-detail"><div className="empty-state"><div className="title">Select an event</div></div></aside>;
-  const m = KIND_META[e.kind];
+  const m = KIND_META[e.kind] || KIND_FALLBACK;
   const [copied, setCopied] = useState(false);
   const copyId = () => {
     navigator.clipboard && navigator.clipboard.writeText(e.id);
