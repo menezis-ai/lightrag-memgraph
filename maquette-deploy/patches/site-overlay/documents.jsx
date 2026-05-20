@@ -251,9 +251,8 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
                   <div key={d.id} className="pending-card requested">
                     <div className="pending-card-h">
                       <code className="pending-tagname">{d.source}</code>
-                      <span className="status-badge status-pending sm">Pending review</span>
                       {mine && !_docCanReview && (
-                        <span className="status-badge sm" style={{ background: "var(--twin-accent-soft-bg)", color: "var(--twin-accent-soft-text)", marginLeft: 4 }}>your submission</span>
+                        <span className="status-badge sm" style={{ background: "var(--twin-accent-soft-bg)", color: "var(--twin-accent-soft-text)" }}>your submission</span>
                       )}
                     </div>
                     <div className="pending-justif">{d.review && d.review.justification}</div>
