@@ -615,6 +615,14 @@ window.MOCK_WORKSPACES = [
 
 // ===== Notifications (seeded for the bell popover; runtime toasts append on top) =====
 window.MOCK_NOTIFICATIONS = [
+  // ── Pending governance — surfaced for stewards (palier 3) so they can
+  // act from the bell without hunting through Documents/Tags tabs. Same
+  // items also show up in their respective "Pending review" sections.
+  { id: "n_p01", kind: "doc-review",  title: "Document needs review", sub: "cft-vendor-api-spec-draft.pdf · submitted by marc.berthier", rel: "47m ago", read: false },
+  { id: "n_p02", kind: "doc-review",  title: "Document needs review", sub: "/cib/runbooks/incident-2026-Q2-postmortem-draft · submitted by yann.dubois", rel: "1h ago", read: false },
+  { id: "n_p03", kind: "tag-request", title: "Tag request", tagname: "argocd", suffix: "awaiting palier-3 approval", sub: "requested by marc.berthier · category infra", rel: "3d ago", read: false },
+  { id: "n_p04", kind: "tag-request", title: "Tag request", tagname: "pacs008", suffix: "awaiting palier-3 approval", sub: "requested by philippe.marchand · category payment", rel: "2d ago", read: false },
+
   { id: "n_001", kind: "tag-mutation", title: "Tag", tagname: "rman", suffix: "applied", sub: "oracle-restart-procedure.pdf · 418 chunks", rel: "12m ago", read: false },
   { id: "n_002", kind: "source-failed", title: "Ingestion failed", sub: "huge-archive.zip · unsupported MIME", rel: "30m ago", read: false },
   { id: "n_003", kind: "source-ready", title: "Source ready", sub: "memgraph-mage-3.8-release-notes.md · 42 chunks", rel: "25m ago", read: false },
