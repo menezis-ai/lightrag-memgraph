@@ -113,7 +113,7 @@ window.MOCK_DOCUMENTS = [
     id: "d10",
     type: "confluence",
     source: "/cib/governance/tagging-charter",
-    summary: "Tagging charter — palier 1/2/3 governance for the Twin thesaurus",
+    summary: "Tagging charter — Reader/Contributor/Steward governance for the Twin thesaurus",
     tags: ["governance", "pending-review"],
     status: "completed",
     chunks: 21,
@@ -179,7 +179,7 @@ window.MOCK_DOCUMENTS = [
       state: "pending-review",
       requested_by: "yann.dubois",
       requested_at: "2026-05-20",
-      justification: "Contains client-impact figures — palier-3 review required before exposure to broader retrieval."
+      justification: "Contains client-impact figures — steward review required before exposure to broader retrieval."
     }
   }
 ];
@@ -338,7 +338,7 @@ window.MOCK_ACTIVITY = [
   { id: "evt_01HX8TWA", ts: "2026-05-10T11:48:00Z", rel: "22h ago", day: "Yesterday",
     kind: "settings", sev: "info", actor: { user: "claire.benoit", role: "KB Admin" },
     target: { type: "workspace", label: "cib · thesaurus" },
-    summary: "Added new tag iso20022 (palier 2) · category payment",
+    summary: "Added new tag iso20022 (Contributor) · category payment",
     meta: { tag: "iso20022", category: "payment", tier: 2, requested_by: "marc.berthier" } },
 
   { id: "evt_01HX8T03", ts: "2026-05-10T09:32:12Z", rel: "1d ago", day: "Yesterday",
@@ -570,6 +570,19 @@ window.MOCK_TAGS_FULL = [
     created: { by: "philippe.marchand", at: "2026-05-10" },
     last_edit: { by: "philippe.marchand", at: "2026-05-10", action: "requested" },
     related: [{ tag: "iso20022", strength: 0.85 }],
+    examples: []
+  },
+  // Rejected request — kept in the thesaurus so the "Rejected" status filter
+  // has something to show. Stewards may revisit later if justification firms up.
+  { tag: "legacy-mq", tier: 3, category: "network", status: "rejected",
+    def: "(rejected) IBM MQ legacy adapter — overlaps with existing `messaging` tag; not adopted.",
+    aliases: [], deprecates: [],
+    sources_count: 0, chunks_count: 0, query_freq_30d: 0,
+    requested_by: "marc.berthier", requested_at: "2026-04-22",
+    justification: "Granularity below `messaging` was requested; rejected as duplicative.",
+    created: { by: "marc.berthier", at: "2026-04-22" },
+    last_edit: { by: "claire.benoit", at: "2026-04-24", action: "rejected — overlaps with `messaging`" },
+    related: [{ tag: "messaging", strength: 0.78 }],
     examples: []
   }
 ];
