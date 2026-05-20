@@ -140,6 +140,15 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
   `Scopes: ...(Contributor or Steward)`.
 - **`system-status.jsx`** *(QW5)* — the LLM-quota banner CTA now says
   `Steward only` instead of `palier 3`.
+- **`settings.jsx`** *(QW5 follow-up)* — the Settings tab carries the
+  largest concentration of palier copy in the bundle (12 strings: rail
+  user pill, profile palier-pill, token gating notice, workspace +
+  provider edit gates, members toast titles, invite + member table
+  selects, table header `<th>Palier</th>` → `<th>Role</th>`). Adds the
+  same `_roleLabel` / `PALIER_ROLE_LABEL` helper as `tags.jsx` so the
+  same rename pattern applies. Also fixes three missed strings in
+  `data.js` (n_p03 / n_p04 tag-request bell suffixes + n_005 tag
+  mutation sub) that surfaced palier text in the bell popover.
 
 When the designer ships a new Sweden bundle, re-`cp` the same overlay
 files from `~/Downloads/design_twinrag_backend/` after applying the
