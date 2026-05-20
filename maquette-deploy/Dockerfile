@@ -4,12 +4,15 @@
 # and all *.jsx files inline. Zero build, just serve the folder.
 #
 # `operator-overrides.css` is appended to the bundle's styles.css at
-# build time so designer-side updates to the Sweden bundle can land
-# clean (no merge conflicts on our patches). See operator-overrides.css
-# for the diff vs the proto.
+# build time. `patches/site-overlay/` carries individual file overlays
+# (documents.jsx, activity.jsx, data.js extended for doc validation +
+# audit feed) that ship on top of the designer's Sweden bundle.
+# Keeping these patches outside the source bundle means the designer
+# can update Downloads/ freely without losing operator-side additions.
 
 FROM caddy:2.8-alpine
 COPY site/ /srv/
+COPY patches/site-overlay/ /srv/
 COPY operator-overrides.css /tmp/operator-overrides.css
 RUN cat /tmp/operator-overrides.css >> /srv/styles.css && rm /tmp/operator-overrides.css
 COPY Caddyfile /etc/caddy/Caddyfile
