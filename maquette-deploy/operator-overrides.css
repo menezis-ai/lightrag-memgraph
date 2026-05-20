@@ -1,0 +1,27 @@
+/* Twin operator console deviations from the proto's styles.css.
+ *
+ * Appended after the Sweden bundle's styles.css at Docker build time
+ * (see Dockerfile). Keeping these in a separate file means the source
+ * bundle stays pristine — the designer can update Downloads/ without
+ * merge conflicts on our operator-side patches.
+ */
+
+/* ── Widescreen fill fix ────────────────────────────────────────────
+ * The proto's `.docs` and `.retrieval` roots are missing `flex: 1`,
+ * leaving a ~50% dead stripe on the right of widescreen viewports
+ * (their parent `.tab-pane` is `display: flex` flex-row). The other
+ * tab roots (.activity, .kg, .swagger, .tags-screen, .settings) all
+ * declare `flex: 1` in the proto. */
+.docs,
+.retrieval {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Base font bump ─────────────────────────────────────────────────
+ * Operator feedback: proto's body 13px reads small on standard 4K
+ * displays. Bump to 14px (a "poil" larger). Components with explicit
+ * px sizes (.pill 11px, etc.) are unaffected. */
+body {
+  font-size: 14px;
+}
