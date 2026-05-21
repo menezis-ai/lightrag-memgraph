@@ -1,0 +1,14 @@
+[project]
+name = "twin-demo-api"
+version = "0.1.0"
+description = "Persistence backend for the Twin RAG maquette (FastAPI + SQLite)."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "aiosqlite>=0.20",
+]
+
+[tool.setuptools.packages.find]
+include = ["twin_demo_api*"]
