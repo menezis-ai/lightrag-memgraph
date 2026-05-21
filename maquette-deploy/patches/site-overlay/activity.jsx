@@ -140,10 +140,13 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
   const clearModalRef = React.useRef(null);
   window.useModalA11y && window.useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
-  // Simulated live polling
+  // Simulated live polling. Interval bumped 9s → 30s and the visual
+  // indicator (below) only surfaces once 3+ events have queued, so the
+  // demo doesn't have a "+1 every 9s" pulse in the corner of the eye
+  // (audit feedback — was reading as visual chatter).
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(() => setPendingCount(c => c + 1), 9000);
+    const t = setInterval(() => setPendingCount(c => c + 1), 30000);
     return () => clearInterval(t);
   }, [live]);
 
@@ -308,13 +311,13 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
           </div>
         </div>
 
-        {pendingCount > 0 && (
+        {pendingCount >= 3 && (
           <button
             className="activity-pending"
             onClick={() => setPendingCount(0)}
           >
             <span className="pending-dot" />
-            {pendingCount} new event{pendingCount > 1 ? "s" : ""} since you opened this view — click to refresh
+            {pendingCount} new events since you opened this view — click to refresh
           </button>
         )}
 
