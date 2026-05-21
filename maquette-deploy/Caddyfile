@@ -11,6 +11,19 @@
 	root * /srv
 	encode zstd gzip
 
+	# Reverse-proxy /api/* to the FastAPI + SQLite backend. Both
+	# containers live on the same Docker network — the backend is
+	# resolvable by its service name. Default matches docker stack
+	# naming (`<stack>_<service>` = `twin-maquette_api`); override via
+	# the BACKEND_ADDR env var for local compose / standalone use.
+	# The upstream port is fixed by the backend Dockerfile (8000).
+	handle_path /api/* {
+		reverse_proxy {$BACKEND_ADDR:twin-maquette_api:8000} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
 	# The HTML file has a space in its name — Babel-CDN-style prototype
 	# expects the URL `/Twin%20RAG%20WebUI.html` to work. Redirect root
 	# to it so visitors don't have to type the path.

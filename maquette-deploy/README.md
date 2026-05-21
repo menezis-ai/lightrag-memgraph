@@ -8,6 +8,18 @@ behind Caddy with auto-HTTPS via Let's Encrypt.
 Live target: <https://maquette.sigilum.fr/>
 Host: OVH VPS `37.59.104.111` (also runs Dokploy + Traefik).
 
+Now ships **two** containers (web + api) instead of one:
+- `twin-maquette:demo` — Caddy serving the static SPA, reverse-proxying
+  `/api/*` to the api sibling.
+- `twin-maquette-api:demo` — FastAPI + SQLite persistence layer in
+  `backend/` (real DB file, mounted from a Docker volume → state
+  survives container rebuilds).
+
+The architecture was previously a sql.js WASM client-side blob (PR #57),
+reverted because BNP infra won't accept a CDN-fetched WASM and a real
+backend with auditable code + Docker-mounted SQLite is the
+production-shaped answer.
+
 ## Why this folder
 
 The Sweden bundle isn't versioned (designer-side, not in this repo) but
@@ -36,44 +48,64 @@ maquette-deploy/
 rsync -a --exclude '.DS_Store' --exclude 'README.md' \
   ~/Downloads/design_twinrag_backend/ \
   /tmp/twin-maquette-deploy/site/
-cp maquette-deploy/Dockerfile maquette-deploy/Caddyfile /tmp/twin-maquette-deploy/
+cp maquette-deploy/Dockerfile maquette-deploy/Caddyfile maquette-deploy/operator-overrides.css /tmp/twin-maquette-deploy/
+cp -r maquette-deploy/patches /tmp/twin-maquette-deploy/
+cp -r maquette-deploy/backend /tmp/twin-maquette-deploy/
+cp maquette-deploy/stack.yml /tmp/twin-maquette-deploy/
 
-# 2. Ship + build on the OVH host
+# 2. Ship + build both images on the OVH host
 tar czf /tmp/twin-maquette-deploy.tgz -C /tmp/twin-maquette-deploy .
 scp /tmp/twin-maquette-deploy.tgz erwin:/tmp/
 ssh erwin '
   rm -rf ~/twin-maquette && mkdir -p ~/twin-maquette
   tar xzf /tmp/twin-maquette-deploy.tgz -C ~/twin-maquette
-  cd ~/twin-maquette && docker build -t twin-maquette:demo .
+  cd ~/twin-maquette
+  docker build -t twin-maquette:demo .
+  docker build -t twin-maquette-api:demo backend/
 '
 ```
 
-## First-time deploy (swarm service + Traefik)
+## First-time deploy (Docker Stack + Traefik)
+
+The two services (web + api) are orchestrated via `stack.yml` so a
+single command stands them up on the existing `dokploy-network`. The
+api stays internal (no Traefik labels); only the web container is
+public.
 
 ```bash
 ssh erwin '
-  docker service create \
-    --name twin-maquette \
-    --network dokploy-network \
-    --env SITE_ADDR=:80 \
-    --label "traefik.enable=true" \
-    --label "traefik.http.routers.twin-maquette.rule=Host(\`maquette.sigilum.fr\`)" \
-    --label "traefik.http.routers.twin-maquette.entrypoints=websecure" \
-    --label "traefik.http.routers.twin-maquette.tls=true" \
-    --label "traefik.http.routers.twin-maquette.tls.certresolver=letsencrypt" \
-    --label "traefik.http.services.twin-maquette.loadbalancer.server.port=80" \
-    --label "traefik.http.routers.twin-maquette-http.rule=Host(\`maquette.sigilum.fr\`)" \
-    --label "traefik.http.routers.twin-maquette-http.entrypoints=web" \
-    --label "traefik.http.routers.twin-maquette-http.middlewares=twin-maquette-https" \
-    --label "traefik.http.middlewares.twin-maquette-https.redirectscheme.scheme=https" \
-    twin-maquette:demo
+  # If a legacy single `twin-maquette` service exists (pre-stack era),
+  # remove it first so the stack can create its own twin-maquette_web.
+  docker service rm twin-maquette 2>/dev/null || true
+
+  cd ~/twin-maquette
+  docker stack deploy -c stack.yml twin-maquette
 '
 ```
 
 ## Update an existing deploy
 
 ```bash
-ssh erwin 'docker service update --force --image twin-maquette:demo twin-maquette'
+# Rebuild on OVH then redeploy the stack (services pick up new images
+# via image-resolve heuristics; --force-recreate via stack is not a
+# thing, so explicit per-service update is the right verb).
+ssh erwin '
+  cd ~/twin-maquette
+  docker build -t twin-maquette:demo .
+  docker build -t twin-maquette-api:demo backend/
+  docker service update --force --image twin-maquette:demo twin-maquette_web
+  docker service update --force --image twin-maquette-api:demo twin-maquette_api
+'
+```
+
+## Inspect the SQLite snapshot
+
+```bash
+ssh erwin '
+  docker exec $(docker ps -q -f name=twin-maquette_api) \
+    sqlite3 /data/twin-demo.sqlite \
+    "SELECT kind, COUNT(*) FROM entities GROUP BY kind;"
+'
 ```
 
 ## DNS
@@ -165,25 +197,6 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
   topbar swallowing the upper half of the viewport in a stress demo
   (gateway-down + quota-exhausted + embedder-degraded + read-only +
   session-soon = 5 stacked banners possible).
-- **`db.jsx`** *(new — sql.js WASM persistence layer, 2026-05-21)* —
-  loads sql.js from CDN, opens an IndexedDB-backed `twin-demo /
-  sqlite-db` blob, exposes `window.twinDb.{boot, getAll, replaceAll,
-  logMutation, reset}`. Single generic `entities (kind, id, data)` PK
-  table + a `mutations` audit log. `app.jsx` boots the db, hydrates
-  `docs` from it on first load, snapshots on every mutation. Doc
-  Approve / Reject in the pending-review queue are now REAL state
-  changes — they actually move the document out of the queue and
-  survive a page reload (required for a credible demo). A trash
-  icon in the topbar resets the SQLite blob (confirm-gated). Devtools
-  show a real SQLite file under Application → IndexedDB → twin-demo.
-- **`Twin RAG WebUI.html`** — adds `<script src="db.jsx">` between
-  `data.js` and the JSX module chain so `window.twinDb` is defined
-  before `app.jsx`'s boot effect.
-- **`topbar.jsx`** — adds the Reset SQLite icon button next to the
-  theme toggle. Only renders when `window.twinDb` exists.
-- **`modals.jsx`** — every toast (not just `error` kind) gets an
-  explicit `×` dismiss button in the top-right corner. User feedback
-  2026-05-21.
 - **`documents.jsx` pending-card polish** *(visual feedback 2026-05-21)*
   — the proto's pending-card on the Documents tab rendered a broken
   `Pending review` badge that wrapped on two lines with a chunky amber

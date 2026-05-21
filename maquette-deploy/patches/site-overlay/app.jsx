@@ -73,25 +73,26 @@ function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, [graphEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
   const [docs, setDocs] = useState(window.MOCK_DOCUMENTS);
-  // sql.js (WASM SQLite) persistence — hydrate docs from IndexedDB on boot,
-  // snapshot back on every mutation. The Approve/Reject buttons in the
-  // pending-review queue now produce REAL state changes that survive a
-  // page reload — required for a credible demo. See db.jsx for schema.
+  // Persistence layer talks to the FastAPI + SQLite backend (see
+  // maquette-deploy/backend/). On boot we fetch the current rows; on
+  // every mutation we PATCH the affected row. The optimistic-update
+  // pattern means the UI doesn't wait for the network round-trip —
+  // failures surface as console warnings, the UI stays consistent
+  // with what the operator just clicked.
   const [dbReady, setDbReady] = useState(false);
   useEffect(() => {
-    if (!window.twinDb) return;
-    window.twinDb.boot().then(() => {
-      const persisted = window.twinDb.getAll("docs");
-      if (persisted) setDocs(persisted);
-      setDbReady(true);
-    }).catch(err => {
-      console.error("twinDb boot failed:", err);
-      setDbReady(true); // proceed without persistence rather than block the UI
-    });
+    if (!window.twinDb) { setDbReady(true); return; }
+    window.twinDb.boot()
+      .then(() => window.twinDb.getAll("docs"))
+      .then(persisted => {
+        if (persisted) setDocs(persisted);
+        setDbReady(true);
+      })
+      .catch(err => {
+        console.error("twinDb boot failed:", err);
+        setDbReady(true); // proceed without persistence rather than block the UI
+      });
   }, []);
-  useEffect(() => {
-    if (dbReady && window.twinDb) window.twinDb.replaceAll("docs", docs);
-  }, [docs, dbReady]);
   // Doc mutator surfaced to children so approve/reject actually move the
   // document out of the pending queue (was toast-only in the proto).
   const mutateDoc = (id, patch) => {
@@ -104,7 +105,8 @@ function App() {
       return next;
     }));
     if (window.twinDb) {
-      window.twinDb.logMutation("docs", patch.review ? `review.${patch.review.state || "update"}` : "update", id, patch);
+      // Fire-and-forget — the local state was already updated above.
+      window.twinDb.patch("docs", id, patch);
     }
   };
   // Empty-workspace demo mode — swaps docs out for an empty array so the

@@ -1,0 +1,58 @@
+# Docker Stack — Twin RAG maquette + persistence backend.
+#
+# Single source of truth for the two services that ship together to
+# OVH (Dokploy + Traefik) and, eventually, to the BNP container plane.
+# Deploy with:
+#
+#   docker stack deploy -c stack.yml twin-maquette
+#
+# The web service keeps the Traefik labels that route the public
+# `maquette.sigilum.fr` hostname; the api service stays internal to the
+# `dokploy-network` overlay so only the web container can reach it.
+
+version: "3.8"
+
+services:
+  api:
+    image: twin-maquette-api:demo
+    networks:
+      - dokploy-network
+    volumes:
+      - twin-maquette-data:/data
+    environment:
+      TWIN_DEMO_DB_PATH: /data/twin-demo.sqlite
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  web:
+    image: twin-maquette:demo
+    networks:
+      - dokploy-network
+    environment:
+      SITE_ADDR: ":80"
+      BACKEND_ADDR: "twin-maquette_api:8000"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.twin-maquette.rule=Host(`maquette.sigilum.fr`)"
+        - "traefik.http.routers.twin-maquette.entrypoints=websecure"
+        - "traefik.http.routers.twin-maquette.tls=true"
+        - "traefik.http.routers.twin-maquette.tls.certresolver=letsencrypt"
+        - "traefik.http.services.twin-maquette.loadbalancer.server.port=80"
+        - "traefik.http.routers.twin-maquette-http.rule=Host(`maquette.sigilum.fr`)"
+        - "traefik.http.routers.twin-maquette-http.entrypoints=web"
+        - "traefik.http.routers.twin-maquette-http.middlewares=twin-maquette-https"
+        - "traefik.http.middlewares.twin-maquette-https.redirectscheme.scheme=https"
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  twin-maquette-data:
+    driver: local
