@@ -503,11 +503,11 @@ function DocRow({ doc, selected, checked, onToggle, onOpenRetag, onClickTag, onS
           </button>
         ) : (
           <button
-            className="action-btn"
+            className="action-btn retag"
             onClick={e => { e.stopPropagation(); onOpenRetag(doc); }}
-            title="Retag"
+            title="Retag this document"
           >
-            <Icon name="plus" size={13} />
+            Retag
           </button>
         )}
       </div>
