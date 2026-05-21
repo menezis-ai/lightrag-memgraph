@@ -137,6 +137,12 @@ window.TagsTab = function TagsTab({ onPushToast }) {
   const [selectedTag, setSelectedTag] = window.useUrlParam("tag", "rman");
   const [pendingOpen, setPendingOpen] = useState(true);
   const [modal, setModal] = useState(null); // {kind, tag?}
+  // Detail-panel collapsed by default under 1500px viewport — the 200/1fr/380
+  // grid otherwise crushes the card grid to a single column with a wide
+  // blank zone (audit #41). User can toggle freely once open.
+  const [panelOpen, setPanelOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 1500 : true
+  );
 
   const requested = tags.filter(t => t.tier === "requested");
 
@@ -251,7 +257,7 @@ window.TagsTab = function TagsTab({ onPushToast }) {
         </select>
       </div>
 
-      <div className="tags-body">
+      <div className={`tags-body${panelOpen ? "" : " is-panel-collapsed"}`}>
         <aside className="tags-rail">
           <button className={"rail-item " + (selectedCat === "all" ? "is-active" : "")} onClick={() => setSelectedCat("all")}>
             <span className="rail-dot" style={{ background: "var(--color-text-tertiary)" }} />
@@ -321,14 +327,29 @@ window.TagsTab = function TagsTab({ onPushToast }) {
           )}
         </main>
 
-        <TagDetailPanel
-          t={detail}
-          allTags={tags}
-          onSelect={setSelectedTag}
-          onAction={setModal}
-          canEdit={canEdit}
-          canSuggest={canSuggest}
-        />
+        {panelOpen ? (
+          <TagDetailPanel
+            t={detail}
+            allTags={tags}
+            onSelect={setSelectedTag}
+            onAction={setModal}
+            canEdit={canEdit}
+            canSuggest={canSuggest}
+            onClose={() => setPanelOpen(false)}
+          />
+        ) : (
+          detail && (
+            <button
+              className="tag-detail-rail"
+              onClick={() => setPanelOpen(true)}
+              title="Show tag details"
+              aria-label={`Show details for tag ${detail.tag}`}
+            >
+              <Icon name="chevron-up" size={11} style={{ transform: "rotate(-90deg)" }} />
+              <span>Details</span>
+            </button>
+          )
+        )}
       </div>
 
       {modal && (
@@ -346,7 +367,7 @@ window.TagsTab = function TagsTab({ onPushToast }) {
   );
 };
 
-function TagDetailPanel({ t, allTags, onSelect, onAction, canEdit, canSuggest }) {
+function TagDetailPanel({ t, allTags, onSelect, onAction, canEdit, canSuggest, onClose }) {
   if (!t) return null;
   const cat = window.MOCK_TAG_CATEGORIES.find(c => c.id === t.category);
   return (
@@ -355,6 +376,16 @@ function TagDetailPanel({ t, allTags, onSelect, onAction, canEdit, canSuggest })
         <div className="detail-kind" style={{ color: cat ? cat.color : "var(--color-text-secondary)" }}>
           <span className="rail-dot" style={{ background: cat ? cat.color : "var(--color-text-tertiary)" }} />
           {cat ? cat.label : "Uncategorized"}
+          {onClose && (
+            <button
+              className="tag-detail-close"
+              onClick={onClose}
+              aria-label="Collapse details panel"
+              title="Collapse panel"
+            >
+              <Icon name="x" size={12} />
+            </button>
+          )}
         </div>
         <div className="tag-detail-h">
           <code className="tag-detail-name">{t.tag}</code>

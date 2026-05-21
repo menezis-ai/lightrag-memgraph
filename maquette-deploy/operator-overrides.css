@@ -372,3 +372,50 @@ body {
     display: none;
   }
 }
+
+/* ── #41: Tags — detail panel collapsible (auto-collapse <1500px) ────
+ * Proto's `.tags-body` is a 200/1fr/380 grid → 580px of chrome. At
+ * 1366px the tag-card grid collapses to a single column with a wide
+ * blank zone on the right. App-level state defaults to collapsed under
+ * 1500px; the rail-style "Details" button anchored on the right edge
+ * of `main` re-opens the panel. A small `x` in the panel header
+ * collapses it again. */
+.tags-body.is-panel-collapsed {
+  grid-template-columns: 200px minmax(0, 1fr) 0;
+}
+.tag-detail-rail {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-right: 0;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  box-shadow: -2px 2px 8px rgba(15,23,32,0.05);
+  z-index: 30;
+}
+.tag-detail-rail:hover { color: var(--color-text-primary); border-color: var(--twin-accent); }
+.tag-detail-rail svg { transform: none !important; }
+
+.tag-detail-close {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+}
+.tag-detail-close:hover { color: var(--color-text-primary); }
+.tag-detail .detail-kind { display: flex; align-items: center; gap: 6px; }
