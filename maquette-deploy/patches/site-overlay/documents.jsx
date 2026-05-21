@@ -77,6 +77,12 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
   }, [pendingOpen]);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+  // "View raw" modal — surfaced both from the pending-review card (so
+  // the steward can read the source BEFORE deciding) and from the
+  // DocDetailPanel footer (existing affordance). Without this, the
+  // review queue is "trust me" governance — the steward needs eyes on
+  // the actual content to make an informed call.
+  const [rawDoc, setRawDoc] = useState(null);
 
   // Empty-workspace state: take over the whole pane with a focused CTA card
   // instead of rendering the filters + empty table. This is the first thing a
@@ -280,12 +286,20 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
                     </div>
                     {_docCanReview ? (
                       <div className="pending-actions">
+                        <button className="ghost-btn small" onClick={() => setRawDoc(d)} title="Read the extracted source text before deciding">
+                          <Icon name="eye" size={11} /> Read source
+                        </button>
+                        <span className="pending-actions-sep" />
                         <button className="primary-btn small" onClick={() => approveDoc(d)}>Approve</button>
                         <button className="ghost-btn small" onClick={() => editAndApproveDoc(d)}>Edit &amp; approve</button>
                         <button className="ghost-btn small danger" onClick={() => { setRejectDoc(d); setRejectReason(""); }}>Reject</button>
                       </div>
                     ) : (
                       <div className="pending-actions">
+                        <button className="ghost-btn small" onClick={() => setRawDoc(d)}>
+                          <Icon name="eye" size={11} /> Read source
+                        </button>
+                        <span className="pending-actions-sep" />
                         <span className="muted">Awaiting steward review · you'll be notified when a steward signs off</span>
                       </div>
                     )}
@@ -465,8 +479,11 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
           onClose={() => setSelectedDocRaw(null)}
           onOpenRetag={onOpenRetag}
           onAddToast={onAddToast}
+          onViewRaw={() => setRawDoc(selectedDoc)}
         />
       )}
+
+      {rawDoc && <RawDocModal doc={rawDoc} onClose={() => setRawDoc(null)} />}
     </div>
   );
 };
@@ -672,6 +689,138 @@ const MOCK_LINEAGE = {
   bytes: 184320
 };
 
+// Per-document extracted text for the "View raw" modal. The steward uses
+// this to validate a pending document before approving — without it, the
+// review queue is "trust me" governance. d13 + d14 are the seeded pending
+// items the demo walks through; others fall back to a generic extract.
+const MOCK_RAW_TEXT_BY_DOC = {
+  d13: `=== CFT Vendor API specification (draft v0.7) ===
+Vendor : Acme Payments Iberia SL · contract IBPAY-2026-014
+Submitted by : marc.berthier · 2026-05-20
+
+1. Overview
+-----------
+This document specifies the integration contract between the CIB
+payment-orchestration layer and the Acme Payments Iberia gateway.
+Coverage : SEPA Credit Transfer (SCT), SEPA Instant (SCT Inst) and
+domestic Spain bizum-rail acknowledgments.
+
+Production rollout target : 2026-Q3.
+Confidence rating (vendor self-declared) : 70%.
+Internal verification : pending steward sign-off (this review).
+
+2. Authentication
+-----------------
+- mTLS, client cert issued by BNP InfoSec PKI (trust-store: cib-root-2024).
+- API key in Authorization: Bearer header (rotated every 30 days).
+- Optional HMAC-SHA256 body signature in X-Acme-Signature for high-value
+  transfers (> EUR 100K). Rejected without 401 if missing.
+
+3. Endpoints (vendor side)
+--------------------------
+POST   /v1/sct/credit-transfer        SCT initiation
+POST   /v1/sct-inst/credit-transfer   SCT Inst initiation (<10s SLA)
+GET    /v1/sct/{id}/status            Status enquiry, polling cap 1/s
+POST   /v1/recall                     R-message (return / reject)
+POST   /v1/bizum/ack                  Bizum acknowledgment relay
+
+4. Idempotency
+--------------
+Required idempotency-key header on every POST. Acme retains the key for
+24h. Duplicate requests within window return the original response with
+HTTP 200; outside window return 409 Conflict.
+
+5. Concerns flagged by Marc (submitter)
+---------------------------------------
+- Section 4 retention window (24h) is shorter than BNP guidance (72h).
+  Recommend negotiation with Acme account manager.
+- HMAC threshold at EUR 100K vs BNP CIB policy threshold at EUR 50K —
+  policy mismatch, requires either contract amendment OR an internal
+  override gateway rule.
+- No explicit dispute-resolution endpoint; relies on R-message which
+  doesn't cover all CIB business cases.
+
+6. Open questions for steward
+-----------------------------
+[ ] Approve as-is and track the 3 concerns above in JIRA ?
+[ ] Reject and request vendor revision (delays Q3 target by ~6 weeks) ?
+[ ] Approve with edits (e.g. raise the HMAC threshold note in our
+    operator runbook) ?
+
+--- end of extracted text ---
+chunks indexed: 47 · sha-256: 7f4b9c…a82e1d · bytes: 184320
+`,
+
+  d14: `=== Q2 2026 incident postmortem — DRAFT ===
+Incident : INC-26-Q2-0414 · Severity: SEV-2 · Duration: 3h 41m
+Service : CIB knowledge-base retrieval (TwinRAG production)
+Submitted by : yann.dubois · 2026-05-20
+
+1. Timeline (UTC)
+-----------------
+14:02 — quota-warn alert on llm provider (openai) at 85%.
+14:14 — quota-exhausted at 100%. Retrieval halts on synthesis step.
+14:18 — on-call paged via PagerDuty (yann.dubois).
+14:31 — failover to anthropic-secondary attempted, rejected by gateway
+        (cert chain not whitelisted in cib-router-2026).
+14:55 — manual workaround : gateway whitelist updated via emergency
+        change CHG-26-04188. Failover succeeds.
+15:14 — secondary saturates (rate-limit 60 rpm at vendor side).
+17:43 — incident closed after openai quota top-up + secondary release.
+
+2. Client impact figures (sensitive)
+------------------------------------
+- 142 retrieval queries returned partial / no-context responses.
+- 4 client-facing agents (treasury, corp-payments) degraded.
+- 1 escalation from BNP Securities Services received at 15:48.
+- No regulatory-reportable event (BCEN / ACPR threshold not crossed).
+
+3. Root cause analysis
+----------------------
+Primary : quota planning at the openai vendor was based on Q1 traffic
+patterns; Q2 onboarding of the corp-payments agent surfaced a 38%
+month-over-month query growth not captured in the renewal forecast.
+
+Contributing : secondary-provider failover hadn't been exercised since
+2025-11; the cert-chain whitelist had silently drifted out of date.
+
+4. Action items
+---------------
+- [done] Quarterly quota recalibration based on rolling 30-day usage.
+- [done] Monthly failover drill (added to oncall rota).
+- [in-progress] Multi-provider routing live, not just failover.
+- [pending] Postmortem review with InfoSec on the gateway whitelist
+  drift detection mechanism (this drift caused 24m of avoidable downtime).
+
+5. Reason this is in review
+---------------------------
+Contains client-impact figures (section 2). Steward review required
+before this document enters the active retrieval set, per the
+sensitive-document policy in workspace cib-core.
+
+--- end of extracted text ---
+chunks indexed: 89 · sha-256: a82e1d…7f4b9c · bytes: 102400
+`,
+};
+
+function _rawTextFor(doc) {
+  if (MOCK_RAW_TEXT_BY_DOC[doc.id]) return MOCK_RAW_TEXT_BY_DOC[doc.id];
+  // Generic fallback — synthesize from chunks + summary so the modal
+  // always has something to show, even for unknown docs.
+  return `=== ${doc.source || "Untitled"} ===
+Type     : ${doc.type || "file"}
+Summary  : ${doc.summary || "(no summary)"}
+Tags     : ${(doc.tags || []).join(", ") || "—"}
+
+--- extracted text (sampled chunks) ---
+${MOCK_CHUNKS.map((c, i) => `[chunk ${i + 1} · ${c.tokens} tok · ${c.id}]\n${c.text}\n`).join("\n")}
+
+--- end of sample ---
+This document has ${doc.chunks ?? "?"} chunks total. The first three are
+shown above as a representative sample for steward review.
+`;
+}
+
 const MOCK_CHUNKS = [
   {
     id: "c_001",
@@ -708,7 +857,7 @@ function _formatAuditAction(m) {
   return m.action;
 }
 
-function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
+function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast, onViewRaw }) {
   const [tab, setTab] = useState("overview");
   const errorRef = React.useRef(null);
   // Audit trail — live mutation log from the FastAPI backend, filtered
@@ -995,8 +1144,8 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
           <button className="btn" onClick={() => { onOpenRetag(doc); onClose(); }}>
             <Icon name="plus" size={13} /> Retag
           </button>
-          <button className="btn" onClick={() => onAddToast("View raw not available in demo", "Backend endpoint /documents/{id}/raw stub")}>
-            <Icon name="info-circle" size={13} /> View raw
+          <button className="btn" onClick={() => onViewRaw && onViewRaw()}>
+            <Icon name="eye" size={13} /> View raw
           </button>
           <button className="btn primary" onClick={reprocess} disabled={doc.status === "processing"}>
             <Icon name="refresh" size={13} /> Re-process
@@ -1004,5 +1153,85 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
         </footer>
       </aside>
     </>
+  );
+}
+
+// Steward's window into the actual ingested content. Without this, the
+// Approve / Reject buttons in the pending review queue are blind faith.
+function RawDocModal({ doc, onClose }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const text = _rawTextFor(doc);
+  const sizeKb = (text.length / 1024).toFixed(1);
+
+  const download = () => {
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safeName = (doc.source || "document").replace(/[^a-z0-9.-]+/gi, "_");
+    a.href = url;
+    a.download = `${safeName}.extracted.txt`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        ref={ref}
+        className="modal raw-doc-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="raw-doc-title"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="modal-h">
+          <div className="raw-doc-h">
+            <h3 id="raw-doc-title">
+              <Icon name="eye" size={14} />
+              Extracted text — what the indexer ingested
+            </h3>
+            <div className="raw-doc-meta">
+              <code className="mono-meta">{doc.source}</code>
+              <span className="sep">·</span>
+              <span>{doc.chunks ?? "?"} chunks indexed</span>
+              <span className="sep">·</span>
+              <span>{sizeKb} KB extracted</span>
+              {doc.review && doc.review.state === "pending-review" && (
+                <>
+                  <span className="sep">·</span>
+                  <span className="raw-doc-pending">awaiting steward review</span>
+                </>
+              )}
+            </div>
+          </div>
+          <button className="modal-x" onClick={onClose} aria-label="Close raw view">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+
+        <div className="raw-doc-body">
+          <pre className="raw-doc-text">{text}</pre>
+        </div>
+
+        <div className="modal-footer raw-doc-footer">
+          <span className="raw-doc-disclaimer">
+            <Icon name="info-circle" size={11} />
+            This is the post-extraction text used for retrieval, not the
+            original binary. Use it to validate before approving.
+          </span>
+          <button className="ghost-btn" onClick={download}>
+            <Icon name="cloud-upload" size={12} /> Download .txt
+          </button>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -23,15 +23,23 @@ du knowledge), pas **sur** les agents (= Kore.ai).
 - Cmd+Shift+R pour bypass cache **avant** Manu arrive.
 - Si infra fail : passer direct à `compare.html` (slide statique).
 
-### 2. Documents tab — pending review queue (4 min)
+### 2. Documents tab — pending review queue (5 min)
 **Question 1 Manu : workflow validation + quality gate.**
 
 - Pointer le bandeau jaune "Pending review · 2 documents awaiting your sign-off"
 - Cliquer pour expand
 - "Voilà ce que Kore.ai n'a pas. Le steward voit la file d'attente directement,
   pas dans un module séparé."
-- Pointer les 3 actions : Approve / Edit & approve / Reject
-- Cliquer **Approve** sur `cft-vendor-api-spec-draft.pdf`
+- Pointer les 4 actions : **Read source** · Approve · Edit & approve · Reject
+- **D'abord cliquer Read source** sur `cft-vendor-api-spec-draft.pdf`
+  - Modal s'ouvre avec le texte extrait réel (vendor API spec draft, 5 sections,
+    et la section "Concerns flagged by Marc" + "Open questions for steward")
+  - "Le steward valide pas à l'aveugle. Il voit ce qui a été ingéré.
+    Si la qualité est insuffisante, il a la matière pour Reject avec une
+    raison précise. Vs Kore.ai qui n'a aucune surface équivalente."
+  - Bouton "Download .txt" pour export forensic si besoin
+  - Close
+- Cliquer **Approve** sur le même doc
 - "La carte disparait du queue. Elle entre dans le retrieval set actif."
 - Faire un Cmd+R (reload). "Et c'est persisté. Reload, ça reste approved."
 

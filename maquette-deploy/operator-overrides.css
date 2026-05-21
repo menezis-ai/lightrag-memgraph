@@ -979,6 +979,88 @@ body {
   font-family: var(--font-mono);
 }
 
+/* ── View raw modal — steward source-validation surface ─────────────
+ * Wide scrollable modal showing the extracted text the indexer holds
+ * for a document. Surfaced from the pending-review card AND from the
+ * DocDetailPanel footer so the steward can read-before-approve. */
+.raw-doc-modal {
+  width: min(900px, 96vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.raw-doc-modal .modal-h {
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+.raw-doc-h h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+.raw-doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+.raw-doc-meta .sep {
+  color: var(--color-text-tertiary);
+}
+.raw-doc-pending {
+  padding: 1px 7px;
+  background: var(--twin-amber-50);
+  color: var(--twin-amber-700);
+  border: 0.5px solid color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 30%, var(--color-border-tertiary));
+  border-radius: 999px;
+  font-size: 10.5px;
+}
+.raw-doc-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+  background: var(--color-background-secondary);
+  border-top: 0.5px solid var(--color-border-tertiary);
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+.raw-doc-text {
+  margin: 0;
+  padding: 18px 22px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.raw-doc-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.raw-doc-disclaimer {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+/* Pending-actions row: visual separator between the "Read source"
+ * affordance and the decision verbs. */
+.pending-actions-sep {
+  display: inline-block;
+  width: 0;
+  height: 16px;
+  border-left: 0.5px solid var(--color-border-tertiary);
+  margin: 0 4px;
+}
+
 /* ── Toast dismiss × button ─────────────────────────────────────────
  * Proto only rendered a close × on error toasts. Propagating + done
  * toasts had no explicit close (user could only wait for auto-expire
