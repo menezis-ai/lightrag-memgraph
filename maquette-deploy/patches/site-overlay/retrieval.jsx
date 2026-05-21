@@ -83,6 +83,12 @@ function QueryModeInfo() {
 window.RetrievalTab = function RetrievalTab() {
   const sys = window.useReadOnly ? window.useReadOnly() : { effectiveReadOnly: false, readOnlyReason: "" };
   const ro = sys.effectiveReadOnly;
+  // Params panel auto-collapses under 1500px so the conv slot gets the
+  // room (proto's 240/1fr/320 grid otherwise shrinks the conversation
+  // to ~600px at 1366px, wrapping every answer chunk on 4 lines).
+  const [paramsOpen, setParamsOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 1500 : true
+  );
   const [query, setQuery] = useState("");
   const [threads, setThreads] = useState(() => {
     try { const raw = localStorage.getItem("twin-rag.threads"); if (raw) return JSON.parse(raw); } catch (e) {}
@@ -203,7 +209,7 @@ window.RetrievalTab = function RetrievalTab() {
     .slice(0, 4);
 
   return (
-    <div className="retrieval has-history">
+    <div className={`retrieval has-history${paramsOpen ? "" : " is-params-collapsed"}`}>
       <aside className="history-panel">
         <div className="history-head">
           <span className="history-title">Conversations</span>
@@ -290,10 +296,19 @@ window.RetrievalTab = function RetrievalTab() {
         </div>
       </div>
 
+      {paramsOpen ? (
       <aside className="params-panel">
         <div className="params-header">
           <h3>Parameters</h3>
           <p>Configure your query</p>
+          <button
+            className="params-collapse"
+            onClick={() => setParamsOpen(false)}
+            aria-label="Collapse parameters panel"
+            title="Collapse panel"
+          >
+            <Icon name="x" size={12} />
+          </button>
         </div>
 
         <div className="field">
@@ -361,6 +376,17 @@ window.RetrievalTab = function RetrievalTab() {
           <span className="dot" /> Connected
         </div>
       </aside>
+      ) : (
+        <button
+          className="params-collapsed-rail"
+          onClick={() => setParamsOpen(true)}
+          aria-label="Show retrieval parameters"
+          title="Show parameters"
+        >
+          <Icon name="settings" size={12} />
+          <span>Params</span>
+        </button>
+      )}
     </div>
   );
 };

@@ -419,3 +419,53 @@ body {
 }
 .tag-detail-close:hover { color: var(--color-text-primary); }
 .tag-detail .detail-kind { display: flex; align-items: center; gap: 6px; }
+
+/* ── #38: Retrieval — params-panel collapsible (auto under 1500px) ───
+ * Proto's `.retrieval.has-history` is 240/1fr/320 → conv slot drops
+ * to ~600px at 1366px viewport, every assistant chunk wraps on 4
+ * lines. App-state default = collapsed under 1500px. Vertical rail
+ * "Params" button reopens; small `x` in params header collapses again. */
+.retrieval.has-history.is-params-collapsed {
+  grid-template-columns: 240px minmax(0, 1fr) 0;
+}
+.params-collapsed-rail {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-right: 0;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  box-shadow: -2px 2px 8px rgba(15,23,32,0.05);
+  z-index: 30;
+}
+.params-collapsed-rail:hover { color: var(--color-text-primary); border-color: var(--twin-accent); }
+.params-collapsed-rail svg { transform: rotate(0) !important; }
+.params-collapse {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+}
+.params-collapse:hover { color: var(--color-text-primary); }
+.params-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.params-header h3 { flex: 0 0 auto; }
+.params-header p { flex: 1 1 auto; }
