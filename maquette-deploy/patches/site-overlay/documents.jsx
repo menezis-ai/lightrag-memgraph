@@ -467,7 +467,11 @@ function DocRow({ doc, selected, checked, onToggle, onOpenRetag, onClickTag, onS
   const visibleTags = doc.tags.slice(0, 2);
   const overflow = doc.tags.length - visibleTags.length;
   return (
-    <div className={`docs-row has-select${selected ? " selected" : ""}${checked ? " is-checked" : ""}`} onClick={() => onSelect(doc)}>
+    <div
+      className={`docs-row has-select${selected ? " selected" : ""}${checked ? " is-checked" : ""}`}
+      onClick={() => onSelect(doc)}
+      onDoubleClick={() => onSelect(doc)}
+    >
       <div className="cell-select" onClick={e => e.stopPropagation()}>
         <input
           type="checkbox"

@@ -307,6 +307,7 @@ window.TagsTab = function TagsTab({ onPushToast }) {
                     key={t.tag}
                     className={"tag-card " + (selectedTag === t.tag ? "is-selected" : "")}
                     onClick={() => setSelectedTag(t.tag)}
+                    onDoubleClick={() => { setSelectedTag(t.tag); setPanelOpen(true); }}
                   >
                     <div className="tag-card-h">
                       <code className="tag-card-name">{t.tag}</code>
