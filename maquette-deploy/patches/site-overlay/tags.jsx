@@ -368,6 +368,19 @@ window.TagsTab = function TagsTab({ onPushToast }) {
 };
 
 function TagDetailPanel({ t, allTags, onSelect, onAction, canEdit, canSuggest, onClose }) {
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const moreRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e) => { if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setMoreOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
   if (!t) return null;
   const cat = window.MOCK_TAG_CATEGORIES.find(c => c.id === t.category);
   return (
@@ -495,8 +508,32 @@ function TagDetailPanel({ t, allTags, onSelect, onAction, canEdit, canSuggest, o
           <>
             <button className="ghost-btn small" onClick={() => onAction({ kind: "edit", tag: t })}>Edit</button>
             <button className="ghost-btn small" onClick={() => onAction({ kind: "synonyms", tag: t })}>Manage synonyms</button>
-            <button className="ghost-btn small" onClick={() => onAction({ kind: "deprecate", tag: t })}>Deprecate</button>
-            <button className="ghost-btn small danger" onClick={() => onAction({ kind: "delete", tag: t })}>Delete</button>
+            <div className="tag-actions-more" ref={moreRef}>
+              <button
+                className={"ghost-btn small" + (moreOpen ? " is-open" : "")}
+                onClick={() => setMoreOpen(o => !o)}
+                aria-expanded={moreOpen}
+                aria-haspopup="menu"
+                aria-label="More actions"
+                title="More actions"
+              >
+                More <Icon name="chevron-down" size={9} />
+              </button>
+              {moreOpen && (
+                <div className="tag-actions-more-popover" role="menu">
+                  <button
+                    className="tag-actions-more-item"
+                    role="menuitem"
+                    onClick={() => { setMoreOpen(false); onAction({ kind: "deprecate", tag: t }); }}
+                  >Deprecate</button>
+                  <button
+                    className="tag-actions-more-item danger"
+                    role="menuitem"
+                    onClick={() => { setMoreOpen(false); onAction({ kind: "delete", tag: t }); }}
+                  >Delete…</button>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
