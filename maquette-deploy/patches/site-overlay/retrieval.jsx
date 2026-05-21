@@ -425,16 +425,26 @@ function Turn({ msg, streaming, highlightSrc, onCiteHover, onCiteLeave, onCiteCl
         {parts.map((p, i) => {
           if (p.type === "text") return <React.Fragment key={i}>{p.value}</React.Fragment>;
           if (p.type === "code") return <code key={i}>{p.value}</code>;
-          if (p.type === "cite") return (
-            <button
-              key={i}
-              className="citation"
-              onMouseEnter={() => onCiteHover(p.value)}
-              onMouseLeave={onCiteLeave}
-              onClick={() => onCiteClick(p.value)}
-              aria-label={`Source ${p.value}`}
-            >{p.value}</button>
-          );
+          if (p.type === "cite") {
+            const src = msg.sources && msg.sources.find(s => s.n === p.value);
+            return (
+              <span key={i} className="citation-wrap">
+                <button
+                  className="citation"
+                  onMouseEnter={() => onCiteHover(p.value)}
+                  onMouseLeave={onCiteLeave}
+                  onClick={() => onCiteClick(p.value)}
+                  aria-label={src ? `Source ${p.value} — ${src.name} (score ${src.score.toFixed(2)})` : `Source ${p.value}`}
+                >{p.value}</button>
+                {src && (
+                  <span className="citation-tooltip" role="tooltip">
+                    <span className="ct-name">{src.name}</span>
+                    <span className="ct-score">{src.score.toFixed(2)}</span>
+                  </span>
+                )}
+              </span>
+            );
+          }
           return null;
         })}
         {streaming && <span className="cursor" style={{ display: "inline-block", width: 6, height: 14, background: "var(--twin-accent)", verticalAlign: "-2px", marginLeft: 2, animation: "blink 1s infinite" }} />}

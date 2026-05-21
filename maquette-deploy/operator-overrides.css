@@ -580,3 +580,42 @@ body {
   border-radius: 3px;
 }
 .tag-input-miss .link-btn { margin-left: 2px; }
+
+/* ── #40: Retrieval — citation hover tooltip (src name + score) ──────
+ * Proto required click-to-scroll to see what each [N] citation
+ * referenced. Hover now reveals an anchored tooltip with the source
+ * name + score; click still scrolls to the source card (unchanged). */
+.citation-wrap {
+  position: relative;
+  display: inline-block;
+}
+.citation-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 4px 12px rgba(15,23,32,0.10);
+  z-index: 100;
+  pointer-events: none;
+}
+.citation-wrap:hover .citation-tooltip,
+.citation-wrap:focus-within .citation-tooltip { display: flex; }
+.citation-tooltip .ct-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+}
+.citation-tooltip .ct-score {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
