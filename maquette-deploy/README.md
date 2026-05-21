@@ -165,6 +165,25 @@ when a feature is too logic-heavy for a CSS-only delta. Current overlays:
   topbar swallowing the upper half of the viewport in a stress demo
   (gateway-down + quota-exhausted + embedder-degraded + read-only +
   session-soon = 5 stacked banners possible).
+- **`db.jsx`** *(new — sql.js WASM persistence layer, 2026-05-21)* —
+  loads sql.js from CDN, opens an IndexedDB-backed `twin-demo /
+  sqlite-db` blob, exposes `window.twinDb.{boot, getAll, replaceAll,
+  logMutation, reset}`. Single generic `entities (kind, id, data)` PK
+  table + a `mutations` audit log. `app.jsx` boots the db, hydrates
+  `docs` from it on first load, snapshots on every mutation. Doc
+  Approve / Reject in the pending-review queue are now REAL state
+  changes — they actually move the document out of the queue and
+  survive a page reload (required for a credible demo). A trash
+  icon in the topbar resets the SQLite blob (confirm-gated). Devtools
+  show a real SQLite file under Application → IndexedDB → twin-demo.
+- **`Twin RAG WebUI.html`** — adds `<script src="db.jsx">` between
+  `data.js` and the JSX module chain so `window.twinDb` is defined
+  before `app.jsx`'s boot effect.
+- **`topbar.jsx`** — adds the Reset SQLite icon button next to the
+  theme toggle. Only renders when `window.twinDb` exists.
+- **`modals.jsx`** — every toast (not just `error` kind) gets an
+  explicit `×` dismiss button in the top-right corner. User feedback
+  2026-05-21.
 - **`documents.jsx` pending-card polish** *(visual feedback 2026-05-21)*
   — the proto's pending-card on the Documents tab rendered a broken
   `Pending review` badge that wrapped on two lines with a chunky amber

@@ -38,7 +38,7 @@ const _DOC_CURRENT_USER = { palier: _docPalier, name: _docHandle };
 const _docCanReview = _docPalier >= 3;
 const _docCanSeeQueue = _docPalier >= 2;
 
-window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd, onOpenRetag, onOpenBulkRetag, onAddToast, onLoadDemo }) {
+window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace, onOpenAdd, onOpenRetag, onOpenBulkRetag, onAddToast, onLoadDemo }) {
   const sys = window.useReadOnly ? window.useReadOnly() : { effectiveReadOnly: false, readOnlyReason: "" };
   const ro = sys.effectiveReadOnly;
   const roTitle = ro ? `Disabled — ${sys.readOnlyReason}` : undefined;
@@ -98,10 +98,12 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
   }
 
   const counts = useMemo(() => {
-    // Pending-review docs surface only in the steward queue, not in the
-    // main grid — exclude them from the status pill counters so the
-    // numbers match the visible table.
-    const reviewable = docs.filter(d => !(d.review && d.review.state === "pending-review"));
+    // Pending-review + rejected docs surface only in the steward queue,
+    // not in the main grid — exclude them from the status pill counters
+    // so the numbers match the visible table.
+    const reviewable = docs.filter(d =>
+      !(d.review && (d.review.state === "pending-review" || d.review.state === "rejected"))
+    );
     const c = { all: reviewable.length, completed: 0, processing: 0, pending: 0, failed: 0 };
     reviewable.forEach(d => { if (c[d.status] !== undefined) c[d.status]++; });
     return c;
@@ -112,6 +114,8 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
     return docs.filter(d => {
       // Pending-review docs surface only in the steward queue (see above).
       if (d.review && d.review.state === "pending-review") return false;
+      // Rejected docs are excluded from active retrieval set per spec.
+      if (d.review && d.review.state === "rejected") return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (search && !d.source.toLowerCase().includes(search.toLowerCase())) return false;
       if (tagFilters.length && !tagFilters.every(t => d.tags.includes(t))) return false;
@@ -119,15 +123,20 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
     });
   }, [docs, statusFilter, search, tagFilters]);
 
-  // Approve / reject handlers — emit the same shape as the tag governance
-  // flow so the activity tab picks them up via the `doc-review` kind.
+  // Approve / reject handlers — REAL state mutation (was toast-only in
+  // the proto). mutateDoc lifts the change to app.jsx where sql.js persists
+  // the docs array to IndexedDB, so the action survives a reload — table
+  // stakes for a credible demo.
+  const _stamp = () => new Date().toISOString().slice(0, 10);
   const approveDoc = (d) => {
+    mutateDoc && mutateDoc(d.id, { review: { state: "approved", reviewed_by: _DOC_CURRENT_USER.name, reviewed_at: _stamp() } });
     onAddToast(
       `Document approved · ${d.source}`,
       `doc.approved · entered active retrieval set · ${d.review && d.review.requested_by ? "requested by " + d.review.requested_by : "audit recorded"}`
     );
   };
   const editAndApproveDoc = (d) => {
+    mutateDoc && mutateDoc(d.id, { review: { state: "approved", reviewed_by: _DOC_CURRENT_USER.name, reviewed_at: _stamp(), edited: true } });
     onAddToast(
       `Document approved with edits · ${d.source}`,
       "doc.approved · steward acknowledged the request after a tag/summary tweak"
@@ -135,6 +144,7 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
   };
   const submitReject = () => {
     if (!rejectDoc) return;
+    mutateDoc && mutateDoc(rejectDoc.id, { review: { state: "rejected", reviewed_by: _DOC_CURRENT_USER.name, reviewed_at: _stamp(), reason: rejectReason || "" } });
     onAddToast(
       `Document rejected · ${rejectDoc.source}`,
       `doc.rejected · reason: ${rejectReason || "(none provided)"} · requester notified`
@@ -467,7 +477,11 @@ function DocRow({ doc, selected, checked, onToggle, onOpenRetag, onClickTag, onS
   const visibleTags = doc.tags.slice(0, 2);
   const overflow = doc.tags.length - visibleTags.length;
   return (
-    <div className={`docs-row has-select${selected ? " selected" : ""}${checked ? " is-checked" : ""}`} onClick={() => onSelect(doc)}>
+    <div
+      className={`docs-row has-select${selected ? " selected" : ""}${checked ? " is-checked" : ""}`}
+      onClick={() => onSelect(doc)}
+      onDoubleClick={() => onSelect(doc)}
+    >
       <div className="cell-select" onClick={e => e.stopPropagation()}>
         <input
           type="checkbox"
