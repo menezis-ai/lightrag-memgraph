@@ -323,16 +323,8 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
             </button>
           ))}
         </div>
-        <input
-          className="search-source"
-          placeholder="Search source name…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-      </div>
-
-      <div className="tag-filter-row">
-        <span className="lbl">Filter by tag<em>— Twin</em></span>
+        <span className="filter-divider" aria-hidden="true" />
+        <span className="filter-label-tag">Tag<em>— Twin</em></span>
         <div className="tag-chips">
           {tagFilters.map(t => (
             <TagChip key={t} tag={t} removable onRemove={removeTagFilter} />
@@ -377,6 +369,12 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
             <button className="tag-add-btn" onClick={() => setTagAddOpen(true)}>+ Add tag</button>
           )}
         </div>
+        <input
+          className="search-source"
+          placeholder="Search source name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
       {selected.size > 0 && (

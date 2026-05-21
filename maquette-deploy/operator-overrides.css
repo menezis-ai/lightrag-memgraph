@@ -529,3 +529,29 @@ body {
 .tag-actions-more-item:hover { background: var(--color-background-secondary); }
 .tag-actions-more-item.danger { color: var(--twin-red-vivid, #B03030); }
 .tag-actions-more-item.danger:hover { background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 9%, var(--color-background-primary)); }
+
+/* ── #34: Documents — fuse status pills + tag filter rows ───────────
+ * Proto stacked .docs-filters (status) and .tag-filter-row (tags) on
+ * two rows with different backgrounds, hiding the fact that tag
+ * selection is also a filter. Merge into a single bar with a vertical
+ * separator between the Status and Tag sections; search input keeps
+ * its margin-left:auto so it parks on the right. */
+.filter-divider {
+  display: inline-block;
+  width: 0;
+  height: 18px;
+  border-left: 0.5px solid var(--color-border-tertiary);
+  margin: 0 4px;
+}
+.filter-label-tag {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+}
+.filter-label-tag em {
+  font-style: normal;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.docs-filters .tag-chips { flex-wrap: wrap; }
