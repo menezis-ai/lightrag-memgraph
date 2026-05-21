@@ -202,6 +202,17 @@ window.RetrievalTab = function RetrievalTab() {
     if (t && !tagFilters.includes(t)) setTagFilters([...tagFilters, t]);
     setTagInput("");
   };
+  // Jump to the Tags tab with `req=<name>` so the steward can validate
+  // the new tag through the governance flow (tags.jsx auto-opens the
+  // Request modal on that param). Replaces the silent fail when the
+  // typed tag isn't in the thesaurus.
+  const requestNewTag = (name) => {
+    const p = new URLSearchParams(window.location.search);
+    p.set("tab", "tags");
+    p.set("req", name.trim().toLowerCase());
+    window.history.pushState(null, "", window.location.pathname + "?" + p.toString());
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
 
   const tagSugg = window.MOCK_THESAURUS
     .filter(t => !tagFilters.includes(t.tag))
@@ -347,6 +358,18 @@ window.RetrievalTab = function RetrievalTab() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {tagInput && tagSugg.length === 0 && (
+            <div className="tag-input-miss" role="status">
+              <Icon name="info-circle" size={11} />
+              <span>
+                No tag named <code>{tagInput}</code> in the thesaurus.
+                {" "}
+                <button className="link-btn small" onMouseDown={() => requestNewTag(tagInput)}>
+                  Request new tag →
+                </button>
+              </span>
             </div>
           )}
         </div>

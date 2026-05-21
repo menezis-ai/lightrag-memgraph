@@ -137,6 +137,23 @@ window.TagsTab = function TagsTab({ onPushToast }) {
   const [selectedTag, setSelectedTag] = window.useUrlParam("tag", "rman");
   const [pendingOpen, setPendingOpen] = useState(true);
   const [modal, setModal] = useState(null); // {kind, tag?}
+  // Cross-tab handoff: Retrieval's "Request new tag" link navigates here
+  // with ?req=<name>. Auto-open the request modal with the name seeded.
+  useEffect(() => {
+    const consume = () => {
+      const p = new URLSearchParams(window.location.search);
+      const req = p.get("req");
+      if (req) {
+        setModal({ kind: "request", seedName: req });
+        p.delete("req");
+        const qs = p.toString();
+        window.history.replaceState(null, "", window.location.pathname + (qs ? "?" + qs : ""));
+      }
+    };
+    consume();
+    window.addEventListener("popstate", consume);
+    return () => window.removeEventListener("popstate", consume);
+  }, []);
   // Detail-panel collapsed by default under 1500px viewport — the 200/1fr/380
   // grid otherwise crushes the card grid to a single column with a wide
   // blank zone (audit #41). User can toggle freely once open.
@@ -545,7 +562,7 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
   const modalRef = React.useRef(null);
   window.useModalA11y && window.useModalA11y({ open: true, onClose, ref: modalRef });
   const tag = action.tag;
-  const [name, setName] = useState(tag ? tag.tag : "");
+  const [name, setName] = useState(tag ? tag.tag : (action.seedName || ""));
   const [migrateTo, setMigrateTo] = useState("");
   const [migrateStrategy, setMigrateStrategy] = useState("migrate");
   const [newSyn, setNewSyn] = useState("");

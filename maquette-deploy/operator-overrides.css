@@ -555,3 +555,28 @@ body {
   margin-left: 4px;
 }
 .docs-filters .tag-chips { flex-wrap: wrap; }
+
+/* ── #39: Retrieval — tag filter rejects non-thesaurus input ─────────
+ * Proto's Enter handler silently noops when typed input doesn't match
+ * the thesaurus (the placeholder "add tag…" implies autocomplete is
+ * authoritative but the user gets no feedback). Adds an explicit miss
+ * hint with a one-click handoff to the Tags tab's Request modal
+ * (seeded with the typed name). */
+.tag-input-miss {
+  margin-top: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.tag-input-miss svg { flex: 0 0 auto; margin-top: 2px; color: var(--color-text-tertiary); }
+.tag-input-miss code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: var(--color-background-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.tag-input-miss .link-btn { margin-left: 2px; }
