@@ -101,20 +101,6 @@ window.TopBar = function TopBar({
         <button className="icon-btn" aria-label="Theme" onClick={onTheme}>
           <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
         </button>
-        {window.twinDb && (
-          <button
-            className="icon-btn"
-            aria-label="Reset demo data (sqlite)"
-            title="Reset demo data — wipes the IndexedDB SQLite snapshot and reloads"
-            onClick={() => {
-              if (window.confirm("Reset the demo SQLite database? All approvals / rejections / mutations made during this session will be lost and the seeded fixture restored.")) {
-                window.twinDb.reset();
-              }
-            }}
-          >
-            <Icon name="trash" size={14} />
-          </button>
-        )}
       </div>
     </header>
   );
