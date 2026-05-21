@@ -727,3 +727,31 @@ body {
   background: var(--twin-accent-hover, var(--twin-accent));
   border-color: var(--twin-accent-hover, var(--twin-accent));
 }
+
+/* ── Toast dismiss × button ─────────────────────────────────────────
+ * Proto only rendered a close × on error toasts. Propagating + done
+ * toasts had no explicit close (user could only wait for auto-expire
+ * or hit Undo on done). User feedback 2026-05-21: every notif needs
+ * a × in the bottom-right viewport. */
+.toast { position: relative; padding-right: 26px; }
+.toast-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: background 120ms, color 120ms;
+}
+.toast-dismiss:hover {
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
