@@ -351,3 +351,24 @@ body {
   letter-spacing: 0.01em;
 }
 .swagger-mock-banner b { font-weight: 600; }
+
+/* ── #37: Documents — hide Chunks + Updated cols under 1500px ────────
+ * With the 520px side-panel open at 1366px viewport, the 8-col table
+ * scrolls horizontally. Chunks + Updated are the two least useful
+ * cells at-a-glance — chunk count is an indexing detail and updated
+ * date is repeated in the detail panel. Hide them and let the
+ * remaining cells take the freed space. */
+@media (max-width: 1500px) {
+  .docs-row {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) 130px 100px 32px;
+  }
+  .docs-row.has-select {
+    grid-template-columns: 32px minmax(0, 1.2fr) minmax(0, 1.4fr) 130px 100px 32px;
+  }
+  .docs-row.has-select > .cell-chunks,
+  .docs-row.has-select > .cell-updated,
+  .docs-row.has-select.header > div:nth-child(6),
+  .docs-row.has-select.header > div:nth-child(7) {
+    display: none;
+  }
+}
