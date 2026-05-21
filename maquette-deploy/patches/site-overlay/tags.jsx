@@ -1,5 +1,5 @@
 // Tags / Thesaurus governance — aligned with the screen-tags spec.
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 // Layout: header (with palier RBAC indicator) → Pending requests section →
 // filters → category rail + card grid + side detail panel.
 
@@ -135,7 +135,14 @@ window.TagsTab = function TagsTab({ onPushToast }) {
   });
   const [q, setQ] = window.useUrlParam("q", "");
   const [selectedTag, setSelectedTag] = window.useUrlParam("tag", "rman");
-  const [pendingOpen, setPendingOpen] = useState(true);
+  // Pending section collapsed by default — full-card amber on first
+  // open reads as "alert" not "to-do". Choice persists per tab.
+  const [pendingOpen, setPendingOpen] = useState(() => {
+    try { return localStorage.getItem("twin.tagsPending.open") === "true"; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("twin.tagsPending.open", String(pendingOpen)); } catch (e) {}
+  }, [pendingOpen]);
   const [modal, setModal] = useState(null); // {kind, tag?}
   // Cross-tab handoff: Retrieval's "Request new tag" link navigates here
   // with ?req=<name>. Auto-open the request modal with the name seeded.

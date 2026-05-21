@@ -1,5 +1,5 @@
 // Documents tab — table with status filter, tag filter, source rows
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 
 const STATUS_LABELS = {
   all: "All",
@@ -65,7 +65,16 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
     () => docs.filter(d => d.review && d.review.state === "pending-review"),
     [docs]
   );
-  const [pendingOpen, setPendingOpen] = useState(true);
+  // Pending section collapsed by default — audit feedback: full-card
+  // amber on first open reads as "alert" not "to-do". Choice persists in
+  // localStorage per tab so the steward who already triaged doesn't have
+  // to re-collapse on every load.
+  const [pendingOpen, setPendingOpen] = useState(() => {
+    try { return localStorage.getItem("twin.docsPending.open") === "true"; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("twin.docsPending.open", String(pendingOpen)); } catch (e) {}
+  }, [pendingOpen]);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
 
