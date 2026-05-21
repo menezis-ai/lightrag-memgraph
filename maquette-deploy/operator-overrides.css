@@ -619,3 +619,63 @@ body {
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── #45: Activity Clear modal — purge preview ───────────────────────
+ * Proto's modal asked the operator to type CLEAR before purging but
+ * never showed what would actually be deleted. Added preview list
+ * computed live from MOCK_ACTIVITY against the retention table; first
+ * 5 affected events surfaced with a "+N more" tail. */
+.purge-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  font-size: 11.5px;
+}
+.purge-preview.is-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+}
+.purge-preview-h {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: 6px;
+}
+.purge-preview-h b { font-weight: 600; }
+.purge-preview-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.purge-preview-list li {
+  display: grid;
+  grid-template-columns: 14px auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.purge-preview-list .pp-kind { color: var(--color-text-primary); font-weight: 500; }
+.purge-preview-list .pp-target {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.purge-preview-list .pp-when { color: var(--color-text-tertiary); font-size: 10.5px; }
+.purge-preview-list .pp-more {
+  display: block;
+  font-style: italic;
+  color: var(--color-text-tertiary);
+  padding-left: 22px;
+  margin-top: 2px;
+}
