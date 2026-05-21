@@ -679,3 +679,51 @@ body {
   padding-left: 22px;
   margin-top: 2px;
 }
+
+/* ── #49: shared EmptyState + button class unification ───────────────
+ * Audit pattern debt: 3 empty-state styles (.empty-state, .empty-pane /
+ * .empty-workspace, .tags-empty.zero/.filtered) and 2 button class
+ * systems (.primary-btn vs .btn.primary) co-exist with divergent CSS,
+ * inviting silent visual drift on the next restyle. New code uses
+ * <EmptyState> from icons.jsx (window.EmptyState) and the styles below
+ * give .empty-state-shared the canonical look + alias .btn.primary to
+ * the .primary-btn visual. Existing call-sites unchanged; conversion
+ * happens progressively per tab in follow-up PRs. See STYLES.md. */
+.empty-state-shared {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 24px;
+  text-align: center;
+}
+.empty-state-shared .title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.empty-state-shared .sub {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  max-width: 420px;
+  line-height: 1.5;
+}
+.empty-state-shared .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* .btn.primary visually matches .primary-btn so callers can use either
+ * interchangeably without divergence. */
+.btn.primary {
+  background: var(--twin-accent);
+  color: #fff;
+  border-color: var(--twin-accent);
+  font-weight: 500;
+}
+.btn.primary:hover {
+  background: var(--twin-accent-hover, var(--twin-accent));
+  border-color: var(--twin-accent-hover, var(--twin-accent));
+}
