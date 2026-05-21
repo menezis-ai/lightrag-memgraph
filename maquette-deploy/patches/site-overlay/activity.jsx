@@ -85,6 +85,52 @@ const RANGES = [
   { id: "all", label: "All" }
 ];
 
+// Map a backend mutation row → activity event shape so the Activity tab
+// can render live persistence events alongside the seeded MOCK_ACTIVITY.
+function _mutationToActivity(m) {
+  if (!m || !m.ts) return null;
+  const ts = m.ts;
+  const day = ts.slice(0, 10);
+  const ago = (() => {
+    const ms = Date.now() - Date.parse(ts);
+    if (ms < 60_000) return "now";
+    if (ms < 3_600_000) return Math.round(ms / 60_000) + "m ago";
+    if (ms < 86_400_000) return Math.round(ms / 3_600_000) + "h ago";
+    return Math.round(ms / 86_400_000) + "d ago";
+  })();
+  const p = m.payload || {};
+  let kind = m.kind;
+  let summary = `${m.action} ${m.kind}`;
+  let sev = "info";
+  let actor = "system";
+  if (m.kind === "docs" && p.review) {
+    kind = "doc-review";
+    if (p.review.state === "approved") summary = `Approved · ${m.target_id} entered active retrieval set`;
+    else if (p.review.state === "rejected") { summary = `Rejected · ${m.target_id} · ${p.review.reason || "no reason"}`; sev = "warning"; }
+    else summary = `Review state → ${p.review.state}`;
+    actor = p.review.reviewed_by || "system";
+  } else if (m.kind === "state" && m.action === "reset") {
+    kind = "settings";
+    summary = "Demo state reset · SQLite reseeded from JSON fixtures";
+  } else if (m.kind === "tags") {
+    kind = "tag-mutation";
+    summary = `Tag ${m.target_id} · ${m.action}`;
+    actor = (p.review && p.review.reviewed_by) || "system";
+  }
+  return {
+    id: `mut-${m.id}`,
+    kind,
+    ts,
+    day,
+    rel: ago,
+    sev,
+    actor: { user: actor, role: "Steward" },
+    target: { type: m.kind, label: m.target_id || "—" },
+    summary,
+    meta: { ...(p || {}), mutation_id: m.id }
+  };
+}
+
 window.ActivityTab = function ActivityTab({ density = "comfortable", live = true, groupByDay = true, onPushToast }) {
   const [range, setRange] = window.useUrlParam("range", "7d", {
     validate: v => ["24h","7d","30d","all"].includes(v)
@@ -102,6 +148,29 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
   });
   const [q, setQ] = window.useUrlParam("q", "");
   const [actor, setActor] = window.useUrlParam("actor", "any");
+  // Live mutations from the FastAPI backend (`/api/mutations`) prepended
+  // to the seeded MOCK_ACTIVITY fixture. Gives the Activity tab a real
+  // audit trail spine that grows every time a steward approves a doc.
+  // Killer for the Manu demo — Kore.ai admitted their audit is "in the
+  // logs, not in the interface" (transcription 2026-05-21).
+  const [liveMutations, setLiveMutations] = useState([]);
+  useEffect(() => {
+    if (!window.twinDb) return;
+    let cancelled = false;
+    const load = () => {
+      fetch("/api/mutations?limit=100")
+        .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+        .then(rows => { if (!cancelled) setLiveMutations(rows.map(_mutationToActivity).filter(Boolean)); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 15000); // refresh every 15s
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  const fullActivity = useMemo(
+    () => [...liveMutations, ...(window.MOCK_ACTIVITY || [])],
+    [liveMutations]
+  );
   const [selectedId, setSelectedId] = useState(window.MOCK_ACTIVITY[0].id);
   const [pendingCount, setPendingCount] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
@@ -164,7 +233,7 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
   }, [live]);
 
   const actors = useMemo(() => {
-    const s = new Set(window.MOCK_ACTIVITY.map(e => e.actor.user));
+    const s = new Set(fullActivity.map(e => e.actor.user));
     return ["any", ...s];
   }, []);
 
@@ -174,7 +243,7 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
     setKinds(next);
   };
 
-  const filtered = window.MOCK_ACTIVITY.filter(e => {
+  const filtered = fullActivity.filter(e => {
     if (range !== "all") {
       const cutoff = NOW_MS - (RANGE_MS[range] || RANGE_MS["7d"]);
       const ts = Date.parse(e.ts);

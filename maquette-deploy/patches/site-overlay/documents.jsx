@@ -693,9 +693,43 @@ const MOCK_CHUNKS = [
   }
 ];
 
+// Translate a backend mutation row into a human-readable verb for the
+// Audit timeline. Keeps the panel readable when payloads get nested.
+function _formatAuditAction(m) {
+  const p = m.payload || {};
+  if (p.review) {
+    const st = p.review.state;
+    if (st === "approved") return p.review.edited ? "Approved with edits" : "Approved";
+    if (st === "rejected") return "Rejected";
+    if (st) return "Review → " + st;
+  }
+  if (m.action === "delete") return "Deleted";
+  if (m.action === "patch") return "Patched";
+  return m.action;
+}
+
 function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
   const [tab, setTab] = useState("overview");
   const errorRef = React.useRef(null);
+  // Audit trail — live mutation log from the FastAPI backend, filtered
+  // for this doc. Killer feature vs Kore.ai (audit is "in the logs, not
+  // in the interface" per their own meeting transcription).
+  const [audit, setAudit] = useState({ loading: false, entries: null, error: null });
+  useEffect(() => {
+    if (tab !== "audit") return;
+    if (!window.twinDb || !doc) return;
+    setAudit({ loading: true, entries: null, error: null });
+    fetch("/api/mutations?limit=200")
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+      .then(rows => {
+        // Backend returns ALL mutations; filter to this doc's audit trail
+        // (cheap — dataset is small in the demo, would move server-side
+        // with `?target_id=` query param if it grew).
+        const mine = rows.filter(m => m.kind === "docs" && m.target_id === doc.id);
+        setAudit({ loading: false, entries: mine, error: null });
+      })
+      .catch(err => setAudit({ loading: false, entries: null, error: err.message }));
+  }, [tab, doc && doc.id]);
 
   useEffect(() => {
     if (focus === "error" && errorRef.current) {
@@ -757,7 +791,7 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
         </div>
 
         <nav className="detail-tabs">
-          {["overview", "chunks", "lineage"].map(t => (
+          {["overview", "chunks", "lineage", "audit"].map(t => (
             <button
               key={t}
               className={`detail-tab${tab === t ? " active" : ""}`}
@@ -766,6 +800,7 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
               {t === "overview" && "Overview"}
               {t === "chunks" && `Chunks (${doc.chunks ?? 0})`}
               {t === "lineage" && "Lineage"}
+              {t === "audit" && <>Audit{audit.entries && audit.entries.length > 0 && <span className="audit-tab-count">{audit.entries.length}</span>}</>}
             </button>
           ))}
         </nav>
@@ -871,6 +906,86 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast }) {
                   <dt>Bytes</dt><dd className="mono-meta">{MOCK_LINEAGE.bytes.toLocaleString()}</dd>
                   <dt>SHA-256</dt><dd className="mono-meta">{MOCK_LINEAGE.sha256}</dd>
                 </dl>
+              </section>
+            </>
+          )}
+
+          {tab === "audit" && (
+            <>
+              <section className="detail-section">
+                <div className="detail-section-head">
+                  <h3>Audit trail</h3>
+                  <span className="audit-source-pill">
+                    <Icon name="lock" size={10} />
+                    SQLite · table <code>mutations</code>
+                  </span>
+                </div>
+                <p className="audit-sub">
+                  Every steward action on this document, sourced live from the
+                  FastAPI backend. Visible in the interface — not buried in
+                  server logs.
+                </p>
+
+                {audit.loading && (
+                  <div className="audit-loading">
+                    <Icon name="loader-2" size={14} /> Loading audit trail…
+                  </div>
+                )}
+
+                {audit.error && (
+                  <div className="audit-error">
+                    <Icon name="alert-triangle" size={13} />
+                    <span>Backend unreachable — {audit.error}</span>
+                  </div>
+                )}
+
+                {!audit.loading && !audit.error && (
+                  <ol className="audit-timeline">
+                    {/* Seed events (from doc data, not from mutation log) so
+                        the timeline isn't empty before any operator action. */}
+                    {doc.review && doc.review.requested_at && (
+                      <li className="audit-entry is-seed">
+                        <span className="audit-dot" />
+                        <div className="audit-body">
+                          <div className="audit-line1">
+                            <span className="audit-action">Requested for review</span>
+                            <span className="audit-actor">by <b>{doc.review.requested_by || "unknown"}</b></span>
+                          </div>
+                          {doc.review.justification && (
+                            <div className="audit-justif">{doc.review.justification}</div>
+                          )}
+                          <div className="audit-when">{doc.review.requested_at} · seed</div>
+                        </div>
+                      </li>
+                    )}
+                    {audit.entries && audit.entries.map(m => (
+                      <li key={m.id} className={"audit-entry " + (m.payload && m.payload.review && m.payload.review.state === "rejected" ? "is-reject" : "is-mutation")}>
+                        <span className="audit-dot" />
+                        <div className="audit-body">
+                          <div className="audit-line1">
+                            <span className="audit-action">{_formatAuditAction(m)}</span>
+                            {m.payload && m.payload.review && m.payload.review.reviewed_by && (
+                              <span className="audit-actor">by <b>{m.payload.review.reviewed_by}</b></span>
+                            )}
+                          </div>
+                          {m.payload && m.payload.review && m.payload.review.reason && (
+                            <div className="audit-justif">Reason: {m.payload.review.reason}</div>
+                          )}
+                          <div className="audit-when">
+                            {m.ts.replace("T", " ").slice(0, 19)} UTC · mutation #{m.id}
+                          </div>
+                          <details className="audit-payload">
+                            <summary>raw payload</summary>
+                            <pre>{JSON.stringify(m.payload, null, 2)}</pre>
+                          </details>
+                        </div>
+                      </li>
+                    ))}
+                    {audit.entries && audit.entries.length === 0 && !doc.review && (
+                      <li className="audit-empty">No steward action recorded for this document yet.</li>
+                    )}
+                  </ol>
+                )}
               </section>
             </>
           )}
