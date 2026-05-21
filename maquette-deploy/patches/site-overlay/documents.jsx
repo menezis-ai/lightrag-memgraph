@@ -1,5 +1,5 @@
 // Documents tab — table with status filter, tag filter, source rows
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 
 const STATUS_LABELS = {
   all: "All",
@@ -65,7 +65,16 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
     () => docs.filter(d => d.review && d.review.state === "pending-review"),
     [docs]
   );
-  const [pendingOpen, setPendingOpen] = useState(true);
+  // Pending section collapsed by default — audit feedback: full-card
+  // amber on first open reads as "alert" not "to-do". Choice persists in
+  // localStorage per tab so the steward who already triaged doesn't have
+  // to re-collapse on every load.
+  const [pendingOpen, setPendingOpen] = useState(() => {
+    try { return localStorage.getItem("twin.docsPending.open") === "true"; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("twin.docsPending.open", String(pendingOpen)); } catch (e) {}
+  }, [pendingOpen]);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
 
@@ -323,16 +332,8 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
             </button>
           ))}
         </div>
-        <input
-          className="search-source"
-          placeholder="Search source name…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-      </div>
-
-      <div className="tag-filter-row">
-        <span className="lbl">Filter by tag<em>— Twin</em></span>
+        <span className="filter-divider" aria-hidden="true" />
+        <span className="filter-label-tag">Tag<em>— Twin</em></span>
         <div className="tag-chips">
           {tagFilters.map(t => (
             <TagChip key={t} tag={t} removable onRemove={removeTagFilter} />
@@ -377,6 +378,12 @@ window.DocumentsTab = function DocumentsTab({ docs, isEmptyWorkspace, onOpenAdd,
             <button className="tag-add-btn" onClick={() => setTagAddOpen(true)}>+ Add tag</button>
           )}
         </div>
+        <input
+          className="search-source"
+          placeholder="Search source name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
       {selected.size > 0 && (
@@ -503,11 +510,11 @@ function DocRow({ doc, selected, checked, onToggle, onOpenRetag, onClickTag, onS
           </button>
         ) : (
           <button
-            className="action-btn"
+            className="action-btn retag"
             onClick={e => { e.stopPropagation(); onOpenRetag(doc); }}
-            title="Retag"
+            title="Retag this document"
           >
-            <Icon name="plus" size={13} />
+            Retag
           </button>
         )}
       </div>

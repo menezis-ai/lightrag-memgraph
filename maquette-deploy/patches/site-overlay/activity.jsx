@@ -1,6 +1,19 @@
 // Activity tab — split timeline (left) + event detail (right)
 const { useState, useEffect, useMemo, useRef } = React;
 
+// Retention windows by event-kind bucket (days). Mirrors the table the
+// Clear modal shows. Used to compute the preview list of events that
+// will actually be purged (audit #45 — operator currently confirms
+// without seeing what's about to be deleted).
+const RETENTION_DAYS = {
+  "source-uploaded": 90, "source-ready": 90, "source-failed": 90,
+  "confluence": 90, "sharepoint": 90, "url": 90,
+  "tag-mutation": 90, "doc-review": 90,
+  "retrieval": 30,
+  "settings": 365, "auth": 365,
+  "pipeline-warning": 2555 // 7y — policy / system
+};
+
 // Filter buckets: condense the 12 event kinds into 5 readable groups.
 // Sub-kinds remain accessible via the "Advanced" dropdown next to the
 // bucket pills. Each KIND_META key MUST belong to exactly one bucket.
@@ -140,10 +153,13 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
   const clearModalRef = React.useRef(null);
   window.useModalA11y && window.useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
-  // Simulated live polling
+  // Simulated live polling. Interval bumped 9s → 30s and the visual
+  // indicator (below) only surfaces once 3+ events have queued, so the
+  // demo doesn't have a "+1 every 9s" pulse in the corner of the eye
+  // (audit feedback — was reading as visual chatter).
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(() => setPendingCount(c => c + 1), 9000);
+    const t = setInterval(() => setPendingCount(c => c + 1), 30000);
     return () => clearInterval(t);
   }, [live]);
 
@@ -308,13 +324,13 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
           </div>
         </div>
 
-        {pendingCount > 0 && (
+        {pendingCount >= 3 && (
           <button
             className="activity-pending"
             onClick={() => setPendingCount(0)}
           >
             <span className="pending-dot" />
-            {pendingCount} new event{pendingCount > 1 ? "s" : ""} since you opened this view — click to refresh
+            {pendingCount} new events since you opened this view — click to refresh
           </button>
         )}
 
@@ -392,6 +408,49 @@ window.ActivityTab = function ActivityTab({ density = "comfortable", live = true
                 <div><span>Auth</span><code>1y</code></div>
                 <div><span>Policy / System</span><code>7y</code></div>
               </div>
+              {(() => {
+                // Compute the purge preview against the full MOCK_ACTIVITY
+                // (not the filtered view — the action is global). Demo NOW_MS
+                // is pinned above so the fixture's ages stay deterministic.
+                const purge = (window.MOCK_ACTIVITY || []).filter(e => {
+                  const days = RETENTION_DAYS[e.kind];
+                  if (!days) return false;
+                  const ts = Date.parse(e.ts);
+                  if (!Number.isFinite(ts)) return false;
+                  return (NOW_MS - ts) / 86400000 > days;
+                });
+                if (purge.length === 0) {
+                  return (
+                    <div className="purge-preview is-empty">
+                      <Icon name="info-circle" size={11} />
+                      <span>No events are currently past their retention window — nothing to purge.</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="purge-preview">
+                    <div className="purge-preview-h">
+                      Will purge <b>{purge.length.toLocaleString()}</b> event{purge.length > 1 ? "s" : ""} past retention
+                    </div>
+                    <ul className="purge-preview-list">
+                      {purge.slice(0, 5).map(e => {
+                        const m = KIND_META[e.kind] || KIND_FALLBACK;
+                        return (
+                          <li key={e.id}>
+                            <Icon name={m.icon} size={10} color={m.color} />
+                            <span className="pp-kind">{m.label}</span>
+                            <span className="pp-target">{e.target.label}</span>
+                            <span className="pp-when">{e.day}</span>
+                          </li>
+                        );
+                      })}
+                      {purge.length > 5 && (
+                        <li className="pp-more">+{(purge.length - 5).toLocaleString()} more</li>
+                      )}
+                    </ul>
+                  </div>
+                );
+              })()}
               <label className="field-label">Type <code>CLEAR</code> to confirm</label>
               <input className="text-input" value={clearConfirm} onChange={e => setClearConfirm(e.target.value)} placeholder="CLEAR" autoFocus />
             </div>

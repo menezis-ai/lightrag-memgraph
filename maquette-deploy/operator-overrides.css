@@ -316,3 +316,414 @@ body {
   color: #fff;
   border-color: var(--twin-accent);
 }
+
+/* ── #36: Documents Scan vs Pipeline badge differentiation ──────────
+ * Proto rendered both Scan (failed count) and Pipeline (processing
+ * count) chips as accent-colored pills with no separator → two
+ * identical-looking dots side-by-side reading as "two alerts". Scan
+ * is actionable (something failed), Pipeline is informational (live
+ * processing count). Recolor Pipeline to neutral, keep Scan red, and
+ * add a vertical separator so the eye groups them as distinct
+ * concerns. */
+.docs-header-actions .btn:not(.btn-retry) .pipeline-badge {
+  background: var(--color-text-secondary);
+}
+.docs-header-actions > div:has(> .btn .pipeline-badge) {
+  border-left: 0.5px solid var(--color-border-tertiary);
+  padding-left: 10px;
+  margin-left: 4px;
+}
+
+/* ── #46: API tab — MOCK banner above every rendered response ───────
+ * The Swagger-like response panel renders mock fixture JSON identically
+ * to a real call. Future devs / new stakeholders viewing the demo can
+ * believe the call hit a live backend. Banner sits above the response
+ * header in amber to make the fixture status unambiguous. */
+.swagger-mock-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 9%, var(--color-background-primary));
+  border-bottom: 0.5px solid color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 35%, var(--color-border-default));
+  color: var(--twin-amber-700, #6B4D00);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+}
+.swagger-mock-banner b { font-weight: 600; }
+
+/* ── #37: Documents — hide Chunks + Updated cols under 1500px ────────
+ * With the 520px side-panel open at 1366px viewport, the 8-col table
+ * scrolls horizontally. Chunks + Updated are the two least useful
+ * cells at-a-glance — chunk count is an indexing detail and updated
+ * date is repeated in the detail panel. Hide them and let the
+ * remaining cells take the freed space. */
+@media (max-width: 1500px) {
+  .docs-row {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) 130px 100px 32px;
+  }
+  .docs-row.has-select {
+    grid-template-columns: 32px minmax(0, 1.2fr) minmax(0, 1.4fr) 130px 100px 32px;
+  }
+  .docs-row.has-select > .cell-chunks,
+  .docs-row.has-select > .cell-updated,
+  .docs-row.has-select.header > div:nth-child(6),
+  .docs-row.has-select.header > div:nth-child(7) {
+    display: none;
+  }
+}
+
+/* ── #41: Tags — detail panel collapsible (auto-collapse <1500px) ────
+ * Proto's `.tags-body` is a 200/1fr/380 grid → 580px of chrome. At
+ * 1366px the tag-card grid collapses to a single column with a wide
+ * blank zone on the right. App-level state defaults to collapsed under
+ * 1500px; the rail-style "Details" button anchored on the right edge
+ * of `main` re-opens the panel. A small `x` in the panel header
+ * collapses it again. */
+.tags-body.is-panel-collapsed {
+  grid-template-columns: 200px minmax(0, 1fr) 0;
+}
+.tag-detail-rail {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-right: 0;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  box-shadow: -2px 2px 8px rgba(15,23,32,0.05);
+  z-index: 30;
+}
+.tag-detail-rail:hover { color: var(--color-text-primary); border-color: var(--twin-accent); }
+.tag-detail-rail svg { transform: none !important; }
+
+.tag-detail-close {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+}
+.tag-detail-close:hover { color: var(--color-text-primary); }
+.tag-detail .detail-kind { display: flex; align-items: center; gap: 6px; }
+
+/* ── #38: Retrieval — params-panel collapsible (auto under 1500px) ───
+ * Proto's `.retrieval.has-history` is 240/1fr/320 → conv slot drops
+ * to ~600px at 1366px viewport, every assistant chunk wraps on 4
+ * lines. App-state default = collapsed under 1500px. Vertical rail
+ * "Params" button reopens; small `x` in params header collapses again. */
+.retrieval.has-history.is-params-collapsed {
+  grid-template-columns: 240px minmax(0, 1fr) 0;
+}
+.params-collapsed-rail {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-right: 0;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  box-shadow: -2px 2px 8px rgba(15,23,32,0.05);
+  z-index: 30;
+}
+.params-collapsed-rail:hover { color: var(--color-text-primary); border-color: var(--twin-accent); }
+.params-collapsed-rail svg { transform: rotate(0) !important; }
+.params-collapse {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+}
+.params-collapse:hover { color: var(--color-text-primary); }
+.params-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.params-header h3 { flex: 0 0 auto; }
+.params-header p { flex: 1 1 auto; }
+
+/* ── #35: Documents row action — explicit "Retag" text vs ambiguous + ─
+ * Proto's row action cell rendered a `+` icon for non-failed docs. The
+ * `+` reads as "add row" not "retag this document" — broke the Linear/
+ * Notion idiom. Switch to an explicit small "Retag" text button. */
+.action-btn.retag {
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* ── #42: Tags — Detail panel actions hierarchy (More dropdown) ──────
+ * Proto rendered Edit / Manage synonyms / Deprecate / Delete as 4
+ * coequal ghost chips. Delete `danger` was visually peer to Edit —
+ * one accidental click away from data loss. Group destructive ops
+ * under a "More ⌄" dropdown so the primary row stays Edit + Manage
+ * synonyms only. */
+.tag-actions-more {
+  position: relative;
+  display: inline-flex;
+}
+.tag-actions-more > .ghost-btn.is-open {
+  background: var(--color-background-secondary);
+  border-color: var(--twin-accent);
+  color: var(--color-text-primary);
+}
+.tag-actions-more-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 50;
+  min-width: 140px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 4px 12px rgba(15,23,32,0.08);
+  padding: 4px;
+}
+.tag-actions-more-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.tag-actions-more-item:hover { background: var(--color-background-secondary); }
+.tag-actions-more-item.danger { color: var(--twin-red-vivid, #B03030); }
+.tag-actions-more-item.danger:hover { background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 9%, var(--color-background-primary)); }
+
+/* ── #34: Documents — fuse status pills + tag filter rows ───────────
+ * Proto stacked .docs-filters (status) and .tag-filter-row (tags) on
+ * two rows with different backgrounds, hiding the fact that tag
+ * selection is also a filter. Merge into a single bar with a vertical
+ * separator between the Status and Tag sections; search input keeps
+ * its margin-left:auto so it parks on the right. */
+.filter-divider {
+  display: inline-block;
+  width: 0;
+  height: 18px;
+  border-left: 0.5px solid var(--color-border-tertiary);
+  margin: 0 4px;
+}
+.filter-label-tag {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+}
+.filter-label-tag em {
+  font-style: normal;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.docs-filters .tag-chips { flex-wrap: wrap; }
+
+/* ── #39: Retrieval — tag filter rejects non-thesaurus input ─────────
+ * Proto's Enter handler silently noops when typed input doesn't match
+ * the thesaurus (the placeholder "add tag…" implies autocomplete is
+ * authoritative but the user gets no feedback). Adds an explicit miss
+ * hint with a one-click handoff to the Tags tab's Request modal
+ * (seeded with the typed name). */
+.tag-input-miss {
+  margin-top: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.tag-input-miss svg { flex: 0 0 auto; margin-top: 2px; color: var(--color-text-tertiary); }
+.tag-input-miss code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: var(--color-background-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.tag-input-miss .link-btn { margin-left: 2px; }
+
+/* ── #40: Retrieval — citation hover tooltip (src name + score) ──────
+ * Proto required click-to-scroll to see what each [N] citation
+ * referenced. Hover now reveals an anchored tooltip with the source
+ * name + score; click still scrolls to the source card (unchanged). */
+.citation-wrap {
+  position: relative;
+  display: inline-block;
+}
+.citation-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  box-shadow: 0 4px 12px rgba(15,23,32,0.10);
+  z-index: 100;
+  pointer-events: none;
+}
+.citation-wrap:hover .citation-tooltip,
+.citation-wrap:focus-within .citation-tooltip { display: flex; }
+.citation-tooltip .ct-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+}
+.citation-tooltip .ct-score {
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── #45: Activity Clear modal — purge preview ───────────────────────
+ * Proto's modal asked the operator to type CLEAR before purging but
+ * never showed what would actually be deleted. Added preview list
+ * computed live from MOCK_ACTIVITY against the retention table; first
+ * 5 affected events surfaced with a "+N more" tail. */
+.purge-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  font-size: 11.5px;
+}
+.purge-preview.is-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+}
+.purge-preview-h {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: 6px;
+}
+.purge-preview-h b { font-weight: 600; }
+.purge-preview-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.purge-preview-list li {
+  display: grid;
+  grid-template-columns: 14px auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.purge-preview-list .pp-kind { color: var(--color-text-primary); font-weight: 500; }
+.purge-preview-list .pp-target {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.purge-preview-list .pp-when { color: var(--color-text-tertiary); font-size: 10.5px; }
+.purge-preview-list .pp-more {
+  display: block;
+  font-style: italic;
+  color: var(--color-text-tertiary);
+  padding-left: 22px;
+  margin-top: 2px;
+}
+
+/* ── #49: shared EmptyState + button class unification ───────────────
+ * Audit pattern debt: 3 empty-state styles (.empty-state, .empty-pane /
+ * .empty-workspace, .tags-empty.zero/.filtered) and 2 button class
+ * systems (.primary-btn vs .btn.primary) co-exist with divergent CSS,
+ * inviting silent visual drift on the next restyle. New code uses
+ * <EmptyState> from icons.jsx (window.EmptyState) and the styles below
+ * give .empty-state-shared the canonical look + alias .btn.primary to
+ * the .primary-btn visual. Existing call-sites unchanged; conversion
+ * happens progressively per tab in follow-up PRs. See STYLES.md. */
+.empty-state-shared {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 24px;
+  text-align: center;
+}
+.empty-state-shared .title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.empty-state-shared .sub {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  max-width: 420px;
+  line-height: 1.5;
+}
+.empty-state-shared .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* .btn.primary visually matches .primary-btn so callers can use either
+ * interchangeably without divergence. */
+.btn.primary {
+  background: var(--twin-accent);
+  color: #fff;
+  border-color: var(--twin-accent);
+  font-weight: 500;
+}
+.btn.primary:hover {
+  background: var(--twin-accent-hover, var(--twin-accent));
+  border-color: var(--twin-accent-hover, var(--twin-accent));
+}

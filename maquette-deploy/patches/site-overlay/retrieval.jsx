@@ -83,6 +83,12 @@ function QueryModeInfo() {
 window.RetrievalTab = function RetrievalTab() {
   const sys = window.useReadOnly ? window.useReadOnly() : { effectiveReadOnly: false, readOnlyReason: "" };
   const ro = sys.effectiveReadOnly;
+  // Params panel auto-collapses under 1500px so the conv slot gets the
+  // room (proto's 240/1fr/320 grid otherwise shrinks the conversation
+  // to ~600px at 1366px, wrapping every answer chunk on 4 lines).
+  const [paramsOpen, setParamsOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 1500 : true
+  );
   const [query, setQuery] = useState("");
   const [threads, setThreads] = useState(() => {
     try { const raw = localStorage.getItem("twin-rag.threads"); if (raw) return JSON.parse(raw); } catch (e) {}
@@ -196,6 +202,17 @@ window.RetrievalTab = function RetrievalTab() {
     if (t && !tagFilters.includes(t)) setTagFilters([...tagFilters, t]);
     setTagInput("");
   };
+  // Jump to the Tags tab with `req=<name>` so the steward can validate
+  // the new tag through the governance flow (tags.jsx auto-opens the
+  // Request modal on that param). Replaces the silent fail when the
+  // typed tag isn't in the thesaurus.
+  const requestNewTag = (name) => {
+    const p = new URLSearchParams(window.location.search);
+    p.set("tab", "tags");
+    p.set("req", name.trim().toLowerCase());
+    window.history.pushState(null, "", window.location.pathname + "?" + p.toString());
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
 
   const tagSugg = window.MOCK_THESAURUS
     .filter(t => !tagFilters.includes(t.tag))
@@ -203,7 +220,7 @@ window.RetrievalTab = function RetrievalTab() {
     .slice(0, 4);
 
   return (
-    <div className="retrieval has-history">
+    <div className={`retrieval has-history${paramsOpen ? "" : " is-params-collapsed"}`}>
       <aside className="history-panel">
         <div className="history-head">
           <span className="history-title">Conversations</span>
@@ -290,10 +307,19 @@ window.RetrievalTab = function RetrievalTab() {
         </div>
       </div>
 
+      {paramsOpen ? (
       <aside className="params-panel">
         <div className="params-header">
           <h3>Parameters</h3>
           <p>Configure your query</p>
+          <button
+            className="params-collapse"
+            onClick={() => setParamsOpen(false)}
+            aria-label="Collapse parameters panel"
+            title="Collapse panel"
+          >
+            <Icon name="x" size={12} />
+          </button>
         </div>
 
         <div className="field">
@@ -334,6 +360,18 @@ window.RetrievalTab = function RetrievalTab() {
               ))}
             </div>
           )}
+          {tagInput && tagSugg.length === 0 && (
+            <div className="tag-input-miss" role="status">
+              <Icon name="info-circle" size={11} />
+              <span>
+                No tag named <code>{tagInput}</code> in the thesaurus.
+                {" "}
+                <button className="link-btn small" onMouseDown={() => requestNewTag(tagInput)}>
+                  Request new tag →
+                </button>
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="field">
@@ -361,6 +399,17 @@ window.RetrievalTab = function RetrievalTab() {
           <span className="dot" /> Connected
         </div>
       </aside>
+      ) : (
+        <button
+          className="params-collapsed-rail"
+          onClick={() => setParamsOpen(true)}
+          aria-label="Show retrieval parameters"
+          title="Show parameters"
+        >
+          <Icon name="settings" size={12} />
+          <span>Params</span>
+        </button>
+      )}
     </div>
   );
 };
@@ -376,16 +425,26 @@ function Turn({ msg, streaming, highlightSrc, onCiteHover, onCiteLeave, onCiteCl
         {parts.map((p, i) => {
           if (p.type === "text") return <React.Fragment key={i}>{p.value}</React.Fragment>;
           if (p.type === "code") return <code key={i}>{p.value}</code>;
-          if (p.type === "cite") return (
-            <button
-              key={i}
-              className="citation"
-              onMouseEnter={() => onCiteHover(p.value)}
-              onMouseLeave={onCiteLeave}
-              onClick={() => onCiteClick(p.value)}
-              aria-label={`Source ${p.value}`}
-            >{p.value}</button>
-          );
+          if (p.type === "cite") {
+            const src = msg.sources && msg.sources.find(s => s.n === p.value);
+            return (
+              <span key={i} className="citation-wrap">
+                <button
+                  className="citation"
+                  onMouseEnter={() => onCiteHover(p.value)}
+                  onMouseLeave={onCiteLeave}
+                  onClick={() => onCiteClick(p.value)}
+                  aria-label={src ? `Source ${p.value} — ${src.name} (score ${src.score.toFixed(2)})` : `Source ${p.value}`}
+                >{p.value}</button>
+                {src && (
+                  <span className="citation-tooltip" role="tooltip">
+                    <span className="ct-name">{src.name}</span>
+                    <span className="ct-score">{src.score.toFixed(2)}</span>
+                  </span>
+                )}
+              </span>
+            );
+          }
           return null;
         })}
         {streaming && <span className="cursor" style={{ display: "inline-block", width: 6, height: 14, background: "var(--twin-accent)", verticalAlign: "-2px", marginLeft: 2, animation: "blink 1s infinite" }} />}

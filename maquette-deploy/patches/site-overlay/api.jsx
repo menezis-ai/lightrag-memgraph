@@ -211,6 +211,10 @@ function EndpointRow({ ep, secured, token }) {
               </div>
               {resp && (
                 <div className="swagger-resp">
+                  <div className="swagger-mock-banner" role="note">
+                    <Icon name="info-circle" size={11} />
+                    <span><b>MOCK</b> · static fixture from this demo bundle, not a live call to the backend</span>
+                  </div>
                   <div className="swagger-resp-h">
                     <span className={"code-cell " + (resp.status < 300 ? "ok" : "err")}>{resp.status}</span>
                     <span className="swagger-resp-msg">{resp.statusText}</span>
