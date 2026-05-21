@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Twin RAG vs Kore.ai — Knowledge management positioning</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 28px 80px;
+      background: var(--color-background-primary);
+    }
+    h1 {
+      font-size: 28px;
+      letter-spacing: -0.02em;
+      margin: 0 0 4px;
+    }
+    .sub {
+      color: var(--color-text-secondary);
+      font-size: 14px;
+      margin: 0 0 32px;
+    }
+    .quote {
+      background: var(--color-background-secondary);
+      border-left: 3px solid var(--twin-accent);
+      padding: 14px 18px;
+      margin: 20px 0 28px;
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--color-text-primary);
+    }
+    .quote .who {
+      display: block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+      font-style: italic;
+    }
+    table.cmp {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.cmp th, table.cmp td {
+      padding: 14px 12px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 0.5px solid var(--color-border-tertiary);
+    }
+    table.cmp th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-text-tertiary);
+      font-weight: 500;
+      background: var(--color-background-secondary);
+      border-bottom: 0.5px solid var(--color-border-default);
+    }
+    table.cmp td.q { font-weight: 500; width: 25%; }
+    table.cmp td.kore {
+      width: 37.5%;
+      background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 4%, transparent);
+      color: var(--color-text-primary);
+    }
+    table.cmp td.twin {
+      width: 37.5%;
+      background: color-mix(in oklab, var(--twin-accent) 6%, transparent);
+      color: var(--color-text-primary);
+    }
+    .verdict { font-style: italic; font-size: 11.5px; color: var(--color-text-secondary); margin-top: 4px; }
+    .verdict.win { color: var(--twin-green-700); font-weight: 500; }
+    .verdict.lose { color: var(--twin-red-vivid); }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 0.5px solid var(--color-border-tertiary);
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+      line-height: 1.6;
+    }
+    .footer a { color: var(--twin-accent); text-decoration: none; }
+    .back-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--color-background-secondary);
+      border: 0.5px solid var(--color-border-tertiary);
+      border-radius: 999px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+    .back-pill:hover { border-color: var(--twin-accent); color: var(--color-text-primary); }
+    .badge-row { display: flex; gap: 12px; margin: 24px 0 8px; }
+    .position-badge {
+      flex: 1;
+      padding: 14px 18px;
+      border-radius: var(--border-radius-md);
+      border: 0.5px solid var(--color-border-tertiary);
+    }
+    .position-badge.kore {
+      background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 4%, transparent);
+    }
+    .position-badge.twin {
+      background: color-mix(in oklab, var(--twin-accent) 6%, transparent);
+      border-color: var(--twin-accent);
+    }
+    .position-badge h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+    }
+    .position-badge p {
+      margin: 0;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: var(--color-text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <a class="back-pill" href="/Twin%20RAG%20WebUI.html">
+    ← Back to Twin RAG demo
+  </a>
+
+  <h1>Twin RAG vs Kore.ai</h1>
+  <p class="sub">
+    Knowledge management positioning · meeting recap 2026-05-21 → Manu / Vihn / Julien
+  </p>
+
+  <div class="quote">
+    "Your platform is focused on how to create agents efficiently. Our need is
+    <b>before</b> this step. It's knowledge management. Your target is not aligned
+    with our need right now."
+    <span class="who">— Emmanuel (Manu) to Kore.ai (Theo · Amar), 2026-05-21</span>
+  </div>
+
+  <div class="badge-row">
+    <div class="position-badge kore">
+      <h3>Kore.ai — "AI for agents"</h3>
+      <p>
+        Search AI + AI for Process + AI for Work — three modules to mix-and-match.
+        Knowledge management is a side-concern (weighting + ingestion connectors).
+        Audit, governance, MyAccess inheritance are gaps Manu surfaced — Kore.ai
+        had no shipped answer, asked to "come back later".
+      </p>
+    </div>
+    <div class="position-badge twin">
+      <h3>Twin RAG — knowledge mgmt first</h3>
+      <p>
+        Single console. Steward review queue + visible audit trail + MyAccess
+        inheritance designed-in. Built on LightRAG (Vihn-audited, technically
+        solid) with a Memgraph spine. Knowledge is the product, agents are
+        downstream consumers.
+      </p>
+    </div>
+  </div>
+
+  <table class="cmp">
+    <thead>
+      <tr>
+        <th>Manu's question</th>
+        <th>Kore.ai (per 2026-05-21 meeting)</th>
+        <th>Twin RAG (live today)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="q">
+          1. Workflow validation + quality gate per document
+        </td>
+        <td class="kore">
+          No shipped flow. Suggested "weighting" of sources (manual % per
+          Confluence vs website). No per-doc approval, no steward.
+          <div class="verdict lose">→ Kore.ai: side-concern</div>
+        </td>
+        <td class="twin">
+          Steward review queue on the Documents tab. Approve / Edit &amp; approve
+          / Reject with required reason. Mirrors the tag governance flow.
+          <div class="verdict win">→ Twin: integrated, live</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="q">
+          2. Audit trail "who uploaded / validated / changed what"
+        </td>
+        <td class="kore">
+          Theo: <i>"It's all within the audit logs… they're not on your
+          interface. We need to go into the logs."</i>
+          <div class="verdict lose">→ Kore.ai: invisible to operator</div>
+        </td>
+        <td class="twin">
+          New <code>Audit</code> tab in the document side-panel, live-fetched
+          from the backend SQLite <code>mutations</code> table. Visible in the
+          UI, chronological, with raw payload toggle.
+          <div class="verdict win">→ Twin: visible &amp; auditable</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="q">
+          3. Inherit clearances from source (ServiceNow, Confluence, MyAccess…)
+        </td>
+        <td class="kore">
+          Theo: <i>"The information you provide is what it's going to be
+          using."</i> No referential heritance — what you import is what
+          everyone in the platform sees.
+          <div class="verdict lose">→ Kore.ai: no inheritance</div>
+        </td>
+        <td class="twin">
+          MyAccess identity pill in the topbar (preview). Architecture: SSO
+          via MyAccess, entity-level access cached in the Memgraph graph as
+          explicit <code>:HAS_ACCESS</code> relations (auditable like any
+          other knowledge), Twin palier (Reader/Contributor/Steward) layered
+          locally for fine-grain in-workspace permissions.
+          <div class="verdict win">→ Twin: designed for ITGP</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="q">
+          4. Quality monitoring + metrics + "why did the agent answer wrong"
+        </td>
+        <td class="kore">
+          No dedicated monitoring. Suggested running the response through a
+          Gen AI guardrail node in AI for Process (another module, separate
+          UI).
+          <div class="verdict lose">→ Kore.ai: bolt-on</div>
+        </td>
+        <td class="twin">
+          Citation chips with source scores on every Retrieval answer (hover =
+          source preview). Activity tab tracks doc-review / retrieval events.
+          Mutations log gives a forensic chain from bad answer →
+          source chunk → which steward approved that source.
+          <div class="verdict win">→ Twin: traceability by design</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="q">
+          5. Workflow / pipeline orchestration for ingestion
+        </td>
+        <td class="kore">
+          AI for Process — third module, low-code/no-code, separate from
+          Search AI. Per-application wiring, not per-document.
+          <div class="verdict">→ Kore.ai: capability exists, separate surface</div>
+        </td>
+        <td class="twin">
+          Documents tab Pipeline + Scan buttons; per-source ingestion state
+          (completed/processing/failed) surfaced in the main table.
+          Pipeline view planned as the next iteration. Single console.
+          <div class="verdict">→ Twin: integrated</div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Sources: Kore.ai / BNP meeting transcription (~30 min, 2026-05-21
+    16:01) · Vihn meeting notes 2026-05-20 (MyAccess inheritance contract +
+    workspace strategy + Twin = hub KMS).
+    Twin RAG live at <a href="https://maquette.sigilum.fr/">maquette.sigilum.fr</a>;
+    backend at <a href="https://maquette.sigilum.fr/api/health">/api/health</a>.
+  </div>
+</body>
+</html>

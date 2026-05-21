@@ -59,6 +59,7 @@ window.TopBar = function TopBar({
         {systemStatus && computedStatus && window.SystemStatusIndicator && (
           <window.SystemStatusIndicator status={systemStatus} computed={computedStatus} />
         )}
+        <MyAccessPill />
         <div ref={wsRef} style={{ position: "relative" }}>
           <button
             className={`workspace-pill${wsOpen ? " is-open" : ""}`}
@@ -119,6 +120,91 @@ window.TopBar = function TopBar({
     </header>
   );
 };
+
+// MyAccess identity pill — positions the BNP-mandated heritance pattern
+// (transcription Vihn 2026-05-20 + Manu/Kore.ai 2026-05-21). Twin must
+// inherit from MyAccess, not duplicate. The pill surfaces the cache
+// state of the bridge; the actual backend implementation comes once
+// MyAccess team has shared the auth contract (OIDC / SAML / REST).
+function MyAccessPill() {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  const [syncing, setSyncing] = React.useState(false);
+  const [lastSync, setLastSync] = React.useState("2026-05-21 16:24 UTC");
+
+  React.useEffect(() => {
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, []);
+
+  const forceSync = () => {
+    setSyncing(true);
+    setTimeout(() => {
+      setSyncing(false);
+      const now = new Date();
+      const stamp = now.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+      setLastSync(stamp);
+    }, 1200);
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        className={`myaccess-pill${open ? " is-open" : ""}`}
+        onClick={() => setOpen(o => !o)}
+        title="Identity inherited from MyAccess (BNP referential master)"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+      >
+        <span className="myaccess-dot" />
+        <span className="myaccess-label">MyAccess</span>
+      </button>
+      {open && (
+        <div className="myaccess-popover" role="dialog" aria-label="MyAccess identity bridge">
+          <header className="myaccess-h">
+            <div className="myaccess-title">
+              <Icon name="lock" size={12} color="var(--twin-accent)" />
+              Identity bridge · MyAccess
+            </div>
+            <span className="myaccess-status">cached</span>
+          </header>
+          <dl className="myaccess-kv">
+            <dt>Source</dt>
+            <dd className="mono-meta">MyAccess (BNP)</dd>
+            <dt>Current user</dt>
+            <dd className="mono-meta">claire.benoit@bnpparibas.com</dd>
+            <dt>Entity (AUID)</dt>
+            <dd className="mono-meta">cib · AUID-7f4e</dd>
+            <dt>Last sync</dt>
+            <dd className="mono-meta">{lastSync}</dd>
+            <dt>Refresh cycle</dt>
+            <dd className="mono-meta">every 5 min · pull · fail-closed if &gt;1h stale</dd>
+          </dl>
+          <p className="myaccess-note">
+            Twin <b>inherits</b> the entity-level access decision from MyAccess
+            (ITGP workflow, owner-validated). The Reader / Contributor /
+            Steward palier is local to Twin — set by Twin admins, not BNP
+            referential. Cache lives in the same Memgraph graph as the
+            knowledge, so the audit trail is requestable in one place.
+          </p>
+          <div className="myaccess-actions">
+            <button
+              className={"link-btn" + (syncing ? " is-busy" : "")}
+              onClick={forceSync}
+              disabled={syncing}
+            >
+              {syncing ? <><Icon name="loader-2" size={11} /> Syncing…</> : <><Icon name="refresh" size={11} /> Force sync now</>}
+            </button>
+            <span className="myaccess-preview-pill">preview</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function WorkspaceMenu({ current, onPick, onClose }) {
   const list = window.MOCK_WORKSPACES || [];
