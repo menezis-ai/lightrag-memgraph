@@ -149,12 +149,17 @@
       </p>
     </div>
     <div class="position-badge twin">
-      <h3>Twin RAG — knowledge mgmt first</h3>
+      <h3>Twin RAG — BNP-native hub KMS</h3>
       <p>
-        Single console. Steward review queue + visible audit trail + MyAccess
-        inheritance designed-in. Built on LightRAG (Vihn-audited, technically
-        solid) with a Memgraph spine. Knowledge is the product, agents are
-        downstream consumers.
+        Unifies what BNP already has into one operator console.
+        <b>Two complementary RAG tiers under one UI</b> : RAG 1.5
+        (Elasticsearch · nightly Confluence + SharePoint ingest via
+        Crosspoint, breadth) and Twin's own LightRAG + Memgraph
+        <b>Twincore patch v0.5.3</b> (graph reasoning, depth, steward
+        governance). SSO BNPP for identity, MyAccess for entity-level
+        ITGP heritance. Steward review + visible audit trail
+        designed-in. Knowledge is the product; agents are downstream
+        consumers.
       </p>
     </div>
   </div>
@@ -238,29 +243,46 @@
       </tr>
       <tr>
         <td class="q">
-          5. Workflow / pipeline orchestration for ingestion
+          5. Coverage of breadth (mass ingest) <i>and</i> depth
+          (curated, graph-reasoned) knowledge
         </td>
         <td class="kore">
-          AI for Process — third module, low-code/no-code, separate from
-          Search AI. Per-application wiring, not per-document.
-          <div class="verdict">→ Kore.ai: capability exists, separate surface</div>
+          Single tier. Asked to handle the BNP existing investments
+          (RAG 1.5 / Confluence / SharePoint / Crosspoint), the answer
+          was to re-ingest into their Search AI module. No coexistence
+          path with the BNP-native stack.
+          <div class="verdict lose">→ Kore.ai: replace, not unify</div>
         </td>
         <td class="twin">
-          Documents tab Pipeline + Scan buttons; per-source ingestion state
-          (completed/processing/failed) surfaced in the main table.
-          Pipeline view planned as the next iteration. Single console.
-          <div class="verdict">→ Twin: integrated</div>
+          <b>Two tiers, one operator UI</b>. RAG 1.5 keeps its nightly
+          Confluence + SharePoint Elasticsearch ingest (Crosspoint
+          workflow unchanged); Twin layers LightRAG + Memgraph
+          <b>Twincore</b> on top for the graph-reasoned use cases and
+          provides the unified steward console. Existing investments
+          preserved.
+          <div class="verdict win">→ Twin: complements existing BNP RAG</div>
         </td>
       </tr>
     </tbody>
   </table>
 
   <div class="footer">
-    Sources: Kore.ai / BNP meeting transcription (~30 min, 2026-05-21
-    16:01) · Vihn meeting notes 2026-05-20 (MyAccess inheritance contract +
-    workspace strategy + Twin = hub KMS).
-    Twin RAG live at <a href="https://maquette.sigilum.fr/">maquette.sigilum.fr</a>;
-    backend at <a href="https://maquette.sigilum.fr/api/health">/api/health</a>.
+    <p>
+      <b>BNP-native hub KMS — Twin RAG unifies what BNP already has</b>.
+      Two complementary RAG tiers piloted from one operator console :
+      <b>RAG 1.5</b> (Elasticsearch · nightly Confluence + SharePoint
+      ingest, breadth — sources collected on Crosspoint) and
+      <b>Twin RAG</b> (LightRAG + Memgraph <b>Twincore patch v0.5.3</b>,
+      graph reasoning + steward governance, depth). Identity flows
+      through <b>SSO BNPP</b>; entity-level authorization inherits from
+      <b>MyAccess</b> via the existing ITGP workflow. One audit trail
+      across the two tiers.
+    </p>
+    <p>
+      Sources : Kore.ai / BNP meeting transcription (~30 min, 2026-05-21
+      16:01) · Vihn meeting notes 2026-05-20 (MyAccess inheritance contract
+      + workspace strategy + Twin = hub KMS over the BNP-native RAG stack).
+    </p>
   </div>
 </body>
 </html>

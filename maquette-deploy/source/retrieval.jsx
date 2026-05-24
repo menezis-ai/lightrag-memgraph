@@ -149,6 +149,24 @@ window.RetrievalTab = function RetrievalTab() {
   const convRef = useRef(null);
   const lastTurnRef = useRef(null);
 
+  // Demo-driven answer mode override — set by the Demo HUD via the demo bus.
+  // "naive" forces a generic fragmented answer; "wargame" renders the impact
+  // widget instead of a text stream. Reset to null after each use.
+  const [nextAnswerMode, setNextAnswerMode] = useState(null);
+  const nextAnswerModeRef = useRef(null);
+  useEffect(() => { nextAnswerModeRef.current = nextAnswerMode; }, [nextAnswerMode]);
+
+  // Tokens for the "naive" fallback answer used in Act 1 of the scripted demo.
+  // Mimics what a flat-RAG (no graph) would produce — fragmented, no synthesis.
+  const NAIVE_TOKENS = [
+    "I find several documents mentioning ", "`R-CORE-02`", " but the answer ",
+    "is scattered across the network inventory, application architecture and DR sheets. ",
+    "Without a validated dependency graph, ", "I can't deterministically trace ",
+    "the impact chain ", "back to the payment applications.\n\n",
+    "Closest documents: ", "`network-core-inventory.csv`", ", ",
+    "`swift-iso20022-migration.pdf`", ", ", "`pra-2026-q1.pdf`", "."
+  ];
+
   const send = (text) => {
     const q = (text === undefined ? query : text).trim();
     if (!q) return;
@@ -158,8 +176,27 @@ window.RetrievalTab = function RetrievalTab() {
     setStreamedTokens([]);
     setStreaming(true);
 
-    // Simulate streaming
-    const tokens = window.MOCK_ANSWER_TOKENS;
+    // Decide which answer to produce. Wargame mode skips the token stream and
+    // returns a generative-UI message instead.
+    const mode = nextAnswerModeRef.current;
+    if (mode === "wargame") {
+      setTimeout(() => {
+        setStreaming(false);
+        setConvo(c => [...c, {
+          role: "assistant",
+          answerMode: "wargame",
+          originId: "e_router02",
+          questionText: q,
+          sources: []
+        }]);
+        setStreamedTokens([]);
+        setNextAnswerMode(null);
+        nextAnswerModeRef.current = null;
+      }, 320);
+      return;
+    }
+
+    const tokens = mode === "naive" ? NAIVE_TOKENS : window.MOCK_ANSWER_TOKENS;
     let i = 0;
     const interval = setInterval(() => {
       i++;
@@ -169,13 +206,38 @@ window.RetrievalTab = function RetrievalTab() {
         setStreaming(false);
         setConvo(c => [...c, {
           role: "assistant",
+          answerMode: mode || "normal",
           tokens: tokens,
-          sources: window.MOCK_RETRIEVAL_SOURCES
+          sources: mode === "naive" ? [] : window.MOCK_RETRIEVAL_SOURCES
         }]);
         setStreamedTokens([]);
+        setNextAnswerMode(null);
+        nextAnswerModeRef.current = null;
       }
-    }, 70);
+    }, mode === "naive" ? 55 : 70);
   };
+
+  // Demo bus subscription — keep `send` in a ref so the bus handler always
+  // calls the latest closure. Otherwise the [] effect-deps freeze it on mount.
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+  useEffect(() => {
+    if (!window.__demoBus) return;
+    const off = window.__demoBus.on("retrieval", (msg) => {
+      if (msg.kind === "prefill") setQuery(msg.text || "");
+      if (msg.kind === "answer-mode") {
+        setNextAnswerMode(msg.mode);
+        nextAnswerModeRef.current = msg.mode;
+      }
+      if (msg.kind === "send") {
+        if (msg.mode) nextAnswerModeRef.current = msg.mode;
+        sendRef.current(msg.text);
+      }
+      if (msg.kind === "clear") setConvo([]);
+    });
+    return off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (convRef.current) convRef.current.scrollTop = convRef.current.scrollHeight;
@@ -250,6 +312,16 @@ window.RetrievalTab = function RetrievalTab() {
         </ul>
       </aside>
       <div className="retrieval-main">
+        <div className="retrieval-demo-banner" role="note">
+          <Icon name="info-circle" size={11} />
+          <span>
+            <b>Demo mode</b> · responses sampled from a pre-recorded
+            fixture (same answer + sources for any query). Live LightRAG
+            retrieval over Memgraph Twincore ships in phase 2 — the
+            backend is already wired (<code>/api/health</code>), the
+            client just doesn't call it yet.
+          </span>
+        </div>
         <div className="retrieval-conv" ref={convRef}>
           {convo.length === 0 && !streaming && (
             <div className="empty-state">
@@ -417,10 +489,39 @@ window.RetrievalTab = function RetrievalTab() {
 function Turn({ msg, streaming, highlightSrc, onCiteHover, onCiteLeave, onCiteClick }) {
   if (msg.role === "user") return <div className="msg-user">{msg.text}</div>;
 
+  // Generative-UI path: wargame widget instead of a text answer.
+  if (msg.answerMode === "wargame" && !streaming) {
+    return (
+      <div className="msg-assistant has-genui">
+        <div className="msg-genui-banner">
+          <Icon name="alert-triangle" size={11} color="var(--twin-accent)" />
+          <span>Contextual visualisation · answer adapted to a critical-dependency question.</span>
+        </div>
+        {window.WargameImpactWidget && (
+          <window.WargameImpactWidget
+            originId={msg.originId || "e_router02"}
+            question={msg.questionText}
+            onJumpToStudio={(id) => {
+              window.__demoBus && window.__demoBus.emit("goto", { tab: "ontology" });
+              window.__demoBus && window.__demoBus.emit("studio", { kind: "highlight", id });
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   const parts = parseAnswer(msg.tokens);
+  const isNaive = msg.answerMode === "naive";
 
   return (
-    <div className="msg-assistant">
+    <div className={`msg-assistant${isNaive ? " is-naive" : ""}`}>
+      {isNaive && !streaming && (
+        <div className="msg-naive-banner" title="Plain-text search can't follow dependencies — the semantic engine would resolve this question.">
+          <Icon name="info-circle" size={11} color="var(--twin-amber-700)" />
+          <span><b>Plain-text search · partial answer</b> — no validated graph path to follow. Switch to semantic (graph) mode for a deterministic impact analysis.</span>
+        </div>
+      )}
       <div className="msg-text">
         {parts.map((p, i) => {
           if (p.type === "text") return <React.Fragment key={i}>{p.value}</React.Fragment>;

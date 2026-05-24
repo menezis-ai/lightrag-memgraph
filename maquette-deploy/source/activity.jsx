@@ -114,8 +114,25 @@ function _mutationToActivity(m) {
     summary = "Demo state reset · SQLite reseeded from JSON fixtures";
   } else if (m.kind === "tags") {
     kind = "tag-mutation";
-    summary = `Tag ${m.target_id} · ${m.action}`;
-    actor = (p.review && p.review.reviewed_by) || "system";
+    if (m.action === "delete") {
+      summary = `Tag ${m.target_id} · deleted`;
+    } else if (p.status === "active") {
+      summary = `Tag ${m.target_id} · approved (status → active)`;
+      actor = (p.review && p.review.reviewed_by) || "system";
+    } else if (p.status === "rejected") {
+      summary = `Tag ${m.target_id} · rejected${p.review && p.review.reason ? " · " + p.review.reason : ""}`;
+      sev = "warning";
+      actor = (p.review && p.review.reviewed_by) || "system";
+    } else if (p.status === "deprecated") {
+      summary = `Tag ${m.target_id} · deprecated`;
+      actor = (p.last_edit && p.last_edit.by) || "system";
+    } else if (p.last_edit) {
+      summary = `Tag ${m.target_id} · ${p.last_edit.action || m.action}`;
+      actor = p.last_edit.by || "system";
+    } else {
+      summary = `Tag ${m.target_id} · ${m.action}`;
+      actor = (p.review && p.review.reviewed_by) || "system";
+    }
   }
   return {
     id: `mut-${m.id}`,

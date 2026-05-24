@@ -1,16 +1,14 @@
 # Maquette deploy
 
-Reproducible deploy of the **Sweden bundle** prototype (the static
-HTML+JSX maquette designed by the BNP / Sigilum team, currently held
-outside this repo at `/Users/julien/Downloads/design_twinrag_backend/`)
-behind Caddy with auto-HTTPS via Let's Encrypt.
+Reproducible deploy of the Twin RAG WebUI maquette behind Caddy with
+auto-HTTPS via Let's Encrypt + a FastAPI/SQLite persistence backend.
 
 Live target: <https://maquette.sigilum.fr/>
 Host: OVH VPS `37.59.104.111` (also runs Dokploy + Traefik).
 
-Now ships **two** containers (web + api) instead of one:
-- `twin-maquette:demo` — Caddy serving the static SPA, reverse-proxying
-  `/api/*` to the api sibling.
+Two containers (web + api):
+- `twin-maquette:demo` — Caddy serving the static SPA from `source/`,
+  reverse-proxying `/api/*` to the api sibling.
 - `twin-maquette-api:demo` — FastAPI + SQLite persistence layer in
   `backend/` (real DB file, mounted from a Docker volume → state
   survives container rebuilds).
@@ -20,41 +18,38 @@ reverted because BNP infra won't accept a CDN-fetched WASM and a real
 backend with auditable code + Docker-mounted SQLite is the
 production-shaped answer.
 
-## Why this folder
-
-The Sweden bundle isn't versioned (designer-side, not in this repo) but
-the **deploy recipe** (`Dockerfile` + `Caddyfile`) is — so we can
-re-deploy from a fresh machine without re-deriving the config each time.
-
-## Layout expected at build time
+## Layout
 
 ```
 maquette-deploy/
-├── Dockerfile          ← here, versioned
-├── Caddyfile           ← here, versioned
-├── README.md           ← here, versioned
-└── site/               ← copy of Sweden bundle (NOT versioned)
-    ├── Twin RAG WebUI.html
-    ├── *.jsx
-    ├── styles.css
-    ├── data.js
-    └── ...
+├── Dockerfile               ← caddy image build
+├── Caddyfile                ← reverse_proxy /api/* → backend
+├── operator-overrides.css   ← appended to source/styles.css at build
+├── stack.yml                ← docker stack deploy spec (web + api)
+├── source/                  ← full SPA (HTML + JSX + CSS + data.js + db.jsx)
+├── backend/                 ← FastAPI + SQLite + seed JSON
+├── README.md                ← this
+├── STYLES.md                ← UI conventions decided post-audit (#49)
+└── DEMO_MANU.md             ← demo script for the Manu 2026-05-22 slot
 ```
+
+Everything is versioned in this repo. No external dependency on a
+working copy elsewhere on the machine.
 
 ## Build + deploy (from a Mac with SSH access to OVH)
 
 ```bash
-# 1. Stage the bundle alongside the deploy artifacts
-rsync -a --exclude '.DS_Store' --exclude 'README.md' \
-  ~/Downloads/design_twinrag_backend/ \
-  /tmp/twin-maquette-deploy/site/
-cp maquette-deploy/Dockerfile maquette-deploy/Caddyfile maquette-deploy/operator-overrides.css /tmp/twin-maquette-deploy/
-cp -r maquette-deploy/patches /tmp/twin-maquette-deploy/
-cp -r maquette-deploy/backend /tmp/twin-maquette-deploy/
-cp maquette-deploy/stack.yml /tmp/twin-maquette-deploy/
+# 1. Stage exactly what the image needs
+rm -rf /tmp/twin-maquette-deploy
+mkdir -p /tmp/twin-maquette-deploy
+cp -r maquette-deploy/source maquette-deploy/backend /tmp/twin-maquette-deploy/
+cp maquette-deploy/Dockerfile maquette-deploy/Caddyfile \
+   maquette-deploy/operator-overrides.css maquette-deploy/stack.yml \
+   /tmp/twin-maquette-deploy/
 
 # 2. Ship + build both images on the OVH host
-tar czf /tmp/twin-maquette-deploy.tgz -C /tmp/twin-maquette-deploy .
+COPYFILE_DISABLE=1 tar czf /tmp/twin-maquette-deploy.tgz \
+   -C /tmp/twin-maquette-deploy .
 scp /tmp/twin-maquette-deploy.tgz erwin:/tmp/
 ssh erwin '
   rm -rf ~/twin-maquette && mkdir -p ~/twin-maquette
@@ -64,6 +59,11 @@ ssh erwin '
   docker build -t twin-maquette-api:demo backend/
 '
 ```
+
+`COPYFILE_DISABLE=1` keeps macOS AppleDouble (`._*`) metadata out of
+the tarball — `seed-data/._docs.json` would otherwise leak into the
+image and break the FastAPI seed loop (it'd try to parse the binary
+fork as JSON).
 
 ## First-time deploy (Docker Stack + Traefik)
 
@@ -114,106 +114,19 @@ Cloudflare → `maquette.sigilum.fr` `A` → `37.59.104.111` · proxy **off**
 (grey cloud — required so Caddy/Traefik can pass the ACME HTTP-01
 challenge for Let's Encrypt).
 
-## Patch overlays
+## `operator-overrides.css`
 
-Operator-side deviations from the designer's Sweden bundle are versioned
-in this folder so the source bundle stays pristine. Two kinds:
+Appended to `source/styles.css` at image build time. Keeps the proto's
+own stylesheet untouched so a future re-import of the bundle stays a
+clean overlay. Tagged blocks by feature / issue number — `grep -nE
+'^/\* ── ' operator-overrides.css` to navigate.
 
-### `operator-overrides.css`
-Appended to the bundle's `styles.css` at build time. Covers:
-- **Widescreen fill fix** — `.docs` and `.retrieval` get `flex: 1; min-width: 0`
-  so they span the full viewport on wide displays (proto leaves a ~50%
-  dead stripe). Equivalent fix is also in the React port at
-  `lightrag_webui_twin/src/styles/overrides.css` (PR #27 on stable/0.5.x).
-- **Base font bump** — `body { font-size: 14px }` (was 13px). Operator
-  feedback on 4K displays.
-- **QW1 Topbar 3-col flex** — proto pins `.tabs` with `position: absolute;
-  left: 50%` while `.brand` and `.topbar-right` both grab `flex: 1`. At
-  1366px with a long kb name + a fully-populated right cluster (sys
-  indicator + workspace pill + bell + theme) the absolute tabs overlap
-  the surrounding zones. Override drops the absolute positioning and
-  switches to a 3-col flow where tabs is the flex-grow middle slot.
-- **QW2 Query mode info button** — adds `.field-label-info / .info-btn /
-  .query-mode-tooltip` so the Retrieval params panel can render an
-  anchored popover next to the "Query mode" select (see
-  `patches/site-overlay/retrieval.jsx`).
+## History note
 
-### `patches/site-overlay/`
-Whole-file overlays that ship on top of the bundle's same-named files
-(`COPY patches/site-overlay/ /srv/` runs after `COPY site/ /srv/`). Used
-when a feature is too logic-heavy for a CSS-only delta. Current overlays:
-
-- **`documents.jsx`** — adds the **steward review queue** at the top of
-  the Documents tab: cards for docs flagged `review.state == "pending-review"`,
-  with **Approve / Edit & approve / Reject** actions (palier-3 only). Reject
-  opens an inline modal with a required reason. Mirrors the tag-governance
-  flow in `tags.jsx`. Pending docs are excluded from the main grid + the
-  status pill counters so the visible totals stay coherent.
-- **`activity.jsx`** — adds the `doc-review` kind to the activity feed's
-  `KIND_META` (icon: `circle-check`, color: accent). Doc-review events
-  (approve/reject) emitted by the steward queue surface in the Activity
-  tab alongside tag mutations, retrievals, etc.
-- **`data.js`** — adds two pending-review documents (`d13`, `d14`) for
-  demo purposes + two seeded `doc-review` activity events (approve +
-  reject) at the top of `MOCK_ACTIVITY` so the audit trail is visible
-  on first load. UX rewording sweep (QW5) also lands here: a few mock
-  strings that surfaced `palier 1/2/3` switch to the UI-facing
-  `Reader / Contributor / Steward` vocabulary the BNP audience reads.
-- **`retrieval.jsx`** *(QW2)* — adds the `QueryModeInfo` popover next
-  to the "Query mode" label so operators don't have to learn what
-  `naive / local / global / hybrid / mix / bypass` mean from context.
-- **`tags.jsx`** *(QW4 + QW5)* — adds the missing `Rejected` option to
-  the status filter and switches `palier 1/2/3` wording to
-  `Reader / Contributor / Steward` (incl. the role pill, pending-review
-  captions, request modal copy, and read-only hints). The internal
-  `palier` integer is preserved as the back-end / API contract; the
-  rename only touches what an operator reads on screen.
-- **`api.jsx`** *(QW5)* — `Scopes: ...(palier 2+)` becomes
-  `Scopes: ...(Contributor or Steward)`.
-- **`system-status.jsx`** *(QW5)* — the LLM-quota banner CTA now says
-  `Steward only` instead of `palier 3`.
-- **`settings.jsx`** *(QW5 follow-up)* — the Settings tab carries the
-  largest concentration of palier copy in the bundle (12 strings: rail
-  user pill, profile palier-pill, token gating notice, workspace +
-  provider edit gates, members toast titles, invite + member table
-  selects, table header `<th>Palier</th>` → `<th>Role</th>`). Adds the
-  same `_roleLabel` / `PALIER_ROLE_LABEL` helper as `tags.jsx` so the
-  same rename pattern applies. Also fixes three missed strings in
-  `data.js` (n_p03 / n_p04 tag-request bell suffixes + n_005 tag
-  mutation sub) that surfaced palier text in the bell popover.
-- **`activity.jsx`** *(issue #43, P0)* — replaces the 11 wrapping
-  `.kind-pill` row with 5 condensed bucket pills (`Sources / Tags /
-  Retrieval / Auth / System`) plus an `Advanced` dropdown that lets
-  power users still toggle individual sub-kinds. Bucket state is
-  tri-valued (`on`, `partial`, `off`) with distinct fills — replaces the
-  proto's opacity-only states (`78% / 100% / 35%`) that were
-  indistinguishable in light mode. URL `kind=` param semantics are
-  preserved (the new bucket UI drives the same kinds Set under the
-  hood).
-- **`system-status.jsx`** *(issue #47)* — caps the visible banner stack
-  to 2 (sorted error > warn > info). Surplus banners collapse behind a
-  `View N more ↓` button anchored at the bottom of the stack that
-  opens a scoped popover with the remaining banners. Prevents the
-  topbar swallowing the upper half of the viewport in a stress demo
-  (gateway-down + quota-exhausted + embedder-degraded + read-only +
-  session-soon = 5 stacked banners possible).
-- **`documents.jsx` pending-card polish** *(visual feedback 2026-05-21)*
-  — the proto's pending-card on the Documents tab rendered a broken
-  `Pending review` badge that wrapped on two lines with a chunky amber
-  border, looking detached from the card chrome. Root cause: the proto
-  defines `.status-badge.status-pending` (colors only) and `.md`
-  (padding/font), but never the base `.status-badge` rule nor the `.sm`
-  modifier referenced throughout the codebase. Spans inherited
-  `display: inline`, so the colored border followed each text line.
-  Fix lands in `operator-overrides.css` (adds the missing base + `.sm`
-  rules — also straightens up every other `.status-badge sm` chip in
-  the proto, e.g. Tags tab). The pending-card itself drops the
-  redundant "Pending review" badge (the section header already says
-  it), keeps the "your submission" contextual chip for contributors,
-  reflows the header to keep the badge top-aligned regardless of source
-  path wrap, and softens the Approve CTA to `accent-soft` so it reads
-  as a sign-off action instead of a transactional submit.
-
-When the designer ships a new Sweden bundle, re-`cp` the same overlay
-files from `~/Downloads/design_twinrag_backend/` after applying the
-relevant patches manually, OR re-derive them from a fresh bundle.
+Until 2026-05-22 the SPA lived outside this repo at
+`~/Downloads/design_twinrag_backend/` and was applied via a
+`patches/site-overlay/` directory (whole-file overrides COPYed after
+the bundle). That was a SPOF — the source bundle was hand-managed,
+unversioned, machine-local. The cleanup commit flattened everything
+into `source/` and dropped the overlay system. See git log for the
+per-feature additions that previously had their own overlay entry.

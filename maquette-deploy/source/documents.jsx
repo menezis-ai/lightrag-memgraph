@@ -38,7 +38,7 @@ const _DOC_CURRENT_USER = { palier: _docPalier, name: _docHandle };
 const _docCanReview = _docPalier >= 3;
 const _docCanSeeQueue = _docPalier >= 2;
 
-window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace, onOpenAdd, onOpenRetag, onOpenBulkRetag, onAddToast, onLoadDemo }) {
+window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, deleteDoc, isEmptyWorkspace, onOpenAdd, onOpenRetag, onOpenBulkRetag, onAddToast, onLoadDemo }) {
   const sys = window.useReadOnly ? window.useReadOnly() : { effectiveReadOnly: false, readOnlyReason: "" };
   const ro = sys.effectiveReadOnly;
   const roTitle = ro ? `Disabled — ${sys.readOnlyReason}` : undefined;
@@ -77,12 +77,35 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
   }, [pendingOpen]);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+  // Edit & approve modal state — steward can tweak summary + tags
+  // before the approval commits, instead of approving blind.
+  const [editDoc, setEditDoc] = useState(null);
+  const [editSummary, setEditSummary] = useState("");
+  const [editTags, setEditTags] = useState("");
   // "View raw" modal — surfaced both from the pending-review card (so
   // the steward can read the source BEFORE deciding) and from the
   // DocDetailPanel footer (existing affordance). Without this, the
   // review queue is "trust me" governance — the steward needs eyes on
   // the actual content to make an informed call.
   const [rawDoc, setRawDoc] = useState(null);
+  // Hard-delete confirm modal — physical removal from the knowledge
+  // base (different from Reject in the pending workflow, which keeps
+  // the doc for audit).
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  // Bulk delete confirm — when the bulk-bar Delete button is hit on a
+  // multi-selection.
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState("");
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    const d = deleteTarget;
+    deleteDoc && deleteDoc(d.id);
+    if (selectedDoc && selectedDoc.id === d.id) setSelectedDocRaw(null);
+    onAddToast(`Document deleted · ${d.source}`, `doc.deleted · ${d.chunks ?? 0} chunks purged from the index · persisted SQLite`);
+    setDeleteTarget(null);
+    setDeleteConfirm("");
+  };
 
   // Empty-workspace state: take over the whole pane with a focused CTA card
   // instead of rendering the filters + empty table. This is the first thing a
@@ -141,12 +164,30 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
       `doc.approved · entered active retrieval set · ${d.review && d.review.requested_by ? "requested by " + d.review.requested_by : "audit recorded"}`
     );
   };
+  // Edit & approve must NOT short-circuit to a direct mutation —
+  // the steward has to see and tweak the metadata first. Opens an
+  // edit modal where summary / tags can be changed before the
+  // approval commits.
   const editAndApproveDoc = (d) => {
-    mutateDoc && mutateDoc(d.id, { review: { state: "approved", reviewed_by: _DOC_CURRENT_USER.name, reviewed_at: _stamp(), edited: true } });
+    setEditDoc(d);
+    setEditSummary(d.summary || "");
+    setEditTags((d.tags || []).join(", "));
+  };
+  const submitEditApprove = () => {
+    if (!editDoc) return;
+    const cleanTags = editTags.split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
+    mutateDoc && mutateDoc(editDoc.id, {
+      summary: editSummary,
+      tags: cleanTags,
+      review: { state: "approved", reviewed_by: _DOC_CURRENT_USER.name, reviewed_at: _stamp(), edited: true }
+    });
     onAddToast(
-      `Document approved with edits · ${d.source}`,
-      "doc.approved · steward acknowledged the request after a tag/summary tweak"
+      `Document approved with edits · ${editDoc.source}`,
+      `doc.approved · summary + tags updated by ${_DOC_CURRENT_USER.name} before sign-off`
     );
+    setEditDoc(null);
+    setEditSummary("");
+    setEditTags("");
   };
   const submitReject = () => {
     if (!rejectDoc) return;
@@ -289,9 +330,8 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
                         <button className="ghost-btn small" onClick={() => setRawDoc(d)} title="Read the extracted source text before deciding">
                           <Icon name="eye" size={11} /> Read source
                         </button>
-                        <span className="pending-actions-sep" />
-                        <button className="primary-btn small" onClick={() => approveDoc(d)}>Approve</button>
                         <button className="ghost-btn small" onClick={() => editAndApproveDoc(d)}>Edit &amp; approve</button>
+                        <button className="primary-btn small" onClick={() => approveDoc(d)}>Approve</button>
                         <button className="ghost-btn small danger" onClick={() => { setRejectDoc(d); setRejectReason(""); }}>Reject</button>
                       </div>
                     ) : (
@@ -299,7 +339,6 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
                         <button className="ghost-btn small" onClick={() => setRawDoc(d)}>
                           <Icon name="eye" size={11} /> Read source
                         </button>
-                        <span className="pending-actions-sep" />
                         <span className="muted">Awaiting steward review · you'll be notified when a steward signs off</span>
                       </div>
                     )}
@@ -323,7 +362,16 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
                 <code>{rejectDoc.source}</code> will be removed from the steward queue and the requester ({rejectDoc.review && rejectDoc.review.requested_by}) will be notified.
                 A <code>doc.rejected</code> event lands on the audit feed.
               </p>
-              <label className="field-label" htmlFor="doc-reject-reason">Reason (visible to requester)</label>
+              <div className="field-label-row">
+                <label className="field-label" htmlFor="doc-reject-reason">Reason (visible to requester)</label>
+                <window.AiAssistButton
+                  label="Use AI to draft reason"
+                  source="from source content + reject patterns"
+                  suggest={() => _aiRejectReasonFor(rejectDoc)}
+                  onSuggest={(text) => setRejectReason(text)}
+                  onToast={onAddToast}
+                />
+              </div>
               <textarea
                 id="doc-reject-reason"
                 className="text-input"
@@ -337,6 +385,58 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
             <div className="modal-footer">
               <button className="ghost-btn" onClick={() => setRejectDoc(null)}>Cancel</button>
               <button className="primary-btn danger" onClick={submitReject} disabled={!rejectReason.trim()}>Reject document</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editDoc && (
+        <div className="modal-backdrop" onClick={() => setEditDoc(null)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="doc-edit-title" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-h">
+              <h3 id="doc-edit-title">Edit &amp; approve document</h3>
+              <div className="modal-h-sub">Steward · tweak metadata before sign-off</div>
+              <button className="modal-x" onClick={() => setEditDoc(null)} aria-label="Close"><Icon name="x" size={14} /></button>
+            </div>
+            <div className="modal-body">
+              <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+                Editing <code>{editDoc.source}</code>. Summary and tags are
+                steward-curated; original artefact is untouched. The{" "}
+                <code>doc.approved</code> event records <code>edited: true</code>.
+              </p>
+
+              <div className="field-label-row">
+                <label className="field-label" htmlFor="doc-edit-summary">Summary</label>
+                <window.AiAssistButton
+                  label="Use AI to draft summary"
+                  source={`from ${editDoc.chunks ?? "indexed"} chunks`}
+                  suggest={() => _aiSummaryFor(editDoc)}
+                  onSuggest={(text) => setEditSummary(text)}
+                  onToast={onAddToast}
+                />
+              </div>
+              <textarea
+                id="doc-edit-summary"
+                className="text-input"
+                rows="4"
+                value={editSummary}
+                onChange={e => setEditSummary(e.target.value)}
+                autoFocus
+              />
+
+              <label className="field-label" htmlFor="doc-edit-tags" style={{ marginTop: 10 }}>Tags <span className="hint">— comma-separated, lowercase</span></label>
+              <input
+                id="doc-edit-tags"
+                className="text-input"
+                type="text"
+                value={editTags}
+                onChange={e => setEditTags(e.target.value)}
+                placeholder="oracle, rman, production"
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setEditDoc(null); setEditSummary(""); setEditTags(""); }}>Cancel</button>
+              <button className="primary-btn" onClick={submitEditApprove} disabled={!editSummary.trim()}>Approve with these edits</button>
             </div>
           </div>
         </div>
@@ -425,9 +525,72 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
           )}>
             <Icon name="refresh" size={13} /> Re-process
           </button>
+          <button
+            className="bulk-action danger"
+            onClick={() => setBulkDeleteOpen(true)}
+            title={`Delete ${selected.size} selected source${selected.size > 1 ? "s" : ""}`}
+          >
+            <Icon name="trash" size={13} /> Delete
+          </button>
           <button className="bulk-clear" onClick={clearSelection}>
             <Icon name="x" size={12} /> Clear selection
           </button>
+        </div>
+      )}
+
+      {bulkDeleteOpen && (
+        <div className="modal-backdrop" onClick={() => setBulkDeleteOpen(false)}>
+          <div className="modal small" role="dialog" aria-modal="true" aria-labelledby="doc-bulk-delete-title" onClick={e => e.stopPropagation()}>
+            <div className="modal-h">
+              <h3 id="doc-bulk-delete-title">Delete {selected.size} document{selected.size > 1 ? "s" : ""}</h3>
+              <div className="modal-h-sub">Steward · destructive bulk action</div>
+              <button className="modal-x" onClick={() => setBulkDeleteOpen(false)} aria-label="Close"><Icon name="x" size={14} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="impact-box danger">
+                <Icon name="alert-triangle" size={13} color="var(--twin-red-vivid)" />
+                <span>
+                  Hard-deletes <b>{selected.size}</b> document{selected.size > 1 ? "s" : ""} from
+                  the knowledge base. All indexed chunks are purged. The
+                  audit trail keeps a <code>doc.deleted</code> entry per
+                  source. This cannot be undone from the UI.
+                </span>
+              </div>
+              <ul className="bulk-delete-list">
+                {filtered.filter(d => selected.has(d.id)).slice(0, 8).map(d => (
+                  <li key={d.id}><code className="mono-meta">{d.source}</code><span className="muted">{d.chunks ?? 0} chunks</span></li>
+                ))}
+                {selected.size > 8 && <li className="muted">+{selected.size - 8} more</li>}
+              </ul>
+              <label className="field-label">Type <code>DELETE</code> to confirm</label>
+              <input
+                className="text-input"
+                value={bulkDeleteConfirm}
+                onChange={e => setBulkDeleteConfirm(e.target.value)}
+                placeholder="DELETE"
+                autoFocus
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setBulkDeleteOpen(false); setBulkDeleteConfirm(""); }}>Cancel</button>
+              <button
+                className="primary-btn danger"
+                disabled={bulkDeleteConfirm !== "DELETE"}
+                onClick={() => {
+                  const ids = [...selected];
+                  ids.forEach(id => deleteDoc && deleteDoc(id));
+                  if (selectedDoc && ids.includes(selectedDoc.id)) setSelectedDocRaw(null);
+                  onAddToast(
+                    `${ids.length} document${ids.length > 1 ? "s" : ""} deleted`,
+                    `doc.deleted × ${ids.length} · all chunks purged from the index · persisted SQLite`
+                  );
+                  clearSelection();
+                  setBulkDeleteOpen(false);
+                  setBulkDeleteConfirm("");
+                }}
+              >Delete {selected.size} permanently</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -480,10 +643,51 @@ window.DocumentsTab = function DocumentsTab({ docs, mutateDoc, isEmptyWorkspace,
           onOpenRetag={onOpenRetag}
           onAddToast={onAddToast}
           onViewRaw={() => setRawDoc(selectedDoc)}
+          onDelete={() => setDeleteTarget(selectedDoc)}
         />
       )}
 
       {rawDoc && <RawDocModal doc={rawDoc} onClose={() => setRawDoc(null)} />}
+
+      {deleteTarget && (
+        <div className="modal-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div className="modal small" role="dialog" aria-modal="true" aria-labelledby="doc-delete-title" onClick={e => e.stopPropagation()}>
+            <div className="modal-h">
+              <h3 id="doc-delete-title">Delete document</h3>
+              <div className="modal-h-sub">Steward · destructive action</div>
+              <button className="modal-x" onClick={() => setDeleteTarget(null)} aria-label="Close"><Icon name="x" size={14} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="impact-box danger">
+                <Icon name="alert-triangle" size={13} color="var(--twin-red-vivid)" />
+                <span>
+                  Hard-deletes <b><code>{deleteTarget.source}</code></b> from the
+                  knowledge base. The {deleteTarget.chunks ?? 0} indexed
+                  chunks are purged. The audit trail keeps a
+                  <code>doc.deleted</code> entry. This cannot be undone
+                  from the UI.
+                </span>
+              </div>
+              <label className="field-label">Type <code>DELETE</code> to confirm</label>
+              <input
+                className="text-input"
+                value={deleteConfirm}
+                onChange={e => setDeleteConfirm(e.target.value)}
+                placeholder="DELETE"
+                autoFocus
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => { setDeleteTarget(null); setDeleteConfirm(""); }}>Cancel</button>
+              <button
+                className="primary-btn danger"
+                disabled={deleteConfirm !== "DELETE"}
+                onClick={confirmDelete}
+              >Delete permanently</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -857,7 +1061,7 @@ function _formatAuditAction(m) {
   return m.action;
 }
 
-function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast, onViewRaw }) {
+function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast, onViewRaw, onDelete }) {
   const [tab, setTab] = useState("overview");
   const errorRef = React.useRef(null);
   // Audit trail — live mutation log from the FastAPI backend, filtered
@@ -1150,6 +1354,13 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast, onViewRa
           <button className="btn primary" onClick={reprocess} disabled={doc.status === "processing"}>
             <Icon name="refresh" size={13} /> Re-process
           </button>
+          <button
+            className="btn danger"
+            onClick={() => onDelete && onDelete()}
+            title="Permanently delete this document"
+          >
+            <Icon name="trash" size={13} /> Delete
+          </button>
         </footer>
       </aside>
     </>
@@ -1158,8 +1369,260 @@ function DocDetailPanel({ doc, focus, onClose, onOpenRetag, onAddToast, onViewRa
 
 // Steward's window into the actual ingested content. Without this, the
 // Approve / Reject buttons in the pending review queue are blind faith.
+// Identify the kind of "original viewer" to render based on the
+// document type / file extension. Maquette renders a faux-viewer per
+// kind (PDF page layout, Confluence page chrome, SharePoint, Office
+// docs, URL preview) so the steward sees what they'd see in the
+// native app — not the post-extraction text dump.
+// Mock LLM drafts — content the local GPT-OSS-20B "would" produce
+// for each form context. The real backend wires window.AiAssistButton
+// to /api/llm/draft with the entity payload; here we precompute
+// per-doc-id outputs so the demo is reproducible.
+function _aiSummaryFor(doc) {
+  if (doc.id === "d13") {
+    return "Acme Payments Iberia vendor API specification (draft v0.7) covering SEPA Credit Transfer, SCT Instant and Bizum acknowledgments. mTLS + API-key + HMAC auth. Notable gaps flagged by submitter: 24h idempotency window vs 72h BNP guidance, HMAC threshold mismatch (EUR 100K vs CIB EUR 50K), missing dispute-resolution endpoint. Steward review required before production rollout (2026-Q3 target).";
+  }
+  if (doc.id === "d14") {
+    return "Q2 2026 incident postmortem INC-26-Q2-0414 (SEV-2, 3h41 duration) on the CIB TwinRAG retrieval service. Root cause: openai quota planning based on Q1 traffic missed a 38% MoM growth from the corp-payments agent onboarding. Failover to anthropic-secondary delayed 24min due to silently-drifted gateway whitelist. 142 partial responses, 1 escalation. No regulatory event. Sensitive — contains client-impact figures.";
+  }
+  return `${doc.source || "Document"} — automatic draft from ${doc.chunks ?? "indexed"} chunks. ${doc.summary || ""}`.trim();
+}
+
+function _aiTagsFor(doc) {
+  if (doc.id === "d13") return "cft, vendor, payments, sepa, sct, network";
+  if (doc.id === "d14") return "incident, postmortem, retrieval, llm, quota, sensitive";
+  return (doc.tags || []).join(", ") || "untagged";
+}
+
+function _aiRejectReasonFor(doc) {
+  if (!doc) return "";
+  if (doc.id === "d13") {
+    return "Vendor confidence rating (70%) below the CIB threshold for production-bound specs (95%). Three contract-level gaps unresolved (idempotency window, HMAC threshold, dispute-resolution). Request resubmission once Acme account manager has confirmed the BNP CIB policy alignment.";
+  }
+  if (doc.id === "d14") {
+    return "Document contains client-impact figures (section 2) without anonymisation. Per workspace cib-core sensitive-document policy, must be anonymised before entering the active retrieval set. Request resubmission with figures replaced by aggregate ranges.";
+  }
+  return `Source ${doc.source || "document"} is not aligned with the active retrieval scope of this workspace. Suggest resubmission with relevance justification.`;
+}
+
+function _viewerKindFor(doc) {
+  const src = (doc.source || "").toLowerCase();
+  if (doc.type === "confluence") return "confluence";
+  if (doc.type === "sharepoint") return "sharepoint";
+  if (doc.type === "url") return "url";
+  if (src.endsWith(".pdf")) return "pdf";
+  if (src.endsWith(".docx") || src.endsWith(".doc")) return "docx";
+  if (src.endsWith(".pptx") || src.endsWith(".ppt")) return "pptx";
+  if (src.endsWith(".xlsx") || src.endsWith(".xls") || src.endsWith(".csv")) return "xlsx";
+  if (src.endsWith(".md")) return "markdown";
+  return "file";
+}
+
+const _VIEWER_LABEL = {
+  pdf:        "PDF viewer",
+  docx:       "Word viewer",
+  pptx:       "PowerPoint viewer",
+  xlsx:       "Excel viewer",
+  markdown:   "Markdown viewer",
+  confluence: "Confluence page",
+  sharepoint: "SharePoint page",
+  url:        "URL preview",
+  file:       "File viewer"
+};
+
+const _VIEWER_ICON = {
+  pdf:        "file-text",
+  docx:       "file-text",
+  pptx:       "file-text",
+  xlsx:       "file-text",
+  markdown:   "file-text",
+  confluence: "brand-confluence",
+  sharepoint: "cloud",
+  url:        "link",
+  file:       "file-text"
+};
+
+// Per-doc faux content for the d13 / d14 demo flow. For unknown docs,
+// render a generic placeholder. The content is the same as _rawTextFor
+// but styled as the original artefact rather than a text dump.
+function _renderOriginalView(doc) {
+  const kind = _viewerKindFor(doc);
+  if (doc.id === "d13" && kind === "pdf") return <PdfPaperD13 doc={doc} />;
+  if (doc.id === "d14" && kind === "confluence") return <ConfluencePageD14 doc={doc} />;
+  return <GenericOriginalView doc={doc} kind={kind} />;
+}
+
+function PdfPaperD13({ doc }) {
+  return (
+    <div className="orig-pdf-page">
+      <div className="orig-pdf-header">
+        <span>ACME PAYMENTS IBERIA SL · CIB INTEGRATION</span>
+        <span>Vendor API Specification · draft v0.7 · 2026-05-20</span>
+      </div>
+      <h2 className="orig-pdf-doctitle">CFT Vendor API specification (draft)</h2>
+      <p className="orig-pdf-subtitle">Contract IBPAY-2026-014 · Submitted by Marc Berthier · Confidence (vendor) 70 %</p>
+
+      <h3>1. Overview</h3>
+      <p>This document specifies the integration contract between the CIB
+      payment-orchestration layer and the Acme Payments Iberia gateway.
+      Coverage : SEPA Credit Transfer (SCT), SEPA Instant (SCT Inst) and
+      domestic Spain bizum-rail acknowledgments.</p>
+      <p>Production rollout target : <b>2026-Q3</b>. Internal verification :
+      pending steward sign-off.</p>
+
+      <h3>2. Authentication</h3>
+      <ul>
+        <li>mTLS, client cert issued by BNP InfoSec PKI (trust-store <code>cib-root-2024</code>).</li>
+        <li>API key in <code>Authorization: Bearer</code> header (rotated every 30 days).</li>
+        <li>HMAC-SHA256 body signature in <code>X-Acme-Signature</code> for transfers &gt; EUR 100K.</li>
+      </ul>
+
+      <h3>3. Endpoints (vendor side)</h3>
+      <table className="orig-pdf-table">
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>POST</td><td><code>/v1/sct/credit-transfer</code></td><td>SCT initiation</td></tr>
+          <tr><td>POST</td><td><code>/v1/sct-inst/credit-transfer</code></td><td>SCT Inst initiation (&lt;10s SLA)</td></tr>
+          <tr><td>GET</td><td><code>/v1/sct/{"{id}"}/status</code></td><td>Status enquiry, polling cap 1/s</td></tr>
+          <tr><td>POST</td><td><code>/v1/recall</code></td><td>R-message (return / reject)</td></tr>
+          <tr><td>POST</td><td><code>/v1/bizum/ack</code></td><td>Bizum acknowledgment relay</td></tr>
+        </tbody>
+      </table>
+
+      <h3>4. Idempotency</h3>
+      <p>Required <code>Idempotency-Key</code> header on every POST.
+      Acme retains the key for 24 h. Duplicate requests within window
+      return the original response with HTTP 200; outside the window
+      return 409 Conflict.</p>
+
+      <div className="orig-pdf-callout">
+        <h4>5. Concerns flagged by Marc (submitter)</h4>
+        <ul>
+          <li>Section 4 retention window (24 h) is shorter than BNP guidance (72 h). Recommend negotiation with Acme account manager.</li>
+          <li>HMAC threshold at EUR 100K vs BNP CIB policy threshold at EUR 50K — policy mismatch, requires either contract amendment OR an internal override gateway rule.</li>
+          <li>No explicit dispute-resolution endpoint; relies on R-message which doesn't cover all CIB business cases.</li>
+        </ul>
+      </div>
+
+      <div className="orig-pdf-callout decision">
+        <h4>6. Open questions for steward</h4>
+        <ul>
+          <li>Approve as-is and track the 3 concerns in JIRA ?</li>
+          <li>Reject and request vendor revision (delays Q3 target by ~6 weeks) ?</li>
+          <li>Approve with edits (e.g. raise the HMAC threshold note in the operator runbook) ?</li>
+        </ul>
+      </div>
+
+      <div className="orig-pdf-footer">
+        <span>Acme Payments Iberia · IBPAY-2026-014</span>
+        <span>Page 1 of 12</span>
+      </div>
+    </div>
+  );
+}
+
+function ConfluencePageD14({ doc }) {
+  return (
+    <div className="orig-confluence-page">
+      <nav className="orig-conf-breadcrumb">
+        <span>CIB</span><span>›</span><span>Runbooks</span><span>›</span><span>Incidents</span><span>›</span><span className="cur">2026-Q2 postmortem (DRAFT)</span>
+      </nav>
+      <header className="orig-conf-head">
+        <h1>Q2 2026 incident postmortem — DRAFT</h1>
+        <div className="orig-conf-meta">
+          <span>By <b>Yann Dubois</b></span><span>·</span>
+          <span>Last edited 2026-05-20 16:48 UTC</span><span>·</span>
+          <span className="orig-conf-label">DRAFT</span>
+          <span className="orig-conf-label sensitive">SENSITIVE</span>
+        </div>
+      </header>
+      <div className="orig-conf-body">
+        <p><b>Incident :</b> INC-26-Q2-0414 · <b>Severity :</b> SEV-2 · <b>Duration :</b> 3 h 41 m<br/>
+        <b>Service :</b> CIB knowledge-base retrieval (TwinRAG production)</p>
+
+        <h2>1. Timeline (UTC)</h2>
+        <table className="orig-conf-table">
+          <tbody>
+            <tr><td><code>14:02</code></td><td>quota-warn alert on llm provider (openai) at 85 %.</td></tr>
+            <tr><td><code>14:14</code></td><td>quota-exhausted at 100 %. Retrieval halts on synthesis step.</td></tr>
+            <tr><td><code>14:18</code></td><td>on-call paged via PagerDuty (yann.dubois).</td></tr>
+            <tr><td><code>14:31</code></td><td>failover to anthropic-secondary attempted, rejected by gateway (cert chain not whitelisted in cib-router-2026).</td></tr>
+            <tr><td><code>14:55</code></td><td>manual workaround : gateway whitelist updated via emergency change CHG-26-04188. Failover succeeds.</td></tr>
+            <tr><td><code>15:14</code></td><td>secondary saturates (rate-limit 60 rpm at vendor side).</td></tr>
+            <tr><td><code>17:43</code></td><td>incident closed after openai quota top-up + secondary release.</td></tr>
+          </tbody>
+        </table>
+
+        <div className="orig-conf-panel danger">
+          <h3>2. Client impact figures (sensitive)</h3>
+          <ul>
+            <li>142 retrieval queries returned partial / no-context responses.</li>
+            <li>4 client-facing agents (treasury, corp-payments) degraded.</li>
+            <li>1 escalation from BNP Securities Services received at 15:48.</li>
+            <li>No regulatory-reportable event (BCEN / ACPR threshold not crossed).</li>
+          </ul>
+        </div>
+
+        <h2>3. Root cause analysis</h2>
+        <p><b>Primary :</b> quota planning at the openai vendor was based on
+        Q1 traffic patterns; Q2 onboarding of the corp-payments agent
+        surfaced a 38 % month-over-month query growth not captured in the
+        renewal forecast.</p>
+        <p><b>Contributing :</b> secondary-provider failover hadn't been
+        exercised since 2025-11; the cert-chain whitelist had silently
+        drifted out of date.</p>
+
+        <h2>4. Action items</h2>
+        <ul>
+          <li>✅ Quarterly quota recalibration based on rolling 30-day usage.</li>
+          <li>✅ Monthly failover drill (added to oncall rota).</li>
+          <li>⏳ Multi-provider routing live, not just failover.</li>
+          <li>📌 Postmortem review with InfoSec on the gateway whitelist drift detection mechanism (this drift caused 24 m of avoidable downtime).</li>
+        </ul>
+
+        <div className="orig-conf-panel info">
+          <h3>5. Reason this is in review</h3>
+          <p>Contains client-impact figures (section 2). Steward review
+          required before this document enters the active retrieval set,
+          per the sensitive-document policy in workspace <code>cib-core</code>.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenericOriginalView({ doc, kind }) {
+  const VIEWER = _VIEWER_LABEL[kind] || "Viewer";
+  return (
+    <div className={"orig-generic orig-" + kind}>
+      <div className="orig-generic-h">
+        <Icon name={_VIEWER_ICON[kind]} size={14} />
+        <span>{VIEWER}</span>
+      </div>
+      <div className="orig-generic-body">
+        <h2>{doc.source}</h2>
+        <p className="orig-generic-summary">{doc.summary}</p>
+        <div className="orig-generic-stub">
+          <Icon name="info-circle" size={14} />
+          <span>
+            <b>Native viewer not yet wired</b> for this file type in the
+            demo. In production, this surface renders the original
+            document through the matching viewer ({VIEWER.toLowerCase()}).
+            Use the <b>View extracted text</b> button (top right) to see
+            what was actually ingested.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RawDocModal({ doc, onClose }) {
   const ref = React.useRef(null);
+  // Two viewing modes: the original document (default — what the
+  // steward needs to validate) and the extracted text (what the
+  // indexer holds). Toggle via the top-right button.
+  const [mode, setMode] = useState("original");
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -1168,6 +1631,7 @@ function RawDocModal({ doc, onClose }) {
 
   const text = _rawTextFor(doc);
   const sizeKb = (text.length / 1024).toFixed(1);
+  const viewer = _viewerKindFor(doc);
 
   const download = () => {
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -1194,8 +1658,10 @@ function RawDocModal({ doc, onClose }) {
         <div className="modal-h">
           <div className="raw-doc-h">
             <h3 id="raw-doc-title">
-              <Icon name="eye" size={14} />
-              Extracted text — what the indexer ingested
+              <Icon name={mode === "original" ? _VIEWER_ICON[viewer] : "eye"} size={14} />
+              {mode === "original"
+                ? `${_VIEWER_LABEL[viewer]} — original`
+                : "Extracted text — what the indexer ingested"}
             </h3>
             <div className="raw-doc-meta">
               <code className="mono-meta">{doc.source}</code>
@@ -1211,20 +1677,36 @@ function RawDocModal({ doc, onClose }) {
               )}
             </div>
           </div>
-          <button className="modal-x" onClick={onClose} aria-label="Close raw view">
-            <Icon name="x" size={14} />
-          </button>
+          <div className="raw-doc-h-actions">
+            <button
+              className={"raw-doc-mode-toggle" + (mode === "extracted" ? " is-on" : "")}
+              onClick={() => setMode(m => m === "original" ? "extracted" : "original")}
+              title={mode === "original" ? "Show the post-extraction text used by the indexer" : "Show the original document"}
+            >
+              {mode === "original"
+                ? <><Icon name="eye" size={11} /> View extracted text</>
+                : <><Icon name={_VIEWER_ICON[viewer]} size={11} /> Back to original</>}
+            </button>
+            <button className="modal-x" onClick={onClose} aria-label="Close">
+              <Icon name="x" size={14} />
+            </button>
+          </div>
         </div>
 
-        <div className="raw-doc-body">
-          <pre className="raw-doc-text">{text}</pre>
+        <div className={"raw-doc-body raw-doc-body-" + mode}>
+          {mode === "original" ? (
+            _renderOriginalView(doc)
+          ) : (
+            <pre className="raw-doc-text">{text}</pre>
+          )}
         </div>
 
         <div className="modal-footer raw-doc-footer">
           <span className="raw-doc-disclaimer">
             <Icon name="info-circle" size={11} />
-            This is the post-extraction text used for retrieval, not the
-            original binary. Use it to validate before approving.
+            {mode === "original"
+              ? "Original artefact rendered for steward validation. Click the toggle to inspect the post-extraction text."
+              : "Post-extraction text used for retrieval, not the original binary."}
           </span>
           <button className="ghost-btn" onClick={download}>
             <Icon name="cloud-upload" size={12} /> Download .txt

@@ -2,9 +2,9 @@
 
 Updated 2026-05-21 — landed with issue [#49](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/issues/49) (post cross-tab audit).
 
-Scope: the Sweden bundle (`/Users/julien/Downloads/design_twinrag_backend/`)
-served at <https://maquette.sigilum.fr/> through `maquette-deploy/`.
-Independent from the React port at `lightrag_webui_twin/`.
+Scope: the SPA in `maquette-deploy/source/` served through
+`maquette-deploy/`. Independent from the React port at
+`lightrag_webui_twin/`.
 
 ## Empty states
 

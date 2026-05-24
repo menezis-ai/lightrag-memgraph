@@ -125,9 +125,13 @@ function TagsEmptyFiltered({ q, selectedCat, selectedStatus, categories, suggest
   );
 }
 
-window.TagsTab = function TagsTab({ onPushToast }) {
-  const tags = window.MOCK_TAGS_FULL;
+window.TagsTab = function TagsTab({ tags: tagsProp, mutateTag, deleteTag, onPushToast }) {
+  // Tags array now lives in app.jsx and is hydrated from /api/tags on
+  // boot — same as docs. Falls back to the legacy MOCK if the prop
+  // wasn't passed (defensive: pre-rewire callers).
+  const tags = tagsProp || window.MOCK_TAGS_FULL;
   const categories = window.MOCK_TAG_CATEGORIES;
+  const _now10 = () => new Date().toISOString().slice(0, 10);
 
   const [selectedCat, setSelectedCat] = window.useUrlParam("cat", "all");
   const [selectedStatus, setSelectedStatus] = window.useUrlParam("status", "all", {
@@ -245,8 +249,29 @@ window.TagsTab = function TagsTab({ onPushToast }) {
                   </div>
                   {canEdit ? (
                     <div className="pending-actions">
-                      <button className="primary-btn small" onClick={() => { window.twinCompleteTask && window.twinCompleteTask("tag"); onPushToast && onPushToast({ id: "approve-" + t.tag + "-" + Date.now(), title: "Tag", tagname: t.tag, titleSuffix: "approved", sub: "Added to thesaurus · auto-emit tag.approved", undo: true }); }}>Approve</button>
+                      <button className="ghost-btn small" onClick={() => setModal({ kind: "see-context", tag: t })} title="Open the full proposal — definition, justification, related tags">
+                        <Icon name="eye" size={11} /> See justification
+                      </button>
                       <button className="ghost-btn small" onClick={() => setModal({ kind: "edit-approve", tag: t })}>Edit & approve</button>
+                      <button
+                        className="primary-btn small"
+                        onClick={() => {
+                          window.twinCompleteTask && window.twinCompleteTask("tag");
+                          // REAL mutation — tag exits the pending queue,
+                          // status flips to active, persisted to SQLite.
+                          mutateTag && mutateTag(t.tag, {
+                            status: "active",
+                            tier: t.tier === "requested" ? 2 : t.tier,
+                            review: { state: "approved", reviewed_by: CURRENT_USER.name, reviewed_at: _now10() }
+                          });
+                          onPushToast && onPushToast({
+                            id: "approve-" + t.tag + "-" + Date.now(),
+                            title: "Tag", tagname: t.tag, titleSuffix: "approved",
+                            sub: "Added to thesaurus · tag.approved emitted · reload-proof",
+                            undo: true
+                          });
+                        }}
+                      >Approve</button>
                       <button className="ghost-btn small danger" onClick={() => setModal({ kind: "reject", tag: t })}>Reject</button>
                     </div>
                   ) : (
@@ -382,8 +407,20 @@ window.TagsTab = function TagsTab({ onPushToast }) {
           action={modal}
           allTags={tags}
           onClose={() => setModal(null)}
-          onCommit={(msg) => {
+          onCommit={(msg, mutation) => {
             setModal(null);
+            // Apply the real mutation to the tags store + persist before
+            // emitting the toast. Patterns:
+            //   { kind: "patch", id, patch }   → mutateTag(id, patch)
+            //   { kind: "delete", id }         → deleteTag(id)
+            // mutation is optional (some actions stay toast-only, e.g.
+            // the "request" flow for a new tag — would need a POST
+            // endpoint that the backend doesn't surface yet).
+            if (mutation && mutation.kind === "patch") {
+              mutateTag && mutateTag(mutation.id, mutation.patch);
+            } else if (mutation && mutation.kind === "delete") {
+              deleteTag && deleteTag(mutation.id);
+            }
             onPushToast && onPushToast(msg);
           }}
         />
@@ -570,6 +607,7 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
   const modalRef = React.useRef(null);
   window.useModalA11y && window.useModalA11y({ open: true, onClose, ref: modalRef });
   const tag = action.tag;
+  const isViewer = action.kind === "see-context";
   const [name, setName] = useState(tag ? tag.tag : (action.seedName || ""));
   const [migrateTo, setMigrateTo] = useState("");
   const [migrateStrategy, setMigrateStrategy] = useState("migrate");
@@ -584,6 +622,7 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
     delete:         "Delete tag",
     reject:         "Reject request",
     "edit-approve": "Edit & approve request",
+    "see-context":  "Tag request — full proposal",
     request:        "Request new tag"
   };
 
@@ -592,23 +631,49 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
     // for the onboarding checklist — it materially affects the thesaurus.
     window.twinCompleteTask && window.twinCompleteTask("tag");
     const stamp = Date.now();
+    const stamp10 = new Date().toISOString().slice(0, 10);
+    // Each branch emits a toast (msg) AND, where applicable, the real
+    // mutation payload to apply against the tags store (mutation arg).
     if (action.kind === "edit") {
-      onCommit({ id: "edit-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "definition updated", sub: "tag.edited emitted to Activity", undo: true });
+      onCommit(
+        { id: "edit-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "definition updated", sub: "tag.edited emitted to Activity · persisted", undo: true },
+        { kind: "patch", id: tag.tag, patch: { last_edit: { by: "claire.benoit", at: stamp10, action: "definition updated" } } }
+      );
     } else if (action.kind === "suggest") {
+      // Contributor flow — no immediate mutation, request enters queue.
+      // Keep toast-only for now (would need a "pending suggestion" entity kind).
       onCommit({ id: "sug-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "edit suggested", sub: "Awaiting steward review", undo: false });
     } else if (action.kind === "synonyms") {
-      onCommit({ id: "syn-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "synonyms updated", sub: "Query rewriting refreshed at gateway", undo: true });
+      onCommit(
+        { id: "syn-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "synonyms updated", sub: "Query rewriting refreshed at gateway · persisted", undo: true },
+        { kind: "patch", id: tag.tag, patch: { last_edit: { by: "claire.benoit", at: stamp10, action: "synonyms updated" } } }
+      );
     } else if (action.kind === "deprecate") {
-      onCommit({ id: "dep-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "deprecated", sub: `${tag.sources_count} docs flagged · tag.deprecated emitted`, undo: true });
+      onCommit(
+        { id: "dep-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "deprecated", sub: `${tag.sources_count} docs flagged · tag.deprecated emitted · persisted`, undo: true },
+        { kind: "patch", id: tag.tag, patch: { status: "deprecated", last_edit: { by: "claire.benoit", at: stamp10, action: "deprecated" } } }
+      );
     } else if (action.kind === "delete") {
       const verb = migrateStrategy === "migrate" ? `migrated to ${migrateTo}` : "deleted (docs untagged)";
-      onCommit({ id: "del-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: verb, sub: `${tag.sources_count} docs updated · tag.deleted emitted`, undo: false });
+      onCommit(
+        { id: "del-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: verb, sub: `${tag.sources_count} docs updated · tag.deleted emitted · persisted`, undo: false },
+        { kind: "delete", id: tag.tag }
+      );
     } else if (action.kind === "reject") {
-      onCommit({ id: "rej-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "rejected", sub: reason || "tag.rejected emitted · author notified", undo: false });
+      onCommit(
+        { id: "rej-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "rejected", sub: reason || "tag.rejected emitted · author notified · persisted", undo: false },
+        { kind: "patch", id: tag.tag, patch: { status: "rejected", review: { state: "rejected", reviewed_by: "claire.benoit", reviewed_at: stamp10, reason: reason || "" } } }
+      );
     } else if (action.kind === "edit-approve") {
-      onCommit({ id: "ea-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "approved (edited)", sub: "Added to thesaurus · tag.approved emitted", undo: true });
+      onCommit(
+        { id: "ea-" + stamp, title: "Tag", tagname: tag.tag, titleSuffix: "approved (edited)", sub: "Added to thesaurus · tag.approved emitted · persisted", undo: true },
+        { kind: "patch", id: tag.tag, patch: { status: "active", tier: tag.tier === "requested" ? 2 : tag.tier, review: { state: "approved", reviewed_by: "claire.benoit", reviewed_at: stamp10, edited: true } } }
+      );
     } else if (action.kind === "request") {
-      onCommit({ id: "req-" + stamp, title: "Tag", tagname: name, titleSuffix: "requested for review", sub: "Queued for steward approval · tag.request_new emitted", undo: false });
+      // New-tag request — would need a backend POST endpoint to insert
+      // a fresh entity. Backend currently only exposes PATCH/DELETE/GET.
+      // Toast-only for now; flagged as TODO for the next iteration.
+      onCommit({ id: "req-" + stamp, title: "Tag", tagname: name, titleSuffix: "requested for review", sub: "Queued for steward approval · tag.request_new emitted (not yet persisted — needs POST endpoint)", undo: false });
     }
   };
 
@@ -643,7 +708,15 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
             <>
               <label className="field-label">Name (canonical)</label>
               <input className="text-input" value={name} onChange={e => setName(e.target.value)} disabled={action.kind !== "edit-approve" && action.kind !== "edit"} />
-              <label className="field-label">Short definition</label>
+              <div className="field-label-row">
+                <label className="field-label">Short definition</label>
+                <window.AiAssistButton
+                  label="Use AI to draft definition"
+                  source={`from ${tag.sources_count || 0} sources using this tag`}
+                  suggest={() => `${tag.tag} — auto-drafted from the ${tag.sources_count || 0} sources currently associated. ${tag.def || ""} Cross-references: ${(tag.related || []).slice(0,3).map(r => r.tag).join(", ") || "n/a"}.`}
+                  onSuggest={() => {}}
+                />
+              </div>
               <textarea className="text-input" rows="3" defaultValue={tag.def} />
               <label className="field-label">Long description (optional)</label>
               <textarea className="text-input" rows="3" placeholder="For complex tags — surfaced in autocomplete tooltip." />
@@ -727,7 +800,15 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
 
           {action.kind === "reject" && (
             <>
-              <label className="field-label">Reason</label>
+              <div className="field-label-row">
+                <label className="field-label">Reason</label>
+                <window.AiAssistButton
+                  label="Use AI to draft reason"
+                  source="from tag overlap analysis"
+                  suggest={() => `Proposed tag '${tag.tag}' overlaps significantly with the existing taxonomy (closest matches: ${(tag.related || []).slice(0, 2).map(r => r.tag).join(", ") || "messaging, generic"}). Recommend using the existing tag rather than introducing a new entry. Re-request if the use case warrants a finer granularity not covered today.`}
+                  onSuggest={(text) => setReason(text)}
+                />
+              </div>
               <textarea className="text-input" rows="3" value={reason} onChange={e => setReason(e.target.value)} placeholder="The author of the request will receive this message. Be specific." />
               <div className="impact-box">
                 <Icon name="info-circle" size={13} color="var(--twin-accent)" />
@@ -736,11 +817,45 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
             </>
           )}
 
+          {action.kind === "see-context" && (
+            <>
+              <label className="field-label">Proposed definition</label>
+              <div className="readonly-block">{tag.def || <span className="muted-italic">No definition provided by the requester.</span>}</div>
+              <label className="field-label">Justification</label>
+              <div className="readonly-block">{tag.justification || <span className="muted-italic">No justification provided.</span>}</div>
+              <label className="field-label">Proposal metadata</label>
+              <div className="readonly-block">
+                <div>Proposed by <b>{tag.requested_by}</b> on {tag.requested_at}</div>
+                <div>Category <code>{tag.category}</code> · Tier <code>{tag.tier}</code></div>
+                {(tag.aliases && tag.aliases.length > 0) && (
+                  <div>Synonyms: {tag.aliases.map(a => <code key={a}>{a}</code>)}</div>
+                )}
+                {(tag.related && tag.related.length > 0) && (
+                  <div>Related existing tags: {tag.related.slice(0, 5).map(r => <code key={r.tag}>{r.tag}</code>)}</div>
+                )}
+              </div>
+              <div className="impact-box">
+                <Icon name="info-circle" size={13} color="var(--twin-accent)" />
+                <span>Read-only view. Close this dialog and use <b>Approve</b>, <b>Edit &amp; approve</b> or <b>Reject</b> to act on the request.</span>
+              </div>
+            </>
+          )}
+
           {action.kind === "request" && (
             <>
               <label className="field-label">Proposed name <span className="hint">lowercase, no spaces</span></label>
               <input className="text-input" value={name} onChange={e => setName(e.target.value.toLowerCase().replace(/\s+/g, "-"))} placeholder="e.g. argocd" />
-              <label className="field-label">Definition <span className="hint">200 chars max</span></label>
+              <div className="field-label-row">
+                <label className="field-label">Definition <span className="hint">200 chars max</span></label>
+                <window.AiAssistButton
+                  label="Use AI to draft definition"
+                  source={`from ${name ? `'${name}' usage across the corpus` : "thesaurus + corpus context"}`}
+                  suggest={() => name
+                    ? `${name} — auto-drafted definition. Concept currently surfacing across the corpus; consolidating under a single tag for cross-source retrieval. Existing related tags: ${(allTags || []).slice(0, 3).map(t => t.tag).join(", ") || "n/a"}.`
+                    : "Type a proposed name first, then click again to draft."}
+                  onSuggest={() => {}}
+                />
+              </div>
               <textarea className="text-input" rows="3" maxLength="200" placeholder="What should this tag mean? When should it be applied?" />
               <label className="field-label">Domain</label>
               <select className="text-input">
@@ -749,7 +864,15 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
               </select>
               <label className="field-label">Synonyms <span className="hint">optional</span></label>
               <input className="text-input" placeholder="comma-separated, e.g. recovery-manager, backup-tool" />
-              <label className="field-label">Justification</label>
+              <div className="field-label-row">
+                <label className="field-label">Justification</label>
+                <window.AiAssistButton
+                  label="Use AI to draft justification"
+                  source="from sources missing a precise tag"
+                  suggest={() => `Existing taxonomy lacks a precise tag for '${name || "this concept"}'. Sources currently bucket under generic tags lose retrieval precision. Adding this tag improves recall on targeted queries (see example sources flagged in the workspace).`}
+                  onSuggest={() => {}}
+                />
+              </div>
               <textarea className="text-input" rows="3" placeholder="Why is the existing taxonomy insufficient? Cite an example use." />
               <div className="impact-box">
                 <Icon name="info-circle" size={13} color="var(--twin-accent)" />
@@ -760,20 +883,22 @@ function TagActionModal({ action, allTags, onClose, onCommit }) {
         </div>
 
         <div className="modal-footer">
-          <button className="ghost-btn" onClick={onClose}>Cancel</button>
-          <button
-            className={"primary-btn " + (action.kind === "delete" || action.kind === "reject" ? "danger" : "")}
-            onClick={commit}
-          >
-            {action.kind === "edit"          && "Save"}
-            {action.kind === "suggest"       && "Submit suggestion"}
-            {action.kind === "synonyms"      && "Save synonyms"}
-            {action.kind === "deprecate"     && "Deprecate"}
-            {action.kind === "delete"        && (migrateStrategy === "migrate" ? "Migrate and delete" : "Untag and delete")}
-            {action.kind === "reject"        && "Reject request"}
-            {action.kind === "edit-approve"  && "Approve with edits"}
-            {action.kind === "request"       && "Submit request"}
-          </button>
+          <button className="ghost-btn" onClick={onClose}>{isViewer ? "Close" : "Cancel"}</button>
+          {!isViewer && (
+            <button
+              className={"primary-btn " + (action.kind === "delete" || action.kind === "reject" ? "danger" : "")}
+              onClick={commit}
+            >
+              {action.kind === "edit"          && "Save"}
+              {action.kind === "suggest"       && "Submit suggestion"}
+              {action.kind === "synonyms"      && "Save synonyms"}
+              {action.kind === "deprecate"     && "Deprecate"}
+              {action.kind === "delete"        && (migrateStrategy === "migrate" ? "Migrate and delete" : "Untag and delete")}
+              {action.kind === "reject"        && "Reject request"}
+              {action.kind === "edit-approve"  && "Approve with edits"}
+              {action.kind === "request"       && "Submit request"}
+            </button>
+          )}
         </div>
       </div>
     </div>

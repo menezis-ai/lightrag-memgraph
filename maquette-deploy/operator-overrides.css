@@ -18,13 +18,86 @@
   min-width: 0;
 }
 
-/* ── Base font bump ─────────────────────────────────────────────────
- * Operator feedback: proto's body 13px reads small on standard 4K
- * displays. Bump to 14px (a "poil" larger). Components with explicit
- * px sizes (.pill 11px, etc.) are unaffected. */
-body {
-  font-size: 14px;
-}
+/* ── Base font bump + global +1px lift (2026-05-21 demo Manu) ───────
+ * Body 14 → 15. Plus +1-2px sur les classes les plus utilisées du proto
+ * pour que l'augmentation propage là où le proto fixe explicitement en
+ * px. Léger partout, pas de saut brutal qui casse les layouts.
+ */
+body { font-size: 15px; }
+
+/* Topbar */
+.brand-name      { font-size: 15px; }
+.brand-kb        { font-size: 14px; }
+.tab             { font-size: 13.5px; }
+
+/* Documents table */
+.docs-row.has-select       { font-size: 13px; }
+.cell-summary,
+.cell-source .name         { font-size: 13px; }
+.cell-tags,
+.cell-status,
+.cell-chunks,
+.cell-updated              { font-size: 12.5px; }
+
+/* Filters + pills */
+.pill                      { font-size: 12.5px; }
+.filter-label              { font-size: 14px; }
+
+/* Right detail panel — TOUS les textes */
+.detail-source h2,
+#detail-title              { font-size: 19px; }
+.detail-tab                { font-size: 13.5px; }
+.detail-status-bar         { font-size: 13px; }
+.detail-section h3         { font-size: 14.5px; }
+.detail-summary            { font-size: 13.5px; line-height: 1.6; }
+.detail-kv                 { font-size: 13px; }
+.detail-kv dt              { font-size: 13px; }
+.detail-kv dd              { font-size: 13px; }
+.detail-tags .tag-chip     { font-size: 12.5px; }
+.detail-error-msg          { font-size: 13px; }
+.detail-footer .btn        { font-size: 13.5px; }
+.chunk-text                { font-size: 13px; line-height: 1.65; }
+.chunk-meta                { font-size: 12px; }
+.chunk-pos                 { font-size: 12.5px; }
+.lineage-timeline .lt-title { font-size: 13.5px; }
+.lineage-timeline .lt-meta  { font-size: 12.5px; }
+.audit-action              { font-size: 14px; }
+.audit-actor               { font-size: 13px; }
+.audit-justif              { font-size: 13px; }
+.audit-when                { font-size: 12px; }
+
+/* Tag detail panel (Tags tab) */
+.tag-detail-name           { font-size: 20px; }
+.tag-detail-aliases code   { font-size: 12.5px; }
+.tag-card-name             { font-size: 14px; }
+.tag-card-def              { font-size: 13px; line-height: 1.55; }
+
+/* Retrieval */
+.msg-user,
+.msg-text                  { font-size: 14.5px; line-height: 1.65; }
+.source-card               { font-size: 13px; }
+.history-item-title        { font-size: 13.5px; }
+.history-item-meta         { font-size: 12px; }
+
+/* Activity */
+.activity-row .row-line1   { font-size: 13.5px; }
+.activity-row .row-summary { font-size: 12.5px; }
+.day-h                     { font-size: 12.5px; }
+
+/* Modals + buttons */
+.modal h3                  { font-size: 17px; }
+.modal-body                { font-size: 14px; }
+.btn                       { font-size: 13px; }
+
+/* Knowledge Graph — legend + hint (les pénibles) */
+.kg-legend-h               { font-size: 12px; }
+.kg-legend ul              { font-size: 13.5px; }
+.kg-legend li              { font-size: 13.5px; }
+.kg-hint                   { font-size: 13.5px; padding: 6px 12px; }
+
+/* Audit / source pill labels */
+.audit-source-pill         { font-size: 11.5px; }
+.audit-sub                 { font-size: 13px; }
 
 /* ── QW1: Topbar 3-col flex layout ──────────────────────────────────
  * Proto centers `.tabs` via `position: absolute; left: 50%` while
@@ -967,6 +1040,117 @@ body {
   align-items: center;
   margin-top: 4px;
 }
+.myaccess-stack {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  background: var(--color-background-secondary);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.myaccess-stack-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.myaccess-stack-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.myaccess-stack-list li {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  position: relative;
+  padding-left: 14px;
+}
+.myaccess-stack-list li::before {
+  content: "·";
+  position: absolute;
+  left: 4px;
+  color: var(--twin-accent);
+  font-weight: 600;
+}
+.myaccess-stack-list b {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+/* ── Workspace switcher honest preview state ────────────────────────
+ * Cross-workspace data scoping is designed but not wired yet (filter
+ * Memgraph nodes by workspace_id). If we let Manu click "twingov"
+ * during the demo, he sees the same data as cib → smoking-gun.
+ * Lock everything except the current workspace + preview pill +
+ * explanatory note at the top of the menu. */
+.ws-menu-note {
+  padding: 8px 12px;
+  margin: 6px 8px;
+  background: var(--color-background-secondary);
+  border-left: 2px solid var(--twin-accent);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+.ws-menu-note code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 0 4px;
+  background: var(--color-background-primary);
+  border-radius: 3px;
+  color: var(--color-text-primary);
+}
+.ws-row.is-locked {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ws-row.is-locked:hover { background: transparent; }
+.ws-locked-pill {
+  display: inline-block;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 3px;
+}
+
+/* ── Retrieval demo banner ──────────────────────────────────────────
+ * Honest disclaimer: any query returns the same MOCK_ANSWER_TOKENS
+ * and the same MOCK_RETRIEVAL_SOURCES. If we don't say it up front,
+ * Manu types two different queries and catches the lie. */
+.retrieval-demo-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 0;
+  background: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 6%, var(--color-background-primary));
+  border-bottom: 0.5px solid color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 25%, var(--color-border-default));
+  color: var(--twin-amber-700, #6B4D00);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.retrieval-demo-banner svg { flex: 0 0 auto; margin-top: 2px; }
+.retrieval-demo-banner b { font-weight: 600; }
+.retrieval-demo-banner code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  background: var(--color-background-primary);
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--color-text-primary);
+}
+
 .myaccess-preview-pill {
   font-size: 9.5px;
   padding: 1px 6px;
@@ -984,14 +1168,39 @@ body {
  * for a document. Surfaced from the pending-review card AND from the
  * DocDetailPanel footer so the steward can read-before-approve. */
 .raw-doc-modal {
-  width: min(900px, 96vw);
+  width: min(1000px, 96vw);
   max-height: 92vh;
   display: flex;
   flex-direction: column;
 }
 .raw-doc-modal .modal-h {
   border-bottom: 0.5px solid var(--color-border-tertiary);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
 }
+.raw-doc-h-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.raw-doc-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+.raw-doc-mode-toggle:hover { border-color: var(--twin-accent); color: var(--color-text-primary); }
+.raw-doc-mode-toggle.is-on { background: var(--color-background-secondary); }
 .raw-doc-h h3 {
   display: inline-flex;
   align-items: center;
@@ -1022,10 +1231,315 @@ body {
   min-height: 0;
   overflow: auto;
   padding: 0;
-  background: var(--color-background-secondary);
+  background: var(--color-background-tertiary, #ECECEC);
   border-top: 0.5px solid var(--color-border-tertiary);
   border-bottom: 0.5px solid var(--color-border-tertiary);
 }
+.raw-doc-body-extracted {
+  background: var(--color-background-secondary);
+}
+
+/* ── PDF viewer mock (d13 cft vendor api spec) ─────────────────────── */
+.orig-pdf-page {
+  background: #fff;
+  margin: 24px auto;
+  max-width: 760px;
+  padding: 60px 70px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  font-family: "Times New Roman", Georgia, serif;
+  color: #111;
+  line-height: 1.55;
+  font-size: 14px;
+}
+.orig-pdf-header,
+.orig-pdf-footer {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #666;
+  padding-bottom: 12px;
+  margin-bottom: 24px;
+  border-bottom: 0.5px solid #ddd;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.orig-pdf-footer {
+  border-top: 0.5px solid #ddd;
+  border-bottom: 0;
+  padding-top: 16px;
+  margin-top: 32px;
+  margin-bottom: 0;
+}
+.orig-pdf-doctitle {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+  color: #111;
+}
+.orig-pdf-subtitle {
+  font-style: italic;
+  color: #555;
+  margin: 0 0 24px;
+  font-size: 13px;
+}
+.orig-pdf-page h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 22px 0 8px;
+  color: #111;
+}
+.orig-pdf-page p, .orig-pdf-page li { font-size: 13.5px; }
+.orig-pdf-page code {
+  font-family: Menlo, monospace;
+  font-size: 12.5px;
+  background: #f4f4f4;
+  padding: 0 4px;
+  border-radius: 2px;
+  color: #333;
+}
+.orig-pdf-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12.5px;
+}
+.orig-pdf-table th, .orig-pdf-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 0.5px solid #ddd;
+}
+.orig-pdf-table th { font-weight: 600; background: #f8f8f8; }
+.orig-pdf-callout {
+  background: #FFF9E6;
+  border-left: 3px solid #C9A100;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+.orig-pdf-callout h4 { margin: 0 0 6px; font-size: 14px; }
+.orig-pdf-callout.decision {
+  background: #E8F0FD;
+  border-left-color: #2563EB;
+}
+
+/* ── Confluence viewer mock (d14 incident postmortem) ──────────────── */
+.orig-confluence-page {
+  background: #fff;
+  margin: 0;
+  padding: 28px 36px 60px;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #172B4D;
+  line-height: 1.55;
+  font-size: 14px;
+  min-height: 100%;
+}
+.orig-conf-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6B778C;
+  margin-bottom: 18px;
+}
+.orig-conf-breadcrumb .cur { color: #172B4D; font-weight: 500; }
+.orig-conf-head h1 {
+  font-size: 28px;
+  font-weight: 500;
+  margin: 0 0 8px;
+  color: #172B4D;
+}
+.orig-conf-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #6B778C;
+  margin-bottom: 24px;
+}
+.orig-conf-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 7px;
+  background: #DFE1E6;
+  color: #42526E;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.orig-conf-label.sensitive { background: #FFEBE6; color: #BF2600; }
+.orig-conf-body h2 {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 26px 0 10px;
+  color: #172B4D;
+}
+.orig-conf-body h3 { font-size: 15.5px; margin: 0 0 8px; }
+.orig-conf-body p, .orig-conf-body li { font-size: 14px; }
+.orig-conf-body code {
+  font-family: Menlo, monospace;
+  font-size: 12.5px;
+  background: #F4F5F7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #172B4D;
+}
+.orig-conf-table {
+  width: auto;
+  border-collapse: collapse;
+  margin: 8px 0 16px;
+}
+.orig-conf-table td {
+  padding: 4px 14px 4px 0;
+  vertical-align: top;
+  font-size: 13.5px;
+}
+.orig-conf-table code { font-size: 12.5px; }
+.orig-conf-panel {
+  border-radius: 4px;
+  padding: 14px 18px;
+  margin: 16px 0;
+}
+.orig-conf-panel.danger { background: #FFEBE6; border-left: 3px solid #DE350B; }
+.orig-conf-panel.info { background: #DEEBFF; border-left: 3px solid #0052CC; }
+.orig-conf-panel h3 { margin: 0 0 8px; color: inherit; }
+
+/* ── Generic viewer placeholder (untyped / unsupported) ────────────── */
+.orig-generic {
+  background: #fff;
+  margin: 24px auto;
+  max-width: 720px;
+  padding: 28px 36px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+}
+.orig-generic-h {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  padding: 4px 10px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+.orig-generic-body h2 {
+  font-size: 20px;
+  margin: 0 0 8px;
+  color: var(--color-text-primary);
+}
+.orig-generic-summary {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+.orig-generic-stub {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: color-mix(in oklab, var(--twin-accent) 6%, var(--color-background-primary));
+  border: 0.5px solid color-mix(in oklab, var(--twin-accent) 25%, var(--color-border-tertiary));
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+.orig-generic-stub svg { flex-shrink: 0; margin-top: 2px; color: var(--twin-accent); }
+.orig-generic-stub b { color: var(--color-text-primary); }
+
+/* DocDetailPanel footer — allow wrap if the panel is narrow so the
+ * Delete button doesn't overflow the right edge. */
+.detail-footer { flex-wrap: wrap; }
+.btn.danger {
+  color: var(--twin-red-vivid, #B03030);
+  border-color: color-mix(in oklab, var(--twin-red-vivid, #B03030) 35%, var(--color-border-tertiary));
+}
+.btn.danger:hover {
+  background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 8%, transparent);
+  color: var(--twin-red-vivid, #B03030);
+  border-color: var(--twin-red-vivid, #B03030);
+}
+
+/* Bulk-bar danger button + bulk-delete confirm modal list. */
+.bulk-action.danger {
+  color: var(--twin-red-vivid, #B03030);
+  border-color: color-mix(in oklab, var(--twin-red-vivid, #B03030) 35%, var(--color-border-tertiary));
+}
+.bulk-action.danger:hover {
+  background: color-mix(in oklab, var(--twin-red-vivid, #B03030) 8%, transparent);
+  border-color: var(--twin-red-vivid, #B03030);
+}
+.bulk-delete-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 8px 10px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.bulk-delete-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+}
+.bulk-delete-list li + li {
+  border-top: 0.5px dashed var(--color-border-tertiary);
+}
+.bulk-delete-list .muted {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+/* ── AI assist button (GPT-OSS-20B draft from sources) ─────────────
+ * Small chip aligned with the field label of any free-text input the
+ * operator could otherwise type by hand. Click → simulated LLM draft
+ * fills the field. Discreet violet to read as "assist", not "save". */
+.ai-assist-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in oklab, #8B5CF6 8%, var(--color-background-primary));
+  color: #6D28D9;
+  border: 0.5px solid color-mix(in oklab, #8B5CF6 30%, var(--color-border-tertiary));
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+  vertical-align: middle;
+}
+.ai-assist-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, #8B5CF6 18%, var(--color-background-primary));
+  border-color: #8B5CF6;
+  color: #5B21B6;
+}
+.ai-assist-btn:disabled,
+.ai-assist-btn.is-busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+.ai-assist-btn svg { flex: 0 0 auto; }
+.ai-assist-btn.is-busy svg { animation: spin 1.1s linear infinite; }
+
+/* Wrapper for field-label + AI assist button on the same row. */
+.field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.field-label-row .field-label { margin-bottom: 0; }
 .raw-doc-text {
   margin: 0;
   padding: 18px 22px;
@@ -1051,14 +1565,88 @@ body {
   line-height: 1.5;
 }
 
-/* Pending-actions row: visual separator between the "Read source"
- * affordance and the decision verbs. */
-.pending-actions-sep {
-  display: inline-block;
-  width: 0;
-  height: 16px;
-  border-left: 0.5px solid var(--color-border-tertiary);
-  margin: 0 4px;
+/* Pending-actions row: locked to a 2x2 grid to avoid the flex-wrap
+ * yoyo (4-in-line / 3+1 / 2+2) as card width changes with viewport.
+ * `margin-top: auto` anchors the row to the card bottom so sibling
+ * cards in the same grid row share a baseline. */
+.pending-grid {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+.pending-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  align-items: stretch;
+  margin-top: auto;
+}
+.pending-actions > button {
+  white-space: nowrap;
+  min-width: 0;
+  justify-content: center;
+}
+
+/* Wargame widget — honesty signal pill next to the "Impact analysis"
+ * header. Confidence = validated_edges / total_traversed_edges. Three
+ * tiers (high/med/low) so a steward sees at-a-glance whether the
+ * cascade is grounded in reviewed relations or still half-hypothesis. */
+.wargame-h-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wargame-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 0.5px solid transparent;
+  white-space: nowrap;
+}
+.wargame-confidence.is-high {
+  color: var(--twin-green-700);
+  background: var(--twin-green-50);
+  border-color: var(--twin-green-700);
+}
+.wargame-confidence.is-med {
+  color: var(--twin-amber-700);
+  background: var(--twin-amber-50);
+  border-color: var(--twin-amber-vivid);
+}
+.wargame-confidence.is-low {
+  color: var(--twin-red-vivid);
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-border);
+}
+
+/* Read-only block for the Tag request "See justification" modal.
+ * Tonal alternative to .text-input — same shape but non-editable so the
+ * reviewer is not invited to mutate the proposal in this view. */
+.readonly-block {
+  padding: 10px 12px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.readonly-block code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--color-background-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.readonly-block code + code {
+  margin-left: 6px;
+}
+.readonly-block > div + div {
+  margin-top: 4px;
 }
 
 /* ── Toast dismiss × button ─────────────────────────────────────────

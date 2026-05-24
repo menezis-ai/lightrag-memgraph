@@ -190,6 +190,15 @@ function MyAccessPill() {
             referential. Cache lives in the same Memgraph graph as the
             knowledge, so the audit trail is requestable in one place.
           </p>
+          <div className="myaccess-stack">
+            <div className="myaccess-stack-label">BNP-native stack — unified under this console</div>
+            <ul className="myaccess-stack-list">
+              <li><b>SSO BNPP</b> · identity</li>
+              <li><b>MyAccess</b> · entity-level authorization (ITGP)</li>
+              <li><b>RAG 1.5</b> · Elasticsearch · nightly Confluence + SharePoint ingest (Crosspoint)</li>
+              <li><b>LightRAG + Memgraph Twincore v0.5.3</b> · graph reasoning · steward governance</li>
+            </ul>
+          </div>
           <div className="myaccess-actions">
             <button
               className={"link-btn" + (syncing ? " is-busy" : "")}
@@ -211,17 +220,29 @@ function WorkspaceMenu({ current, onPick, onClose }) {
   return (
     <div className="ws-menu" role="menu" aria-label="Switch workspace">
       <div className="ws-menu-h">Workspaces</div>
+      <div className="ws-menu-note">
+        Cross-workspace data scoping (filter Memgraph nodes by
+        <code>workspace_id</code>, full opacification) — designed,
+        ships next sprint. Today the demo runs in <code>cib</code>
+        only; the other workspaces are listed for context.
+      </div>
       <ul className="ws-menu-list">
         {list.map(w => {
           const active = w.id === current;
+          // Lock anything that isn't the active workspace: the data
+          // scoping behind a real switch isn't wired yet, and Manu
+          // would catch the lie immediately if a switch showed the
+          // same docs. Honest preview > silent mock.
+          const locked = !active;
           return (
             <li key={w.id}>
               <button
                 role="menuitemradio"
                 aria-checked={active}
-                className={`ws-row${active ? " is-active" : ""}`}
-                onClick={() => !active && onPick(w)}
-                disabled={active}
+                className={`ws-row${active ? " is-active" : ""}${locked ? " is-locked" : ""}`}
+                onClick={() => !active && !locked && onPick(w)}
+                disabled={active || locked}
+                title={locked ? "Cross-workspace switching ships next sprint" : undefined}
               >
                 <span className="ws-row-l">
                   <Icon name="folder" size={12} color="var(--color-text-secondary)" />
@@ -239,6 +260,12 @@ function WorkspaceMenu({ current, onPick, onClose }) {
                     <span>{w.sources.toLocaleString()} sources</span>
                     <span className="ws-sep">·</span>
                     <span className="ws-role">{w.role}</span>
+                    {locked && (
+                      <>
+                        <span className="ws-sep">·</span>
+                        <span className="ws-locked-pill">preview</span>
+                      </>
+                    )}
                   </span>
                 </span>
               </button>

@@ -33,7 +33,14 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.5, clas
     "chevron-up": <path d="M6 15l6 -6l6 6" />,
     "chevron-right": <path d="M9 6l6 6l-6 6" />,
     "minus": <path d="M5 12h14" />,
-    "circle-dot": <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" fill="currentColor" /></>
+    "circle-dot": <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" fill="currentColor" /></>,
+    // Wand + sparkles — used for AI-assist affordances (draft via LLM
+    // from sources). Tabler "wand" outline.
+    "wand": <><path d="M6 21l15 -15l-3 -3l-15 15l3 3" /><path d="M15 6l3 3" /><path d="M9 3a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2" /><path d="M19 13a2 2 0 0 0 2 2a2 2 0 0 0 -2 2a2 2 0 0 0 -2 -2a2 2 0 0 0 2 -2" /></>,
+    "edit": <><path d="M7 7H6a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" /><path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97L9 12v3h3l8.385 -8.415z" /><path d="M16 5l3 3" /></>,
+    "check": <path d="M5 12l5 5l10 -10" />,
+    "focus": <><circle cx="12" cy="12" r="3" /><path d="M3 7V5a2 2 0 0 1 2 -2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1 -2 2h-2M7 21H5a2 2 0 0 1 -2 -2v-2" /></>,
+    "chevron-left": <path d="M15 6l-6 6l6 6" />
   };
   return (
     <svg
@@ -74,6 +81,44 @@ window.EmptyState = ({ icon, iconSize = 24, title, sub, actions, padding }) => {
       {sub && <div className="sub">{sub}</div>}
       {actions && <div className="actions">{actions}</div>}
     </div>
+  );
+};
+
+// AI-assist button — delegates a free-text form field to the local
+// LLM (GPT-OSS-20B). Click → simulated 700ms draft → calls onSuggest
+// with the proposed string. The host (modal / form) plugs it into the
+// associated state setter. Behavior is mocked in the maquette (no
+// real model call); production wires this to /api/llm/draft with a
+// context payload describing the form field + surrounding entity.
+window.AiAssistButton = ({ label = "Use AI to draft", model = "GPT-OSS-20B", source = "from sources", suggest, onSuggest, onToast, busy }) => {
+  const [_busy, setBusy] = React.useState(false);
+  const click = () => {
+    if (busy || _busy) return;
+    setBusy(true);
+    // Simulated latency — feels like a real local-model call.
+    setTimeout(() => {
+      const draft = typeof suggest === "function" ? suggest() : suggest;
+      if (onSuggest) onSuggest(draft);
+      // onToast is expected to be the addSimpleToast(title, sub)
+      // two-arg helper from app.jsx. Don't pass an object — it'll
+      // crash React (it'd try to render the object as a child).
+      if (onToast) onToast(`${model} · draft ready`, `${source} · review before submitting`);
+      setBusy(false);
+    }, 700);
+  };
+  const busyNow = busy || _busy;
+  return (
+    <button
+      type="button"
+      className={"ai-assist-btn" + (busyNow ? " is-busy" : "")}
+      onClick={click}
+      disabled={busyNow}
+      title={`${label} · ${model}`}
+      aria-busy={busyNow}
+    >
+      <Icon name={busyNow ? "loader-2" : "wand"} size={11} />
+      <span>{busyNow ? "Drafting…" : label}</span>
+    </button>
   );
 };
 

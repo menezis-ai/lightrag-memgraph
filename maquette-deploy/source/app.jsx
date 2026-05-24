@@ -16,7 +16,9 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "activityLive": true,
   "activityGroupByDay": true,
   "graphTabOverride": "env",
-  "emptyWorkspace": false
+  "emptyWorkspace": false,
+  "ontologyLayout": "split",
+  "presentationMode": false
 }/*EDITMODE-END*/;
 
 const TIER_ACCENTS = {
@@ -37,11 +39,12 @@ function App() {
     if (t.graphTabOverride === "off") return false;
     return !!ENV_CONFIG.GRAPH_TAB_ENABLED;
   })();
-  const VALID_TABS = ["documents","retrieval","tags","activity","api","settings", ...(graphEnabled ? ["kg"] : [])];
+  const VALID_TABS = ["documents","retrieval","ontology","tags","activity","api","settings", ...(graphEnabled ? ["kg"] : [])];
   const TAB_LIST = [
     { id: "documents", label: "Documents" },
     { id: "retrieval", label: "Retrieval" },
     ...(graphEnabled ? [{ id: "kg", label: "Knowledge Graph" }] : []),
+    { id: "ontology", label: "Ontology Studio" },
     { id: "tags", label: "Tags" },
     { id: "activity", label: "Activity" },
     { id: "api", label: "API" },
@@ -93,6 +96,12 @@ function App() {
         setDbReady(true); // proceed without persistence rather than block the UI
       });
   }, []);
+  const deleteDoc = (id) => {
+    setDocs(arr => arr.filter(d => d.id !== id));
+    if (window.twinDb) {
+      window.twinDb.removeOne("docs", id);
+    }
+  };
   // Doc mutator surfaced to children so approve/reject actually move the
   // document out of the pending queue (was toast-only in the proto).
   const mutateDoc = (id, patch) => {
@@ -107,6 +116,46 @@ function App() {
     if (window.twinDb) {
       // Fire-and-forget — the local state was already updated above.
       window.twinDb.patch("docs", id, patch);
+    }
+  };
+
+  // Same pattern for tags — pending tag requests Approve / Reject etc.
+  // were toast-only in the proto. Now they actually move the tag out of
+  // the pending queue (status change), persist to SQLite, and surface in
+  // the audit trail / Activity feed like doc mutations.
+  const [tags, setTags] = useState(window.MOCK_TAGS_FULL);
+  useEffect(() => {
+    if (!window.twinDb) return;
+    // Wait for dbReady to be set by the docs effect above — both share
+    // the same boot lifecycle.
+    if (!dbReady) return;
+    window.twinDb.getAll("tags").then(persisted => {
+      if (persisted) setTags(persisted);
+    }).catch(() => {});
+  }, [dbReady]);
+  useEffect(() => {
+    if (dbReady && window.twinDb) {
+      // Snapshot the full tags set on change — small dataset, cheap.
+      // Could be per-tag PATCH later if scaling matters.
+    }
+  }, [tags, dbReady]);
+  const mutateTag = (id, patch) => {
+    setTags(arr => arr.map(t => {
+      if (t.tag !== id && t.id !== id) return t;
+      const next = { ...t, ...patch };
+      if (patch.review !== undefined) {
+        next.review = { ...(t.review || {}), ...patch.review };
+      }
+      return next;
+    }));
+    if (window.twinDb) {
+      window.twinDb.patch("tags", id, patch);
+    }
+  };
+  const deleteTag = (id) => {
+    setTags(arr => arr.filter(t => (t.tag !== id && t.id !== id)));
+    if (window.twinDb) {
+      window.twinDb.removeOne("tags", id);
     }
   };
   // Empty-workspace demo mode — swaps docs out for an empty array so the
@@ -215,6 +264,25 @@ function App() {
     document.documentElement.setAttribute("data-theme", t.theme);
   }, [t.theme]);
 
+  // Demo HUD state — exposed at App level so its hotkeys work across tabs.
+  const [demoActive, setDemoActive] = useState(false);
+
+  // Goto bus — lets the Wargame widget (deep in Retrieval) ask App to switch
+  // tabs without a prop chain.
+  useEffect(() => {
+    if (!window.__demoBus) return;
+    return window.__demoBus.on("goto", (msg) => {
+      if (msg && msg.tab && VALID_TABS.includes(msg.tab)) setTab(msg.tab);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Presentation mode: hide body chrome (tabs/banners/retry/etc.) so the demo
+  // canvas fills the viewport. CSS uses :root[data-presentation="on"] hooks.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-presentation", t.presentationMode ? "on" : "off");
+  }, [t.presentationMode]);
+
   useEffect(() => {
     const ta = TIER_ACCENTS[t.tierAccent] || TIER_ACCENTS["twin-rag"];
     const root = document.documentElement;
@@ -303,6 +371,7 @@ function App() {
             <DocumentsTab
               docs={effectiveDocs}
               mutateDoc={mutateDoc}
+              deleteDoc={deleteDoc}
               isEmptyWorkspace={t.emptyWorkspace}
               onOpenAdd={() => setAddOpen(true)}
               onOpenRetag={openRetagSingle}
@@ -322,8 +391,15 @@ function App() {
               onPushToast={addToast}
             />
           )}
-          {tab === "tags" && <TagsTab onPushToast={addToast} />}
+          {tab === "tags" && <TagsTab tags={tags} mutateTag={mutateTag} deleteTag={deleteTag} onPushToast={addToast} />}
           {tab === "kg" && graphEnabled && window.GraphTab && <window.GraphTab />}
+          {tab === "ontology" && window.OntologyStudio && (
+            <window.OntologyStudio
+              layoutVariant={t.ontologyLayout || "split"}
+              presentation={!!t.presentationMode}
+              demoBus={window.__demoBus}
+            />
+          )}
           {tab === "settings" && window.SettingsTab && (
             <window.SettingsTab
               workspace={workspace}
@@ -363,6 +439,16 @@ function App() {
           state={onboard}
           set={setOnboard}
           onJump={jumpToTask}
+        />
+      )}
+
+      {window.DemoHUD && (
+        <window.DemoHUD
+          active={demoActive}
+          setActive={setDemoActive}
+          onGoto={(tabId) => { if (VALID_TABS.includes(tabId)) setTab(tabId); }}
+          onPrefill={(text) => window.__demoBus && window.__demoBus.emit("retrieval", { kind: "prefill", text })}
+          onSend={() => window.__demoBus && window.__demoBus.emit("retrieval", { kind: "send" })}
         />
       )}
 
@@ -461,6 +547,51 @@ function App() {
               onChange={v => setStatusKey("manualReadOnly", v)}
             />
             <window.TweakButton label="Reset to healthy" onClick={() => setSystemStatus(window.INITIAL_SYSTEM_STATUS)} />
+          </window.TweakSection>
+          <window.TweakSection label="Ontology Studio">
+            <window.TweakRadio
+              label="Layout"
+              value={t.ontologyLayout || "split"}
+              onChange={v => setTweak("ontologyLayout", v)}
+              options={[
+                { value: "split",  label: "Split" },
+                { value: "canvas", label: "Canvas" },
+                { value: "bottom", label: "Bottom" }
+              ]}
+            />
+            <window.TweakToggle
+              label="Presentation mode"
+              value={!!t.presentationMode}
+              onChange={v => setTweak("presentationMode", v)}
+            />
+            <div className="tweak-hint">Presentation hides tabs/banners and enlarges the canvas — good for the Comex demo.</div>
+            <window.TweakButton label="Reset ontology" onClick={() => {
+              delete window.__ontoLive;
+              delete window.__ontoInbox;
+              delete window.__ontoAudit;
+              setTab("documents");
+              setTimeout(() => setTab("ontology"), 80);
+            }} />
+          </window.TweakSection>
+          <window.TweakSection label="Demo (3-act)">
+            <window.TweakToggle
+              label="Demo HUD active"
+              value={demoActive}
+              onChange={v => setDemoActive(v)}
+            />
+            <window.TweakButton label="Run Act 1 · Classic RAG limitations" onClick={() => {
+              setDemoActive(true);
+              setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "1" })), 100);
+            }} />
+            <window.TweakButton label="Run Act 2 · Sculpt the ontology" onClick={() => {
+              setDemoActive(true);
+              setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "2" })), 100);
+            }} />
+            <window.TweakButton label="Run Act 3 · Resilience stress test" onClick={() => {
+              setDemoActive(true);
+              setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "3" })), 100);
+            }} />
+            <div className="tweak-hint">Hotkeys · <code>D</code> toggle · <code>1/2/3</code> jump · <code>→</code> next step · <code>Esc</code> exit.</div>
           </window.TweakSection>
           <window.TweakSection label="Feature flags">
             <window.TweakRadio
