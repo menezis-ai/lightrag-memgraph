@@ -50,13 +50,20 @@ jobs:
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
-        # 60 retries × 5s = 5 minutes max cold-start window. Needed for
-        # memgraph-mage:latest (3.9+) which is heavier than 3.7.2.
+        # --memory 2g: 2026-05-28 PR #142 observed mid-test cascade failures
+        # (`Failed to DNS resolve memgraph:7687`) on 3.8.0/latest matrices —
+        # memgraph container disappeared from the docker network after ~5 min
+        # under sustained query load, classic OOM-kill signature. 3.7.2 always
+        # passed (lighter image). Cap memory explicitly so OOM is bounded.
+        # --health-retries 120 (10 min): mage:latest (3.9+) cold-start can
+        # exceed the previous 5 min window on a contended runner.
         options: >-
+          --memory 2g
+          --memory-swap 2g
           --health-cmd "echo 'RETURN 1;' | mgconsole"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 60
+          --health-retries 120
     steps:
       - uses: actions/checkout@v4
 
