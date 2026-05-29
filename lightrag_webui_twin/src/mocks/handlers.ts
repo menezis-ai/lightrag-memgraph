@@ -1,15 +1,14 @@
 /**
  * MSW request handlers — back the API routes with the in-repo fixtures.
  *
- * Each handler honors the shape declared in `src/api/resources.ts`. Filtering
- * mirrors what the tab implementations do locally on the fixture arrays, so
+ * Path layout mirrors the production split (Étape 0 sprint 2026-05-29):
+ *   - LightRAG-native paths: `/documents`, `/documents/:id/chunks`,
+ *     `/documents/:id/scan`, `/health`, `/openapi`, `/pipeline_status`.
+ *   - Twin overlay paths: every endpoint under `${ANY}/twin/api/*`.
+ *
+ * Filtering mirrors what the tab implementations do locally on the fixtures so
  * tab-side state behaves identically whether data comes from MSW or from a
  * future real backend.
- *
- * Path prefix: handlers match path-only (relative) so they intercept calls
- * regardless of `VITE_API_BASE_URL`. The fetch wrapper builds `${BASE}${path}`,
- * and msw matches against the full URL — using `/foo` with `*://*` patterns
- * keeps us origin-agnostic.
  */
 
 import { http, HttpResponse } from 'msw';
@@ -31,12 +30,13 @@ import type { ActivityEvent } from '../types/activity';
 import type { Document } from '../types/document';
 
 const ANY = '*';
+const TWIN = '/twin/api';
 
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
   const q = params.get('q');
-  if (q && !d.source.toLowerCase().includes(q.toLowerCase())) return false;
+  if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
   const tag = params.get('tag');
   if (tag && !d.tags.includes(tag)) return false;
   return true;
@@ -52,6 +52,8 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
   if (sev && sev !== 'any' && e.sev !== sev) return false;
   const actor = params.get('actor');
   if (actor && actor !== 'any' && e.actor.user !== actor) return false;
+  const resourceId = params.get('resource.id');
+  if (resourceId && e.target.id !== resourceId) return false;
   const q = params.get('q');
   if (q) {
     const needle = q.toLowerCase();
@@ -61,34 +63,103 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
   return true;
 }
 
+function tagEntryStub(name: string, status: string, action: string) {
+  return {
+    tag: name,
+    tier: status === 'pending-review' ? 'requested' : 3,
+    category: 'infra',
+    status,
+    def: '',
+    aliases: [],
+    deprecates: [],
+    sources_count: 0,
+    chunks_count: 0,
+    query_freq_30d: 0,
+    created: { by: 'system', at: '2026-05-29' },
+    last_edit: { by: 'system', at: '2026-05-29', action },
+    related: [],
+    examples: [],
+  };
+}
+
 export const handlers = [
-  // Documents
+  // -------------------------------------------------------------------------
+  // LightRAG-native endpoints
+  // -------------------------------------------------------------------------
   http.get(`${ANY}/documents`, ({ request }) => {
     const url = new URL(request.url);
+    // Skip Twin overlay paths so this generic /documents handler does not
+    // shadow /twin/api/documents/* routes.
+    if (url.pathname.startsWith(TWIN)) return undefined;
     const filtered = DOCUMENT_FIXTURES.filter((d) =>
       matchDocumentsQuery(d, url.searchParams),
     );
     return HttpResponse.json({ items: filtered, total: filtered.length });
   }),
+  http.get(`${ANY}/documents/:id/chunks`, ({ params, request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const id = String(params.id);
+    const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+    const count = doc?.chunks_count ?? 0;
+    const chunks = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
+      chunk_id: `${id}_c${i}`,
+      order: i,
+      text: `Chunk ${i + 1} of ${doc?.file_path ?? id} — placeholder content.`,
+    }));
+    return HttpResponse.json(chunks);
+  }),
+  http.post(`${ANY}/documents/:id/scan`, ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    return HttpResponse.json({ ok: true });
+  }),
+  http.delete(`${ANY}/documents/:id`, ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    return HttpResponse.json({ ok: true });
+  }),
+  http.get(`${ANY}/health`, ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    return HttpResponse.json({ status: 'ok', version: API_VERSION });
+  }),
+  http.get(`${ANY}/pipeline_status`, () =>
+    HttpResponse.json({ busy: false, job_count: 0, latest_message: null }),
+  ),
+  http.get(`${ANY}/openapi`, ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    return HttpResponse.json({ groups: OPENAPI_GROUPS, version: API_VERSION });
+  }),
 
-  // Workspaces
-  http.get(`${ANY}/workspaces`, () => HttpResponse.json(WORKSPACE_FIXTURES)),
+  // -------------------------------------------------------------------------
+  // Twin overlay endpoints
+  // -------------------------------------------------------------------------
+  http.get(`${ANY}${TWIN}/workspaces`, () =>
+    HttpResponse.json(WORKSPACE_FIXTURES),
+  ),
+  http.get(`${ANY}${TWIN}/notifications`, () =>
+    HttpResponse.json(NOTIFICATION_FIXTURES),
+  ),
+  http.post(`${ANY}${TWIN}/notifications/read-all`, () =>
+    HttpResponse.json({ ok: true }),
+  ),
+  http.delete(`${ANY}${TWIN}/notifications`, () =>
+    HttpResponse.json({ ok: true }),
+  ),
 
-  // Notifications
-  http.get(`${ANY}/notifications`, () => HttpResponse.json(NOTIFICATION_FIXTURES)),
-  http.post(`${ANY}/notifications/read-all`, () => HttpResponse.json({ ok: true })),
-  http.delete(`${ANY}/notifications`, () => HttpResponse.json({ ok: true })),
+  http.get(`${ANY}${TWIN}/health`, () => HttpResponse.json({ status: 'ok' })),
 
-  // Thesaurus + tags
-  http.get(`${ANY}/thesaurus`, () => HttpResponse.json(THESAURUS_FIXTURES)),
-  http.get(`${ANY}/tags`, () => HttpResponse.json(TAG_FIXTURES)),
-  http.get(`${ANY}/tags/categories`, () => HttpResponse.json(TAG_CATEGORY_FIXTURES)),
+  http.get(`${ANY}${TWIN}/thesaurus`, () =>
+    HttpResponse.json(THESAURUS_FIXTURES),
+  ),
+  http.get(`${ANY}${TWIN}/tags`, () => HttpResponse.json(TAG_FIXTURES)),
+  http.get(`${ANY}${TWIN}/tags/categories`, () =>
+    HttpResponse.json(TAG_CATEGORY_FIXTURES),
+  ),
 
-  // Tag mutations — echo a minimal TagEntry shape so the WebUI mutation
-  // hooks resolve. The dev MSW doesn't try to mirror the backend state
-  // machine; it just acks the request. Real persistence happens on the
-  // FastAPI server when `VITE_USE_MSW=false`.
-  http.post(`${ANY}/tags`, async ({ request }) => {
+  http.post(`${ANY}${TWIN}/tags`, async ({ request }) => {
     const body = (await request.json()) as {
       tag: string;
       def: string;
@@ -96,120 +167,54 @@ export const handlers = [
     };
     return HttpResponse.json(
       {
-        tag: body.tag,
-        tier: 'requested',
-        category: body.category,
-        status: 'pending-review',
+        ...tagEntryStub(body.tag, 'pending-review', 'requested'),
         def: body.def,
-        aliases: [],
-        deprecates: [],
-        sources_count: 0,
-        chunks_count: 0,
-        query_freq_30d: 0,
-        created: { by: 'system', at: '2026-05-13' },
-        last_edit: { by: 'system', at: '2026-05-13', action: 'requested' },
-        related: [],
-        examples: [],
+        category: body.category,
       },
       { status: 201 },
     );
   }),
-  http.post(`${ANY}/tags/:name/approve`, ({ params }) =>
-    HttpResponse.json({
-      tag: params.name,
-      tier: 3,
-      category: 'infra',
-      status: 'active',
-      def: '',
-      aliases: [],
-      deprecates: [],
-      sources_count: 0,
-      chunks_count: 0,
-      query_freq_30d: 0,
-      created: { by: 'system', at: '2026-05-13' },
-      last_edit: { by: 'system', at: '2026-05-13', action: 'approved' },
-      related: [],
-      examples: [],
-    }),
+  http.post(`${ANY}${TWIN}/tags/:name/approve`, ({ params }) =>
+    HttpResponse.json(tagEntryStub(String(params.name), 'active', 'approved')),
   ),
-  http.post(`${ANY}/tags/:name/reject`, ({ params }) =>
-    HttpResponse.json({
-      tag: params.name,
-      tier: 'requested',
-      category: 'infra',
-      status: 'rejected',
-      def: '',
-      aliases: [],
-      deprecates: [],
-      sources_count: 0,
-      chunks_count: 0,
-      query_freq_30d: 0,
-      created: { by: 'system', at: '2026-05-13' },
-      last_edit: { by: 'system', at: '2026-05-13', action: 'rejected' },
-      related: [],
-      examples: [],
-    }),
+  http.post(`${ANY}${TWIN}/tags/:name/reject`, ({ params }) =>
+    HttpResponse.json(
+      tagEntryStub(String(params.name), 'rejected', 'rejected'),
+    ),
   ),
-  http.patch(`${ANY}/tags/:name`, async ({ params, request }) => {
+  http.patch(`${ANY}${TWIN}/tags/:name`, async ({ params, request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json({
-      tag: params.name,
-      tier: 1,
+      ...tagEntryStub(String(params.name), 'active', 'edited'),
       category: (body.category as string) ?? 'infra',
-      status: 'active',
       def: (body.def as string) ?? '',
       aliases: (body.aliases as string[]) ?? [],
-      deprecates: [],
-      sources_count: 0,
-      chunks_count: 0,
-      query_freq_30d: 0,
-      created: { by: 'system', at: '2026-05-13' },
-      last_edit: { by: 'system', at: '2026-05-13', action: 'edited' },
-      related: [],
-      examples: [],
     });
   }),
-  http.post(`${ANY}/tags/:name/deprecate`, ({ params }) =>
-    HttpResponse.json({
-      tag: params.name,
-      tier: 1,
-      category: 'infra',
-      status: 'deprecated',
-      def: '',
-      aliases: [],
-      deprecates: [],
-      sources_count: 0,
-      chunks_count: 0,
-      query_freq_30d: 0,
-      created: { by: 'system', at: '2026-05-13' },
-      last_edit: { by: 'system', at: '2026-05-13', action: 'deprecated' },
-      related: [],
-      examples: [],
-    }),
+  http.post(`${ANY}${TWIN}/tags/:name/deprecate`, ({ params }) =>
+    HttpResponse.json(
+      tagEntryStub(String(params.name), 'deprecated', 'deprecated'),
+    ),
   ),
-  http.post(`${ANY}/tags/:name/synonyms`, async ({ params, request }) => {
-    const body = (await request.json()) as { aliases: string[] };
-    return HttpResponse.json({
-      tag: params.name,
-      tier: 1,
-      category: 'infra',
-      status: 'active',
-      def: '',
-      aliases: body.aliases,
-      deprecates: [],
-      sources_count: 0,
-      chunks_count: 0,
-      query_freq_30d: 0,
-      created: { by: 'system', at: '2026-05-13' },
-      last_edit: { by: 'system', at: '2026-05-13', action: 'synonyms updated' },
-      related: [],
-      examples: [],
-    });
-  }),
-  http.delete(`${ANY}/tags/:name`, () => HttpResponse.json({ ok: true })),
+  http.post(
+    `${ANY}${TWIN}/tags/:name/synonyms`,
+    async ({ params, request }) => {
+      const body = (await request.json()) as { aliases: string[] };
+      return HttpResponse.json({
+        ...tagEntryStub(
+          String(params.name),
+          'active',
+          'synonyms updated',
+        ),
+        aliases: body.aliases,
+      });
+    },
+  ),
+  http.delete(`${ANY}${TWIN}/tags/:name`, () =>
+    HttpResponse.json({ ok: true }),
+  ),
 
-  // Activity
-  http.get(`${ANY}/activity`, ({ request }) => {
+  http.get(`${ANY}${TWIN}/activity`, ({ request }) => {
     const url = new URL(request.url);
     const filtered = ACTIVITY_FIXTURES.filter((e) =>
       matchActivityQuery(e, url.searchParams),
@@ -221,12 +226,63 @@ export const handlers = [
     });
   }),
 
-  // OpenAPI
-  http.get(`${ANY}/openapi`, () =>
-    HttpResponse.json({ groups: OPENAPI_GROUPS, version: API_VERSION }),
+  // Document overlay
+  http.get(
+    `${ANY}${TWIN}/documents/:id/metadata`,
+    ({ params }) => {
+      const id = String(params.id);
+      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      return HttpResponse.json({
+        tags: doc?.tags ?? [],
+        workspace: doc?.workspace ?? 'cib',
+        review: doc?.review,
+      });
+    },
+  ),
+  http.post(
+    `${ANY}${TWIN}/documents/:id/approve`,
+    ({ params }) => {
+      const id = String(params.id);
+      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
+      return HttpResponse.json({
+        ...doc,
+        review: { ...doc.review!, state: 'approved' as const },
+      });
+    },
+  ),
+  http.post(
+    `${ANY}${TWIN}/documents/:id/reject`,
+    async ({ params, request }) => {
+      const id = String(params.id);
+      const body = (await request.json()) as { reason: string };
+      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
+      return HttpResponse.json({
+        ...doc,
+        review: {
+          ...doc.review!,
+          state: 'rejected' as const,
+          justification: body.reason,
+        },
+      });
+    },
+  ),
+  http.post(`${ANY}${TWIN}/documents/bulk-delete`, async ({ request }) => {
+    const body = (await request.json()) as { doc_ids: string[] };
+    return HttpResponse.json({ deleted: body.doc_ids.length });
+  }),
+
+  // Auth
+  http.post(`${ANY}${TWIN}/auth/logout`, () =>
+    HttpResponse.json({ ok: true }),
   ),
 
   // Graph
-  http.get(`${ANY}/graph/entities`, () => HttpResponse.json(GRAPH_ENTITY_FIXTURES)),
-  http.get(`${ANY}/graph/relations`, () => HttpResponse.json(GRAPH_RELATION_FIXTURES)),
+  http.get(`${ANY}${TWIN}/graph/entities`, () =>
+    HttpResponse.json(GRAPH_ENTITY_FIXTURES),
+  ),
+  http.get(`${ANY}${TWIN}/graph/relations`, () =>
+    HttpResponse.json(GRAPH_RELATION_FIXTURES),
+  ),
 ];

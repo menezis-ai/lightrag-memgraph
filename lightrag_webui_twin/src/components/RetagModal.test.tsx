@@ -24,14 +24,19 @@ import { THESAURUS_FIXTURES } from '../fixtures';
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {
-    id: 'd1',
+    doc_id: 'd1',
+    track_id: null,
     type: 'file',
-    source: 'oracle-restart-procedure.pdf',
-    summary: 'A doc',
+    file_path: 'oracle-restart-procedure.pdf',
+    content_summary: 'A doc',
+    content_length: 100,
     tags: ['rman'],
-    status: 'completed',
-    chunks: 418,
-    updated: '2h ago',
+    status: 'PROCESSED',
+    chunks_count: 418,
+    created_at: '2026-05-29T14:00:00Z',
+    updated_at: '2026-05-29T14:00:00Z',
+    error_msg: null,
+    metadata: {},
     visibility: 'private',
     workspace: 'cib',
     ...overrides,
@@ -78,7 +83,11 @@ describe('RetagModal — basic rendering', () => {
   });
 
   it('renders bulk title when docs.length > 1', () => {
-    const docs = [makeDoc({ id: 'a' }), makeDoc({ id: 'b' }), makeDoc({ id: 'c' })];
+    const docs = [
+      makeDoc({ doc_id: 'a' }),
+      makeDoc({ doc_id: 'b' }),
+      makeDoc({ doc_id: 'c' }),
+    ];
     render(
       <RetagModal
         open
@@ -110,8 +119,8 @@ describe('RetagModal — tag list', () => {
 
   it('partials are shown separately in bulk mode', () => {
     const docs = [
-      makeDoc({ id: 'a', tags: ['rman', 'oracle'] }),
-      makeDoc({ id: 'b', tags: ['rman', 'incident'] }),
+      makeDoc({ doc_id: 'a', tags: ['rman', 'oracle'] }),
+      makeDoc({ doc_id: 'b', tags: ['rman', 'incident'] }),
     ];
     render(
       <RetagModal
@@ -236,7 +245,7 @@ describe('RetagModal — submit & close', () => {
     expect(action.bulk).toBe(false);
     expect(action.adds).toEqual(['rman']);
     expect(action.removes).toEqual([]);
-    expect(action.primary.id).toBe('d1');
+    expect(action.primary.doc_id).toBe('d1');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

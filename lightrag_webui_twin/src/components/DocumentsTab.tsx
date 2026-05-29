@@ -1,32 +1,40 @@
 /**
  * DocumentsTab — table of sources with status filter, search, tag filter,
- * multi-select, and bulk retag.
+ * multi-select, retag, individual + bulk delete (#149).
  *
- * Ported from Desktop/UI/documents.jsx. Scope of this port:
- *   - main shell (header + filters + table + bulk bar)
- *   - DocRow (private, internal)
+ * Aligned on LightRAG DocStatus schema (sprint Étape 0). Field names mirror the
+ * API JSON exactly (`doc_id`, `file_path`, `content_summary`, `chunks_count`,
+ * `updated_at`) so there is no remapping at the boundary.
  *
- * Deferred to later slice/sprint:
- *   - PipelineStatusPopover (pipeline-status modal)
- *   - DocDetailPanel (right-side doc detail panel)
- *
- * Behavior delta vs the proto:
- *   - thesaurus injected via prop (no window.MOCK_THESAURUS)
- *   - onAddToast typed as (title, sub?) — host owns the toast queue
- *   - URL state via useUrlParam/useUrlArrayParam from S1
+ * Status enum is uppercase (LightRAG-native) but displayed lowercased for UI
+ * continuity; filter pills/labels use lowercase keys mapped via STATUS_TO_FILTER.
  */
 
 import { useMemo, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
-import {
-  useUrlArrayParam,
-  useUrlParam,
-} from '../hooks/useUrlParam';
+import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
+import { relativeTime } from '../utils/relativeTime';
 import type { Document, DocumentStatus } from '../types/document';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
-const STATUS_LABELS: Record<'all' | DocumentStatus, string> = {
+type StatusFilterKey = 'all' | 'completed' | 'processing' | 'pending' | 'failed';
+
+const FILTER_TO_STATUS: Record<Exclude<StatusFilterKey, 'all'>, DocumentStatus> = {
+  completed: 'PROCESSED',
+  processing: 'PROCESSING',
+  pending: 'PENDING',
+  failed: 'FAILED',
+};
+
+const STATUS_TO_FILTER: Record<DocumentStatus, StatusFilterKey> = {
+  PROCESSED: 'completed',
+  PROCESSING: 'processing',
+  PENDING: 'pending',
+  FAILED: 'failed',
+};
+
+const STATUS_LABELS: Record<StatusFilterKey, string> = {
   all: 'All',
   completed: 'Completed',
   processing: 'Processing',
@@ -34,13 +42,15 @@ const STATUS_LABELS: Record<'all' | DocumentStatus, string> = {
   failed: 'Failed',
 };
 
-const STATUS_KEYS: readonly ('all' | DocumentStatus)[] = [
+const STATUS_KEYS: readonly StatusFilterKey[] = [
   'all',
   'completed',
   'processing',
   'pending',
   'failed',
 ];
+
+const STATUS_FILTERS = ['all', 'completed', 'processing', 'pending', 'failed'] as const;
 
 export interface DocumentsTabProps {
   docs: readonly Document[];
@@ -49,9 +59,13 @@ export interface DocumentsTabProps {
   onOpenRetag: (doc: Document) => void;
   onOpenBulkRetag: (docs: readonly Document[]) => void;
   onAddToast: (title: string, sub?: string) => void;
+  /** Delete a single document (cascade), per #149. */
+  onDeleteDoc?: (doc: Document) => void;
+  /** Bulk delete the selected documents (cascade), per #149. */
+  onBulkDelete?: (docs: readonly Document[]) => void;
+  /** Now in ms for deterministic relative-time rendering in tests. */
+  nowMs?: number;
 }
-
-type StatusFilter = 'all' | DocumentStatus;
 
 export function DocumentsTab({
   docs,
@@ -60,16 +74,16 @@ export function DocumentsTab({
   onOpenRetag,
   onOpenBulkRetag,
   onAddToast,
+  onDeleteDoc,
+  onBulkDelete,
+  nowMs,
 }: DocumentsTabProps) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [statusFilter, setStatusFilter] = useUrlParam<StatusFilter>(
+  const [statusFilter, setStatusFilter] = useUrlParam<StatusFilterKey>(
     'status',
     'all',
     {
-      validate: (v) =>
-        (['all', 'completed', 'processing', 'pending', 'failed'] as const).includes(
-          v as StatusFilter,
-        ),
+      validate: (v) => (STATUS_FILTERS as readonly string[]).includes(v),
     },
   );
   const [search, setSearch] = useUrlParam<string>('q', '');
@@ -78,7 +92,7 @@ export function DocumentsTab({
   const [tagAddVal, setTagAddVal] = useState('');
 
   const counts = useMemo(() => {
-    const c: Record<StatusFilter, number> = {
+    const c: Record<StatusFilterKey, number> = {
       all: docs.length,
       completed: 0,
       processing: 0,
@@ -86,7 +100,7 @@ export function DocumentsTab({
       failed: 0,
     };
     docs.forEach((d) => {
-      c[d.status]++;
+      c[STATUS_TO_FILTER[d.status]]++;
     });
     return c;
   }, [docs]);
@@ -94,13 +108,17 @@ export function DocumentsTab({
 
   const filtered = useMemo(() => {
     return docs.filter((d) => {
-      if (statusFilter !== 'all' && d.status !== statusFilter) return false;
-      if (search && !d.source.toLowerCase().includes(search.toLowerCase()))
+      if (
+        statusFilter !== 'all' &&
+        d.status !== FILTER_TO_STATUS[statusFilter]
+      )
         return false;
       if (
-        tagFilters.length &&
-        !tagFilters.every((t) => d.tags.includes(t))
+        search &&
+        !d.file_path.toLowerCase().includes(search.toLowerCase())
       )
+        return false;
+      if (tagFilters.length && !tagFilters.every((t) => d.tags.includes(t)))
         return false;
       return true;
     });
@@ -133,7 +151,7 @@ export function DocumentsTab({
     else next.add(id);
     setSelected(next);
   };
-  const filteredIds = filtered.map((d) => d.id);
+  const filteredIds = filtered.map((d) => d.doc_id);
   const allFilteredSelected =
     filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
   const someFilteredSelected = filteredIds.some((id) => selected.has(id));
@@ -144,8 +162,13 @@ export function DocumentsTab({
     setSelected(next);
   };
   const clearSelection = () => setSelected(new Set());
-  const selectedDocs = docs.filter((d) => selected.has(d.id));
+  const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
   const openBulk = () => onOpenBulkRetag(selectedDocs);
+  const triggerBulkDelete = () => {
+    if (!onBulkDelete || selectedDocs.length === 0) return;
+    onBulkDelete(selectedDocs);
+    clearSelection();
+  };
 
   const hasFilters =
     statusFilter !== 'all' ||
@@ -338,6 +361,17 @@ export function DocumentsTab({
           >
             <Icon name="refresh" size={13} /> Re-process
           </button>
+          {onBulkDelete && (
+            <button
+              type="button"
+              className="bulk-action danger"
+              onClick={triggerBulkDelete}
+              data-testid="docs-bulk-delete"
+              aria-label={`Delete ${selected.size} sources`}
+            >
+              <Icon name="x" size={13} /> Delete {selected.size}
+            </button>
+          )}
           <button
             type="button"
             className="bulk-clear"
@@ -400,12 +434,14 @@ export function DocumentsTab({
           )}
           {filtered.map((d) => (
             <DocRow
-              key={d.id}
+              key={d.doc_id}
               doc={d}
-              checked={selected.has(d.id)}
+              checked={selected.has(d.doc_id)}
               onToggle={toggleRow}
               onOpenRetag={onOpenRetag}
               onClickTag={clickTagOnRow}
+              onDelete={onDeleteDoc}
+              nowMs={nowMs}
             />
           ))}
         </div>
@@ -420,57 +456,78 @@ interface DocRowProps {
   onToggle: (id: string) => void;
   onOpenRetag: (doc: Document) => void;
   onClickTag: (e: React.MouseEvent, tag: string) => void;
+  onDelete?: (doc: Document) => void;
+  nowMs?: number;
 }
 
-function DocRow({ doc, checked, onToggle, onOpenRetag, onClickTag }: DocRowProps) {
-  const isFail = doc.status === 'failed';
+function DocRow({
+  doc,
+  checked,
+  onToggle,
+  onOpenRetag,
+  onClickTag,
+  onDelete,
+  nowMs,
+}: DocRowProps) {
+  const isFail = doc.status === 'FAILED';
   const visibleTags = doc.tags.slice(0, 2);
   const overflow = doc.tags.length - visibleTags.length;
+  const filterStatus = STATUS_TO_FILTER[doc.status];
   return (
     <div
       className={`docs-row has-select${checked ? ' is-checked' : ''}`}
-      data-testid={`docs-row-${doc.id}`}
+      data-testid={`docs-row-${doc.doc_id}`}
     >
       <div className="cell-select" onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
           className="row-check"
           checked={checked}
-          onChange={() => onToggle(doc.id)}
-          aria-label={`Select ${doc.source}`}
+          onChange={() => onToggle(doc.doc_id)}
+          aria-label={`Select ${doc.file_path}`}
         />
       </div>
       <div className="cell-source">
         <SourceIcon type={doc.type} size={14} />
-        <span className={doc.type !== 'file' ? 'mono' : ''}>{doc.source}</span>
+        <span className={doc.type !== 'file' ? 'mono' : ''}>{doc.file_path}</span>
       </div>
-      <div className="cell-summary">{doc.summary}</div>
+      <div className="cell-summary">{doc.content_summary}</div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
           <span
             key={t}
             onClick={(e) => onClickTag(e, t)}
-            data-testid={`row-tag-${doc.id}-${t}`}
+            data-testid={`row-tag-${doc.doc_id}-${t}`}
           >
             <TagChip tag={t} />
           </span>
         ))}
-        {overflow > 0 && (
-          <span className="tag-overflow">+{overflow}</span>
-        )}
+        {overflow > 0 && <span className="tag-overflow">+{overflow}</span>}
       </div>
-      <div className={`cell-status status-${doc.status}`}>{doc.status}</div>
-      <div className="cell-chunks">{doc.chunks}</div>
-      <div className="cell-updated">{doc.updated}</div>
+      <div className={`cell-status status-${filterStatus}`}>{filterStatus}</div>
+      <div className="cell-chunks">{doc.chunks_count ?? 0}</div>
+      <div className="cell-updated">{relativeTime(doc.updated_at, nowMs)}</div>
       <div className="cell-actions">
         <button
           type="button"
           className="row-action"
           onClick={() => onOpenRetag(doc)}
-          aria-label={`Retag ${doc.source}`}
+          aria-label={`Retag ${doc.file_path}`}
         >
           <Icon name="tags" size={13} />
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            className="row-action row-action-danger"
+            onClick={() => onDelete(doc)}
+            data-testid={`docs-row-delete-${doc.doc_id}`}
+            aria-label={`Delete ${doc.file_path}`}
+            title="Delete (cascade)"
+          >
+            <Icon name="x" size={13} />
+          </button>
+        )}
         {isFail && (
           <span className="row-fail">
             <Icon name="alert-triangle" size={13} />

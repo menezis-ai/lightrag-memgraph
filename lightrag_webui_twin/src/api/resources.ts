@@ -1,10 +1,19 @@
 /**
- * Typed per-resource fetchers — one function per backend phase-1 endpoint.
+ * Typed per-resource fetchers — one function per backend endpoint.
  *
- * Each function signature mirrors the corresponding fixture shape so the
- * backend contract is self-documenting from the WebUI side. Listing endpoints
- * return `{ items, total }` envelopes so pagination + filtering can grow
- * without breaking callers.
+ * Two surfaces:
+ *   - `lightragApi` : native LightRAG endpoints (no path prefix beyond the
+ *     LightRAG mount root). These hit endpoints LightRAG already ships:
+ *     /documents, /documents/{id}/chunks, /documents/{id}/scan, /query,
+ *     /health, /pipeline_status, /openapi.
+ *   - `twinApi` : Twin overlay endpoints, served by our FastAPI sub-app
+ *     mounted via `register(mount_server=True)`. All paths share the
+ *     `/twin/api/` prefix: /tags, /audit-events, /activity, /notifications,
+ *     /workspaces, /graph/*, /auth/logout, /documents/{id}/metadata,
+ *     /documents/{id}/approve, /documents/{id}/reject.
+ *
+ * The single `api` export aggregates both for convenience; queries.ts hooks
+ * stay on `api.xxx()` without caring about which surface owns the endpoint.
  */
 
 import { apiFetch, type ApiRequestInit } from './client';
@@ -15,6 +24,8 @@ import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification, Workspace } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
+
+const TWIN = '/twin/api';
 
 export interface ListEnvelope<T> {
   items: readonly T[];
@@ -28,29 +39,87 @@ export interface DocumentsQuery {
   cursor?: string;
 }
 
-export const api = {
-  // Documents
+export interface DocumentChunk {
+  chunk_id: string;
+  order: number;
+  text: string;
+  /** Truncated preview when classification > internal (Louis compliance). */
+  redacted?: boolean;
+}
+
+// ============================================================================
+// LightRAG-native endpoints (NO /twin/api prefix)
+// ============================================================================
+
+export const lightragApi = {
   listDocuments: (q: DocumentsQuery = {}, init?: ApiRequestInit) =>
     apiFetch<ListEnvelope<Document>>('/documents', { ...init, query: { ...q } }),
+  listDocumentChunks: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<readonly DocumentChunk[]>(
+      `/documents/${encodeURIComponent(docId)}/chunks`,
+      init,
+    ),
+  scanDocument: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}/scan`, {
+      ...init,
+      method: 'POST',
+    }),
+  deleteDocument: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}`, {
+      ...init,
+      method: 'DELETE',
+    }),
+  health: (init?: ApiRequestInit) =>
+    apiFetch<{ status: 'ok' | 'degraded' | 'down'; version?: string }>(
+      '/health',
+      init,
+    ),
+  pipelineStatus: (init?: ApiRequestInit) =>
+    apiFetch<{
+      busy: boolean;
+      job_count: number;
+      latest_message: string | null;
+    }>('/pipeline_status', init),
+  getOpenApi: (init?: ApiRequestInit) =>
+    apiFetch<{ groups: readonly OpenApiGroup[]; version: string }>(
+      '/openapi',
+      init,
+    ),
+};
 
-  // Workspaces / notifications / topbar
+// ============================================================================
+// Twin overlay endpoints (/twin/api/* prefix)
+// ============================================================================
+
+export const twinApi = {
+  // Workspaces / notifications
   listWorkspaces: (init?: ApiRequestInit) =>
-    apiFetch<readonly Workspace[]>('/workspaces', init),
+    apiFetch<readonly Workspace[]>(`${TWIN}/workspaces`, init),
   listNotifications: (init?: ApiRequestInit) =>
-    apiFetch<readonly Notification[]>('/notifications', init),
+    apiFetch<readonly Notification[]>(`${TWIN}/notifications`, init),
   markAllNotificationsRead: (init?: ApiRequestInit) =>
-    apiFetch<{ ok: true }>('/notifications/read-all', { ...init, method: 'POST' }),
+    apiFetch<{ ok: true }>(`${TWIN}/notifications/read-all`, {
+      ...init,
+      method: 'POST',
+    }),
   clearNotifications: (init?: ApiRequestInit) =>
-    apiFetch<{ ok: true }>('/notifications', { ...init, method: 'DELETE' }),
+    apiFetch<{ ok: true }>(`${TWIN}/notifications`, {
+      ...init,
+      method: 'DELETE',
+    }),
+
+  // Health (Twin overlay component health, e.g. Memgraph reachability)
+  health: (init?: ApiRequestInit) =>
+    apiFetch<{ status: 'ok' | 'degraded' | 'down' }>(`${TWIN}/health`, init),
 
   // Thesaurus + tag governance
   listThesaurus: (init?: ApiRequestInit) =>
-    apiFetch<readonly ThesaurusEntry[]>('/thesaurus', init),
-  listTags: (init?: ApiRequestInit) => apiFetch<readonly TagEntry[]>('/tags', init),
+    apiFetch<readonly ThesaurusEntry[]>(`${TWIN}/thesaurus`, init),
+  listTags: (init?: ApiRequestInit) =>
+    apiFetch<readonly TagEntry[]>(`${TWIN}/tags`, init),
   listTagCategories: (init?: ApiRequestInit) =>
-    apiFetch<readonly TagCategory[]>('/tags/categories', init),
+    apiFetch<readonly TagCategory[]>(`${TWIN}/tags/categories`, init),
 
-  // Tag mutations (S4c slice 2)
   requestTag: (
     body: {
       tag: string;
@@ -61,9 +130,9 @@ export const api = {
       actor?: string;
     },
     init?: ApiRequestInit,
-  ) => apiFetch<TagEntry>('/tags', { ...init, method: 'POST', body }),
+  ) => apiFetch<TagEntry>(`${TWIN}/tags`, { ...init, method: 'POST', body }),
   approveTag: (name: string, actor?: string, init?: ApiRequestInit) =>
-    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/approve`, {
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}/approve`, {
       ...init,
       method: 'POST',
       body: { actor },
@@ -73,7 +142,7 @@ export const api = {
     body: { reason: string; actor?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/reject`, {
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}/reject`, {
       ...init,
       method: 'POST',
       body,
@@ -89,7 +158,7 @@ export const api = {
     },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}`, {
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}`, {
       ...init,
       method: 'PATCH',
       body,
@@ -99,7 +168,7 @@ export const api = {
     body: { reason?: string; actor?: string } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/deprecate`, {
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}/deprecate`, {
       ...init,
       method: 'POST',
       body,
@@ -109,7 +178,7 @@ export const api = {
     body: { aliases: readonly string[]; actor?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<TagEntry>(`/tags/${encodeURIComponent(name)}/synonyms`, {
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}/synonyms`, {
       ...init,
       method: 'POST',
       body,
@@ -119,37 +188,133 @@ export const api = {
     body: { strategy?: 'migrate' | 'untag'; to?: string; actor?: string } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<{ ok: boolean }>(`/tags/${encodeURIComponent(name)}`, {
+    apiFetch<{ ok: boolean }>(`${TWIN}/tags/${encodeURIComponent(name)}`, {
       ...init,
       method: 'DELETE',
       body,
     }),
 
-  // Activity audit feed
+  // Activity audit feed (a.k.a. audit-events)
   listActivity: (
-    q: { range?: string; kind?: string; sev?: string; actor?: string; q?: string } = {},
+    q: {
+      range?: string;
+      kind?: string;
+      sev?: string;
+      actor?: string;
+      q?: string;
+      resourceId?: string;
+    } = {},
+    init?: ApiRequestInit,
+  ) => {
+    const params: Record<string, string | undefined> = { ...q };
+    if (q.resourceId) {
+      params['resource.id'] = q.resourceId;
+      delete params.resourceId;
+    }
+    return apiFetch<ListEnvelope<ActivityEvent> & { nowMs?: number }>(
+      `${TWIN}/activity`,
+      { ...init, query: params },
+    );
+  },
+
+  // Document overlay (metadata, approve, reject, multi delete)
+  getDocumentMetadata: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<{
+      tags: readonly string[];
+      workspace: string;
+      review?: Document['review'];
+    }>(`${TWIN}/documents/${encodeURIComponent(docId)}/metadata`, init),
+  approveDocument: (
+    docId: string,
+    body: { actor?: string; edits?: Partial<Document> } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<ListEnvelope<ActivityEvent> & { nowMs?: number }>('/activity', {
+    apiFetch<Document>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/approve`,
+      { ...init, method: 'POST', body },
+    ),
+  rejectDocument: (
+    docId: string,
+    body: { reason: string; actor?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<Document>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/reject`,
+      { ...init, method: 'POST', body },
+    ),
+  bulkDeleteDocuments: (
+    body: { doc_ids: readonly string[]; actor?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ deleted: number }>(`${TWIN}/documents/bulk-delete`, {
       ...init,
-      query: { ...q },
+      method: 'POST',
+      body,
     }),
 
-  // OpenAPI surface (proxied from the underlying LightRAG server)
-  getOpenApi: (init?: ApiRequestInit) =>
-    apiFetch<{ groups: readonly OpenApiGroup[]; version: string }>('/openapi', init),
+  // Auth
+  logout: (init?: ApiRequestInit) =>
+    apiFetch<{ ok: true }>(`${TWIN}/auth/logout`, { ...init, method: 'POST' }),
 
   // Knowledge graph teaser
   listGraphEntities: (
     q: { workspace?: string; type?: string } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<readonly GraphEntity[]>('/graph/entities', { ...init, query: { ...q } }),
+    apiFetch<readonly GraphEntity[]>(`${TWIN}/graph/entities`, {
+      ...init,
+      query: { ...q },
+    }),
   listGraphRelations: (
     q: { workspace?: string } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<readonly GraphRelation[]>('/graph/relations', { ...init, query: { ...q } }),
+    apiFetch<readonly GraphRelation[]>(`${TWIN}/graph/relations`, {
+      ...init,
+      query: { ...q },
+    }),
+};
+
+// ============================================================================
+// Aggregated facade — preserves the existing `api.xxx()` call surface so the
+// query hooks (`queries.ts`) and App.tsx don't need to know which surface
+// (lightragApi vs twinApi) owns each endpoint.
+// ============================================================================
+
+export const api = {
+  // LightRAG-native
+  listDocuments: lightragApi.listDocuments,
+  listDocumentChunks: lightragApi.listDocumentChunks,
+  scanDocument: lightragApi.scanDocument,
+  deleteDocument: lightragApi.deleteDocument,
+  health: lightragApi.health,
+  pipelineStatus: lightragApi.pipelineStatus,
+  getOpenApi: lightragApi.getOpenApi,
+
+  // Twin overlay
+  listWorkspaces: twinApi.listWorkspaces,
+  listNotifications: twinApi.listNotifications,
+  markAllNotificationsRead: twinApi.markAllNotificationsRead,
+  clearNotifications: twinApi.clearNotifications,
+  twinHealth: twinApi.health,
+  listThesaurus: twinApi.listThesaurus,
+  listTags: twinApi.listTags,
+  listTagCategories: twinApi.listTagCategories,
+  requestTag: twinApi.requestTag,
+  approveTag: twinApi.approveTag,
+  rejectTag: twinApi.rejectTag,
+  editTag: twinApi.editTag,
+  deprecateTag: twinApi.deprecateTag,
+  updateTagSynonyms: twinApi.updateTagSynonyms,
+  deleteTag: twinApi.deleteTag,
+  listActivity: twinApi.listActivity,
+  getDocumentMetadata: twinApi.getDocumentMetadata,
+  approveDocument: twinApi.approveDocument,
+  rejectDocument: twinApi.rejectDocument,
+  bulkDeleteDocuments: twinApi.bulkDeleteDocuments,
+  logout: twinApi.logout,
+  listGraphEntities: twinApi.listGraphEntities,
+  listGraphRelations: twinApi.listGraphRelations,
 };
 
 export type ApiClient = typeof api;
