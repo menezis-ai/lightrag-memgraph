@@ -90,9 +90,14 @@ async def seeded_stores():
 
     ws = graph._get_workspace_label()
 
-    # Clean old data
+    # Clean old data. REMOVE label first so Memgraph 3.10's vector index
+    # garbage collection prunes any stale index entries before the nodes
+    # are gone (3.10 strict-errors on property access from index refs to
+    # deleted vertices — see vector_impl.delete_entity).
     async with graph._driver.session() as session:
-        await session.run(f"MATCH (n:`{ws}`) DETACH DELETE n")
+        await session.run(
+            f"MATCH (n:`{ws}`) REMOVE n:`{ws}` WITH n DETACH DELETE n"
+        )
 
     # Seed nodes
     for name, etype, desc in [
@@ -134,10 +139,12 @@ async def seeded_stores():
         meta_fields={"entity_name", "source_id", "content", "file_path"},
     )
     await entities_vdb.initialize()
-    # Clean old VDB data
+    # Clean old VDB data — REMOVE label first (Memgraph 3.10 hygiene).
     label_ent = entities_vdb._label()
     async with _pool.get_session() as session:
-        result = await session.run(f"MATCH (n:`{label_ent}`) DETACH DELETE n")
+        result = await session.run(
+            f"MATCH (n:`{label_ent}`) REMOVE n:`{label_ent}` WITH n DETACH DELETE n"
+        )
         await result.consume()
 
     entity_vdb_data = {}
@@ -173,10 +180,12 @@ async def seeded_stores():
         meta_fields={"src_id", "tgt_id", "source_id", "content", "file_path"},
     )
     await rels_vdb.initialize()
-    # Clean old VDB data
+    # Clean old VDB data — REMOVE label first (Memgraph 3.10 hygiene).
     label_rel = rels_vdb._label()
     async with _pool.get_session() as session:
-        result = await session.run(f"MATCH (n:`{label_rel}`) DETACH DELETE n")
+        result = await session.run(
+            f"MATCH (n:`{label_rel}`) REMOVE n:`{label_rel}` WITH n DETACH DELETE n"
+        )
         await result.consume()
 
     rel_vdb_data = {}
@@ -221,12 +230,18 @@ async def seeded_stores():
         "text_chunks": text_chunks,
     }
 
-    # Cleanup
+    # Cleanup — REMOVE label first (Memgraph 3.10 hygiene).
     async with graph._driver.session() as session:
-        await session.run(f"MATCH (n:`{ws}`) DETACH DELETE n")
+        await session.run(
+            f"MATCH (n:`{ws}`) REMOVE n:`{ws}` WITH n DETACH DELETE n"
+        )
     async with _pool.get_session() as session:
-        await session.run(f"MATCH (n:`{label_ent}`) DETACH DELETE n")
-        await session.run(f"MATCH (n:`{label_rel}`) DETACH DELETE n")
+        await session.run(
+            f"MATCH (n:`{label_ent}`) REMOVE n:`{label_ent}` WITH n DETACH DELETE n"
+        )
+        await session.run(
+            f"MATCH (n:`{label_rel}`) REMOVE n:`{label_rel}` WITH n DETACH DELETE n"
+        )
 
 
 async def _do_search(mode, stores, query="Paris France capital"):
