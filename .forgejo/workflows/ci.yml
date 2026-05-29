@@ -38,25 +38,36 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest-docker
     strategy:
-      # Bunker has 11 runners; 15 parallel jobs caused contention spikes
-      # that made memgraph:latest cold-start exceed health-retries window.
-      # Cap at 5 to keep memgraph cold-starts deterministic.
+      # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
+      # the contention threshold that previously starved cold-starts.
       max-parallel: 5
       matrix:
         # 1.4.10 dropped: intermittent test failures under integration load
         # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
         lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
-        memgraph-version: ["3.7.2", "3.8.0", "latest"]
+        # 3.7.2 / 3.8.0 dropped: never deployed at BNP. 3.10.1 is the current
+        # BNP prod target — pinned explicitly so the rolling `latest` tag
+        # can't silently move the coverage point under us.
+        memgraph-version: ["3.10.1"]
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
-        # 60 retries × 5s = 5 minutes max cold-start window. Needed for
-        # memgraph-mage:latest (3.9+) which is heavier than 3.7.2.
+        # --memory 3g: bumped from 2g after 2026-05-29 PR #143 showed
+        # 1.4.9 × 3.10.1 fail at ~7m53s under sustained query load. Local
+        # repro on Python 3.12 with the same combo runs in 25s with 615
+        # tests passing, so the runner was OOM-killing memgraph mid-suite.
+        # 3.10.1 mage image is heavier than 3.7.2 (the previous "always
+        # passes" baseline) — 3g cap accommodates Memgraph + MAGE + sustained
+        # vector_search load without leaving the runner thrashing.
+        # --health-retries 120 (10 min): mage:latest (3.9+) cold-start can
+        # exceed the previous 5 min window on a contended runner.
         options: >-
+          --memory 3g
+          --memory-swap 3g
           --health-cmd "echo 'RETURN 1;' | mgconsole"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 60
+          --health-retries 120
     steps:
       - uses: actions/checkout@v4
 

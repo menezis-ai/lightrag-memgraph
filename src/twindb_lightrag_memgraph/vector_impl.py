@@ -318,16 +318,29 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 await result.consume()
 
     async def delete_entity(self, entity_name: str) -> None:
+        # REMOVE label before DETACH DELETE: Memgraph 3.10+ keeps vector
+        # index entries for deleted vertices around (vector_index_memory_tracked
+        # is not freed on vertex delete), then strict-errors on subsequent
+        # property access from vector_search results — see release notes
+        # "accessing properties of a deleted node/relationship now raises an
+        # error instead". Removing the indexed label first prunes the vector
+        # index entry cleanly; the DETACH DELETE then removes the orphan.
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 result = await session.run(
-                    f"MATCH (n:`{label}`) WHERE n.entity_name = $name DETACH DELETE n",
+                    f"""
+                    MATCH (n:`{label}`) WHERE n.entity_name = $name
+                    REMOVE n:`{label}`
+                    WITH n
+                    DETACH DELETE n
+                    """,
                     name=entity_name,
                 )
                 await result.consume()
 
     async def delete_entity_relation(self, entity_name: str) -> None:
+        # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
@@ -335,6 +348,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     f"""
                     MATCH (n:`{label}`)
                     WHERE n.src_id = $name OR n.tgt_id = $name
+                    REMOVE n:`{label}`
+                    WITH n
                     DETACH DELETE n
                     """,
                     name=entity_name,
@@ -372,6 +387,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return out
 
     async def delete(self, ids: list[str]) -> None:
+        # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
@@ -379,6 +395,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     f"""
                     UNWIND $ids AS target_id
                     MATCH (n:`{label}` {{id: target_id}})
+                    REMOVE n:`{label}`
+                    WITH n
                     DETACH DELETE n
                     """,
                     ids=list(ids),
@@ -404,10 +422,21 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return out
 
     async def drop(self) -> dict[str, str]:
+        # Same Memgraph 3.10 vector-index hygiene as delete_entity above:
+        # REMOVE label before DETACH DELETE so the vector index entry is
+        # pruned cleanly, otherwise the subsequent DROP VECTOR INDEX can
+        # leave stale refs that break the next test or the next ingest.
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}`)
+                    REMOVE n:`{label}`
+                    WITH n
+                    DETACH DELETE n
+                    """
+                )
                 await result.consume()
                 try:
                     result = await session.run(
