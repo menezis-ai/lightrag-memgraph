@@ -88,7 +88,7 @@ export function RetagModal({
   const [focusIdx, setFocusIdx] = useState(0);
 
   // Reset internal state whenever the targets change.
-  const targetsKey = targets.map((d) => d.id).join(',');
+  const targetsKey = targets.map((d) => d.doc_id).join(',');
   useEffect(() => {
     if (!isReady) return;
     setCurrent(sharedTags);
@@ -131,7 +131,10 @@ export function RetagModal({
   };
 
   const isRemoving = pendingRemove.length > 0 && pendingAdd.length === 0;
-  const totalChunks = targets.reduce((s, d) => s + (d.chunks || 0), 0);
+  const totalChunks = targets.reduce(
+    (s, d) => s + (d.chunks_count ?? 0),
+    0,
+  );
   const previewChunks = bulk
     ? Math.round(totalChunks * (pendingAdd.length > 0 ? 1 : 0.4)) ||
       targets.length * 100
@@ -211,7 +214,7 @@ export function RetagModal({
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {primary.source}
+                    {primary.file_path}
                   </span>
                   <span className="sep">·</span>
                   <span className="vis-chip">
@@ -228,13 +231,13 @@ export function RetagModal({
               <div className="bulk-target-strip">
                 {targets.slice(0, 4).map((d) => (
                   <span
-                    key={d.id}
+                    key={d.doc_id}
                     className="bulk-target-chip"
-                    title={d.source}
+                    title={d.file_path}
                   >
                     <SourceIcon type={d.type} size={11} />
                     <span className={d.type !== 'file' ? 'mono' : ''}>
-                      {d.source}
+                      {d.file_path}
                     </span>
                   </span>
                 ))}

@@ -23,14 +23,20 @@ import { useEffect, useState } from 'react';
 import { ActivityTab } from './components/ActivityTab';
 import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
 import { ApiTab } from './components/ApiTab';
+import { DocDetailPanel } from './components/DocDetailPanel';
 import { DocumentsTab } from './components/DocumentsTab';
 import { GraphTab } from './components/GraphTab';
+import { OnboardingWizard } from './components/OnboardingWizard';
+import { PendingDocsSection } from './components/PendingDocsSection';
 import { RetagModal, type RetagAction } from './components/RetagModal';
 import { RetrievalTab } from './components/RetrievalTab';
+import { SettingsTab } from './components/SettingsTab';
 import { TagsTab, type TagApproveAction } from './components/TagsTab';
 import type { TagActionCommit } from './components/TagActionModal';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
+import { useAuth } from './hooks/useAuth';
+import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
@@ -100,6 +106,12 @@ function AppShell() {
   const [addOpen, setAddOpen] = useState(false);
   const [retagDoc, setRetagDoc] = useState<Document | null>(null);
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
+  const [detailDoc, setDetailDoc] = useState<Document | null>(null);
+
+  // Auth + onboarding
+  const auth = useAuth();
+  const onboarding = useOnboarding();
+  const onboardingOpen = !onboarding.state.dismissed;
 
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
@@ -148,7 +160,7 @@ function AppShell() {
       titleSuffix: action.bulk
         ? `${verb} to ${action.targets.length} sources`
         : verb,
-      sub: action.primary.source,
+      sub: action.primary.file_path,
       undo: { adds: action.adds, removes: action.removes },
     });
   };
@@ -289,6 +301,12 @@ function AppShell() {
   // Resolved props — fall back to the local fixtures while the first fetch is
   // in flight so the UI never shows an empty shell on cold start.
   const docList = docs.data?.items ?? DOCUMENT_FIXTURES;
+  const pendingDocs = docList.filter(
+    (d) => d.review?.state === 'pending-review',
+  );
+  const nonPendingDocs = docList.filter(
+    (d) => d.review?.state !== 'pending-review',
+  );
   const thesaurusList = thesaurus.data ?? THESAURUS_FIXTURES;
   const tagList = tags.data ?? TAG_FIXTURES;
   const tagCategoryList = tagCategories.data ?? TAG_CATEGORY_FIXTURES;
@@ -327,13 +345,43 @@ function AppShell() {
       >
         <div className="tab-pane" key={tab}>
           {tab === 'documents' && (
-            <DocumentsTab
-              docs={docList}
-              thesaurus={thesaurusList}
-              onOpenAdd={() => setAddOpen(true)}
-              onOpenRetag={(d) => setRetagDoc(d)}
-              onOpenBulkRetag={(ds) => setRetagBulk(ds)}
-              onAddToast={onAddToast}
+            <>
+              <PendingDocsSection
+                docs={pendingDocs}
+                actor={auth.user?.email ?? 'anonymous'}
+                onToast={(kind, title, sub) =>
+                  pushToast({ kind, title, sub })
+                }
+              />
+              <DocumentsTab
+                docs={nonPendingDocs}
+                thesaurus={thesaurusList}
+                onOpenAdd={() => setAddOpen(true)}
+                onOpenRetag={(d) => setRetagDoc(d)}
+                onOpenBulkRetag={(ds) => setRetagBulk(ds)}
+                onAddToast={onAddToast}
+                onDeleteDoc={(d) => setDetailDoc(d)}
+                onBulkDelete={(ds) =>
+                  pushToast({
+                    kind: 'done',
+                    title: `Delete queued`,
+                    sub: `${ds.length} sources`,
+                  })
+                }
+              />
+            </>
+          )}
+          {tab === 'settings' && (
+            <SettingsTab
+              activeWorkspace={workspace}
+              kbName={kbName}
+              onDeleteWorkspace={(id) =>
+                pushToast({
+                  kind: 'done',
+                  title: 'Workspace delete queued',
+                  sub: id,
+                })
+              }
             />
           )}
           {tab === 'retrieval' && (
@@ -399,6 +447,33 @@ function AppShell() {
           setRetagBulk(null);
         }}
         onSubmit={onRetagSubmit}
+      />
+      <DocDetailPanel
+        doc={detailDoc}
+        onClose={() => setDetailDoc(null)}
+        onRetag={(d) => {
+          setDetailDoc(null);
+          setRetagDoc(d);
+        }}
+        onReprocess={(d) =>
+          pushToast({
+            kind: 'done',
+            title: 'Re-process queued',
+            sub: d.file_path,
+          })
+        }
+        onDelete={(d) =>
+          pushToast({
+            kind: 'done',
+            title: 'Delete queued',
+            sub: d.file_path,
+          })
+        }
+      />
+      <OnboardingWizard
+        open={onboardingOpen}
+        onAddSource={() => setAddOpen(true)}
+        onGoToRetrieval={() => setTab('retrieval')}
       />
       <ToastViewport
         toasts={toasts}

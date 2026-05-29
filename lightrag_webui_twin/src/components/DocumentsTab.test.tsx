@@ -45,7 +45,7 @@ describe('DocumentsTab — rendering', () => {
     render(<DocumentsTab {...defaultProps()} />);
     expect(screen.getByText('Document management')).toBeInTheDocument();
     DOCUMENT_FIXTURES.forEach((d) => {
-      expect(screen.getByText(d.source)).toBeInTheDocument();
+      expect(screen.getByText(d.file_path)).toBeInTheDocument();
     });
   });
 
@@ -120,7 +120,7 @@ describe('DocumentsTab — selection + bulk', () => {
     expect(p.onOpenBulkRetag).toHaveBeenCalledTimes(1);
     const arg = p.onOpenBulkRetag.mock.calls[0][0];
     expect(arg).toHaveLength(1);
-    expect(arg[0].id).toBe('d1');
+    expect(arg[0].doc_id).toBe('d1');
   });
 });
 
@@ -139,7 +139,7 @@ describe('DocumentsTab — header actions', () => {
       screen.getByLabelText('Retag oracle-restart-procedure.pdf'),
     );
     expect(p.onOpenRetag).toHaveBeenCalled();
-    expect(p.onOpenRetag.mock.calls[0][0].id).toBe('d1');
+    expect(p.onOpenRetag.mock.calls[0][0].doc_id).toBe('d1');
   });
 
   it('Clear button resets filters and emits a toast', async () => {

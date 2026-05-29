@@ -1,36 +1,69 @@
 /**
  * Document-related types.
  *
- * These mirror the shape used by the proto's MOCK_DOCUMENTS and double as the
- * spec the backend phase-1 endpoints will need to honor:
- *   GET    /documents              -> Document[]
- *   POST   /documents              -> Document
- *   PATCH  /documents/{id}/tags    -> Document   (delta-style)
- *   DELETE /documents/{id}/tags    -> Document
+ * Aligned on LightRAG `DocStatus` (lightrag/base.py, lightrag/api/routers/document.py)
+ * since the sprint Étape 0 (2026-05-29). Twin overlay adds `tags`, `workspace`,
+ * `review` on top of the native LightRAG shape, served by
+ * `/twin/api/documents/{id}/metadata`.
  *
- * Keep this in sync with the backend's pydantic models when phase 1 lands.
+ * Routes:
+ *   GET    /documents                                        -> { items: Document[], total }
+ *   POST   /documents                                        -> upload (LightRAG native)
+ *   GET    /documents/{id}/chunks                            -> chunks[]
+ *   POST   /documents/{id}/scan                              -> reprocess
+ *   GET    /twin/api/documents/{id}/metadata                 -> overlay fields
+ *   POST   /twin/api/documents/{id}/approve                  -> review approve
+ *   POST   /twin/api/documents/{id}/reject                   -> review reject
+ *   PATCH  /twin/api/documents/{id}/tags                     -> overlay tags
  */
 
 import type { WorkspaceVisibility } from './topbar';
 
 export type DocumentType = 'file' | 'confluence' | 'sharepoint' | 'url';
 
-export type DocumentStatus = 'pending' | 'processing' | 'completed' | 'failed';
+/** LightRAG-native status enum (uppercase, mirrors DocStatus.status). */
+export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'FAILED';
 
+export type ReviewState = 'pending-review' | 'approved' | 'rejected';
+
+export interface DocumentReview {
+  state: ReviewState;
+  requested_by: string;
+  requested_at: string;
+  justification: string;
+}
+
+/**
+ * LightRAG-aligned Document shape.
+ *
+ * snake_case field names match the LightRAG API JSON exactly so there is no
+ * serialization mapping at the boundary. `type` and `visibility` are Twin
+ * overlay UI hints, not present on LightRAG's native DocStatus.
+ */
 export interface Document {
-  id: string;
-  type: DocumentType;
-  /** File name, URL, or path identifier of the source. */
-  source: string;
-  /** Short human-readable summary of the content. */
-  summary: string;
-  tags: string[];
+  /** LightRAG DocStatus primary key. */
+  doc_id: string;
+  /** Upload batch correlation id; null for legacy or single uploads. */
+  track_id: string | null;
+  /** Original source identifier (file name, URL, Confluence path...). */
+  file_path: string;
+  /** Short summary, populated by LightRAG ingestion. */
+  content_summary: string;
+  /** Total content length in chars. */
+  content_length: number;
   status: DocumentStatus;
-  /** Number of chunks the document was split into. */
-  chunks: number;
-  /** Human-readable relative timestamp (e.g. "2h ago"). */
-  updated: string;
-  visibility: WorkspaceVisibility;
-  /** Workspace id this document belongs to. */
+  /** Final chunk count; null while still PROCESSING. */
+  chunks_count: number | null;
+  created_at: string;
+  updated_at: string;
+  error_msg: string | null;
+  metadata: Record<string, unknown>;
+
+  // --- Twin overlay (served by /twin/api/documents/{id}/metadata) ---
+  /** UI-only hint for source icon; derived from file_path/metadata. */
+  type: DocumentType;
+  tags: string[];
   workspace: string;
+  visibility: WorkspaceVisibility;
+  review?: DocumentReview;
 }
