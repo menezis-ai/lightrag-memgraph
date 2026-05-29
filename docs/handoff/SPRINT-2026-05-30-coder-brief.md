@@ -60,7 +60,7 @@ LightRAG runtime (1.4.9.11)
 
 ### Étape 0 — Foundation path alignment LightRAG natif vs Twin overlay (~1h)
 
-Pas une issue dédiée, inclus dans #110. Avant tout port de composant :
+**Issue dédiée Forgejo** (à créer par Julien post-brief, numéro à inscrire ici une fois ouverte : `#TBD`). Étape **bloquante** — doit être mergée avant toute autre étape du sprint sinon le reste des composants utilisera les mauvais paths API et les fixtures dérivantes du schéma LightRAG.
 
 **Fichiers à toucher** : `lightrag_webui_twin/src/api/resources.ts`, `lightrag_webui_twin/src/mocks/handlers.ts`, `lightrag_webui_twin/src/types/document.ts`.
 
@@ -157,15 +157,30 @@ export function useAuth(): {
 **Runtime config injectable** :
 
 ```html
-<!-- index.html, injecté par le serveur Twin à servir le HTML -->
+<!-- index.html — le backend Twin (sub-app FastAPI mountée via register(mount_server=True))
+     sert ce fichier et fait une substitution Python à la volée AVANT envoi au navigateur.
+     PAS de Vite SSG, PAS d'inline statique au build. Le placeholder `__TWIN_CONFIG_JSON__`
+     est remplacé à chaque request par les valeurs runtime (env vars BNP + JWT claims). -->
 <script>
-  window.__twinConfig = {
-    apiBaseUrl: '/twin/api',
-    lightragBaseUrl: '/api',  // LightRAG natif
-    idpLogoutUrl: 'https://keycloak.bnp.internal/realms/twin/protocol/openid-connect/logout',
-  };
+  window.__twinConfig = __TWIN_CONFIG_JSON__;
 </script>
 ```
+
+**Côté FastAPI (référence pour l'agent backend, hors scope sprint)** :
+```python
+# server module — extrait conceptuel, ne PAS implémenter dans ce sprint
+@app.get("/webui/", response_class=HTMLResponse)
+async def serve_webui(request: Request):
+    html = (WEBUI_DIST / "index.html").read_text()
+    config = {
+        "apiBaseUrl": "/twin/api",
+        "lightragBaseUrl": "/api",
+        "idpLogoutUrl": os.environ["TWIN_IDP_LOGOUT_URL"],
+    }
+    return html.replace("__TWIN_CONFIG_JSON__", json.dumps(config))
+```
+
+**Côté webui (ce sprint)** : tu poses juste le placeholder `__TWIN_CONFIG_JSON__` dans `index.html` et tu lis `window.__twinConfig` dans `useAuth` / `api/client`. En dev (`bun run dev`), Vite ne fait pas la substitution — fallback vers un objet de dev hardcodé dans `src/config/devConfig.ts` (lu UNIQUEMENT si `import.meta.env.DEV === true` ET `window.__twinConfig === '__TWIN_CONFIG_JSON__'`, signe que la substitution n'a pas eu lieu).
 
 **Tests** : `useAuth` lit le JWT depuis cookie HttpOnly (en prod) ou `window.__twinDebugUser` (en dev), expose `palier` et `workspaces`. Couvrir signout flow → vérifier que `queryClient.clear()` est appelé + `window.location.href` set.
 
@@ -204,9 +219,9 @@ Source : `~/Downloads/design_twinrag_backend/onboarding.jsx`. 6 étapes : welcom
 
 ### Étape 4 — #104 Topbar enrichment (~2-3h)
 
-⚠️ **Spec révisée 2026-05-29** (décision PO suite Louis) :
+⚠️ **Spec révisée 2026-05-29** (décision PO suite Louis + post-recette Alberto) :
 - **PAS de `PalierSwitcher`** — pas de UI dropdown pour changer le palier. Le palier vient du JWT MyAccess, point.
-- `MyAccessPill` affiche le palier courant lu via `useAuth().user.palier`
+- **PAS de `MyAccessPill`** — supprimé. C'était un gimmick maquette (afficher "Steward / Contributor / Reader" en pill colorée à côté du nom). N'a pas sa place dans une app prod : le palier ne se "porte" pas visuellement comme un badge, il conditionne uniquement les capacités UI (boutons activés/masqués). Si un composant doit faire un gating, il lit `useAuth().user.palier` directement.
 - `WorkspaceSwitcher` lit `useAuth().user.workspaces`, click → `setActiveWorkspace(id)` (voir #154 spec workspace switching)
 - `TodoBell` consomme `GET /twin/api/notifications` (refresh 20s via TanStack Query refetchInterval)
 - `SystemStatusIndicator` consomme `GET /api/health` (LightRAG natif) + `GET /twin/api/health` (overlay) — affiche le pire des deux
@@ -214,7 +229,6 @@ Source : `~/Downloads/design_twinrag_backend/onboarding.jsx`. 6 étapes : welcom
 
 **Fichiers** :
 - `lightrag_webui_twin/src/components/Topbar.tsx` (enrichir l'existant)
-- `lightrag_webui_twin/src/components/Topbar/MyAccessPill.tsx`
 - `lightrag_webui_twin/src/components/Topbar/WorkspaceSwitcher.tsx`
 - `lightrag_webui_twin/src/components/Topbar/TodoBell.tsx`
 - `lightrag_webui_twin/src/components/Topbar/SystemStatusIndicator.tsx`
