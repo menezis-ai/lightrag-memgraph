@@ -127,15 +127,17 @@ C'est la slide qui rassure Eric (*"on prend ta doctrine"*) et anticipe la questi
 
 ### Contenu
 
-Démontrer sur écran (maquette OVH `https://maquette.sigilum.fr/` — durcie ce week-end) :
+Démo en direct sur le **port React TypeScript** (`lightrag_webui_twin/`) — Vite + Bun + React 19 + Tailwind v3, stack prod-ready 2026. Fallback : maquette OVH `https://maquette.sigilum.fr/`.
 
 | Vue | Pour qui | Sa valeur métier |
 |---|---|---|
 | **Tag governance** (request → approve → deprecate → migrate → delete) | Steward (Palier 3) | Empêche l'explosion de la taxonomie, garantit la qualité du retrieval |
 | **Document validation queue** (pending → approve / reject) | Steward | Filtre les sources avant indexation, audit trail demandé par DORA art. 17 |
 | **Activity feed** (qui a fait quoi en 30j) | Steward + auditeur | Conformité EBA/GL/2019/04 sur la journalisation des accès |
-| **Source revalidation** (modification d'une source Confluence) | Steward | Ce que Fabrice a demandé le 2026-05-26 — couvre le cas Confluence édité après sign-off |
+| **Documents detail panel** (chunks + lineage + audit + AI assist) | Steward + Contributeur | Surface unique pour valider, ré-indexer, supprimer en cascade |
 | **Knowledge graph** (entités, relations, métadonnées) | Steward + Contributeur (Palier 2) | Compréhension fine de ce que l'IA voit |
+
+> **Scope démo lundi** : Twin = façade **LightRAG only**. File upload + ingestion native. Les connecteurs Confluence/SharePoint (Crosspoint, RAG 1.5) viennent plus tard — *"petit à petit, ne pas devenir le KMS officiel"* (Anas 2026-05-29). Source revalidation (spec Fabrice 26/05) reste dans la doctrine, sortira post-démo.
 
 **Trois paliers, confirmés Salah 2026-05-27** :
 
@@ -157,8 +159,26 @@ Pour différencier TwinRAG du *"yet another chatbot"*. Manu cherchait un éditeu
 
 1. Ouvrir un tag (ex : `oracle`), montrer la justification écrite par le requester
 2. Approver le tag → toast → entry dans Activity feed (refresh visible)
-3. Aller dans la queue de documents pending review → montrer la diff Confluence pour un doc modifié → reject avec raison
+3. Aller dans la queue de documents pending review → montrer un PDF en attente → reject avec raison écrite
 4. Aller dans l'Activity feed → filtrer par steward → 30 jours → exporter CSV
+
+### Stack technique du port React (point Anas 2026-05-29)
+
+Le port a été fait sur la stack moderne 2026 — pas sur le legacy CRA/MUI/Redux que l'équipe Eureka maintient sur `eureka-cms`. Choix défendable :
+
+| | Eureka (eureka-cms) | Notre `lightrag_webui_twin/` |
+|---|---|---|
+| Build | `react-scripts` (CRA, déprécié depuis 2023) | **Vite** (recommandation officielle React team) |
+| Package manager | npm | **Bun** (~10× perf install) |
+| UI lib | MUI + Emotion | **Tailwind v3** + composants typés |
+| State async | Redux Toolkit | **TanStack Query** (RSC-ready) |
+| Tests | Jest + Cypress | **Vitest** (drop-in compat Jest, ~3× perf) |
+
+Option de handoff :
+- **(A)** Équipe Eureka adopte tel quel → modernise leur stack
+- **(B)** On documente le pattern de migration manuelle vers leur stack interne (MUI/Redux)
+
+Position : *"j'ai opté pour la stack 2026, l'équipe Eureka décide"*. Pas de régression technique imposée.
 
 ---
 
@@ -175,10 +195,11 @@ Pour différencier TwinRAG du *"yet another chatbot"*. Manu cherchait un éditeu
 | Architecture parasite (lobotomisation LightRAG) | ✅ codé, en PR #141 | M2 |
 | Wheel hermétique (pas de pip install runtime) | ✅ codé, en PR #141 | M2.3 + M1.1 |
 | Security baseline (pipmaster bloqué) | ✅ codé, en PR #141 | M1.1 |
-| WebUI gouvernance (49% portée TS, 51% à porter) | 🟡 en cours | M6 |
+| WebUI gouvernance portée en React TS prod-ready (Vite + Bun) | ✅ ce week-end, ~75% surface couverte | M6 + M0.6 |
 | Audit trail BCE-grade (ContextVars + bounded queue + JSON ECS) | 🟡 spec finalisée | M3 |
 | Doctrine data (chunks + TTL + classification) | 🟡 spec finalisée | M5 |
 | Process & runbook d'install BNP | ✅ ce document | M9 |
+| Hotfix Memgraph 3.10 vector index (livré BNP v0.5.4) | ✅ shipped 2026-05-29 | — |
 
 **Ce que nous demandons (CAPA externe)** :
 
@@ -187,6 +208,7 @@ Pour différencier TwinRAG du *"yet another chatbot"*. Manu cherchait un éditeu
 | **Intégration OIDC SSO BNPP** + mapping claims → paliers | 2-3j BNP | Timothée + Geoffrey | sem +2 |
 | **Spec ENTITY-Twin Rosetta** (référentiel Twin ↔ MyAccess) | 2j coproduction | Julien + Timothée | sem +1 |
 | **Politique de classification documents** (rules par franchise) | 1j workshop | Fabrice + sponsors franchises | sem +1 |
+| **Décision stack WebUI** (adopter Vite/Bun OU migration vers MUI/CRA documentée) | 0,5j arbitrage | Fabrice + Chafi/Yazid | sem +1 |
 | **Validation contrats outsourcing EBA** (statut freelance Julien) | escalation juridique BNP | DPO + RSSI | sem +3 |
 | **Décision Délégation Microsoft Graph V2** (roadmap 1.2.x) | discovery | Louis + équipe MS BNP | sem +4 |
 
@@ -223,6 +245,14 @@ C'est la slide où on retourne la question *"combien ça coûte"* en *"voici ce 
 ### Si Eric demande *"vous allez consommer du temps de mes LLM"*
 
 > *"On a séparé `chat_llm` et `indexing_llm` dans la config — on peut pointer la phase de validation document (lourde en LLM) sur ton LLM d'indexation, et la phase requête (légère) sur le chat LLM. C'est de l'orchestration de ressources, pas une création de nouveau service. Pour la 1.1, on est sur des appels comparables à RAG 1.5."*
+
+### Si Chafi/Yazid dit *"pourquoi tu n'es pas sur notre stack CRA/MUI/Redux ?"*
+
+> *"J'ai opté pour Vite + Bun + Tailwind + TanStack Query parce que c'est la stack 2026 recommandée par la React team — react-scripts est officiellement déprécié depuis début 2023. Cela dit, je n'impose rien : je vous remets le port React TS prod-ready, deux options sur la table. Soit l'équipe Eureka adopte et modernise la stack interne, soit je documente le pattern de migration vers MUI/CRA et vous le réécrivez chez vous. C'est votre call. Mon objectif c'est que le composant existe en React maintenable, pas qu'il existe dans une stack précise."*
+
+### Si quelqu'un demande *"vous avez livré du code chez BNP ce week-end ?"*
+
+> *"Oui — la version 0.5.4 du pip package contient un hotfix critique du backend vector index, validé par 273 tests sur la cible BNP exacte (LightRAG 1.4.9.11 × Memgraph 3.10.1). Le zip a été préparé selon la procédure habituelle (source tree, pas de wheel), prêt pour le canal transit BNP standard. C'est notre quatrième livraison sans incident depuis février."*
 
 ---
 
