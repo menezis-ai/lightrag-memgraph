@@ -38,15 +38,17 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest-docker
     strategy:
-      # Bunker has 11 runners; 15 parallel jobs caused contention spikes
-      # that made memgraph:latest cold-start exceed health-retries window.
-      # Cap at 5 to keep memgraph cold-starts deterministic.
+      # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
+      # the contention threshold that previously starved cold-starts.
       max-parallel: 5
       matrix:
         # 1.4.10 dropped: intermittent test failures under integration load
         # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
         lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
-        memgraph-version: ["3.7.2", "3.8.0", "latest"]
+        # 3.7.2 / 3.8.0 dropped: never deployed at BNP. 3.10.1 is the current
+        # BNP prod target — pinned explicitly so the rolling `latest` tag
+        # can't silently move the coverage point under us.
+        memgraph-version: ["3.10.1"]
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
