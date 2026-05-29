@@ -52,16 +52,18 @@ jobs:
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
-        # --memory 2g: 2026-05-28 PR #142 observed mid-test cascade failures
-        # (`Failed to DNS resolve memgraph:7687`) on 3.8.0/latest matrices —
-        # memgraph container disappeared from the docker network after ~5 min
-        # under sustained query load, classic OOM-kill signature. 3.7.2 always
-        # passed (lighter image). Cap memory explicitly so OOM is bounded.
+        # --memory 3g: bumped from 2g after 2026-05-29 PR #143 showed
+        # 1.4.9 × 3.10.1 fail at ~7m53s under sustained query load. Local
+        # repro on Python 3.12 with the same combo runs in 25s with 615
+        # tests passing, so the runner was OOM-killing memgraph mid-suite.
+        # 3.10.1 mage image is heavier than 3.7.2 (the previous "always
+        # passes" baseline) — 3g cap accommodates Memgraph + MAGE + sustained
+        # vector_search load without leaving the runner thrashing.
         # --health-retries 120 (10 min): mage:latest (3.9+) cold-start can
         # exceed the previous 5 min window on a contended runner.
         options: >-
-          --memory 2g
-          --memory-swap 2g
+          --memory 3g
+          --memory-swap 3g
           --health-cmd "echo 'RETURN 1;' | mgconsole"
           --health-interval 5s
           --health-timeout 5s
