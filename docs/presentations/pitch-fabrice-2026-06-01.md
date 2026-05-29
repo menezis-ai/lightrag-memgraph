@@ -65,7 +65,7 @@ Schéma à l'écran :
 
 1. **Architecture parasite (Axiome TETRA PAK)** : on s'interface avec LightRAG, on ne réécrit pas le moteur. Eric a validé techniquement le 2026-05-28 que *"ça ne change rien à la manière dont seraient interrogées les bases par les agents"*.
 2. **IAM délégué (Loi du LAGOM)** : zéro base utilisateur côté Twin. Le JWT BNPP dicte tout. Si le claim `role` n'est pas dans le token, l'accès est 403.
-3. **Compliance par construction (Standard SAAB)** : la version v1.1.0 contient `_patch_security_baseline()` qui refuse au runtime tout `pip install` non autorisé. Plus aucun téléchargement de dépendances au boot. La supply chain est verrouillée.
+3. **Compliance par construction (Standard SAAB)** : la branche `stable/0.6.x` contient depuis 2026-05-29 (PR #141 mergée) `_patch_security_baseline()` qui refuse au runtime tout `pip install` non autorisé. Plus aucun téléchargement de dépendances au boot. La supply chain est verrouillée. Le wheel résultant est hermétique (258 KB, dist WebUI embarquée).
 
 ### Pourquoi cette slide
 
@@ -118,6 +118,58 @@ C'est la slide qui rassure Eric (*"on prend ta doctrine"*) et anticipe la questi
 ### Si Louis pousse plus loin
 
 > *"Pour Word, Excel et PowerPoint, on lit le label de classification dans les métadonnées Office. Un fichier marqué Confidentiel est rejeté à l'ingestion. Pour les PDF, qui n'ont pas de label natif, on a un bandeau dans l'UI qui rappelle à l'utilisateur que l'outil n'est pas habilité pour des documents au-dessus d'Internal. C'est le même pattern que Crosspoint."*
+
+---
+
+## Slide 3.5 — Multi-tenant par filtre, pas par instance
+
+**Titre slide** : *"Comment on tient 5 franchises avec un seul setup."*
+
+### Contenu
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  1 instance Memgraph 64 GB                       │
+│                                                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────┐  │
+│  │ workspace:  │  │ workspace:  │  │ workspace:  │  │ ws:    │  │
+│  │   cib       │  │  payments   │  │  infra      │  │ swift  │  │
+│  │  ───────    │  │  ───────    │  │  ───────    │  │ ────── │  │
+│  │ Vec_cib_*   │  │ Vec_pay_*   │  │ Vec_inf_*   │  │ Vec_*  │  │
+│  │ KV_cib_*    │  │ KV_pay_*    │  │ KV_inf_*    │  │ KV_*   │  │
+│  │ DocStatus_  │  │ DocStatus_  │  │ DocStatus_  │  │ DS_*   │  │
+│  │   cib       │  │   pay       │  │   inf       │  │        │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └────────┘  │
+│                                                                  │
+│           Filtres Cypher par label, isolation logique            │
+└──────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │
+                  X-Twin-Workspace: <id>
+                  + claim JWT MyAccess
+                  + garde RBAC par requête
+```
+
+**Doctrine** (décision PO 2026-05-29) : un workspace Twin = un **filtre label/préfixe Cypher** sur une instance Memgraph **mutualisée**, pas une instance dédiée.
+
+**Pourquoi c'est important** :
+
+- **Économie infra** : 1 instance Memgraph 64 GB héberge N franchises. Sans Twin, un steward qui demande 3 KB LightRAG nu force 3 instances Memgraph triplicées.
+- **Pas de migration** : ouvrir une nouvelle franchise = inserts avec un nouveau préfixe de label. Zéro provisioning infra.
+- **Isolation RBAC** : la garde `workspace_id ∈ jwt.claims.workspaces` côté gateway impose l'étanchéité, pas la séparation physique.
+- **Schéma backend déjà compatible** : labels `KV_{workspace}_*`, `Vec_{workspace}_*`, `DocStatus_{workspace}` sont en place depuis v0.3.1 — il reste à wirer le runtime switching par header HTTP (M2.2).
+
+### Pourquoi cette slide
+
+Pour anticiper la question Fabrice du coût opérationnel par franchise sponsor. Et pour désamorcer la peur Louis du *"vous allez nous demander de provisionner 12 Memgraph séparés en prod si on a 12 franchises"* — la réponse est non : la séparation est logique, pas physique.
+
+### Speaker notes
+
+> *"Une question naturelle quand on parle de TwinRAG comme console KMS pour franchises sponsors : combien d'infra on consomme à chaque nouvelle franchise. La réponse est : zéro. Workspace dans Twin, c'est un filtre Cypher sur une instance Memgraph mutualisée. Le code backend supporte ça depuis v0.3.1, c'est `KV_workspace_namespace`, `Vec_workspace_namespace`, etc. Quand un steward CIB ouvre l'UI, son JWT MyAccess porte la liste des workspaces auxquels il a accès, le frontend ajoute un header `X-Twin-Workspace: cib` à chaque requête, le backend filtre. Le coût marginal d'une nouvelle franchise est de quelques labels Cypher, pas un déploiement infra. Pour Louis, ça veut dire que la surface d'audit est UNE instance Memgraph, pas N instances à inventorier."*
+
+### Si Manu objecte *"pourquoi pas un vrai schéma multi-tenant ?"*
+
+> *"On a regardé. Sur Memgraph 3.x, les options multi-tenant natives — base par tenant, label par tenant — ont un coût mémoire fixe par tenant qui devient prohibitif au-delà de 50 franchises. Le filtre par label, lui, scale linéairement avec le nombre de chunks, pas avec le nombre de tenants. Et il s'aligne parfaitement avec le claim MyAccess qui porte déjà la liste des workspaces accessibles à l'utilisateur. La séparation physique reste possible en option futur si une franchise a une exigence réglementaire spécifique."*
 
 ---
 
@@ -192,9 +244,9 @@ Position : *"j'ai opté pour la stack 2026, l'équipe Eureka décide"*. Pas de r
 
 | Livrable | Statut | Référence |
 |---|---|---|
-| Architecture parasite (lobotomisation LightRAG) | ✅ codé, en PR #141 | M2 |
-| Wheel hermétique (pas de pip install runtime) | ✅ codé, en PR #141 | M2.3 + M1.1 |
-| Security baseline (pipmaster bloqué) | ✅ codé, en PR #141 | M1.1 |
+| Architecture parasite (lobotomisation LightRAG) | ✅ **mergé sur `stable/0.6.x`** (PR #141, 2026-05-29) | M2 |
+| Wheel hermétique (pas de pip install runtime) | ✅ **mergé sur `stable/0.6.x`** (PR #141) | M2.3 + M1.1 |
+| Security baseline (pipmaster bloqué) | ✅ **mergé sur `stable/0.6.x`** (PR #141) | M1.1 |
 | WebUI gouvernance portée en React TS prod-ready (Vite + Bun) | ✅ ce week-end, ~75% surface couverte | M6 + M0.6 |
 | Audit trail BCE-grade (ContextVars + bounded queue + JSON ECS) | 🟡 spec finalisée | M3 |
 | Doctrine data (chunks + TTL + classification) | 🟡 spec finalisée | M5 |
