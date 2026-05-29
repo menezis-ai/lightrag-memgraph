@@ -60,7 +60,7 @@ LightRAG runtime (1.4.9.11)
 
 ### Étape 0 — Foundation path alignment LightRAG natif vs Twin overlay (~1h)
 
-**Issue dédiée Forgejo** (à créer par Julien post-brief, numéro à inscrire ici une fois ouverte : `#TBD`). Étape **bloquante** — doit être mergée avant toute autre étape du sprint sinon le reste des composants utilisera les mauvais paths API et les fixtures dérivantes du schéma LightRAG.
+**Issue dédiée Forgejo** : [#156](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/issues/156). Étape **bloquante** — doit être mergée avant toute autre étape du sprint sinon le reste des composants utilisera les mauvais paths API et les fixtures dérivantes du schéma LightRAG. Livré dans PR #155 (sprint weekend 29/05).
 
 **Fichiers à toucher** : `lightrag_webui_twin/src/api/resources.ts`, `lightrag_webui_twin/src/mocks/handlers.ts`, `lightrag_webui_twin/src/types/document.ts`.
 
