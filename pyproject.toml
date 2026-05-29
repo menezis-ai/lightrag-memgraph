@@ -37,6 +37,7 @@ server = [
     "uvicorn[standard]>=0.27.0",
     "pydantic-settings>=2.0.0",
     "PyJWT>=2.8.0",
+    "python-multipart>=0.0.9",
 ]
 tracing = [
     "langsmith>=0.1.0",
@@ -53,11 +54,19 @@ all = [
 where = ["src"]
 
 [tool.setuptools.package-data]
+"twindb_lightrag_memgraph" = [
+    "webui_dist/*",
+    "webui_dist/assets/*",
+]
 "twindb_lightrag_memgraph.intelligence" = [
     "prompts/*.txt",
     "thesaurus/*.json",
     "routing/*.json",
 ]
+
+# Tell setuptools to ship a python-multipart dependency for /documents/upload
+# (LightRAG natif uses Form upload — was a runtime hazard surfaced during M2
+# smoke test). Required when [server] extra is installed.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

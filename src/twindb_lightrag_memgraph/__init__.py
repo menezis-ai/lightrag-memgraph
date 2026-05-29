@@ -36,16 +36,52 @@ except Exception:
 _registered = False
 
 
-def register() -> None:
+def register(
+    replace_ui: bool = False,
+    mount_server: bool = False,
+    security_baseline: bool = True,
+    webui_dist: str | None = None,
+    twin_api_prefix: str = "/twin/api",
+) -> None:
     """Monkey-patch LightRAG's storage registries to add Memgraph backends.
 
     Safe to call multiple times (idempotent).
     Patches 3 dicts in lightrag.kg: STORAGE_IMPLEMENTATIONS,
     STORAGE_ENV_REQUIREMENTS, and STORAGES.
+
+    Args:
+        replace_ui: If True, also wrap ``lightrag.api.lightrag_server.create_app``
+            to swap the native ``/webui`` Mount with our WebUI fork (TS build).
+            Requires ``webui_dist`` to point to a built ``dist/`` (containing
+            ``index.html``) — or relies on an embedded ``webui_dist/`` shipped
+            inside this package.
+        mount_server: If True, mount our Twin sub-app on ``twin_api_prefix``
+            (FastAPI: ``twindb_lightrag_memgraph.server.app:create_app``).
+            Lifespans are chained so the sub-app initializes during parent startup.
+        security_baseline: If True (default), neutralize runtime supply-chain
+            hazards before any LightRAG module gets a chance to mis-behave:
+            blocks ``pipmaster`` install entrypoints and the
+            ``check_and_install_dependencies`` call in ``lightrag_server``.
+            Cf. audit Prisme G §1 — required for BNP production deployment.
+            Disable only in dev environments where you accept runtime pip calls.
+        webui_dist: Optional explicit path to the WebUI fork's ``dist/``.
+            When ``None`` and ``replace_ui=True``, falls back to
+            ``<package>/webui_dist`` (set up by ``scripts/build_webui.sh``).
+        twin_api_prefix: URL prefix where the Twin sub-app is mounted
+            (default ``/twin/api``).
+
+    Storage-only behavior (default ``replace_ui=False, mount_server=False``) is
+    identical to v1.0.x — instances already in BNP production are unaffected.
     """
     global _registered
     if _registered:
         return
+
+    # 0. Security baseline FIRST — must run before any lightrag.api.* or
+    #    lightrag.llm.* import that would trigger pipmaster auto-install.
+    #    Idempotent via sentinels on the target modules.
+    if security_baseline:
+        _patch_security_baseline()
 
     import lightrag.kg as kg_registry
 
@@ -91,6 +127,14 @@ def register() -> None:
     # 7. Append our version to lightrag.__version__ so the WebUI displays it
     #    next to the LightRAG version string in the top-right corner.
     _patch_version_string()
+
+    # 8. Optionally extend the FastAPI app: swap WebUI + mount Twin sub-app.
+    #    Opt-in via flags — default off keeps prod instances unaffected.
+    if replace_ui or mount_server:
+        _patch_lightrag_server_create_app(
+            webui_dist=_resolve_webui_dist(webui_dist) if replace_ui else None,
+            twin_api_prefix=twin_api_prefix if mount_server else None,
+        )
 
     _registered = True
     msg = (
@@ -711,6 +755,288 @@ def _patch_insert_done():
     _hooked_insert_done.__name__ = "hooked_insert_done"
     LightRAG._insert_done = _hooked_insert_done
     logger.info("Patched LightRAG._insert_done with post-indexation hooks")
+
+
+def _patch_security_baseline() -> None:
+    """Defense-in-depth security baseline patches for BNP production.
+
+    Implements the supply-chain controls identified in audit Prisme G §1 and
+    required by DORA art. 9 (ICT supply-chain integrity). When this baseline
+    is active, the process cannot pull new dependencies at runtime — the wheel
+    must already contain everything it needs.
+
+    Currently blocks:
+        1. ``pipmaster`` runtime install entrypoints (sync + async + all manager
+           classes: ``PackageManager``, ``AsyncPackageManager``,
+           ``UvPackageManager``, ``CondaPackageManager``).
+        2. ``lightrag.api.lightrag_server.check_and_install_dependencies()``
+           which would auto-install uvicorn/tiktoken/fastapi at boot.
+
+    Idempotent. Sentinels are set on each target module so repeated
+    ``register()`` calls don't stack patches.
+    """
+    _disable_pipmaster_runtime_install()
+    _disable_lightrag_dependency_autoinstall()
+
+
+_RUNTIME_INSTALL_REFUSED_MSG = (
+    "Runtime pip install blocked by TwinRAG security baseline (pipmaster "
+    "neutralized). All dependencies must be pinned in pyproject.toml and "
+    "resolved at build time. Attempted: {package!r}. "
+    "See audit Prisme G §1 (supply-chain integrity, DORA art. 9). "
+    "To disable in dev environments only: register(security_baseline=False)."
+)
+
+
+def _disable_pipmaster_runtime_install() -> None:
+    """Replace every pipmaster install entrypoint with a hard refusal.
+
+    Coverage: module-level convenience helpers (sync + async) + every
+    ``install*`` / ``ensure*`` method on every manager class.
+    """
+    try:
+        import pipmaster as pm
+    except ImportError:
+        return  # pipmaster not installed — nothing to do
+
+    if getattr(pm, "_twindb_install_blocked", False):
+        return
+
+    def _refuse(*args, **kwargs):
+        pkg = kwargs.get("package", kwargs.get("package_name", "<unknown>"))
+        if pkg == "<unknown>":
+            for a in args:
+                if isinstance(a, str):
+                    pkg = a
+                    break
+        raise RuntimeError(_RUNTIME_INSTALL_REFUSED_MSG.format(package=pkg))
+
+    async def _refuse_async(*args, **kwargs):
+        return _refuse(*args, **kwargs)
+
+    # Module-level convenience functions
+    _sync_targets = (
+        "install", "install_edit", "install_if_missing", "install_multiple",
+        "install_multiple_if_not_installed", "install_or_update",
+        "install_or_update_multiple", "install_requirements", "install_version",
+        "ensure_packages", "ensure_requirements",
+    )
+    for name in _sync_targets:
+        if hasattr(pm, name):
+            setattr(pm, name, _refuse)
+
+    _async_targets = (
+        "async_install", "async_install_if_missing", "async_install_multiple",
+        "async_ensure_packages", "async_ensure_requirements",
+    )
+    for name in _async_targets:
+        if hasattr(pm, name):
+            setattr(pm, name, _refuse_async)
+
+    # Class-level methods on every manager
+    for cls_name in (
+        "PackageManager", "AsyncPackageManager",
+        "UvPackageManager", "CondaPackageManager",
+    ):
+        cls = getattr(pm, cls_name, None)
+        if cls is None:
+            continue
+        is_async_cls = cls_name == "AsyncPackageManager"
+        for method_name in list(cls.__dict__):
+            if not (method_name.startswith("install") or method_name.startswith("ensure")):
+                continue
+            replacement = _refuse_async if is_async_cls else _refuse
+            setattr(cls, method_name, replacement)
+
+    pm._twindb_install_blocked = True
+    logger.info("twindb: pipmaster runtime install blocked (security baseline)")
+
+
+def _disable_lightrag_dependency_autoinstall() -> None:
+    """Neutralize ``lightrag.api.lightrag_server.check_and_install_dependencies``
+    iff the module is already imported. Otherwise skip silently — the module
+    parses ``sys.argv`` at import time and would raise ``SystemExit`` under
+    pytest (which has its own argv). The hook in
+    ``_patch_lightrag_server_create_app`` re-calls this once the module is
+    safely loaded by an explicit ``replace_ui=`` / ``mount_server=`` path.
+
+    Replaced with a no-op that logs a warning if ever called. Required
+    packages (uvicorn, tiktoken, fastapi) are expected to be pinned in
+    pyproject.toml and installed at build time.
+
+    Pipmaster itself is already neutralized by
+    ``_disable_pipmaster_runtime_install``, so even if this no-op never
+    fires, an actual install attempt would still ``RuntimeError`` — the
+    no-op only converts an attempted install into a logged warning instead
+    of a boot crash.
+    """
+    import sys
+    srv = sys.modules.get("lightrag.api.lightrag_server")
+    if srv is None:
+        return  # not yet imported — will be patched lazily via the create_app hook
+
+    if getattr(srv, "_twindb_autoinstall_blocked", False):
+        return
+
+    def _noop():
+        logger.warning(
+            "twindb: lightrag.api.lightrag_server.check_and_install_dependencies "
+            "was called but is a no-op under TwinRAG security baseline. "
+            "Verify uvicorn/tiktoken/fastapi are pinned in pyproject.toml."
+        )
+
+    if hasattr(srv, "check_and_install_dependencies"):
+        srv.check_and_install_dependencies = _noop
+        srv._twindb_autoinstall_blocked = True
+        logger.info("twindb: lightrag check_and_install_dependencies neutralized")
+
+
+def _resolve_webui_dist(explicit: str | None) -> str:
+    """Resolve the WebUI fork ``dist/`` path with this priority:
+       1. explicit argument (raise if missing index.html);
+       2. embedded ``<package>/webui_dist`` (set up by build script);
+       3. dev fallback: ``lightrag_webui_twin/dist`` sibling of the repo root.
+
+    Raises ``FileNotFoundError`` if none works.
+    """
+    from pathlib import Path
+    import twindb_lightrag_memgraph as _pkg
+
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(Path(explicit).expanduser().resolve())
+
+    pkg_dir = Path(_pkg.__file__).parent
+    candidates.append((pkg_dir / "webui_dist").resolve())
+
+    # Dev fallback: when running from a checkout (editable install)
+    # walk up to find sibling lightrag_webui_twin/dist
+    repo_root = pkg_dir.parent.parent  # src/twindb_lightrag_memgraph → src → repo
+    candidates.append((repo_root / "lightrag_webui_twin" / "dist").resolve())
+
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "index.html").is_file():
+            return str(candidate)
+
+    raise FileNotFoundError(
+        "register(replace_ui=True): no WebUI dist found. Tried:\n  - "
+        + "\n  - ".join(str(c) for c in candidates)
+        + "\nBuild it with: cd lightrag_webui_twin && bun install --frozen-lockfile && bun run build"
+    )
+
+
+def _patch_lightrag_server_create_app(
+    webui_dist: str | None = None,
+    twin_api_prefix: str | None = None,
+) -> None:
+    """Wrap ``lightrag.api.lightrag_server.create_app`` to optionally:
+       - replace the native ``/webui`` Mount with our WebUI fork (``webui_dist``);
+       - mount our Twin sub-app on ``twin_api_prefix``.
+
+    Idempotent: a sentinel attribute on the module prevents stacking wrappers
+    when ``register()`` is called more than once (e.g. in test loops).
+
+    Both features default to off if their kwarg is ``None``. Calling this with
+    both ``None`` is a no-op (still installs the wrapper as a passthrough so
+    subsequent re-registrations are coherent).
+
+    Order: this must run AFTER ``_patch_version_string()`` because the source
+    string of ``lightrag_server.core_version`` is bound at module import.
+    """
+    import lightrag.api.lightrag_server as srv
+
+    if getattr(srv, "_twindb_create_app_patched", False):
+        logger.debug("_patch_lightrag_server_create_app: already patched — skip")
+        return
+
+    # Now that lightrag_server is safely imported (explicit user opt-in via
+    # replace_ui/mount_server), revisit the security baseline's autoinstall
+    # neutralization which had to skip earlier if the module was not yet loaded.
+    _disable_lightrag_dependency_autoinstall()
+
+    orig_create_app = srv.create_app
+
+    def wrapped_create_app(args):
+        app = orig_create_app(args)
+        if webui_dist is not None:
+            _replace_webui_mount(app, webui_dist)
+        if twin_api_prefix is not None:
+            _mount_twin_subapp(app, twin_api_prefix)
+        return app
+
+    wrapped_create_app.__wrapped__ = orig_create_app
+    wrapped_create_app.__name__ = "wrapped_create_app"
+    srv.create_app = wrapped_create_app
+    srv._twindb_create_app_patched = True
+    logger.info(
+        "twindb: lightrag.api.lightrag_server.create_app wrapped "
+        "(replace_ui=%s, mount_server=%s)",
+        webui_dist is not None,
+        twin_api_prefix is not None,
+    )
+
+
+def _replace_webui_mount(app, webui_dist: str) -> None:
+    """Substitute the ``.app`` of the route named ``"webui"`` in ``app.router.routes``.
+
+    Strategy chosen (Prisme A §6 Option A): mutate the existing ``Mount`` rather
+    than appending a second one, so the route order — and thus precedence —
+    stays identical to the native ``create_app`` output. This makes the swap
+    invisible to downstream middlewares, the ``/`` redirect, and the
+    ``/docs`` / ``/auth-status`` / ``/login`` companions.
+    """
+    from fastapi.staticfiles import StaticFiles
+    from starlette.routing import Mount
+
+    webui_route = None
+    for route in app.router.routes:
+        if isinstance(route, Mount) and getattr(route, "name", None) == "webui":
+            webui_route = route
+            break
+
+    if webui_route is None:
+        logger.warning(
+            "_replace_webui_mount: no Mount(name='webui') found on app — "
+            "LightRAG likely started without WebUI assets (check_frontend_build "
+            "returned False). UI replacement skipped."
+        )
+        return
+
+    webui_route.app = StaticFiles(directory=webui_dist, html=True, check_dir=True)
+    logger.info("twindb: WebUI mount at /webui swapped → %s", webui_dist)
+
+
+def _mount_twin_subapp(app, prefix: str) -> None:
+    """Mount our Twin FastAPI sub-app on ``prefix`` with explicit lifespan chaining.
+
+    Without chaining, the sub-app's startup hooks never fire when mounted, and
+    its module-level ``_rag`` stays uninitialized — every route returns 500.
+    Prisme A §6 Option B documents this pitfall.
+    """
+    from contextlib import AsyncExitStack, asynccontextmanager
+
+    try:
+        from twindb_lightrag_memgraph.server.app import create_app as create_twin_app
+    except ImportError as exc:
+        raise ImportError(
+            "mount_server=True requires the 'server' extra: "
+            "pip install 'twindb-lightrag-memgraph[server]'"
+        ) from exc
+
+    twin_app = create_twin_app()
+
+    parent_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def chained_lifespan(parent_app):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(parent_lifespan(parent_app))
+            await stack.enter_async_context(twin_app.router.lifespan_context(twin_app))
+            yield
+
+    app.router.lifespan_context = chained_lifespan
+    app.mount(prefix, twin_app, name="twin")
+    logger.info("twindb: Twin sub-app mounted at %s (lifespan chained)", prefix)
 
 
 def _patch_version_string():

@@ -6,7 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This package provides Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**. LightRAG ships a graph backend; this package fills the remaining 3 slots so an entire instance runs on a single Memgraph DB.
 
-The current working branch is `stable/0.5.x` (LTS = 0.3.2 + auto-create vector index). The `main` branch tracks 0.5.x as well; `0.4.x` was abandoned. See `changelog.md` for what's in vs. out of stable.
+### Branch policy (per project memory, 2026-05-20)
+
+- `stable/0.6.x` — **active dev** branch. Carries the WebUI fork (`lightrag_webui_twin/`) and the `maquette-deploy/` artifacts. **Default working branch.**
+- `stable/0.5.x` — **LTS, storage backends only**. WebUI/maquette/deploy work is pollution here and was force-reverted from it (PR #30, 2026-05-20).
+- `stable/0.3.2-lts` — frozen LTS = 0.3.2 + auto-create vector index.
+- `main` — tracks 0.5.x; `0.4.x` was abandoned.
+
+Maquette work flows through short-lived `feat/maquette-*` branches cut off `stable/0.6.x` (often a dozen in flight at once — `git branch | grep maquette`). They merge back to `0.6.x`, not to `main`.
+
+The live maquette at https://maquette.sigilum.fr/ runs from a `docker service` on OVH `37.59.104.111` and is independent of repo state — see `maquette-deploy/` below.
+
+`pyproject.toml` reports version `1.0.0` and `register()` patches `lightrag.__version__` to `vX.Y.Z+memgraph-1.0.0` so the WebUI shows the composite version. See `changelog.md` for what's in vs. out of stable.
 
 ## Distribution
 
@@ -36,7 +47,8 @@ The local `.venv` is Python 3.14. Be aware of two known footguns recorded in pro
 pytest tests/ --ignore=tests/test_bench.py -v
 
 # All integration tests (real Memgraph required)
-docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:latest
+docker compose up -d memgraph   # uses root docker-compose.yml (memgraph/memgraph-mage:latest on 7687/7444)
+# or, ad-hoc: docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:latest
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
 
 # Single test
@@ -52,9 +64,13 @@ coverage xml  # produces coverage.xml for SonarQube
 
 `tests/conftest.py` auto-skips `@pytest.mark.integration` tests when `MEMGRAPH_URI` is unset, so no need to filter manually for offline runs.
 
+Test layout: storage tests live directly under `tests/` (`test_kv.py`, `test_vector.py`, `test_docstatus.py`, `test_buffered_writes.py`, `test_batch_patch.py`, `test_e2e.py`, …); intelligence and server suites live in `tests/test_intelligence/` and `tests/test_server/` respectively. `pytest tests/` collects all three trees.
+
 ### SonarQube
 
 SonarQube is permanently available at `http://192.168.1.212:9000` (per project memory; not the address in the global directive — that one is `192.168.1.49:9000`, a different instance). `sonar-scanner` is at `/opt/homebrew/bin/sonar-scanner`. Token must be provided via env, never committed.
+
+Scanner config lives in `sonar-project.properties` at the repo root: `sonar.sources=src`, `sonar.tests=tests`, Python version matrix `3.10,3.11,3.12,3.13,3.14`, coverage report at `coverage.xml`. Reuse this file rather than passing flags ad hoc.
 
 `aquery()` cognitive complexity must stay ≤ 15 — keep helper methods extracted (project memory).
 

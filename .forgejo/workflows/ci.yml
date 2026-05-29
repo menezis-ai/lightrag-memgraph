@@ -14,7 +14,12 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         # 1.4.10 dropped: intermittent test failures under integration load
         # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
-        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
+        # 1.4.9 dropped 2026-05-29: BNP runs 1.4.9.11 (hotfix release), not
+        # 1.4.9 vanilla. Coverage on 1.4.9 added persistent flake to the
+        # bunker runner (jobs failing at install OR at random tests across
+        # different runs of the same commit). Same logic as the 3.7.2/3.8.0
+        # Memgraph drop: matrix = BNP target + forward-compat only.
+        lightrag-version: ["1.4.9.11", "1.4.11", "1.4.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +49,12 @@ jobs:
       matrix:
         # 1.4.10 dropped: intermittent test failures under integration load
         # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
-        lightrag-version: ["1.4.9", "1.4.9.11", "1.4.11", "1.4.12"]
+        # 1.4.9 dropped 2026-05-29: BNP runs 1.4.9.11 (hotfix release), not
+        # 1.4.9 vanilla. Coverage on 1.4.9 added persistent flake to the
+        # bunker runner (jobs failing at install OR at random tests across
+        # different runs of the same commit). Same logic as the 3.7.2/3.8.0
+        # Memgraph drop: matrix = BNP target + forward-compat only.
+        lightrag-version: ["1.4.9.11", "1.4.11", "1.4.12"]
         # 3.7.2 / 3.8.0 dropped: never deployed at BNP. 3.10.1 is the current
         # BNP prod target — pinned explicitly so the rolling `latest` tag
         # can't silently move the coverage point under us.
