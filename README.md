@@ -68,6 +68,8 @@ All backends read their connection settings from environment variables (`os.envi
 | `MEMGRAPH_POOL_SIZE` | No | `50` | Write pool size (max Bolt connections for write operations) |
 | `MEMGRAPH_READ_POOL_SIZE` | No | `20` | Read pool size (dedicated read-only Bolt connections, isolated from writes) |
 | `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | No | `5.0` | Seconds to wait for a free connection before failing (applies to both pools) |
+| `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. BNP `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
+| `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files outranking this are refused at the pre-insert hook. Unknown classes are treated as above the ceiling (fail-closed). |
 
 ## How it works
 
@@ -331,24 +333,104 @@ await close_driver()  # Force driver reset; next get_driver() creates a new one
 
 ```
 src/twindb_lightrag_memgraph/
-  __init__.py        register() -- monkey-patches lightrag.kg registry
-  _pool.py           Shared Bolt driver singleton (event-loop aware)
-  _constants.py      Validators, defaults, env var names
-  _buffered_graph.py Buffered batch write proxy
-  _hooks.py          Post-indexation hooks
-  kv_impl.py         MemgraphKVStorage -- key-value pairs as Cypher nodes
-  vector_impl.py     MemgraphVectorDBStorage -- vector embeddings + cosine search
-  docstatus_impl.py  MemgraphDocStatusStorage -- document processing status tracking
+  __init__.py               register() -- monkey-patches lightrag.kg registry
+  _pool.py                  Shared Bolt driver singleton (event-loop aware)
+  _constants.py             Validators, defaults, env var names
+  _buffered_graph.py        Buffered batch write proxy
+  _hooks.py                 Post-indexation hooks
+  kv_impl.py                MemgraphKVStorage -- key-value pairs as Cypher nodes
+  vector_impl.py            MemgraphVectorDBStorage -- vector embeddings + cosine search
+  docstatus_impl.py         MemgraphDocStatusStorage -- document processing status tracking
+  classification.py         MSIP / sensitivity-label extractor (OOXML / OLE / PDF)
+  _classification_hook.py   Pre-insert hook that classifies + gates documents
+
+scripts/
+  extract_msip.py    CLI: probe a file for its Microsoft sensitivity label
 
 tests/
-  conftest.py              Auto-skip integration tests when MEMGRAPH_URI is unset
-  test_register.py         Offline: registration logic
-  test_kv.py               Integration: KV CRUD
-  test_vector.py           Integration: vector CRUD + search
-  test_docstatus.py        Integration: doc status CRUD + queries
-  test_prod_checklist.py   Integration: dim=1024, multi-workspace, full pipeline
-  test_bench.py            Integration: performance benchmarks
+  conftest.py                  Auto-skip integration tests when MEMGRAPH_URI is unset
+  test_register.py             Offline: registration logic
+  test_kv.py                   Integration: KV CRUD
+  test_vector.py               Integration: vector CRUD + search
+  test_docstatus.py            Integration: doc status CRUD + queries
+  test_prod_checklist.py       Integration: dim=1024, multi-workspace, full pipeline
+  test_bench.py                Integration: performance benchmarks
+  test_classification.py       Offline: MSIP extractor (OOXML / optional-dep paths)
+  test_classification_hook.py  Offline: pre-insert hook gating + audit emission
 ```
+
+## Classification (Microsoft Information Protection)
+
+Optional pre-insert hook that reads the sensitivity label Microsoft 365 embeds in Office documents and refuses ingestion of files above a configured ceiling. Designed for regulated tenants (BNP, healthcare, defense) where letting a `C3 Strictement Confidentiel` document slip into a public retrieval index is a compliance incident.
+
+### What it reads
+
+- **OOXML** (`.docx` `.xlsx` `.pptx` and their `.docm`/`.xlsm`/`.pptm` macro-enabled siblings) — `MSIP_Label_<GUID>_*` properties in `docProps/custom.xml`. Pure stdlib, zero extra dependency.
+- **Legacy OLE binary** (`.doc` `.xls` `.ppt`) — same `MSIP_Label_*` keys in the custom properties stream. Requires `olefile`.
+- **PDF** — `MSIP_Label_*` blocks in the XMP metadata. Requires `pikepdf`.
+
+Missing optional deps degrade gracefully — the affected formats return `ClassificationResult(class_id=None, reason='<pkg>-missing')` instead of raising.
+
+### Tenant label map
+
+MIP label GUIDs are tenant-specific (the GUID for "C2 Confidentiel" in the BNP tenant is different from another organization's). The mapping lives in a JSON file pointed to by `TWIN_MIP_LABEL_MAP`:
+
+```json
+{
+  "11111111-2222-3333-4444-555555555555": "C1",
+  "22222222-3333-4444-5555-666666666666": {"id": "C2", "name": "C2 Confidentiel"},
+  "33333333-4444-5555-6666-777777777777": "C3",
+  "44444444-5555-6666-7777-888888888888": "C4"
+}
+```
+
+Long form (`{id, name}`) overrides the raw label name with a tenant-curated display string. Short form (just the id) is fine when the document already carries the right name.
+
+### CLI
+
+```bash
+# Probe a single file
+python scripts/extract_msip.py path/to/report.docx --label-map labels.json
+
+# Fail the CI when any file outranks C2
+python scripts/extract_msip.py --label-map labels.json --exit-code-on-above C2 docs/*.docx
+```
+
+### Programmatic use
+
+```python
+from twindb_lightrag_memgraph._classification_hook import install_classification_hook
+
+# Build the hook once at server startup
+hook = install_classification_hook(
+    label_map_path="/etc/twin/labels.json",
+    ceiling="C2",
+    audit_emit=my_audit_callback,  # optional (kind, payload) callback
+)
+
+# Per document, before LightRAG.insert():
+try:
+    classification = hook(file_path)        # dict, ready for DocStatus.metadata
+except ClassificationRejection as exc:
+    log.warning("refused: %s", exc)
+    # Skip the insert + surface the rejection in the operator UI
+```
+
+The returned `classification` dict is intended to be persisted on `DocStatus.metadata['classification']` — the WebUI's `DocDetailPanel` already gates the chunks tab and the "View raw" notice on `metadata.classification.class_id > 'C2'`.
+
+### Behavior summary
+
+| File state | `class_id` | `reason` | Default ceiling action |
+|---|---|---|---|
+| Labeled, GUID in map | `"C1".."C4"` | `None` | allow / reject per `is_above(class_id, ceiling)` |
+| Labeled, GUID not in map | `"UNKNOWN"` | `"unknown-label-guid"` | reject (fail-closed) |
+| No `docProps/custom.xml` | `None` | `"no-custom-props"` | reject (fail-closed) |
+| `custom.xml` without MSIP property | `None` | `"no-msip-label"` | reject (fail-closed) |
+| Malformed file | `None` | `"parse-error: <kind>"` | reject (fail-closed) |
+| Unsupported extension | `None` | `"unsupported-extension: <ext>"` | reject (fail-closed) |
+| Missing optional dep | `None` | `"olefile-missing"` / `"pikepdf-missing"` | reject (fail-closed); install the dep to enable detection |
+
+Set `TWIN_MIP_MAX_CLASSIFICATION` to relax the ceiling per workspace. Per-workspace overrides (`install_classification_hook(ceiling="C3")`) take precedence over the env var.
 
 ## Known limitations
 
