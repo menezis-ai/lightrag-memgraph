@@ -67,6 +67,14 @@ export interface DocumentsTabProps {
   onBulkDelete?: (docs: readonly Document[]) => void;
   /** Now in ms for deterministic relative-time rendering in tests. */
   nowMs?: number;
+  /**
+   * Optional slot rendered FULL-WIDTH between the header (h1 + actions) and
+   * the filter pills. The host (App.tsx) injects PendingDocsSection here so
+   * the "To be validated by your reviewer" panel sits inside the Documents
+   * tab content rather than above it. Pattern mirrors the design prototype
+   * (~/Downloads/prototype/src/app.jsx — `pendingSlot` prop).
+   */
+  pendingSlot?: React.ReactNode;
 }
 
 export function DocumentsTab({
@@ -79,6 +87,7 @@ export function DocumentsTab({
   onDeleteDoc,
   onBulkDelete,
   nowMs,
+  pendingSlot,
 }: DocumentsTabProps) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [statusFilter, setStatusFilter] = useUrlParam<StatusFilterKey>(
@@ -241,6 +250,8 @@ export function DocumentsTab({
           </button>
         </div>
       </div>
+
+      {pendingSlot}
 
       <div className="docs-filters">
         <span className="filter-label">Uploaded</span>
@@ -477,7 +488,7 @@ function DocRow({
   const filterStatus = STATUS_TO_FILTER[doc.status];
   return (
     <div
-      className={`docs-row has-select${checked ? ' is-checked' : ''}`}
+      className={`docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`}
       data-testid={`docs-row-${doc.doc_id}`}
     >
       <div className="cell-select" onClick={(e) => e.stopPropagation()}>
@@ -497,7 +508,21 @@ function DocRow({
           docId={doc.doc_id}
         />
       </div>
-      <div className="cell-summary">{doc.content_summary}</div>
+      <div className="cell-summary">
+        {isFail && (
+          <Icon
+            name="alert-triangle"
+            size={13}
+            color="var(--twin-red-vivid)"
+            // Inline-flex via aria-hidden + style so the icon sits flush with
+            // the summary text baseline. No extra span — the .is-failed row
+            // class already paints everything red.
+          />
+        )}
+        <span style={isFail ? { marginLeft: 6 } : undefined}>
+          {doc.content_summary}
+        </span>
+      </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
           <span
@@ -533,11 +558,6 @@ function DocRow({
           >
             <Icon name="x" size={13} />
           </button>
-        )}
-        {isFail && (
-          <span className="row-fail">
-            <Icon name="alert-triangle" size={13} />
-          </span>
         )}
       </div>
     </div>

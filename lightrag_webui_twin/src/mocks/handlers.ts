@@ -32,6 +32,27 @@ import type { Document } from '../types/document';
 const ANY = '*';
 const TWIN = '/twin/api';
 
+/**
+ * Mutable document store. Initialized from DOCUMENT_FIXTURES at module load,
+ * then mutated by approve / reject / delete handlers so the UI sees state
+ * changes when the host re-fetches via useDocuments() invalidation.
+ *
+ * Reset via `resetDocumentsState()` between tests so suites don't pollute
+ * each other.
+ */
+let documentsState: Document[] = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
+
+export function resetDocumentsState(): void {
+  documentsState = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
+}
+
+function updateDoc(id: string, patch: Partial<Document>): Document | null {
+  const idx = documentsState.findIndex((d) => d.doc_id === id);
+  if (idx < 0) return null;
+  documentsState[idx] = { ...documentsState[idx], ...patch };
+  return documentsState[idx];
+}
+
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
@@ -91,7 +112,7 @@ export const handlers = [
     // Skip Twin overlay paths so this generic /documents handler does not
     // shadow /twin/api/documents/* routes.
     if (url.pathname.startsWith(TWIN)) return undefined;
-    const filtered = DOCUMENT_FIXTURES.filter((d) =>
+    const filtered = documentsState.filter((d) =>
       matchDocumentsQuery(d, url.searchParams),
     );
     return HttpResponse.json({ items: filtered, total: filtered.length });
@@ -100,7 +121,7 @@ export const handlers = [
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
     const id = String(params.id);
-    const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+    const doc = documentsState.find((d) => d.doc_id === id);
     const count = doc?.chunks_count ?? 0;
     const chunks = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
       chunk_id: `${id}_c${i}`,
@@ -114,9 +135,11 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     return HttpResponse.json({ ok: true });
   }),
-  http.delete(`${ANY}/documents/:id`, ({ request }) => {
+  http.delete(`${ANY}/documents/:id`, ({ params, request }) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
+    const id = String(params.id);
+    documentsState = documentsState.filter((d) => d.doc_id !== id);
     return HttpResponse.json({ ok: true });
   }),
   http.get(`${ANY}/health`, ({ request }) => {
@@ -231,7 +254,7 @@ export const handlers = [
     `${ANY}${TWIN}/documents/:id/metadata`,
     ({ params }) => {
       const id = String(params.id);
-      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      const doc = documentsState.find((d) => d.doc_id === id);
       return HttpResponse.json({
         tags: doc?.tags ?? [],
         workspace: doc?.workspace ?? 'cib',
@@ -241,14 +264,19 @@ export const handlers = [
   ),
   http.post(
     `${ANY}${TWIN}/documents/:id/approve`,
-    ({ params }) => {
+    async ({ params, request }) => {
       const id = String(params.id);
-      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      const body = (await request.json().catch(() => ({}))) as {
+        edits?: Partial<Document>;
+      };
+      const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
-      return HttpResponse.json({
-        ...doc,
+      const updated = updateDoc(id, {
+        ...(body.edits ?? {}),
+        status: 'PROCESSED',
         review: { ...doc.review!, state: 'approved' as const },
       });
+      return HttpResponse.json(updated);
     },
   ),
   http.post(
@@ -256,20 +284,22 @@ export const handlers = [
     async ({ params, request }) => {
       const id = String(params.id);
       const body = (await request.json()) as { reason: string };
-      const doc = DOCUMENT_FIXTURES.find((d) => d.doc_id === id);
+      const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
-      return HttpResponse.json({
-        ...doc,
+      const updated = updateDoc(id, {
         review: {
           ...doc.review!,
           state: 'rejected' as const,
           justification: body.reason,
         },
       });
+      return HttpResponse.json(updated);
     },
   ),
   http.post(`${ANY}${TWIN}/documents/bulk-delete`, async ({ request }) => {
     const body = (await request.json()) as { doc_ids: string[] };
+    const ids = new Set(body.doc_ids);
+    documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
     return HttpResponse.json({ deleted: body.doc_ids.length });
   }),
 

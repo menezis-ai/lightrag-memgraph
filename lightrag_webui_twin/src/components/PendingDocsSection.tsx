@@ -180,16 +180,21 @@ export function PendingDocsSection({
                 <div className="pending-meta">
                   {modified ? (
                     <>
-                      Modification detected · {fmtDate(upd?.detected_at)} ·{' '}
-                      {doc.chunks_count ?? 0} chunks indexed · tags{' '}
-                      {doc.tags.join(', ')}
+                      Modified by <b>{upd?.requested_by}</b> ·{' '}
+                      {fmtDate(upd?.detected_at)} ·{' '}
+                      {upd?.chunks_indexed ?? doc.chunks_count ?? 0} chunks indexed
+                      {doc.tags.length > 0 && (
+                        <> · tags {doc.tags.join(', ')}</>
+                      )}
                     </>
                   ) : (
                     <>
                       Submitted by <b>{doc.review?.requested_by}</b> ·{' '}
                       {fmtDate(doc.review?.requested_at)} ·{' '}
-                      {doc.chunks_count ?? 0} chunks · tags{' '}
-                      {doc.tags.join(', ')}
+                      {doc.chunks_count ?? 0} chunks
+                      {doc.tags.length > 0 && (
+                        <> · tags {doc.tags.join(', ')}</>
+                      )}
                     </>
                   )}
                 </div>
@@ -293,6 +298,7 @@ interface EditApproveModalProps {
 function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
   const [summary, setSummary] = useState(doc.content_summary);
   const [tags, setTags] = useState(doc.tags.join(', '));
+  const charCount = summary.length;
   return (
     <div
       className="modal-backdrop"
@@ -300,15 +306,20 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
       data-testid="pending-doc-edit-modal"
     >
       <div
-        className="modal"
+        className="modal edit-approve-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Edit & Approve"
-        style={{ width: 520 }}
+        aria-label="Edit & approve document"
+        style={{ width: 620 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-header">
-          <h2>Edit &amp; Approve</h2>
+        <div className="modal-header ea-header">
+          <div className="ea-title">
+            <h2>Edit &amp; approve document</h2>
+            <div className="ea-subtitle">
+              Steward · tweak metadata before sign-off
+            </div>
+          </div>
           <button
             type="button"
             className="icon-btn"
@@ -318,25 +329,62 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
             <Icon name="x" size={16} />
           </button>
         </div>
-        <div className="modal-body">
-          <label>
-            Summary
-            <textarea
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              data-testid="pending-doc-edit-summary"
-              rows={3}
-            />
-          </label>
-          <label>
-            Tags (comma-separated)
+        <div className="modal-body edit-approve-body">
+          <p className="ea-intro">
+            Editing <code className="mono">{doc.file_path}</code>. Summary and
+            tags are steward-curated; original artefact is untouched. The{' '}
+            <code className="mono">doc.approved</code> event records{' '}
+            <code className="mono">edited: true</code>.
+          </p>
+
+          <div className="edit-approve-field">
+            <div className="ea-field-h">
+              <label
+                htmlFor="pending-doc-edit-summary"
+                className="ea-field-label"
+              >
+                Summary
+              </label>
+              <button
+                type="button"
+                className="ea-ai-btn"
+                data-testid="pending-doc-edit-ai-summary"
+                title="Generate a draft summary with the workspace LLM"
+              >
+                <Icon name="settings" size={11} /> Use AI to draft summary
+              </button>
+            </div>
+            <div className="ea-textarea-wrap">
+              <textarea
+                id="pending-doc-edit-summary"
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                data-testid="pending-doc-edit-summary"
+                rows={5}
+              />
+              {charCount > 0 && (
+                <span
+                  className="ea-char-badge"
+                  title={`${charCount} characters`}
+                >
+                  {charCount > 999 ? '999+' : charCount}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="edit-approve-field">
+            <label htmlFor="pending-doc-edit-tags" className="ea-field-label">
+              Tags <span className="ea-field-hint">— comma-separated, lowercase</span>
+            </label>
             <input
+              id="pending-doc-edit-tags"
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               data-testid="pending-doc-edit-tags"
             />
-          </label>
+          </div>
         </div>
         <div className="modal-footer">
           <button type="button" className="btn" onClick={onClose}>
@@ -351,12 +399,12 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
                 content_summary: summary,
                 tags: tags
                   .split(',')
-                  .map((t) => t.trim())
+                  .map((t) => t.trim().toLowerCase())
                   .filter(Boolean),
               })
             }
           >
-            Approve with edits
+            Approve with these edits
           </button>
         </div>
       </div>

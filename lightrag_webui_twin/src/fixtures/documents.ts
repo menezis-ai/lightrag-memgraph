@@ -171,10 +171,12 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
         edited_rel: '2h ago',
         detected_at: '2026-05-26',
         chunks_indexed: 54,
+        // Body = diff content only. The "edited by X · date" preamble belongs
+        // in the meta line, not duplicated here.
         summary_diff:
-          'Confluence page edited 2h ago by yann.dubois — added 2 new sections: ' +
-          '"PGA sizing on RHEL 9 large pages" and "AWR snapshot interpretation for ' +
-          'memory pressure". Existing sections unchanged. ~340 words added.',
+          'Added 2 new sections: "PGA sizing on RHEL 9 large pages" and ' +
+          '"AWR snapshot interpretation for memory pressure". Existing ' +
+          'sections unchanged. ~340 words added.',
       },
     },
   },

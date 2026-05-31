@@ -262,14 +262,14 @@ export function ActivityTab({
                 <Icon name="external-link" size={12} />
                 Export
               </button>
-              <button
-                className="ghost-btn danger"
-                onClick={() => setClearOpen(true)}
-                title="Palier 3 only — purges events past their retention window"
-              >
-                <Icon name="trash" size={12} />
-                Clear
-              </button>
+              {/*
+                Clear button removed — Activity is an IMMUTABLE LEDGER.
+                Audit events are append-only by doctrine (Louis HORVAT compliance
+                + EBA/DORA audit trail requirements). The retention-policy table
+                in Settings → Workspace governs natural expiry; no operator
+                affordance to wipe rows. Modal + clearOpen state still wired in
+                case it gets reintroduced behind a Steward-only ops escape.
+              */}
             </div>
           </div>
         </div>
