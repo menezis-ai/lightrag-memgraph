@@ -48,6 +48,12 @@ const PLACEHOLDER = '__TWIN_CONFIG_JSON__';
 /**
  * Resolve the active runtime config, applying the dev fallback when the
  * placeholder is still present (or `window.__twinConfig` is missing).
+ *
+ * In a PROD build, the absence of a substituted config is normally a hard
+ * error — it means the FastAPI sub-app didn't run and the bearer / scopes
+ * are not in the page. But for the standalone OVH demo deploy (Caddy + MSW
+ * client-side, no FastAPI behind), `VITE_FORCE_MSW=true` is the explicit
+ * opt-in for "we know there's no real backend, use the dev fallback".
  */
 export function resolveRuntimeConfig(
   source: TwinRuntimeConfig | string | undefined,
@@ -55,6 +61,9 @@ export function resolveRuntimeConfig(
 ): TwinRuntimeConfig {
   if (!source || source === PLACEHOLDER) {
     if (isDev) return DEV_CONFIG;
+    // PROD standalone demo path — VITE_FORCE_MSW=true means we deliberately
+    // shipped without a FastAPI substitution layer; use the demo fallback.
+    if (import.meta.env.VITE_FORCE_MSW === 'true') return DEV_CONFIG;
     throw new Error(
       '[twin-webui] window.__twinConfig was not substituted by the server. ' +
         'Check that the FastAPI sub-app is serving index.html via register(mount_server=True).',
