@@ -683,3 +683,32 @@
   justify-content: center;
   pointer-events: none;
 }
+
+/* ── Failed row visual treatment (FAILED status) ──────────────────────────
+   When a document's ingestion failed (unsupported MIME, too large, etc.),
+   the entire row turns red — text in red, file path in red, summary in
+   red, status in red. An alert-triangle icon prefixes the summary cell
+   to anchor the eye. The actions cell keeps the standard color so the
+   operator can still click delete / retag without ambiguity.
+*/
+.docs-row.is-failed,
+.docs-row.is-failed .cell-source span,
+.docs-row.is-failed .cell-summary,
+.docs-row.is-failed .cell-summary span,
+.docs-row.is-failed .cell-status,
+.docs-row.is-failed .cell-chunks,
+.docs-row.is-failed .cell-updated {
+  color: var(--twin-red-vivid);
+}
+.docs-row.is-failed .cell-source .mono,
+.docs-row.is-failed .cell-source .ti {
+  color: var(--twin-red-vivid);
+}
+.docs-row.is-failed .cell-summary {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.docs-row.is-failed:hover {
+  background: var(--twin-red-50);
+}
