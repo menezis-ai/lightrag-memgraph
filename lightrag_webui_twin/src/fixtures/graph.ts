@@ -64,3 +64,51 @@ export const GRAPH_RELATION_FIXTURES: readonly GraphRelation[] = [
   { id: 'r_20', source: 'e_claire', target: 'e_lightrag', label: 'ADMINISTERS', strength: 0.68 },
   { id: 'r_21', source: 'e_claire', target: 'e_rman', label: 'TAGGED', strength: 0.55 },
 ];
+
+/**
+ * Per-entity tag map for the Graph rail's "Filter by tag" picker (B4).
+ * Keys are entity ids; values are the tags that entity is associated with.
+ * Mirrors the prototype's GRAPH_ENTITY_TAGS (~/Downloads/prototype/data.js).
+ */
+export const GRAPH_ENTITY_TAGS: Record<string, readonly string[]> = {
+  e_rhel: ['rhel9', 'production'],
+  e_pga: ['oracle'],
+  e_archlog: ['rman', 'oracle'],
+  e_vmware: ['vmware', 'production'],
+  e_esxi: ['vmware'],
+  e_vmotion: ['vmware'],
+  e_mage: ['memgraph'],
+  e_lightrag: ['graphrag', 'memgraph'],
+  e_cypher: ['memgraph'],
+  e_swift: ['swift'],
+  e_iso20022: ['iso20022', 'swift'],
+  e_cft: ['cft', 'network'],
+  e_marc: ['oracle', 'rman'],
+  e_claire: ['governance'],
+  e_paris: ['production'],
+  e_aubervil: ['production'],
+};
+
+/**
+ * Per-entity source-doc map for the Graph rail's "Filter by source" picker.
+ * Values are file_path strings matching DOCUMENT_FIXTURES.
+ */
+export const GRAPH_ENTITY_DOCS: Record<string, readonly string[]> = {
+  e_oracle: ['oracle-restart-procedure.pdf', '/cib/runbooks/oracle-pga-tuning'],
+  e_rman: ['oracle-restart-procedure.pdf', '/cib/runbooks/rman-restore-cookbook'],
+  e_rhel: ['oracle-restart-procedure.pdf', 'rhel9-kernel-tuning.pdf'],
+  e_pga: ['/cib/runbooks/oracle-pga-tuning'],
+  e_archlog: ['/cib/runbooks/rman-restore-cookbook'],
+  e_vmware: ['vmware-best-practices-2026.pdf'],
+  e_esxi: ['vmware-best-practices-2026.pdf'],
+  e_vmotion: ['vmware-best-practices-2026.pdf'],
+  e_memgraph: ['memgraph-mage-3.8-release-notes.md'],
+  e_mage: ['memgraph-mage-3.8-release-notes.md'],
+  e_lightrag: ['memgraph-mage-3.8-release-notes.md'],
+  e_cypher: ['memgraph-mage-3.8-release-notes.md'],
+  e_swift: ['swift-iso20022-migration.pdf'],
+  e_iso20022: ['swift-iso20022-migration.pdf'],
+  e_cft: ['cft-network-architecture.docx'],
+  e_marc: ['oracle-restart-procedure.pdf'],
+  e_claire: ['/cib/governance/tagging-charter'],
+};

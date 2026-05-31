@@ -190,7 +190,9 @@ export function TagsTab({
                 >
                   <div className="pending-card-h">
                     <code className="pending-tagname">{t.tag}</code>
-                    <StatusBadge status="pending-review" />
+                    <span style={{ marginLeft: 'auto' }}>
+                      <StatusBadge status="pending-review" />
+                    </span>
                   </div>
                   <div className="pending-justif">{t.justification}</div>
                   <div className="pending-meta">

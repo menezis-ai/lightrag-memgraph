@@ -24,6 +24,17 @@ import {
   type GraphEntityType,
   type GraphRelation,
 } from '../types/graph';
+import {
+  GRAPH_ENTITY_DOCS,
+  GRAPH_ENTITY_TAGS,
+} from '../fixtures/graph';
+
+const tagsOf = (e: GraphEntity): readonly string[] =>
+  GRAPH_ENTITY_TAGS[e.id] ?? [];
+const docsOf = (e: GraphEntity): readonly string[] =>
+  GRAPH_ENTITY_DOCS[e.id] ?? [];
+const shortDoc = (d: string): string =>
+  d.includes('/') ? d.split('/').filter(Boolean).pop() ?? d : d;
 
 const TYPE_KEYS = Object.keys(GRAPH_TYPE_LABEL) as readonly GraphEntityType[];
 
@@ -47,6 +58,19 @@ export function GraphTab({
     'gtype',
     TYPE_KEYS,
   );
+  const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
+  const [srcFilter, setSrcFilter] = useUrlArrayParam('gsrc', []);
+
+  const allTags = useMemo(() => {
+    const s = new Set<string>();
+    entities.forEach((e) => tagsOf(e).forEach((t) => s.add(t)));
+    return Array.from(s).sort();
+  }, [entities]);
+  const allSources = useMemo(() => {
+    const s = new Set<string>();
+    entities.forEach((e) => docsOf(e).forEach((d) => s.add(d)));
+    return Array.from(s).sort();
+  }, [entities]);
   const [selectedId, setSelectedId] = useUrlParam<string>(
     'gent',
     entities[0]?.id ?? '',
@@ -70,13 +94,23 @@ export function GraphTab({
     const needle = q.trim().toLowerCase();
     return entities.filter((e) => {
       if (!activeTypes.includes(e.type)) return false;
+      if (
+        tagFilter.length > 0 &&
+        !tagsOf(e).some((t) => tagFilter.includes(t))
+      )
+        return false;
+      if (
+        srcFilter.length > 0 &&
+        !docsOf(e).some((d) => srcFilter.includes(d))
+      )
+        return false;
       if (!needle) return true;
       return (
         e.name.toLowerCase().includes(needle) ||
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, activeTypes]);
+  }, [entities, q, activeTypes, tagFilter, srcFilter]);
 
   const visibleIds = useMemo(() => new Set(matches.map((e) => e.id)), [matches]);
   const visibleRels = useMemo(
@@ -223,6 +257,21 @@ export function GraphTab({
               );
             })}
           </ul>
+          <FilterPicker
+            label="Filter by tag"
+            options={allTags}
+            selected={tagFilter}
+            onChange={setTagFilter}
+            placeholder="Search tags…"
+          />
+          <FilterPicker
+            label="Filter by source"
+            options={allSources}
+            selected={srcFilter}
+            onChange={setSrcFilter}
+            placeholder="Search sources…"
+            format={shortDoc}
+          />
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>
             <ul>
@@ -553,5 +602,170 @@ function GraphDetailPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+// ─────────────────────────────────────────── FilterPicker (B4) ──
+// Fuzzy-search picker scaled past chip-walls (200+ sources / 50+ tags).
+// Layout (user request 2026-05-31): search input FIRST, removable pills
+// BELOW the search bar — inverse of the design prototype, more intuitive
+// for "search → click to add → see what's selected just below".
+
+interface FilterPickerProps {
+  label: string;
+  options: readonly string[];
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  format?: (x: string) => string;
+}
+
+function FilterPicker({
+  label,
+  options,
+  selected,
+  onChange,
+  placeholder,
+  format,
+}: FilterPickerProps) {
+  const fmt = format ?? ((x: string) => x);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [focus, setFocus] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const fuzzy = (opt: string, q: string): boolean => {
+    opt = opt.toLowerCase();
+    q = q.toLowerCase().trim();
+    if (!q) return true;
+    if (opt.indexOf(q) >= 0) return true;
+    let i = 0;
+    for (let k = 0; k < opt.length; k++) {
+      if (opt[k] === q[i]) i++;
+      if (i >= q.length) return true;
+    }
+    return false;
+  };
+
+  const avail = options.filter((o) => !selected.includes(o));
+  const rank = (o: string) => {
+    const q = query.toLowerCase().trim();
+    const a = fmt(o).toLowerCase().indexOf(q);
+    const b = o.toLowerCase().indexOf(q);
+    return a >= 0 ? a : b >= 0 ? b : 999;
+  };
+  const results = (
+    query
+      ? avail
+          .filter((o) => fuzzy(fmt(o), query) || fuzzy(o, query))
+          .sort((a, b) => rank(a) - rank(b) || fmt(a).length - fmt(b).length)
+      : avail
+  ).slice(0, 8);
+
+  const add = (o: string) => {
+    onChange(selected.concat([o]));
+    setQuery('');
+    setFocus(0);
+  };
+  const remove = (o: string) => onChange(selected.filter((x) => x !== o));
+
+  return (
+    <div className="kg-rail-filter" ref={boxRef}>
+      <div className="kg-rail-h">
+        {label}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            className="kg-rail-clear"
+            onClick={() => onChange([])}
+          >
+            clear ({selected.length})
+          </button>
+        )}
+      </div>
+      {/* Search input FIRST (per 2026-05-31 user request — inverse of prototype) */}
+      <div className="kg-picker">
+        <input
+          className="kg-picker-input"
+          value={query}
+          placeholder={placeholder}
+          aria-label={label}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setFocus(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setFocus((f) => Math.min(results.length - 1, f + 1));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setFocus((f) => Math.max(0, f - 1));
+            } else if (e.key === 'Enter' && results[focus]) {
+              e.preventDefault();
+              add(results[focus]);
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+            }
+          }}
+        />
+        {open && results.length > 0 && (
+          <div className="kg-picker-menu">
+            {results.map((o, i) => (
+              <button
+                key={o}
+                type="button"
+                className={`kg-picker-opt${i === focus ? ' focus' : ''}`}
+                onMouseEnter={() => setFocus(i)}
+                onMouseDown={() => add(o)}
+                title={o}
+                data-testid={`kg-pick-${o}`}
+              >
+                {fmt(o)}
+              </button>
+            ))}
+          </div>
+        )}
+        {open && query && results.length === 0 && (
+          <div className="kg-picker-menu">
+            <div className="kg-picker-empty">No match</div>
+          </div>
+        )}
+      </div>
+      {/* Selected pills BELOW the search bar (per 2026-05-31 user request) */}
+      {selected.length > 0 && (
+        <div className="kg-picker-pills">
+          {selected.map((o) => (
+            <span
+              key={o}
+              className="kg-picker-pill"
+              title={o}
+              data-testid={`kg-picked-${o}`}
+            >
+              <span className="lbl">{fmt(o)}</span>
+              <button
+                type="button"
+                onClick={() => remove(o)}
+                aria-label={`Remove ${fmt(o)}`}
+              >
+                <Icon name="x" size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

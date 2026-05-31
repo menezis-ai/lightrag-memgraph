@@ -734,3 +734,21 @@
   padding: 1px 6px;
   font-size: 10px;
 }
+
+/* StatusBadge.sm pending — match the .class-pill.class-c2 visual contour
+   exactly (amber tonality). The user's verbatim ask: "même contour que C3"
+   = thin border, mono font, small radius. Use class-c2 colors not c3 since
+   pending is amber-coded throughout the maquette (matches the "Modified
+   source" pill + the legacy .status-pending amber colors).
+*/
+.status-badge.status-pending.sm {
+  background: var(--twin-amber-50);
+  color: var(--twin-amber-700);
+  border: 0.5px solid var(--twin-amber-700);
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
