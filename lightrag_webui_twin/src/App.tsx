@@ -28,6 +28,7 @@ import { DocumentsTab } from './components/DocumentsTab';
 import { GraphTab } from './components/GraphTab';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { PendingDocsSection } from './components/PendingDocsSection';
+import { ReadSourceModal } from './components/ReadSourceModal';
 import { RetagModal, type RetagAction } from './components/RetagModal';
 import { RetrievalTab } from './components/RetrievalTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -107,6 +108,7 @@ function AppShell() {
   const [retagDoc, setRetagDoc] = useState<Document | null>(null);
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
+  const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
 
   // Auth + onboarding
   const auth = useAuth();
@@ -349,6 +351,7 @@ function AppShell() {
               <PendingDocsSection
                 docs={pendingDocs}
                 actor={auth.user?.email ?? 'anonymous'}
+                onReadSource={(d) => setReadSourceDoc(d)}
                 onToast={(kind, title, sub) =>
                   pushToast({ kind, title, sub })
                 }
@@ -375,11 +378,18 @@ function AppShell() {
             <SettingsTab
               activeWorkspace={workspace}
               kbName={kbName}
-              onDeleteWorkspace={(id) =>
+              onSignOut={() =>
                 pushToast({
                   kind: 'done',
-                  title: 'Workspace delete queued',
-                  sub: id,
+                  title: 'Signed out',
+                  sub: 'POST /twin/api/auth/logout · session cleared',
+                })
+              }
+              onRestartTutorial={() =>
+                pushToast({
+                  kind: 'done',
+                  title: 'Tutorial restarted',
+                  sub: 'Welcome modal will appear · 0 of 6 steps complete',
                 })
               }
             />
@@ -469,6 +479,10 @@ function AppShell() {
             sub: d.file_path,
           })
         }
+      />
+      <ReadSourceModal
+        doc={readSourceDoc}
+        onClose={() => setReadSourceDoc(null)}
       />
       <OnboardingWizard
         open={onboardingOpen}

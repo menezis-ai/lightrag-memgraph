@@ -17,17 +17,29 @@ import type { TwinRuntimeConfig } from '../types/auth';
 export const DEV_CONFIG: TwinRuntimeConfig = {
   apiBaseUrl: '/twin/api',
   lightragBaseUrl: '/api',
-  idpLogoutUrl: 'http://localhost:8000/realms/twin/protocol/openid-connect/logout',
+  idpLogoutUrl: 'https://idp.twin.internal/realms/twin/protocol/openid-connect/logout',
   debugUser: {
-    sso_subject: 'dev.steward@twin.local',
-    email: 'dev.steward@twin.local',
-    name: 'dev.steward',
+    sso_subject: 'claire.benoit@demo.local',
+    email: 'claire.benoit@demo.local',
+    name: 'Claire Benoit',
     palier: {
       level: 3,
       label: 'Steward',
       scopes: ['twin:read', 'twin:write', 'twin:approve'],
     },
-    workspaces: ['cib', 'wm', 'retail'],
+    workspaces: ['cib', 'cib-edge', 'payments', 'infra', 'sandbox'],
+    idp: 'keycloak',
+    idp_realm: 'twin-cib',
+    sub: 'clb-7f4e',
+    session_expires: '2026-05-19T23:59:00Z',
+    gateway_scopes: [
+      'read:documents',
+      'write:documents',
+      'read:query',
+      'read:activity',
+      'admin:tags',
+      'admin:workspace',
+    ],
   },
 };
 

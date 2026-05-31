@@ -1,13 +1,14 @@
 /**
- * Unit tests for SettingsTab and its sub-sections.
+ * Unit tests for SettingsTab (3-section redesign per 2026-05-30).
  *
  * Behaviors under test:
- *   - Profile reads useAuth() and renders display name + palier
- *   - Workspace renders the active workspace id + runtime config
- *   - Providers Configure opens a panel; Reader cannot Request change
- *   - Danger zone is hidden for non-Steward
- *   - Danger zone delete requires typing the workspace id verbatim
- *   - 4 sections present, no Tokens/Members/API generation rail
+ *   - rail exposes exactly Profile / API / Workspace (Providers / Members /
+ *     Danger zone / Tokens / API generation all absent)
+ *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
+ *   - Profile Sign out button fires onSignOut
+ *   - Profile Restart tutorial button fires onRestartTutorial
+ *   - Workspace section shows the workspace id + retention table
+ *   - API section shows the ApiTab (proxy)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,14 +18,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsTab } from './SettingsTab';
 import { __resetAuthConfigCacheForTests } from '../hooks/useAuth';
 
-function renderWith(qc: QueryClient, props: Partial<Parameters<typeof SettingsTab>[0]> = {}) {
+function renderWith(
+  qc: QueryClient,
+  props: Partial<Parameters<typeof SettingsTab>[0]> = {},
+) {
   return render(
     <QueryClientProvider client={qc}>
-      <SettingsTab
-        activeWorkspace="cib"
-        kbName="CIB Knowledge"
-        {...props}
-      />
+      <SettingsTab activeWorkspace="cib" kbName="CIB KB" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -39,15 +39,16 @@ afterEach(() => {
 });
 
 describe('SettingsTab — rail', () => {
-  it('exposes exactly 4 sections: profile, workspace, providers, danger', () => {
+  it('exposes exactly 3 sections: profile, api, workspace', () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-rail-profile')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-rail-api')).toBeInTheDocument();
     expect(screen.getByTestId('settings-rail-workspace')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-rail-providers')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-rail-danger')).toBeInTheDocument();
-    // Removed sections must not appear
-    expect(screen.queryByText(/tokens/i)).toBeNull();
-    expect(screen.queryByText(/api generation/i)).toBeNull();
+    // Removed sections must NOT appear (30/05 cleanup)
+    expect(screen.queryByTestId('settings-rail-providers')).toBeNull();
+    expect(screen.queryByTestId('settings-rail-members')).toBeNull();
+    expect(screen.queryByTestId('settings-rail-danger')).toBeNull();
+    expect(screen.queryByTestId('settings-rail-tokens')).toBeNull();
   });
 });
 
@@ -55,77 +56,53 @@ describe('SettingsTab — Profile', () => {
   it('shows MyAccess identity from useAuth (dev fallback = Steward)', () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-profile')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-profile-name').textContent).toBe(
-      'dev.steward',
-    );
+    expect(
+      screen.getByTestId('settings-profile-name').textContent,
+    ).toBe('Claire Benoit');
     expect(screen.getByText('Steward')).toBeInTheDocument();
+  });
+
+  it('Sign out button fires onSignOut', async () => {
+    const onSignOut = vi.fn();
+    renderWith(new QueryClient(), { onSignOut });
+    await userEvent.click(screen.getByTestId('settings-signout'));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('Restart tutorial button fires onRestartTutorial', async () => {
+    const onRestart = vi.fn();
+    renderWith(new QueryClient(), { onRestartTutorial: onRestart });
+    await userEvent.click(screen.getByTestId('settings-restart-tutorial'));
+    expect(onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders gateway scopes as chip list', () => {
+    renderWith(new QueryClient());
+    // Steward dev fallback has 6 scopes
+    expect(screen.getByText('read:documents')).toBeInTheDocument();
+    expect(screen.getByText('admin:workspace')).toBeInTheDocument();
   });
 });
 
 describe('SettingsTab — Workspace', () => {
-  it('renders the active workspace id + Twin api base', async () => {
-    renderWith(new QueryClient(), { activeWorkspace: 'wm' });
+  it('renders the workspace id + retention table rows', async () => {
+    renderWith(new QueryClient());
     await userEvent.click(screen.getByTestId('settings-rail-workspace'));
-    expect(screen.getByTestId('settings-active-ws').textContent).toBe('wm');
-    expect(screen.getByText('/twin/api')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-active-ws').textContent).toBe('cib');
+    // 6 retention rows present
+    expect(screen.getByText('Source mgmt')).toBeInTheDocument();
+    expect(screen.getByText('Tag mgmt')).toBeInTheDocument();
+    expect(screen.getByText('Retrieval')).toBeInTheDocument();
+    expect(screen.getByText('Admin')).toBeInTheDocument();
+    expect(screen.getByText('Auth')).toBeInTheDocument();
+    expect(screen.getByText('Policy / System')).toBeInTheDocument();
   });
 });
 
-describe('SettingsTab — Providers', () => {
-  it('opens a Configure panel and shows Request change for Steward', async () => {
+describe('SettingsTab — API', () => {
+  it('renders the ApiTab when API section is selected', async () => {
     renderWith(new QueryClient());
-    await userEvent.click(screen.getByTestId('settings-rail-providers'));
-    await userEvent.click(
-      screen.getByTestId('settings-providers-configure-llm'),
-    );
-    expect(screen.getByTestId('settings-provider-panel-llm')).toBeInTheDocument();
-    expect(
-      screen.getByTestId('settings-provider-request-llm'),
-    ).toBeInTheDocument();
-  });
-});
-
-describe('SettingsTab — Danger', () => {
-  it('requires typing the workspace id verbatim before Delete is enabled', async () => {
-    const onDelete = vi.fn();
-    renderWith(new QueryClient(), {
-      activeWorkspace: 'cib',
-      onDeleteWorkspace: onDelete,
-    });
-    await userEvent.click(screen.getByTestId('settings-rail-danger'));
-    await userEvent.click(screen.getByTestId('settings-danger-delete-ws'));
-
-    const submit = screen.getByTestId('settings-danger-confirm-submit');
-    expect(submit).toBeDisabled();
-
-    const input = screen.getByTestId('settings-danger-confirm-input');
-    await userEvent.type(input, 'wrong-ws');
-    expect(submit).toBeDisabled();
-
-    await userEvent.clear(input);
-    await userEvent.type(input, 'cib');
-    expect(submit).not.toBeDisabled();
-
-    await userEvent.click(submit);
-    expect(onDelete).toHaveBeenCalledWith('cib');
-  });
-
-  it('hides destructive actions for non-Steward users', async () => {
-    __resetAuthConfigCacheForTests();
-    (window as Window & typeof globalThis).__twinConfig = {
-      apiBaseUrl: '/twin/api',
-      lightragBaseUrl: '/api',
-      idpLogoutUrl: 'http://localhost/logout',
-      debugUser: {
-        sso_subject: 'r@x.local',
-        email: 'r@x.local',
-        name: 'reader.bob',
-        palier: { level: 1, label: 'Reader', scopes: ['twin:read'] },
-        workspaces: ['cib'],
-      },
-    };
-    renderWith(new QueryClient());
-    await userEvent.click(screen.getByTestId('settings-rail-danger'));
-    expect(screen.queryByTestId('settings-danger-delete-ws')).toBeNull();
+    await userEvent.click(screen.getByTestId('settings-rail-api'));
+    expect(screen.getByTestId('settings-api')).toBeInTheDocument();
   });
 });

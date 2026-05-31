@@ -4,6 +4,8 @@
 @import './styles/tokens.css';
 @import './styles/legacy.css';
 @import './styles/overrides.css';
+@import './styles/polish.css';
+@import './styles/prototype.css';
 
 @tailwind base;
 @tailwind components;

@@ -47,6 +47,11 @@ beforeEach(() => {
       name: 'test.user',
       palier: { level: 3, label: 'Steward', scopes: ['twin:read', 'twin:write'] },
       workspaces: WORKSPACE_FIXTURES.map((w) => w.id),
+      idp: 'keycloak',
+      idp_realm: 'twin-test',
+      sub: 'test-001',
+      session_expires: '2026-12-31T23:59:00Z',
+      gateway_scopes: ['read:documents', 'write:documents'],
     },
   };
   server.listen({ onUnhandledRequest: 'bypass' });
