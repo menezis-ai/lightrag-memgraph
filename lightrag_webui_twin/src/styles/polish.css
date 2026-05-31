@@ -752,3 +752,50 @@
   font-weight: 600;
   letter-spacing: 0.04em;
 }
+
+/* ── DocumentsTab row actions — accessible click targets ──────────────────
+   The maquette has .cell-action (singular) for a single action button.
+   PR #155 introduced .cell-actions (plural) with 2 buttons (retag +
+   delete) and an optional alert-triangle, but never landed the CSS — the
+   icons rendered adjacent with no gap, making them painful to hit. Fix:
+   give the column proper gap + give .row-action a square 28×28 click
+   target with hover/focus affordance. Danger variant keeps the red.
+*/
+.cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+}
+.row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 0.5px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.row-action:hover {
+  background: var(--color-background-secondary);
+  border-color: var(--color-border-tertiary);
+  color: var(--color-text-primary);
+}
+.row-action:focus-visible {
+  outline: none;
+  border-color: var(--twin-accent);
+  box-shadow: 0 0 0 2px var(--twin-accent-soft-bg);
+}
+.row-action.row-action-danger {
+  color: var(--twin-red-vivid);
+}
+.row-action.row-action-danger:hover {
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-border);
+  color: var(--twin-red-vivid);
+}

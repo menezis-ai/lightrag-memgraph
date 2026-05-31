@@ -124,7 +124,53 @@ describe('SystemStatusIndicator', () => {
     });
   });
 
-  it('opens the detail popover on click', async () => {
+  // Couche 1.2 — Bucket A : sys-pill geometry from the prototype.
+  // The topbar trigger must be a .sys-pill with a .sys-dot + .sys-pill-label,
+  // and switch label/variant based on the worst-of status (ok → "All systems",
+  // degraded → "Degraded" + .sys-pill-warn, down → "Outage" + .sys-pill-error).
+  it('renders the .sys-pill shape with the "All systems" label when healthy', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <SystemStatusIndicator pollMs={60_000} />
+      </Wrap>,
+    );
+    const button = screen.getByTestId('topbar-status-indicator');
+    await waitFor(() => {
+      expect(button.classList.contains('sys-pill')).toBe(true);
+      expect(button.querySelector('.sys-dot')).toBeTruthy();
+      expect(button.querySelector('.sys-pill-label')?.textContent).toBe(
+        'All systems',
+      );
+    });
+  });
+
+  it('switches to .sys-pill-error + "Outage" when both endpoints fail', async () => {
+    // Override both health endpoints with errors so worst-of resolves to 'down'.
+    server.use(
+      http.get('*/health', ({ request }) => {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith('/twin/api')) return undefined;
+        return HttpResponse.error();
+      }),
+      http.get('*/twin/api/health', () => HttpResponse.error()),
+    );
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <SystemStatusIndicator pollMs={60_000} />
+      </Wrap>,
+    );
+    const button = screen.getByTestId('topbar-status-indicator');
+    await waitFor(() => {
+      expect(button.classList.contains('sys-pill-error')).toBe(true);
+      expect(button.querySelector('.sys-pill-label')?.textContent).toBe(
+        'Outage',
+      );
+    });
+  });
+
+  it('opens the .sys-popover with per-surface checks on click', async () => {
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
@@ -132,10 +178,11 @@ describe('SystemStatusIndicator', () => {
       </Wrap>,
     );
     await userEvent.click(screen.getByTestId('topbar-status-indicator'));
-    await waitFor(() => {
-      expect(screen.getByTestId('status-lightrag')).toBeInTheDocument();
-      expect(screen.getByTestId('status-twin')).toBeInTheDocument();
-    });
+    const popover = await screen.findByRole('dialog', { name: 'System status' });
+    expect(popover.classList.contains('sys-popover')).toBe(true);
+    expect(popover.querySelector('.sys-popover-checks')).toBeTruthy();
+    expect(screen.getByTestId('status-lightrag')).toBeInTheDocument();
+    expect(screen.getByTestId('status-twin')).toBeInTheDocument();
   });
 });
 

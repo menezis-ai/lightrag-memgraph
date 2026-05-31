@@ -4,7 +4,16 @@ import './index.css';
 import App from './App.tsx';
 
 async function bootstrap(): Promise<void> {
-  if (import.meta.env.DEV && import.meta.env.VITE_USE_MSW !== 'false') {
+  // MSW activation policy:
+  //   - DEV         : on by default (set VITE_USE_MSW=false to disable)
+  //   - PROD demo   : opt-in via VITE_FORCE_MSW=true (OVH static deploy
+  //                   has no FastAPI backend; MSW serves all fixtures
+  //                   client-side via public/mockServiceWorker.js)
+  //   - PROD real   : off (default), the app expects a real backend
+  const dev = import.meta.env.DEV;
+  const forced = import.meta.env.VITE_FORCE_MSW === 'true';
+  const disabled = import.meta.env.VITE_USE_MSW === 'false';
+  if ((dev && !disabled) || forced) {
     const { startMsw } = await import('./mocks/browser');
     await startMsw();
   }
