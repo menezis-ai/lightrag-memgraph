@@ -126,14 +126,13 @@ export function TagsTab({
               Thesaurus governance · {totalActive} active tags · {requested.length}{' '}
               pending requests · workspace <code>cib</code>
             </span>
-            <span className="dot-sep">·</span>
-            <span
-              className="palier-pill"
-              tabIndex={0}
-              title="Palier 3 (admin / steward) — full access: approve/reject tag requests, edit definitions, deprecate, delete with migration, purge expired activity events."
-            >
-              palier {currentUser.palier} · {currentUser.role}
-            </span>
+            {/*
+              palier-pill killed per the 30/05 cleanup. Role is JWT-only —
+              the operator's capabilities (canEdit / canSuggest) are gated
+              silently below; surfacing "palier 3 · admin / steward" as a
+              header chrome chip was a maquette gimmick that doesn't carry
+              its weight in production.
+            */}
           </div>
         </div>
         <div className="tags-header-actions">
@@ -221,7 +220,7 @@ export function TagsTab({
                     </div>
                   ) : (
                     <div className="pending-actions">
-                      <span className="muted">Awaiting palier-3 review</span>
+                      <span className="muted">Awaiting reviewer approval</span>
                     </div>
                   )}
                 </div>
@@ -447,7 +446,7 @@ function TagsEmptyZero({ canSuggest, onRequest }: TagsEmptyZeroProps) {
           </button>
         ) : (
           <span className="tags-empty-hint">
-            Your palier doesn't allow tag requests. Ask a Tier 2+ steward.
+            Your role doesn't allow tag requests. Ask a Tier 2+ reviewer.
           </span>
         )}
       </div>

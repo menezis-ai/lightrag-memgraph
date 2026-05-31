@@ -303,12 +303,21 @@ function AppShell() {
   // Resolved props — fall back to the local fixtures while the first fetch is
   // in flight so the UI never shows an empty shell on cold start.
   const docList = docs.data?.items ?? DOCUMENT_FIXTURES;
-  const pendingDocs = docList.filter(
-    (d) => d.review?.state === 'pending-review',
-  );
-  const nonPendingDocs = docList.filter(
-    (d) => d.review?.state !== 'pending-review',
-  );
+  // Pending = "needs reviewer attention", covers both first-time approval
+  // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
+  // (modified — Fabrice 2026-05-26 spec). Sort so pending-review cards come
+  // first, modified second, to keep the reviewer's eye on new arrivals.
+  const isPendingReview = (d: Document) =>
+    d.review?.state === 'pending-review' || d.review?.state === 'modified';
+  const pendingDocs = docList
+    .filter(isPendingReview)
+    .slice()
+    .sort(
+      (a, b) =>
+        (a.review!.state === 'modified' ? 1 : 0) -
+        (b.review!.state === 'modified' ? 1 : 0),
+    );
+  const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
   const thesaurusList = thesaurus.data ?? THESAURUS_FIXTURES;
   const tagList = tags.data ?? TAG_FIXTURES;
   const tagCategoryList = tagCategories.data ?? TAG_CATEGORY_FIXTURES;

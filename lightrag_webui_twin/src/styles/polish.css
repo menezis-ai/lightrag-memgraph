@@ -542,3 +542,144 @@
   color: var(--twin-amber-vivid);
   border-color: var(--twin-amber-vivid);
 }
+
+/* ── Edit & Approve modal — vertical labels + full-width inputs ──────────
+   The maquette's default <label> wrapping an <input> renders inline
+   (label beside field). For multi-line editors (textarea), that produces
+   a squashed label column. Switch to block layout with label-above.
+*/
+.edit-approve-body {
+  gap: 14px;
+}
+.edit-approve-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edit-approve-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.edit-approve-field textarea,
+.edit-approve-field input[type="text"] {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  resize: vertical;
+  line-height: 1.45;
+}
+.edit-approve-field textarea:focus,
+.edit-approve-field input[type="text"]:focus {
+  outline: none;
+  border-color: var(--twin-accent);
+  box-shadow: 0 0 0 2px var(--twin-accent-soft-bg);
+}
+
+/* Same fix for the Reject modal's reason textarea. */
+.modal-body > textarea[aria-label="Rejection reason"] {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  resize: vertical;
+  line-height: 1.45;
+}
+.modal-body > textarea[aria-label="Rejection reason"]:focus {
+  outline: none;
+  border-color: var(--twin-accent);
+  box-shadow: 0 0 0 2px var(--twin-accent-soft-bg);
+}
+
+/* ── Edit & Approve modal — maquette-grade layout (Steward sign-off) ────── */
+.edit-approve-modal { max-width: 94vw; }
+.ea-header { align-items: flex-start; }
+.ea-title h2 { margin: 0; font-size: 16px; font-weight: 500; }
+.ea-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.ea-intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  padding: 10px 14px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  border-left: 2px solid var(--color-border-secondary);
+}
+.ea-intro code { font-size: 11.5px; }
+.ea-field-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ea-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+}
+.ea-field-hint {
+  font-size: 10.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-tertiary);
+}
+.ea-ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, #8B5CF6 12%, transparent),
+    color-mix(in oklab, #3871B4 12%, transparent)
+  );
+  color: #8B5CF6;
+  border: 0.5px solid color-mix(in oklab, #8B5CF6 30%, transparent);
+  cursor: pointer;
+  transition: background 120ms;
+}
+.ea-ai-btn:hover {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, #8B5CF6 20%, transparent),
+    color-mix(in oklab, #3871B4 20%, transparent)
+  );
+}
+.ea-textarea-wrap { position: relative; }
+.ea-char-badge {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--twin-red-vivid);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}

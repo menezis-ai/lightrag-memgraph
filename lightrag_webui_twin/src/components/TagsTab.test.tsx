@@ -41,13 +41,15 @@ afterEach(() => {
 });
 
 describe('TagsTab — rendering', () => {
-  it('renders header with active + pending counts and palier pill', () => {
+  it('renders header with active + pending counts; no palier pill', () => {
     render(<TagsTab {...defaultProps()} />);
     expect(screen.getByRole('heading', { name: 'Tags' })).toBeInTheDocument();
     // 21 fixtures - 2 requested = 19 active
     const sub = document.querySelector('.tags-sub') as HTMLElement;
     expect(sub.textContent).toMatch(/19 active tags · 2 pending requests/);
-    expect(sub.textContent).toMatch(/palier 3 · admin \/ steward/);
+    // palier-pill killed per 30/05 cleanup — role lives in JWT, not in chrome
+    expect(sub.textContent).not.toMatch(/palier 3/);
+    expect(document.querySelector('.palier-pill')).toBeNull();
   });
 
   it('renders the pending requests section with Approve/Edit-approve/Reject for palier 3', () => {
@@ -62,11 +64,11 @@ describe('TagsTab — rendering', () => {
     expect(within(argocd).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });
 
-  it('palier 2 sees pending section but only "Awaiting palier-3 review" caption', () => {
+  it('palier 2 sees pending section but only "Awaiting reviewer approval" caption', () => {
     render(<TagsTab {...defaultProps(PALIER2)} />);
     const argocd = screen.getByTestId('pending-argocd');
     expect(within(argocd).queryByRole('button', { name: 'Approve' })).toBeNull();
-    expect(within(argocd).getByText('Awaiting palier-3 review')).toBeInTheDocument();
+    expect(within(argocd).getByText('Awaiting reviewer approval')).toBeInTheDocument();
   });
 
   it('palier 1 does NOT see the pending section at all', () => {
