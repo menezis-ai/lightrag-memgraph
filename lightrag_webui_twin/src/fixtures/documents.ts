@@ -124,7 +124,24 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: TWO_HOURS_AGO,
     updated_at: TWO_HOURS_AGO,
     error_msg: null,
-    metadata: { mime: 'application/pdf', uploader: 'claire.benoit', classification: 'internal' },
+    metadata: {
+      mime: 'application/pdf',
+      uploader: 'claire.benoit',
+      // Structured MIP classification (post-ingestion via PR #157 hook).
+      // C2 = Confidentiel — most CIB runbooks land here. Visible as a yellow
+      // pill in DocumentsTab + PendingDocs cards.
+      classification: {
+        class_id: 'C2',
+        class_name: 'C2 Confidentiel',
+        label_guid: '22222222-2222-2222-2222-222222222222',
+        raw_name: 'C2 Confidentiel',
+        set_date: '2026-03-12T14:22:01Z',
+        method: 'Standard',
+        source_format: 'ooxml',
+        reason: null,
+        meta: { Enabled: 'true', SiteId: '{99999999-bnp-tenant-id-here}' },
+      },
+    },
     type: 'file',
     tags: ['rman', 'oracle'],
     workspace: 'cib',
@@ -189,7 +206,23 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: TWENTY_FIVE_MIN_AGO,
     updated_at: TWENTY_FIVE_MIN_AGO,
     error_msg: null,
-    metadata: { mime: 'text/markdown', uploader: 'claire.benoit', classification: 'internal' },
+    metadata: {
+      mime: 'text/markdown',
+      uploader: 'claire.benoit',
+      // C1 = Public — vendor release notes, no confidentiality. Visible as
+      // a neutral grey pill (the pill won't grab attention).
+      classification: {
+        class_id: 'C1',
+        class_name: 'C1 Public',
+        label_guid: '11111111-1111-1111-1111-111111111111',
+        raw_name: 'C1 Public',
+        set_date: '2026-04-08T09:15:00Z',
+        method: 'Standard',
+        source_format: 'ooxml',
+        reason: null,
+        meta: { Enabled: 'true' },
+      },
+    },
     type: 'file',
     tags: ['memgraph', 'mage'],
     workspace: 'cib',
@@ -225,7 +258,23 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: '2026-05-20T09:00:00Z',
     updated_at: '2026-05-20T09:00:00Z',
     error_msg: null,
-    metadata: { mime: 'application/pdf', uploader: 'marc.berthier' },
+    metadata: {
+      mime: 'application/pdf',
+      uploader: 'marc.berthier',
+      // C3 = Strictement Confidentiel — vendor draft, restricted. Visible
+      // as a red pill. DocDetailPanel chunks will be truncated.
+      classification: {
+        class_id: 'C3',
+        class_name: 'C3 Strictement Confidentiel',
+        label_guid: '33333333-3333-3333-3333-333333333333',
+        raw_name: 'C3 Strictement Confidentiel',
+        set_date: '2026-05-18T11:03:45Z',
+        method: 'Standard',
+        source_format: 'ooxml',
+        reason: null,
+        meta: { Enabled: 'true' },
+      },
+    },
     type: 'file',
     tags: ['cft', 'network'],
     workspace: 'cib',

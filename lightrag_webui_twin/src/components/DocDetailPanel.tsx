@@ -20,8 +20,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
+import { ClassPill } from './ClassPill';
 import { relativeTime } from '../utils/relativeTime';
 import type { Document } from '../types/document';
+import {
+  getClassName,
+  isAboveInternal,
+  type ClassificationValue,
+} from '../types/classification';
 
 export type DetailTab = 'chunks' | 'lineage' | 'audit';
 
@@ -34,14 +40,24 @@ export interface DocDetailPanelProps {
   nowMs?: number;
 }
 
+/**
+ * Get a single human-readable classification token from either shape
+ * (legacy string maquette baseline OR structured ClassificationResult from
+ * the PR #157 MIP extractor). Used in the header text + raw-notice modal.
+ */
 function classificationOf(doc: Document): string {
-  const cls = doc.metadata?.classification;
-  return typeof cls === 'string' ? cls : 'internal';
+  const cls = doc.metadata?.classification as ClassificationValue;
+  return getClassName(cls);
 }
 
-function isAboveInternal(doc: Document): boolean {
-  const cls = classificationOf(doc).toLowerCase();
-  return cls !== 'internal' && cls !== 'public';
+/**
+ * "Is this above what an internal-cleared operator can read?" Drives the
+ * chunks-tab truncation + the raw-bytes notice gate (doctrine Eric 28/05).
+ * Handles both legacy `string` and structured `ClassificationResult` shapes
+ * via `isAboveInternal()` in `types/classification.ts`.
+ */
+function isClassificationAboveInternal(doc: Document): boolean {
+  return isAboveInternal(doc.metadata?.classification as ClassificationValue);
 }
 
 export function DocDetailPanel({
@@ -83,6 +99,10 @@ export function DocDetailPanel({
           <strong className={doc.type !== 'file' ? 'mono' : ''}>
             {doc.file_path}
           </strong>
+          <ClassPill
+            cls={doc.metadata?.classification as ClassificationValue}
+            docId={doc.doc_id}
+          />
           <span className="muted">· {classificationOf(doc)}</span>
         </div>
         <button
@@ -180,7 +200,7 @@ export function DocDetailPanel({
               <p>
                 Source classification: <code>{classificationOf(doc)}</code>.
               </p>
-              {isAboveInternal(doc) ? (
+              {isClassificationAboveInternal(doc) ? (
                 <p className="muted">
                   Raw bytes are not exposed in the Twin UI above{' '}
                   <code>internal</code>. To view this source, request access
@@ -220,7 +240,7 @@ function ChunksTab({ docId, doc }: ChunksTabProps) {
     queryKey: ['doc-chunks', docId] as const,
     queryFn: () => api.listDocumentChunks(docId),
   });
-  const above = isAboveInternal(doc);
+  const above = isClassificationAboveInternal(doc);
   if (isLoading) {
     return (
       <div className="muted" data-testid="doc-detail-chunks-loading">

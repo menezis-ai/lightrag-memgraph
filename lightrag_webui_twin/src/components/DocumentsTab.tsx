@@ -13,9 +13,11 @@
 import { useMemo, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
+import { ClassPill } from './ClassPill';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
 import type { Document, DocumentStatus } from '../types/document';
+import type { ClassificationValue } from '../types/classification';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
 type StatusFilterKey = 'all' | 'completed' | 'processing' | 'pending' | 'failed';
@@ -490,6 +492,10 @@ function DocRow({
       <div className="cell-source">
         <SourceIcon type={doc.type} size={14} />
         <span className={doc.type !== 'file' ? 'mono' : ''}>{doc.file_path}</span>
+        <ClassPill
+          cls={doc.metadata?.classification as ClassificationValue}
+          docId={doc.doc_id}
+        />
       </div>
       <div className="cell-summary">{doc.content_summary}</div>
       <div className="cell-tags">

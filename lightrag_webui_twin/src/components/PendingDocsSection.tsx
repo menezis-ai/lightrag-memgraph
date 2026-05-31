@@ -29,7 +29,9 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
+import { ClassPill } from './ClassPill';
 import type { Document } from '../types/document';
+import type { ClassificationValue } from '../types/classification';
 
 export interface PendingDocsSectionProps {
   docs: readonly Document[];
@@ -157,6 +159,10 @@ export function PendingDocsSection({
                   >
                     {doc.file_path}
                   </span>
+                  <ClassPill
+                    cls={doc.metadata?.classification as ClassificationValue}
+                    docId={doc.doc_id}
+                  />
                   {modified && (
                     <span
                       className="pending-pill amber"

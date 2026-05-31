@@ -488,3 +488,57 @@
 .topbar-right > div + div {
   margin-left: 6px;
 }
+
+/* ── Classification pill (MSIP sensitivity label) — Louis HORVAT compliance ──
+   Renders the BNP class_id resolved by the pre-insert MSIP extractor next to
+   the document name. Restraint by design: an operator sees these on every
+   row, alarm-bell red on C2 (the routine internal class) would be fatigue
+   for no signal. C3/C4 escalate. UNKNOWN gets a striped pattern that says
+   "needs reviewer attention" without screaming.
+   Spec : src/twindb_lightrag_memgraph/classification.py
+   Component : src/components/ClassPill.tsx
+*/
+.class-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 8px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  border: 0.5px solid transparent;
+  vertical-align: baseline;
+  cursor: help;
+}
+.class-pill.class-c1 {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-tertiary);
+}
+.class-pill.class-c2 {
+  background: var(--twin-amber-50);
+  color: var(--twin-amber-700);
+  border-color: var(--twin-amber-700);
+}
+.class-pill.class-c3 {
+  background: var(--twin-red-50);
+  color: var(--twin-red-vivid);
+  border-color: var(--twin-red-border);
+}
+.class-pill.class-c4 {
+  background: var(--twin-red-vivid);
+  color: white;
+  border-color: var(--twin-red-vivid);
+}
+.class-pill.class-unknown {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--twin-amber-50) 0 4px,
+    transparent 4px 8px
+  );
+  color: var(--twin-amber-vivid);
+  border-color: var(--twin-amber-vivid);
+}
