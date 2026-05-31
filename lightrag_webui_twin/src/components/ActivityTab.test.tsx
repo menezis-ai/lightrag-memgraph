@@ -170,34 +170,13 @@ describe('ActivityTab — selection + detail', () => {
   });
 });
 
-describe('ActivityTab — clear modal', () => {
-  it('clear button opens the dialog, CLEAR gate enables purge, toast emitted', async () => {
-    const p = defaultProps();
-    render(<ActivityTab {...p} />);
-    await userEvent.click(screen.getByRole('button', { name: /^Clear/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Clear activity events' });
-    const purge = within(dialog).getByRole('button', {
-      name: 'Purge expired events',
-    });
-    expect(purge).toBeDisabled();
-    const input = within(dialog).getByPlaceholderText('CLEAR');
-    // wait past useModalA11y autofocus before typing
-    await new Promise((r) => setTimeout(r, 60));
-    (input as HTMLInputElement).focus();
-    await userEvent.type(input, 'CLEAR');
-    expect(purge).toBeEnabled();
-    await userEvent.click(purge);
-    expect(p.onPushToast).toHaveBeenCalledTimes(1);
-    const t = p.onPushToast.mock.calls[0][0];
-    expect(t.kind).toBe('done');
-    expect(t.titleSuffix).toMatch(/purged/);
-  });
-
-  it('clicking the backdrop closes the dialog', async () => {
+describe('ActivityTab — immutable ledger (no Clear)', () => {
+  it('does NOT expose a Clear button — audit trail is append-only', () => {
     render(<ActivityTab {...defaultProps()} />);
-    await userEvent.click(screen.getByRole('button', { name: /^Clear/ }));
-    await screen.findByRole('dialog', { name: 'Clear activity events' });
-    await userEvent.click(screen.getByTestId('clear-modal-bg'));
+    // Activity is an immutable ledger per BNP doctrine (EBA / DORA audit
+    // trail). The Clear button was removed 2026-05-31. Natural expiry is
+    // governed by the retention-policy table in Settings → Workspace.
+    expect(screen.queryByRole('button', { name: /^Clear/ })).toBeNull();
     expect(
       screen.queryByRole('dialog', { name: 'Clear activity events' }),
     ).toBeNull();

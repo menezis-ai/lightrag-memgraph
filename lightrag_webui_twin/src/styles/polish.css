@@ -712,3 +712,25 @@
 .docs-row.is-failed:hover {
   background: var(--twin-red-50);
 }
+
+/* ── StatusBadge — align .sm size on the .class-pill format ───────────────
+   The maquette had no base .status-badge rule, only color variants and a
+   .md size; .sm rendered flat (no font, no padding) which made the
+   "Pending" pill on tag requests look different from the C2/C3 ClassPill
+   on document rows. Unify on the class-pill geometry so all small chips
+   read the same to the eye.
+*/
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  vertical-align: baseline;
+}
+.status-badge.sm {
+  padding: 1px 6px;
+  font-size: 10px;
+}
