@@ -68,11 +68,23 @@ function baseProps() {
 }
 
 describe('Topbar — tabs', () => {
-  it('renders the default tabs', () => {
+  it('renders the default tabs in the canonical order without API', () => {
     render(<Topbar {...baseProps()} />);
-    expect(screen.getByRole('button', { name: 'Documents' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retrieval' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'API' })).toBeInTheDocument();
+    // Doctrine product (2026-05-31) — Documents · Tags · Retrieval · Graph ·
+    // Activity · Settings, in this exact order. API is moved into Settings
+    // and MUST NOT appear in the topbar nav.
+    const tabBtns = Array.from(
+      document.querySelectorAll('.tabs button.tab'),
+    ) as HTMLButtonElement[];
+    expect(tabBtns.map((b) => b.textContent)).toEqual([
+      'Documents',
+      'Tags',
+      'Retrieval',
+      'Graph',
+      'Activity',
+      'Settings',
+    ]);
+    expect(screen.queryByRole('button', { name: 'API' })).toBeNull();
   });
 
   it('marks the active tab', () => {

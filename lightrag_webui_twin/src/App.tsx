@@ -22,7 +22,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { ActivityTab } from './components/ActivityTab';
 import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
-import { ApiTab } from './components/ApiTab';
 import { DocDetailPanel } from './components/DocDetailPanel';
 import { DocumentsTab } from './components/DocumentsTab';
 import { GraphTab } from './components/GraphTab';
@@ -48,7 +47,6 @@ import {
   useGraphEntities,
   useGraphRelations,
   useNotifications,
-  useOpenApi,
   useRejectTag,
   useRequestTag,
   useTagCategories,
@@ -61,15 +59,11 @@ import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
   ANSWER_TOKENS_FIXTURE,
-  API_BASE_URL,
-  API_SERVERS,
-  API_VERSION,
   DOCUMENT_FIXTURES,
   FORMAT_CATEGORY_FIXTURES,
   GRAPH_ENTITY_FIXTURES,
   GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
-  OPENAPI_GROUPS,
   RETRIEVAL_SOURCES_FIXTURE,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
@@ -124,7 +118,6 @@ function AppShell() {
   const tags = useTags();
   const tagCategories = useTagCategories();
   const activity = useActivity();
-  const openApi = useOpenApi();
   const graphEntities = useGraphEntities();
   const graphRelations = useGraphRelations();
 
@@ -323,8 +316,6 @@ function AppShell() {
   const tagCategoryList = tagCategories.data ?? TAG_CATEGORY_FIXTURES;
   const activityEvents = activity.data?.items ?? ACTIVITY_FIXTURES;
   const activityNow = activity.data?.nowMs ?? ACTIVITY_NOW_MS;
-  const openApiGroups = openApi.data?.groups ?? OPENAPI_GROUPS;
-  const apiVersion = openApi.data?.version ?? API_VERSION;
   const graphEntityList = graphEntities.data ?? GRAPH_ENTITY_FIXTURES;
   const graphRelationList = graphRelations.data ?? GRAPH_RELATION_FIXTURES;
 
@@ -426,14 +417,6 @@ function AppShell() {
               entities={graphEntityList}
               relations={graphRelationList}
               onNavigate={onNavigate}
-            />
-          )}
-          {tab === 'api' && (
-            <ApiTab
-              apiVersion={apiVersion}
-              groups={openApiGroups}
-              servers={API_SERVERS}
-              baseUrl={API_BASE_URL}
             />
           )}
           {tab === 'tags' && (

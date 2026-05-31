@@ -46,12 +46,15 @@ export interface Tab {
   label: string;
 }
 
+// Canonical nav order (doctrine product) — Documents · Tags · Retrieval · Graph
+// · Activity · Settings. API is NOT a top-level tab — it lives inside Settings
+// as the "API" section (see SettingsTab). Topbar reordering / re-introducing
+// "API" here is a regression.
 export const DEFAULT_TABS: readonly Tab[] = [
   { id: 'documents', label: 'Documents' },
-  { id: 'retrieval', label: 'Retrieval' },
   { id: 'tags', label: 'Tags' },
-  { id: 'activity', label: 'Activity' },
+  { id: 'retrieval', label: 'Retrieval' },
   { id: 'graph', label: 'Graph' },
-  { id: 'api', label: 'API' },
+  { id: 'activity', label: 'Activity' },
   { id: 'settings', label: 'Settings' },
 ];
