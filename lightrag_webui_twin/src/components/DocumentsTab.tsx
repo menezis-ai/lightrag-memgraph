@@ -67,6 +67,14 @@ export interface DocumentsTabProps {
   onBulkDelete?: (docs: readonly Document[]) => void;
   /** Now in ms for deterministic relative-time rendering in tests. */
   nowMs?: number;
+  /**
+   * Optional slot rendered FULL-WIDTH between the header (h1 + actions) and
+   * the filter pills. The host (App.tsx) injects PendingDocsSection here so
+   * the "To be validated by your reviewer" panel sits inside the Documents
+   * tab content rather than above it. Pattern mirrors the design prototype
+   * (~/Downloads/prototype/src/app.jsx — `pendingSlot` prop).
+   */
+  pendingSlot?: React.ReactNode;
 }
 
 export function DocumentsTab({
@@ -79,6 +87,7 @@ export function DocumentsTab({
   onDeleteDoc,
   onBulkDelete,
   nowMs,
+  pendingSlot,
 }: DocumentsTabProps) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [statusFilter, setStatusFilter] = useUrlParam<StatusFilterKey>(
@@ -241,6 +250,8 @@ export function DocumentsTab({
           </button>
         </div>
       </div>
+
+      {pendingSlot}
 
       <div className="docs-filters">
         <span className="filter-label">Uploaded</span>

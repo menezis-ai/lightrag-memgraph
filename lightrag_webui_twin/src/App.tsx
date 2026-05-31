@@ -356,32 +356,32 @@ function AppShell() {
       >
         <div className="tab-pane" key={tab}>
           {tab === 'documents' && (
-            <>
-              <PendingDocsSection
-                docs={pendingDocs}
-                actor={auth.user?.email ?? 'anonymous'}
-                onReadSource={(d) => setReadSourceDoc(d)}
-                onToast={(kind, title, sub) =>
-                  pushToast({ kind, title, sub })
-                }
-              />
-              <DocumentsTab
-                docs={nonPendingDocs}
-                thesaurus={thesaurusList}
-                onOpenAdd={() => setAddOpen(true)}
-                onOpenRetag={(d) => setRetagDoc(d)}
-                onOpenBulkRetag={(ds) => setRetagBulk(ds)}
-                onAddToast={onAddToast}
-                onDeleteDoc={(d) => setDetailDoc(d)}
-                onBulkDelete={(ds) =>
-                  pushToast({
-                    kind: 'done',
-                    title: `Delete queued`,
-                    sub: `${ds.length} sources`,
-                  })
-                }
-              />
-            </>
+            <DocumentsTab
+              docs={nonPendingDocs}
+              thesaurus={thesaurusList}
+              pendingSlot={
+                <PendingDocsSection
+                  docs={pendingDocs}
+                  actor={auth.user?.email ?? 'anonymous'}
+                  onReadSource={(d) => setReadSourceDoc(d)}
+                  onToast={(kind, title, sub) =>
+                    pushToast({ kind, title, sub })
+                  }
+                />
+              }
+              onOpenAdd={() => setAddOpen(true)}
+              onOpenRetag={(d) => setRetagDoc(d)}
+              onOpenBulkRetag={(ds) => setRetagBulk(ds)}
+              onAddToast={onAddToast}
+              onDeleteDoc={(d) => setDetailDoc(d)}
+              onBulkDelete={(ds) =>
+                pushToast({
+                  kind: 'done',
+                  title: `Delete queued`,
+                  sub: `${ds.length} sources`,
+                })
+              }
+            />
           )}
           {tab === 'settings' && (
             <SettingsTab
