@@ -180,16 +180,21 @@ export function PendingDocsSection({
                 <div className="pending-meta">
                   {modified ? (
                     <>
-                      Modification detected · {fmtDate(upd?.detected_at)} ·{' '}
-                      {doc.chunks_count ?? 0} chunks indexed · tags{' '}
-                      {doc.tags.join(', ')}
+                      Modified by <b>{upd?.requested_by}</b> ·{' '}
+                      {fmtDate(upd?.detected_at)} ·{' '}
+                      {upd?.chunks_indexed ?? doc.chunks_count ?? 0} chunks indexed
+                      {doc.tags.length > 0 && (
+                        <> · tags {doc.tags.join(', ')}</>
+                      )}
                     </>
                   ) : (
                     <>
                       Submitted by <b>{doc.review?.requested_by}</b> ·{' '}
                       {fmtDate(doc.review?.requested_at)} ·{' '}
-                      {doc.chunks_count ?? 0} chunks · tags{' '}
-                      {doc.tags.join(', ')}
+                      {doc.chunks_count ?? 0} chunks
+                      {doc.tags.length > 0 && (
+                        <> · tags {doc.tags.join(', ')}</>
+                      )}
                     </>
                   )}
                 </div>
