@@ -1,46 +1,57 @@
 /**
- * SettingsTab — 4 sub-sections, no Tokens, no Members edit, no API generation.
+ * SettingsTab — 3 sections only (review 2026-05-30):
  *
- * Sections gardées (Louis HORVAT 2026-05-28):
- *   - Profile     : read-only, lit useAuth()
- *   - Workspace   : env vars read-only
- *   - Providers   : LLM / Embedder / Reranker avec real Configure panels
- *   - Danger      : Delete workspace (gated by Steward palier)
+ *   - Profile   : read-only, lit useAuth()
+ *   - API       : OpenAPI browser (delegates to ApiTab)
+ *   - Workspace : env vars + retention table read-only
  *
- * Sections explicitly REMOVED:
- *   - Tokens / OAuth2 client management
+ * REMOVED from the maquette pre-30/05:
+ *   - Providers (removed 30/05 cleanup)
  *   - Members editable (lives in MyAccess)
+ *   - Tokens / OAuth2 client management
  *   - API key generation
+ *   - Danger zone (workspace deletion moves to ops tooling)
  *
- * The component takes the active workspace + kb name from props so it does
- * not duplicate App-level state; the host owns workspace switching.
+ * Rationale: Twin is a knowledge-management console, not an identity / billing
+ * console. Every section that asked the operator to manage capability tokens
+ * or destructive workspace state was moved out of the UI surface — Louis 28/05
+ * + cleanup 30/05.
  */
 
 import { useState } from 'react';
+import { ApiTab } from './ApiTab';
 import { ProfileSection } from './Settings/ProfileSection';
 import { WorkspaceSection } from './Settings/WorkspaceSection';
-import { ProvidersSection } from './Settings/ProvidersSection';
-import { DangerSection } from './Settings/DangerSection';
+import { Icon } from './Icon';
+import {
+  API_BASE_URL,
+  API_SERVERS,
+  API_VERSION,
+  OPENAPI_GROUPS,
+} from '../fixtures';
 
-type SectionKey = 'profile' | 'workspace' | 'providers' | 'danger';
+type SectionKey = 'profile' | 'api' | 'workspace';
 
-const SECTIONS: { key: SectionKey; label: string }[] = [
-  { key: 'profile', label: 'Profile' },
-  { key: 'workspace', label: 'Workspace' },
-  { key: 'providers', label: 'Providers' },
-  { key: 'danger', label: 'Danger zone' },
+const SECTIONS: { key: SectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
+  { key: 'profile', label: 'Profile', icon: 'circle-dot' },
+  { key: 'api', label: 'API', icon: 'world' },
+  { key: 'workspace', label: 'Workspace', icon: 'folder' },
 ];
 
 export interface SettingsTabProps {
-  activeWorkspace: string;
-  kbName: string;
-  onDeleteWorkspace?: (id: string) => void;
+  /** Active workspace id. Currently informational — display lives in WorkspaceSection. */
+  activeWorkspace?: string;
+  /** Active workspace display name. Same status as above. */
+  kbName?: string;
+  /** Bearer-token revoke + redirect to IdP. Pushed up so the host owns the toast queue. */
+  onSignOut?: () => void;
+  /** Reopen the onboarding wizard at step 1. */
+  onRestartTutorial?: () => void;
 }
 
 export function SettingsTab({
-  activeWorkspace,
-  kbName,
-  onDeleteWorkspace,
+  onSignOut,
+  onRestartTutorial,
 }: SettingsTabProps) {
   const [section, setSection] = useState<SectionKey>('profile');
 
@@ -58,27 +69,36 @@ export function SettingsTab({
                 data-testid={`settings-rail-${s.key}`}
                 aria-current={section === s.key}
               >
-                {s.label}
+                <Icon name={s.icon} size={14} /> {s.label}
               </button>
             </li>
           ))}
         </ul>
       </aside>
       <main className="settings-main">
-        {section === 'profile' && <ProfileSection />}
-        {section === 'workspace' && (
-          <WorkspaceSection
-            activeWorkspace={activeWorkspace}
-            kbName={kbName}
+        {section === 'profile' && (
+          <ProfileSection
+            onSignOut={onSignOut}
+            onRestartTutorial={onRestartTutorial}
           />
         )}
-        {section === 'providers' && <ProvidersSection />}
-        {section === 'danger' && (
-          <DangerSection
-            activeWorkspace={activeWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-          />
+        {section === 'api' && (
+          <div className="settings-section settings-api" data-testid="settings-api">
+            <h3>API</h3>
+            <p className="muted">
+              LightRAG OpenAPI surface. Bearer (OIDC) auth only — the gateway
+              injects <code>tag_filter</code> and <code>visibility</code> scoping
+              from the active workspace.
+            </p>
+            <ApiTab
+              apiVersion={API_VERSION}
+              groups={OPENAPI_GROUPS}
+              servers={API_SERVERS}
+              baseUrl={API_BASE_URL}
+            />
+          </div>
         )}
+        {section === 'workspace' && <WorkspaceSection />}
       </main>
     </div>
   );

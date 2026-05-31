@@ -1,0 +1,544 @@
+/* Polish layer — styles for components added during the React port sprint
+ * (Settings, PendingDocs, Onboarding, DocDetailPanel, Topbar additions).
+ *
+ * Sticks to the existing token vocabulary (--twin-*, --color-*) and the
+ * design language already established in legacy.css: 13px body, 0.5px
+ * borders, --border-radius-md|lg, --color-background-secondary|tertiary
+ * for layered surfaces.
+ */
+
+/* ============================================================
+ * Generic utilities
+ * ============================================================ */
+
+.tag-overflow {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+}
+
+.row-action-danger {
+  color: var(--twin-red-vivid);
+}
+.row-action-danger:hover {
+  background: var(--twin-red-50);
+}
+
+.bulk-action.danger {
+  color: var(--twin-red-vivid);
+  border-color: var(--twin-red-border, transparent);
+}
+.bulk-action.danger:hover {
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-vivid);
+}
+
+.btn.small {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  border-radius: var(--border-radius-sm);
+}
+.btn.danger {
+  color: var(--twin-red-vivid);
+  border-color: var(--color-border-tertiary);
+}
+.btn.danger:hover {
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-vivid);
+}
+.btn.danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sev {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sev.sev-info {
+  background: var(--twin-accent-soft-bg);
+  color: var(--twin-accent-soft-text);
+}
+.sev.sev-warning {
+  background: var(--twin-amber-50);
+  color: var(--twin-amber-700);
+}
+.sev.sev-error,
+.sev.sev-critical {
+  background: var(--twin-red-50);
+  color: var(--twin-red-vivid);
+}
+
+.muted {
+  color: var(--color-text-secondary);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.link-btn.danger {
+  color: var(--twin-red-vivid);
+}
+
+/* ============================================================
+ * Settings tab — rail + main two-column layout
+ * ============================================================ */
+
+.settings {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  background: var(--color-background-tertiary);
+  height: 100%;
+  overflow: hidden;
+}
+.settings-rail {
+  background: var(--color-background-primary);
+  border-right: 0.5px solid var(--color-border-tertiary);
+  padding: 18px 14px;
+  overflow-y: auto;
+}
+.settings-rail h2 {
+  margin: 0 0 14px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  font-weight: 600;
+}
+.settings-rail ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-rail-btn {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  border-radius: var(--border-radius-md);
+  transition: background 120ms, color 120ms;
+}
+.settings-rail-btn:hover {
+  background: var(--color-background-secondary);
+}
+.settings-rail-btn.active {
+  background: var(--twin-accent-soft-bg);
+  color: var(--twin-accent-soft-text);
+  font-weight: 500;
+}
+.settings-main {
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+.settings-section h3 {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 500;
+}
+.settings-section > p {
+  margin: 0 0 18px 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.settings-section + .settings-section {
+  margin-top: 28px;
+}
+
+.settings-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  row-gap: 8px;
+  column-gap: 16px;
+  font-size: 12.5px;
+}
+.settings-dl dt {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: center;
+}
+.settings-dl dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.settings-providers {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+}
+.settings-provider-row strong {
+  font-weight: 500;
+}
+.settings-provider-row .muted {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.settings-danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--twin-red-50);
+  border: 0.5px solid var(--twin-red-border);
+  border-radius: var(--border-radius-md);
+  gap: 16px;
+}
+.settings-danger-row strong {
+  font-weight: 500;
+  color: var(--twin-red-vivid);
+}
+.settings-danger-row .muted {
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+/* Workspace section inputs (typed confirmation) */
+[data-testid="settings-danger-confirm-input"] {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  margin-top: 8px;
+}
+
+/* ============================================================
+ * Pending docs (section atop DocumentsTab)
+ * ============================================================ */
+
+.pending-docs {
+  padding: 16px 28px 0;
+}
+.pending-docs-header h2 {
+  margin: 0 0 2px 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.pending-docs-header h2 .muted {
+  font-weight: 400;
+  font-size: 12px;
+}
+.pending-docs-header > p {
+  margin: 0 0 14px 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.pending-docs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 18px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 10px;
+}
+.pending-doc-card {
+  background: var(--twin-amber-50);
+  border: 0.5px solid var(--twin-amber-700);
+  border-left: 3px solid var(--twin-amber-vivid);
+  border-radius: var(--border-radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pending-doc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.pending-doc-head strong {
+  font-weight: 500;
+}
+.pending-doc-summary {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+.pending-doc-just {
+  font-size: 10.5px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: var(--border-radius-sm);
+}
+.pending-doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ============================================================
+ * Onboarding wizard
+ * ============================================================ */
+
+.modal.onboarding {
+  /* slight grey wash to set apart from data modals */
+  background: linear-gradient(
+    180deg,
+    var(--color-background-primary) 0%,
+    var(--color-background-secondary) 100%
+  );
+}
+.onboarding-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.onboarding-checklist li label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.onboarding-checklist li label:hover {
+  border-color: var(--twin-accent-soft-border);
+  background: var(--twin-accent-soft-bg);
+}
+.onboarding-checklist input[type="checkbox"] {
+  accent-color: var(--twin-accent);
+  width: 14px;
+  height: 14px;
+}
+.onboarding-footer {
+  justify-content: space-between;
+}
+.onboarding-footer .actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================================
+ * Document detail panel (right-side overlay)
+ * ============================================================ */
+
+.doc-detail-panel {
+  position: fixed;
+  top: 48px; /* below topbar */
+  right: 0;
+  bottom: 0;
+  width: 460px;
+  background: var(--color-background-primary);
+  border-left: 0.5px solid var(--color-border-tertiary);
+  box-shadow: -4px 0 24px rgba(15, 23, 32, 0.06);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  animation: slide-in-right 240ms ease;
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.doc-detail-header {
+  padding: 14px 18px;
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.doc-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+.doc-detail-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+  font-weight: 500;
+}
+.doc-detail-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px 0;
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+.doc-detail-tabs .tab.small {
+  font-size: 11px;
+  padding: 6px 10px;
+  text-transform: capitalize;
+}
+.doc-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+.doc-detail-footer {
+  padding: 10px 14px;
+  border-top: 0.5px solid var(--color-border-tertiary);
+  background: var(--color-background-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Chunks list */
+.doc-chunks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.doc-chunk {
+  padding: 10px 12px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+}
+.doc-chunk-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+.doc-chunk-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+}
+
+/* Lineage tab */
+.doc-lineage {
+  font-size: 12px;
+}
+
+/* Audit tab list */
+.doc-audit {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.doc-audit-row {
+  padding: 10px 12px;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+}
+.doc-audit-line1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.doc-audit-row .muted {
+  font-size: 11px;
+}
+
+/* ============================================================
+ * Topbar additions: pull SystemStatusIndicator dot tight to the bell
+ * ============================================================ */
+.topbar-right > div + div {
+  margin-left: 6px;
+}
+
+/* ── Classification pill (MSIP sensitivity label) — Louis HORVAT compliance ──
+   Renders the BNP class_id resolved by the pre-insert MSIP extractor next to
+   the document name. Restraint by design: an operator sees these on every
+   row, alarm-bell red on C2 (the routine internal class) would be fatigue
+   for no signal. C3/C4 escalate. UNKNOWN gets a striped pattern that says
+   "needs reviewer attention" without screaming.
+   Spec : src/twindb_lightrag_memgraph/classification.py
+   Component : src/components/ClassPill.tsx
+*/
+.class-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 8px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  border: 0.5px solid transparent;
+  vertical-align: baseline;
+  cursor: help;
+}
+.class-pill.class-c1 {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-tertiary);
+}
+.class-pill.class-c2 {
+  background: var(--twin-amber-50);
+  color: var(--twin-amber-700);
+  border-color: var(--twin-amber-700);
+}
+.class-pill.class-c3 {
+  background: var(--twin-red-50);
+  color: var(--twin-red-vivid);
+  border-color: var(--twin-red-border);
+}
+.class-pill.class-c4 {
+  background: var(--twin-red-vivid);
+  color: white;
+  border-color: var(--twin-red-vivid);
+}
+.class-pill.class-unknown {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--twin-amber-50) 0 4px,
+    transparent 4px 8px
+  );
+  color: var(--twin-amber-vivid);
+  border-color: var(--twin-amber-vivid);
+}

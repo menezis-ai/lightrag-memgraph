@@ -24,13 +24,33 @@ export type DocumentType = 'file' | 'confluence' | 'sharepoint' | 'url';
 /** LightRAG-native status enum (uppercase, mirrors DocStatus.status). */
 export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'FAILED';
 
-export type ReviewState = 'pending-review' | 'approved' | 'rejected';
+export type ReviewState = 'pending-review' | 'approved' | 'rejected' | 'modified';
+
+/**
+ * Payload describing an upstream-change event for a live source (Confluence /
+ * SharePoint) that requires re-validation. Present when `review.state === 'modified'`.
+ * Drives the "Modified source" pending card variant (spec Fabrice 2026-05-26).
+ */
+export interface DocumentReviewUpdate {
+  /** Author of the upstream edit. */
+  requested_by: string;
+  /** Human-readable relative time of the edit ("2h ago"). */
+  edited_rel: string;
+  /** ISO date the change was detected by Twin. */
+  detected_at: string;
+  /** Chunks currently indexed (pre-revalidation). */
+  chunks_indexed: number;
+  /** One-paragraph diff description (LLM-generated or rule-based). */
+  summary_diff: string;
+}
 
 export interface DocumentReview {
   state: ReviewState;
-  requested_by: string;
-  requested_at: string;
-  justification: string;
+  requested_by?: string;
+  requested_at?: string;
+  justification?: string;
+  /** Set when state === 'modified' — describes the upstream change. */
+  update?: DocumentReviewUpdate;
 }
 
 /**
@@ -66,4 +86,11 @@ export interface Document {
   workspace: string;
   visibility: WorkspaceVisibility;
   review?: DocumentReview;
+  /**
+   * Post-extraction text used by LightRAG for retrieval (NOT the original
+   * binary). Populated lazily and exposed via the Read source modal so a
+   * reviewer can audit what the indexer ingested before approving. Returned
+   * by `GET /twin/api/documents/{id}/extracted-text`; absent in list views.
+   */
+  extracted_text?: string;
 }

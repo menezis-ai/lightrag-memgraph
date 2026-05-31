@@ -24,6 +24,22 @@ export interface AuthenticatedUser {
   palier: Palier;
   /** Workspace ids the user can switch into, fed by MyAccess claim. */
   workspaces: readonly string[];
+
+  // ── Identity-provider trace (rendered read-only in Settings → Profile) ──
+  /** IdP identifier (e.g. "keycloak"). */
+  idp: string;
+  /** IdP realm name (e.g. "twin-cib"). */
+  idp_realm: string;
+  /** Short identifier the IdP carries in the `sub` JWT claim. */
+  sub: string;
+  /** ISO timestamp when the bearer token expires. */
+  session_expires: string;
+  /**
+   * Gateway-level OAuth2 scopes carried by the JWT. Distinct from `palier.scopes`
+   * (which are the Twin-internal capability tokens) — these are what the API
+   * gateway / FastAPI middleware checks. Rendered as chip list in Profile.
+   */
+  gateway_scopes: readonly string[];
 }
 
 /**

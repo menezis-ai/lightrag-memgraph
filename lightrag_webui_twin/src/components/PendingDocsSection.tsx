@@ -1,48 +1,62 @@
 /**
- * PendingDocsSection — top-of-DocumentsTab card list for docs in
- * `review.state === 'pending-review'`.
+ * PendingDocsSection — top-of-DocumentsTab card list for docs the operator
+ * must validate. Two card variants are rendered side-by-side:
  *
- * Actions per card (#106 + #150 spec révisée):
- *   - Approve         : POST /twin/api/documents/{id}/approve (TanStack useMutation)
- *   - Edit & Approve  : opens EditApproveModal (régression v2 fix — was no-op);
- *                       submits the editable summary back to /approve as `edits`
- *   - Reject          : opens RejectModal asking for a mandatory reason
- *   - Simulate change : opens an in-place diff stub (preview impact)
+ *   - `requested`  : new source awaiting first sign-off (`review.state === 'pending-review'`)
+ *   - `modified`   : Confluence/SharePoint source edited upstream after
+ *                    first approval; needs re-validation (`review.state === 'modified'`).
+ *                    The diff summary comes from `review.update.summary_diff`.
  *
- * Every mutation follows the RC-1 pattern (TanStack useMutation, optimistic
- * UI is forbidden — toast + invalidate AFTER server ack).
+ * Visual structure mirrors the design-prototype handoff (Bucket B1):
+ *   section.pending-section[.is-open]
+ *     button.pending-h           (collapsible: alert + .pending-title + .pending-counts)
+ *     div.pending-grid           (auto-fill 2-col, equal-height cards)
+ *       div.pending-card[.requested | .modified]
+ *         div.pending-card-h     (SourceIcon + .pending-card-title + [.pending-pill.amber])
+ *         div.pending-body       (summary OR diff)
+ *         div.pending-meta       (Submitted by | Modification detected · date · chunks · tags)
+ *         div.pending-actions.grid2
+ *           button.pbtn.ghost    (Read source / Edit & approve)
+ *           button.pbtn.approve  (Approve / Approve update — soft-filled)
+ *           button.pbtn.danger   (Reject / Reject update — red outline)
+ *
+ * RC-1 invariant: TanStack useMutation, onSuccess → invalidateQueries → toast.
+ * NO optimistic UI — `isPending` from the mutation drives a per-doc busy
+ * state so the operator sees "Approving…" instead of a half-faked transition.
  */
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
-import { relativeTime } from '../utils/relativeTime';
+import { ClassPill } from './ClassPill';
 import type { Document } from '../types/document';
+import type { ClassificationValue } from '../types/classification';
 
 export interface PendingDocsSectionProps {
   docs: readonly Document[];
+  /** Open the Read-source modal at the App level (host owns modal state). */
+  onReadSource?: (doc: Document) => void;
   /** Push a UI toast — host owns the queue. */
-  onToast: (
-    kind: 'done' | 'error',
-    title: string,
-    sub?: string,
-  ) => void;
+  onToast: (kind: 'done' | 'error', title: string, sub?: string) => void;
   /** Current operator's identifier for audit attribution. */
   actor?: string;
-  nowMs?: number;
+}
+
+function fmtDate(iso: string | undefined): string {
+  return iso ? String(iso).slice(0, 10) : '';
 }
 
 export function PendingDocsSection({
   docs,
+  onReadSource,
   onToast,
   actor,
-  nowMs,
 }: PendingDocsSectionProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
-  const [simulating, setSimulating] = useState<Document | null>(null);
+  const [open, setOpen] = useState(true);
 
   const approveMut = useMutation({
     mutationFn: ({
@@ -51,6 +65,7 @@ export function PendingDocsSection({
     }: {
       doc: Document;
       edits?: Partial<Document>;
+      update?: boolean;
     }) => api.approveDocument(doc.doc_id, { actor, edits }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
@@ -58,14 +73,14 @@ export function PendingDocsSection({
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       onToast(
         'done',
-        `Document approved`,
+        variables.update ? 'Update approved' : 'Document approved',
         variables.doc.file_path,
       );
     },
     onError: (err: Error, variables) => {
       onToast(
         'error',
-        `Approve failed`,
+        'Approve failed',
         `${variables.doc.file_path} · ${err.message}`,
       );
     },
@@ -77,12 +92,12 @@ export function PendingDocsSection({
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
       queryClient.invalidateQueries({ queryKey: ['activity'] });
-      onToast('done', `Document rejected`, variables.doc.file_path);
+      onToast('done', 'Document rejected', variables.doc.file_path);
     },
     onError: (err: Error, variables) => {
       onToast(
         'error',
-        `Reject failed`,
+        'Reject failed',
         `${variables.doc.file_path} · ${err.message}`,
       );
     },
@@ -90,83 +105,160 @@ export function PendingDocsSection({
 
   if (docs.length === 0) return null;
 
+  const isBusy = (docId: string) =>
+    approveMut.isPending && approveMut.variables?.doc.doc_id === docId;
+
   return (
     <section
-      className="pending-docs"
+      className={`pending-section${open ? ' is-open' : ''}`}
       data-testid="pending-docs-section"
-      aria-label="Pending documents"
+      aria-label="Documents to validate"
     >
-      <header className="pending-docs-header">
-        <h2>
-          Pending review{' '}
-          <span className="muted">({docs.length})</span>
-        </h2>
-        <p className="muted">
-          These sources are queued for Steward approval before they index into
-          the workspace KB.
-        </p>
-      </header>
-      <ul className="pending-docs-list">
-        {docs.map((doc) => (
-          <li
-            key={doc.doc_id}
-            className="pending-doc-card"
-            data-testid={`pending-doc-${doc.doc_id}`}
-          >
-            <div className="pending-doc-head">
-              <SourceIcon type={doc.type} size={14} />
-              <strong className={doc.type !== 'file' ? 'mono' : ''}>
-                {doc.file_path}
-              </strong>
-              <span className="muted">
-                · {relativeTime(doc.created_at, nowMs)}
-              </span>
-            </div>
-            <div className="pending-doc-summary">{doc.content_summary}</div>
-            {doc.review?.justification && (
-              <div className="pending-doc-just muted">
-                Justification: {doc.review.justification}
+      <button
+        type="button"
+        className="pending-h"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
+        <span className="pending-title">To be validated by your reviewer</span>
+        <span className="pending-counts">
+          <b>{docs.length}</b> documents awaiting your sign-off
+        </span>
+        <span
+          style={{
+            marginLeft: 'auto',
+            display: 'inline-flex',
+            transform: open ? 'none' : 'rotate(-90deg)',
+            transition: 'transform .15s',
+          }}
+        >
+          <Icon
+            name="chevron-down"
+            size={14}
+            color="var(--color-text-tertiary)"
+          />
+        </span>
+      </button>
+      {open && (
+        <div className="pending-grid">
+          {docs.map((doc) => {
+            const modified = doc.review?.state === 'modified';
+            const upd = modified ? doc.review?.update : undefined;
+            const isMono = doc.type !== 'file';
+            return (
+              <div
+                key={doc.doc_id}
+                className={`pending-card ${modified ? 'modified' : 'requested'}`}
+                data-testid={`pending-doc-${doc.doc_id}`}
+              >
+                <div className="pending-card-h">
+                  <SourceIcon type={doc.type} size={14} />
+                  <span
+                    className={`pending-card-title${isMono ? ' mono' : ''}`}
+                  >
+                    {doc.file_path}
+                  </span>
+                  <ClassPill
+                    cls={doc.metadata?.classification as ClassificationValue}
+                    docId={doc.doc_id}
+                  />
+                  {modified && (
+                    <span
+                      className="pending-pill amber"
+                      style={{ marginLeft: 'auto' }}
+                    >
+                      <Icon name="alert-triangle" size={11} /> Modified source
+                    </span>
+                  )}
+                </div>
+                <div className="pending-body">
+                  {modified
+                    ? (upd?.summary_diff ?? doc.content_summary)
+                    : doc.content_summary}
+                </div>
+                <div className="pending-meta">
+                  {modified ? (
+                    <>
+                      Modification detected · {fmtDate(upd?.detected_at)} ·{' '}
+                      {doc.chunks_count ?? 0} chunks indexed · tags{' '}
+                      {doc.tags.join(', ')}
+                    </>
+                  ) : (
+                    <>
+                      Submitted by <b>{doc.review?.requested_by}</b> ·{' '}
+                      {fmtDate(doc.review?.requested_at)} ·{' '}
+                      {doc.chunks_count ?? 0} chunks · tags{' '}
+                      {doc.tags.join(', ')}
+                    </>
+                  )}
+                </div>
+                <div className="pending-actions grid2">
+                  <button
+                    type="button"
+                    className="pbtn ghost"
+                    onClick={() => onReadSource?.(doc)}
+                    data-testid={`pending-doc-read-${doc.doc_id}`}
+                  >
+                    <Icon name="eye" size={13} /> Read source
+                  </button>
+                  {modified ? (
+                    <>
+                      <button
+                        type="button"
+                        className="pbtn approve"
+                        disabled={isBusy(doc.doc_id)}
+                        onClick={() =>
+                          approveMut.mutate({ doc, update: true })
+                        }
+                        data-testid={`pending-doc-approve-update-${doc.doc_id}`}
+                      >
+                        {isBusy(doc.doc_id) ? 'Approving…' : 'Approve update'}
+                      </button>
+                      <button
+                        type="button"
+                        className="pbtn danger span2"
+                        onClick={() => setRejecting(doc)}
+                        data-testid={`pending-doc-reject-update-${doc.doc_id}`}
+                      >
+                        Reject update
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="pbtn ghost"
+                        onClick={() => setEditing(doc)}
+                        data-testid={`pending-doc-edit-approve-${doc.doc_id}`}
+                      >
+                        Edit &amp; approve
+                      </button>
+                      <button
+                        type="button"
+                        className="pbtn approve"
+                        disabled={isBusy(doc.doc_id)}
+                        onClick={() => approveMut.mutate({ doc })}
+                        data-testid={`pending-doc-approve-${doc.doc_id}`}
+                      >
+                        {isBusy(doc.doc_id) ? 'Approving…' : 'Approve'}
+                      </button>
+                      <button
+                        type="button"
+                        className="pbtn danger"
+                        onClick={() => setRejecting(doc)}
+                        data-testid={`pending-doc-reject-${doc.doc_id}`}
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            )}
-            <div className="pending-doc-actions">
-              <button
-                type="button"
-                className="btn small primary"
-                disabled={approveMut.isPending}
-                onClick={() => approveMut.mutate({ doc })}
-                data-testid={`pending-doc-approve-${doc.doc_id}`}
-              >
-                <Icon name="circle-check" size={12} />{' '}
-                {approveMut.isPending ? 'Approving…' : 'Approve'}
-              </button>
-              <button
-                type="button"
-                className="btn small"
-                onClick={() => setEditing(doc)}
-                data-testid={`pending-doc-edit-approve-${doc.doc_id}`}
-              >
-                <Icon name="settings" size={12} /> Edit &amp; Approve
-              </button>
-              <button
-                type="button"
-                className="btn small"
-                onClick={() => setSimulating(doc)}
-                data-testid={`pending-doc-simulate-${doc.doc_id}`}
-              >
-                <Icon name="eye" size={12} /> Simulate change
-              </button>
-              <button
-                type="button"
-                className="btn small danger"
-                onClick={() => setRejecting(doc)}
-                data-testid={`pending-doc-reject-${doc.doc_id}`}
-              >
-                <Icon name="x" size={12} /> Reject
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+            );
+          })}
+        </div>
+      )}
 
       {editing && (
         <EditApproveModal
@@ -187,9 +279,6 @@ export function PendingDocsSection({
             setRejecting(null);
           }}
         />
-      )}
-      {simulating && (
-        <SimulateModal doc={simulating} onClose={() => setSimulating(null)} />
       )}
     </section>
   );
@@ -334,59 +423,6 @@ function RejectModal({ doc, onClose, onSubmit }: RejectModalProps) {
             onClick={() => onSubmit(reason.trim())}
           >
             Reject
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface SimulateModalProps {
-  doc: Document;
-  onClose: () => void;
-}
-
-function SimulateModal({ doc, onClose }: SimulateModalProps) {
-  return (
-    <div
-      className="modal-backdrop"
-      onClick={onClose}
-      data-testid="pending-doc-simulate-modal"
-    >
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Simulate change"
-        style={{ width: 460 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <h2>Simulate change</h2>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-        <div className="modal-body">
-          <p>
-            Approving this source will add{' '}
-            <strong>{doc.chunks_count ?? '~'}</strong> chunks and{' '}
-            <strong>{doc.tags.length}</strong> tag link(s) to workspace{' '}
-            <code className="mono">{doc.workspace}</code>.
-          </p>
-          <p className="muted">
-            Full dry-run diff (graph + retrieval impact) ships in backend
-            phase 2.
-          </p>
-        </div>
-        <div className="modal-footer">
-          <button type="button" className="btn" onClick={onClose}>
-            Close
           </button>
         </div>
       </div>

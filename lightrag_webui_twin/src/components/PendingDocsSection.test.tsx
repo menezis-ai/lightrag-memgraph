@@ -188,17 +188,75 @@ describe('PendingDocsSection — Reject', () => {
   });
 });
 
-describe('PendingDocsSection — Simulate', () => {
-  it('Simulate opens a preview modal', async () => {
+describe('PendingDocsSection — Read source (B2)', () => {
+  it('Read source button delegates to host via onReadSource', async () => {
+    const onReadSource = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
-        <PendingDocsSection docs={[makePendingDoc()]} onToast={() => {}} />
+        <PendingDocsSection
+          docs={[makePendingDoc()]}
+          onToast={() => {}}
+          onReadSource={onReadSource}
+        />
       </Wrap>,
     );
-    await userEvent.click(
-      screen.getByTestId('pending-doc-simulate-pending-1'),
+    await userEvent.click(screen.getByTestId('pending-doc-read-pending-1'));
+    expect(onReadSource).toHaveBeenCalledTimes(1);
+    expect(onReadSource.mock.calls[0][0].doc_id).toBe('pending-1');
+  });
+});
+
+describe('PendingDocsSection — Modified variant (Confluence revalidation)', () => {
+  function makeModifiedDoc(): Document {
+    return {
+      ...makePendingDoc({
+        doc_id: 'mod-1',
+        file_path: '/cib/runbooks/oracle-pga-tuning',
+        type: 'confluence',
+      }),
+      review: {
+        state: 'modified',
+        update: {
+          requested_by: 'yann.dubois',
+          edited_rel: '2h ago',
+          detected_at: '2026-05-26',
+          chunks_indexed: 54,
+          summary_diff: 'Confluence page edited 2h ago — added 2 new sections.',
+        },
+      },
+    };
+  }
+
+  it('renders the Modified source pill and the diff summary', () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[makeModifiedDoc()]} onToast={() => {}} />
+      </Wrap>,
     );
-    expect(screen.getByTestId('pending-doc-simulate-modal')).toBeInTheDocument();
+    const card = screen.getByTestId('pending-doc-mod-1');
+    expect(card.className).toContain('modified');
+    expect(card.textContent).toContain('Modified source');
+    expect(card.textContent).toContain('Confluence page edited 2h ago');
+  });
+
+  it('uses Approve update / Reject update buttons (not the requested ones)', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <PendingDocsSection
+          docs={[makeModifiedDoc()]}
+          onToast={() => {}}
+          actor="claire.benoit"
+        />
+      </Wrap>,
+    );
+    await userEvent.click(screen.getByTestId('pending-doc-approve-update-mod-1'));
+    await waitFor(() => expect(approveCalls.length).toBe(1));
+    expect(approveCalls[0].id).toBe('mod-1');
+    // The "requested" variant buttons must NOT be present
+    expect(screen.queryByTestId('pending-doc-approve-mod-1')).toBeNull();
+    expect(screen.queryByTestId('pending-doc-edit-approve-mod-1')).toBeNull();
   });
 });

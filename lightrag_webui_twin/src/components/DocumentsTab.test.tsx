@@ -51,13 +51,16 @@ describe('DocumentsTab — rendering', () => {
 
   it('shows status counts in the filter pills', () => {
     render(<DocumentsTab {...defaultProps()} />);
-    // DOCUMENT_FIXTURES has 4 completed, 1 failed, 1 processing
-    expect(screen.getByRole('button', { name: /^All \(6\)/ })).toBeInTheDocument();
+    // DOCUMENT_FIXTURES = 7 docs: 4 PROCESSED, 1 FAILED, 2 PROCESSING
+    expect(screen.getByRole('button', { name: /^All \(7\)/ })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /^Completed \(4\)/ }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /^Failed \(1\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Processing \(2\)/ }),
     ).toBeInTheDocument();
   });
 });

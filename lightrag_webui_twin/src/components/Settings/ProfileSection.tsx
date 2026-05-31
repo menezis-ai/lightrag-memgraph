@@ -1,14 +1,40 @@
 /**
- * Profile sub-section — read-only.
+ * Settings → Profile section.
  *
- * Identity fields come exclusively from `useAuth().user` (MyAccess JWT). The
- * UI must NEVER offer to edit them — those operations live in MyAccess, not
- * Twin (Louis 2026-05-28).
+ * Account info inherited from Keycloak (no edit affordance — corrections
+ * happen in the corporate IdP). Renders:
+ *
+ *   - Identity card  : initials avatar + name + email + role-badge
+ *   - Identity provider trace : IdP / realm / sub / session_expires (env-controlled)
+ *   - Gateway scopes : chip list (one per OAuth2 scope on the bearer token)
+ *   - Session card   : Sign out
+ *   - Tutorial card  : Restart onboarding
+ *
+ * Wording: "Role" not "Palier" (palier = JWT-only term). The `role-badge` class
+ * replaces the killed `palier-pill` from the maquette pre-30/05 cleanup.
  */
 
 import { useAuth } from '../../hooks/useAuth';
+import { Icon } from '../Icon';
 
-export function ProfileSection() {
+export interface ProfileSectionProps {
+  onSignOut?: () => void;
+  onRestartTutorial?: () => void;
+}
+
+function initialsOf(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((s) => s[0] ?? '')
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+export function ProfileSection({
+  onSignOut,
+  onRestartTutorial,
+}: ProfileSectionProps) {
   const { user } = useAuth();
   if (!user) {
     return (
@@ -18,30 +44,92 @@ export function ProfileSection() {
       </div>
     );
   }
+
   return (
     <div className="settings-section" data-testid="settings-profile">
       <h3>Profile</h3>
       <p className="muted">
-        Identity & rôles inherited from MyAccess. Modifications are made in
-        MyAccess, not in Twin.
+        Account info inherited from your Keycloak session. Update name/email in
+        the corporate IDP.
       </p>
-      <dl className="settings-dl">
-        <dt>Display name</dt>
-        <dd data-testid="settings-profile-name">{user.name}</dd>
-        <dt>Email</dt>
-        <dd>{user.email}</dd>
-        <dt>SSO subject</dt>
-        <dd className="mono">{user.sso_subject}</dd>
-        <dt>Palier</dt>
-        <dd>
-          <strong>{user.palier.label}</strong>{' '}
-          <span className="muted">(level {user.palier.level})</span>
-        </dd>
-        <dt>Scopes</dt>
-        <dd className="mono">{user.palier.scopes.join(', ')}</dd>
-        <dt>Workspaces</dt>
-        <dd className="mono">{user.workspaces.join(', ')}</dd>
-      </dl>
+
+      <div className="set-card">
+        <div className="set-identity">
+          <div className="set-avatar" aria-hidden>
+            {initialsOf(user.name)}
+          </div>
+          <div className="set-identity-main">
+            <div className="set-identity-name" data-testid="settings-profile-name">
+              {user.name}
+            </div>
+            <div className="set-identity-email">{user.email}</div>
+            <span className="role-badge">{user.palier.label}</span>
+          </div>
+        </div>
+        <dl className="set-dl">
+          <dt>Identity provider</dt>
+          <dd className="mono">
+            {user.idp} · {user.idp_realm} · sub={user.sub}
+          </dd>
+          <dt>Session expires</dt>
+          <dd className="mono">{user.session_expires}</dd>
+        </dl>
+      </div>
+
+      <div className="set-card">
+        <div className="set-card-h">
+          Scopes{' '}
+          <span className="set-card-hint">
+            Permissions attached to your bearer token at gateway level.
+          </span>
+        </div>
+        <div className="scope-chips">
+          {user.gateway_scopes.map((s) => (
+            <code key={s} className="scope-chip">
+              {s}
+            </code>
+          ))}
+        </div>
+      </div>
+
+      <div className="set-card">
+        <div className="set-card-h">Session</div>
+        <div className="set-row">
+          <button
+            type="button"
+            className="btn"
+            data-testid="settings-signout"
+            onClick={() => onSignOut?.()}
+          >
+            <Icon name="arrow-right" size={13} /> Sign out
+          </button>
+          <span className="set-row-note">
+            Local cache (threads, tweaks) is preserved in this browser.
+          </span>
+        </div>
+      </div>
+
+      <div className="set-card">
+        <div className="set-card-h">
+          Tutorial{' '}
+          <span className="set-card-hint">
+            Replay the welcome tour and the 6-step checklist.
+          </span>
+        </div>
+        <div className="set-row">
+          <button
+            type="button"
+            className="btn"
+            data-testid="settings-restart-tutorial"
+            onClick={() => onRestartTutorial?.()}
+          >
+            <Icon name="refresh" size={13} /> Restart tutorial
+          </button>
+          <span className="set-row-note">
+            Resets progress for this browser only — your data is untouched.
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
