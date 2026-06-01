@@ -133,6 +133,29 @@ function invalidateTagSideEffects(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['notifications'] });
 }
 
+function updateDocumentTags(
+  data:
+    | { items: readonly Document[]; [key: string]: unknown }
+    | undefined,
+  targets: readonly string[],
+  adds: readonly string[],
+  removes: readonly string[],
+): { items: readonly Document[]; [key: string]: unknown } | undefined {
+  if (!data) return data;
+  const targetSet = new Set(targets);
+  const removeSet = new Set(removes);
+  return {
+    ...data,
+    items: data.items.map((doc) => {
+      if (!targetSet.has(doc.doc_id)) return doc;
+      const nextTags = Array.from(
+        new Set([...doc.tags.filter((tag) => !removeSet.has(tag)), ...adds]),
+      );
+      return { ...doc, tags: nextTags };
+    }),
+  };
+}
+
 export function useRequestTag() {
   const qc = useQueryClient();
   return useMutation({
@@ -275,10 +298,32 @@ export function useBulkRetagDocuments() {
   return useMutation({
     mutationFn: (body: Parameters<typeof api.bulkRetagDocuments>[0]) =>
       api.bulkRetagDocuments(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['documents'] });
-      qc.invalidateQueries({ queryKey: ['activity'] });
-      qc.invalidateQueries({ queryKey: ['notifications'] });
+    onMutate: async (body) => {
+      await qc.cancelQueries({ queryKey: ['documents'] });
+      const previousDocuments = qc.getQueriesData<{
+        items: readonly Document[];
+        [key: string]: unknown;
+      }>({ queryKey: ['documents'] });
+      qc.setQueriesData<{
+        items: readonly Document[];
+        [key: string]: unknown;
+      }>({ queryKey: ['documents'] }, (old) =>
+        updateDocumentTags(old, body.targets, body.adds, body.removes),
+      );
+      return { previousDocuments };
+    },
+    onError: (_err, _body, ctx) => {
+      ctx?.previousDocuments.forEach(([queryKey, data]) => {
+        qc.setQueryData(queryKey, data);
+      });
+    },
+    onSettled: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['documents'] }),
+        qc.invalidateQueries({ queryKey: ['tags'] }),
+        qc.invalidateQueries({ queryKey: ['activity'] }),
+        qc.invalidateQueries({ queryKey: ['notifications'] }),
+      ]);
     },
   });
 }

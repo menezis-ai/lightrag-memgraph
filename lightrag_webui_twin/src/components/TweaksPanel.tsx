@@ -24,7 +24,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -68,6 +67,7 @@ function writePosition(p: Position): void {
  * (key, value) pair or a `{ key: value, ... }` patch object, matching the
  * proto's contract.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTweaks<T extends Record<string, unknown>>(
   defaults: T,
 ): [T, (keyOrPatch: keyof T | Partial<T>, value?: T[keyof T]) => void] {
@@ -96,7 +96,8 @@ export interface TweaksPanelProps {
 
 export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: TweaksPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const offsetRef = useRef<Position>(readPosition());
+  const [offset, setOffset] = useState<Position>(() => readPosition());
+  const offsetRef = useRef<Position>(offset);
 
   const clampToViewport = useCallback(() => {
     const panel = panelRef.current;
@@ -105,12 +106,12 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
     const h = panel.offsetHeight;
     const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
     const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
-    offsetRef.current = {
+    const next = {
       x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
       y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
     };
-    panel.style.right = offsetRef.current.x + 'px';
-    panel.style.bottom = offsetRef.current.y + 'px';
+    offsetRef.current = next;
+    setOffset(next);
   }, []);
 
   useEffect(() => {
@@ -138,6 +139,7 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
         x: startRight - (ev.clientX - sx),
         y: startBottom - (ev.clientY - sy),
       };
+      setOffset(offsetRef.current);
       clampToViewport();
     };
     const up = () => {
@@ -155,7 +157,7 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
       ref={panelRef}
       className="twk-panel"
       data-testid="twk-panel"
-      style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}
+      style={{ right: offset.x, bottom: offset.y }}
     >
       <div className="twk-hd" onMouseDown={onDragStart} data-testid="twk-hd">
         <b>{title}</b>
@@ -290,7 +292,9 @@ export function TweakRadio<V extends string | number = string>({
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const valueRef = useRef<V>(value);
-  valueRef.current = value;
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   const labelLen = (o: TweakOption<V>): number =>
     String(typeof o === 'object' && o !== null && 'label' in o ? o.label : o).length;
@@ -556,7 +560,7 @@ export function TweakColor({ label, value, options, onChange }: TweakColorProps)
   }
   // Native <input type=color> emits lowercase hex per the HTML spec.
   const key = (o: ColorOption): string => JSON.stringify(o).toLowerCase();
-  const cur = useMemo(() => key(value), [value]);
+  const cur = key(value);
   return (
     <TweakRow label={label}>
       <div className="twk-chips" role="radiogroup" aria-label={label}>

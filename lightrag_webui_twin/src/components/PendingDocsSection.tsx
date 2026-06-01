@@ -25,7 +25,7 @@
  * state so the operator sees "Approving…" instead of a half-faked transition.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
@@ -57,6 +57,47 @@ export function PendingDocsSection({
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
   const [open, setOpen] = useState(true);
+  const busyDocIdsRef = useRef(new Set<string>());
+  const [busyDocIds, setBusyDocIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  const setDocBusy = (docId: string): boolean => {
+    if (busyDocIdsRef.current.has(docId)) return false;
+    const next = new Set(busyDocIdsRef.current);
+    next.add(docId);
+    busyDocIdsRef.current = next;
+    setBusyDocIds(next);
+    return true;
+  };
+
+  const clearDocBusy = (docId: string | undefined): void => {
+    if (!docId || !busyDocIdsRef.current.has(docId)) return;
+    const next = new Set(busyDocIdsRef.current);
+    next.delete(docId);
+    busyDocIdsRef.current = next;
+    setBusyDocIds(next);
+  };
+
+  const updateDocumentReview = (
+    docId: string,
+    state: 'approved' | 'rejected',
+    edits?: Partial<Document>,
+  ) => {
+    queryClient.setQueriesData<
+      { items: readonly Document[]; [key: string]: unknown } | undefined
+    >({ queryKey: ['documents'] }, (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        items: old.items.map((doc) =>
+          doc.doc_id === docId
+            ? { ...doc, ...edits, review: { ...doc.review, state } }
+            : doc,
+        ),
+      };
+    });
+  };
 
   const approveMut = useMutation({
     mutationFn: ({
@@ -67,46 +108,80 @@ export function PendingDocsSection({
       edits?: Partial<Document>;
       update?: boolean;
     }) => api.approveDocument(doc.doc_id, { actor, edits }),
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: ['documents'] });
+      const previousDocuments = queryClient.getQueriesData<{
+        items: readonly Document[];
+        [key: string]: unknown;
+      }>({ queryKey: ['documents'] });
+      updateDocumentReview(variables.doc.doc_id, 'approved', variables.edits);
+      return { previousDocuments };
+    },
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['documents'] });
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
       onToast(
         'done',
         variables.update ? 'Update approved' : 'Document approved',
         variables.doc.file_path,
       );
     },
-    onError: (err: Error, variables) => {
+    onError: (err: Error, variables, ctx) => {
+      ctx?.previousDocuments.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       onToast(
         'error',
         'Approve failed',
         `${variables.doc.file_path} · ${err.message}`,
       );
     },
+    onSettled: async (_data, _err, variables) => {
+      clearDocBusy(variables?.doc.doc_id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['documents'] }),
+        queryClient.invalidateQueries({ queryKey: ['activity'] }),
+        queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      ]);
+    },
   });
 
   const rejectMut = useMutation({
     mutationFn: ({ doc, reason }: { doc: Document; reason: string }) =>
       api.rejectDocument(doc.doc_id, { reason, actor }),
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: ['documents'] });
+      const previousDocuments = queryClient.getQueriesData<{
+        items: readonly Document[];
+        [key: string]: unknown;
+      }>({ queryKey: ['documents'] });
+      updateDocumentReview(variables.doc.doc_id, 'rejected');
+      return { previousDocuments };
+    },
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['documents'] });
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
       onToast('done', 'Document rejected', variables.doc.file_path);
     },
-    onError: (err: Error, variables) => {
+    onError: (err: Error, variables, ctx) => {
+      ctx?.previousDocuments.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       onToast(
         'error',
         'Reject failed',
         `${variables.doc.file_path} · ${err.message}`,
       );
     },
+    onSettled: async (_data, _err, variables) => {
+      clearDocBusy(variables?.doc.doc_id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['documents'] }),
+        queryClient.invalidateQueries({ queryKey: ['activity'] }),
+        queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      ]);
+    },
   });
 
   if (docs.length === 0) return null;
 
-  const isBusy = (docId: string) =>
-    approveMut.isPending && approveMut.variables?.doc.doc_id === docId;
+  const isBusy = (docId: string) => busyDocIds.has(docId);
 
   return (
     <section
@@ -202,6 +277,7 @@ export function PendingDocsSection({
                   <button
                     type="button"
                     className="pbtn ghost"
+                    disabled={isBusy(doc.doc_id)}
                     onClick={() => onReadSource?.(doc)}
                     data-testid={`pending-doc-read-${doc.doc_id}`}
                   >
@@ -213,9 +289,10 @@ export function PendingDocsSection({
                         type="button"
                         className="pbtn approve"
                         disabled={isBusy(doc.doc_id)}
-                        onClick={() =>
-                          approveMut.mutate({ doc, update: true })
-                        }
+                        onClick={() => {
+                          if (!setDocBusy(doc.doc_id)) return;
+                          approveMut.mutate({ doc, update: true });
+                        }}
                         data-testid={`pending-doc-approve-update-${doc.doc_id}`}
                       >
                         {isBusy(doc.doc_id) ? 'Approving…' : 'Approve update'}
@@ -223,6 +300,7 @@ export function PendingDocsSection({
                       <button
                         type="button"
                         className="pbtn danger span2"
+                        disabled={isBusy(doc.doc_id)}
                         onClick={() => setRejecting(doc)}
                         data-testid={`pending-doc-reject-update-${doc.doc_id}`}
                       >
@@ -234,6 +312,7 @@ export function PendingDocsSection({
                       <button
                         type="button"
                         className="pbtn ghost"
+                        disabled={isBusy(doc.doc_id)}
                         onClick={() => setEditing(doc)}
                         data-testid={`pending-doc-edit-approve-${doc.doc_id}`}
                       >
@@ -243,7 +322,10 @@ export function PendingDocsSection({
                         type="button"
                         className="pbtn approve"
                         disabled={isBusy(doc.doc_id)}
-                        onClick={() => approveMut.mutate({ doc })}
+                        onClick={() => {
+                          if (!setDocBusy(doc.doc_id)) return;
+                          approveMut.mutate({ doc });
+                        }}
                         data-testid={`pending-doc-approve-${doc.doc_id}`}
                       >
                         {isBusy(doc.doc_id) ? 'Approving…' : 'Approve'}
@@ -251,6 +333,7 @@ export function PendingDocsSection({
                       <button
                         type="button"
                         className="pbtn danger"
+                        disabled={isBusy(doc.doc_id)}
                         onClick={() => setRejecting(doc)}
                         data-testid={`pending-doc-reject-${doc.doc_id}`}
                       >
@@ -270,6 +353,7 @@ export function PendingDocsSection({
           doc={editing}
           onClose={() => setEditing(null)}
           onSubmit={(edits) => {
+            if (!setDocBusy(editing.doc_id)) return;
             approveMut.mutate({ doc: editing, edits });
             setEditing(null);
           }}
@@ -279,7 +363,9 @@ export function PendingDocsSection({
         <RejectModal
           doc={rejecting}
           onClose={() => setRejecting(null)}
+          submitting={isBusy(rejecting.doc_id)}
           onSubmit={(reason) => {
+            if (!setDocBusy(rejecting.doc_id)) return;
             rejectMut.mutate({ doc: rejecting, reason });
             setRejecting(null);
           }}
@@ -416,9 +502,15 @@ interface RejectModalProps {
   doc: Document;
   onClose: () => void;
   onSubmit: (reason: string) => void;
+  submitting?: boolean;
 }
 
-function RejectModal({ doc, onClose, onSubmit }: RejectModalProps) {
+function RejectModal({
+  doc,
+  onClose,
+  onSubmit,
+  submitting = false,
+}: RejectModalProps) {
   const [reason, setReason] = useState('');
   const canSubmit = reason.trim().length >= 6;
   return (
@@ -436,7 +528,7 @@ function RejectModal({ doc, onClose, onSubmit }: RejectModalProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h2>Reject {doc.file_path}</h2>
+          <h2>Reject source</h2>
           <button
             type="button"
             className="icon-btn"
@@ -448,9 +540,10 @@ function RejectModal({ doc, onClose, onSubmit }: RejectModalProps) {
         </div>
         <div className="modal-body">
           <p className="muted">
-            A short reason is required (≥ 6 chars). It is logged in the audit
+            A rejection reason is required (minimum 6 characters). It is logged in the audit
             trail and surfaced to the uploader.
           </p>
+          <p className="muted mono breakable">{doc.file_path}</p>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -466,11 +559,11 @@ function RejectModal({ doc, onClose, onSubmit }: RejectModalProps) {
           <button
             type="button"
             className="btn danger"
-            disabled={!canSubmit}
+            disabled={!canSubmit || submitting}
             data-testid="pending-doc-reject-submit"
             onClick={() => onSubmit(reason.trim())}
           >
-            Reject
+            {submitting ? 'Rejecting…' : 'Reject'}
           </button>
         </div>
       </div>

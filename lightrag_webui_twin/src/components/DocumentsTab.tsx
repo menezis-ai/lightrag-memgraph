@@ -101,6 +101,7 @@ export function DocumentsTab({
   const [tagFilters, setTagFilters] = useUrlArrayParam('tag', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
+  const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilterKey, number> = {
@@ -157,6 +158,7 @@ export function DocumentsTab({
   };
 
   const toggleRow = (id: string) => {
+    setBulkDeleteArmed(false);
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -167,16 +169,28 @@ export function DocumentsTab({
     filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
   const someFilteredSelected = filteredIds.some((id) => selected.has(id));
   const toggleAll = () => {
+    setBulkDeleteArmed(false);
     const next = new Set(selected);
     if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
     else filteredIds.forEach((id) => next.add(id));
     setSelected(next);
   };
-  const clearSelection = () => setSelected(new Set());
+  const clearSelection = () => {
+    setBulkDeleteArmed(false);
+    setSelected(new Set());
+  };
   const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
   const openBulk = () => onOpenBulkRetag(selectedDocs);
   const triggerBulkDelete = () => {
     if (!onBulkDelete || selectedDocs.length === 0) return;
+    if (!bulkDeleteArmed) {
+      setBulkDeleteArmed(true);
+      onAddToast(
+        'Confirm bulk delete',
+        `${selectedDocs.length} source${selectedDocs.length === 1 ? '' : 's'} selected · click Delete again to cascade-remove chunks, entities and relations`,
+      );
+      return;
+    }
     onBulkDelete(selectedDocs);
     clearSelection();
   };
@@ -285,7 +299,7 @@ export function DocumentsTab({
             <TagChip key={t} tag={t} removable onRemove={removeTagFilter} />
           ))}
           {tagAddOpen ? (
-            <div style={{ position: 'relative' }}>
+            <div className="autocomplete-anchor">
               <input
                 autoFocus
                 value={tagAddVal}
@@ -310,7 +324,7 @@ export function DocumentsTab({
               />
               {thesaurusSuggestions.length > 0 && (
                 <div
-                  className="autocomplete"
+                  className="autocomplete floating-autocomplete"
                   style={{
                     position: 'absolute',
                     top: '100%',
@@ -382,7 +396,8 @@ export function DocumentsTab({
               data-testid="docs-bulk-delete"
               aria-label={`Delete ${selected.size} sources`}
             >
-              <Icon name="x" size={13} /> Delete {selected.size}
+              <Icon name="x" size={13} />{' '}
+              {bulkDeleteArmed ? `Confirm delete ${selected.size}` : `Delete ${selected.size}`}
             </button>
           )}
           <button
@@ -502,7 +517,12 @@ function DocRow({
       </div>
       <div className="cell-source">
         <SourceIcon type={doc.type} size={14} />
-        <span className={doc.type !== 'file' ? 'mono' : ''}>{doc.file_path}</span>
+        <span
+          className={`source-name${doc.type !== 'file' ? ' mono' : ''}`}
+          title={doc.file_path}
+        >
+          {doc.file_path}
+        </span>
         <ClassPill
           cls={doc.metadata?.classification as ClassificationValue}
           docId={doc.doc_id}
@@ -519,7 +539,11 @@ function DocRow({
             // class already paints everything red.
           />
         )}
-        <span style={isFail ? { marginLeft: 6 } : undefined}>
+        <span
+          className="summary-text"
+          style={isFail ? { marginLeft: 6 } : undefined}
+          title={doc.content_summary}
+        >
           {doc.content_summary}
         </span>
       </div>

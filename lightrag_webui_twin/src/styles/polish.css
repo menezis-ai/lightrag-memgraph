@@ -758,6 +758,138 @@
   letter-spacing: 0.04em;
 }
 
+/* ── CIB stress hardening: dense layouts, long paths, overlays ─────────── */
+.breakable {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.docs-table {
+  min-width: 1040px;
+}
+.docs-row.has-select {
+  grid-template-columns:
+    32px minmax(180px, 1.05fr) minmax(220px, 1.35fr) minmax(112px, 130px)
+    92px 56px 78px 36px;
+}
+.cell-source,
+.cell-summary,
+.cell-tags,
+.cell-status,
+.cell-updated {
+  min-width: 0;
+}
+.cell-source .source-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-summary .summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+.tag-card-name,
+.tag-detail-name,
+.tag-detail-aliases code,
+.related-chip code,
+.hist-what,
+.hist-who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.tag-card-h,
+.tag-detail-h,
+.hist-item {
+  min-width: 0;
+}
+.toast-viewport {
+  max-width: min(420px, calc(100vw - 32px));
+}
+.toast {
+  width: min(360px, calc(100vw - 32px));
+}
+.toast .title,
+.toast .sub,
+.toast .title .tagname {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.toast .title {
+  flex-wrap: wrap;
+}
+.toast .sub {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.autocomplete-anchor,
+.chip-input,
+.field {
+  position: relative;
+}
+.floating-autocomplete,
+.modal-autocomplete {
+  z-index: 260;
+  box-shadow: 0 10px 28px rgba(15, 23, 32, 0.16);
+}
+.floating-autocomplete {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 48px));
+}
+.modal-autocomplete {
+  position: relative;
+}
+.modal {
+  overflow: visible;
+}
+.modal-body {
+  overscroll-behavior: contain;
+}
+.modal-body:has(.modal-autocomplete) {
+  overflow: visible;
+  max-height: none;
+}
+.autocomplete-row .row1,
+.autocomplete-row .def {
+  min-width: 0;
+}
+.autocomplete-row .row1 span:first-child,
+.autocomplete-row .def {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.pbtn:disabled,
+.bulk-action:disabled,
+.row-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.history-item:focus-visible,
+.switch:focus-visible,
+.kg-node:focus-visible {
+  outline: 2px solid var(--twin-accent);
+  outline-offset: 2px;
+}
+.source-card .src-name {
+  overflow-wrap: anywhere;
+}
+
 /* ── DocumentsTab row actions — accessible click targets ──────────────────
    The maquette has .cell-action (singular) for a single action button.
    PR #155 introduced .cell-actions (plural) with 2 buttons (retag +

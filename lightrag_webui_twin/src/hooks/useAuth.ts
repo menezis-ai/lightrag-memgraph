@@ -57,7 +57,7 @@ export function __resetAuthConfigCacheForTests(): void {
 
 export function useAuth(): UseAuthResult {
   const queryClient = useQueryClient();
-  const config = useMemo(getRuntimeConfig, []);
+  const config = useMemo(() => getRuntimeConfig(), []);
   const user = config.debugUser ?? null;
 
   const signout = useCallback(async () => {

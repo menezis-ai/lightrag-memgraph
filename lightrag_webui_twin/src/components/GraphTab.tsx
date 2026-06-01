@@ -373,9 +373,20 @@ export function GraphTab({
                     key={e.id}
                     className={`kg-node${isSelected ? ' is-selected' : ''}${isDim ? ' is-dim' : ''}`}
                     transform={`translate(${e.x}, ${e.y})`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Select entity ${e.name}`}
+                    aria-pressed={isSelected}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       setSelectedId(e.id);
+                    }}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        setSelectedId(e.id);
+                      }
                     }}
                     onMouseEnter={() => setHoverId(e.id)}
                     onMouseLeave={() => setHoverId(null)}

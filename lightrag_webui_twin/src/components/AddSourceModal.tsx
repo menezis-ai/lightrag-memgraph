@@ -391,12 +391,18 @@ export function AddSourceModal({
               />
             </div>
             {tagInput && tagSugg.length > 0 && (
-              <div className="autocomplete" style={{ marginTop: 4 }}>
+              <div
+                className="autocomplete modal-autocomplete"
+                role="listbox"
+                style={{ marginTop: 4 }}
+              >
                 {tagSugg.map((s, i) => (
                   <div
                     key={s.tag}
                     className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
                     onMouseDown={() => addTag(s.tag)}
+                    role="option"
+                    aria-selected={i === 0}
                     data-testid={`tag-sugg-${s.tag}`}
                   >
                     <div className="row1">
