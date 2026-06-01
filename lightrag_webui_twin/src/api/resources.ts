@@ -59,6 +59,23 @@ export const lightragApi = {
       `/documents/${encodeURIComponent(docId)}/chunks`,
       init,
     ),
+  /**
+   * Resolve all DocStatus rows associated with an ingestion track_id
+   * (the id returned by /documents/upload). Used to discover the
+   * generated doc_id once processing completes, so initial tags from
+   * the AddSource modal can be applied via bulk-retag.
+   */
+  trackStatus: (trackId: string, init?: ApiRequestInit) =>
+    apiFetch<{
+      track_id: string;
+      documents: readonly {
+        id: string;
+        status: string;
+        file_path: string;
+      }[];
+      total_count: number;
+      status_summary: Record<string, number>;
+    }>(`/documents/track_status/${encodeURIComponent(trackId)}`, init),
   scanDocument: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}/scan`, {
       ...init,
@@ -378,6 +395,7 @@ export const api = {
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
   scanDocument: lightragApi.scanDocument,
+  trackStatus: lightragApi.trackStatus,
   uploadDocument: lightragApi.uploadDocument,
   deleteDocument: lightragApi.deleteDocument,
   health: lightragApi.health,

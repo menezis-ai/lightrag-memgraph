@@ -58,6 +58,7 @@ import {
   useUpdateTagSynonyms,
   useWorkspaces,
 } from './api/queries';
+import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
@@ -284,10 +285,100 @@ function AppShell() {
       });
     }
 
-    // TODO: apply action.tags via bulk-retag once the doc_ids surface
-    // (requires either parsing the InsertResponse for the doc id or
-    // polling track_status; deferred to the next iteration so the
-    // upload path ships unblocked).
+    // Auto-tag-on-upload: when the operator typed tags in the modal,
+    // poll /documents/track_status/{track_id} until each upload's doc
+    // lands as 'processed', then fire a bulk-retag with the saved
+    // tags. We don't block the main toast on this — it runs in the
+    // background and pushes a follow-up toast on completion.
+    if (action.tags.length > 0) {
+      const successfulTrackIds = results
+        .filter((r) => r.status === 'fulfilled')
+        .map((r) => (r as PromiseFulfilledResult<{ track_id: string }>).value.track_id)
+        .filter(Boolean);
+      if (successfulTrackIds.length > 0) {
+        void applyInitialTagsAfterIngestion(
+          successfulTrackIds,
+          action.tags,
+        );
+      }
+    }
+  };
+
+  /**
+   * Poll track_status for each track_id (up to ~60s with 2s intervals)
+   * and, once the corresponding doc reaches 'processed' (or 'failed'),
+   * collect its doc_id and fire a single bulk-retag with the operator's
+   * initial tags. Survives across page refreshes only for the duration
+   * of the modal interaction (lost on reload — intentional, the operator
+   * can retag manually if the page is closed mid-ingestion).
+   */
+  const applyInitialTagsAfterIngestion = async (
+    trackIds: readonly string[],
+    tags: readonly string[],
+  ): Promise<void> => {
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_POLLS = 30;
+    const TERMINAL_STATUSES = new Set([
+      'processed',
+      'PROCESSED',
+      'failed',
+      'FAILED',
+    ]);
+    const resolvedDocIds = new Set<string>();
+    const pending = new Set(trackIds);
+    for (let i = 0; i < MAX_POLLS && pending.size > 0; i++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      for (const tid of Array.from(pending)) {
+        try {
+          const status = await api.trackStatus(tid);
+          const terminalDocs = status.documents.filter((d) =>
+            TERMINAL_STATUSES.has(d.status),
+          );
+          if (
+            terminalDocs.length > 0 &&
+            terminalDocs.length === status.documents.length
+          ) {
+            terminalDocs
+              .filter((d) => d.status.toLowerCase() === 'processed')
+              .forEach((d) => resolvedDocIds.add(d.id));
+            pending.delete(tid);
+          }
+        } catch {
+          // 404 from track_status is fine while LightRAG is still
+          // booking the doc — keep polling until MAX_POLLS.
+        }
+      }
+    }
+    if (resolvedDocIds.size === 0) {
+      if (trackIds.length > 0) {
+        pushToast({
+          kind: 'error',
+          title: 'Initial tags not applied',
+          sub: `Ingestion didn't reach a terminal state within ${(MAX_POLLS * POLL_INTERVAL_MS) / 1000}s. Retag manually once the docs land.`,
+        });
+      }
+      return;
+    }
+    try {
+      await bulkRetagDocs.mutateAsync({
+        targets: Array.from(resolvedDocIds),
+        adds: tags,
+        removes: [],
+        actor: CURRENT_USER.name,
+      });
+      pushToast({
+        kind: 'done',
+        title: 'Initial tags applied',
+        sub: `${resolvedDocIds.size} doc${resolvedDocIds.size === 1 ? '' : 's'} · tags: ${tags.join(', ')}`,
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Initial tags failed',
+        sub:
+          err instanceof Error ? err.message : 'bulk-retag returned an error',
+      });
+    }
   };
 
   // Tag mutations — call the backend through TanStack Query. Each mutation
