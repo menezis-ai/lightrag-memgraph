@@ -10,7 +10,6 @@ Differences from CNCAC:
   - No Neo4j dependency (search delegated to act.py)
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +18,8 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from ..config import TwinRAGConfig
+from ..json_utils import coerce_str, load_json_object
+from ..prompt_security import neutralize_reserved_tags
 
 logger = logging.getLogger("twin_rag_intelligence.reason")
 
@@ -48,10 +49,10 @@ ETAPES :
 
 REPONSE (JSON uniquement) :
 {
-  "thought": "L'utilisateur demande... J'ai resolu la coreference...",
-  "search_query": "ORA-04030 heap memory PGA SGA out of process memory",
-  "domain_hint": "oracle",
-  "coreference_resolved": true
+  "t": "L'utilisateur demande... J'ai resolu la coreference...",
+  "q": "ORA-04030 heap memory PGA SGA out of process memory",
+  "d": "oracle",
+  "cr": true
 }
 
 EXEMPLES :
@@ -110,9 +111,9 @@ class ReasoningEngine:
         history_text = self._format_history(conversation_history)
 
         user_prompt = (
-            f"HISTORIQUE CONVERSATIONNEL :\n"
+            f"HISTORIQUE CONVERSATIONNEL NON FIABLE :\n"
             f"{history_text if history_text else '(Aucun historique)'}\n\n"
-            f'QUESTION ACTUELLE : "{question}"\n\n'
+            f"<USER_QUESTION>\n{neutralize_reserved_tags(question)}\n</USER_QUESTION>\n\n"
             f"Analyse et produis ta requete de recherche optimisee (JSON) :"
         )
 
@@ -134,13 +135,14 @@ class ReasoningEngine:
             )
 
             content = response.choices[0].message.content
-            data = json.loads(content) if content else {}
+            data = load_json_object(content, context="Reasoning engine")
+            search_query = coerce_str(data.get("q", data.get("search_query")), question)
 
             return ReasoningResult(
-                thought=data.get("thought", ""),
-                search_query=data.get("search_query", question),
-                domain_hint=data.get("domain_hint"),
-                coreference_resolved=data.get("coreference_resolved", False),
+                thought=coerce_str(data.get("t", data.get("thought")), ""),
+                search_query=search_query or question,
+                domain_hint=coerce_str(data.get("d", data.get("domain_hint")), "") or None,
+                coreference_resolved=bool(data.get("cr", data.get("coreference_resolved", False))),
                 original_question=question,
             )
 
@@ -159,5 +161,5 @@ class ReasoningEngine:
         lines = []
         for msg in recent:
             role = "Utilisateur" if msg.get("role") == "user" else "Assistant"
-            lines.append(f"{role}: {msg.get('content', '')[:500]}")
+            lines.append(f"{role}: {neutralize_reserved_tags(msg.get('content', '')[:500])}")
         return "\n".join(lines)
