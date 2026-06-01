@@ -9,6 +9,7 @@ from the buffer, falling back to the real graph for data not yet buffered.
 
 import logging
 
+from ._constants import validate_identifier
 from ._pool import acquire_write_slot, get_session
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
@@ -99,6 +100,9 @@ class _BufferedGraphProxy:
                 edge_count,
             )
             raise
+        self._node_buffer.clear()
+        self._node_types.clear()
+        self._edge_buffer.clear()
         logger.debug(
             "Buffered flush: %d nodes, %d edges",
             node_count,
@@ -107,7 +111,7 @@ class _BufferedGraphProxy:
 
     async def _flush_nodes(self):
         """Single UNWIND query for all buffered nodes + per-type label queries."""
-        workspace = self._real.workspace
+        workspace = validate_identifier(self._real.workspace, "workspace")
         entries = [
             {"entity_id": name, "properties": data}
             for name, data in self._node_buffer.items()
@@ -131,11 +135,21 @@ class _BufferedGraphProxy:
                 for name, node_type in self._node_types.items():
                     by_type.setdefault(node_type, []).append(name)
                 for node_type, names in by_type.items():
+                    try:
+                        safe_type = validate_identifier(
+                            str(node_type), "entity_type"
+                        )
+                    except ValueError:
+                        logger.warning(
+                            "Skipping unsafe buffered entity_type label: %r",
+                            node_type,
+                        )
+                        continue
                     result = await session.run(
                         f"""
                         UNWIND $names AS name
                         MATCH (n:`{workspace}` {{entity_id: name}})
-                        SET n:`{node_type}`
+                        SET n:`{safe_type}`
                         """,
                         names=names,
                     )
@@ -143,7 +157,7 @@ class _BufferedGraphProxy:
 
     async def _flush_edges(self):
         """Single UNWIND query for all buffered edges."""
-        workspace = self._real.workspace
+        workspace = validate_identifier(self._real.workspace, "workspace")
         entries = [
             {
                 "source_entity_id": src,

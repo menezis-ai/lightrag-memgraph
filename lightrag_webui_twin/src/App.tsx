@@ -35,7 +35,7 @@ import { TagsTab, type TagApproveAction } from './components/TagsTab';
 import type { TagActionCommit } from './components/TagActionModal';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
-import { useAuth } from './hooks/useAuth';
+import { clearTwinBrowserState, useAuth } from './hooks/useAuth';
 import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
@@ -600,6 +600,7 @@ function AppShell() {
                   // either re-prompt Basic Auth (current model) or
                   // hit the JWT/IdP login (future).
                   queryClient.clear();
+                  clearTwinBrowserState();
                   window.location.reload();
                 })();
               }}
