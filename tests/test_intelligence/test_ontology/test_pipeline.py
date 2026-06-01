@@ -407,7 +407,10 @@ class TestDualPass:
             original = client.chat.completions.create
 
             async def tracking_create(**kw):
-                prompts_seen.append(kw["messages"][0]["content"])
+                # Red Team prompt security (2026-06-02): the document
+                # now lives in the USER message wrapped in
+                # <UNTRUSTED_DOCUMENT> tags, not in the system prompt.
+                prompts_seen.append(kw["messages"][1]["content"])
                 return await original(**kw)
 
             client.chat.completions.create = AsyncMock(side_effect=tracking_create)
@@ -430,9 +433,12 @@ class TestDualPass:
         # Global pass: 20000 tokens * 3 chars/token = 60000 chars max
         global_prompt = prompts_seen[0]
         assert len(global_prompt) < 100_000
-        # Extract the DOCUMENT section from the prompt
-        doc_start = global_prompt.index("DOCUMENT:\n") + len("DOCUMENT:\n")
-        doc_end = global_prompt.index("\n\nTASK:")
+        # Extract the DOCUMENT section from the new Red Team wrapper.
+        doc_start = (
+            global_prompt.index("<UNTRUSTED_DOCUMENT>\n")
+            + len("<UNTRUSTED_DOCUMENT>\n")
+        )
+        doc_end = global_prompt.index("\n</UNTRUSTED_DOCUMENT>")
         doc_section = global_prompt[doc_start:doc_end]
         # Document should be truncated well below 100k
         assert len(doc_section) <= 60_000
