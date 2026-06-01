@@ -44,6 +44,11 @@
   border-radius: var(--border-radius-sm);
 }
 .btn.danger {
+  /* Outline-style danger button: red text on the base button bg, hover
+     reveals the pale-red tint. Must reset the solid-red background from
+     legacy.css:1143 (the pipeline-panel "Stop" variant); otherwise
+     polish's red text lands on legacy's red bg → invisible label. */
+  background: var(--color-background-primary);
   color: var(--twin-red-vivid);
   border-color: var(--color-border-tertiary);
 }
