@@ -585,13 +585,24 @@ function AppShell() {
             <SettingsTab
               activeWorkspace={workspace}
               kbName={kbName}
-              onSignOut={() =>
-                pushToast({
-                  kind: 'done',
-                  title: 'Signed out',
-                  sub: 'POST /twin/api/auth/logout · session cleared',
-                })
-              }
+              onSignOut={() => {
+                void (async () => {
+                  try {
+                    await api.logout();
+                  } catch {
+                    // Even if the endpoint hiccups, we want to clear
+                    // the local state and force the operator back to
+                    // the Basic Auth prompt — never block sign-out
+                    // on a server error.
+                  }
+                  // Drop all cached React Query state (tags, docs,
+                  // activity, …). The next request after reload will
+                  // either re-prompt Basic Auth (current model) or
+                  // hit the JWT/IdP login (future).
+                  queryClient.clear();
+                  window.location.reload();
+                })();
+              }}
               onRestartTutorial={() =>
                 pushToast({
                   kind: 'done',

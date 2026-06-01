@@ -528,6 +528,30 @@ async def bulk_retag_documents(
     return {"updated": updated, "failed": failed}
 
 
+@router.post("/auth/logout", response_model=AckResponse)
+async def logout() -> dict[str, Any]:
+    """Sign out the current operator.
+
+    Under the current Traefik Basic Auth gate, sign-out is mostly a
+    client-side concern (clear React Query cache + reload to retrigger
+    the browser's auth prompt). The endpoint exists so the frontend
+    can confirm round-trip before clearing local state — when JWT/IdP
+    arrives (Couche 3 §3.3), this also clears the HttpOnly cookie
+    via Set-Cookie: Max-Age=0.
+
+    Returns {ok: true} always — sign-out cannot fail server-side
+    under the current model.
+    """
+    from fastapi.responses import JSONResponse
+
+    response = JSONResponse(content={"ok": True})
+    # Pre-emptive cookie clear for the future JWT flow. Currently a
+    # no-op because Basic Auth uses HTTP headers, not cookies.
+    response.delete_cookie("twin_session", path="/")
+    response.delete_cookie("twin_id_token", path="/")
+    return response
+
+
 @router.post("/documents/{doc_id}/approve")
 async def approve_document(
     doc_id: str,
