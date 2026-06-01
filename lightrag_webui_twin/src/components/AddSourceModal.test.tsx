@@ -66,7 +66,7 @@ describe('AddSourceModal — basic rendering', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the initial files and URLs', () => {
+  it('renders the initial files (URL chips are gated — see Coming soon)', () => {
     render(
       <AddSourceModal
         {...defaultProps()}
@@ -76,35 +76,41 @@ describe('AddSourceModal — basic rendering', () => {
     );
     expect(screen.getByText('oracle-config-guide.pdf')).toBeInTheDocument();
     expect(screen.getByText('huge-archive.zip')).toBeInTheDocument();
-    expect(
-      screen.getByText('confluence.bnp/cib/runbooks'),
-    ).toBeInTheDocument();
-  });
-});
-
-describe('AddSourceModal — URL handling', () => {
-  it('adds a URL on Enter, auto-detecting type', async () => {
-    render(<AddSourceModal {...defaultProps()} />);
-    const input = screen.getByLabelText('URL input');
-    await userEvent.type(input, 'sharepoint.bnp/cib/incidents{Enter}');
-    expect(
-      screen.getByText('sharepoint.bnp/cib/incidents'),
-    ).toBeInTheDocument();
-    // SourceIcon for sharepoint = `cloud`
-    expect(document.querySelector('svg[data-icon="cloud"]')).not.toBeNull();
-  });
-
-  it('removes a URL on chip X click', async () => {
-    render(
-      <AddSourceModal {...defaultProps()} initialUrls={[sampleConfluence]} />,
-    );
-    const x = screen.getByRole('button', {
-      name: 'Remove confluence.bnp/cib/runbooks',
-    });
-    await userEvent.click(x);
+    // initialUrls is preserved in state and submitted, but its UI chip
+    // doesn't render while the linked-sources block is gated.
     expect(
       screen.queryByText('confluence.bnp/cib/runbooks'),
     ).toBeNull();
+  });
+});
+
+describe('AddSourceModal — Linked sources (Coming soon)', () => {
+  // The linked-sources block is gated until the RAG 1.5 connector
+  // (Fayçal + Eric, BNP) ships its API. Until then, the input is
+  // disabled and a "Coming soon" pill is rendered next to the label.
+  it('renders the Coming soon pill and a disabled input', () => {
+    render(<AddSourceModal {...defaultProps()} />);
+    expect(screen.getByText('Coming soon')).toBeInTheDocument();
+    const input = screen.getByLabelText(
+      'URL input (disabled — coming soon)',
+    ) as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+  });
+
+  it('still forwards initialUrls to onSubmit (state preserved while UI is gated)', async () => {
+    const onSubmit = vi.fn();
+    render(
+      <AddSourceModal
+        {...defaultProps()}
+        initialUrls={[sampleConfluence]}
+        initialFiles={[sampleUploaded]}
+        onSubmit={onSubmit}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /add 2/i }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ urls: [sampleConfluence] }),
+    );
   });
 });
 

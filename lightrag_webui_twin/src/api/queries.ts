@@ -219,6 +219,27 @@ export function useDeleteTag() {
   });
 }
 
+/**
+ * Import a JSON taxonomy via POST /tags/categories/_import. Server-side
+ * validation matches docs/templates/twin-categories.schema.json — a
+ * 400 surfaces as ApiError with the validation message. On success,
+ * we invalidate both ['tag-categories'] (sidebar refreshes) and
+ * ['tags'] (the existing tags' category labels may now point at
+ * a renamed/removed category that the UI should re-render against).
+ */
+export function useImportCategories() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.importCategories>[0]) =>
+      api.importCategories(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tag-categories'] });
+      qc.invalidateQueries({ queryKey: ['tags'] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
 // Helper: split a useDocuments() result into shape the DocumentsTab expects
 // (an array). DocumentsTab currently takes `docs: readonly Document[]`.
 export function asDocuments(

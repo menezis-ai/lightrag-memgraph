@@ -14,11 +14,14 @@
  *     translates it to a toast payload.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { TagActionModal, type TagActionCommit } from './TagActionModal';
 import { useUrlParam } from '../hooks/useUrlParam';
+import { useImportCategories } from '../api/queries';
+import { api } from '../api/resources';
+import { ApiError } from '../api/client';
 import type {
   TagAction,
   TagCategory,
@@ -65,6 +68,85 @@ export function TagsTab({
   const [selectedTag, setSelectedTag] = useUrlParam<string>('tag', tags[0]?.tag ?? '');
   const [pendingOpen, setPendingOpen] = useState(true);
   const [modal, setModal] = useState<TagAction | null>(null);
+
+  // ── Taxonomy import / template download ─────────────────────────
+  // Doctrine: categories are governance taxonomy, not user-generated.
+  // No UI to *create* a category; instead an admin uploads the
+  // canonical JSON (mirrored to Memgraph by the server). The schema
+  // is at docs/templates/twin-categories.schema.json — server rejects
+  // any payload that doesn't match.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importStatus, setImportStatus] = useState<
+    | { kind: 'idle' }
+    | { kind: 'success'; count: number }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
+  const importCategories = useImportCategories();
+
+  const handleDownloadTemplate = async (): Promise<void> => {
+    try {
+      const data = await api.downloadCategoriesTemplate();
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'twin-categories.template.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setImportStatus({
+        kind: 'error',
+        message:
+          err instanceof Error
+            ? `Template download failed: ${err.message}`
+            : 'Template download failed.',
+      });
+    }
+  };
+
+  const handleImportFile = async (file: File): Promise<void> => {
+    setImportStatus({ kind: 'idle' });
+    let parsed: unknown;
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setImportStatus({
+        kind: 'error',
+        message: `Invalid JSON file: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      setImportStatus({
+        kind: 'error',
+        message:
+          'Root must be a JSON array of category objects. See ' +
+          'docs/templates/twin-categories.schema.json for the expected shape.',
+      });
+      return;
+    }
+    try {
+      await importCategories.mutateAsync(
+        parsed as Parameters<typeof api.importCategories>[0],
+      );
+      setImportStatus({ kind: 'success', count: parsed.length });
+    } catch (err) {
+      const message =
+        err instanceof ApiError && typeof err.body === 'object' && err.body
+          ? (err.body as { detail?: string }).detail ?? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Import failed.';
+      setImportStatus({ kind: 'error', message });
+    }
+  };
 
   const requested = useMemo(
     () => tags.filter((t) => t.tier === 'requested'),
@@ -136,6 +218,44 @@ export function TagsTab({
           </div>
         </div>
         <div className="tags-header-actions">
+          {canEdit && (
+            <>
+              <button
+                className="ghost-btn"
+                onClick={() => void handleDownloadTemplate()}
+                title="Download the canonical category template JSON"
+                data-testid="taxonomy-download-template"
+              >
+                <Icon name="external-link" size={12} /> Download template
+              </button>
+              <button
+                className="ghost-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importCategories.isPending}
+                title="Mirror an uploaded JSON taxonomy into the workspace (replace, not merge)"
+                data-testid="taxonomy-import"
+              >
+                <Icon name="cloud-upload" size={12} />{' '}
+                {importCategories.isPending
+                  ? 'Importing…'
+                  : 'Import categories'}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Reset the input so re-selecting the same file fires
+                  // another change event (browser would otherwise no-op).
+                  e.target.value = '';
+                  if (file) void handleImportFile(file);
+                }}
+                data-testid="taxonomy-import-file"
+              />
+            </>
+          )}
           {canSuggest && (
             <button
               className="ghost-btn"
@@ -153,6 +273,31 @@ export function TagsTab({
           </button>
         </div>
       </div>
+
+      {importStatus.kind !== 'idle' && (
+        <div
+          className={
+            'taxonomy-import-status taxonomy-import-status--' +
+            importStatus.kind
+          }
+          role={importStatus.kind === 'error' ? 'alert' : 'status'}
+          data-testid="taxonomy-import-status"
+        >
+          {importStatus.kind === 'success' && (
+            <>
+              <Icon name="circle-check" size={14} />{' '}
+              Categories imported · {importStatus.count} domain
+              {importStatus.count === 1 ? '' : 's'} applied.
+            </>
+          )}
+          {importStatus.kind === 'error' && (
+            <>
+              <Icon name="alert-triangle" size={14} />{' '}
+              {importStatus.message}
+            </>
+          )}
+        </div>
+      )}
 
       {requested.length > 0 && canSuggest && (
         <div className={'pending-section ' + (pendingOpen ? 'is-open' : '')}>

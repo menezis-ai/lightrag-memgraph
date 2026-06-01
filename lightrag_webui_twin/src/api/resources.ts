@@ -120,6 +120,34 @@ export const twinApi = {
   listTagCategories: (init?: ApiRequestInit) =>
     apiFetch<readonly TagCategory[]>(`${TWIN}/tags/categories`, init),
 
+  /**
+   * Download the canonical taxonomy template (governance JSON).
+   * Server returns the JSON with ``Content-Disposition: attachment``
+   * so a plain anchor + ``download`` attribute would also work, but
+   * routing through ``apiFetch`` keeps auth header propagation
+   * consistent when the host turns on JWT-cookie auth.
+   */
+  downloadCategoriesTemplate: (init?: ApiRequestInit) =>
+    apiFetch<readonly TagCategory[]>(
+      `${TWIN}/tags/categories/template`,
+      init,
+    ),
+
+  /**
+   * Mirror a JSON taxonomy into the workspace's categories store.
+   * Server-side validation is strict (matches the template schema);
+   * a 400 maps to ``ApiError`` with the validation message as ``body``.
+   */
+  importCategories: (
+    body: readonly { id: string; label: string; color: string }[],
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ ok: boolean }>(`${TWIN}/tags/categories/_import`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+
   requestTag: (
     body: {
       tag: string;
@@ -300,6 +328,8 @@ export const api = {
   listThesaurus: twinApi.listThesaurus,
   listTags: twinApi.listTags,
   listTagCategories: twinApi.listTagCategories,
+  downloadCategoriesTemplate: twinApi.downloadCategoriesTemplate,
+  importCategories: twinApi.importCategories,
   requestTag: twinApi.requestTag,
   approveTag: twinApi.approveTag,
   rejectTag: twinApi.rejectTag,

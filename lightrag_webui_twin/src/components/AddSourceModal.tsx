@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Icon, SourceIcon } from './Icon';
+import { Icon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
 import type { FormatCategory } from '../types/format';
@@ -56,12 +56,6 @@ export interface AddSourceModalProps {
   onSubmit: (action: AddSourceAction) => void;
 }
 
-function detectLinkedType(url: string): LinkedSourceType {
-  if (/confluence/i.test(url)) return 'confluence';
-  if (/sharepoint/i.test(url)) return 'sharepoint';
-  return 'url';
-}
-
 export function AddSourceModal({
   open,
   thesaurus,
@@ -75,8 +69,10 @@ export function AddSourceModal({
   useModalA11y({ open, onClose, ref: modalRef });
 
   const [files, setFiles] = useState<readonly FileUpload[]>(initialFiles);
-  const [urls, setUrls] = useState<readonly LinkedSource[]>(initialUrls);
-  const [urlInput, setUrlInput] = useState('');
+  // Linked sources are gated until the RAG 1.5 connector lands — see the
+  // "Coming soon" badge in the JSX. We keep `urls` in state (initialised
+  // from props for tests) so the submit pipeline still emits it.
+  const [urls] = useState<readonly LinkedSource[]>(initialUrls);
   const [tags, setTags] = useState<readonly string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [drag, setDrag] = useState(false);
@@ -115,15 +111,6 @@ export function AddSourceModal({
 
   if (!open) return null;
 
-  const addUrls = (val: string) => {
-    const parts = val
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    setUrls([...urls, ...parts.map((u) => ({ url: u, type: detectLinkedType(u) }))]);
-    setUrlInput('');
-  };
-  const removeUrl = (u: string) => setUrls(urls.filter((x) => x.url !== u));
   const removeFile = (n: string) =>
     setFiles(files.filter((f) => f.name !== n));
   const addTag = (t: string) => {
@@ -304,42 +291,32 @@ export function AddSourceModal({
           <div>
             <div className="section-label">
               <span>Linked sources</span>
+              <span
+                className="coming-soon"
+                title="Waiting on the RAG 1.5 API to be exposed"
+              >
+                Coming soon
+              </span>
             </div>
-            <div className="linked-box" style={{ marginTop: 6 }}>
-              {urls.map((u) => (
-                <span key={u.url} className="url-chip">
-                  <span className="ico">
-                    <SourceIcon type={u.type} size={12} />
-                  </span>
-                  <span>{u.url}</span>
-                  <button
-                    type="button"
-                    className="x-btn"
-                    onClick={() => removeUrl(u.url)}
-                    aria-label={`Remove ${u.url}`}
-                  >
-                    <Icon name="x" size={10} />
-                  </button>
-                </span>
-              ))}
+            <div
+              className="linked-box disabled"
+              aria-disabled="true"
+              style={{ marginTop: 6 }}
+            >
               <input
                 className="url-input"
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') addUrls(urlInput);
-                }}
-                placeholder={
-                  urls.length
-                    ? 'Paste another URL — Enter to add'
-                    : 'Paste Confluence or SharePoint URL — Enter to add'
-                }
-                aria-label="URL input"
+                value=""
+                onChange={() => {}}
+                disabled
+                placeholder="Available once the RAG 1.5 API is wired"
+                aria-label="URL input (disabled — coming soon)"
+                tabIndex={-1}
               />
             </div>
             <div className="helper-note" style={{ marginTop: 4 }}>
-              Auto-detects Confluence, SharePoint, or generic URL · paste
-              multiple separated by space or comma
+              Confluence / SharePoint linking will use the RAG 1.5 connector
+              (Fayçal &amp; Eric, BNP). Endpoint is not yet available — drop
+              files in the box above in the meantime.
             </div>
           </div>
 
