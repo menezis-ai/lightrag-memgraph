@@ -528,6 +528,116 @@ async def bulk_retag_documents(
     return {"updated": updated, "failed": failed}
 
 
+@router.post("/documents/{doc_id}/approve")
+async def approve_document(
+    doc_id: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Mark a document as reviewer-approved.
+
+    Persists ``DocStatus.metadata.review = {state: 'approved',
+    actor, at, edits?}`` on the Memgraph node and emits a
+    ``doc-approved`` activity event. The ``edits`` (optional) carries
+    operator-supplied corrections that were applied at the same time
+    as the approval — the front-end's EditApproveModal sends these
+    alongside the approve when the reviewer needed to fix something
+    before signing off.
+    """
+    rag = _get_rag()
+    body = body or {}
+    actor = body.get("actor") or "system"
+    edits = body.get("edits") or {}
+
+    doc = await rag.doc_status.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    metadata = doc.get("metadata") or {}
+    review = metadata.get("review") or {}
+    review.update(
+        {
+            "state": "approved",
+            "actor": actor,
+            "at": _utcnow_iso(),
+        }
+    )
+    if edits:
+        review["edits"] = edits
+    metadata["review"] = review
+    doc["metadata"] = metadata
+    await rag.doc_status.upsert({doc_id: doc})
+
+    event = _make_event(
+        kind="doc-approved",
+        sev="info",
+        actor=actor,
+        target_label=doc.get("file_path") or doc_id,
+        summary=(
+            f"approved by {actor}" + (f" with edits" if edits else "")
+        ),
+        meta={"doc_id": doc_id, "edits": edits},
+        target_type="document",
+    )
+    await get_store().record_activity(event)
+
+    return {"doc_id": doc_id, "review": review}
+
+
+@router.post("/documents/{doc_id}/reject")
+async def reject_document(
+    doc_id: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Mark a document as reviewer-rejected.
+
+    Persists ``DocStatus.metadata.review = {state: 'rejected',
+    actor, at, justification}`` on the Memgraph node and emits a
+    ``doc-rejected`` activity event with the rejection reason in the
+    summary (visible in the audit feed). The doc itself is NOT
+    deleted — it stays in DocStatus with its rejected review so the
+    operator can still see it in the table with the right badge.
+    """
+    rag = _get_rag()
+    actor = body.get("actor") or "system"
+    reason = body.get("reason") or ""
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="reject_document requires a non-empty `reason` field.",
+        )
+
+    doc = await rag.doc_status.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    metadata = doc.get("metadata") or {}
+    review = metadata.get("review") or {}
+    review.update(
+        {
+            "state": "rejected",
+            "actor": actor,
+            "at": _utcnow_iso(),
+            "justification": reason,
+        }
+    )
+    metadata["review"] = review
+    doc["metadata"] = metadata
+    await rag.doc_status.upsert({doc_id: doc})
+
+    event = _make_event(
+        kind="doc-rejected",
+        sev="warning",
+        actor=actor,
+        target_label=doc.get("file_path") or doc_id,
+        summary=f"rejected: {reason}",
+        meta={"doc_id": doc_id, "reason": reason},
+        target_type="document",
+    )
+    await get_store().record_activity(event)
+
+    return {"doc_id": doc_id, "review": review}
+
+
 @router.post("/tags/categories/_import", response_model=AckResponse)
 async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
     """Mirror the uploaded JSON into the workspace's categories store.
