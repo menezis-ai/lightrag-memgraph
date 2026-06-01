@@ -50,7 +50,14 @@ services:
       - dokploy-network
     environment:
       MEMGRAPH_URI: "bolt://memgraph:7687"
+      # NB: LightRAG core reads WORKSPACE; our KV/Vector/DocStatus
+      # storage backends read MEMGRAPH_WORKSPACE (a footgun documented
+      # as tech debt — to fix by aligning the env var name in
+      # _constants.resolve_workspace). Until then we set both so the
+      # graph backend, the Webui stores, and the shim_native_routes
+      # query against the SAME workspace label DocStatus_${WORKSPACE}.
       WORKSPACE: "${WORKSPACE:-cib}"
+      MEMGRAPH_WORKSPACE: "${WORKSPACE:-cib}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       LLM_BINDING_API_KEY: "${OPENAI_API_KEY}"
       EMBEDDING_BINDING_API_KEY: "${OPENAI_API_KEY}"
