@@ -35,6 +35,13 @@ function getDevFlag(): boolean {
 
 let cachedConfig: TwinRuntimeConfig | null = null;
 
+const TWIN_BROWSER_STORAGE_KEYS = ['twin-rag.threads.v2'] as const;
+
+export function clearTwinBrowserState(): void {
+  if (typeof window === 'undefined') return;
+  TWIN_BROWSER_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+}
+
 function getRuntimeConfig(): TwinRuntimeConfig {
   if (cachedConfig) return cachedConfig;
   const raw =
@@ -60,6 +67,7 @@ export function useAuth(): UseAuthResult {
       // Server reachability errors should still let us cycle the client side.
     }
     queryClient.clear();
+    clearTwinBrowserState();
     if (typeof window !== 'undefined') {
       const target = new URL(config.idpLogoutUrl);
       target.searchParams.set('redirect_uri', window.location.origin);

@@ -107,3 +107,34 @@ class TestRegister:
         verify_storage_implementation("KV_STORAGE", "MemgraphKVStorage")
         verify_storage_implementation("VECTOR_STORAGE", "MemgraphVectorDBStorage")
         verify_storage_implementation("DOC_STATUS_STORAGE", "MemgraphDocStatusStorage")
+
+    async def test_mount_twin_subapp_requires_configured_bearer(self, monkeypatch):
+        """The production /twin/api mount must inherit the Twin auth dependency."""
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient
+
+        from twindb_lightrag_memgraph.server.auth import configure_auth
+
+        monkeypatch.setenv("LIGHTRAG_API_KEY", "mount-secret")
+        app = FastAPI()
+        twindb_lightrag_memgraph._mount_twin_subapp(
+            app,
+            "/twin/api",
+            webui_stores="seed",
+        )
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                denied = await client.get("/twin/api/tags")
+                assert denied.status_code == 401
+
+                allowed = await client.get(
+                    "/twin/api/tags",
+                    headers={"Authorization": "Bearer mount-secret"},
+                )
+                assert allowed.status_code == 200
+        finally:
+            configure_auth(api_key=None, jwt_secret=None)

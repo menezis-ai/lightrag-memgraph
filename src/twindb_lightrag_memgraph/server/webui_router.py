@@ -499,7 +499,19 @@ async def bulk_retag_documents(
             status_code=400,
             detail="targets must be a non-empty list of doc_id strings.",
         )
+    if len(targets) > 500:
+        raise HTTPException(
+            status_code=413,
+            detail="bulk-retag accepts at most 500 target documents.",
+        )
+    if len(adds) + len(removes) > 50:
+        raise HTTPException(
+            status_code=413,
+            detail="bulk-retag accepts at most 50 tag mutations.",
+        )
     for tag in (*adds, *removes):
+        if not isinstance(tag, str):
+            raise HTTPException(status_code=400, detail="tags must be strings.")
         validate_identifier(tag, "tag")
 
     workspace = resolve_workspace()
@@ -560,64 +572,65 @@ async def bulk_retag_documents(
 
     doc_ids = list(existing.keys())
 
-    # 2) Apply adds via MERGE on tag + MERGE on relation. The tag
-    # node is auto-created with placeholder data if missing — the
-    # ON CREATE SET writes a TagEntry-shaped JSON with the right id
-    # baked in via string replace on the placeholder.
-    if adds:
+    # 2) Apply adds/removes in one bounded write transaction. Adds run before
+    # removes so a payload containing the same tag in both lists settles on
+    # "removed" deterministically.
+    if adds or removes:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                # We loop over `adds` in Cypher via UNWIND, building
-                # the TagEntry json per tag on the fly.
-                tag_rows = [
-                    {
-                        "id": tag_id,
-                        "data": placeholder.replace(
-                            '"<PLACEHOLDER>"', _json.dumps(tag_id)
-                        ),
-                    }
-                    for tag_id in adds
-                ]
-                result = await session.run(
-                    f"""
-                    UNWIND $tags AS tag
-                    MERGE (t:`{tag_label}` {{id: tag.id}})
-                      ON CREATE SET
-                        t.data = tag.data,
-                        t.`__created_at` = timestamp(),
-                        t.`__auto_via_retag` = true
-                      SET t.`__updated_at` = timestamp()
-                    WITH t
-                    UNWIND $docs AS docId
-                    MATCH (d:`{doc_label}` {{id: docId}})
-                    MERGE (d)-[r:TAGGED_WITH]->(t)
-                      ON CREATE SET r.at = $now, r.actor = $actor
-                    """,
-                    tags=tag_rows,
-                    docs=doc_ids,
-                    now=now,
-                    actor=actor,
-                )
-                await result.consume()
+                tx = await session.begin_transaction()
+                try:
+                    if adds:
+                        tag_rows = [
+                            {
+                                "id": tag_id,
+                                "data": placeholder.replace(
+                                    '"<PLACEHOLDER>"', _json.dumps(tag_id)
+                                ),
+                            }
+                            for tag_id in adds
+                        ]
+                        result = await tx.run(
+                            f"""
+                            UNWIND $tags AS tag
+                            MERGE (t:`{tag_label}` {{id: tag.id}})
+                              ON CREATE SET
+                                t.data = tag.data,
+                                t.`__created_at` = timestamp(),
+                                t.`__auto_via_retag` = true
+                              SET t.`__updated_at` = timestamp()
+                            WITH t
+                            UNWIND $docs AS docId
+                            MATCH (d:`{doc_label}` {{id: docId}})
+                            MERGE (d)-[r:TAGGED_WITH]->(t)
+                              ON CREATE SET r.at = $now, r.actor = $actor
+                            """,
+                            tags=tag_rows,
+                            docs=doc_ids,
+                            now=now,
+                            actor=actor,
+                        )
+                        await result.consume()
 
-    # 3) Apply removes — delete only the relation; the tag node stays
-    # in the catalog (other docs may still reference it).
-    if removes:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $docs AS docId
-                    UNWIND $tags AS tagId
-                    MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
-                    DELETE r
-                    """,
-                    docs=doc_ids,
-                    tags=removes,
-                )
-                await result.consume()
+                    if removes:
+                        result = await tx.run(
+                            f"""
+                            UNWIND $docs AS docId
+                            UNWIND $tags AS tagId
+                            MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
+                            DELETE r
+                            """,
+                            docs=doc_ids,
+                            tags=removes,
+                        )
+                        await result.consume()
 
-    # 4) Emit one audit event per doc with the resulting tag list
+                    await tx.commit()
+                except Exception:
+                    await tx.rollback()
+                    raise
+
+    # 3) Emit one audit event per doc with the resulting tag list
     # fetched via the relation (single Cypher batch round-trip).
     async with _pool.get_read_session() as session:
         result = await session.run(

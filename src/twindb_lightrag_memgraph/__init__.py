@@ -1068,6 +1068,7 @@ def _patch_lightrag_server_create_app(
                 twin_api_prefix,
                 webui_stores=webui_stores,
                 webui_categories_config=webui_categories_config,
+                auth_args=args,
             )
         return app
 
@@ -1322,6 +1323,7 @@ def _mount_twin_subapp(
     prefix: str,
     webui_stores: str = "seed",
     webui_categories_config: str | None = None,
+    auth_args=None,
 ) -> None:
     """Mount the Twin overlay as an ``APIRouter`` directly on the host app.
 
@@ -1352,6 +1354,38 @@ def _mount_twin_subapp(
         graph entities/relations). Fresh installs boot empty for tags,
         activity, notifications — mutations persist across restarts.
     """
+    import os
+
+    from fastapi import Depends
+
+    from .server.auth import configure_auth, require_auth
+
+    def _arg_value(*names: str):
+        if auth_args is None:
+            return None
+        for name in names:
+            value = getattr(auth_args, name, None)
+            if value:
+                return value
+        return None
+
+    configure_auth(
+        api_key=_arg_value("api_key", "lightrag_api_key")
+        or os.environ.get("LIGHTRAG_API_KEY"),
+        jwt_secret=_arg_value("jwt_secret", "lightrag_jwt_secret")
+        or os.environ.get("LIGHTRAG_JWT_SECRET"),
+        jwt_algorithm=_arg_value("jwt_algorithm", "lightrag_jwt_algorithm")
+        or os.environ.get("LIGHTRAG_JWT_ALGORITHM", "HS256"),
+        jwt_expiration_hours=int(
+            _arg_value("jwt_expiration_hours", "lightrag_jwt_expiration_hours")
+            or os.environ.get("LIGHTRAG_JWT_EXPIRATION_HOURS", "4")
+        ),
+        jwt_username=_arg_value("jwt_username", "lightrag_jwt_username")
+        or os.environ.get("LIGHTRAG_JWT_USERNAME", "admin"),
+        jwt_password=_arg_value("jwt_password", "lightrag_jwt_password")
+        or os.environ.get("LIGHTRAG_JWT_PASSWORD", "changeme"),
+    )
+
     try:
         from .server.webui_router import (
             WebuiStore,
@@ -1364,7 +1398,11 @@ def _mount_twin_subapp(
             "pip install 'twindb-lightrag-memgraph[server]'"
         ) from exc
 
-    app.include_router(webui_router, prefix=prefix)
+    app.include_router(
+        webui_router,
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
 
     if webui_stores == "seed":
         # Sync setup; the seed includes pre-populated tags / activity /
@@ -1385,7 +1423,6 @@ def _mount_twin_subapp(
         )
 
     # Memgraph branch — async store factories require a lifespan hook.
-    import os
     from contextlib import asynccontextmanager
 
     parent_lifespan = app.router.lifespan_context
