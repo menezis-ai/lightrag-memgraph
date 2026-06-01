@@ -556,6 +556,7 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
  * Default request body for "Try it out" — deterministic per endpoint.
  * Exported for unit testing.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function requestBodyFor(ep: OpenApiEndpoint): string {
   if (ep.p === '/query' || ep.p === '/query/stream') {
     return JSON.stringify(
@@ -584,6 +585,7 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
 }
 
 /** Build a curl preview for the given endpoint. Exported for testing. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function curlFor(
   ep: OpenApiEndpoint,
   body: string,
@@ -601,7 +603,9 @@ export function curlFor(
 }
 
 /** Mock 401 response. Exported for testing. */
-export function mockUnauthorized(_ep: OpenApiEndpoint): MockResponse {
+// eslint-disable-next-line react-refresh/only-export-components
+export function mockUnauthorized(ep: OpenApiEndpoint): MockResponse {
+  void ep;
   return {
     status: 401,
     statusText: 'Unauthorized',
@@ -618,6 +622,7 @@ export function mockUnauthorized(_ep: OpenApiEndpoint): MockResponse {
 }
 
 /** Mock success response. Body shape varies by endpoint. Exported for testing. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function mockResponseFor(
   ep: OpenApiEndpoint,
   _body: string,

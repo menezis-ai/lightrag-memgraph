@@ -75,6 +75,7 @@ export function ActivityTab({
   const [pendingCount, setPendingCount] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearConfirm, setClearConfirm] = useState('');
+  const [initialNowMs] = useState(() => Date.now());
   const clearModalRef = useRef<HTMLDivElement>(null);
   useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
@@ -97,7 +98,7 @@ export function ActivityTab({
   };
 
   const filtered = useMemo(() => {
-    const effectiveNow = nowMs ?? Date.now();
+    const effectiveNow = nowMs ?? initialNowMs;
     return events.filter((e) => {
       if (range !== 'all') {
         const cutoff =
@@ -123,7 +124,7 @@ export function ActivityTab({
       }
       return true;
     });
-  }, [events, range, kinds, sev, actor, q, nowMs]);
+  }, [events, range, kinds, sev, actor, q, nowMs, initialNowMs]);
 
   const selected = filtered.find((e) => e.id === selectedId) ?? filtered[0] ?? null;
 
@@ -600,6 +601,7 @@ function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
  * Flatten an ActivityEvent list to a CSV blob and trigger a download. Exported
  * so it can be unit-tested without rendering the whole tab.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function exportActivityCsv(
   rows: readonly ActivityEvent[],
   range: ActivityRange,

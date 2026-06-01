@@ -176,7 +176,7 @@ describe('DocDetailPanel — classification gating', () => {
 });
 
 describe('DocDetailPanel — footer actions', () => {
-  it('Delete button invokes onDelete with the doc', async () => {
+  it('Delete button requires confirmation, then invokes onDelete with the doc', async () => {
     const onDelete = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
@@ -184,6 +184,8 @@ describe('DocDetailPanel — footer actions', () => {
         <DocDetailPanel doc={makeDoc()} onClose={() => {}} onDelete={onDelete} />
       </Wrap>,
     );
+    await userEvent.click(screen.getByTestId('doc-detail-delete'));
+    expect(onDelete).not.toHaveBeenCalled();
     await userEvent.click(screen.getByTestId('doc-detail-delete'));
     expect(onDelete).toHaveBeenCalled();
     expect(onDelete.mock.calls[0][0].doc_id).toBe('d-test-1');

@@ -85,9 +85,14 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
     node.addEventListener('keydown', onKey);
     return () => {
       node.removeEventListener('keydown', onKey);
-      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+      const fallback = document.querySelector<HTMLElement>(
+        '[data-focus-fallback="app-main"]',
+      );
+      const target =
+        previouslyFocused?.isConnected === true ? previouslyFocused : fallback;
+      if (target && typeof target.focus === 'function') {
         try {
-          previouslyFocused.focus();
+          target.focus({ preventScroll: true });
         } catch {
           /* element no longer in DOM */
         }

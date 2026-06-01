@@ -68,12 +68,15 @@ export function DocDetailPanel({
   onDelete,
   nowMs,
 }: DocDetailPanelProps) {
-  const [tab, setTab] = useState<DetailTab>('chunks');
+  const [tabState, setTabState] = useState<{
+    docId: string;
+    tab: DetailTab;
+  }>({ docId: '', tab: 'chunks' });
   const [rawNoticeOpen, setRawNoticeOpen] = useState(false);
-
-  useEffect(() => {
-    if (doc) setTab('chunks');
-  }, [doc?.doc_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    docId: string;
+    armed: boolean;
+  } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -84,6 +87,11 @@ export function DocDetailPanel({
   }, [doc, onClose]);
 
   if (!doc) return null;
+  const deleteArmed =
+    deleteConfirm?.docId === doc.doc_id && deleteConfirm.armed;
+  const tab = tabState.docId === doc.doc_id ? tabState.tab : 'chunks';
+  const setTab = (next: DetailTab) =>
+    setTabState({ docId: doc.doc_id, tab: next });
 
   return (
     <aside
@@ -164,10 +172,21 @@ export function DocDetailPanel({
         <button
           type="button"
           className="btn small danger"
-          onClick={() => onDelete?.(doc)}
+          onClick={() => {
+            if (!deleteArmed) {
+              setDeleteConfirm({ docId: doc.doc_id, armed: true });
+              return;
+            }
+            onDelete?.(doc);
+          }}
           data-testid="doc-detail-delete"
+          aria-label={
+            deleteArmed
+              ? `Confirm delete ${doc.file_path}`
+              : `Delete ${doc.file_path}`
+          }
         >
-          <Icon name="x" size={12} /> Delete
+          <Icon name="x" size={12} /> {deleteArmed ? 'Confirm delete' : 'Delete'}
         </button>
       </footer>
 

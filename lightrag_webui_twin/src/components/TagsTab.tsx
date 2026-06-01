@@ -896,6 +896,7 @@ function TagDetailPanel({
  * Build a thesaurus JSON snapshot and trigger a download.
  * Exported for unit testing without rendering the whole tab.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function exportThesaurusJson(
   tags: readonly TagEntry[],
   categories: readonly TagCategory[],

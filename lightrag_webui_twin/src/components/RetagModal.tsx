@@ -15,7 +15,7 @@
  *   - A11y trap via useModalA11y is wired through a single hook call.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
@@ -81,26 +81,50 @@ export function RetagModal({
     return { sharedTags: shared, partialTags: partial };
   }, [targets, bulk]);
 
-  const [current, setCurrent] = useState<readonly string[]>([]);
+  const targetsKey = targets.map((d) => d.doc_id).join(',');
+  if (!isReady) return null;
+
+  return (
+    <RetagModalBody
+      key={targetsKey}
+      modalRef={modalRef}
+      targets={targets}
+      bulk={bulk}
+      sharedTags={sharedTags}
+      partialTags={partialTags}
+      thesaurus={thesaurus}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />
+  );
+}
+
+interface RetagModalBodyProps {
+  modalRef: RefObject<HTMLDivElement | null>;
+  targets: readonly Document[];
+  bulk: boolean;
+  sharedTags: readonly string[];
+  partialTags: readonly string[];
+  thesaurus: readonly ThesaurusEntry[];
+  onClose: () => void;
+  onSubmit: (action: RetagAction) => void;
+}
+
+function RetagModalBody({
+  modalRef,
+  targets,
+  bulk,
+  sharedTags,
+  partialTags,
+  thesaurus,
+  onClose,
+  onSubmit,
+}: RetagModalBodyProps) {
+  const current = sharedTags;
   const [pendingAdd, setPendingAdd] = useState<readonly string[]>([]);
   const [pendingRemove, setPendingRemove] = useState<readonly string[]>([]);
   const [input, setInput] = useState('');
   const [focusIdx, setFocusIdx] = useState(0);
-
-  // Reset internal state whenever the targets change.
-  const targetsKey = targets.map((d) => d.doc_id).join(',');
-  useEffect(() => {
-    if (!isReady) return;
-    setCurrent(sharedTags);
-    setPendingAdd([]);
-    setPendingRemove([]);
-    setInput('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetsKey, isReady]);
-
-  // Suppress the unused-warning by exposing `current` indirectly via
-  // pendingRemove logic. (We still want a local list to render.)
-  void setCurrent;
 
   const sugg = useMemo(() => {
     const all = thesaurus.filter(
@@ -115,7 +139,6 @@ export function RetagModal({
       .slice(0, 5);
   }, [input, current, pendingAdd, thesaurus]);
 
-  if (!isReady) return null;
   const primary = targets[0];
 
   const addTag = (t: string) => {
@@ -349,7 +372,7 @@ export function RetagModal({
                 marginTop: 6,
               }}
             />
-            <div className="autocomplete">
+            <div className="autocomplete modal-autocomplete" role="listbox">
               <div className="autocomplete-header">
                 {sugg.length > 0
                   ? `${sugg.length} match${sugg.length > 1 ? 'es' : ''} in thesaurus`

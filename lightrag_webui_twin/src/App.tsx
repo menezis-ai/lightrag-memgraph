@@ -58,6 +58,7 @@ import {
   useUpdateTagSynonyms,
   useWorkspaces,
 } from './api/queries';
+import { ApiError } from './api/client';
 import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
@@ -126,17 +127,32 @@ function AppShell() {
   const graphRelations = useGraphRelations();
 
   // Notifications carry mutable client state (read/cleared) on top of the
-  // query data, so we mirror them locally and use the query result as the
-  // source of truth on first load + refetch.
-  const [notifications, setNotifications] = useState([...NOTIFICATION_FIXTURES]);
-  useEffect(() => {
-    if (notificationsQ.data) setNotifications([...notificationsQ.data]);
-  }, [notificationsQ.data]);
+  // query data. Keep only local overrides in React state so refetches can
+  // merge without an effect-driven mirror.
+  const [readNotificationIds, setReadNotificationIds] = useState<ReadonlySet<string>>(
+    () =>
+      new Set(
+        NOTIFICATION_FIXTURES.filter((notification) => notification.read).map(
+          (notification) => notification.id,
+        ),
+      ),
+  );
+  const [clearedNotificationIds, setClearedNotificationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  const notificationSource = notificationsQ.data ?? NOTIFICATION_FIXTURES;
+  const notifications = notificationSource
+    .filter((notification) => !clearedNotificationIds.has(notification.id))
+    .map((notification) =>
+      readNotificationIds.has(notification.id)
+        ? { ...notification, read: true }
+        : notification,
+    );
   const unreadCount = notifications.filter((n) => !n.read).length;
   const workspaceList = workspaces.data ?? WORKSPACE_FIXTURES;
   const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
@@ -326,11 +342,13 @@ function AppShell() {
     ]);
     const resolvedDocIds = new Set<string>();
     const pending = new Set(trackIds);
+    const transientErrors = new Map<string, number>();
     for (let i = 0; i < MAX_POLLS && pending.size > 0; i++) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       for (const tid of Array.from(pending)) {
         try {
           const status = await api.trackStatus(tid);
+          transientErrors.delete(tid);
           const terminalDocs = status.documents.filter((d) =>
             TERMINAL_STATUSES.has(d.status),
           );
@@ -343,9 +361,23 @@ function AppShell() {
               .forEach((d) => resolvedDocIds.add(d.id));
             pending.delete(tid);
           }
-        } catch {
+        } catch (err) {
           // 404 from track_status is fine while LightRAG is still
           // booking the doc — keep polling until MAX_POLLS.
+          if (err instanceof ApiError && err.status === 404) continue;
+          const nextFailures = (transientErrors.get(tid) ?? 0) + 1;
+          transientErrors.set(tid, nextFailures);
+          if (nextFailures >= 3) {
+            pending.delete(tid);
+            pushToast({
+              kind: 'error',
+              title: 'Initial tag polling failed',
+              sub:
+                err instanceof Error
+                  ? `${tid}: ${err.message}`
+                  : `${tid}: track_status unavailable`,
+            });
+          }
         }
       }
     }
@@ -395,80 +427,51 @@ function AppShell() {
   const deleteTag = useDeleteTag();
 
   const onTagApprove = (action: TagApproveAction) => {
-    approveTag.mutate({ name: action.tag.tag, actor: CURRENT_USER.name });
-    pushToast({
-      kind: 'done',
-      title: 'Tag',
-      tagname: action.tag.tag,
-      titleSuffix: 'approved',
-      sub: 'Added to thesaurus · Tier 3',
+    approveTag.mutate(
+      { name: action.tag.tag, actor: CURRENT_USER.name },
+      {
+        onSuccess: () =>
+          pushToast({
+            kind: 'done',
+            title: 'Tag',
+            tagname: action.tag.tag,
+            titleSuffix: 'approved',
+            sub: 'Added to thesaurus · Tier 3',
+          }),
+        onError: (err) =>
+          pushToast({
+            kind: 'error',
+            title: 'Tag approval failed',
+            tagname: action.tag.tag,
+            sub: err instanceof Error ? err.message : 'Mutation rejected',
+          }),
+      },
+    );
+  };
+
+  const commitTagMutation = (
+    run: (callbacks: {
+      onSuccess: () => void;
+      onError: (err: unknown) => void;
+    }) => void,
+    toast: Omit<Toast, 'id'>,
+    failureTitle: string,
+  ) => {
+    run({
+      onSuccess: () => pushToast(toast),
+      onError: (err) =>
+        pushToast({
+          kind: 'error',
+          title: failureTitle,
+          tagname: toast.tagname,
+          sub: err instanceof Error ? err.message : 'Mutation rejected',
+        }),
     });
   };
 
   const onTagCommit = (commit: TagActionCommit) => {
     const tagname = commit.tag?.tag ?? commit.name ?? '';
     const actor = CURRENT_USER.name;
-    switch (commit.kind) {
-      case 'edit':
-        editTag.mutate({ name: tagname, actor });
-        break;
-      case 'suggest':
-        // No backend endpoint for "suggest" yet — surface as a request.
-        if (commit.tag) {
-          requestTag.mutate({
-            tag: commit.tag.tag,
-            def: commit.tag.def,
-            category: commit.tag.category,
-            actor,
-            justification: 'suggested edit',
-          });
-        }
-        break;
-      case 'synonyms':
-        if (commit.tag) {
-          updateSynonyms.mutate({
-            name: tagname,
-            aliases: commit.newSynonym
-              ? [...commit.tag.aliases, commit.newSynonym]
-              : commit.tag.aliases,
-            actor,
-          });
-        }
-        break;
-      case 'deprecate':
-        deprecateTag.mutate({ name: tagname, actor });
-        break;
-      case 'delete':
-        deleteTag.mutate({
-          name: tagname,
-          strategy: commit.migrate?.strategy ?? 'untag',
-          to: commit.migrate?.to,
-          actor,
-        });
-        break;
-      case 'reject':
-        rejectTag.mutate({
-          name: tagname,
-          reason: commit.reason || 'rejected',
-          actor,
-        });
-        break;
-      case 'edit-approve':
-        approveTag.mutate({ name: tagname, actor });
-        break;
-      case 'request':
-        if (commit.name) {
-          requestTag.mutate({
-            tag: commit.name,
-            def: commit.tag?.def ?? '',
-            category: commit.tag?.category ?? 'infra',
-            actor,
-          });
-        }
-        break;
-    }
-    // Local toast so the action feels instant; the synthesized backend event
-    // also lands on /activity which the Activity tab will surface on refetch.
     const verbMap: Record<TagActionCommit['kind'], string> = {
       edit: 'definition updated',
       suggest: 'edit suggested',
@@ -482,13 +485,126 @@ function AppShell() {
       'edit-approve': 'approved (edited)',
       request: 'requested for review',
     };
-    pushToast({
+    const successToast: Omit<Toast, 'id'> = {
       kind: 'done',
       title: 'Tag',
       tagname,
       titleSuffix: verbMap[commit.kind],
       sub: commit.reason ?? '',
-    });
+    };
+    const failureTitle = `Tag ${commit.kind} failed`;
+
+    switch (commit.kind) {
+      case 'edit':
+        commitTagMutation(
+          (cb) => editTag.mutate({ name: tagname, actor }, cb),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'suggest':
+        // No backend endpoint for "suggest" yet — surface as a request.
+        if (commit.tag) {
+          commitTagMutation(
+            (cb) =>
+              requestTag.mutate(
+                {
+                  tag: commit.tag!.tag,
+                  def: commit.tag!.def,
+                  category: commit.tag!.category,
+                  actor,
+                  justification: 'suggested edit',
+                },
+                cb,
+              ),
+            successToast,
+            failureTitle,
+          );
+        }
+        break;
+      case 'synonyms':
+        if (commit.tag) {
+          commitTagMutation(
+            (cb) =>
+              updateSynonyms.mutate(
+                {
+                  name: tagname,
+                  aliases: commit.newSynonym
+                    ? [...commit.tag!.aliases, commit.newSynonym]
+                    : commit.tag!.aliases,
+                  actor,
+                },
+                cb,
+              ),
+            successToast,
+            failureTitle,
+          );
+        }
+        break;
+      case 'deprecate':
+        commitTagMutation(
+          (cb) => deprecateTag.mutate({ name: tagname, actor }, cb),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'delete':
+        commitTagMutation(
+          (cb) =>
+            deleteTag.mutate(
+              {
+                name: tagname,
+                strategy: commit.migrate?.strategy ?? 'untag',
+                to: commit.migrate?.to,
+                actor,
+              },
+              cb,
+            ),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'reject':
+        commitTagMutation(
+          (cb) =>
+            rejectTag.mutate(
+              {
+                name: tagname,
+                reason: commit.reason || 'rejected',
+                actor,
+              },
+              cb,
+            ),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'edit-approve':
+        commitTagMutation(
+          (cb) => approveTag.mutate({ name: tagname, actor }, cb),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'request':
+        if (commit.name) {
+          commitTagMutation(
+            (cb) =>
+              requestTag.mutate(
+                {
+                  tag: commit.name!,
+                  def: commit.tag?.def ?? '',
+                  category: commit.tag?.category ?? 'infra',
+                  actor,
+                },
+                cb,
+              ),
+            successToast,
+            failureTitle,
+          );
+        }
+        break;
+    }
   };
 
   const onNavigate = (nextTab: string, params?: Record<string, string>) => {
@@ -546,11 +662,19 @@ function AppShell() {
         notifications={notifications}
         unreadCount={unreadCount}
         onMarkAllRead={() =>
-          setNotifications((ns) => ns.map((n) => ({ ...n, read: true })))
+          setReadNotificationIds(
+            new Set(notificationSource.map((notification) => notification.id)),
+          )
         }
-        onClearNotifications={() => setNotifications([])}
+        onClearNotifications={() =>
+          setClearedNotificationIds(
+            new Set(notificationSource.map((notification) => notification.id)),
+          )
+        }
       />
       <main
+        tabIndex={-1}
+        data-focus-fallback="app-main"
         style={{
           flex: 1,
           overflow: 'hidden',
@@ -587,9 +711,19 @@ function AppShell() {
               kbName={kbName}
               onSignOut={() => {
                 void (async () => {
+                  let logoutFailed = false;
                   try {
                     await api.logout();
-                  } catch {
+                  } catch (err) {
+                    logoutFailed = true;
+                    pushToast({
+                      kind: 'error',
+                      title: 'Sign-out endpoint failed',
+                      sub:
+                        err instanceof Error
+                          ? `${err.message} · local session will still be cleared`
+                          : 'Local session will still be cleared',
+                    });
                     // Even if the endpoint hiccups, we want to clear
                     // the local state and force the operator back to
                     // the Basic Auth prompt — never block sign-out
@@ -601,7 +735,7 @@ function AppShell() {
                   // hit the JWT/IdP login (future).
                   queryClient.clear();
                   clearTwinBrowserState();
-                  window.location.reload();
+                  window.setTimeout(() => window.location.reload(), logoutFailed ? 1200 : 0);
                 })();
               }}
               onRestartTutorial={() =>

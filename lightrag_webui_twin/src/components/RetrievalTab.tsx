@@ -18,7 +18,7 @@
  *   - URL state via useUrlParam / useUrlArrayParam / useUrlNumberParam.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import {
@@ -102,7 +102,10 @@ export function RetrievalTab({
   const convRef = useRef<HTMLDivElement>(null);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
-  const convo: readonly ChatMessage[] = activeThread?.messages ?? [];
+  const convo = useMemo<readonly ChatMessage[]>(
+    () => activeThread?.messages ?? [],
+    [activeThread],
+  );
 
   // Persist threads to localStorage.
   useEffect(() => {
@@ -263,7 +266,17 @@ export function RetrievalTab({
                 'history-item' +
                 (t.id === activeThreadId ? ' is-active' : '')
               }
+              role="button"
+              tabIndex={0}
               onClick={() => setActiveThreadId(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setActiveThreadId(t.id);
+                }
+              }}
+              aria-current={t.id === activeThreadId ? 'true' : undefined}
+              aria-label={`Open conversation ${t.title}`}
               data-testid={`thread-${t.id}`}
             >
               <div className="history-item-title" title={t.title}>
@@ -422,12 +435,18 @@ export function RetrievalTab({
             />
           </div>
           {tagInput && tagSugg.length > 0 && (
-            <div className="autocomplete" style={{ marginTop: 4 }}>
+            <div
+              className="autocomplete panel-autocomplete"
+              role="listbox"
+              style={{ marginTop: 4 }}
+            >
               {tagSugg.map((s, i) => (
                 <div
                   key={s.tag}
                   className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
                   onMouseDown={() => addTag(s.tag)}
+                  role="option"
+                  aria-selected={i === 0}
                   data-testid={`rtag-sugg-${s.tag}`}
                 >
                   <div className="row1">
@@ -471,7 +490,14 @@ export function RetrievalTab({
           <span
             className={`switch${onlyCtx ? ' on' : ''}`}
             onClick={() => setOnlyCtx(!onlyCtx)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOnlyCtx((v) => !v);
+              }
+            }}
             role="switch"
+            tabIndex={0}
             aria-checked={onlyCtx}
             aria-label="Only need context"
           />
@@ -481,7 +507,14 @@ export function RetrievalTab({
           <span
             className={`switch${onlyPrompt ? ' on' : ''}`}
             onClick={() => setOnlyPrompt(!onlyPrompt)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOnlyPrompt((v) => !v);
+              }
+            }}
             role="switch"
+            tabIndex={0}
             aria-checked={onlyPrompt}
             aria-label="Only need prompt"
           />
