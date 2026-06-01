@@ -421,6 +421,113 @@ async def get_categories_template():
     )
 
 
+# ------------------------------------------------------------------
+# Bulk-retag — persistent doc-level tagging (doctrine: tag is a
+# Memgraph node attribute, not a separate lookup table).
+# ------------------------------------------------------------------
+
+
+def _get_rag():
+    """Resolve the host LightRAG instance captured at register() time."""
+    from .. import _twindb_state
+
+    rag = _twindb_state.get("rag")
+    if rag is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Twin overlay: LightRAG instance not captured. The host must "
+                "boot via register(shim_native_routes=True) so the rag "
+                "captures the create_document_routes call."
+            ),
+        )
+    return rag
+
+
+@router.post("/documents/_bulk-retag")
+async def bulk_retag_documents(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply tag adds/removes to a list of documents.
+
+    Doctrine: a tag is a **Memgraph node attribute** on the
+    ``DocStatus_{workspace}`` label. Every retag persists, every
+    refresh shows the new state. Each retag emits one activity event
+    ``kind="doc-retagged"`` for the audit trail.
+
+    Body shape::
+
+        {
+          "targets": ["doc-abc", "doc-def", ...],
+          "adds":    ["rman", "oracle"],
+          "removes": ["deprecated"],
+          "actor":   "claire.benoit"  # optional, falls back to "system"
+        }
+
+    Returns ``{updated: N, failed: [doc_id, ...]}`` — ``failed``
+    contains doc ids that didn't exist in DocStatus (404 silently
+    aggregated; partial success is the common case for stale UI
+    selections).
+    """
+    rag = _get_rag()
+    targets = body.get("targets") or []
+    adds = list(body.get("adds") or [])
+    removes_set = set(body.get("removes") or [])
+    actor = body.get("actor") or "system"
+
+    if not isinstance(targets, list) or not targets:
+        raise HTTPException(
+            status_code=400,
+            detail="targets must be a non-empty list of doc_id strings.",
+        )
+
+    updated = 0
+    failed: list[str] = []
+    for doc_id in targets:
+        if not isinstance(doc_id, str) or not doc_id:
+            failed.append(str(doc_id))
+            continue
+        doc = await rag.doc_status.get_by_id(doc_id)
+        if not doc:
+            failed.append(doc_id)
+            continue
+
+        metadata = doc.get("metadata") or {}
+        current = set(metadata.get("tags") or [])
+        # Set semantics — adds first (so the new tag list is the
+        # canonical post-state), removes second (so a tag in both
+        # adds and removes is *removed*; rare but well-defined).
+        new_tags = sorted((current | set(adds)) - removes_set)
+        metadata["tags"] = new_tags
+        doc["metadata"] = metadata
+
+        # upsert performs `SET n += $props` (additive) so other doc
+        # fields (file_path, status, chunks_count, etc.) survive.
+        await rag.doc_status.upsert({doc_id: doc})
+
+        # Audit event on the Twin activity store.
+        event = _make_event(
+            kind="doc-retagged",
+            sev="info",
+            actor=actor,
+            target_label=doc.get("file_path") or doc_id,
+            summary=(
+                f"tags: +{','.join(adds) or '∅'} -{','.join(sorted(removes_set)) or '∅'}"
+            ),
+            meta={
+                "doc_id": doc_id,
+                "adds": adds,
+                "removes": sorted(removes_set),
+                "resulting_tags": new_tags,
+            },
+            target_type="document",
+        )
+        await get_store().record_activity(event)
+        updated += 1
+
+    return {"updated": updated, "failed": failed}
+
+
 @router.post("/tags/categories/_import", response_model=AckResponse)
 async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
     """Mirror the uploaded JSON into the workspace's categories store.

@@ -11,6 +11,10 @@ import type { IconName } from '../components/Icon';
 export type ActivityKind =
   | 'retrieval'
   | 'tag-mutation'
+  | 'doc-retagged'
+  | 'doc-approved'
+  | 'doc-rejected'
+  | 'doc-deleted'
   | 'source-uploaded'
   | 'source-ready'
   | 'source-failed'
@@ -62,6 +66,26 @@ export interface ActivityKindMeta {
 export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
   retrieval: { label: 'Retrieval', icon: 'search', color: 'var(--twin-accent)' },
   'tag-mutation': { label: 'Tag mutation', icon: 'tags', color: 'var(--twin-accent)' },
+  'doc-retagged': {
+    label: 'Document retagged',
+    icon: 'tags',
+    color: 'var(--twin-accent)',
+  },
+  'doc-approved': {
+    label: 'Document approved',
+    icon: 'circle-check',
+    color: 'var(--twin-green-700)',
+  },
+  'doc-rejected': {
+    label: 'Document rejected',
+    icon: 'alert-triangle',
+    color: 'var(--twin-amber-vivid)',
+  },
+  'doc-deleted': {
+    label: 'Document deleted',
+    icon: 'trash',
+    color: 'var(--color-text-secondary)',
+  },
   'source-uploaded': {
     label: 'Source uploaded',
     icon: 'cloud-upload',
