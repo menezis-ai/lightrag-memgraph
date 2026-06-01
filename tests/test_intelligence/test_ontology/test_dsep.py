@@ -123,7 +123,11 @@ class TestBuildDSEPBlock:
         block = build_dsep_block([], "emergence")
         assert block.startswith("=== DSEP (Domain-Specific Extraction Profile)")
         assert block.endswith("=== END DSEP ===")
-        assert "Apply these constraints" in block
+        # Mode propagation + the closing instruction added by the prompt
+        # security refactor (Red Team hardening 2026-06-02): the block
+        # now signs off with a final-JSON gate referencing the operators.
+        assert "Mode: emergence" in block
+        assert "Before final JSON" in block
 
     def test_invalid_operator_ignored(self):
         block = build_dsep_block(["nonexistent", "structural_analysis"], "dedicated")
