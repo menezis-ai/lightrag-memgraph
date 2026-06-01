@@ -448,12 +448,28 @@ def _get_rag():
 async def bulk_retag_documents(
     body: dict[str, Any],
 ) -> dict[str, Any]:
-    """Apply tag adds/removes to a list of documents.
+    """Apply tag adds/removes to a list of documents as graph edges.
 
-    Doctrine: a tag is a **Memgraph node attribute** on the
-    ``DocStatus_{workspace}`` label. Every retag persists, every
-    refresh shows the new state. Each retag emits one activity event
-    ``kind="doc-retagged"`` for the audit trail.
+    Doctrine (refined): a tag is a **Memgraph node**
+    (``WebuiTag_{workspace}``), not a string attribute. The fact that
+    a document carries a tag is a **graph relation**
+    ``(:DocStatus_{workspace})-[:TAGGED_WITH]->(:WebuiTag_{workspace})``.
+
+    Why this shape:
+      * Native Cypher queries on tags work: "all docs with rman AND
+        production" = ``MATCH (d)-[:TAGGED_WITH]->({id:'rman'}),
+        (d)-[:TAGGED_WITH]->({id:'production'}) RETURN d``.
+      * Cascade on doc delete is automatic via ``DETACH DELETE``.
+      * Foundation for V2: propagate the [:TAGGED_WITH] edge to chunks
+        / entities / vectors so retrieval can be filtered server-side.
+      * No string-in-JSON-array heresy — we use the graph engine as
+        intended.
+
+    Governance loop: a tag id that doesn't yet exist in the catalog
+    gets ``MERGE``d on the fly with ``tier="requested"`` /
+    ``status="pending-review"``. The Steward sees it in the Tags
+    tab's "Pending requests" section and approves or rejects.
+    Nothing leaks past the catalog by surprise.
 
     Body shape::
 
@@ -464,15 +480,18 @@ async def bulk_retag_documents(
           "actor":   "claire.benoit"  # optional, falls back to "system"
         }
 
-    Returns ``{updated: N, failed: [doc_id, ...]}`` — ``failed``
-    contains doc ids that didn't exist in DocStatus (404 silently
-    aggregated; partial success is the common case for stale UI
-    selections).
+    Returns ``{updated: N, failed: [doc_id, ...]}`` — ``failed`` lists
+    doc ids that didn't exist in DocStatus_{workspace} (the catalog
+    auto-creation makes tag-not-found impossible by construction).
     """
-    rag = _get_rag()
+    import json as _json
+
+    from .. import _pool
+    from .._constants import resolve_workspace, validate_identifier
+
     targets = body.get("targets") or []
     adds = list(body.get("adds") or [])
-    removes_set = set(body.get("removes") or [])
+    removes = list(body.get("removes") or [])
     actor = body.get("actor") or "system"
 
     if not isinstance(targets, list) or not targets:
@@ -480,52 +499,163 @@ async def bulk_retag_documents(
             status_code=400,
             detail="targets must be a non-empty list of doc_id strings.",
         )
+    for tag in (*adds, *removes):
+        validate_identifier(tag, "tag")
 
-    updated = 0
-    failed: list[str] = []
-    for doc_id in targets:
-        if not isinstance(doc_id, str) or not doc_id:
-            failed.append(str(doc_id))
-            continue
-        doc = await rag.doc_status.get_by_id(doc_id)
-        if not doc:
-            failed.append(doc_id)
-            continue
+    workspace = resolve_workspace()
+    doc_label = f"DocStatus_{workspace}"
+    tag_label = f"WebuiTag_{workspace}"
+    now = _utcnow_iso()
 
-        metadata = doc.get("metadata") or {}
-        current = set(metadata.get("tags") or [])
-        # Set semantics — adds first (so the new tag list is the
-        # canonical post-state), removes second (so a tag in both
-        # adds and removes is *removed*; rare but well-defined).
-        new_tags = sorted((current | set(adds)) - removes_set)
-        metadata["tags"] = new_tags
-        doc["metadata"] = metadata
+    placeholder = _json.dumps(
+        {
+            "tag": "<PLACEHOLDER>",  # overwritten per-tag via Cypher SET n.data
+            "tier": "requested",
+            "category": "uncategorized",
+            "status": "pending-review",
+            "def": "Auto-created via retag — needs Steward review.",
+            "aliases": [],
+            "deprecates": [],
+            "sources_count": 0,
+            "chunks_count": 0,
+            "query_freq_30d": 0,
+            "related": [],
+            "examples": [],
+            "requested_by": actor,
+            "requested_at": now,
+            "justification": "auto-created via retag",
+            "created": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+            "last_edit": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+        },
+        sort_keys=True,
+    )
 
-        # upsert performs `SET n += $props` (additive) so other doc
-        # fields (file_path, status, chunks_count, etc.) survive.
-        await rag.doc_status.upsert({doc_id: doc})
+    # 1) Probe which target docs actually exist + capture file_path
+    # for the audit event labels.
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $ids AS id
+            MATCH (n:`{doc_label}` {{id: id}})
+            RETURN n.id AS id, n.file_path AS file_path
+            """,
+            ids=targets,
+        )
+        existing: dict[str, str | None] = {}
+        async for record in result:
+            existing[record["id"]] = record.get("file_path")
+        await result.consume()
 
-        # Audit event on the Twin activity store.
+    failed = [t for t in targets if t not in existing]
+    if not existing:
+        return {"updated": 0, "failed": failed}
+
+    doc_ids = list(existing.keys())
+
+    # 2) Apply adds via MERGE on tag + MERGE on relation. The tag
+    # node is auto-created with placeholder data if missing — the
+    # ON CREATE SET writes a TagEntry-shaped JSON with the right id
+    # baked in via string replace on the placeholder.
+    if adds:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                # We loop over `adds` in Cypher via UNWIND, building
+                # the TagEntry json per tag on the fly.
+                tag_rows = [
+                    {
+                        "id": tag_id,
+                        "data": placeholder.replace(
+                            '"<PLACEHOLDER>"', _json.dumps(tag_id)
+                        ),
+                    }
+                    for tag_id in adds
+                ]
+                result = await session.run(
+                    f"""
+                    UNWIND $tags AS tag
+                    MERGE (t:`{tag_label}` {{id: tag.id}})
+                      ON CREATE SET
+                        t.data = tag.data,
+                        t.`__created_at` = timestamp(),
+                        t.`__auto_via_retag` = true
+                      SET t.`__updated_at` = timestamp()
+                    WITH t
+                    UNWIND $docs AS docId
+                    MATCH (d:`{doc_label}` {{id: docId}})
+                    MERGE (d)-[r:TAGGED_WITH]->(t)
+                      ON CREATE SET r.at = $now, r.actor = $actor
+                    """,
+                    tags=tag_rows,
+                    docs=doc_ids,
+                    now=now,
+                    actor=actor,
+                )
+                await result.consume()
+
+    # 3) Apply removes — delete only the relation; the tag node stays
+    # in the catalog (other docs may still reference it).
+    if removes:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    UNWIND $docs AS docId
+                    UNWIND $tags AS tagId
+                    MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
+                    DELETE r
+                    """,
+                    docs=doc_ids,
+                    tags=removes,
+                )
+                await result.consume()
+
+    # 4) Emit one audit event per doc with the resulting tag list
+    # fetched via the relation (single Cypher batch round-trip).
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $docs AS docId
+            MATCH (d:`{doc_label}` {{id: docId}})
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+            RETURN docId, collect(t.id) AS tags
+            """,
+            docs=doc_ids,
+        )
+        resulting_by_doc: dict[str, list[str]] = {}
+        async for record in result:
+            tags = sorted(tid for tid in (record["tags"] or []) if tid)
+            resulting_by_doc[record["docId"]] = tags
+        await result.consume()
+
+    for doc_id in doc_ids:
+        new_tags = resulting_by_doc.get(doc_id, [])
         event = _make_event(
             kind="doc-retagged",
             sev="info",
             actor=actor,
-            target_label=doc.get("file_path") or doc_id,
+            target_label=existing[doc_id] or doc_id,
             summary=(
-                f"tags: +{','.join(adds) or '∅'} -{','.join(sorted(removes_set)) or '∅'}"
+                f"tags: +{','.join(adds) or '∅'} -{','.join(removes) or '∅'}"
             ),
             meta={
                 "doc_id": doc_id,
                 "adds": adds,
-                "removes": sorted(removes_set),
+                "removes": removes,
                 "resulting_tags": new_tags,
             },
             target_type="document",
         )
         await get_store().record_activity(event)
-        updated += 1
 
-    return {"updated": updated, "failed": failed}
+    return {"updated": len(doc_ids), "failed": failed}
 
 
 @router.post("/auth/logout", response_model=AckResponse)

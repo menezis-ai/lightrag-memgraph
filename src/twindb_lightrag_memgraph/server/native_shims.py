@@ -120,12 +120,52 @@ def _filter_docs(
         needle = q.lower()
         out = [d for d in out if needle in (d.get("file_path") or "").lower()]
     if tag:
-        out = [
-            d
-            for d in out
-            if tag in ((d.get("metadata") or {}).get("tags") or [])
-        ]
+        # Tags now come from the [:TAGGED_WITH] graph relation and are
+        # injected on top of each doc dict by the list endpoint
+        # (see :func:`_attach_tags_via_graph`). The filter respects
+        # whichever representation is on the dict.
+        out = [d for d in out if tag in (d.get("tags") or [])]
     return out
+
+
+async def _attach_tags_via_graph(docs: list[dict[str, Any]]) -> None:
+    """Mutate ``docs`` in place to add a ``tags`` field via graph join.
+
+    Single Cypher batch round-trip joining the doc nodes to their
+    [:TAGGED_WITH] tag nodes. Doctrine: tags are graph relations, not
+    a JSON array nested in metadata. Docs with zero edges receive
+    ``tags=[]`` (the OPTIONAL MATCH guarantees a row per input id).
+    """
+    if not docs:
+        return
+
+    from .. import _pool
+    from .._constants import resolve_workspace
+
+    workspace = resolve_workspace()
+    doc_label = f"DocStatus_{workspace}"
+    tag_label = f"WebuiTag_{workspace}"
+    doc_ids = [d["doc_id"] for d in docs if d.get("doc_id")]
+
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $ids AS docId
+            MATCH (d:`{doc_label}` {{id: docId}})
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+            RETURN docId, collect(t.id) AS tags
+            """,
+            ids=doc_ids,
+        )
+        tags_by_id: dict[str, list[str]] = {}
+        async for record in result:
+            tags_by_id[record["docId"]] = sorted(
+                tid for tid in (record["tags"] or []) if tid
+            )
+        await result.consume()
+
+    for d in docs:
+        d["tags"] = tags_by_id.get(d["doc_id"], [])
 
 
 def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -133,8 +173,12 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
     LightRAG's DocStatusResponse uses ``id`` for the doc identifier whereas
     the WebUI uses ``doc_id``. Pulls structured Twin fields out of
-    ``metadata`` when present (so the ClassPill + tags + review render
-    without a second roundtrip).
+    ``metadata`` when present (workspace label + review state). The
+    ``tags`` field is left at the empty list here — it is populated
+    in a separate graph-join pass by :func:`_attach_tags_via_graph`
+    because tags now live as [:TAGGED_WITH] edges, not as a JSON array
+    in ``metadata.tags`` (doctrine: a graph engine deserves graph
+    queries, not string-array-in-property heresy).
     """
     metadata = doc.get("metadata") or {}
     return {
@@ -148,7 +192,9 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "updated_at": doc.get("updated_at"),
         "track_id": doc.get("track_id"),
         "error_msg": doc.get("error_msg"),
-        "tags": metadata.get("tags") or [],
+        # Tags are populated by _attach_tags_via_graph after this
+        # projection (graph-join via [:TAGGED_WITH] edges).
+        "tags": [],
         "workspace": metadata.get("workspace"),
         "review": metadata.get("review"),
         "metadata": metadata,
@@ -221,6 +267,9 @@ def build_native_shims_router(get_rag) -> APIRouter:
                 payload["status"] = payload["status"].value
             payload["id"] = doc_id
             projected.append(_project_doc(payload))
+
+        # Tags via graph join — single batch Cypher round-trip.
+        await _attach_tags_via_graph(projected)
 
         filtered = _filter_docs(projected, q=q, tag=tag)
 
