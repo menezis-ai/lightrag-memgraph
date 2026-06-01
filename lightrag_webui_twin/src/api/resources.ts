@@ -82,6 +82,19 @@ export const lightragApi = {
       method: 'POST',
     }),
   /**
+   * Trigger re-processing of all FAILED docs in the workspace via
+   * LightRAG's native batch endpoint. There is no per-doc-by-id
+   * reprocess in LightRAG 1.4.9.11; the DocDetailPanel "Re-process"
+   * button surfaces this to operators as "retry failed batch" when
+   * the targeted doc is FAILED, and as a clear no-op explanation
+   * otherwise (see App.tsx onReprocess).
+   */
+  reprocessFailedDocuments: (init?: ApiRequestInit) =>
+    apiFetch<{ status: string; message?: string; failed_count?: number }>(
+      `/documents/reprocess_failed`,
+      { ...init, method: 'POST' },
+    ),
+  /**
    * Upload one file to LightRAG native /documents/upload (multipart).
    *
    * apiFetch is JSON-only, so this bypass uses fetch directly. The
@@ -395,6 +408,7 @@ export const api = {
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
   scanDocument: lightragApi.scanDocument,
+  reprocessFailedDocuments: lightragApi.reprocessFailedDocuments,
   trackStatus: lightragApi.trackStatus,
   uploadDocument: lightragApi.uploadDocument,
   deleteDocument: lightragApi.deleteDocument,

@@ -664,13 +664,40 @@ function AppShell() {
           setDetailDoc(null);
           setRetagDoc(d);
         }}
-        onReprocess={(d) =>
-          pushToast({
-            kind: 'done',
-            title: 'Re-process queued',
-            sub: d.file_path,
-          })
-        }
+        onReprocess={(d) => {
+          // LightRAG 1.4.9.11 has no per-doc-by-id reprocess (only a
+          // global /documents/reprocess_failed batch). Surface the
+          // honest semantics rather than fake a per-doc success:
+          //   - status FAILED → trigger the batch (this doc gets in)
+          //   - status anything else → no-op + explain
+          const failed =
+            String(d.status).toLowerCase() === 'failed' ||
+            String(d.status).toUpperCase() === 'FAILED';
+          if (!failed) {
+            pushToast({
+              kind: 'done',
+              title: 'Re-process not applicable',
+              sub: `${d.file_path} is "${d.status}". LightRAG re-process targets the FAILED batch only. To force a refresh: delete + re-upload.`,
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const r = await api.reprocessFailedDocuments();
+              pushToast({
+                kind: 'done',
+                title: 'Re-process queued (failed batch)',
+                sub: `${r.message ?? 'LightRAG is retrying all FAILED docs'} · ${d.file_path} included`,
+              });
+            } catch (err) {
+              pushToast({
+                kind: 'error',
+                title: 'Re-process failed',
+                sub: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+        }}
         onDelete={(d) => {
           setDetailDoc(null);
           void onDeleteSingle(d);
