@@ -33,6 +33,15 @@ pip install -e ".[test]"
 
 `uv.lock` is **not** present — use `uv` defaults if creating one (per global directive §4), but the project currently relies on `pip install -e`.
 
+### Run the FastAPI overlay locally
+
+```bash
+python -m twindb_lightrag_memgraph.server   # uvicorn factory, default port
+LIGHTRAG_PORT=8080 python -m twindb_lightrag_memgraph.server
+```
+
+Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightRAGServerSettings`. See `WEBUI-WIRING-PLAN.md` (repo root) for the full Couche 2 / Couche 3 contract this server exposes to the WebUI fork.
+
 ### Tests
 
 The local `.venv` is Python 3.14. Be aware of two known footguns recorded in project memory:
@@ -102,6 +111,19 @@ A push triggers 1–15 min of CI (global directive §6). Run unit + integration 
 
 The package also patches `MemgraphGraphStorage` with batch read methods (`get_nodes_batch`, `node_degrees_batch`, `get_edges_batch`, `get_nodes_with_degrees_batch`, etc.) replacing N sequential queries with single UNWIND queries.
 
+### Server module (`src/twindb_lightrag_memgraph/server/`)
+
+FastAPI app factory that sits on top of `register()` and gives the WebUI fork a real backend (Couche 3 of `WEBUI-WIRING-PLAN.md`). Run with `python -m twindb_lightrag_memgraph.server` (uvicorn factory mode; `LIGHTRAG_PORT=8080` to override). Layout:
+
+- `app.py` — `create_app()` factory. Mounts CORS, dual auth (static API key + JWT for the CFT agent), LangSmith tracing, `/query`, `/insert`, `/health`, and the chunk/document routes. `settings.py` (`LightRAGServerSettings`) provides runtime config; `auth.py` is the auth router; `tracing.py` does trace-parent propagation.
+- `chunk_routes.py` — `/chunks/*` and `/documents/*` endpoints (P3 context expansion) that the WebUI's DocDetailPanel + RetrievalTab consume.
+- `webui_router.py` + `webui_models.py` + `webui_*store.py` (`webui_tagstore`, `webui_activitystore`, `webui_notificationstore`) — Twin overlay endpoints (`/twin/api/{tags,activity,notifications,...}`). Pydantic models in `webui_models.py` are the Python side of the contract whose TypeScript twin lives in `lightrag_webui_twin/src/fixtures/`. `webui_seed.py` seeds them for demo/test runs.
+
+### Classification (Couche 2 — BNP MIP labels)
+
+- `classification.py` — `detect_classification()` extracts Microsoft Information Protection (MIP/AIP) sensitivity labels from OOXML (`docx/xlsx/pptx` via stdlib), legacy OLE (`doc/xls/ppt` via optional `olefile`), and PDF (XMP via optional `pikepdf`). Maps GUID → tenant-specific class (BNP `C1`/`C2`/`C3`/`C4`) via a JSON map at `TWIN_MIP_LABEL_MAP`. Gracefully degrades when optional deps or labels are missing.
+- `_classification_hook.py` — `install_classification_hook()` patches LightRAG's ingestion path: runs `detect_classification()` on the source path *before* chunking, writes the payload to `DocStatus.metadata.classification`, and optionally REJECTS docs above `TWIN_MIP_MAX_CLASSIFICATION` (default `C2`). Rejections emit a `classification-rejected` audit event (callback injected to stay decoupled from the overlay store). **Opt-in** — must be called after `register()`. Never raises into the caller; failures yield `class_id="UNKNOWN"` and let LightRAG decide.
+
 ### Intelligence package (`src/twindb_lightrag_memgraph/intelligence/`)
 
 L3 layer between LightRAG retriever (L2) and the agentic platform (L4). Single entry point: `TwinRAGEngine` in `engine.py`.
@@ -124,19 +146,24 @@ User preference: config files in **JSON, not YAML** (no extra dependency, ecosys
 
 Sibling Vite + Bun + React 19 + TypeScript strict + Tailwind v3 sub-project. Ports the design proto at `/Users/julien/Desktop/UI/` (untouched reference) into a typed, tested codebase that will eventually serve as the Twin operator console (citations cliquables, UI tag rétroactif, sous-graphe filtré par tag, source isolation badge).
 
-**Roadmap** — S1 (scaffold + 3 leaves + 2 hooks + typed fixtures) and S2 (3 modals + DocumentsTab + RetrievalTab) merged 2026-05-12. S3 (tags / activity / api / graph + CSS class-body port + TweaksPanel) and S4 (real network wiring against backend phase 1) remain. See memory `project_webui_fork.md` for the detailed plan, current state, and pitfalls archive.
+**Roadmap** — S1/S2/S3/S4a/S4b/S4c are landed (see memory `project_webui_fork.md`). The live end-to-end mutation loop (WebUI → FastAPI → Memgraph store → cache invalidation → refetch) is in place. The current frontier is **Couche 3** of the wiring plan (real LightRAG fetch + JWT + `X-Twin-Workspace` header + drop MSW in prod) — authoritative spec lives in `WEBUI-WIRING-PLAN.md` at the repo root, *not* in memory.
 
 **Stack notes:**
 - Bun runs everything: `bun install`, `bun run dev`, `bun run typecheck`, `bun run test:run`, `bun run build`.
 - Vitest config is inline in `vite.config.ts`. `src/test/setup.ts` provisions an **in-memory localStorage** because happy-dom 20.x on Bun does not ship a Storage implementation.
 - Design tokens (`--twin-*`, light + dark) live in `src/styles/tokens.css` as plain CSS variables; `tailwind.config.js` exposes them as utility classes (`bg-twin-accent`, `text-twin-green-700`, etc.).
-- 114 unit tests across 11 test files, ~1.6s. Modals emit typed `*Action` payloads on submit (RetagAction, AddSourceAction) — the host (App.tsx) owns the toast queue and the network call. **No `window.*` globals**; thesaurus / workspaces / notifications are injected via props.
-- Typed fixtures in `src/fixtures/` are the **contract template for backend phase 1**: `/documents`, `/workspaces`, `/notifications`, `/tags`, `/retrieval` endpoints will honor these shapes.
+- Modals emit typed `*Action` payloads on submit (RetagAction, AddSourceAction) — the host (App.tsx) owns the toast queue and the network call. **No `window.*` globals**; thesaurus / workspaces / notifications are injected via props.
+- Typed fixtures in `src/fixtures/` are the **contract template** that the Python `server/webui_models.py` honors.
+- **MSW + runtime config**: dev and the OVH standalone demo run on MSW (mocked at the browser worker level). `resolveRuntimeConfig()` decides at boot whether to install MSW vs hit the real backend. The `VITE_FORCE_MSW=1` env flag forces MSW even in a production build — that is how `https://maquette.sigilum.fr/` ships a static SPA with no backend. Do not strip the MSW fallback from `resolveRuntimeConfig()`; both prod-with-backend and prod-standalone-demo depend on it.
 
 **Tests pitfalls** (also in `project_webui_fork.md`):
 - `userEvent.type(input, 'foo{Enter}')` races on slow CI — split into two calls + `waitFor`.
 - `useModalA11y`'s 30ms autofocus can steal mid-typing keystrokes from a non-first input — wait 60ms + force `.focus()` explicitly before typing.
 - ARIA live regions duplicate visible text; scope `getByText` to a specific container or use `data-testid`.
+
+### Maquette deploy (`maquette-deploy/`)
+
+OVH demo packaging at `https://maquette.sigilum.fr/` (VPS `37.59.104.111`). Two containers: Caddy + the static SPA (`source/`), and a FastAPI + SQLite persistence sibling (`backend/`). `Dockerfile`/`Caddyfile` build the legacy JSX prototype; `Dockerfile.react`/`Caddyfile.react` build the React port (the typed WebUI fork) — same SPA contract, different source tree. Full deploy procedure (stage tarball → `scp` → `docker stack deploy`) lives in `maquette-deploy/README.md`; UI conventions in `STYLES.md`; the backend contract the SPA depends on is in `BACKEND_CONTRACT.md`. **The maquette is a vitrine, not a deliverable** — its FastAPI/SQLite layer is intentionally a toy and must not be confused with `src/twindb_lightrag_memgraph/server/`. Don't audit it as a production system.
 
 ## Storage idioms (read these before touching impls)
 

@@ -8,11 +8,34 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import {
+  render as rtlRender,
+  screen,
+  within,
+  type RenderOptions,
+} from '@testing-library/react';
+import type { ReactElement, ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TagsTab, exportThesaurusJson } from './TagsTab';
 import { TAG_CATEGORY_FIXTURES, TAG_FIXTURES } from '../fixtures';
 import type { TagCurrentUser } from '../types/tag';
+
+// TagsTab now consumes useImportCategories() which calls useQueryClient().
+// Every render must therefore sit inside a QueryClientProvider. We shadow
+// the bare render() so the existing test bodies stay identical.
+function render(
+  ui: ReactElement,
+  options?: Omit<RenderOptions, 'wrapper'>,
+): ReturnType<typeof rtlRender> {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return rtlRender(ui, { wrapper: Wrapper, ...options });
+}
 
 const PALIER3: TagCurrentUser = {
   name: 'claire.benoit',

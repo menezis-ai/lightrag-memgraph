@@ -40,6 +40,9 @@ import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
+  useBulkRetagDocuments,
+  useDeleteDocument,
+  useUploadDocument,
   useDeleteTag,
   useDeprecateTag,
   useDocuments,
@@ -55,6 +58,7 @@ import {
   useUpdateTagSynonyms,
   useWorkspaces,
 } from './api/queries';
+import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
@@ -145,27 +149,236 @@ function AppShell() {
   const onAddToast = (title: string, sub?: string) =>
     pushToast({ kind: 'done', title, sub });
 
-  const onRetagSubmit = (action: RetagAction) => {
+  const bulkRetagDocs = useBulkRetagDocuments();
+
+  const onRetagSubmit = async (action: RetagAction) => {
     const verb = action.adds.length > 0 ? 'applied' : 'removed';
     const sample = action.adds[0] ?? action.removes[0];
+    try {
+      const result = await bulkRetagDocs.mutateAsync({
+        targets: action.targets.map((d) => d.doc_id),
+        adds: action.adds,
+        removes: action.removes,
+        actor: CURRENT_USER.name,
+      });
+      const failedCount = result.failed.length;
+      pushToast({
+        kind: 'done',
+        title: 'Tag',
+        tagname: sample,
+        titleSuffix: action.bulk
+          ? `${verb} to ${result.updated} source${result.updated === 1 ? '' : 's'}${
+              failedCount > 0 ? ` · ${failedCount} skipped` : ''
+            }`
+          : verb,
+        sub: action.primary.file_path,
+        undo: { adds: action.adds, removes: action.removes },
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Tag mutation failed',
+        sub:
+          err instanceof Error
+            ? err.message
+            : `Could not persist tags on ${action.targets.length} document${
+                action.targets.length === 1 ? '' : 's'
+              }`,
+      });
+    }
+  };
+
+  const uploadDoc = useUploadDocument();
+  const deleteDoc = useDeleteDocument();
+
+  const onDeleteSingle = async (doc: { doc_id: string; file_path: string }) => {
+    try {
+      await deleteDoc.mutateAsync(doc.doc_id);
+      pushToast({
+        kind: 'done',
+        title: 'Document deleted',
+        sub: `${doc.file_path} — removed from Memgraph (cascade: chunks + entities + relations)`,
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Delete failed',
+        sub:
+          err instanceof Error
+            ? err.message
+            : `Could not delete ${doc.file_path}`,
+      });
+    }
+  };
+
+  const onDeleteBulk = async (
+    docs: readonly { doc_id: string; file_path: string }[],
+  ) => {
+    if (docs.length === 0) return;
     pushToast({
-      kind: 'done',
-      title: 'Tag',
-      tagname: sample,
-      titleSuffix: action.bulk
-        ? `${verb} to ${action.targets.length} sources`
-        : verb,
-      sub: action.primary.file_path,
-      undo: { adds: action.adds, removes: action.removes },
+      kind: 'propagating',
+      title: 'Deleting sources…',
+      sub: `${docs.length} source${docs.length === 1 ? '' : 's'} → DELETE /documents/{id}`,
+    });
+    const results = await Promise.allSettled(
+      docs.map((d) => deleteDoc.mutateAsync(d.doc_id)),
+    );
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const ko = results.filter((r) => r.status === 'rejected').length;
+    pushToast({
+      kind: ko === 0 ? 'done' : 'error',
+      title:
+        ko === 0
+          ? `${ok} source${ok === 1 ? '' : 's'} deleted`
+          : `${ko} delete${ko === 1 ? '' : 's'} failed`,
+      sub: `${ok} ok · ${ko} ko`,
     });
   };
 
-  const onAddSourceSubmit = (action: AddSourceAction) => {
+  const onAddSourceSubmit = async (action: AddSourceAction) => {
+    if (action.rawFiles.length === 0) {
+      // No raw files (e.g. test path or all entries were URLs which
+      // are gated coming-soon). Acknowledge without server round-trip.
+      pushToast({
+        kind: 'done',
+        title: 'Sources queued',
+        sub: `${action.readyCount} entr${action.readyCount === 1 ? 'y' : 'ies'}`,
+      });
+      return;
+    }
+
     pushToast({
-      kind: 'done',
-      title: 'Sources queued for ingestion',
-      sub: `${action.readyCount} added${action.tags.length ? ' · tags: ' + action.tags.join(', ') : ''}`,
+      kind: 'propagating',
+      title: 'Uploading sources…',
+      sub: `${action.rawFiles.length} file${action.rawFiles.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
     });
+
+    const results = await Promise.allSettled(
+      action.rawFiles.map((f) => uploadDoc.mutateAsync(f)),
+    );
+
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const ko = results.filter((r) => r.status === 'rejected').length;
+    const dup = results.filter(
+      (r) =>
+        r.status === 'fulfilled' &&
+        (r.value as { status?: string }).status === 'duplicated',
+    ).length;
+
+    if (ko === 0) {
+      pushToast({
+        kind: 'done',
+        title: 'Sources queued for ingestion',
+        sub: `${ok} uploaded${dup > 0 ? ` (${dup} already present)` : ''}${
+          action.tags.length
+            ? ' · initial tags will apply once docs land'
+            : ''
+        }`,
+      });
+    } else {
+      pushToast({
+        kind: 'error',
+        title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
+        sub: `${ok} ok · ${ko} ko${
+          dup > 0 ? ` · ${dup} already present` : ''
+        }`,
+      });
+    }
+
+    // Auto-tag-on-upload: when the operator typed tags in the modal,
+    // poll /documents/track_status/{track_id} until each upload's doc
+    // lands as 'processed', then fire a bulk-retag with the saved
+    // tags. We don't block the main toast on this — it runs in the
+    // background and pushes a follow-up toast on completion.
+    if (action.tags.length > 0) {
+      const successfulTrackIds = results
+        .filter((r) => r.status === 'fulfilled')
+        .map((r) => (r as PromiseFulfilledResult<{ track_id: string }>).value.track_id)
+        .filter(Boolean);
+      if (successfulTrackIds.length > 0) {
+        void applyInitialTagsAfterIngestion(
+          successfulTrackIds,
+          action.tags,
+        );
+      }
+    }
+  };
+
+  /**
+   * Poll track_status for each track_id (up to ~60s with 2s intervals)
+   * and, once the corresponding doc reaches 'processed' (or 'failed'),
+   * collect its doc_id and fire a single bulk-retag with the operator's
+   * initial tags. Survives across page refreshes only for the duration
+   * of the modal interaction (lost on reload — intentional, the operator
+   * can retag manually if the page is closed mid-ingestion).
+   */
+  const applyInitialTagsAfterIngestion = async (
+    trackIds: readonly string[],
+    tags: readonly string[],
+  ): Promise<void> => {
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_POLLS = 30;
+    const TERMINAL_STATUSES = new Set([
+      'processed',
+      'PROCESSED',
+      'failed',
+      'FAILED',
+    ]);
+    const resolvedDocIds = new Set<string>();
+    const pending = new Set(trackIds);
+    for (let i = 0; i < MAX_POLLS && pending.size > 0; i++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      for (const tid of Array.from(pending)) {
+        try {
+          const status = await api.trackStatus(tid);
+          const terminalDocs = status.documents.filter((d) =>
+            TERMINAL_STATUSES.has(d.status),
+          );
+          if (
+            terminalDocs.length > 0 &&
+            terminalDocs.length === status.documents.length
+          ) {
+            terminalDocs
+              .filter((d) => d.status.toLowerCase() === 'processed')
+              .forEach((d) => resolvedDocIds.add(d.id));
+            pending.delete(tid);
+          }
+        } catch {
+          // 404 from track_status is fine while LightRAG is still
+          // booking the doc — keep polling until MAX_POLLS.
+        }
+      }
+    }
+    if (resolvedDocIds.size === 0) {
+      if (trackIds.length > 0) {
+        pushToast({
+          kind: 'error',
+          title: 'Initial tags not applied',
+          sub: `Ingestion didn't reach a terminal state within ${(MAX_POLLS * POLL_INTERVAL_MS) / 1000}s. Retag manually once the docs land.`,
+        });
+      }
+      return;
+    }
+    try {
+      await bulkRetagDocs.mutateAsync({
+        targets: Array.from(resolvedDocIds),
+        adds: tags,
+        removes: [],
+        actor: CURRENT_USER.name,
+      });
+      pushToast({
+        kind: 'done',
+        title: 'Initial tags applied',
+        sub: `${resolvedDocIds.size} doc${resolvedDocIds.size === 1 ? '' : 's'} · tags: ${tags.join(', ')}`,
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Initial tags failed',
+        sub:
+          err instanceof Error ? err.message : 'bulk-retag returned an error',
+      });
+    }
   };
 
   // Tag mutations — call the backend through TanStack Query. Each mutation
@@ -365,26 +578,31 @@ function AppShell() {
               onOpenBulkRetag={(ds) => setRetagBulk(ds)}
               onAddToast={onAddToast}
               onDeleteDoc={(d) => setDetailDoc(d)}
-              onBulkDelete={(ds) =>
-                pushToast({
-                  kind: 'done',
-                  title: `Delete queued`,
-                  sub: `${ds.length} sources`,
-                })
-              }
+              onBulkDelete={onDeleteBulk}
             />
           )}
           {tab === 'settings' && (
             <SettingsTab
               activeWorkspace={workspace}
               kbName={kbName}
-              onSignOut={() =>
-                pushToast({
-                  kind: 'done',
-                  title: 'Signed out',
-                  sub: 'POST /twin/api/auth/logout · session cleared',
-                })
-              }
+              onSignOut={() => {
+                void (async () => {
+                  try {
+                    await api.logout();
+                  } catch {
+                    // Even if the endpoint hiccups, we want to clear
+                    // the local state and force the operator back to
+                    // the Basic Auth prompt — never block sign-out
+                    // on a server error.
+                  }
+                  // Drop all cached React Query state (tags, docs,
+                  // activity, …). The next request after reload will
+                  // either re-prompt Basic Auth (current model) or
+                  // hit the JWT/IdP login (future).
+                  queryClient.clear();
+                  window.location.reload();
+                })();
+              }}
               onRestartTutorial={() =>
                 pushToast({
                   kind: 'done',
@@ -457,20 +675,44 @@ function AppShell() {
           setDetailDoc(null);
           setRetagDoc(d);
         }}
-        onReprocess={(d) =>
-          pushToast({
-            kind: 'done',
-            title: 'Re-process queued',
-            sub: d.file_path,
-          })
-        }
-        onDelete={(d) =>
-          pushToast({
-            kind: 'done',
-            title: 'Delete queued',
-            sub: d.file_path,
-          })
-        }
+        onReprocess={(d) => {
+          // LightRAG 1.4.9.11 has no per-doc-by-id reprocess (only a
+          // global /documents/reprocess_failed batch). Surface the
+          // honest semantics rather than fake a per-doc success:
+          //   - status FAILED → trigger the batch (this doc gets in)
+          //   - status anything else → no-op + explain
+          const failed =
+            String(d.status).toLowerCase() === 'failed' ||
+            String(d.status).toUpperCase() === 'FAILED';
+          if (!failed) {
+            pushToast({
+              kind: 'done',
+              title: 'Re-process not applicable',
+              sub: `${d.file_path} is "${d.status}". LightRAG re-process targets the FAILED batch only. To force a refresh: delete + re-upload.`,
+            });
+            return;
+          }
+          void (async () => {
+            try {
+              const r = await api.reprocessFailedDocuments();
+              pushToast({
+                kind: 'done',
+                title: 'Re-process queued (failed batch)',
+                sub: `${r.message ?? 'LightRAG is retrying all FAILED docs'} · ${d.file_path} included`,
+              });
+            } catch (err) {
+              pushToast({
+                kind: 'error',
+                title: 'Re-process failed',
+                sub: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+        }}
+        onDelete={(d) => {
+          setDetailDoc(null);
+          void onDeleteSingle(d);
+        }}
       />
       <ReadSourceModal
         doc={readSourceDoc}

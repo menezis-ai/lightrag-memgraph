@@ -1,0 +1,32 @@
+[
+  {
+    "id": "network",
+    "label": "Network",
+    "color": "#1F8A7A"
+  },
+  {
+    "id": "infra",
+    "label": "Infrastructure",
+    "color": "#5A7FB4"
+  },
+  {
+    "id": "compliance",
+    "label": "Compliance",
+    "color": "#9C2D8E"
+  },
+  {
+    "id": "operations",
+    "label": "Operations",
+    "color": "#C24A24"
+  },
+  {
+    "id": "governance",
+    "label": "Governance",
+    "color": "#2C3E50"
+  },
+  {
+    "id": "lifecycle",
+    "label": "Lifecycle",
+    "color": "#8A5C0E"
+  }
+]

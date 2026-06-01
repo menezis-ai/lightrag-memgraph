@@ -169,6 +169,10 @@ class ActivityEvent(_Base):
     kind: Literal[
         "retrieval",
         "tag-mutation",
+        "doc-retagged",
+        "doc-approved",
+        "doc-rejected",
+        "doc-deleted",
         "source-uploaded",
         "source-ready",
         "source-failed",

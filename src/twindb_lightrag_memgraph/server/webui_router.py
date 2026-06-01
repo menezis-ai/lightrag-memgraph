@@ -379,6 +379,448 @@ async def list_tag_categories() -> list[dict[str, Any]]:
     return await get_store().list_tag_categories()
 
 
+# ------------------------------------------------------------------
+# Categories template + import — admin convenience for non-shell ops
+# ------------------------------------------------------------------
+#
+# Doctrine recap: categories are governance taxonomy, not user-generated.
+# The default flow is Config-as-Code (mount a JSON via ConfigMap, restart
+# Twin). These two endpoints exist for admins who own the JSON but lack
+# shell access on the host — the upload mirrors Memgraph in-place using
+# the exact same validator as `webui_categories_config`.
+
+_CATEGORIES_TEMPLATE: list[dict[str, Any]] = [
+    {"id": "network", "label": "Network", "color": "#1F8A7A"},
+    {"id": "infra", "label": "Infrastructure", "color": "#5A7FB4"},
+    {"id": "compliance", "label": "Compliance", "color": "#9C2D8E"},
+    {"id": "operations", "label": "Operations", "color": "#C24A24"},
+    {"id": "governance", "label": "Governance", "color": "#2C3E50"},
+    {"id": "lifecycle", "label": "Lifecycle", "color": "#8A5C0E"},
+]
+
+
+@router.get("/tags/categories/template")
+async def get_categories_template():
+    """Return the canonical template JSON that operators can save + edit.
+
+    Served as application/json with a Content-Disposition so a browser
+    "Download template" button receives a file save dialog rather than
+    rendering inline. The 6 entries here mirror
+    ``docs/templates/twin-categories.template.json`` and the schema
+    lives at ``docs/templates/twin-categories.schema.json``.
+    """
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        content=_CATEGORIES_TEMPLATE,
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="twin-categories.template.json"'
+            ),
+        },
+    )
+
+
+# ------------------------------------------------------------------
+# Bulk-retag — persistent doc-level tagging (doctrine: tag is a
+# Memgraph node attribute, not a separate lookup table).
+# ------------------------------------------------------------------
+
+
+def _get_rag():
+    """Resolve the host LightRAG instance captured at register() time."""
+    from .. import _twindb_state
+
+    rag = _twindb_state.get("rag")
+    if rag is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Twin overlay: LightRAG instance not captured. The host must "
+                "boot via register(shim_native_routes=True) so the rag "
+                "captures the create_document_routes call."
+            ),
+        )
+    return rag
+
+
+@router.post("/documents/_bulk-retag")
+async def bulk_retag_documents(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply tag adds/removes to a list of documents as graph edges.
+
+    Doctrine (refined): a tag is a **Memgraph node**
+    (``WebuiTag_{workspace}``), not a string attribute. The fact that
+    a document carries a tag is a **graph relation**
+    ``(:DocStatus_{workspace})-[:TAGGED_WITH]->(:WebuiTag_{workspace})``.
+
+    Why this shape:
+      * Native Cypher queries on tags work: "all docs with rman AND
+        production" = ``MATCH (d)-[:TAGGED_WITH]->({id:'rman'}),
+        (d)-[:TAGGED_WITH]->({id:'production'}) RETURN d``.
+      * Cascade on doc delete is automatic via ``DETACH DELETE``.
+      * Foundation for V2: propagate the [:TAGGED_WITH] edge to chunks
+        / entities / vectors so retrieval can be filtered server-side.
+      * No string-in-JSON-array heresy — we use the graph engine as
+        intended.
+
+    Governance loop: a tag id that doesn't yet exist in the catalog
+    gets ``MERGE``d on the fly with ``tier="requested"`` /
+    ``status="pending-review"``. The Steward sees it in the Tags
+    tab's "Pending requests" section and approves or rejects.
+    Nothing leaks past the catalog by surprise.
+
+    Body shape::
+
+        {
+          "targets": ["doc-abc", "doc-def", ...],
+          "adds":    ["rman", "oracle"],
+          "removes": ["deprecated"],
+          "actor":   "claire.benoit"  # optional, falls back to "system"
+        }
+
+    Returns ``{updated: N, failed: [doc_id, ...]}`` — ``failed`` lists
+    doc ids that didn't exist in DocStatus_{workspace} (the catalog
+    auto-creation makes tag-not-found impossible by construction).
+    """
+    import json as _json
+
+    from .. import _pool
+    from .._constants import resolve_workspace, validate_identifier
+
+    targets = body.get("targets") or []
+    adds = list(body.get("adds") or [])
+    removes = list(body.get("removes") or [])
+    actor = body.get("actor") or "system"
+
+    if not isinstance(targets, list) or not targets:
+        raise HTTPException(
+            status_code=400,
+            detail="targets must be a non-empty list of doc_id strings.",
+        )
+    for tag in (*adds, *removes):
+        validate_identifier(tag, "tag")
+
+    workspace = resolve_workspace()
+    doc_label = f"DocStatus_{workspace}"
+    tag_label = f"WebuiTag_{workspace}"
+    now = _utcnow_iso()
+
+    placeholder = _json.dumps(
+        {
+            "tag": "<PLACEHOLDER>",  # overwritten per-tag via Cypher SET n.data
+            "tier": "requested",
+            "category": "uncategorized",
+            "status": "pending-review",
+            "def": "Auto-created via retag — needs Steward review.",
+            "aliases": [],
+            "deprecates": [],
+            "sources_count": 0,
+            "chunks_count": 0,
+            "query_freq_30d": 0,
+            "related": [],
+            "examples": [],
+            "requested_by": actor,
+            "requested_at": now,
+            "justification": "auto-created via retag",
+            "created": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+            "last_edit": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+        },
+        sort_keys=True,
+    )
+
+    # 1) Probe which target docs actually exist + capture file_path
+    # for the audit event labels.
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $ids AS id
+            MATCH (n:`{doc_label}` {{id: id}})
+            RETURN n.id AS id, n.file_path AS file_path
+            """,
+            ids=targets,
+        )
+        existing: dict[str, str | None] = {}
+        async for record in result:
+            existing[record["id"]] = record.get("file_path")
+        await result.consume()
+
+    failed = [t for t in targets if t not in existing]
+    if not existing:
+        return {"updated": 0, "failed": failed}
+
+    doc_ids = list(existing.keys())
+
+    # 2) Apply adds via MERGE on tag + MERGE on relation. The tag
+    # node is auto-created with placeholder data if missing — the
+    # ON CREATE SET writes a TagEntry-shaped JSON with the right id
+    # baked in via string replace on the placeholder.
+    if adds:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                # We loop over `adds` in Cypher via UNWIND, building
+                # the TagEntry json per tag on the fly.
+                tag_rows = [
+                    {
+                        "id": tag_id,
+                        "data": placeholder.replace(
+                            '"<PLACEHOLDER>"', _json.dumps(tag_id)
+                        ),
+                    }
+                    for tag_id in adds
+                ]
+                result = await session.run(
+                    f"""
+                    UNWIND $tags AS tag
+                    MERGE (t:`{tag_label}` {{id: tag.id}})
+                      ON CREATE SET
+                        t.data = tag.data,
+                        t.`__created_at` = timestamp(),
+                        t.`__auto_via_retag` = true
+                      SET t.`__updated_at` = timestamp()
+                    WITH t
+                    UNWIND $docs AS docId
+                    MATCH (d:`{doc_label}` {{id: docId}})
+                    MERGE (d)-[r:TAGGED_WITH]->(t)
+                      ON CREATE SET r.at = $now, r.actor = $actor
+                    """,
+                    tags=tag_rows,
+                    docs=doc_ids,
+                    now=now,
+                    actor=actor,
+                )
+                await result.consume()
+
+    # 3) Apply removes — delete only the relation; the tag node stays
+    # in the catalog (other docs may still reference it).
+    if removes:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    UNWIND $docs AS docId
+                    UNWIND $tags AS tagId
+                    MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
+                    DELETE r
+                    """,
+                    docs=doc_ids,
+                    tags=removes,
+                )
+                await result.consume()
+
+    # 4) Emit one audit event per doc with the resulting tag list
+    # fetched via the relation (single Cypher batch round-trip).
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $docs AS docId
+            MATCH (d:`{doc_label}` {{id: docId}})
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+            RETURN docId, collect(t.id) AS tags
+            """,
+            docs=doc_ids,
+        )
+        resulting_by_doc: dict[str, list[str]] = {}
+        async for record in result:
+            tags = sorted(tid for tid in (record["tags"] or []) if tid)
+            resulting_by_doc[record["docId"]] = tags
+        await result.consume()
+
+    for doc_id in doc_ids:
+        new_tags = resulting_by_doc.get(doc_id, [])
+        event = _make_event(
+            kind="doc-retagged",
+            sev="info",
+            actor=actor,
+            target_label=existing[doc_id] or doc_id,
+            summary=(
+                f"tags: +{','.join(adds) or '∅'} -{','.join(removes) or '∅'}"
+            ),
+            meta={
+                "doc_id": doc_id,
+                "adds": adds,
+                "removes": removes,
+                "resulting_tags": new_tags,
+            },
+            target_type="document",
+        )
+        await get_store().record_activity(event)
+
+    return {"updated": len(doc_ids), "failed": failed}
+
+
+@router.post("/auth/logout", response_model=AckResponse)
+async def logout() -> dict[str, Any]:
+    """Sign out the current operator.
+
+    Under the current Traefik Basic Auth gate, sign-out is mostly a
+    client-side concern (clear React Query cache + reload to retrigger
+    the browser's auth prompt). The endpoint exists so the frontend
+    can confirm round-trip before clearing local state — when JWT/IdP
+    arrives (Couche 3 §3.3), this also clears the HttpOnly cookie
+    via Set-Cookie: Max-Age=0.
+
+    Returns {ok: true} always — sign-out cannot fail server-side
+    under the current model.
+    """
+    from fastapi.responses import JSONResponse
+
+    response = JSONResponse(content={"ok": True})
+    # Pre-emptive cookie clear for the future JWT flow. Currently a
+    # no-op because Basic Auth uses HTTP headers, not cookies.
+    response.delete_cookie("twin_session", path="/")
+    response.delete_cookie("twin_id_token", path="/")
+    return response
+
+
+@router.post("/documents/{doc_id}/approve")
+async def approve_document(
+    doc_id: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Mark a document as reviewer-approved.
+
+    Persists ``DocStatus.metadata.review = {state: 'approved',
+    actor, at, edits?}`` on the Memgraph node and emits a
+    ``doc-approved`` activity event. The ``edits`` (optional) carries
+    operator-supplied corrections that were applied at the same time
+    as the approval — the front-end's EditApproveModal sends these
+    alongside the approve when the reviewer needed to fix something
+    before signing off.
+    """
+    rag = _get_rag()
+    body = body or {}
+    actor = body.get("actor") or "system"
+    edits = body.get("edits") or {}
+
+    doc = await rag.doc_status.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    metadata = doc.get("metadata") or {}
+    review = metadata.get("review") or {}
+    review.update(
+        {
+            "state": "approved",
+            "actor": actor,
+            "at": _utcnow_iso(),
+        }
+    )
+    if edits:
+        review["edits"] = edits
+    metadata["review"] = review
+    doc["metadata"] = metadata
+    await rag.doc_status.upsert({doc_id: doc})
+
+    event = _make_event(
+        kind="doc-approved",
+        sev="info",
+        actor=actor,
+        target_label=doc.get("file_path") or doc_id,
+        summary=(
+            f"approved by {actor}" + (f" with edits" if edits else "")
+        ),
+        meta={"doc_id": doc_id, "edits": edits},
+        target_type="document",
+    )
+    await get_store().record_activity(event)
+
+    return {"doc_id": doc_id, "review": review}
+
+
+@router.post("/documents/{doc_id}/reject")
+async def reject_document(
+    doc_id: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Mark a document as reviewer-rejected.
+
+    Persists ``DocStatus.metadata.review = {state: 'rejected',
+    actor, at, justification}`` on the Memgraph node and emits a
+    ``doc-rejected`` activity event with the rejection reason in the
+    summary (visible in the audit feed). The doc itself is NOT
+    deleted — it stays in DocStatus with its rejected review so the
+    operator can still see it in the table with the right badge.
+    """
+    rag = _get_rag()
+    actor = body.get("actor") or "system"
+    reason = body.get("reason") or ""
+    if not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="reject_document requires a non-empty `reason` field.",
+        )
+
+    doc = await rag.doc_status.get_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    metadata = doc.get("metadata") or {}
+    review = metadata.get("review") or {}
+    review.update(
+        {
+            "state": "rejected",
+            "actor": actor,
+            "at": _utcnow_iso(),
+            "justification": reason,
+        }
+    )
+    metadata["review"] = review
+    doc["metadata"] = metadata
+    await rag.doc_status.upsert({doc_id: doc})
+
+    event = _make_event(
+        kind="doc-rejected",
+        sev="warning",
+        actor=actor,
+        target_label=doc.get("file_path") or doc_id,
+        summary=f"rejected: {reason}",
+        meta={"doc_id": doc_id, "reason": reason},
+        target_type="document",
+    )
+    await get_store().record_activity(event)
+
+    return {"doc_id": doc_id, "review": review}
+
+
+@router.post("/tags/categories/_import", response_model=AckResponse)
+async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mirror the uploaded JSON into the workspace's categories store.
+
+    Same validator as ``webui_categories_config`` — only JSON matching
+    the schema is accepted. On success, returns ``{ok: True}`` and the
+    operator's next page refresh sees the new taxonomy. Rejects with
+    400 if the JSON shape is wrong, 503 if the store backend is not
+    Memgraph (the seed/in-memory backend has no concept of "import").
+    """
+    backend = get_store().tags
+    if not isinstance(backend, MemgraphTagStore):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Categories import requires the Memgraph store backend "
+                "(register with webui_stores='memgraph'). The current "
+                "backend does not support taxonomy mutation."
+            ),
+        )
+
+    try:
+        await backend.replace_categories_from_list(body, source="import")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"ok": True}
+
+
 @router.get("/activity", response_model=ActivityEnvelope)
 async def list_activity(
     kind: str | None = Query(default=None),

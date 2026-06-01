@@ -16,7 +16,7 @@
  * stay on `api.xxx()` without caring about which surface owns the endpoint.
  */
 
-import { apiFetch, type ApiRequestInit } from './client';
+import { ApiError, apiFetch, type ApiRequestInit } from './client';
 import type { ActivityEvent } from '../types/activity';
 import type { OpenApiGroup } from '../types/api';
 import type { Document } from '../types/document';
@@ -59,11 +59,83 @@ export const lightragApi = {
       `/documents/${encodeURIComponent(docId)}/chunks`,
       init,
     ),
+  /**
+   * Resolve all DocStatus rows associated with an ingestion track_id
+   * (the id returned by /documents/upload). Used to discover the
+   * generated doc_id once processing completes, so initial tags from
+   * the AddSource modal can be applied via bulk-retag.
+   */
+  trackStatus: (trackId: string, init?: ApiRequestInit) =>
+    apiFetch<{
+      track_id: string;
+      documents: readonly {
+        id: string;
+        status: string;
+        file_path: string;
+      }[];
+      total_count: number;
+      status_summary: Record<string, number>;
+    }>(`/documents/track_status/${encodeURIComponent(trackId)}`, init),
   scanDocument: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}/scan`, {
       ...init,
       method: 'POST',
     }),
+  /**
+   * Trigger re-processing of all FAILED docs in the workspace via
+   * LightRAG's native batch endpoint. There is no per-doc-by-id
+   * reprocess in LightRAG 1.4.9.11; the DocDetailPanel "Re-process"
+   * button surfaces this to operators as "retry failed batch" when
+   * the targeted doc is FAILED, and as a clear no-op explanation
+   * otherwise (see App.tsx onReprocess).
+   */
+  reprocessFailedDocuments: (init?: ApiRequestInit) =>
+    apiFetch<{ status: string; message?: string; failed_count?: number }>(
+      `/documents/reprocess_failed`,
+      { ...init, method: 'POST' },
+    ),
+  /**
+   * Upload one file to LightRAG native /documents/upload (multipart).
+   *
+   * apiFetch is JSON-only, so this bypass uses fetch directly. The
+   * Authorization header pattern matches apiFetch (env-driven for now;
+   * will read from window.__twinConfig once Couche 3 §3.6 lands).
+   * Returns the InsertResponse shape:
+   *   { status: 'success'|'duplicated', message: string, track_id: string }
+   * On 4xx/5xx, throws an ApiError so the host can show a real toast.
+   */
+  uploadDocument: async (
+    file: File,
+    init?: { signal?: AbortSignal },
+  ): Promise<{ status: string; message: string; track_id: string }> => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+    const authToken = import.meta.env.VITE_AUTH_TOKEN ?? '';
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers: Record<string, string> = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const res = await fetch(`${baseUrl}/documents/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: init?.signal,
+    });
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* keep as text */
+    }
+    if (!res.ok) {
+      throw new ApiError(
+        `POST /documents/upload → ${res.status} ${res.statusText}`,
+        res.status,
+        body,
+      );
+    }
+    return body as { status: string; message: string; track_id: string };
+  },
   deleteDocument: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}`, {
       ...init,
@@ -119,6 +191,34 @@ export const twinApi = {
     apiFetch<readonly TagEntry[]>(`${TWIN}/tags`, init),
   listTagCategories: (init?: ApiRequestInit) =>
     apiFetch<readonly TagCategory[]>(`${TWIN}/tags/categories`, init),
+
+  /**
+   * Download the canonical taxonomy template (governance JSON).
+   * Server returns the JSON with ``Content-Disposition: attachment``
+   * so a plain anchor + ``download`` attribute would also work, but
+   * routing through ``apiFetch`` keeps auth header propagation
+   * consistent when the host turns on JWT-cookie auth.
+   */
+  downloadCategoriesTemplate: (init?: ApiRequestInit) =>
+    apiFetch<readonly TagCategory[]>(
+      `${TWIN}/tags/categories/template`,
+      init,
+    ),
+
+  /**
+   * Mirror a JSON taxonomy into the workspace's categories store.
+   * Server-side validation is strict (matches the template schema);
+   * a 400 maps to ``ApiError`` with the validation message as ``body``.
+   */
+  importCategories: (
+    body: readonly { id: string; label: string; color: string }[],
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ ok: boolean }>(`${TWIN}/tags/categories/_import`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
 
   requestTag: (
     body: {
@@ -252,6 +352,28 @@ export const twinApi = {
       body,
     }),
 
+  /**
+   * Persist a tag mutation (single or bulk) on a list of documents.
+   * Doctrine: a tag is a Memgraph node attribute on DocStatus_{workspace}.
+   * The server applies set semantics — adds first, removes second — and
+   * emits one activity event per doc (kind="doc-retagged").
+   * 404s for unknown doc_ids come back in the `failed` array, not as
+   * a top-level ApiError, so partial success is the common case.
+   */
+  bulkRetagDocuments: (
+    body: {
+      targets: readonly string[];
+      adds: readonly string[];
+      removes: readonly string[];
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ updated: number; failed: readonly string[] }>(
+      `${TWIN}/documents/_bulk-retag`,
+      { ...init, method: 'POST', body },
+    ),
+
   // Auth
   logout: (init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`${TWIN}/auth/logout`, { ...init, method: 'POST' }),
@@ -286,6 +408,9 @@ export const api = {
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
   scanDocument: lightragApi.scanDocument,
+  reprocessFailedDocuments: lightragApi.reprocessFailedDocuments,
+  trackStatus: lightragApi.trackStatus,
+  uploadDocument: lightragApi.uploadDocument,
   deleteDocument: lightragApi.deleteDocument,
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
@@ -300,6 +425,8 @@ export const api = {
   listThesaurus: twinApi.listThesaurus,
   listTags: twinApi.listTags,
   listTagCategories: twinApi.listTagCategories,
+  downloadCategoriesTemplate: twinApi.downloadCategoriesTemplate,
+  importCategories: twinApi.importCategories,
   requestTag: twinApi.requestTag,
   approveTag: twinApi.approveTag,
   rejectTag: twinApi.rejectTag,
@@ -312,6 +439,7 @@ export const api = {
   approveDocument: twinApi.approveDocument,
   rejectDocument: twinApi.rejectDocument,
   bulkDeleteDocuments: twinApi.bulkDeleteDocuments,
+  bulkRetagDocuments: twinApi.bulkRetagDocuments,
   logout: twinApi.logout,
   listGraphEntities: twinApi.listGraphEntities,
   listGraphRelations: twinApi.listGraphRelations,

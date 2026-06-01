@@ -792,6 +792,26 @@ input:focus, textarea:focus, select:focus { outline: none; }
   display: flex; justify-content: space-between; align-items: center;
 }
 .section-label .optional { font-size: 11px; color: var(--color-text-tertiary); font-weight: 400; }
+.section-label .coming-soon {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  background: var(--color-background-tertiary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: 999px;
+  padding: 2px 8px;
+  line-height: 1.4;
+  cursor: help;
+}
+.linked-box.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--color-background-secondary);
+}
+.linked-box.disabled .url-input { cursor: not-allowed; }
+.linked-box.disabled .url-input:disabled { color: var(--color-text-tertiary); }
 .section-label-uc {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--color-text-tertiary); font-weight: 500;
@@ -2100,7 +2120,30 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--twin-accent-soft-text);
   border-radius: 11px;
 }
-.tags-header-actions { display: flex; gap: 8px; }
+.tags-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Taxonomy import / template download status banner */
+.taxonomy-import-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 28px 12px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 0.5px solid;
+}
+.taxonomy-import-status--success {
+  background: var(--twin-green-50, #E9F4ED);
+  color: var(--twin-green-700, #1B6A3A);
+  border-color: var(--twin-green-200, #A6D8B6);
+}
+.taxonomy-import-status--error {
+  background: var(--twin-red-50, #FCEDED);
+  color: var(--twin-red-700, #8B2424);
+  border-color: var(--twin-red-200, #E6B0B0);
+}
 
 /* Pending requests section */
 .pending-section { background: var(--twin-amber-50); border-bottom: 0.5px solid #E0BB7A; }

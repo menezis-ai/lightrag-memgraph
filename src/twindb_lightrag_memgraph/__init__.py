@@ -35,13 +35,21 @@ except Exception:
 
 _registered = False
 
+# Module-level state captured during LightRAG bootstrap so that other
+# patches can reach the host's LightRAG instance without re-instantiating
+# it. Populated by ``_patch_capture_rag`` when ``shim_native_routes=True``.
+_twindb_state: dict[str, object] = {}
+
 
 def register(
     replace_ui: bool = False,
     mount_server: bool = False,
+    shim_native_routes: bool = False,
     security_baseline: bool = True,
     webui_dist: str | None = None,
     twin_api_prefix: str = "/twin/api",
+    webui_stores: str = "seed",
+    webui_categories_config: str | None = None,
 ) -> None:
     """Monkey-patch LightRAG's storage registries to add Memgraph backends.
 
@@ -58,6 +66,42 @@ def register(
         mount_server: If True, mount our Twin sub-app on ``twin_api_prefix``
             (FastAPI: ``twindb_lightrag_memgraph.server.app:create_app``).
             Lifespans are chained so the sub-app initializes during parent startup.
+        shim_native_routes: If True, prepend a Twin-shaped APIRouter at the
+            HEAD of ``app.router.routes`` to shadow LightRAG's native
+            ``GET /documents``, ``GET /health``, ``GET /pipeline_status`` (+
+            add the missing ``GET /documents/{id}/chunks``, per-doc scan,
+            REST-style delete, curated ``/openapi``). Requires the host
+            LightRAG bootstrap to use the standard ``create_document_routes``
+            factory so the ``rag`` instance can be captured.
+        webui_stores: Which backend to use for the Twin overlay's
+            tags / activity / notifications stores when ``mount_server=True``.
+
+              - ``"seed"`` (default): in-memory + fixtures from ``webui_seed``.
+                Useful for demo, dev, and the standalone OVH build. Mutations
+                are lost on restart.
+              - ``"memgraph"``: Memgraph-backed stores (workspace-scoped via
+                env var ``WORKSPACE``). Fresh install boots empty; mutations
+                persist; the seed data for *documents*, *workspaces*,
+                *thesaurus*, *graph* still loads (those are reference data,
+                not user-generated). Requires ``MEMGRAPH_URI`` and runs the
+                async store factories inside a lifespan wrapper around the
+                LightRAG host's lifespan.
+        webui_categories_config: Optional path to a JSON file that
+            *mirrors* the tag-category taxonomy on every boot. Doctrine
+            "Config as Code" — the BNP admin owns the taxonomy in Git
+            (or a Kubernetes ConfigMap), and Twin enforces it.
+
+              - Schema: ``[{"id": "...", "label": "...", "color": "#RRGGBB"}, …]``.
+              - Semantics: **replace**, not merge. Every reboot mirrors
+                the file's content. Removing a category from the file
+                makes it disappear on next boot (tags pointing at it
+                become orphan; logged as warning, not auto-deleted).
+              - Only honored when ``webui_stores="memgraph"``. With
+                ``webui_stores="seed"`` the in-memory fixtures win.
+              - When ``None`` (default), the internal seed
+                ``webui_seed.TAG_CATEGORIES`` is bootstrapped on a
+                fresh workspace via
+                :meth:`MemgraphTagStore.bootstrap_categories_if_empty`.
         security_baseline: If True (default), neutralize runtime supply-chain
             hazards before any LightRAG module gets a chance to mis-behave:
             blocks ``pipmaster`` install entrypoints and the
@@ -128,12 +172,23 @@ def register(
     #    next to the LightRAG version string in the top-right corner.
     _patch_version_string()
 
-    # 8. Optionally extend the FastAPI app: swap WebUI + mount Twin sub-app.
+    # 8. Optionally extend the FastAPI app: swap WebUI + mount Twin sub-app
+    #    + shim native routes for the agent-readable contract.
     #    Opt-in via flags — default off keeps prod instances unaffected.
-    if replace_ui or mount_server:
+    if shim_native_routes:
+        # Must wrap create_document_routes BEFORE create_app runs so that
+        # when the host's create_app calls it, we capture the rag instance.
+        _patch_capture_rag()
+
+    if replace_ui or mount_server or shim_native_routes:
         _patch_lightrag_server_create_app(
             webui_dist=_resolve_webui_dist(webui_dist) if replace_ui else None,
             twin_api_prefix=twin_api_prefix if mount_server else None,
+            shim_native_routes=shim_native_routes,
+            webui_stores=webui_stores if mount_server else "seed",
+            webui_categories_config=(
+                webui_categories_config if mount_server else None
+            ),
         )
 
     _registered = True
@@ -925,20 +980,65 @@ def _resolve_webui_dist(explicit: str | None) -> str:
     )
 
 
+def _patch_capture_rag() -> None:
+    """Wrap ``create_document_routes(rag, ...)`` so we capture ``rag``.
+
+    LightRAG instantiates the RAG inside ``create_app`` and immediately
+    feeds it to ``create_document_routes`` (and the query/graph routes)
+    as the first positional arg. We wrap that factory to grab a reference
+    before delegating to the original.
+
+    Idempotent — sentinel attribute on the target module prevents
+    stacking wrappers across repeated ``register()`` calls in tests.
+    """
+    import lightrag.api.routers.document_routes as dr
+
+    if getattr(dr, "_twindb_capture_rag_patched", False):
+        return
+
+    orig_factory = dr.create_document_routes
+
+    def wrapped_factory(rag, *args, **kwargs):
+        _twindb_state["rag"] = rag
+        logger.info("twindb: captured LightRAG instance for shim routes")
+        return orig_factory(rag, *args, **kwargs)
+
+    wrapped_factory.__wrapped__ = orig_factory
+    wrapped_factory.__name__ = "wrapped_create_document_routes"
+    dr.create_document_routes = wrapped_factory
+
+    # The lightrag_server module imports create_document_routes by name
+    # at module-load time, so we must also rebind there if the module is
+    # already imported.
+    import sys
+
+    if "lightrag.api.lightrag_server" in sys.modules:
+        srv_mod = sys.modules["lightrag.api.lightrag_server"]
+        if hasattr(srv_mod, "create_document_routes"):
+            srv_mod.create_document_routes = wrapped_factory
+
+    dr._twindb_capture_rag_patched = True
+
+
 def _patch_lightrag_server_create_app(
     webui_dist: str | None = None,
     twin_api_prefix: str | None = None,
+    shim_native_routes: bool = False,
+    webui_stores: str = "seed",
+    webui_categories_config: str | None = None,
 ) -> None:
     """Wrap ``lightrag.api.lightrag_server.create_app`` to optionally:
        - replace the native ``/webui`` Mount with our WebUI fork (``webui_dist``);
-       - mount our Twin sub-app on ``twin_api_prefix``.
+       - mount our Twin sub-app on ``twin_api_prefix``;
+       - prepend native-route shims (``shim_native_routes``) for the
+         agent-readable surface the React port expects.
 
     Idempotent: a sentinel attribute on the module prevents stacking wrappers
     when ``register()`` is called more than once (e.g. in test loops).
 
-    Both features default to off if their kwarg is ``None``. Calling this with
-    both ``None`` is a no-op (still installs the wrapper as a passthrough so
-    subsequent re-registrations are coherent).
+    All three features default to off. Calling with all None/False is a no-op
+    (still installs the wrapper as a passthrough so subsequent re-registrations
+    are coherent).
 
     Order: this must run AFTER ``_patch_version_string()`` because the source
     string of ``lightrag_server.core_version`` is bound at module import.
@@ -958,10 +1058,17 @@ def _patch_lightrag_server_create_app(
 
     def wrapped_create_app(args):
         app = orig_create_app(args)
+        if shim_native_routes:
+            _inject_native_shims(app)
         if webui_dist is not None:
             _replace_webui_mount(app, webui_dist)
         if twin_api_prefix is not None:
-            _mount_twin_subapp(app, twin_api_prefix)
+            _mount_twin_subapp(
+                app,
+                twin_api_prefix,
+                webui_stores=webui_stores,
+                webui_categories_config=webui_categories_config,
+            )
         return app
 
     wrapped_create_app.__wrapped__ = orig_create_app
@@ -970,10 +1077,102 @@ def _patch_lightrag_server_create_app(
     srv._twindb_create_app_patched = True
     logger.info(
         "twindb: lightrag.api.lightrag_server.create_app wrapped "
-        "(replace_ui=%s, mount_server=%s)",
+        "(replace_ui=%s, mount_server=%s, shim_native_routes=%s)",
         webui_dist is not None,
         twin_api_prefix is not None,
+        shim_native_routes,
     )
+
+
+def _inject_native_shims(app) -> None:
+    """Prepend the Twin native shim routes at the HEAD of ``app.router.routes``.
+
+    FastAPI matches routes in registration order — the first hit wins.
+    To shadow LightRAG's natives (already registered by the time
+    ``create_app`` returns) we insert at index 0.
+
+    The shims call back into the host's ``LightRAG`` instance captured
+    by ``_patch_capture_rag``. If capture failed (host bootstrap took a
+    non-standard path), routes raise 500 with a clear error message —
+    we never silently fall back to a different RAG.
+    """
+    from .server.native_shims import build_health_shim, build_native_shims_router
+
+    def _get_rag():
+        rag = _twindb_state.get("rag")
+        if rag is None:
+            raise RuntimeError(
+                "twindb shim: host LightRAG instance not captured. "
+                "register(shim_native_routes=True) requires create_document_routes "
+                "to be called by the host (the standard lightrag-server entrypoint)."
+            )
+        return rag
+
+    shim_router = build_native_shims_router(_get_rag)
+    health_router = build_health_shim(_get_rag)
+
+    # Prepend each shim route to app.router.routes so they beat LightRAG's
+    # natives in the first-match-wins game.
+    insert_at = 0
+    for r in list(shim_router.routes) + list(health_router.routes):
+        app.router.routes.insert(insert_at, r)
+        insert_at += 1
+
+    logger.info(
+        "twindb: prepended %d native shim route(s) at app.router HEAD",
+        insert_at,
+    )
+
+
+def _build_runtime_config() -> dict[str, object]:
+    """Build the TwinRuntimeConfig dict that gets substituted into index.html.
+
+    Shape mirrors ``lightrag_webui_twin/src/types/auth.ts:TwinRuntimeConfig``.
+
+    Until Couche 3 §3.3 lands (real JWT decoding from the BNP IdP cookie),
+    we ship a ``debugUser`` with a wide-open palier so the operator console
+    is usable against a local LightRAG without standing up Keycloak.
+
+    Override per-deploy via env vars (read late so a single ``register()``
+    call can re-render against a different identity without re-importing).
+    """
+    import os
+
+    api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
+    lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
+    idp_logout = os.environ.get(
+        "TWIN_IDP_LOGOUT_URL",
+        "https://idp.twin.local/realms/twin/protocol/openid-connect/logout",
+    )
+    debug_user = {
+        "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
+        "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
+        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "Local Operator"),
+        "palier": {
+            "level": 3,
+            "label": "Steward",
+            "scopes": ["twin:read", "twin:write", "twin:approve"],
+        },
+        "workspaces": [os.environ.get("WORKSPACE", "default")],
+        "idp": "local-debug",
+        "idp_realm": "twin-local",
+        "sub": "local-debug-sub",
+        "session_expires": "2099-12-31T23:59:00Z",
+        "gateway_scopes": [
+            "read:documents",
+            "write:documents",
+            "read:query",
+            "read:activity",
+            "admin:tags",
+            "admin:workspace",
+        ],
+    }
+    return {
+        "apiBaseUrl": api_base,
+        "lightragBaseUrl": lightrag_base,
+        "idpLogoutUrl": idp_logout,
+        "debugUser": debug_user,
+    }
 
 
 def _replace_webui_mount(app, webui_dist: str) -> None:
@@ -984,9 +1183,77 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
     stays identical to the native ``create_app`` output. This makes the swap
     invisible to downstream middlewares, the ``/`` redirect, and the
     ``/docs`` / ``/auth-status`` / ``/login`` companions.
+
+    The substituted Mount serves a :class:`_TemplatedStaticFiles` that
+    rewrites ``__TWIN_CONFIG_JSON__`` inside ``index.html`` on the fly,
+    so the SPA receives the runtime config from the server (cf. plan §3.4)
+    without any build-time injection or extra route.
+
+    Side mount: the Twin React port is built with ``base: '/'`` (so the
+    same dist also serves the standalone OVH demo at root). When mounted
+    under ``/webui/`` the inline references like ``/assets/index-XYZ.js``
+    and ``/favicon.svg`` would 404. We mount a sibling ``/assets`` +
+    favicon static handler so absolute-root references resolve. This is
+    invisible to LightRAG natives because ``/assets`` is not part of
+    LightRAG's surface — the Twin sub-paths are additive.
     """
+    import json
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
+    from starlette.responses import HTMLResponse
     from starlette.routing import Mount
+
+    class _TemplatedStaticFiles(StaticFiles):
+        """StaticFiles subclass that substitutes ``__TWIN_CONFIG_JSON__`` in index.html.
+
+        Intercepts the lookup of ``index.html`` (both via the empty-path
+        directory-default and explicit ``GET /webui/index.html``) and
+        returns an :class:`HTMLResponse` with the placeholder replaced by
+        the runtime config JSON. All other paths fall through to
+        :meth:`StaticFiles.get_response` unchanged.
+
+        The template is read once and cached on the instance; the config
+        is also computed once at instance creation time. To pick up a new
+        config value, call ``register()`` again (the wrapper rebinds and
+        re-runs ``_replace_webui_mount``).
+        """
+
+        def __init__(
+            self,
+            *args,
+            runtime_config_json: str,
+            **kwargs,
+        ):
+            super().__init__(*args, **kwargs)
+            self._runtime_config_json = runtime_config_json
+            self._template_cache: str | None = None
+            self._template_path = Path(self.directory) / "index.html"
+
+        async def get_response(self, path: str, scope):
+            # Starlette normalizes the mount-relative path via os.path.normpath,
+            # so GET /webui/ arrives as path == "." (NOT "" or "/"). Explicit
+            # GET /webui/index.html arrives as path == "index.html". Both
+            # resolve to the same file → both are substitution targets.
+            if path in (".", "index.html"):
+                if self._template_cache is None:
+                    try:
+                        self._template_cache = self._template_path.read_text(
+                            encoding="utf-8"
+                        )
+                    except FileNotFoundError:
+                        logger.error(
+                            "twindb webui template not found at %s",
+                            self._template_path,
+                        )
+                        return await super().get_response(path, scope)
+                html = self._template_cache.replace(
+                    "__TWIN_CONFIG_JSON__",
+                    self._runtime_config_json,
+                )
+                return HTMLResponse(html)
+            return await super().get_response(path, scope)
 
     webui_route = None
     for route in app.router.routes:
@@ -1002,41 +1269,202 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         )
         return
 
-    webui_route.app = StaticFiles(directory=webui_dist, html=True, check_dir=True)
-    logger.info("twindb: WebUI mount at /webui swapped → %s", webui_dist)
+    runtime_config_json = json.dumps(_build_runtime_config())
+
+    webui_route.app = _TemplatedStaticFiles(
+        directory=webui_dist,
+        html=True,
+        check_dir=True,
+        runtime_config_json=runtime_config_json,
+    )
+
+    # Side-mount /assets at root so the dist's absolute references resolve.
+    dist_path = Path(webui_dist)
+    assets_dir = dist_path / "assets"
+    if assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="twin-assets-root",
+        )
+
+    # favicon + small static files referenced from index.html at root
+    for fname in ("favicon.svg", "favicon.ico", "favicon.png", "icons.svg"):
+        fpath = dist_path / fname
+        if fpath.is_file():
+            captured = str(fpath)
+
+            async def _serve(path=captured):
+                return FileResponse(path)
+
+            app.get(f"/{fname}", include_in_schema=False)(_serve)
+
+    # Bundle may also reference /mockServiceWorker.js (used by VITE_FORCE_MSW
+    # standalone build). Harmless to expose even in BNP mode — it only
+    # activates if VITE_FORCE_MSW was true at build-time.
+    msw_path = dist_path / "mockServiceWorker.js"
+    if msw_path.is_file():
+        captured_msw = str(msw_path)
+
+        async def _serve_msw():
+            return FileResponse(captured_msw, media_type="application/javascript")
+
+        app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
+
+    logger.info(
+        "twindb: WebUI mount at /webui swapped → %s (with __TWIN_CONFIG_JSON__ substitution)",
+        webui_dist,
+    )
 
 
-def _mount_twin_subapp(app, prefix: str) -> None:
-    """Mount our Twin FastAPI sub-app on ``prefix`` with explicit lifespan chaining.
+def _mount_twin_subapp(
+    app,
+    prefix: str,
+    webui_stores: str = "seed",
+    webui_categories_config: str | None = None,
+) -> None:
+    """Mount the Twin overlay as an ``APIRouter`` directly on the host app.
 
-    Without chaining, the sub-app's startup hooks never fire when mounted, and
-    its module-level ``_rag`` stays uninitialized — every route returns 500.
-    Prisme A §6 Option B documents this pitfall.
+    Doctrine: one app, one LightRAG, one lifespan. Earlier revisions
+    instantiated a full FastAPI sub-app with a chained lifespan that
+    booted a second LightRAG — fine for the standalone factory in
+    ``server/app.py`` (still usable for unit tests), doubled the
+    resource footprint in production. The current implementation
+    includes the existing ``webui_router`` directly so:
+
+      - one LightRAG instance for the whole process (the host's),
+      - the same ``/twin/api/*`` surface from ``webui_router`` serves
+        every endpoint the React port expects (workspaces, notifications,
+        tags + CRUD, thesaurus, activity, graph).
+
+    Storage backend selection (``webui_stores``):
+
+      - ``"seed"``: the WebUI store is built sync from
+        :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
+        notifications) are visible immediately. No lifespan wrapping.
+      - ``"memgraph"``: the WebUI store is built **inside a chained
+        lifespan** because the Memgraph store factories are async. On
+        startup, after LightRAG's own lifespan has run
+        ``rag.initialize_storages()``, we instantiate Memgraph-backed
+        backends scoped to ``$WORKSPACE`` and swap them into a
+        :class:`WebuiStore` (which still carries the seed for the
+        non-user-generated bits: documents, workspaces, thesaurus,
+        graph entities/relations). Fresh installs boot empty for tags,
+        activity, notifications — mutations persist across restarts.
     """
-    from contextlib import AsyncExitStack, asynccontextmanager
-
     try:
-        from twindb_lightrag_memgraph.server.app import create_app as create_twin_app
+        from .server.webui_router import (
+            WebuiStore,
+            router as webui_router,
+            set_store,
+        )
     except ImportError as exc:
         raise ImportError(
             "mount_server=True requires the 'server' extra: "
             "pip install 'twindb-lightrag-memgraph[server]'"
         ) from exc
 
-    twin_app = create_twin_app()
+    app.include_router(webui_router, prefix=prefix)
+
+    if webui_stores == "seed":
+        # Sync setup; the seed includes pre-populated tags / activity /
+        # notifications visible from the very first request.
+        set_store(WebuiStore.from_seed())
+        logger.info(
+            "twindb: Twin overlay router included at %s "
+            "(in-memory seed; %d routes)",
+            prefix,
+            len(webui_router.routes),
+        )
+        return
+
+    if webui_stores != "memgraph":
+        raise ValueError(
+            f"webui_stores={webui_stores!r} is not supported. "
+            "Use 'seed' or 'memgraph'."
+        )
+
+    # Memgraph branch — async store factories require a lifespan hook.
+    import os
+    from contextlib import asynccontextmanager
 
     parent_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
     async def chained_lifespan(parent_app):
-        async with AsyncExitStack() as stack:
-            await stack.enter_async_context(parent_lifespan(parent_app))
-            await stack.enter_async_context(twin_app.router.lifespan_context(twin_app))
+        async with parent_lifespan(parent_app):
+            # LightRAG has finished initialize_storages() — Memgraph
+            # connection pool is up, indexes are created. Safe to talk
+            # to the WebUI store Memgraph backends.
+            #
+            # We **bypass** the ``make_memgraph_*_store()`` factories
+            # because they call ``bootstrap_if_empty()``, which seeds
+            # the workspace with the demo fixtures on first init.
+            # That makes a "fresh" workspace look pre-populated (not
+            # what an operator on a clean BNP install expects). We
+            # instantiate the classes directly + ``initialize()`` only.
+            workspace = os.environ.get("WORKSPACE", "default")
+            try:
+                from .server.webui_activitystore import MemgraphActivityStore
+                from .server.webui_notificationstore import (
+                    MemgraphNotificationStore,
+                )
+                from .server.webui_tagstore import MemgraphTagStore
+
+                tag_store = MemgraphTagStore(workspace=workspace)
+                await tag_store.initialize()
+                # Categories — governance taxonomy, NOT user-generated.
+                # Two modes:
+                #   1. webui_categories_config set → mirror an external
+                #      JSON file on every boot (Config-as-Code doctrine,
+                #      Option 3). The file is source of truth, edits
+                #      propagate to Memgraph at next reboot.
+                #   2. No config path → bootstrap once from the internal
+                #      seed (Oracle / Infra / Network / Payment /
+                #      Lifecycle / Governance). Useful for demo + early
+                #      dev when the admin hasn't shipped a config yet.
+                if webui_categories_config:
+                    n = await tag_store.replace_categories_from_config(
+                        webui_categories_config
+                    )
+                    logger.info(
+                        "twindb: categories sourced from %s (%d entries)",
+                        webui_categories_config,
+                        n,
+                    )
+                else:
+                    await tag_store.bootstrap_categories_if_empty()
+                activity_store = MemgraphActivityStore(workspace=workspace)
+                await activity_store.initialize()
+                notif_store = MemgraphNotificationStore(workspace=workspace)
+                await notif_store.initialize()
+
+                store = WebuiStore.from_seed()
+                store._tag_backend = tag_store
+                store._activity_backend = activity_store
+                store._notification_backend = notif_store
+                set_store(store)
+                logger.info(
+                    "twindb: Twin overlay stores switched to Memgraph "
+                    "(workspace=%s) — fresh workspaces boot empty.",
+                    workspace,
+                )
+            except Exception:
+                logger.exception(
+                    "twindb: FAILED to switch stores to Memgraph "
+                    "(workspace=%s); keeping in-memory seed.",
+                    workspace,
+                )
+                raise
             yield
 
     app.router.lifespan_context = chained_lifespan
-    app.mount(prefix, twin_app, name="twin")
-    logger.info("twindb: Twin sub-app mounted at %s (lifespan chained)", prefix)
+    logger.info(
+        "twindb: Twin overlay router included at %s "
+        "(memgraph stores pending lifespan startup; %d routes)",
+        prefix,
+        len(webui_router.routes),
+    )
 
 
 def _patch_version_string():
