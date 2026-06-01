@@ -40,6 +40,9 @@ import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
+  useBulkRetagDocuments,
+  useDeleteDocument,
+  useUploadDocument,
   useDeleteTag,
   useDeprecateTag,
   useDocuments,
@@ -145,27 +148,146 @@ function AppShell() {
   const onAddToast = (title: string, sub?: string) =>
     pushToast({ kind: 'done', title, sub });
 
-  const onRetagSubmit = (action: RetagAction) => {
+  const bulkRetagDocs = useBulkRetagDocuments();
+
+  const onRetagSubmit = async (action: RetagAction) => {
     const verb = action.adds.length > 0 ? 'applied' : 'removed';
     const sample = action.adds[0] ?? action.removes[0];
+    try {
+      const result = await bulkRetagDocs.mutateAsync({
+        targets: action.targets.map((d) => d.doc_id),
+        adds: action.adds,
+        removes: action.removes,
+        actor: CURRENT_USER.name,
+      });
+      const failedCount = result.failed.length;
+      pushToast({
+        kind: 'done',
+        title: 'Tag',
+        tagname: sample,
+        titleSuffix: action.bulk
+          ? `${verb} to ${result.updated} source${result.updated === 1 ? '' : 's'}${
+              failedCount > 0 ? ` · ${failedCount} skipped` : ''
+            }`
+          : verb,
+        sub: action.primary.file_path,
+        undo: { adds: action.adds, removes: action.removes },
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Tag mutation failed',
+        sub:
+          err instanceof Error
+            ? err.message
+            : `Could not persist tags on ${action.targets.length} document${
+                action.targets.length === 1 ? '' : 's'
+              }`,
+      });
+    }
+  };
+
+  const uploadDoc = useUploadDocument();
+  const deleteDoc = useDeleteDocument();
+
+  const onDeleteSingle = async (doc: { doc_id: string; file_path: string }) => {
+    try {
+      await deleteDoc.mutateAsync(doc.doc_id);
+      pushToast({
+        kind: 'done',
+        title: 'Document deleted',
+        sub: `${doc.file_path} — removed from Memgraph (cascade: chunks + entities + relations)`,
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Delete failed',
+        sub:
+          err instanceof Error
+            ? err.message
+            : `Could not delete ${doc.file_path}`,
+      });
+    }
+  };
+
+  const onDeleteBulk = async (
+    docs: readonly { doc_id: string; file_path: string }[],
+  ) => {
+    if (docs.length === 0) return;
     pushToast({
-      kind: 'done',
-      title: 'Tag',
-      tagname: sample,
-      titleSuffix: action.bulk
-        ? `${verb} to ${action.targets.length} sources`
-        : verb,
-      sub: action.primary.file_path,
-      undo: { adds: action.adds, removes: action.removes },
+      kind: 'propagating',
+      title: 'Deleting sources…',
+      sub: `${docs.length} source${docs.length === 1 ? '' : 's'} → DELETE /documents/{id}`,
+    });
+    const results = await Promise.allSettled(
+      docs.map((d) => deleteDoc.mutateAsync(d.doc_id)),
+    );
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const ko = results.filter((r) => r.status === 'rejected').length;
+    pushToast({
+      kind: ko === 0 ? 'done' : 'error',
+      title:
+        ko === 0
+          ? `${ok} source${ok === 1 ? '' : 's'} deleted`
+          : `${ko} delete${ko === 1 ? '' : 's'} failed`,
+      sub: `${ok} ok · ${ko} ko`,
     });
   };
 
-  const onAddSourceSubmit = (action: AddSourceAction) => {
+  const onAddSourceSubmit = async (action: AddSourceAction) => {
+    if (action.rawFiles.length === 0) {
+      // No raw files (e.g. test path or all entries were URLs which
+      // are gated coming-soon). Acknowledge without server round-trip.
+      pushToast({
+        kind: 'done',
+        title: 'Sources queued',
+        sub: `${action.readyCount} entr${action.readyCount === 1 ? 'y' : 'ies'}`,
+      });
+      return;
+    }
+
     pushToast({
-      kind: 'done',
-      title: 'Sources queued for ingestion',
-      sub: `${action.readyCount} added${action.tags.length ? ' · tags: ' + action.tags.join(', ') : ''}`,
+      kind: 'propagating',
+      title: 'Uploading sources…',
+      sub: `${action.rawFiles.length} file${action.rawFiles.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
     });
+
+    const results = await Promise.allSettled(
+      action.rawFiles.map((f) => uploadDoc.mutateAsync(f)),
+    );
+
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const ko = results.filter((r) => r.status === 'rejected').length;
+    const dup = results.filter(
+      (r) =>
+        r.status === 'fulfilled' &&
+        (r.value as { status?: string }).status === 'duplicated',
+    ).length;
+
+    if (ko === 0) {
+      pushToast({
+        kind: 'done',
+        title: 'Sources queued for ingestion',
+        sub: `${ok} uploaded${dup > 0 ? ` (${dup} already present)` : ''}${
+          action.tags.length
+            ? ' · initial tags will apply once docs land'
+            : ''
+        }`,
+      });
+    } else {
+      pushToast({
+        kind: 'error',
+        title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
+        sub: `${ok} ok · ${ko} ko${
+          dup > 0 ? ` · ${dup} already present` : ''
+        }`,
+      });
+    }
+
+    // TODO: apply action.tags via bulk-retag once the doc_ids surface
+    // (requires either parsing the InsertResponse for the doc id or
+    // polling track_status; deferred to the next iteration so the
+    // upload path ships unblocked).
   };
 
   // Tag mutations — call the backend through TanStack Query. Each mutation
@@ -365,13 +487,7 @@ function AppShell() {
               onOpenBulkRetag={(ds) => setRetagBulk(ds)}
               onAddToast={onAddToast}
               onDeleteDoc={(d) => setDetailDoc(d)}
-              onBulkDelete={(ds) =>
-                pushToast({
-                  kind: 'done',
-                  title: `Delete queued`,
-                  sub: `${ds.length} sources`,
-                })
-              }
+              onBulkDelete={onDeleteBulk}
             />
           )}
           {tab === 'settings' && (
@@ -464,13 +580,10 @@ function AppShell() {
             sub: d.file_path,
           })
         }
-        onDelete={(d) =>
-          pushToast({
-            kind: 'done',
-            title: 'Delete queued',
-            sub: d.file_path,
-          })
-        }
+        onDelete={(d) => {
+          setDetailDoc(null);
+          void onDeleteSingle(d);
+        }}
       />
       <ReadSourceModal
         doc={readSourceDoc}

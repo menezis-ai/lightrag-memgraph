@@ -220,6 +220,70 @@ export function useDeleteTag() {
 }
 
 /**
+ * Delete one document via the shimmed DELETE /documents/{id} route.
+ * The shim calls ``rag.adelete_by_doc_id`` which cascades to entities,
+ * relations, chunks, vector embeddings — full removal from Memgraph.
+ *
+ * Doctrine: every UI-visible mutation persists. Bulk-delete is
+ * implemented in the host (Promise.allSettled over N of these) to
+ * keep the server endpoint surface narrow.
+ */
+export function useDeleteDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (docId: string) => api.deleteDocument(docId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+/**
+ * Upload one file to LightRAG (multipart). Returns the InsertResponse
+ * with status and track_id. Callers chain N of these for bulk upload
+ * and invalidate the documents query once they all settle.
+ */
+export function useUploadDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => api.uploadDocument(file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['pipeline_status'] });
+    },
+  });
+}
+
+/**
+ * Persist a tag mutation on N documents (single doc = N=1).
+ *
+ * Doctrine: a tag is a Memgraph node attribute on
+ * DocStatus_{workspace}. Optimistic UI is no longer acceptable —
+ * every retag MUST hit the backend so a refresh shows the new
+ * state. On success: invalidate ['documents'] (cards refresh),
+ * ['activity'] (audit feed picks up the doc-retagged events),
+ * ['notifications'] (the operator's bell badge increments).
+ *
+ * The server may return ``failed: [doc_id, ...]`` for stale UI
+ * selections (doc deleted between the user opening the modal and
+ * submitting). Callers should surface this in a toast so the
+ * operator knows the action didn't fully apply.
+ */
+export function useBulkRetagDocuments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.bulkRetagDocuments>[0]) =>
+      api.bulkRetagDocuments(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+      qc.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/**
  * Import a JSON taxonomy via POST /tags/categories/_import. Server-side
  * validation matches docs/templates/twin-categories.schema.json — a
  * 400 surfaces as ApiError with the validation message. On success,

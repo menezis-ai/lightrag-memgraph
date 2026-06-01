@@ -16,7 +16,7 @@
  * stay on `api.xxx()` without caring about which surface owns the endpoint.
  */
 
-import { apiFetch, type ApiRequestInit } from './client';
+import { ApiError, apiFetch, type ApiRequestInit } from './client';
 import type { ActivityEvent } from '../types/activity';
 import type { OpenApiGroup } from '../types/api';
 import type { Document } from '../types/document';
@@ -64,6 +64,48 @@ export const lightragApi = {
       ...init,
       method: 'POST',
     }),
+  /**
+   * Upload one file to LightRAG native /documents/upload (multipart).
+   *
+   * apiFetch is JSON-only, so this bypass uses fetch directly. The
+   * Authorization header pattern matches apiFetch (env-driven for now;
+   * will read from window.__twinConfig once Couche 3 §3.6 lands).
+   * Returns the InsertResponse shape:
+   *   { status: 'success'|'duplicated', message: string, track_id: string }
+   * On 4xx/5xx, throws an ApiError so the host can show a real toast.
+   */
+  uploadDocument: async (
+    file: File,
+    init?: { signal?: AbortSignal },
+  ): Promise<{ status: string; message: string; track_id: string }> => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+    const authToken = import.meta.env.VITE_AUTH_TOKEN ?? '';
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers: Record<string, string> = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const res = await fetch(`${baseUrl}/documents/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: init?.signal,
+    });
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* keep as text */
+    }
+    if (!res.ok) {
+      throw new ApiError(
+        `POST /documents/upload → ${res.status} ${res.statusText}`,
+        res.status,
+        body,
+      );
+    }
+    return body as { status: string; message: string; track_id: string };
+  },
   deleteDocument: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}`, {
       ...init,
@@ -280,6 +322,28 @@ export const twinApi = {
       body,
     }),
 
+  /**
+   * Persist a tag mutation (single or bulk) on a list of documents.
+   * Doctrine: a tag is a Memgraph node attribute on DocStatus_{workspace}.
+   * The server applies set semantics — adds first, removes second — and
+   * emits one activity event per doc (kind="doc-retagged").
+   * 404s for unknown doc_ids come back in the `failed` array, not as
+   * a top-level ApiError, so partial success is the common case.
+   */
+  bulkRetagDocuments: (
+    body: {
+      targets: readonly string[];
+      adds: readonly string[];
+      removes: readonly string[];
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ updated: number; failed: readonly string[] }>(
+      `${TWIN}/documents/_bulk-retag`,
+      { ...init, method: 'POST', body },
+    ),
+
   // Auth
   logout: (init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`${TWIN}/auth/logout`, { ...init, method: 'POST' }),
@@ -314,6 +378,7 @@ export const api = {
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
   scanDocument: lightragApi.scanDocument,
+  uploadDocument: lightragApi.uploadDocument,
   deleteDocument: lightragApi.deleteDocument,
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
@@ -342,6 +407,7 @@ export const api = {
   approveDocument: twinApi.approveDocument,
   rejectDocument: twinApi.rejectDocument,
   bulkDeleteDocuments: twinApi.bulkDeleteDocuments,
+  bulkRetagDocuments: twinApi.bulkRetagDocuments,
   logout: twinApi.logout,
   listGraphEntities: twinApi.listGraphEntities,
   listGraphRelations: twinApi.listGraphRelations,

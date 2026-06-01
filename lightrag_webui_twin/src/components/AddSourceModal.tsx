@@ -39,6 +39,13 @@ export interface LinkedSource {
 
 export interface AddSourceAction {
   files: readonly FileUpload[];
+  /**
+   * Raw File objects keyed by display name, captured when the user picks
+   * or drops files. The host uses these to POST multipart/form-data to
+   * LightRAG's ``/documents/upload``. May be empty in tests that only
+   * exercise UI flows (initialFiles paths).
+   */
+  rawFiles: readonly File[];
   urls: readonly LinkedSource[];
   tags: readonly string[];
   /** Files in `uploaded` state + all URLs. Mirrors the proto's `ready` count. */
@@ -68,7 +75,27 @@ export function AddSourceModal({
   const modalRef = useRef<HTMLDivElement>(null);
   useModalA11y({ open, onClose, ref: modalRef });
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<readonly FileUpload[]>(initialFiles);
+  // Raw File objects parallel to `files` — kept out of state shape
+  // proper because they're not serializable + the test fixtures only
+  // care about the metadata. Keyed by display name so removeFile can
+  // drop both metadata + binary in one operation.
+  const rawFilesRef = useRef<Map<string, File>>(new Map());
+
+  const appendDroppedFiles = (incoming: FileList | null): void => {
+    const incomingArr = Array.from(incoming || []);
+    if (incomingArr.length === 0) return;
+    const dropped = incomingArr.map<FileUpload>((f) => ({
+      name: f.name,
+      size: Number((f.size / (1024 * 1024)).toFixed(1)),
+      state: 'uploading',
+      progress: 0,
+      uploaded: 0,
+    }));
+    incomingArr.forEach((f) => rawFilesRef.current.set(f.name, f));
+    setFiles((current) => [...current, ...dropped]);
+  };
   // Linked sources are gated until the RAG 1.5 connector lands — see the
   // "Coming soon" badge in the JSX. We keep `urls` in state (initialised
   // from props for tests) so the submit pipeline still emits it.
@@ -111,8 +138,10 @@ export function AddSourceModal({
 
   if (!open) return null;
 
-  const removeFile = (n: string) =>
+  const removeFile = (n: string) => {
+    rawFilesRef.current.delete(n);
     setFiles(files.filter((f) => f.name !== n));
+  };
   const addTag = (t: string) => {
     if (t && !tags.includes(t)) setTags([...tags, t]);
     setTagInput('');
@@ -126,7 +155,12 @@ export function AddSourceModal({
 
   const submit = () => {
     if (ready === 0) return;
-    onSubmit({ files, urls, tags, readyCount: ready });
+    // Collect raw File objects in the same order as `files` so callers
+    // (host App) can correlate progress feedback per file.
+    const rawFiles = files
+      .map((f) => rawFilesRef.current.get(f.name))
+      .filter((f): f is File => f !== undefined);
+    onSubmit({ files, rawFiles, urls, tags, readyCount: ready });
     onClose();
   };
 
@@ -159,6 +193,16 @@ export function AddSourceModal({
         <div className="modal-body">
           <div
             className={drag ? 'dropzone drag' : 'dropzone'}
+            role="button"
+            tabIndex={0}
+            aria-label="Drop files or click to browse"
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
             onDragOver={(e) => {
               e.preventDefault();
               setDrag(true);
@@ -167,18 +211,21 @@ export function AddSourceModal({
             onDrop={(e) => {
               e.preventDefault();
               setDrag(false);
-              const dropped = Array.from(e.dataTransfer.files || []).map<FileUpload>(
-                (f) => ({
-                  name: f.name,
-                  size: Number((f.size / (1024 * 1024)).toFixed(1)),
-                  state: 'uploading',
-                  progress: 0,
-                  uploaded: 0,
-                }),
-              );
-              setFiles([...files, ...dropped]);
+              appendDroppedFiles(e.dataTransfer.files);
             }}
           >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              style={{ display: 'none' }}
+              data-testid="addsource-file-input"
+              onChange={(e) => {
+                appendDroppedFiles(e.target.files);
+                // Reset so re-picking the same file re-fires change.
+                e.target.value = '';
+              }}
+            />
             <Icon name="cloud-upload" size={28} color="var(--color-text-secondary)" />
             <div className="title">Drop files here or click to browse</div>
             <div className="sub">
