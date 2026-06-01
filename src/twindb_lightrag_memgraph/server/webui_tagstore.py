@@ -193,6 +193,204 @@ class MemgraphTagStore:
         )
         return True
 
+    async def replace_categories_from_config(
+        self,
+        config_path: str,
+    ) -> int:
+        """Mirror the categories from an external JSON config file.
+
+        Doctrine: categories are referentiel — a curated taxonomy
+        decided by Knowledge governance, not user-generated. To respect
+        that doctrine in production, the BNP admin defines the
+        taxonomy in a JSON file (Kubernetes ConfigMap, NFS mount, …)
+        and Twin enforces it on every boot.
+
+        Semantics: **replace, not merge**. Every boot, the function:
+          1. Reads the JSON file.
+          2. Validates the shape (list of ``{id, label, color}``).
+          3. Deletes all existing ``WebuiTagCategory_{workspace}``
+             nodes for this workspace.
+          4. Writes the file's categories.
+
+        This is idempotent across reboots: editing the config file
+        and restarting Twin is enough to publish a taxonomy change.
+
+        Caveat: tags that reference a removed category keep their
+        ``category`` field pointing at a now-orphan id. We log them
+        as a warning so the admin can decide whether to migrate or
+        purge. We do **not** auto-delete or auto-rename — destructive
+        cleanup of user-generated data must always be explicit.
+
+        Args:
+            config_path: filesystem path to a JSON file shaped like
+                ``[{"id": "oracle", "label": "Oracle", "color": "#..."}, …]``.
+
+        Returns:
+            The number of categories applied.
+
+        Raises:
+            FileNotFoundError: if the config path doesn't exist.
+            ValueError: if the JSON shape is invalid (missing keys,
+                duplicate ids, non-list root).
+        """
+        import json
+        from pathlib import Path
+
+        path = Path(config_path)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"webui_categories_config: file not found at {path}. "
+                "Either drop the flag (fallback to internal seed) or "
+                "fix the mount path."
+            )
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"webui_categories_config: {path} is not valid JSON: {exc}"
+            ) from exc
+
+        return await self.replace_categories_from_list(raw, source=str(path))
+
+    async def replace_categories_from_list(
+        self,
+        raw: Any,
+        source: str = "import",
+    ) -> int:
+        """Validate + mirror a list of category objects into Memgraph.
+
+        Same semantics as :meth:`replace_categories_from_config` but
+        consumes an in-memory ``list[dict]`` instead of a file. Used by
+        the HTTP import endpoint (``POST /tags/categories/_import``) so
+        an admin can upload a JSON taxonomy via the WebUI without
+        needing shell access to the host.
+
+        Validation matches ``docs/templates/twin-categories.schema.json``:
+        a non-empty list of objects each carrying ``id``, ``label``,
+        ``color``; ``id`` must be unique within the document and a
+        non-empty string.
+
+        Args:
+            raw: parsed JSON content — expected to be a list of dicts.
+            source: free-form label included in error messages so the
+                caller knows which input was rejected
+                (e.g. ``"import"``, the file path, ``"_self_check"``).
+
+        Returns:
+            The number of categories applied.
+
+        Raises:
+            ValueError: if ``raw`` doesn't match the schema.
+        """
+        if not isinstance(raw, list):
+            raise ValueError(
+                f"{source}: root must be a JSON array of category objects, "
+                f"got {type(raw).__name__}."
+            )
+        if not raw:
+            raise ValueError(
+                f"{source}: array is empty — at least one category is required."
+            )
+
+        seen_ids: set[str] = set()
+        normalized: list[dict[str, Any]] = []
+        for i, entry in enumerate(raw):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"{source}[{i}]: must be an object, "
+                    f"got {type(entry).__name__}."
+                )
+            for required in ("id", "label", "color"):
+                if required not in entry:
+                    raise ValueError(
+                        f"{source}[{i}]: missing required key {required!r}. "
+                        f"Got keys {list(entry.keys())}."
+                    )
+            cat_id = entry["id"]
+            if not isinstance(cat_id, str) or not cat_id:
+                raise ValueError(
+                    f"{source}[{i}].id must be a non-empty string, "
+                    f"got {cat_id!r}."
+                )
+            if cat_id in seen_ids:
+                raise ValueError(
+                    f"{source}[{i}]: duplicate id {cat_id!r}."
+                )
+            seen_ids.add(cat_id)
+            normalized.append(
+                {
+                    "id": cat_id,
+                    "label": str(entry["label"]),
+                    "color": str(entry["color"]),
+                }
+            )
+
+        # Mirror: drop existing then write fresh.
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{self._cat_label}`) DETACH DELETE n"
+                )
+                await result.consume()
+        await self._write_many(self._cat_label, "id", normalized)
+
+        logger.info(
+            "[WebuiTagStore] replace_categories_from_list: "
+            "applied %d categories from %s",
+            len(normalized),
+            source,
+        )
+        return len(normalized)
+
+    async def bootstrap_categories_if_empty(
+        self,
+        categories: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        """Seed JUST the categories KV when empty for this workspace.
+
+        Variant of :meth:`bootstrap_if_empty` that touches **only** the
+        ``WebuiTagCategory_{workspace}`` label, never the tag label.
+        Used by ``register(webui_stores="memgraph")`` to ship a curated
+        taxonomy (Oracle, Infrastructure, Network, Payment, Lifecycle,
+        Governance) without polluting tags / activity / notifications
+        with demo fixtures — the doctrine being that *categories are
+        referentiel data* (governance taxonomy) whereas *tags are
+        user-generated*.
+
+        Eventually superseded by an external config (e.g. JSON file
+        mounted via ConfigMap) — cf. the Option 3 doctrine. For now this
+        bootstrap-from-seed is the pragmatic shim.
+
+        Returns True if a bootstrap happened, False if categories were
+        already present.
+        """
+        seed_cats = (
+            categories if categories is not None else webui_seed.TAG_CATEGORIES
+        )
+
+        async with _pool.get_read_session() as session:
+            res = await session.run(
+                f"MATCH (n:`{self._cat_label}`) RETURN count(n) AS c"
+            )
+            record = await res.single()
+            await res.consume()
+            cat_count = record["c"] if record else 0
+
+        if cat_count > 0:
+            logger.debug(
+                "[WebuiTagStore] Category bootstrap skipped (count=%d)",
+                cat_count,
+            )
+            return False
+
+        await self._write_many(self._cat_label, "id", seed_cats)
+        logger.info(
+            "[WebuiTagStore] Bootstrapped %d categories (governance taxonomy)",
+            len(seed_cats),
+        )
+        return True
+
     async def list_tags(self) -> list[dict[str, Any]]:
         return await self._read_many(self._tag_label)
 

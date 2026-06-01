@@ -1,0 +1,400 @@
+"""
+Native-route shims — re-shape LightRAG's native FastAPI surface to match
+the React port's contract (``lightrag_webui_twin/src/api/resources.ts``).
+
+Doctrine: Twin = AI-Readable Surface. The WebUI contract is the source
+of truth; LightRAG's native routes get translated, not vice-versa.
+
+Mounted by :func:`twindb_lightrag_memgraph.register` when called with
+``shim_native_routes=True``. The router is inserted at the HEAD of
+``app.router.routes`` so shadow routes win the match against LightRAG's
+later ``include_router(create_document_routes(...))`` registration.
+
+Coverage map (cf. ``/tmp/webui-lightrag-compat-*.md``):
+
+=========================  ========================================  ===========
+WebUI emits                LightRAG native                           Shim action
+=========================  ========================================  ===========
+``GET /documents``         ``POST /documents/paginated``             reshape envelope
+``GET /documents/{id}/     (none)                                    build from KV
+   chunks``                                                          text_chunks
+``POST /documents/{id}/    ``POST /documents/scan`` (global)         no-op + 202
+   scan``
+``DELETE /documents/{id}`` ``DELETE /documents/delete_document``     translate
+                           (body=id)                                  path → body
+``GET /health``            ``GET /health`` (rich)                    project
+``GET /pipeline_status``   ``GET /documents/pipeline_status``        alias + project
+``GET /openapi``           ``GET /openapi.json`` (full FastAPI spec) static groups
+=========================  ========================================  ===========
+
+The shims never touch LightRAG source code; they only sit *before* the
+native routes in the FastAPI router list.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Response models — mirror lightrag_webui_twin/src/types/document.ts etc.
+# ---------------------------------------------------------------------------
+
+
+class _DocumentEnvelope(BaseModel):
+    """Mirror of TS ``Document`` (partial, only what the React port reads)."""
+
+    doc_id: str
+    file_path: str
+    status: str
+    chunks_count: int
+    content_summary: str | None = None
+    content_length: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    track_id: str | None = None
+    error_msg: str | None = None
+    # Twin overlay fields (populated by the overlay store, none here yet):
+    tags: list[str] = []
+    workspace: str | None = None
+    review: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class _ListEnvelope(BaseModel):
+    """Mirror of TS ``ListEnvelope<T>`` from resources.ts."""
+
+    items: list[_DocumentEnvelope]
+    total: int
+
+
+class _DocumentChunk(BaseModel):
+    chunk_id: str
+    order: int
+    text: str
+    redacted: bool | None = None
+
+
+class _SimpleHealth(BaseModel):
+    """Simplified health for the React port (vs LightRAG's rich payload)."""
+
+    status: str  # 'ok' | 'degraded' | 'down'
+    version: str | None = None
+
+
+class _SimplePipelineStatus(BaseModel):
+    busy: bool
+    job_count: int
+    latest_message: str | None = None
+
+
+class _OkResponse(BaseModel):
+    ok: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _filter_docs(
+    items: list[dict[str, Any]],
+    q: str | None,
+    tag: str | None,
+) -> list[dict[str, Any]]:
+    """Apply WebUI-side filters that LightRAG's paginated endpoint doesn't.
+
+    ``q`` matches a substring of file_path (case-insensitive); ``tag``
+    matches against ``metadata.tags`` if present (the overlay tagstore
+    is the authoritative source — but documents already carrying tags
+    on their DocStatus.metadata get filtered here too).
+    """
+    out = items
+    if q:
+        needle = q.lower()
+        out = [d for d in out if needle in (d.get("file_path") or "").lower()]
+    if tag:
+        out = [
+            d
+            for d in out
+            if tag in ((d.get("metadata") or {}).get("tags") or [])
+        ]
+    return out
+
+
+def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a LightRAG DocStatusResponse into the Twin _DocumentEnvelope shape.
+
+    LightRAG's DocStatusResponse uses ``id`` for the doc identifier whereas
+    the WebUI uses ``doc_id``. Pulls structured Twin fields out of
+    ``metadata`` when present (so the ClassPill + tags + review render
+    without a second roundtrip).
+    """
+    metadata = doc.get("metadata") or {}
+    return {
+        "doc_id": doc.get("id") or doc.get("doc_id") or "",
+        "file_path": doc.get("file_path") or "",
+        "status": doc.get("status") or "",
+        "chunks_count": doc.get("chunks_count") or 0,
+        "content_summary": doc.get("content_summary"),
+        "content_length": doc.get("content_length"),
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
+        "track_id": doc.get("track_id"),
+        "error_msg": doc.get("error_msg"),
+        "tags": metadata.get("tags") or [],
+        "workspace": metadata.get("workspace"),
+        "review": metadata.get("review"),
+        "metadata": metadata,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Router factory
+# ---------------------------------------------------------------------------
+
+
+def build_native_shims_router(get_rag) -> APIRouter:
+    """Build the shim APIRouter.
+
+    Args:
+        get_rag: zero-arg callable returning the host ``LightRAG`` instance.
+            Late binding lets us register the router before the host's
+            lifespan has finished instantiating the RAG.
+    """
+    router = APIRouter(tags=["twin-shim"])
+
+    @router.get("/documents", response_model=_ListEnvelope)
+    async def list_documents(
+        status: str | None = Query(default=None),
+        q: str | None = Query(default=None),
+        tag: str | None = Query(default=None),
+        cursor: str | None = Query(default=None),
+    ) -> _ListEnvelope:
+        """Shadow the native ``GET /documents`` to expose a flat envelope.
+
+        Pagination model: opaque cursor = page number. The React port doesn't
+        need offset arithmetic; it just forwards whatever ``cursor`` it got
+        from the previous response (TODO: emit a ``next_cursor`` field, see
+        ``_ListEnvelope`` extension).
+
+        Calls ``MemgraphDocStatusStorage.get_docs_paginated`` which returns
+        ``(list[tuple[doc_id, DocProcessingStatus]], total)`` — a tuple, not
+        a dict envelope (the native LightRAG paginated HTTP route assembles
+        the dict in the route handler).
+        """
+        import dataclasses
+
+        from lightrag.base import DocStatus
+
+        rag = get_rag()
+        page = int(cursor) if (cursor and cursor.isdigit()) else 1
+        page_size = 50
+
+        # Translate UI string status → DocStatus enum (the storage method
+        # only accepts the enum; the WebUI sends uppercase strings).
+        status_enum: DocStatus | None = None
+        if status and status not in ("all", ""):
+            try:
+                status_enum = DocStatus(status.lower())
+            except ValueError:
+                logger.warning("twindb shim: unknown status filter %r", status)
+
+        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+        )
+
+        # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
+        projected: list[dict[str, Any]] = []
+        for doc_id, dps in docs_tuples:
+            payload = dataclasses.asdict(dps)
+            # asdict() leaves enums as enums — coerce to their string value
+            if hasattr(payload.get("status"), "value"):
+                payload["status"] = payload["status"].value
+            payload["id"] = doc_id
+            projected.append(_project_doc(payload))
+
+        filtered = _filter_docs(projected, q=q, tag=tag)
+
+        return _ListEnvelope(
+            items=[_DocumentEnvelope(**d) for d in filtered],
+            total=total,
+        )
+
+    @router.get(
+        "/documents/{doc_id}/chunks",
+        response_model=list[_DocumentChunk],
+    )
+    async def list_document_chunks(doc_id: str) -> list[_DocumentChunk]:
+        """Return text chunks for a doc.
+
+        Resolution path: ``DocProcessingStatus.chunks_list`` carries the
+        ordered chunk IDs at indexation time; we look up their content
+        via ``text_chunks.get_by_ids()``. Avoids depending on a
+        non-standard ``get_all()`` and keeps the query O(chunks per doc)
+        instead of O(total chunks in the workspace).
+        """
+        rag = get_rag()
+        doc_status = await rag.doc_status.get_by_id(doc_id)
+        if doc_status is None:
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+        # DocStatus may come back as dict (Memgraph backend) or dataclass
+        # depending on storage impl. Read chunks_list defensively.
+        chunks_list: list[str] | None
+        if isinstance(doc_status, dict):
+            chunks_list = doc_status.get("chunks_list")
+        else:
+            chunks_list = getattr(doc_status, "chunks_list", None)
+
+        if not chunks_list:
+            return []
+
+        raw_chunks = await rag.text_chunks.get_by_ids(chunks_list)
+        items: list[_DocumentChunk] = []
+        for chunk_id, raw in zip(chunks_list, raw_chunks):
+            if not raw:
+                continue
+            items.append(
+                _DocumentChunk(
+                    chunk_id=chunk_id,
+                    order=int(raw.get("chunk_order_index") or 0),
+                    text=raw.get("content") or "",
+                )
+            )
+        items.sort(key=lambda c: c.order)
+        return items
+
+    @router.post(
+        "/documents/{doc_id}/scan",
+        response_model=_OkResponse,
+        status_code=202,
+    )
+    async def scan_document(doc_id: str) -> _OkResponse:
+        """Per-doc re-scan stub.
+
+        LightRAG only has a global ``POST /documents/scan`` (scans the input
+        directory for new files). A targeted re-scan of a single doc would
+        require ``adelete_by_doc_id`` + re-ingest, which is destructive.
+        For now we ack the request and emit an audit event (TODO).
+        """
+        logger.info("twindb shim: per-doc scan ack for doc_id=%s (no-op)", doc_id)
+        return _OkResponse()
+
+    @router.delete("/documents/{doc_id}", response_model=_OkResponse)
+    async def delete_document(doc_id: str) -> _OkResponse:
+        """Translate REST per-id deletion → LightRAG's body-based delete.
+
+        LightRAG offers ``adelete_by_doc_id`` on the LightRAG instance
+        directly (the HTTP route ``DELETE /documents/delete_document``
+        wraps it). We bypass the HTTP and call the method.
+        """
+        rag = get_rag()
+        try:
+            await rag.adelete_by_doc_id(doc_id)
+        except Exception as exc:
+            logger.exception("twindb shim: delete_document(%s) failed", doc_id)
+            raise HTTPException(status_code=500, detail=str(exc))
+        return _OkResponse()
+
+    @router.get("/pipeline_status", response_model=_SimplePipelineStatus)
+    async def pipeline_status() -> _SimplePipelineStatus:
+        """Root-level alias of ``/documents/pipeline_status`` with projection.
+
+        LightRAG's payload is ~10 fields; the WebUI consumes only 3. We
+        keep the shim contract narrow to surface accidental over-coupling.
+        """
+        rag = get_rag()
+        try:
+            from lightrag.kg.shared_storage import get_namespace_data
+
+            data = await get_namespace_data(
+                "pipeline_status", workspace=rag.workspace
+            )
+            data = dict(data)
+        except Exception as exc:
+            logger.warning("twindb shim: pipeline_status fallback (%s)", exc)
+            data = {}
+
+        return _SimplePipelineStatus(
+            busy=bool(data.get("busy", False)),
+            # job_count = total docs being processed; LightRAG calls it ``docs``
+            job_count=int(data.get("docs", 0)),
+            latest_message=data.get("latest_message") or None,
+        )
+
+    @router.get("/openapi")
+    async def webui_openapi() -> dict[str, Any]:
+        """Twin-specific OpenAPI tour, not the full FastAPI spec.
+
+        Distinct from ``/openapi.json`` (FastAPI default). Returns a static
+        grouping designed for the WebUI's "API" tab — a curated reading
+        of the surface, not the auto-generated firehose.
+        """
+        # Static fixture; full spec available at /openapi.json
+        return {
+            "version": "v1",
+            "groups": [
+                {
+                    "name": "Documents",
+                    "endpoints": [
+                        {"method": "GET", "path": "/documents"},
+                        {"method": "GET", "path": "/documents/{id}/chunks"},
+                        {"method": "POST", "path": "/documents/{id}/scan"},
+                        {"method": "DELETE", "path": "/documents/{id}"},
+                    ],
+                },
+                {
+                    "name": "Pipeline",
+                    "endpoints": [
+                        {"method": "GET", "path": "/pipeline_status"},
+                        {"method": "GET", "path": "/health"},
+                    ],
+                },
+                {
+                    "name": "Twin overlay",
+                    "endpoints": [
+                        {"method": "GET", "path": "/twin/api/workspaces"},
+                        {"method": "GET", "path": "/twin/api/tags"},
+                        {"method": "GET", "path": "/twin/api/activity"},
+                        {"method": "GET", "path": "/twin/api/notifications"},
+                    ],
+                },
+            ],
+        }
+
+    return router
+
+
+def build_health_shim(get_rag) -> APIRouter:
+    """Build a separate router for ``/health`` shadow.
+
+    Kept distinct so we can omit it (``shim_health=False``) when an
+    operator wants to keep LightRAG's rich health payload — e.g. for
+    Prometheus scraping that already parses the native shape.
+    """
+    router = APIRouter(tags=["twin-shim"])
+
+    @router.get("/health", response_model=_SimpleHealth)
+    async def health() -> _SimpleHealth:
+        try:
+            rag = get_rag()
+        except Exception:
+            return _SimpleHealth(status="degraded")
+
+        import lightrag
+
+        return _SimpleHealth(
+            status="ok",
+            version=getattr(lightrag, "__version__", None),
+        )
+
+    return router

@@ -379,6 +379,77 @@ async def list_tag_categories() -> list[dict[str, Any]]:
     return await get_store().list_tag_categories()
 
 
+# ------------------------------------------------------------------
+# Categories template + import — admin convenience for non-shell ops
+# ------------------------------------------------------------------
+#
+# Doctrine recap: categories are governance taxonomy, not user-generated.
+# The default flow is Config-as-Code (mount a JSON via ConfigMap, restart
+# Twin). These two endpoints exist for admins who own the JSON but lack
+# shell access on the host — the upload mirrors Memgraph in-place using
+# the exact same validator as `webui_categories_config`.
+
+_CATEGORIES_TEMPLATE: list[dict[str, Any]] = [
+    {"id": "network", "label": "Network", "color": "#1F8A7A"},
+    {"id": "infra", "label": "Infrastructure", "color": "#5A7FB4"},
+    {"id": "compliance", "label": "Compliance", "color": "#9C2D8E"},
+    {"id": "operations", "label": "Operations", "color": "#C24A24"},
+    {"id": "governance", "label": "Governance", "color": "#2C3E50"},
+    {"id": "lifecycle", "label": "Lifecycle", "color": "#8A5C0E"},
+]
+
+
+@router.get("/tags/categories/template")
+async def get_categories_template():
+    """Return the canonical template JSON that operators can save + edit.
+
+    Served as application/json with a Content-Disposition so a browser
+    "Download template" button receives a file save dialog rather than
+    rendering inline. The 6 entries here mirror
+    ``docs/templates/twin-categories.template.json`` and the schema
+    lives at ``docs/templates/twin-categories.schema.json``.
+    """
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        content=_CATEGORIES_TEMPLATE,
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="twin-categories.template.json"'
+            ),
+        },
+    )
+
+
+@router.post("/tags/categories/_import", response_model=AckResponse)
+async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mirror the uploaded JSON into the workspace's categories store.
+
+    Same validator as ``webui_categories_config`` — only JSON matching
+    the schema is accepted. On success, returns ``{ok: True}`` and the
+    operator's next page refresh sees the new taxonomy. Rejects with
+    400 if the JSON shape is wrong, 503 if the store backend is not
+    Memgraph (the seed/in-memory backend has no concept of "import").
+    """
+    backend = get_store().tags
+    if not isinstance(backend, MemgraphTagStore):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Categories import requires the Memgraph store backend "
+                "(register with webui_stores='memgraph'). The current "
+                "backend does not support taxonomy mutation."
+            ),
+        )
+
+    try:
+        await backend.replace_categories_from_list(body, source="import")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"ok": True}
+
+
 @router.get("/activity", response_model=ActivityEnvelope)
 async def list_activity(
     kind: str | None = Query(default=None),
