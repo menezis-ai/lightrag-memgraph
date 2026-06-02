@@ -36,6 +36,11 @@ export async function getMswStats(
 ): Promise<{
   approveCalls: Record<string, number>;
   tagApproveCalls: Record<string, number>;
+  spaceRequests: Array<{
+    path: string;
+    space: string | null;
+    workspace: string | null;
+  }>;
 }> {
   return page.evaluate(async () => {
     const res = await fetch('/__e2e/stats');
@@ -61,6 +66,19 @@ export async function seedDocuments(
       }
     ).__TWIN_E2E_QUERY_CLIENT?.invalidateQueries({ queryKey: ['documents'] });
   }, documents);
+}
+
+export async function seedActivity(
+  page: Page,
+  events: readonly Record<string, unknown>[],
+) {
+  await page.evaluate(async (activityEvents) => {
+    await fetch('/__e2e/activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: activityEvents }),
+    });
+  }, events);
 }
 
 export async function addSourceFile(

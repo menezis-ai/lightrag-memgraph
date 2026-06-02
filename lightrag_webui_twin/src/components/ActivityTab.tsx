@@ -42,6 +42,8 @@ export interface ActivityTabProps {
   onPushToast?: (toast: Omit<Toast, 'id'>) => void;
   /** Host-controlled tab navigation (replaces direct window.history mutation). */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  /** Host-controlled query refresh. Used by the explicit Refresh affordance. */
+  onRefresh?: () => void | Promise<unknown>;
 }
 
 const RANGE_IDS = ACTIVITY_RANGES.map((r) => r.id);
@@ -54,6 +56,7 @@ export function ActivityTab({
   groupByDay = true,
   onPushToast,
   onNavigate,
+  onRefresh,
 }: ActivityTabProps) {
   const [range, setRange] = useUrlParam<ActivityRange>('range', '7d', {
     validate: (v) => (RANGE_IDS as readonly string[]).includes(v as string),
@@ -144,6 +147,10 @@ export function ActivityTab({
     setSev('any');
     setActor('any');
     setQ('');
+  };
+  const refreshEvents = () => {
+    setPendingCount(0);
+    void onRefresh?.();
   };
 
   return (
@@ -257,6 +264,14 @@ export function ActivityTab({
             <div className="activity-actions">
               <button
                 className="ghost-btn"
+                onClick={refreshEvents}
+                title="Refresh activity events"
+              >
+                <Icon name="refresh" size={12} />
+                Refresh
+              </button>
+              <button
+                className="ghost-btn"
                 onClick={() => exportActivityCsv(filtered, range)}
                 title={`Download ${filtered.length} event${filtered.length === 1 ? '' : 's'} as CSV`}
               >
@@ -278,7 +293,7 @@ export function ActivityTab({
         {pendingCount > 0 && (
           <button
             className="activity-pending"
-            onClick={() => setPendingCount(0)}
+            onClick={refreshEvents}
           >
             <span className="pending-dot" />
             {pendingCount} new event{pendingCount > 1 ? 's' : ''} since you opened this view — click to refresh

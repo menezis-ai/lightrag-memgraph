@@ -27,11 +27,13 @@ function wrap(qc: QueryClient) {
 
 const ORIGINAL_LOCATION = window.location;
 const originalConfig = (window as Window & typeof globalThis).__twinConfig;
+const originalE2eConfig = (window as Window & typeof globalThis).__twinE2eRuntimeConfig;
 
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
   logoutMock.mockResolvedValue({ ok: true });
   (window as Window & typeof globalThis).__twinConfig = undefined;
+  (window as Window & typeof globalThis).__twinE2eRuntimeConfig = undefined;
   Object.defineProperty(window, 'location', {
     value: {
       ...ORIGINAL_LOCATION,
@@ -45,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks();
   (window as Window & typeof globalThis).__twinConfig = originalConfig;
+  (window as Window & typeof globalThis).__twinE2eRuntimeConfig = originalE2eConfig;
   Object.defineProperty(window, 'location', {
     value: ORIGINAL_LOCATION,
     writable: true,
@@ -82,6 +85,18 @@ describe('resolveRuntimeConfig', () => {
       idpLogoutUrl: 'https://idp.example.com/logout',
     };
     expect(resolveRuntimeConfig(cfg, false)).toBe(cfg);
+  });
+
+  it('uses the e2e runtime override in dev before the HTML placeholder fallback', () => {
+    const cfg = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '/api',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+      defaultSpaceId: 'sandbox',
+      spaces: [{ id: 'sandbox', label: 'Sandbox', kind: 'sandbox' as const }],
+    };
+    (window as Window & typeof globalThis).__twinE2eRuntimeConfig = cfg;
+    expect(resolveRuntimeConfig('__TWIN_CONFIG_JSON__', true)).toBe(cfg);
   });
 });
 

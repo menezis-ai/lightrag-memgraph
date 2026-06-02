@@ -63,9 +63,9 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Theme').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
-    await page.getByTitle('Switch workspace').click();
-    await page.getByRole('menuitemradio', { name: /infra/ }).click();
-    await expect(page.getByTitle('Switch workspace')).toContainText('infra');
+    await page.getByTitle('Switch space').click();
+    await page.getByRole('menuitemradio', { name: /sandbox/ }).click();
+    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
 
     await openTab(page, 'Tags');
     await expect(page.getByRole('heading', { name: 'Tags' })).toBeVisible();
@@ -130,26 +130,26 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(onlyPrompt).toHaveAttribute('aria-checked', 'true');
   });
 
-  test('@doctrine @workspace workspace switch refreshes documents and clears local filters', async ({
+  test('@doctrine @workspace space switch refreshes documents and clears local filters', async ({
     page,
   }) => {
     await seedDocuments(page, [
       {
-        doc_id: 'infra_doc_1',
-        file_path: '/infra/runbooks/kernel-panic-runbook.md',
-        content_summary: 'Infra workspace document seeded by e2e',
+        doc_id: 'sandbox_doc_1',
+        file_path: '/sandbox/runbooks/kernel-panic-runbook.md',
+        content_summary: 'Sandbox space document seeded by e2e',
         tags: ['rhel9'],
-        workspace: 'infra',
+        workspace: 'sandbox',
       },
     ]);
     await page.getByLabel('Search source').fill('oracle');
     await expect(page).toHaveURL(/q=oracle/);
-    await page.getByTitle('Switch workspace').click();
-    await page.getByRole('menuitemradio', { name: /infra/ }).click();
-    await expect(page.getByTitle('Switch workspace')).toContainText('infra');
+    await page.getByTitle('Switch space').click();
+    await page.getByRole('menuitemradio', { name: /sandbox/ }).click();
+    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
     await expect(page).not.toHaveURL(/q=oracle/);
     await expect(page.getByLabel('Search source')).toHaveValue('');
-    await expect(page.getByTestId('docs-row-infra_doc_1')).toContainText(
+    await expect(page.getByTestId('docs-row-sandbox_doc_1')).toContainText(
       'kernel-panic-runbook.md',
     );
     await expect(page.getByTestId('docs-row-d1')).toBeHidden();
@@ -230,7 +230,7 @@ test.describe('Twin WebUI operator journeys', () => {
 
     await page.getByTestId('settings-rail-workspace').click();
     await expect(page.getByTestId('settings-workspace')).toBeVisible();
-    await expect(page.getByTestId('settings-active-ws')).toContainText('cib');
+    await expect(page.getByTestId('settings-active-ws')).toContainText('default');
     await expect(page.getByText('Retention policy')).toBeVisible();
 
     await page.getByTestId('settings-rail-api').click();
@@ -314,6 +314,20 @@ test.describe('Twin WebUI operator journeys', () => {
     await openTab(page, 'Activity');
     await page.getByLabel('Search events').fill('argocd');
     await expect(page.getByRole('heading', { name: 'argocd' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Tag argocd approved/ })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
+    await openTab(page, 'Tags');
+    await page.getByLabel('Search tags').fill('argocd');
+    await expect(page.getByTestId('tag-card-argocd')).toBeVisible();
+    await expect(page.getByTestId('pending-argocd')).toBeHidden();
+
+    await page.getByRole('button', { name: /Notifications, \d+ unread/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('argocd');
+
+    await openTab(page, 'Activity');
+    await page.getByLabel('Search events').fill('argocd');
     await expect(page.getByRole('button', { name: /Tag argocd approved/ })).toBeVisible();
   });
 
@@ -429,6 +443,11 @@ test.describe('Twin WebUI operator journeys', () => {
       timeout: 10_000,
     });
     await page.getByLabel('Search source').fill('auto-tagged-runbook');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('auto-tagged-runbook.md');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('oracle');
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
+    await expect(page.getByLabel('Search source')).toHaveValue('auto-tagged-runbook');
     await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('auto-tagged-runbook.md');
     await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('oracle');
   });
@@ -738,7 +757,7 @@ test.describe('Twin WebUI operator journeys', () => {
         file_path: `/cib/e2e/bulk-massive-${n}.md`,
         content_summary: 'Bulk 413 fixture',
         tags: ['oracle'],
-        workspace: 'cib',
+        workspace: 'default',
       };
     });
     await seedDocuments(page, docs);

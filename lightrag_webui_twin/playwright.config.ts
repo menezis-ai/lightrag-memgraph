@@ -5,7 +5,10 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  // MSW keeps mutable mock state in the browser worker. Until e2e runs against
+  // the real Couche 3 backend, run specs serially so /__e2e/reset from one file
+  // cannot wipe another file mid-journey.
+  workers: 1,
   reporter: process.env.CI ? [['html'], ['github']] : [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://127.0.0.1:4173',
