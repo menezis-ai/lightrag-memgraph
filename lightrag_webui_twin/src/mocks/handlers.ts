@@ -28,6 +28,7 @@ import {
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
 import type { Document } from '../types/document';
+import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 
@@ -47,6 +48,15 @@ let categoryState: TagCategory[] = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
 let tagState: TagEntry[] = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
 let notificationState: Notification[] = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
 let activityState: ActivityEvent[] = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
+let graphEntityState: GraphEntity[] = GRAPH_ENTITY_FIXTURES.map((e) => ({
+  ...e,
+  tags: e.tags ? [...e.tags] : [],
+  properties: e.properties ? { ...e.properties } : {},
+}));
+let graphRelationState: GraphRelation[] = GRAPH_RELATION_FIXTURES.map((r) => ({
+  ...r,
+  properties: r.properties ? { ...r.properties } : {},
+}));
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 
@@ -71,6 +81,15 @@ export function resetDocumentsState(): void {
   tagState = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
   notificationState = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
   activityState = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
+  graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
+    ...e,
+    tags: e.tags ? [...e.tags] : [],
+    properties: e.properties ? { ...e.properties } : {},
+  }));
+  graphRelationState = GRAPH_RELATION_FIXTURES.map((r) => ({
+    ...r,
+    properties: r.properties ? { ...r.properties } : {},
+  }));
   uploadedTrackDocs.clear();
   uploadSeq = 0;
   e2eScenario.bulkRetagStatus = undefined;
@@ -657,11 +676,71 @@ export const handlers = [
     HttpResponse.json({ ok: true }),
   ),
 
-  // Graph
+  // Graph — entities + relations with mutable state so PATCH survives.
   http.get(`${ANY}${TWIN}/graph/entities`, () =>
-    HttpResponse.json(GRAPH_ENTITY_FIXTURES),
+    HttpResponse.json(graphEntityState),
   ),
   http.get(`${ANY}${TWIN}/graph/relations`, () =>
-    HttpResponse.json(GRAPH_RELATION_FIXTURES),
+    HttpResponse.json(graphRelationState),
   ),
+  http.patch(`${ANY}${TWIN}/graph/entities/:id`, async ({ params, request }) => {
+    const id = String(params.id);
+    const patch = (await request.json()) as Partial<GraphEntity>;
+    const idx = graphEntityState.findIndex((e) => e.id === id);
+    if (idx < 0) {
+      return HttpResponse.json({ detail: 'Unknown entity' }, { status: 404 });
+    }
+    const next = { ...graphEntityState[idx], ...patch };
+    graphEntityState = [
+      ...graphEntityState.slice(0, idx),
+      next,
+      ...graphEntityState.slice(idx + 1),
+    ];
+    activityState = [
+      {
+        id: `evt_graph_entity_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-entity-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'entity', label: next.name, id },
+        summary: `Graph entity ${next.name} updated`,
+        meta: { entity_id: id, patch: Object.keys(patch) },
+      },
+      ...activityState,
+    ];
+    return HttpResponse.json(next);
+  }),
+  http.patch(`${ANY}${TWIN}/graph/relations/:id`, async ({ params, request }) => {
+    const id = String(params.id);
+    const patch = (await request.json()) as Partial<GraphRelation>;
+    const idx = graphRelationState.findIndex((r) => r.id === id);
+    if (idx < 0) {
+      return HttpResponse.json({ detail: 'Unknown relation' }, { status: 404 });
+    }
+    const next = { ...graphRelationState[idx], ...patch };
+    graphRelationState = [
+      ...graphRelationState.slice(0, idx),
+      next,
+      ...graphRelationState.slice(idx + 1),
+    ];
+    activityState = [
+      {
+        id: `evt_graph_relation_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-relation-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'relation', label: next.label, id },
+        summary: `Graph relation ${next.label} updated`,
+        meta: { relation_id: id, patch: Object.keys(patch) },
+      },
+      ...activityState,
+    ];
+    return HttpResponse.json(next);
+  }),
 ];

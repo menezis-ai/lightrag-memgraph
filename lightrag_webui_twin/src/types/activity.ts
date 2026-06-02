@@ -19,6 +19,8 @@ export type ActivityKind =
   | 'source-ready'
   | 'source-failed'
   | 'pipeline-warning'
+  | 'graph-entity-edited'
+  | 'graph-relation-edited'
   | 'auth'
   | 'settings';
 
@@ -105,6 +107,16 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     label: 'Pipeline',
     icon: 'alert-triangle',
     color: 'var(--twin-amber-vivid)',
+  },
+  'graph-entity-edited': {
+    label: 'Graph entity edited',
+    icon: 'circle-dot',
+    color: 'var(--twin-accent)',
+  },
+  'graph-relation-edited': {
+    label: 'Graph relation edited',
+    icon: 'link',
+    color: 'var(--twin-accent)',
   },
   auth: { label: 'Auth', icon: 'lock', color: 'var(--color-text-secondary)' },
   settings: {

@@ -10,6 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './resources';
 import type { Document } from '../types/document';
+import type { GraphEntity, GraphRelation } from '../types/graph';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 
@@ -110,6 +111,69 @@ export function useGraphRelations() {
     queryKey: ['graph-relations'] as const,
     queryFn: ({ signal }) => api.listGraphRelations({}, { signal }),
     ...DEFAULTS,
+  });
+}
+
+// ─── Graph entity / relation editing — optimistic + rollback. ───────────
+// onMutate snapshots the previous list, patches in place, then rolls back
+// on error. The MSW handlers (and the future backend) persist to Memgraph,
+// so the entity_definition / relation_label change survives a refresh.
+
+export function useUpdateGraphEntity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: { id: string; patch: Parameters<typeof api.updateGraphEntity>[1] }) =>
+      api.updateGraphEntity(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: ['graph-entities'] });
+      const prev = qc.getQueryData<readonly GraphEntity[]>(['graph-entities']);
+      if (prev) {
+        qc.setQueryData<readonly GraphEntity[]>(
+          ['graph-entities'],
+          prev.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+        );
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['graph-entities'], ctx.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-entities'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useUpdateGraphRelation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: { id: string; patch: Parameters<typeof api.updateGraphRelation>[1] }) =>
+      api.updateGraphRelation(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: ['graph-relations'] });
+      const prev = qc.getQueryData<readonly GraphRelation[]>(['graph-relations']);
+      if (prev) {
+        qc.setQueryData<readonly GraphRelation[]>(
+          ['graph-relations'],
+          prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+        );
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['graph-relations'], ctx.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-relations'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
   });
 }
 

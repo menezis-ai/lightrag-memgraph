@@ -20,7 +20,12 @@ import { ApiError, apiFetch, type ApiRequestInit } from './client';
 import type { ActivityEvent } from '../types/activity';
 import type { OpenApiGroup } from '../types/api';
 import type { Document } from '../types/document';
-import type { GraphEntity, GraphRelation } from '../types/graph';
+import type {
+  GraphEntity,
+  GraphEntityPatch,
+  GraphRelation,
+  GraphRelationPatch,
+} from '../types/graph';
 import type { Notification, Workspace } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
@@ -396,6 +401,26 @@ export const twinApi = {
       ...init,
       query: { ...q },
     }),
+  updateGraphEntity: (
+    id: string,
+    patch: GraphEntityPatch,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<GraphEntity>(`${TWIN}/graph/entities/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'PATCH',
+      body: patch,
+    }),
+  updateGraphRelation: (
+    id: string,
+    patch: GraphRelationPatch,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<GraphRelation>(`${TWIN}/graph/relations/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'PATCH',
+      body: patch,
+    }),
 };
 
 // ============================================================================
@@ -444,6 +469,8 @@ export const api = {
   logout: twinApi.logout,
   listGraphEntities: twinApi.listGraphEntities,
   listGraphRelations: twinApi.listGraphRelations,
+  updateGraphEntity: twinApi.updateGraphEntity,
+  updateGraphRelation: twinApi.updateGraphRelation,
 };
 
 export type ApiClient = typeof api;
