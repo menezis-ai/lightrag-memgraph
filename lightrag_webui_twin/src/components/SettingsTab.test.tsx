@@ -2,12 +2,12 @@
  * Unit tests for SettingsTab (3-section redesign per 2026-05-30).
  *
  * Behaviors under test:
- *   - rail exposes exactly Profile / API / Workspace (Providers / Members /
+ *   - rail exposes exactly Profile / API / Space (Providers / Members /
  *     Danger zone / Tokens / API generation all absent)
  *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
  *   - Profile Sign out button fires onSignOut
  *   - Profile Restart tutorial button fires onRestartTutorial
- *   - Workspace section shows the workspace id + retention table
+ *   - Space section shows the space id + retention table
  *   - API section shows the ApiTab (proxy)
  */
 
@@ -24,7 +24,7 @@ function renderWith(
 ) {
   return render(
     <QueryClientProvider client={qc}>
-      <SettingsTab activeWorkspace="cib" kbName="CIB KB" {...props} />
+      <SettingsTab activeWorkspace="default" kbName="Default space" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe('SettingsTab — rail', () => {
-  it('exposes exactly 3 sections: profile, api, workspace', () => {
+  it('exposes exactly 3 sections: profile, api, space', () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-rail-profile')).toBeInTheDocument();
     expect(screen.getByTestId('settings-rail-api')).toBeInTheDocument();
@@ -84,11 +84,11 @@ describe('SettingsTab — Profile', () => {
   });
 });
 
-describe('SettingsTab — Workspace', () => {
-  it('renders the workspace id + retention table rows', async () => {
+describe('SettingsTab — Space', () => {
+  it('renders the space id + retention table rows', async () => {
     renderWith(new QueryClient());
     await userEvent.click(screen.getByTestId('settings-rail-workspace'));
-    expect(screen.getByTestId('settings-active-ws').textContent).toBe('cib');
+    expect(screen.getByTestId('settings-active-ws').textContent).toBe('default');
     // 6 retention rows present
     expect(screen.getByText('Source mgmt')).toBeInTheDocument();
     expect(screen.getByText('Tag mgmt')).toBeInTheDocument();

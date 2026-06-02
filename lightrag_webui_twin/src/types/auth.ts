@@ -42,6 +42,16 @@ export interface AuthenticatedUser {
   gateway_scopes: readonly string[];
 }
 
+export type TwinSpaceKind = 'primary' | 'sandbox' | 'staging' | 'archive' | 'custom';
+
+export interface TwinSpaceConfig {
+  id: string;
+  label: string;
+  kind?: TwinSpaceKind;
+  description?: string;
+  sources?: number;
+}
+
 /**
  * Runtime config injected by the Twin FastAPI sub-app via index.html string
  * substitution (placeholder `__TWIN_CONFIG_JSON__`). See sprint Étape 0 brief.
@@ -50,6 +60,11 @@ export interface TwinRuntimeConfig {
   apiBaseUrl: string;
   lightragBaseUrl: string;
   idpLogoutUrl: string;
+  /** Default Twin space selected at boot. SRE/DevOps owns this via env. */
+  defaultSpaceId?: string;
+  /** Admin-created logical spaces inside the same Memgraph DB / KB. Max 5. */
+  spaces?: readonly TwinSpaceConfig[];
+  maxSpaces?: number;
   /** Debug-only: bypass IdP and pretend to be this user. Stripped in prod. */
   debugUser?: AuthenticatedUser;
 }

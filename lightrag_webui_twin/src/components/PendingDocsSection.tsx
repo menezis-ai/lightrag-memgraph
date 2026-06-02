@@ -447,7 +447,7 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
                 type="button"
                 className="ea-ai-btn"
                 data-testid="pending-doc-edit-ai-summary"
-                title="Generate a draft summary with the workspace LLM"
+                title="Generate a draft summary with the active space LLM"
               >
                 <Icon name="settings" size={11} /> Use AI to draft summary
               </button>

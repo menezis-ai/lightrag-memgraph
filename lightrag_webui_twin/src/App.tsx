@@ -13,13 +13,14 @@
  *     directly without a QueryClient wrapper.
  *
  * Env switches:
- *   - VITE_USE_MSW=false   → skip the MSW worker; fetches hit VITE_API_BASE_URL.
- *   - VITE_API_BASE_URL=…  → real backend origin.
- *   - VITE_AUTH_TOKEN=…    → bearer attached on every fetch.
+ *   - window.__twinConfig  → server-injected API bases + current identity.
+ *   - VITE_USE_MSW=false   → skip the MSW worker.
+ *   - VITE_API_BASE_URL=…  → optional dev/test backend origin fallback.
+ *   - VITE_AUTH_TOKEN=…    → optional dev/test bearer fallback.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityTab } from './components/ActivityTab';
 import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
 import { DocDetailPanel } from './components/DocDetailPanel';
@@ -58,7 +59,7 @@ import {
   useUpdateTagSynonyms,
   useWorkspaces,
 } from './api/queries';
-import { ApiError } from './api/client';
+import { ApiError, getTwinRuntimeConfig, setActiveSpace } from './api/client';
 import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
@@ -78,7 +79,7 @@ import {
 } from './fixtures';
 import type { Document } from './types/document';
 import type { TagCurrentUser } from './types/tag';
-import type { Theme } from './types/topbar';
+import type { Theme, Workspace } from './types/topbar';
 import type { Toast } from './types/toast';
 
 const CURRENT_USER: TagCurrentUser = {
@@ -110,10 +111,19 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   window.__TWIN_E2E_QUERY_CLIENT = queryClient;
 }
 
+function getInitialSpaceId(): string {
+  const cfg = getTwinRuntimeConfig();
+  return cfg.defaultSpaceId || cfg.spaces?.[0]?.id || 'default';
+}
+
 function AppShell() {
   const [tab, setTab] = useState('documents');
   const [theme, setTheme] = useState<Theme>('light');
-  const [workspace, setWorkspace] = useState('cib');
+  const [workspace, setWorkspaceState] = useState(() => {
+    const initial = getInitialSpaceId();
+    setActiveSpace(initial);
+    return initial;
+  });
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   // Modal state
@@ -125,6 +135,7 @@ function AppShell() {
 
   // Auth + onboarding
   const auth = useAuth();
+  const runtimeConfig = auth.config;
   const onboarding = useOnboarding();
   const onboardingOpen = !onboarding.state.dismissed;
 
@@ -168,7 +179,20 @@ function AppShell() {
         : notification,
     );
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const workspaceList = workspaces.data ?? WORKSPACE_FIXTURES;
+  const configuredSpaces = runtimeConfig.spaces;
+  const workspaceList = useMemo<readonly Workspace[]>(() => {
+    if (configuredSpaces && configuredSpaces.length > 0) {
+      return configuredSpaces.map((space) => ({
+        id: space.id,
+        kb: space.label,
+        visibility: space.kind === 'sandbox' ? 'private' : 'internal',
+        sources: space.sources ?? 0,
+        role: 'admin / steward',
+        current: space.id === workspace,
+      }));
+    }
+    return workspaces.data ?? WORKSPACE_FIXTURES;
+  }, [configuredSpaces, workspace, workspaces.data]);
   const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
@@ -648,7 +672,8 @@ function AppShell() {
 
   const onSwitchWorkspace = (nextWorkspace: string) => {
     window.history.replaceState(null, '', window.location.pathname);
-    setWorkspace(nextWorkspace);
+    setActiveSpace(nextWorkspace);
+    setWorkspaceState(nextWorkspace);
     setReadNotificationIds(new Set());
     setClearedNotificationIds(new Set());
     setDetailDoc(null);

@@ -1,19 +1,39 @@
 /**
  * Thin typed fetch wrapper for the Twin RAG backend.
  *
- * Env contract:
- *   VITE_API_BASE_URL — backend phase-1 origin (e.g. https://cib-kb.twin.internal).
- *                       Empty string = same-origin (default, plays well with MSW).
- *   VITE_AUTH_TOKEN   — optional bearer token, attached as Authorization header.
- *                       In prod this comes from the Twin gateway (Keycloak OIDC).
+ * Runtime contract:
+ *   window.__twinConfig.apiBaseUrl      — Twin overlay base, e.g. /twin/api.
+ *   window.__twinConfig.lightragBaseUrl — LightRAG native base, usually empty.
+ *   window.__twinConfig.defaultSpaceId  — SRE-provisioned default Twin space.
+ *   VITE_API_BASE_URL                   — optional dev/test origin fallback.
+ *   VITE_AUTH_TOKEN                     — optional dev/test bearer fallback.
  *
  * Errors throw `ApiError` with the HTTP status and parsed body (or the raw text
  * if the response was non-JSON, e.g. nginx 502 HTML — same failure mode that
  * burned the BNP front in v0.5.2's HTTP-e2e suite).
  */
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-const AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN ?? '';
+import { resolveRuntimeConfig } from '../config/devConfig';
+
+const TWIN_PREFIX = '/twin/api';
+const ENV_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+const ENV_AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN ?? '';
+
+let activeSpace: string | null = null;
+
+export function setActiveSpace(space: string | null): void {
+  activeSpace = space;
+}
+
+export function getActiveSpace(): string | null {
+  return activeSpace;
+}
+
+/** @deprecated Use setActiveSpace. Kept for transitional callers/tests. */
+export const setActiveWorkspace = setActiveSpace;
+
+/** @deprecated Use getActiveSpace. Kept for transitional callers/tests. */
+export const getActiveWorkspace = getActiveSpace;
 
 export class ApiError extends Error {
   status: number;
@@ -35,11 +55,57 @@ export interface ApiRequestInit {
   body?: unknown;
   /** Optional override for the global bearer token. */
   token?: string;
+  /** Optional override for X-Twin-Space. Null disables the header. */
+  space?: string | null;
+  /** @deprecated Compatibility alias for space. */
+  workspace?: string | null;
   signal?: AbortSignal;
 }
 
-function buildUrl(path: string, query?: ApiRequestInit['query']): string {
-  const url = BASE_URL + path;
+export function getTwinRuntimeConfig() {
+  const raw =
+    typeof window !== 'undefined' ? window.__twinConfig : undefined;
+  return resolveRuntimeConfig(raw, Boolean(import.meta.env.DEV));
+}
+
+function isAbsoluteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function trimSlashes(value: string): string {
+  return value.replace(/^\/+|\/+$/g, '');
+}
+
+function joinUrl(base: string, path: string): string {
+  if (!base) return path || '';
+  if (!path) return base;
+  if (isAbsoluteUrl(path)) return path;
+  return `${base.replace(/\/$/, '')}/${trimSlashes(path)}`;
+}
+
+function runtimeBase(kind: 'twin' | 'lightrag'): string {
+  const cfg = getTwinRuntimeConfig();
+  const configured =
+    kind === 'twin' ? cfg.apiBaseUrl : cfg.lightragBaseUrl;
+  if (!ENV_BASE_URL) return configured.replace(/\/$/, '');
+  if (!configured) return ENV_BASE_URL;
+  if (isAbsoluteUrl(configured)) return configured.replace(/\/$/, '');
+  return joinUrl(ENV_BASE_URL, configured);
+}
+
+export function buildApiUrl(
+  path: string,
+  query?: ApiRequestInit['query'],
+): string {
+  let url: string;
+  if (isAbsoluteUrl(path)) {
+    url = path;
+  } else if (path === TWIN_PREFIX || path.startsWith(`${TWIN_PREFIX}/`)) {
+    const suffix = path.slice(TWIN_PREFIX.length);
+    url = joinUrl(runtimeBase('twin'), suffix);
+  } else {
+    url = joinUrl(runtimeBase('lightrag'), path);
+  }
   if (!query) return url;
   const usp = new URLSearchParams();
   Object.entries(query).forEach(([k, v]) => {
@@ -48,6 +114,34 @@ function buildUrl(path: string, query?: ApiRequestInit['query']): string {
   });
   const qs = usp.toString();
   return qs ? `${url}?${qs}` : url;
+}
+
+export function buildApiHeaders(
+  init: Pick<ApiRequestInit, 'token' | 'space' | 'workspace'> = {},
+  options: { json?: boolean } = {},
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+  if (options.json) {
+    headers['Content-Type'] = 'application/json';
+  }
+  const token = init.token ?? ENV_AUTH_TOKEN;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const space =
+    init.space === undefined
+      ? init.workspace === undefined
+        ? activeSpace
+        : init.workspace
+      : init.space;
+  if (space) {
+    headers['X-Twin-Space'] = space;
+    // Transitional compatibility until the backend stops accepting the old name.
+    headers['X-Twin-Workspace'] = space;
+  }
+  return headers;
 }
 
 async function parseBody(res: Response): Promise<unknown> {
@@ -61,23 +155,17 @@ async function parseBody(res: Response): Promise<unknown> {
 }
 
 export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  };
   const method = init.method ?? 'GET';
-  if (method !== 'GET' && method !== 'HEAD') {
-    headers['Content-Type'] = 'application/json';
-  }
-  const token = init.token ?? AUTH_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const headers = buildApiHeaders(init, {
+    json: method !== 'GET' && method !== 'HEAD',
+  });
 
-  const res = await fetch(buildUrl(path, init.query), {
+  const res = await fetch(buildApiUrl(path, init.query), {
     method,
     headers,
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     signal: init.signal,
+    credentials: 'include',
   });
 
   if (!res.ok) {

@@ -1,12 +1,12 @@
 /**
- * Topbar — logo, tabs, workspace switcher, notifications, theme toggle.
+ * Topbar — logo, tabs, space switcher, notifications, theme toggle.
  *
  * Ported from Desktop/UI/topbar.jsx. Key changes vs the proto:
- *   - Workspaces and notifications are *injected* via props instead of
+ *   - Spaces and notifications are *injected* via props instead of
  *     read from window.MOCK_WORKSPACES / window.MOCK_NOTIFICATIONS, so the
  *     component is fully testable with fixtures and ready to wire to a
  *     real fetcher later.
- *   - WorkspaceMenu and NotificationsPopover stay internal to this file
+ *   - SpaceMenu and NotificationsPopover stay internal to this file
  *     (private sub-components, not exported) — they're tightly coupled to
  *     the popover open/close state owned by Topbar.
  *   - Click-outside + Escape handling preserved 1-for-1.
@@ -29,7 +29,7 @@ export interface TopbarProps {
   onTab: (id: string) => void;
   theme: Theme;
   onTheme: () => void;
-  /** Current workspace id (matches Workspace.id). */
+  /** Current Twin space id (kept as `workspace` prop for transition). */
   workspace: string;
   kbName: string;
   onSwitchWorkspace: (w: Workspace) => void;
@@ -116,7 +116,7 @@ export function Topbar({
               setWsOpen((o) => !o);
               setNotifOpen(false);
             }}
-            title="Switch workspace"
+            title="Switch space"
             aria-expanded={wsOpen}
             aria-haspopup="menu"
           >
@@ -125,7 +125,7 @@ export function Topbar({
             <Icon name="chevron-down" size={11} />
           </button>
           {wsOpen && (
-            <WorkspaceMenu
+            <SpaceMenu
               current={workspace}
               workspaces={workspaces}
               onPick={(ws) => {
@@ -177,22 +177,22 @@ export function Topbar({
   );
 }
 
-interface WorkspaceMenuProps {
+interface SpaceMenuProps {
   current: string;
   workspaces: readonly Workspace[];
   onPick: (w: Workspace) => void;
   onClose: () => void;
 }
 
-function WorkspaceMenu({
+function SpaceMenu({
   current,
   workspaces,
   onPick,
   onClose,
-}: WorkspaceMenuProps) {
+}: SpaceMenuProps) {
   return (
-    <div className="ws-menu" role="menu" aria-label="Switch workspace">
-      <div className="ws-menu-h">Workspaces</div>
+    <div className="ws-menu" role="menu" aria-label="Switch space">
+      <div className="ws-menu-h">Spaces</div>
       <ul className="ws-menu-list">
         {workspaces.map((w) => {
           const active = w.id === current;
@@ -244,7 +244,7 @@ function WorkspaceMenu({
       </ul>
       <div className="ws-menu-f">
         <button type="button" className="link-btn" onClick={onClose}>
-          Manage workspaces →
+          Manage spaces →
         </button>
       </div>
     </div>

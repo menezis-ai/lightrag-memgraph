@@ -38,7 +38,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
     error_msg: null,
     metadata: { uploader: 'claire.benoit', classification: 'internal' },
     visibility: 'private',
-    workspace: 'cib',
+    workspace: 'default',
     ...overrides,
   };
 }

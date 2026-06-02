@@ -1,7 +1,7 @@
 /**
- * Settings → Workspace section.
+ * Settings → Space section.
  *
- * Read-only view of the workspace identity (id / display name / visibility /
+ * Read-only view of the active Twin space identity (id / display name / visibility /
  * region) and the retention policy table. Values are env-controlled at Helm
  * install time — the env-badge makes this explicit so an operator doesn't
  * waste a click looking for an "Edit" button.
@@ -18,9 +18,9 @@ export function WorkspaceSection() {
   const ws = WORKSPACE_SETTINGS;
   return (
     <div className="settings-section" data-testid="settings-workspace">
-      <h3>Workspace</h3>
+      <h3>Space</h3>
       <p className="muted">
-        Configuration for workspace {ws.workspace_id}. Some values are set at
+        Configuration for space {ws.workspace_id}. Some values are set at
         Helm install time and cannot be changed at runtime.
       </p>
 
@@ -32,7 +32,7 @@ export function WorkspaceSection() {
           </span>
         </div>
         <dl className="set-dl">
-          <dt>Workspace ID</dt>
+          <dt>Space ID</dt>
           <dd className="mono" data-testid="settings-active-ws">
             {ws.workspace_id}
           </dd>

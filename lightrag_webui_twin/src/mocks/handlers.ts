@@ -333,7 +333,7 @@ export const handlers = [
         metadata: { mime: file instanceof File ? file.type : 'text/plain', uploader: 'e2e' },
         type: 'file',
         tags: [],
-        workspace: 'cib',
+        workspace: 'default',
         visibility: 'private',
       },
       ...documentsState,

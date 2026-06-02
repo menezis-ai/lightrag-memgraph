@@ -16,7 +16,13 @@
  * stay on `api.xxx()` without caring about which surface owns the endpoint.
  */
 
-import { ApiError, apiFetch, type ApiRequestInit } from './client';
+import {
+  ApiError,
+  apiFetch,
+  buildApiHeaders,
+  buildApiUrl,
+  type ApiRequestInit,
+} from './client';
 import type { ActivityEvent } from '../types/activity';
 import type { OpenApiGroup } from '../types/api';
 import type { Document } from '../types/document';
@@ -104,8 +110,7 @@ export const lightragApi = {
    * Upload one file to LightRAG native /documents/upload (multipart).
    *
    * apiFetch is JSON-only, so this bypass uses fetch directly. The
-   * Authorization header pattern matches apiFetch (env-driven for now;
-   * will read from window.__twinConfig once Couche 3 §3.6 lands).
+   * URL, auth, cookie, and workspace header pattern matches apiFetch.
    * Returns the InsertResponse shape:
    *   { status: 'success'|'duplicated', message: string, track_id: string }
    * On 4xx/5xx, throws an ApiError so the host can show a real toast.
@@ -114,17 +119,14 @@ export const lightragApi = {
     file: File,
     init?: { signal?: AbortSignal },
   ): Promise<{ status: string; message: string; track_id: string }> => {
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-    const authToken = import.meta.env.VITE_AUTH_TOKEN ?? '';
     const formData = new FormData();
     formData.append('file', file);
-    const headers: Record<string, string> = {};
-    if (authToken) headers.Authorization = `Bearer ${authToken}`;
-    const res = await fetch(`${baseUrl}/documents/upload`, {
+    const res = await fetch(buildApiUrl('/documents/upload'), {
       method: 'POST',
-      headers,
+      headers: buildApiHeaders(),
       body: formData,
       signal: init?.signal,
+      credentials: 'include',
     });
     const text = await res.text();
     let body: unknown = text;

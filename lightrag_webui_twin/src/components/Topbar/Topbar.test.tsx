@@ -69,7 +69,7 @@ function wrap(qc: QueryClient) {
 }
 
 describe('WorkspaceSwitcher', () => {
-  it('renders the active workspace and opens a menu on click', async () => {
+  it('renders the active space and opens a menu on click', async () => {
     const onPick = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
@@ -86,7 +86,7 @@ describe('WorkspaceSwitcher', () => {
     expect(screen.getByTestId('topbar-workspace-menu')).toBeInTheDocument();
   });
 
-  it('emits onPick(id) when a non-active workspace is clicked', async () => {
+  it('emits onPick(id) when a non-active space is clicked', async () => {
     const onPick = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
