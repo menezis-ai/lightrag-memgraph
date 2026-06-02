@@ -818,6 +818,11 @@
 }
 .toast {
   width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast button,
+.toast-stack-more {
+  pointer-events: auto;
 }
 .toast .title,
 .toast .sub,
@@ -856,14 +861,15 @@
   position: relative;
 }
 .modal {
-  overflow: visible;
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
 }
 .modal-body {
   overscroll-behavior: contain;
 }
 .modal-body:has(.modal-autocomplete) {
-  overflow: visible;
-  max-height: none;
+  overflow-y: auto;
+  max-height: min(60vh, calc(100vh - 180px));
 }
 .autocomplete-row .row1,
 .autocomplete-row .def {
