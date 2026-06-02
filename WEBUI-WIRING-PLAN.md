@@ -37,6 +37,14 @@ Implementation status:
   code keeps working while the backend contract moves to "space".
 - Visible UI copy now says "Space" / "Spaces". The empty state is:
   `No space available for this KB. Please contact Twincore Team`.
+- Backend phase-1 enforcement now reads `X-Twin-Space` first,
+  accepts `X-Twin-Workspace` as a temporary fallback, validates the id
+  against the configured catalog, and binds `request.state.space`.
+- The Twin WebUI overlay has one store per space. In-memory dev stores are
+  isolated; Memgraph stores are initialized per configured space.
+- Native document shims keep the LightRAG workspace/KB unchanged and filter
+  documents/chunks/delete by `DocStatus.metadata.space`; legacy docs with no
+  space metadata remain visible only from the default space.
 
 Env contract for SRE/devOps:
 
@@ -78,6 +86,14 @@ Code touched in this update:
 
 - `src/twindb_lightrag_memgraph/__init__.py` — runtime config now emits
   `defaultSpaceId`, `spaces`, and `maxSpaces`.
+- `src/twindb_lightrag_memgraph/_spaces.py` — shared env parsing and runtime
+  space catalog without FastAPI/server dependency.
+- `src/twindb_lightrag_memgraph/server/space.py` — request header resolution
+  and request context binding.
+- `src/twindb_lightrag_memgraph/server/webui_router.py` — per-space WebUI
+  stores plus `/spaces` compatibility endpoint.
+- `src/twindb_lightrag_memgraph/server/native_shims.py` — document/chunk/delete
+  shims filter by active Twin space without changing the LightRAG workspace.
 - `lightrag_webui_twin/src/api/client.ts` — runtime URL bases plus
   `X-Twin-Space` header, with temporary `X-Twin-Workspace` compatibility.
 - `lightrag_webui_twin/src/App.tsx` — active space initialized from runtime
@@ -93,15 +109,15 @@ Validated:
 - `cd lightrag_webui_twin && bun run test:run` — 325 tests passed
 - `cd lightrag_webui_twin && bun run build`
 - `.venv/bin/pytest tests/test_register.py -q` — 9 tests passed
+- `.venv/bin/pytest -q` — 575 tests passed, 147 skipped
 - `git diff --check`
 
 Still to do:
 
-- Backend enforcement: read `X-Twin-Space`, validate against the configured
-  space list, and apply the Memgraph space filter on documents, tags,
-  activity, graph queries, and Twin endpoints.
 - Admin lifecycle: create/update/delete up to four additional spaces beyond
   the SRE-provisioned default.
+- Real JWT/MyAccess enforcement: validate the parent KB access through IdP
+  claims before exposing the configured space list.
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility until then.
 
@@ -315,13 +331,13 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 - [x] Frontend side: `apiFetch` sets `X-Twin-Space` on every request
       from the active runtime-configured space. It also sends
       `X-Twin-Workspace` temporarily for old route code.
-- [ ] Backend side: read `X-Twin-Space` first, accept
+- [x] Backend side: read `X-Twin-Space` first, accept
       `X-Twin-Workspace` as a temporary fallback, validate the id against
       the configured space list, and set `request.state.space`.
       Downstream routes read this to scope every Twin query in the same
       Memgraph database.
-- [ ] Wire both in `register()` so every `/twin/api/*` request hits
-      them before the route handlers.
+- [x] Wire space binding in `register()` / WebUI router so every
+      `/twin/api/*` request hits it before route handlers.
 
 #### 3.4 — index.html substitution + WebUI mount (2h)
 

@@ -9,6 +9,8 @@ Each mutation must:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -122,6 +124,41 @@ class TestRequestTag:
         assert notifs[0]["tagname"] == "newtag"
         assert notifs[0]["suffix"] == "requested"
         assert notifs[0]["read"] is False
+
+    async def test_tag_mutation_is_isolated_by_space(self, monkeypatch, client):
+        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+        monkeypatch.setenv(
+            "TWIN_SPACES_JSON",
+            json.dumps(
+                [
+                    {"id": "default", "label": "Default space", "kind": "primary"},
+                    {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
+                ]
+            ),
+        )
+        webui_router.reset_store()
+
+        r = await client.post(
+            "/tags",
+            headers={"X-Twin-Space": "default"},
+            json={
+                "tag": "spaceonly",
+                "def": "Only in the default space",
+                "category": "infra",
+            },
+        )
+        assert r.status_code == 201
+
+        default_tags = (await client.get(
+            "/tags",
+            headers={"X-Twin-Space": "default"},
+        )).json()
+        sandbox_tags = (await client.get(
+            "/tags",
+            headers={"X-Twin-Space": "sandbox"},
+        )).json()
+        assert any(tag["tag"] == "spaceonly" for tag in default_tags)
+        assert all(tag["tag"] != "spaceonly" for tag in sandbox_tags)
 
 
 # ---------------------------------------------------------------------------

@@ -28,9 +28,10 @@ import secrets
 import threading
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import webui_seed
+from .space import bind_request_space, current_space_id, load_space_catalog
 from .webui_activitystore import InMemoryActivityStore, MemgraphActivityStore
 from .webui_models import (
     AckResponse,
@@ -196,6 +197,23 @@ class WebuiStore:
             graph_relations=copy.deepcopy(webui_seed.GRAPH_RELATIONS),
         )
 
+    @classmethod
+    def for_space(cls, space: str) -> WebuiStore:
+        default_space = load_space_catalog().default_space_id
+        if space == default_space:
+            return cls.from_seed()
+        return cls(
+            documents=[],
+            workspaces=copy.deepcopy(webui_seed.WORKSPACES),
+            thesaurus=copy.deepcopy(webui_seed.THESAURUS),
+            tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
+            tags_seed=[],
+            openapi_groups=copy.deepcopy(webui_seed.OPENAPI_GROUPS),
+            openapi_version=webui_seed.OPENAPI_VERSION,
+            graph_entities=[],
+            graph_relations=[],
+        )
+
     # -- Backend accessors --------------------------------------------
 
     @property
@@ -221,7 +239,14 @@ class WebuiStore:
         q: str | None = None,
         tag: str | None = None,
     ) -> list[dict[str, Any]]:
-        items = self._documents
+        default_space = load_space_catalog().default_space_id
+        active_space = current_space_id()
+        items = [
+            d
+            for d in self._documents
+            if (d.get("space") or d.get("metadata", {}).get("space") or default_space)
+            == active_space
+        ]
         if status and status != "all":
             items = [d for d in items if d["status"] == status]
         if q:
@@ -305,19 +330,25 @@ class WebuiStore:
 # ---------------------------------------------------------------------------
 
 
-_store: WebuiStore = WebuiStore.from_seed()
+_stores: dict[str, WebuiStore] = {}
 
 
-def get_store() -> WebuiStore:
-    return _store
+def get_store(space: str | None = None) -> WebuiStore:
+    space_id = space or current_space_id()
+    store = _stores.get(space_id)
+    if store is None:
+        store = WebuiStore.for_space(space_id)
+        _stores[space_id] = store
+    return store
 
 
-def set_store(store: WebuiStore) -> None:
-    global _store
-    _store = store
+def set_store(store: WebuiStore, space: str | None = None) -> None:
+    space_id = space or load_space_catalog().default_space_id
+    _stores[space_id] = store
 
 
 def reset_store() -> None:
+    _stores.clear()
     set_store(WebuiStore.from_seed())
 
 
@@ -326,7 +357,7 @@ def reset_store() -> None:
 # ---------------------------------------------------------------------------
 
 
-router = APIRouter(tags=["webui"])
+router = APIRouter(tags=["webui"], dependencies=[Depends(bind_request_space)])
 
 
 # -- Read endpoints ----------------------------------------------------------
@@ -344,7 +375,23 @@ async def list_documents(
 
 @router.get("/workspaces", response_model=list[Workspace])
 async def list_workspaces() -> list[dict[str, Any]]:
+    catalog = load_space_catalog()
+    if catalog.explicit:
+        active = current_space_id()
+        return [
+            space.as_workspace_compat(current=space.id == active)
+            for space in catalog.spaces
+        ]
     return get_store().list_workspaces()
+
+
+@router.get("/spaces", response_model=list[Workspace])
+async def list_spaces() -> list[dict[str, Any]]:
+    active = current_space_id()
+    return [
+        space.as_workspace_compat(current=space.id == active)
+        for space in load_space_catalog().spaces
+    ]
 
 
 @router.get("/notifications", response_model=list[Notification])
@@ -515,8 +562,9 @@ async def bulk_retag_documents(
         validate_identifier(tag, "tag")
 
     workspace = resolve_workspace()
+    space = current_space_id()
     doc_label = f"DocStatus_{workspace}"
-    tag_label = f"WebuiTag_{workspace}"
+    tag_label = f"WebuiTag_{space}"
     now = _utcnow_iso()
 
     placeholder = _json.dumps(

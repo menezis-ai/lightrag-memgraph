@@ -310,6 +310,28 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             await result.consume()
             return docs
 
+    async def get_docs_by_statuses(
+        self, statuses: list[DocStatus]
+    ) -> dict[str, DocProcessingStatus]:
+        label = self._label()
+        status_values = [status.value for status in statuses]
+        if not status_values:
+            return {}
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}`)
+                WHERE n.status IN $statuses
+                RETURN n.id AS id, properties(n) AS props
+                """,
+                statuses=status_values,
+            )
+            docs = {}
+            async for record in result:
+                docs[record["id"]] = self._deserialize_status(record["props"])
+            await result.consume()
+            return docs
+
     async def get_docs_by_track_id(
         self, track_id: str
     ) -> dict[str, DocProcessingStatus]:

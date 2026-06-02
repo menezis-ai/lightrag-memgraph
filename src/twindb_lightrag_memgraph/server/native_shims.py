@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ def _filter_docs(
     items: list[dict[str, Any]],
     q: str | None,
     tag: str | None,
+    space: str,
 ) -> list[dict[str, Any]]:
     """Apply WebUI-side filters that LightRAG's paginated endpoint doesn't.
 
@@ -115,7 +116,14 @@ def _filter_docs(
     is the authoritative source — but documents already carrying tags
     on their DocStatus.metadata get filtered here too).
     """
-    out = items
+    from .space import load_space_catalog
+
+    default_space = load_space_catalog().default_space_id
+    out = [
+        d
+        for d in items
+        if (d.get("metadata") or {}).get("space", default_space) == space
+    ]
     if q:
         needle = q.lower()
         out = [d for d in out if needle in (d.get("file_path") or "").lower()]
@@ -128,7 +136,7 @@ def _filter_docs(
     return out
 
 
-async def _attach_tags_via_graph(docs: list[dict[str, Any]]) -> None:
+async def _attach_tags_via_graph(docs: list[dict[str, Any]], space: str) -> None:
     """Mutate ``docs`` in place to add a ``tags`` field via graph join.
 
     Single Cypher batch round-trip joining the doc nodes to their
@@ -144,7 +152,7 @@ async def _attach_tags_via_graph(docs: list[dict[str, Any]]) -> None:
 
     workspace = resolve_workspace()
     doc_label = f"DocStatus_{workspace}"
-    tag_label = f"WebuiTag_{workspace}"
+    tag_label = f"WebuiTag_{space}"
     doc_ids = [d["doc_id"] for d in docs if d.get("doc_id")]
 
     async with _pool.get_read_session() as session:
@@ -201,6 +209,17 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _doc_matches_space(doc_status: Any, space: str) -> bool:
+    from .space import load_space_catalog
+
+    if isinstance(doc_status, dict):
+        metadata = doc_status.get("metadata") or {}
+    else:
+        metadata = getattr(doc_status, "metadata", None) or {}
+    default_space = load_space_catalog().default_space_id
+    return metadata.get("space", default_space) == space
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -218,6 +237,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
 
     @router.get("/documents", response_model=_ListEnvelope)
     async def list_documents(
+        request: Request,
         status: str | None = Query(default=None),
         q: str | None = Query(default=None),
         tag: str | None = Query(default=None),
@@ -238,8 +258,10 @@ def build_native_shims_router(get_rag) -> APIRouter:
         import dataclasses
 
         from lightrag.base import DocStatus
+        from .space import resolve_space_from_headers
 
         rag = get_rag()
+        space = resolve_space_from_headers(request.headers)
         page = int(cursor) if (cursor and cursor.isdigit()) else 1
         page_size = 50
 
@@ -252,7 +274,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
             except ValueError:
                 logger.warning("twindb shim: unknown status filter %r", status)
 
-        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
             page=page,
             page_size=page_size,
             status_filter=status_enum,
@@ -269,20 +291,23 @@ def build_native_shims_router(get_rag) -> APIRouter:
             projected.append(_project_doc(payload))
 
         # Tags via graph join — single batch Cypher round-trip.
-        await _attach_tags_via_graph(projected)
+        await _attach_tags_via_graph(projected, space=space)
 
-        filtered = _filter_docs(projected, q=q, tag=tag)
+        filtered = _filter_docs(projected, q=q, tag=tag, space=space)
 
         return _ListEnvelope(
             items=[_DocumentEnvelope(**d) for d in filtered],
-            total=total,
+            total=len(filtered),
         )
 
     @router.get(
         "/documents/{doc_id}/chunks",
         response_model=list[_DocumentChunk],
     )
-    async def list_document_chunks(doc_id: str) -> list[_DocumentChunk]:
+    async def list_document_chunks(
+        request: Request,
+        doc_id: str,
+    ) -> list[_DocumentChunk]:
         """Return text chunks for a doc.
 
         Resolution path: ``DocProcessingStatus.chunks_list`` carries the
@@ -291,9 +316,14 @@ def build_native_shims_router(get_rag) -> APIRouter:
         non-standard ``get_all()`` and keeps the query O(chunks per doc)
         instead of O(total chunks in the workspace).
         """
+        from .space import resolve_space_from_headers
+
         rag = get_rag()
+        space = resolve_space_from_headers(request.headers)
         doc_status = await rag.doc_status.get_by_id(doc_id)
         if doc_status is None:
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+        if not _doc_matches_space(doc_status, space):
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
         # DocStatus may come back as dict (Memgraph backend) or dataclass
@@ -339,14 +369,23 @@ def build_native_shims_router(get_rag) -> APIRouter:
         return _OkResponse()
 
     @router.delete("/documents/{doc_id}", response_model=_OkResponse)
-    async def delete_document(doc_id: str) -> _OkResponse:
+    async def delete_document(
+        request: Request,
+        doc_id: str,
+    ) -> _OkResponse:
         """Translate REST per-id deletion → LightRAG's body-based delete.
 
         LightRAG offers ``adelete_by_doc_id`` on the LightRAG instance
         directly (the HTTP route ``DELETE /documents/delete_document``
         wraps it). We bypass the HTTP and call the method.
         """
+        from .space import resolve_space_from_headers
+
         rag = get_rag()
+        space = resolve_space_from_headers(request.headers)
+        doc_status = await rag.doc_status.get_by_id(doc_id)
+        if doc_status is None or not _doc_matches_space(doc_status, space):
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
         try:
             await rag.adelete_by_doc_id(doc_id)
         except Exception as exc:

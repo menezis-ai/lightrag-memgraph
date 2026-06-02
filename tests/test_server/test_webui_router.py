@@ -11,6 +11,8 @@ JSON, never HTML. We assert content-type on each response to lock that in.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -127,6 +129,51 @@ class TestWorkspaces:
         assert isinstance(body, list)
         assert len(body) == len(WORKSPACES)
         assert any(w["current"] is True for w in body)
+
+
+class TestSpaces:
+    def _configure_spaces(self, monkeypatch):
+        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+        monkeypatch.setenv(
+            "TWIN_SPACES_JSON",
+            json.dumps(
+                [
+                    {"id": "default", "label": "Default space", "kind": "primary"},
+                    {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
+                ]
+            ),
+        )
+        webui_router.reset_store()
+
+    async def test_spaces_endpoint_lists_configured_spaces(self, monkeypatch, client):
+        self._configure_spaces(monkeypatch)
+        r = await client.get("/spaces", headers={"X-Twin-Space": "sandbox"})
+        assert r.status_code == 200
+        body = r.json()
+        assert [space["id"] for space in body] == ["default", "sandbox"]
+        assert next(space for space in body if space["id"] == "sandbox")["current"]
+
+    async def test_workspaces_endpoint_uses_spaces_when_configured(
+        self, monkeypatch, client
+    ):
+        self._configure_spaces(monkeypatch)
+        r = await client.get("/workspaces")
+        assert r.status_code == 200
+        assert [space["id"] for space in r.json()] == ["default", "sandbox"]
+
+    async def test_rejects_unknown_space_header(self, monkeypatch, client):
+        self._configure_spaces(monkeypatch)
+        r = await client.get("/tags", headers={"X-Twin-Space": "rogue"})
+        assert r.status_code == 403
+        assert r.json()["detail"] == (
+            "No space available for this KB. Please contact Twincore Team"
+        )
+
+    async def test_legacy_workspace_header_is_accepted(self, monkeypatch, client):
+        self._configure_spaces(monkeypatch)
+        r = await client.get("/documents", headers={"X-Twin-Workspace": "sandbox"})
+        assert r.status_code == 200
+        assert r.json() == {"items": [], "total": 0}
 
 
 class TestNotifications:
