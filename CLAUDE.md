@@ -146,13 +146,24 @@ User preference: config files in **JSON, not YAML** (no extra dependency, ecosys
 
 Sibling Vite + Bun + React 19 + TypeScript strict + Tailwind v3 sub-project. Ports the design proto at `/Users/julien/Desktop/UI/` (untouched reference) into a typed, tested codebase that will eventually serve as the Twin operator console (citations cliquables, UI tag rétroactif, sous-graphe filtré par tag, source isolation badge).
 
-**Roadmap** — S1/S2/S3/S4a/S4b/S4c are landed (see memory `project_webui_fork.md`). The live end-to-end mutation loop (WebUI → FastAPI → Memgraph store → cache invalidation → refetch) is in place. The current frontier is **Couche 3** of the wiring plan (real LightRAG fetch + JWT + `X-Twin-Workspace` header + drop MSW in prod) — authoritative spec lives in `WEBUI-WIRING-PLAN.md` at the repo root, *not* in memory.
+**Roadmap** — S1/S2/S3/S4a/S4b/S4c are landed (see memory `project_webui_fork.md`). The live end-to-end mutation loop (WebUI → FastAPI → Memgraph store → cache invalidation → refetch) is in place. **Couche 3** of the wiring plan is now **partial**: runtime config injection + frontend space cutover landed 2026-06-02 (PR #170); backend `X-Twin-Space` enforcement + admin space CRUD remain. Authoritative spec is `WEBUI-WIRING-PLAN.md` at the repo root, *not* memory.
+
+**Spaces vs workspaces (2026-06-02 cutover):** The user-facing term is **Space**; the backend still uses `workspace` internally during the transition. The React port no longer hardcodes any space id — initial space comes from `window.__twinConfig.defaultSpaceId`. The server injects spaces via `_build_runtime_config()` from env vars:
+
+- `TWIN_DEFAULT_SPACE` (fallback `WORKSPACE`, then `default`)
+- `TWIN_DEFAULT_SPACE_LABEL`
+- `TWIN_SPACES_JSON` — JSON array of `{id, label, kind, description, sources}`
+- `TWIN_MAX_SPACES` — clamped 1..5 (one SRE default + up to four admin-created)
+
+The HTTP client sends `X-Twin-Space` AND `X-Twin-Workspace` in parallel during the migration. Don't strip the dual-header window until the backend contract has fully migrated. The Empty state when no space is provisioned: `No space available for this KB. Please contact Twincore Team.`
+
+**Vrai Graph (M12):** The Knowledge Graph tab in the React port is UI-only (`GRAPH_ENTITY_FIXTURES` + MSW state). PATCH endpoints persist in-memory MSW only. Real Memgraph wiring (Cypher `MATCH (n)`, real PATCH, layout strategy) is tracked under milestone M12 (#25). Don't conflate the UI port (landed PR #169) with the graph being real.
 
 **Stack notes:**
 - Bun runs everything: `bun install`, `bun run dev`, `bun run typecheck`, `bun run test:run`, `bun run build`.
 - Vitest config is inline in `vite.config.ts`. `src/test/setup.ts` provisions an **in-memory localStorage** because happy-dom 20.x on Bun does not ship a Storage implementation.
 - Design tokens (`--twin-*`, light + dark) live in `src/styles/tokens.css` as plain CSS variables; `tailwind.config.js` exposes them as utility classes (`bg-twin-accent`, `text-twin-green-700`, etc.).
-- Modals emit typed `*Action` payloads on submit (RetagAction, AddSourceAction) — the host (App.tsx) owns the toast queue and the network call. **No `window.*` globals**; thesaurus / workspaces / notifications are injected via props.
+- Modals emit typed `*Action` payloads on submit (RetagAction, AddSourceAction) — the host (App.tsx) owns the toast queue and the network call. **No `window.*` globals** *except* `window.__twinConfig` which is the server-injected runtime config (spaces, idp, debugUser). Thesaurus / spaces / notifications are injected via props.
 - Typed fixtures in `src/fixtures/` are the **contract template** that the Python `server/webui_models.py` honors.
 - **MSW + runtime config**: dev and the OVH standalone demo run on MSW (mocked at the browser worker level). `resolveRuntimeConfig()` decides at boot whether to install MSW vs hit the real backend. The `VITE_FORCE_MSW=1` env flag forces MSW even in a production build — that is how `https://maquette.sigilum.fr/` ships a static SPA with no backend. Do not strip the MSW fallback from `resolveRuntimeConfig()`; both prod-with-backend and prod-standalone-demo depend on it.
 
