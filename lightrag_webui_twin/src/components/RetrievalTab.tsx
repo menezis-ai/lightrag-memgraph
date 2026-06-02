@@ -48,10 +48,29 @@ const STREAM_TICK_MS = 70;
 
 export interface RetrievalTabProps {
   thesaurus: readonly ThesaurusEntry[];
-  /** Tokens streamed back for each "send". Same tokens for every query in
-   *  the proto — mock-only. In production this comes from the backend. */
+  /** Fallback tokens streamed when `onSendQuery` is not provided. Same
+   *  tokens for every query — mock-only. In production this stays empty
+   *  and `onSendQuery` drives the real backend response. */
   answerTokens: readonly AnswerToken[];
   answerSources: readonly RetrievalSource[];
+  /** Real-backend callback. When provided, `send()` calls this with the
+   *  user's query + active params instead of streaming the static
+   *  fixture. The returned `response` string is split into whitespace
+   *  tokens and streamed via the existing animator. Sources are passed
+   *  through as-is (the LightRAG native endpoint does not return
+   *  structured sources yet, so callers may omit). */
+  onSendQuery?: (params: {
+    query: string;
+    mode: QueryMode;
+    topK: number;
+    maxTokens: number;
+    onlyContext: boolean;
+    onlyPrompt: boolean;
+    tagFilters: readonly string[];
+  }) => Promise<{
+    response: string;
+    sources?: readonly RetrievalSource[];
+  }>;
   /** Seed threads when localStorage is empty. */
   initialThreads?: readonly RetrievalThread[];
   /** Suggestions displayed in the empty state. */
@@ -70,6 +89,7 @@ export function RetrievalTab({
   thesaurus,
   answerTokens,
   answerSources,
+  onSendQuery,
   initialThreads = [],
   suggestions = DEFAULT_SUGGESTIONS,
   onNavigate,
@@ -190,6 +210,34 @@ export function RetrievalTab({
     });
   };
 
+  const streamTokens = (
+    tokens: readonly AnswerToken[],
+    sources: readonly RetrievalSource[],
+  ) => {
+    if (tokens.length === 0) {
+      setStreaming(false);
+      setConvo((c) => [
+        ...c,
+        { role: 'assistant', tokens: [], sources },
+      ]);
+      return;
+    }
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setStreamedTokens(tokens.slice(0, i));
+      if (i >= tokens.length) {
+        clearInterval(interval);
+        setStreaming(false);
+        setConvo((c) => [
+          ...c,
+          { role: 'assistant', tokens, sources },
+        ]);
+        setStreamedTokens([]);
+      }
+    }, STREAM_TICK_MS);
+  };
+
   const send = (text?: string) => {
     const q = (text ?? query).trim();
     if (!q) return;
@@ -198,25 +246,33 @@ export function RetrievalTab({
     setStreamedTokens([]);
     setStreaming(true);
 
-    // Simulate streaming with setInterval, identical to the proto.
-    let i = 0;
-    const interval = setInterval(() => {
-      i++;
-      setStreamedTokens(answerTokens.slice(0, i));
-      if (i >= answerTokens.length) {
-        clearInterval(interval);
-        setStreaming(false);
-        setConvo((c) => [
-          ...c,
-          {
-            role: 'assistant',
-            tokens: answerTokens,
-            sources: answerSources,
-          },
-        ]);
-        setStreamedTokens([]);
-      }
-    }, STREAM_TICK_MS);
+    if (!onSendQuery) {
+      // No backend wired — stream the fixture tokens (test/dev path).
+      streamTokens(answerTokens, answerSources);
+      return;
+    }
+
+    onSendQuery({
+      query: q,
+      mode: queryMode,
+      topK,
+      maxTokens: maxTok,
+      onlyContext: onlyCtx,
+      onlyPrompt,
+      tagFilters,
+    })
+      .then(({ response, sources }) => {
+        // Tokenize on whitespace, keeping word boundaries — matches the
+        // proto's per-word streaming animation.
+        const tokens = response
+          .split(/(\s+)/)
+          .filter((t) => t.length > 0);
+        streamTokens(tokens, sources ?? []);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Query failed';
+        streamTokens([`⚠ ${msg}`], []);
+      });
   };
 
   const clear = () => {

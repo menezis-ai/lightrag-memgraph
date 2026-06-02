@@ -100,6 +100,24 @@ describe('ToastViewport — interactions', () => {
     render(<ToastViewport toasts={[noUndo]} onUndo={() => {}} onDismiss={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
+
+  it('propagating toast also renders Dismiss and propagates onDismiss', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <ToastViewport toasts={[propagating]} onUndo={() => {}} onDismiss={onDismiss} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(onDismiss).toHaveBeenCalledWith(propagating);
+  });
+
+  it('done toast also renders Dismiss (even with Undo) and propagates onDismiss', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <ToastViewport toasts={[done]} onUndo={() => {}} onDismiss={onDismiss} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(onDismiss).toHaveBeenCalledWith(done);
+  });
 });
 
 describe('ToastViewport — ARIA announcements', () => {

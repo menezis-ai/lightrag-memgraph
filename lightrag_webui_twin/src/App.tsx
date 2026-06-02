@@ -81,7 +81,7 @@ import {
 import type { Document } from './types/document';
 import type { TagCurrentUser } from './types/tag';
 import type { Theme, Workspace } from './types/topbar';
-import type { Toast } from './types/toast';
+import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
 
 const CURRENT_USER: TagCurrentUser = {
   name: 'claire.benoit',
@@ -199,6 +199,9 @@ function AppShell() {
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
     setToasts((ts) => [...ts, { id, ...t }]);
+    window.setTimeout(() => {
+      setToasts((ts) => ts.filter((x) => x.id !== id));
+    }, TOAST_AUTO_DISMISS_MS);
   };
 
   const onAddToast = (title: string, sub?: string) =>
@@ -839,6 +842,17 @@ function AppShell() {
               thesaurus={thesaurusList}
               answerTokens={ANSWER_TOKENS_FIXTURE}
               answerSources={RETRIEVAL_SOURCES_FIXTURE}
+              onSendQuery={async (params) => {
+                const res = await api.query({
+                  query: params.query,
+                  mode: params.mode,
+                  top_k: params.topK,
+                  max_total_tokens: params.maxTokens,
+                  only_need_context: params.onlyContext,
+                  only_need_prompt: params.onlyPrompt,
+                });
+                return { response: res.response };
+              }}
               initialThreads={makeSampleThreads()}
               onNavigate={onNavigate}
             />
