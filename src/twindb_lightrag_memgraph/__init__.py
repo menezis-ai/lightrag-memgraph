@@ -1137,10 +1137,9 @@ def _build_runtime_config() -> dict[str, object]:
     Override per-deploy via env vars (read late so a single ``register()``
     call can re-render against a different identity without re-importing).
     """
-    import json
     import os
 
-    from ._constants import validate_identifier
+    from ._spaces import build_runtime_space_config, load_space_catalog
 
     api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
@@ -1148,69 +1147,8 @@ def _build_runtime_config() -> dict[str, object]:
         "TWIN_IDP_LOGOUT_URL",
         "https://idp.twin.local/realms/twin/protocol/openid-connect/logout",
     )
-    default_space_raw = (
-        os.environ.get("TWIN_DEFAULT_SPACE")
-        or os.environ.get("WORKSPACE")
-        or "default"
-    ).strip()
-    try:
-        default_space = validate_identifier(default_space_raw, "space")
-    except ValueError:
-        logger.exception("Invalid default Twin space; falling back to 'default'")
-        default_space = "default"
-    try:
-        max_spaces = int(os.environ.get("TWIN_MAX_SPACES", "5"))
-    except ValueError:
-        logger.exception("Invalid TWIN_MAX_SPACES; falling back to 5")
-        max_spaces = 5
-    max_spaces = max(1, min(5, max_spaces))
-    spaces_raw = os.environ.get("TWIN_SPACES_JSON")
-    spaces: list[dict[str, object]]
-    if spaces_raw:
-        try:
-            parsed = json.loads(spaces_raw)
-            if not isinstance(parsed, list):
-                raise ValueError("TWIN_SPACES_JSON must be a JSON array")
-            spaces = []
-            for item in parsed[:max_spaces]:
-                if not isinstance(item, dict):
-                    continue
-                sid_raw = str(item.get("id") or "").strip()
-                if not sid_raw:
-                    continue
-                try:
-                    sid = validate_identifier(sid_raw, "space")
-                except ValueError:
-                    logger.exception("Skipping invalid Twin space id")
-                    continue
-                spaces.append(
-                    {
-                        "id": sid,
-                        "label": str(item.get("label") or sid),
-                        "kind": str(item.get("kind") or "custom"),
-                        "description": str(item.get("description") or ""),
-                        "sources": int(item.get("sources") or 0),
-                    }
-                )
-        except Exception:
-            logger.exception(
-                "Invalid TWIN_SPACES_JSON; falling back to TWIN_DEFAULT_SPACE"
-            )
-            spaces = []
-    else:
-        spaces = []
-    if not spaces:
-        spaces = [
-            {
-                "id": default_space,
-                "label": os.environ.get("TWIN_DEFAULT_SPACE_LABEL", "Default space"),
-                "kind": "primary",
-                "description": "SRE-provisioned default space for this KB.",
-                "sources": 0,
-            }
-        ]
-    if not any(space["id"] == default_space for space in spaces):
-        default_space = str(spaces[0]["id"])
+    space_catalog = load_space_catalog()
+    runtime_space_config = build_runtime_space_config()
     debug_user = {
         "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
@@ -1220,7 +1158,7 @@ def _build_runtime_config() -> dict[str, object]:
             "label": "Steward",
             "scopes": ["twin:read", "twin:write", "twin:approve"],
         },
-        "workspaces": [space["id"] for space in spaces],
+        "workspaces": [space.id for space in space_catalog.spaces],
         "idp": "local-debug",
         "idp_realm": "twin-local",
         "sub": "local-debug-sub",
@@ -1238,9 +1176,7 @@ def _build_runtime_config() -> dict[str, object]:
         "apiBaseUrl": api_base,
         "lightragBaseUrl": lightrag_base,
         "idpLogoutUrl": idp_logout,
-        "defaultSpaceId": default_space,
-        "spaces": spaces,
-        "maxSpaces": max_spaces,
+        **runtime_space_config,
         "debugUser": debug_user,
     }
 
@@ -1509,57 +1445,59 @@ def _mount_twin_subapp(
             # That makes a "fresh" workspace look pre-populated (not
             # what an operator on a clean BNP install expects). We
             # instantiate the classes directly + ``initialize()`` only.
-            workspace = os.environ.get("WORKSPACE", "default")
             try:
+                from .server.space import load_space_catalog
                 from .server.webui_activitystore import MemgraphActivityStore
                 from .server.webui_notificationstore import (
                     MemgraphNotificationStore,
                 )
                 from .server.webui_tagstore import MemgraphTagStore
 
-                tag_store = MemgraphTagStore(workspace=workspace)
-                await tag_store.initialize()
-                # Categories — governance taxonomy, NOT user-generated.
-                # Two modes:
-                #   1. webui_categories_config set → mirror an external
-                #      JSON file on every boot (Config-as-Code doctrine,
-                #      Option 3). The file is source of truth, edits
-                #      propagate to Memgraph at next reboot.
-                #   2. No config path → bootstrap once from the internal
-                #      seed (Oracle / Infra / Network / Payment /
-                #      Lifecycle / Governance). Useful for demo + early
-                #      dev when the admin hasn't shipped a config yet.
-                if webui_categories_config:
-                    n = await tag_store.replace_categories_from_config(
-                        webui_categories_config
-                    )
-                    logger.info(
-                        "twindb: categories sourced from %s (%d entries)",
-                        webui_categories_config,
-                        n,
-                    )
-                else:
-                    await tag_store.bootstrap_categories_if_empty()
-                activity_store = MemgraphActivityStore(workspace=workspace)
-                await activity_store.initialize()
-                notif_store = MemgraphNotificationStore(workspace=workspace)
-                await notif_store.initialize()
+                catalog = load_space_catalog()
+                for space in catalog.spaces:
+                    tag_store = MemgraphTagStore(workspace=space.id)
+                    await tag_store.initialize()
+                    # Categories — governance taxonomy, NOT user-generated.
+                    # Two modes:
+                    #   1. webui_categories_config set → mirror an external
+                    #      JSON file on every boot (Config-as-Code doctrine,
+                    #      Option 3). The file is source of truth, edits
+                    #      propagate to Memgraph at next reboot.
+                    #   2. No config path → bootstrap once from the internal
+                    #      seed (Oracle / Infra / Network / Payment /
+                    #      Lifecycle / Governance). Useful for demo + early
+                    #      dev when the admin hasn't shipped a config yet.
+                    if webui_categories_config:
+                        n = await tag_store.replace_categories_from_config(
+                            webui_categories_config
+                        )
+                        logger.info(
+                            "twindb: categories sourced from %s (%d entries, space=%s)",
+                            webui_categories_config,
+                            n,
+                            space.id,
+                        )
+                    else:
+                        await tag_store.bootstrap_categories_if_empty()
+                    activity_store = MemgraphActivityStore(workspace=space.id)
+                    await activity_store.initialize()
+                    notif_store = MemgraphNotificationStore(workspace=space.id)
+                    await notif_store.initialize()
 
-                store = WebuiStore.from_seed()
-                store._tag_backend = tag_store
-                store._activity_backend = activity_store
-                store._notification_backend = notif_store
-                set_store(store)
+                    store = WebuiStore.for_space(space.id)
+                    store._tag_backend = tag_store
+                    store._activity_backend = activity_store
+                    store._notification_backend = notif_store
+                    set_store(store, space=space.id)
                 logger.info(
                     "twindb: Twin overlay stores switched to Memgraph "
-                    "(workspace=%s) — fresh workspaces boot empty.",
-                    workspace,
+                    "(spaces=%s) — fresh spaces boot empty.",
+                    ",".join(space.id for space in catalog.spaces),
                 )
             except Exception:
                 logger.exception(
-                    "twindb: FAILED to switch stores to Memgraph "
-                    "(workspace=%s); keeping in-memory seed.",
-                    workspace,
+                    "twindb: FAILED to switch stores to Memgraph; "
+                    "keeping in-memory seed.",
                 )
                 raise
             yield
