@@ -516,7 +516,7 @@ function AppShell() {
     const tagname = commit.tag?.tag ?? commit.name ?? '';
     const actor = CURRENT_USER.name;
     const verbMap: Record<TagActionCommit['kind'], string> = {
-      edit: 'definition updated',
+      edit: 'updated',
       suggest: 'edit suggested',
       synonyms: 'synonyms updated',
       deprecate: 'deprecated',

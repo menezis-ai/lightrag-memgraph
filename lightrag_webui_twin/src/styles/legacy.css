@@ -110,7 +110,23 @@ input:focus, textarea:focus, select:focus { outline: none; }
   left: 50%;
   transform: translateX(-50%);
 }
-.topbar .brand { display: flex; align-items: center; gap: 10px; }
+.topbar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.topbar .brand:focus-visible {
+  outline: 2px solid var(--twin-accent);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
 .topbar .brand-mark {
   width: 26px; height: 22px; border-radius: 6px;
   background: var(--twin-accent);
@@ -3221,6 +3237,12 @@ input:focus, textarea:focus, select:focus { outline: none; }
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-text-primary);
+}
+.kg-detail-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 .kg-detail-swatch {
   width: 10px; height: 10px; border-radius: 3px;

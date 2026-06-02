@@ -18,7 +18,8 @@ test.describe('Twin WebUI tag governance persistence', () => {
       .getByLabel('Short definition')
       .fill('Oracle database operations and recovery runbooks edited by e2e.');
     await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('.toast-viewport')).toContainText('definition updated');
+    await expect(page.locator('.toast-viewport')).toContainText('oracle');
+    await expect(page.locator('.toast-viewport')).toContainText('updated');
     await expect(page.getByTestId('tag-card-oracle')).toContainText('edited by e2e');
 
     await page.reload();

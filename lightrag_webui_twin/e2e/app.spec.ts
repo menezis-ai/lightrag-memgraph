@@ -710,7 +710,8 @@ test.describe('Twin WebUI operator journeys', () => {
       .getByLabel('Short definition')
       .fill('Updated reliability signal definition from e2e.');
     await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('.toast-viewport')).toContainText('definition updated');
+    await expect(page.locator('.toast-viewport')).toContainText('golden-signal');
+    await expect(page.locator('.toast-viewport')).toContainText('updated');
     await expect(page.getByTestId('tag-card-golden-signal')).toContainText(
       'Updated reliability signal definition from e2e.',
     );

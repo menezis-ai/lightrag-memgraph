@@ -310,9 +310,10 @@ export function TagsTab({
             aria-expanded={pendingOpen}
           >
             <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
-            <span className="pending-title">Pending requests</span>
+            <span className="pending-title">Tag requests</span>
             <span className="pending-counts">
-              <b>{requested.length}</b> awaiting review
+              <b>{requested.length}</b> tag request
+              {requested.length === 1 ? '' : 's'} awaiting review
             </span>
             <span
               style={{

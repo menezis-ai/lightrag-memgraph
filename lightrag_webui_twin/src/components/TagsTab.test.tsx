@@ -77,6 +77,10 @@ describe('TagsTab — rendering', () => {
 
   it('renders the pending requests section with Approve/Edit-approve/Reject for palier 3', () => {
     render(<TagsTab {...defaultProps()} />);
+    expect(screen.getByText('Tag requests')).toBeInTheDocument();
+    expect(document.querySelector('.pending-counts')?.textContent).toMatch(
+      /2 tag requests awaiting review/,
+    );
     expect(screen.getByTestId('pending-argocd')).toBeInTheDocument();
     expect(screen.getByTestId('pending-pacs008')).toBeInTheDocument();
     const argocd = screen.getByTestId('pending-argocd');
