@@ -13,6 +13,36 @@ import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
+const DEFAULT_UPLOAD_CONCURRENCY = 4;
+
+async function mapSettledWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let next = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        try {
+          results[index] = {
+            status: 'fulfilled',
+            value: await fn(items[index], index),
+          };
+        } catch (reason) {
+          results[index] = { status: 'rejected', reason };
+        }
+      }
+    }),
+  );
+
+  return results;
+}
 
 export function useDocuments(
   query: { status?: string; q?: string; tag?: string; workspace?: string } = {},
@@ -339,14 +369,30 @@ export function useBulkDeleteDocuments() {
 }
 
 /**
- * Upload one file to LightRAG (multipart). Returns the InsertResponse
- * with status and track_id. Callers chain N of these for bulk upload
- * and invalidate the documents query once they all settle.
+ * Upload one file to LightRAG (multipart). Returns the InsertResponse with
+ * status and track_id. Use `useUploadDocumentsBatch` for multi-file drops so
+ * concurrency and cache invalidation stay bounded.
  */
 export function useUploadDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (file: File) => api.uploadDocument(file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['pipeline_status'] });
+    },
+  });
+}
+
+export function useUploadDocumentsBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (files: readonly File[]) =>
+      mapSettledWithConcurrency(
+        files,
+        DEFAULT_UPLOAD_CONCURRENCY,
+        (file) => api.uploadDocument(file),
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
       qc.invalidateQueries({ queryKey: ['pipeline_status'] });

@@ -99,6 +99,7 @@ export function DocumentsTab({
   );
   const [search, setSearch] = useUrlParam<string>('q', '');
   const [tagFilters, setTagFilters] = useUrlArrayParam('tag', []);
+  const [sourceFilters, setSourceFilters] = useUrlArrayParam('source', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
@@ -112,9 +113,14 @@ export function DocumentsTab({
         return false;
       if (tagFilters.length && !tagFilters.every((t) => d.tags.includes(t)))
         return false;
+      if (
+        sourceFilters.length &&
+        !sourceFilters.includes(d.file_path)
+      )
+        return false;
       return true;
     });
-  }, [docs, search, tagFilters]);
+  }, [docs, search, tagFilters, sourceFilters]);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilterKey, number> = {
@@ -205,12 +211,14 @@ export function DocumentsTab({
     statusFilter !== 'all' ||
     !!search ||
     tagFilters.length > 0 ||
+    sourceFilters.length > 0 ||
     selected.size > 0;
   const clearAllFilters = () => {
     const summary = [
       statusFilter !== 'all' && `status: ${statusFilter}`,
       search && `q: ${search}`,
       tagFilters.length > 0 && `tags: ${tagFilters.join(', ')}`,
+      sourceFilters.length > 0 && `sources: ${sourceFilters.length}`,
       selected.size > 0 && `${selected.size} selected`,
     ]
       .filter(Boolean)
@@ -218,6 +226,7 @@ export function DocumentsTab({
     setStatusFilter('all');
     setSearch('');
     setTagFilters([]);
+    setSourceFilters([]);
     setSelected(new Set());
     if (summary) onAddToast('Filters cleared', summary);
   };

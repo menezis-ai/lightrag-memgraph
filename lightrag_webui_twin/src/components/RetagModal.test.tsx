@@ -293,7 +293,6 @@ describe('RetagModal — submit & close', () => {
         onSubmit={() => {}}
       />,
     );
-    await new Promise((r) => setTimeout(r, 60));
     const input = screen.getByLabelText('Tag input') as HTMLInputElement;
     input.focus();
     await userEvent.type(input, 'ora');

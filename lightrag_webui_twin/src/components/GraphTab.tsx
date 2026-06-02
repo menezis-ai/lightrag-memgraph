@@ -85,22 +85,14 @@ export function GraphTab({
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(
     null,
   );
 
-  const typeCounts = useMemo(() => {
-    const c: Partial<Record<GraphEntityType, number>> = {};
-    entities.forEach((e) => {
-      c[e.type] = (c[e.type] ?? 0) + 1;
-    });
-    return c;
-  }, [entities]);
-
-  const matches = useMemo(() => {
+  const nonTypeFiltered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return entities.filter((e) => {
-      if (!activeTypes.includes(e.type)) return false;
       if (
         tagFilter.length > 0 &&
         !tagsOf(e).some((t) => tagFilter.includes(t))
@@ -117,7 +109,22 @@ export function GraphTab({
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, activeTypes, tagFilter, srcFilter]);
+  }, [entities, q, tagFilter, srcFilter]);
+
+  const typeCounts = useMemo(() => {
+    const c: Partial<Record<GraphEntityType, number>> = {};
+    nonTypeFiltered.forEach((e) => {
+      c[e.type] = (c[e.type] ?? 0) + 1;
+    });
+    return c;
+  }, [nonTypeFiltered]);
+
+  const matches = useMemo(() => {
+    return nonTypeFiltered.filter((e) => {
+      if (!activeTypes.includes(e.type)) return false;
+      return true;
+    });
+  }, [nonTypeFiltered, activeTypes]);
 
   const visibleIds = useMemo(() => new Set(matches.map((e) => e.id)), [matches]);
   const visibleRels = useMemo(
@@ -183,11 +190,20 @@ export function GraphTab({
       window.removeEventListener('mouseup', onUp);
     };
   }, []);
-  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const dz = e.deltaY < 0 ? 1.1 : 0.9;
-    setZoom((z) => Math.max(0.4, Math.min(3, z * dz)));
-  };
+  useEffect(() => {
+    const node = canvasRef.current;
+    if (!node) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const dz = e.deltaY < 0 ? 1.1 : 0.9;
+      setZoom((z) => Math.max(0.4, Math.min(3, z * dz)));
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      node.removeEventListener('wheel', onWheel);
+    };
+  }, []);
+
   const resetView = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -296,9 +312,9 @@ export function GraphTab({
         </aside>
 
         <div
+          ref={canvasRef}
           className="kg-canvas"
           onMouseDown={onMouseDown}
-          onWheel={onWheel}
           data-testid="kg-canvas"
           style={{ touchAction: 'none', overscrollBehavior: 'none' }}
         >
@@ -912,7 +928,15 @@ function EntityEditor({
           <div className="kg-detail-section kg-detail-cta">
             <button
               className="ghost-btn"
-              onClick={() => onNavigate?.('documents', { q: entity.name })}
+              onClick={() => {
+                const sources = docsOf(entity);
+                onNavigate?.(
+                  'documents',
+                  sources.length
+                    ? { source: sources.join(',') }
+                    : { q: entity.name },
+                );
+              }}
               type="button"
             >
               <Icon name="external-link" size={11} /> View {entity.sources}{' '}

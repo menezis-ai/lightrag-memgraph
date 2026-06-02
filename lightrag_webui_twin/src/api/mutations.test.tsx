@@ -19,6 +19,7 @@ import {
   useEditTag,
   useRejectTag,
   useRequestTag,
+  useUploadDocumentsBatch,
   useUpdateTagSynonyms,
 } from './queries';
 
@@ -37,6 +38,10 @@ function wrapper() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  return wrapperForClient(client);
+}
+
+function wrapperForClient(client: QueryClient) {
   const Wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -189,5 +194,47 @@ describe('useBulkDeleteDocuments', () => {
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.doc_ids).toEqual(['doc-a', 'doc-b']);
     expect(body.actor).toBe('claire.benoit');
+  });
+});
+
+describe('useUploadDocumentsBatch', () => {
+  it('limits concurrent uploads and invalidates once after the batch', async () => {
+    let active = 0;
+    let maxActive = 0;
+    fetchMock.mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return jsonResponse({
+        status: 'success',
+        message: 'queued',
+        track_id: `track-${fetchMock.mock.calls.length}`,
+      });
+    });
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useUploadDocumentsBatch(), {
+      wrapper: wrapperForClient(client),
+    });
+
+    const files = Array.from(
+      { length: 20 },
+      (_, i) => new File([`payload-${i}`], `doc-${i}.txt`, { type: 'text/plain' }),
+    );
+
+    await act(async () => {
+      const uploadResults = await result.current.mutateAsync(files);
+      expect(uploadResults.every((r) => r.status === 'fulfilled')).toBe(true);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+    expect(maxActive).toBeLessThanOrEqual(4);
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['documents'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pipeline_status'] });
   });
 });
