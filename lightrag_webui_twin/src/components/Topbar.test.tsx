@@ -112,17 +112,17 @@ describe('Topbar — tabs', () => {
   });
 });
 
-describe('Topbar — workspace switcher', () => {
-  it('opens the workspace menu on pill click', async () => {
+describe('Topbar — space switcher', () => {
+  it('opens the space menu on pill click', async () => {
     render(<Topbar {...baseProps()} />);
-    await userEvent.click(screen.getByTitle('Switch workspace'));
-    expect(screen.getByRole('menu', { name: 'Switch workspace' })).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle('Switch space'));
+    expect(screen.getByRole('menu', { name: 'Switch space' })).toBeInTheDocument();
   });
 
   it('invokes onSwitchWorkspace when a non-active row is picked', async () => {
     const p = baseProps();
     render(<Topbar {...p} />);
-    await userEvent.click(screen.getByTitle('Switch workspace'));
+    await userEvent.click(screen.getByTitle('Switch space'));
     // The "payments" row should be enabled (not current).
     const payments = screen.getByRole('menuitemradio', { checked: false });
     await userEvent.click(payments);
@@ -131,16 +131,16 @@ describe('Topbar — workspace switcher', () => {
     );
   });
 
-  it('disables the row matching the current workspace', async () => {
+  it('disables the row matching the current space', async () => {
     render(<Topbar {...baseProps()} />);
-    await userEvent.click(screen.getByTitle('Switch workspace'));
+    await userEvent.click(screen.getByTitle('Switch space'));
     const current = screen.getByRole('menuitemradio', { checked: true });
     expect(current).toBeDisabled();
   });
 
   it('closes the menu when Escape is pressed', async () => {
     render(<Topbar {...baseProps()} />);
-    await userEvent.click(screen.getByTitle('Switch workspace'));
+    await userEvent.click(screen.getByTitle('Switch space'));
     expect(screen.queryByRole('menu')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).toBeNull();

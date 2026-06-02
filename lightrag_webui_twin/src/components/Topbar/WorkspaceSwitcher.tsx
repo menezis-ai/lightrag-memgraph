@@ -1,19 +1,15 @@
 /**
- * WorkspaceSwitcher — dropdown listing workspaces the user can access (per
- * MyAccess claim), with click → setActiveWorkspace.
+ * WorkspaceSwitcher — transitional wrapper for the Twin space selector.
  *
- * Layered above the existing Topbar workspace pill so it can be embedded
- * either inside or outside the Topbar. Filters the workspace list to only
- * those present in `useAuth().user.workspaces` (no leak of workspaces the
- * user doesn't have a claim for, even if the fixture/API returns them).
+ * The class/test ids keep their historical `workspace` name for now, but
+ * visible copy and HTTP semantics now use Twin "spaces".
  *
- * The `X-Twin-Workspace` HTTP header (#154) is set by the host App after
+ * The `X-Twin-Space` HTTP header is set by the host App after
  * picking — this component just emits the id; it does not own the apiFetch
  * default headers.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
 import { Icon } from '../Icon';
 import type { Workspace } from '../../types/topbar';
 
@@ -28,14 +24,9 @@ export function WorkspaceSwitcher({
   workspaces,
   onPick,
 }: WorkspaceSwitcherProps) {
-  const { user } = useAuth();
-  const allowed = new Set(user?.workspaces ?? []);
-  // If MyAccess didn't list any, fall back to all (this is the dev case);
-  // production always seeds at least one workspace claim.
-  const visible =
-    allowed.size === 0
-      ? workspaces
-      : workspaces.filter((w) => allowed.has(w.id));
+  // MyAccess gates the parent BNP/LGP workspace. Spaces are scoped inside
+  // that KB, so dev/prod both show the configured space list by default.
+  const visible = workspaces;
 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -66,10 +57,10 @@ export function WorkspaceSwitcher({
         <div
           className="ws-menu"
           role="menu"
-          aria-label="Switch workspace"
+          aria-label="Switch space"
           data-testid="topbar-workspace-menu"
         >
-          <div className="ws-menu-h">Workspaces ({visible.length})</div>
+          <div className="ws-menu-h">Spaces ({visible.length})</div>
           <ul className="ws-menu-list">
             {visible.map((w) => {
               const isActive = w.id === active;
@@ -131,7 +122,7 @@ export function WorkspaceSwitcher({
                   style={{ padding: 12 }}
                   data-testid="topbar-workspace-empty"
                 >
-                  No workspace accessible with your MyAccess claim.
+                  No space available for this KB. Please contact Twincore Team
                 </div>
               </li>
             )}

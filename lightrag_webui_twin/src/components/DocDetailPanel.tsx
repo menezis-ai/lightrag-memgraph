@@ -314,7 +314,7 @@ function LineageTab({ doc, nowMs }: LineageTabProps) {
       <dl className="settings-dl">
         <dt>Source path</dt>
         <dd className="mono">{doc.file_path}</dd>
-        <dt>Workspace</dt>
+        <dt>Space</dt>
         <dd className="mono">{doc.workspace}</dd>
         <dt>Uploader</dt>
         <dd>{String(doc.metadata?.uploader ?? 'unknown')}</dd>

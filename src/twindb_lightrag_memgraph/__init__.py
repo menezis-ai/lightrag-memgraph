@@ -1137,7 +1137,10 @@ def _build_runtime_config() -> dict[str, object]:
     Override per-deploy via env vars (read late so a single ``register()``
     call can re-render against a different identity without re-importing).
     """
+    import json
     import os
+
+    from ._constants import validate_identifier
 
     api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
@@ -1145,6 +1148,69 @@ def _build_runtime_config() -> dict[str, object]:
         "TWIN_IDP_LOGOUT_URL",
         "https://idp.twin.local/realms/twin/protocol/openid-connect/logout",
     )
+    default_space_raw = (
+        os.environ.get("TWIN_DEFAULT_SPACE")
+        or os.environ.get("WORKSPACE")
+        or "default"
+    ).strip()
+    try:
+        default_space = validate_identifier(default_space_raw, "space")
+    except ValueError:
+        logger.exception("Invalid default Twin space; falling back to 'default'")
+        default_space = "default"
+    try:
+        max_spaces = int(os.environ.get("TWIN_MAX_SPACES", "5"))
+    except ValueError:
+        logger.exception("Invalid TWIN_MAX_SPACES; falling back to 5")
+        max_spaces = 5
+    max_spaces = max(1, min(5, max_spaces))
+    spaces_raw = os.environ.get("TWIN_SPACES_JSON")
+    spaces: list[dict[str, object]]
+    if spaces_raw:
+        try:
+            parsed = json.loads(spaces_raw)
+            if not isinstance(parsed, list):
+                raise ValueError("TWIN_SPACES_JSON must be a JSON array")
+            spaces = []
+            for item in parsed[:max_spaces]:
+                if not isinstance(item, dict):
+                    continue
+                sid_raw = str(item.get("id") or "").strip()
+                if not sid_raw:
+                    continue
+                try:
+                    sid = validate_identifier(sid_raw, "space")
+                except ValueError:
+                    logger.exception("Skipping invalid Twin space id")
+                    continue
+                spaces.append(
+                    {
+                        "id": sid,
+                        "label": str(item.get("label") or sid),
+                        "kind": str(item.get("kind") or "custom"),
+                        "description": str(item.get("description") or ""),
+                        "sources": int(item.get("sources") or 0),
+                    }
+                )
+        except Exception:
+            logger.exception(
+                "Invalid TWIN_SPACES_JSON; falling back to TWIN_DEFAULT_SPACE"
+            )
+            spaces = []
+    else:
+        spaces = []
+    if not spaces:
+        spaces = [
+            {
+                "id": default_space,
+                "label": os.environ.get("TWIN_DEFAULT_SPACE_LABEL", "Default space"),
+                "kind": "primary",
+                "description": "SRE-provisioned default space for this KB.",
+                "sources": 0,
+            }
+        ]
+    if not any(space["id"] == default_space for space in spaces):
+        default_space = str(spaces[0]["id"])
     debug_user = {
         "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
@@ -1154,7 +1220,7 @@ def _build_runtime_config() -> dict[str, object]:
             "label": "Steward",
             "scopes": ["twin:read", "twin:write", "twin:approve"],
         },
-        "workspaces": [os.environ.get("WORKSPACE", "default")],
+        "workspaces": [space["id"] for space in spaces],
         "idp": "local-debug",
         "idp_realm": "twin-local",
         "sub": "local-debug-sub",
@@ -1172,6 +1238,9 @@ def _build_runtime_config() -> dict[str, object]:
         "apiBaseUrl": api_base,
         "lightragBaseUrl": lightrag_base,
         "idpLogoutUrl": idp_logout,
+        "defaultSpaceId": default_space,
+        "spaces": spaces,
+        "maxSpaces": max_spaces,
         "debugUser": debug_user,
     }
 

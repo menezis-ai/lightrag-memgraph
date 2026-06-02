@@ -1,5 +1,5 @@
 /**
- * Settings tab fixtures — Workspace identity + retention table.
+ * Settings tab fixtures — Space identity + retention table.
  *
  * Mirrors the prototype `data.js` `WORKSPACE_SETTINGS` shape. Real runtime
  * values come from `/twin/api/workspaces/{id}/settings` once the server
@@ -28,17 +28,17 @@ export interface WorkspaceSettings {
 }
 
 export const WORKSPACE_SETTINGS: WorkspaceSettings = {
-  workspace_id: 'cib',
-  display_name: 'CIB KB',
+  workspace_id: 'default',
+  display_name: 'Default space',
   visibility: 'private',
   visibility_env: 'TWIN_INSTANCE_VISIBILITY',
   region: 'eu-west-3 · dc-paris',
-  retention_policy: 'twin-cib-retention-v2.1',
+  retention_policy: 'twin-default-space-retention-v1',
   retention: [
     { area: 'Source mgmt', ttl: '90d', note: 'uploads, deletes, re-ingests' },
     { area: 'Tag mgmt', ttl: '90d', note: 'requests, approvals, deprecations' },
     { area: 'Retrieval', ttl: '30d', note: 'queries + cited sources' },
-    { area: 'Admin', ttl: '1y', note: 'workspace + provider changes' },
+    { area: 'Admin', ttl: '1y', note: 'space + provider changes' },
     { area: 'Auth', ttl: '1y', note: 'logins, token mints' },
     { area: 'Policy / System', ttl: '7y', note: 'policy violations, system actions' },
   ],

@@ -92,7 +92,7 @@ describe('useAuth — dev fallback', () => {
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.palier.level).toBe(3);
     expect(result.current.user?.palier.label).toBe('Steward');
-    expect(result.current.user?.workspaces).toContain('cib');
+    expect(result.current.user?.workspaces).toContain('default');
   });
 
   it('returns the same config across re-renders (cached)', () => {

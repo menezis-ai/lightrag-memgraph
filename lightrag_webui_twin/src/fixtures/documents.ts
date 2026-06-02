@@ -144,7 +144,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['rman', 'oracle'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
   },
   {
@@ -161,7 +161,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'claire.benoit', classification: 'internal' },
     type: 'confluence',
     tags: ['rman'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
     extracted_text: D2_EXTRACTED,
     review: {
@@ -194,7 +194,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { mime: 'application/zip', uploader: 'claire.benoit' },
     type: 'sharepoint',
     tags: [],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
   },
   {
@@ -227,7 +227,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['memgraph', 'mage'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
   },
   {
@@ -245,7 +245,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'manu.dev', classification: 'restricted' },
     type: 'confluence',
     tags: ['incident', 'oracle', 'production'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
   },
   {
@@ -279,7 +279,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['cft', 'network'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
     extracted_text: D6_EXTRACTED,
     review: {
@@ -306,7 +306,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'yann.dubois' },
     type: 'confluence',
     tags: ['incident', 'production'],
-    workspace: 'cib',
+    workspace: 'default',
     visibility: 'private',
     extracted_text: D7_EXTRACTED,
     review: {

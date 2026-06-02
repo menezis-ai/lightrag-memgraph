@@ -38,7 +38,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
     error_msg: null,
     metadata: {},
     visibility: 'private',
-    workspace: 'cib',
+    workspace: 'default',
     ...overrides,
   };
 }

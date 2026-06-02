@@ -7,18 +7,103 @@
 > picking up this work has the full contract without reading the entire
 > session log.
 
-## TL;DR — state of play, 2026-05-31
+## TL;DR — state of play, 2026-06-02
 
 | Couche | Scope | Status | Reference |
 |---|---|---|---|
 | **0** | Decisions + branch hygiene + visual snapshot | ✅ Done | session log |
 | **1** | Visual port from `~/Downloads/prototype/` to React/TS | ✅ Done | PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158), [#159](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/159) |
 | **2** | BNP classification (TS types + ClassPill + DocDetailPanel gating + Python extractor + pre-insert hook) | ✅ Done | PR [#157](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/157) (Python) + PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158) (TS UI) |
-| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Workspace header, drop MSW in prod) | ⏸ **TODO** | this document |
+| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Partial** — runtime config + frontend space cutover done; backend enforcement remains | this document |
 
 The standalone OVH demo at https://maquette.sigilum.fr/ uses the React
 port with **MSW client-side** (everything mocked in the browser, no
 backend). Couche 3 replaces MSW with the real LightRAG + Twin overlay.
+
+## Update 2026-06-02 — Runtime config + Twin spaces
+
+Implementation status:
+
+- The React client no longer hardcodes `cib`; the initial Twin space comes
+  from `window.__twinConfig.defaultSpaceId` / `window.__twinConfig.spaces`.
+- The server injects `defaultSpaceId`, `spaces`, and `maxSpaces` into the
+  runtime config from env vars:
+  - `TWIN_DEFAULT_SPACE` (fallback: `WORKSPACE`, then `default`)
+  - `TWIN_DEFAULT_SPACE_LABEL`
+  - `TWIN_SPACES_JSON`
+  - `TWIN_MAX_SPACES` (clamped to 1..5: one default + four admin-created)
+- The HTTP client sends `X-Twin-Space` on API requests. It also sends the
+  legacy `X-Twin-Workspace` header during the transition so existing backend
+  code keeps working while the backend contract moves to "space".
+- Visible UI copy now says "Space" / "Spaces". The empty state is:
+  `No space available for this KB. Please contact Twincore Team`.
+
+Env contract for SRE/devOps:
+
+```bash
+TWIN_DEFAULT_SPACE=default
+TWIN_DEFAULT_SPACE_LABEL="Default space"
+TWIN_MAX_SPACES=5
+TWIN_SPACES_JSON='[
+  {
+    "id": "default",
+    "label": "Default space",
+    "kind": "primary",
+    "description": "SRE-provisioned default space for this KB.",
+    "sources": 0
+  },
+  {
+    "id": "sandbox",
+    "label": "Sandbox",
+    "kind": "sandbox",
+    "description": "Operator-managed test space.",
+    "sources": 0
+  }
+]'
+```
+
+Rules:
+
+- `TWIN_DEFAULT_SPACE` is mandatory conceptually: every KB has one default
+  space provisioned by SRE/devOps. Code fallback is `WORKSPACE`, then
+  `default`, only to keep dev/test bootable.
+- `TWIN_MAX_SPACES` is clamped to `1..5`. Product rule = one default space
+  plus up to four admin-created spaces.
+- Space ids are validated with the same safe identifier rule as Memgraph
+  workspace labels: non-empty `[a-zA-Z0-9_]`.
+- `TWIN_SPACES_JSON` is the deployment-time source of truth until the admin
+  CRUD exists.
+
+Code touched in this update:
+
+- `src/twindb_lightrag_memgraph/__init__.py` — runtime config now emits
+  `defaultSpaceId`, `spaces`, and `maxSpaces`.
+- `lightrag_webui_twin/src/api/client.ts` — runtime URL bases plus
+  `X-Twin-Space` header, with temporary `X-Twin-Workspace` compatibility.
+- `lightrag_webui_twin/src/App.tsx` — active space initialized from runtime
+  config and switched through `setActiveSpace`.
+- `lightrag_webui_twin/src/types/auth.ts` and `src/config/devConfig.ts` —
+  typed space config and dev defaults.
+- UI copy under `components/` — visible vocabulary changed from workspace to
+  space where it describes Twin sub-scopes.
+
+Validated:
+
+- `cd lightrag_webui_twin && bun run typecheck`
+- `cd lightrag_webui_twin && bun run test:run` — 325 tests passed
+- `cd lightrag_webui_twin && bun run build`
+- `.venv/bin/pytest tests/test_register.py -q` — 9 tests passed
+- `git diff --check`
+
+Still to do:
+
+- Backend enforcement: read `X-Twin-Space`, validate against the configured
+  space list, and apply the Memgraph space filter on documents, tags,
+  activity, graph queries, and Twin endpoints.
+- Admin lifecycle: create/update/delete up to four additional spaces beyond
+  the SRE-provisioned default.
+- Clean up remaining internal `workspace` names once the backend contract has
+  fully migrated; keep compatibility until then.
 
 ---
 
@@ -51,7 +136,7 @@ return the structured classification when present:
 ```json
 {
   "tags": ["rman", "oracle"],
-  "workspace": "cib",
+  "space": "default",
   "review": { ... },
   "classification": {
     "class_id": "C2",
@@ -101,7 +186,7 @@ notice gate on `isAboveInternal(cls)` = "above C2 on the BNP ladder".
 2. **Set env vars** on the LightRAG host:
    ```bash
    TWIN_MIP_LABEL_MAP=/etc/twin/labels.json
-   TWIN_MIP_MAX_CLASSIFICATION=C2   # adjust per workspace
+   TWIN_MIP_MAX_CLASSIFICATION=C2   # adjust per KB / space policy
    ```
 
 3. **Install the hook** (Couche 3 wiring — see below) in the FastAPI
@@ -167,7 +252,7 @@ classification hook active.
 | `src/twindb_lightrag_memgraph/server/routes_workspaces.py` | **NEW** | `/twin/api/workspaces`, `/twin/api/notifications` |
 | `src/twindb_lightrag_memgraph/server/routes_graph.py` | **NEW** | `/twin/api/graph/entities`, `/twin/api/graph/relations` |
 | `src/twindb_lightrag_memgraph/server/routes_auth.py` | **NEW** | `/twin/api/auth/logout` (revoke server-side session + Set-Cookie clear) |
-| `src/twindb_lightrag_memgraph/server/middleware_workspace.py` | **NEW** | Read `X-Twin-Workspace` header on every request, scope downstream queries |
+| `src/twindb_lightrag_memgraph/server/middleware_space.py` | **NEW** | Read `X-Twin-Space` header on every request, scope downstream queries |
 | `src/twindb_lightrag_memgraph/server/middleware_jwt.py` | **NEW** | Decode Keycloak/IdP JWT cookie → set `request.state.user: AuthenticatedUser` |
 | `src/twindb_lightrag_memgraph/server/serve_webui.py` | **NEW** | `GET /webui/` reads `dist/index.html`, substitutes `__TWIN_CONFIG_JSON__` with JSON built from env + JWT claims |
 | `src/twindb_lightrag_memgraph/__init__.py` | **EDIT** | Add `replace_ui: bool`, `mount_server: bool`, `webui_dist_path: str` kwargs to `register()`; wire the sub-app + WebUI mount when set |
@@ -188,7 +273,7 @@ classification hook active.
       the LightRAG server).
 - [ ] Implement `routes_documents.py`:
   - `GET /documents/{id}/metadata` → reads DocStatus from
-    `MemgraphDocStatusStorage`, returns `{tags, workspace, review,
+    `MemgraphDocStatusStorage`, returns `{tags, space, review,
     classification}` (extract `classification` from
     `DocStatus.metadata.classification`).
   - `POST /documents/{id}/approve` body `{actor, edits?}` → updates
@@ -216,9 +301,9 @@ them. Options:
 
 Go with Memgraph labels — keeps the "one DB, three pools" story
 intact and the audit feed query is a simple `MATCH (n:Twin_Activity)
-WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
+WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 
-#### 3.3 — JWT middleware + workspace scoping (3h)
+#### 3.3 — JWT middleware + space scoping (3h)
 
 - [ ] `middleware_jwt.py`: decode the BNP IdP / Keycloak JWT from
       cookie (HttpOnly, SameSite=Lax). Validate signature against the
@@ -227,12 +312,14 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
       Failure modes: missing cookie → 401, expired → 401 with
       `WWW-Authenticate: Bearer error="expired"`, signature mismatch
       → 401.
-- [ ] `middleware_workspace.py`: read `X-Twin-Workspace` header (set
-      by the React WorkspaceSwitcher), validate it's in
-      `request.state.user.workspaces`, set `request.state.workspace`.
-      Downstream routes read this to scope every query (Memgraph
-      labels are `KV_{workspace}_{namespace}` etc — no leakage by
-      construction, but the middleware is the assertion point).
+- [x] Frontend side: `apiFetch` sets `X-Twin-Space` on every request
+      from the active runtime-configured space. It also sends
+      `X-Twin-Workspace` temporarily for old route code.
+- [ ] Backend side: read `X-Twin-Space` first, accept
+      `X-Twin-Workspace` as a temporary fallback, validate the id against
+      the configured space list, and set `request.state.space`.
+      Downstream routes read this to scope every Twin query in the same
+      Memgraph database.
 - [ ] Wire both in `register()` so every `/twin/api/*` request hits
       them before the route handlers.
 
@@ -244,8 +331,11 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
       ```python
       json.dumps({
         "apiBaseUrl": "/twin/api",
-        "lightragBaseUrl": "/api",
+        "lightragBaseUrl": "",
         "idpLogoutUrl": os.environ["TWIN_IDP_LOGOUT_URL"],
+        "defaultSpaceId": os.environ["TWIN_DEFAULT_SPACE"],
+        "spaces": json.loads(os.environ["TWIN_SPACES_JSON"]),
+        "maxSpaces": 5,
         "debugUser": None,  # PROD: no debug user, real JWT decoded server-side
       })
       ```
@@ -268,14 +358,14 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 
 #### 3.6 — Frontend cutover (2h)
 
-- [ ] `client.ts`: read `apiBaseUrl` from `window.__twinConfig`. The
+- [x] `client.ts`: read `apiBaseUrl` from `window.__twinConfig`. The
       MSW gate in `main.tsx` already turns off MSW unless
       `VITE_FORCE_MSW=true`, so a PROD build automatically hits the
       real backend.
-- [ ] Add `X-Twin-Workspace` header to every fetch: extend `apiFetch`
-      to read the current workspace from a React context (the
-      `WorkspaceSwitcher` already updates it).
-- [ ] `useAuth.signout()` is already wired correctly (POST
+- [x] Add `X-Twin-Space` header to every fetch: `apiFetch` reads the
+      active space set by the App/Topbar selector. `X-Twin-Workspace`
+      remains as a temporary compatibility header.
+- [x] `useAuth.signout()` is already wired correctly (POST
       `/twin/api/auth/logout` → `queryClient.clear()` → redirect IdP).
       Confirm the IdP URL is read from `window.__twinConfig.idpLogoutUrl`.
 
@@ -289,12 +379,12 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
       tagged C3 with `TWIN_MIP_MAX_CLASSIFICATION=C2`, assert the
       DocStatus is `FAILED` with the expected `error_msg`, and an
       activity event of kind `classification-rejected` exists.
-- [ ] `test_workspace_scoping.py`: insert docs in workspace `cib` and
-      `wm`, GET `/documents` with `X-Twin-Workspace: cib`, assert only
-      `cib` docs returned.
+- [ ] `test_space_scoping.py`: insert docs in spaces `default` and
+      `sandbox`, GET `/documents` with `X-Twin-Space: default`, assert
+      only `default` docs returned.
 - [ ] `test_jwt_middleware.py`: GET `/twin/api/workspaces` without
-      cookie → 401; with a valid JWT for a user with `workspaces:
-      ["cib", "wm"]` → 200 with both listed.
+      cookie → 401; with a valid JWT for a user allowed on the parent
+      KB → 200 with the configured space list.
 - [ ] Add the new tests to the `integration-tests` job in
       `.forgejo/workflows/ci.yml` (already includes a Memgraph service
       container).
@@ -326,7 +416,7 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 | `register()` flag explosion (replace_ui, mount_server, classify, ...) | High if not designed carefully | Group under a single `extensions=ExtensionConfig(...)` dataclass; keep `register()` signature small |
 | Frontend MSW removal breaks the dev story | Low (MSW stays on in DEV by default) | The activation matrix in `main.tsx` is already documented — don't regress |
 | BNP tenant label map mismatched with Compliance Center | Medium | Add a `/twin/api/classification/_self_check` debug endpoint that returns the loaded map + lets ops validate visually |
-| Real fetch + TanStack Query cache thrash on workspace switch | Medium | On `setActiveWorkspace`, call `queryClient.removeQueries()` for all `['documents', '...']` keys — already in App.tsx skeleton, just needs confirmation |
+| Real fetch + TanStack Query cache thrash on space switch | Medium | On `setActiveSpace`, call `queryClient.removeQueries()` for all `['documents', '...']` keys — already in App.tsx skeleton, just needs confirmation |
 
 ### Sequencing recommendation
 
@@ -335,7 +425,7 @@ WHERE n.workspace = $ws RETURN n ORDER BY n.ts DESC LIMIT $limit`.
                              │                                  │
 3.2 persistence (4h) ────────┤                                  │
                              │                                  ├─→ 3.8 deploy (2h)
-3.3 JWT + workspace (3h) ────┤                                  │
+3.3 JWT + space (3h) ────────┤                                  │
                              │                                  │
 3.4 index.html mount (2h) ───┤                                  │
                              │                                  │

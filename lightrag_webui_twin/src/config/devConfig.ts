@@ -16,8 +16,24 @@ import type { TwinRuntimeConfig } from '../types/auth';
 
 export const DEV_CONFIG: TwinRuntimeConfig = {
   apiBaseUrl: '/twin/api',
-  lightragBaseUrl: '/api',
+  lightragBaseUrl: '',
   idpLogoutUrl: 'https://idp.twin.internal/realms/twin/protocol/openid-connect/logout',
+  defaultSpaceId: 'default',
+  maxSpaces: 5,
+  spaces: [
+    {
+      id: 'default',
+      label: 'Default space',
+      kind: 'primary',
+      description: 'SRE-provisioned default space for this KB.',
+    },
+    {
+      id: 'sandbox',
+      label: 'Sandbox',
+      kind: 'sandbox',
+      description: 'Optional test space isolated from agent-facing data.',
+    },
+  ],
   debugUser: {
     sso_subject: 'claire.benoit@demo.local',
     email: 'claire.benoit@demo.local',
@@ -27,7 +43,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
       label: 'Steward',
       scopes: ['twin:read', 'twin:write', 'twin:approve'],
     },
-    workspaces: ['cib', 'cib-edge', 'payments', 'infra', 'sandbox'],
+    workspaces: ['default', 'sandbox'],
     idp: 'keycloak',
     idp_realm: 'twin-cib',
     sub: 'clb-7f4e',
