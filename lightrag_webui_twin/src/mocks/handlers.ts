@@ -28,6 +28,7 @@ import {
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
 import type { Document } from '../types/document';
+import type { TagCategory } from '../types/tag';
 
 const ANY = '*';
 const TWIN = '/twin/api';
@@ -41,9 +42,30 @@ const TWIN = '/twin/api';
  * each other.
  */
 let documentsState: Document[] = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
+let categoryState: TagCategory[] = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
+let uploadSeq = 0;
+const uploadedTrackDocs = new Map<string, string>();
+
+interface E2eScenario {
+  bulkRetagStatus?: number;
+  approveDelayMs?: number;
+  trackStatusMode?: 'empty' | 'processed' | 'timeout';
+}
+
+const e2eScenario: E2eScenario = {};
+const e2eStats = {
+  approveCalls: {} as Record<string, number>,
+};
 
 export function resetDocumentsState(): void {
   documentsState = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
+  categoryState = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
+  uploadedTrackDocs.clear();
+  uploadSeq = 0;
+  e2eScenario.bulkRetagStatus = undefined;
+  e2eScenario.approveDelayMs = undefined;
+  e2eScenario.trackStatusMode = undefined;
+  e2eStats.approveCalls = {};
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
@@ -105,6 +127,23 @@ function tagEntryStub(name: string, status: string, action: string) {
 
 export const handlers = [
   // -------------------------------------------------------------------------
+  // E2E-only controls. These endpoints are intercepted by MSW in dev/test and
+  // let Playwright simulate backend failures without changing app code.
+  // -------------------------------------------------------------------------
+  http.post(`${ANY}/__e2e/reset`, () => {
+    resetDocumentsState();
+    return HttpResponse.json({ ok: true });
+  }),
+  http.post(`${ANY}/__e2e/scenario`, async ({ request }) => {
+    const patch = (await request.json()) as E2eScenario;
+    Object.assign(e2eScenario, patch);
+    return HttpResponse.json({ ok: true, scenario: e2eScenario });
+  }),
+  http.get(`${ANY}/__e2e/stats`, () =>
+    HttpResponse.json({ approveCalls: e2eStats.approveCalls }),
+  ),
+
+  // -------------------------------------------------------------------------
   // LightRAG-native endpoints
   // -------------------------------------------------------------------------
   http.get(`${ANY}/documents`, ({ request }) => {
@@ -134,6 +173,88 @@ export const handlers = [
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
     return HttpResponse.json({ ok: true });
+  }),
+  http.post(`${ANY}/documents/upload`, async ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const form = await request.formData();
+    const file = form.get('file');
+    const name =
+      file instanceof File && file.name
+        ? file.name
+        : `uploaded-${Date.now()}.txt`;
+    uploadSeq += 1;
+    const trackId = `track_${name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
+    const docId = `uploaded_${uploadSeq}`;
+    uploadedTrackDocs.set(trackId, docId);
+    documentsState = [
+      {
+        doc_id: docId,
+        track_id: trackId,
+        file_path: name,
+        content_summary: `${name} uploaded by e2e`,
+        content_length: file instanceof File ? file.size : 0,
+        status: 'PROCESSED',
+        chunks_count: 1,
+        created_at: '2026-06-02T00:00:00Z',
+        updated_at: '2026-06-02T00:00:00Z',
+        error_msg: null,
+        metadata: { mime: file instanceof File ? file.type : 'text/plain', uploader: 'e2e' },
+        type: 'file',
+        tags: [],
+        workspace: 'cib',
+        visibility: 'private',
+      },
+      ...documentsState,
+    ];
+    return HttpResponse.json({
+      status: 'success',
+      message: `${name} queued for ingestion`,
+      track_id: trackId,
+    });
+  }),
+  http.get(`${ANY}/documents/track_status/:trackId`, ({ params, request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const trackId = String(params.trackId);
+    const docId = uploadedTrackDocs.get(trackId);
+    if (e2eScenario.trackStatusMode === 'processed' && docId) {
+      const doc = documentsState.find((d) => d.doc_id === docId);
+      return HttpResponse.json({
+        track_id: trackId,
+        documents: doc
+          ? [{ id: doc.doc_id, status: 'processed', file_path: doc.file_path }]
+          : [],
+        total_count: doc ? 1 : 0,
+        status_summary: doc ? { processed: 1 } : {},
+      });
+    }
+    if (e2eScenario.trackStatusMode === 'timeout') {
+      return HttpResponse.json({
+        track_id: trackId,
+        documents: docId
+          ? [{ id: docId, status: 'processing', file_path: documentsState.find((d) => d.doc_id === docId)?.file_path ?? docId }]
+          : [],
+        total_count: docId ? 1 : 0,
+        status_summary: docId ? { processing: 1 } : {},
+      });
+    }
+    return HttpResponse.json({
+      track_id: trackId,
+      documents: [],
+      total_count: 0,
+      status_summary: {},
+    });
+  }),
+  http.post(`${ANY}/documents/reprocess_failed`, ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const failedCount = documentsState.filter((d) => d.status === 'FAILED').length;
+    return HttpResponse.json({
+      status: 'queued',
+      message: 'LightRAG is retrying all FAILED docs',
+      failed_count: failedCount,
+    });
   }),
   http.delete(`${ANY}/documents/:id`, ({ params, request }) => {
     const url = new URL(request.url);
@@ -178,9 +299,34 @@ export const handlers = [
     HttpResponse.json(THESAURUS_FIXTURES),
   ),
   http.get(`${ANY}${TWIN}/tags`, () => HttpResponse.json(TAG_FIXTURES)),
-  http.get(`${ANY}${TWIN}/tags/categories`, () =>
+  http.get(`${ANY}${TWIN}/tags/categories`, () => HttpResponse.json(categoryState)),
+  http.get(`${ANY}${TWIN}/tags/categories/template`, () =>
     HttpResponse.json(TAG_CATEGORY_FIXTURES),
   ),
+  http.post(`${ANY}${TWIN}/tags/categories/_import`, async ({ request }) => {
+    const body = (await request.json().catch(() => null)) as
+      | { id?: string; label?: string; color?: string }[]
+      | null;
+    if (!Array.isArray(body)) {
+      return HttpResponse.json(
+        { detail: 'Root must be a JSON array of category objects.' },
+        { status: 400 },
+      );
+    }
+    const bad = body.findIndex((c) => !c.id || !c.label || !c.color);
+    if (bad >= 0) {
+      return HttpResponse.json(
+        { detail: `Category[${bad}] missing required fields: id, label, color` },
+        { status: 400 },
+      );
+    }
+    categoryState = body.map((c) => ({
+      id: c.id!,
+      label: c.label!,
+      color: c.color!,
+    }));
+    return HttpResponse.json({ ok: true, count: categoryState.length });
+  }),
 
   http.post(`${ANY}${TWIN}/tags`, async ({ request }) => {
     const body = (await request.json()) as {
@@ -266,6 +412,10 @@ export const handlers = [
     `${ANY}${TWIN}/documents/:id/approve`,
     async ({ params, request }) => {
       const id = String(params.id);
+      e2eStats.approveCalls[id] = (e2eStats.approveCalls[id] ?? 0) + 1;
+      if (e2eScenario.approveDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, e2eScenario.approveDelayMs));
+      }
       const body = (await request.json().catch(() => ({}))) as {
         edits?: Partial<Document>;
       };
@@ -301,6 +451,35 @@ export const handlers = [
     const ids = new Set(body.doc_ids);
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
     return HttpResponse.json({ deleted: body.doc_ids.length });
+  }),
+  http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {
+    if (e2eScenario.bulkRetagStatus) {
+      return HttpResponse.json(
+        { detail: `Forced bulk-retag failure ${e2eScenario.bulkRetagStatus}` },
+        { status: e2eScenario.bulkRetagStatus },
+      );
+    }
+    const body = (await request.json()) as {
+      targets: string[];
+      adds?: string[];
+      removes?: string[];
+    };
+    const targetIds = new Set(body.targets);
+    const failed: string[] = [];
+    body.targets.forEach((id) => {
+      if (!documentsState.some((d) => d.doc_id === id)) failed.push(id);
+    });
+    documentsState = documentsState.map((doc) => {
+      if (!targetIds.has(doc.doc_id)) return doc;
+      const tags = new Set(doc.tags);
+      (body.adds ?? []).forEach((tag) => tags.add(tag));
+      (body.removes ?? []).forEach((tag) => tags.delete(tag));
+      return { ...doc, tags: Array.from(tags) };
+    });
+    return HttpResponse.json({
+      updated: body.targets.length - failed.length,
+      failed,
+    });
   }),
 
   // Auth
