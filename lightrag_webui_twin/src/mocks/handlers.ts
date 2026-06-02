@@ -28,6 +28,7 @@ import {
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
 import type { Document } from '../types/document';
+import type { Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 
 const ANY = '*';
@@ -44,32 +45,42 @@ const TWIN = '/twin/api';
 let documentsState: Document[] = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
 let categoryState: TagCategory[] = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
 let tagState: TagEntry[] = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
+let notificationState: Notification[] = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
+let activityState: ActivityEvent[] = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 
 interface E2eScenario {
   bulkRetagStatus?: number;
   approveDelayMs?: number;
+  tagApproveDelayMs?: number;
   trackStatusMode?: 'empty' | 'processed' | 'timeout';
   authGate?: boolean;
+  uploadFailureNames?: string[];
 }
 
 const e2eScenario: E2eScenario = {};
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
+  tagApproveCalls: {} as Record<string, number>,
 };
 
 export function resetDocumentsState(): void {
   documentsState = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
   categoryState = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
   tagState = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
+  notificationState = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
+  activityState = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
   uploadedTrackDocs.clear();
   uploadSeq = 0;
   e2eScenario.bulkRetagStatus = undefined;
   e2eScenario.approveDelayMs = undefined;
+  e2eScenario.tagApproveDelayMs = undefined;
   e2eScenario.trackStatusMode = undefined;
   e2eScenario.authGate = undefined;
+  e2eScenario.uploadFailureNames = undefined;
   e2eStats.approveCalls = {};
+  e2eStats.tagApproveCalls = {};
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
@@ -82,6 +93,8 @@ function updateDoc(id: string, patch: Partial<Document>): Document | null {
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
+  const workspace = params.get('workspace');
+  if (workspace && d.workspace !== workspace) return false;
   const q = params.get('q');
   if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
   const tag = params.get('tag');
@@ -136,6 +149,37 @@ function upsertTag(tag: TagEntry): TagEntry {
   return tag;
 }
 
+function recordTagMutation(name: string, suffix: string): void {
+  notificationState = [
+    {
+      id: `n_tag_${name}_${Date.now()}`,
+      kind: 'tag-mutation',
+      title: 'Tag',
+      tagname: name,
+      suffix,
+      sub: 'Thesaurus updated by e2e steward action',
+      rel: 'now',
+      read: false,
+    },
+    ...notificationState,
+  ];
+  activityState = [
+    {
+      id: `evt_tag_${name}_${Date.now()}`,
+      ts: '2026-06-02T00:00:00Z',
+      rel: 'now',
+      day: 'Today',
+      kind: 'tag-mutation',
+      sev: 'info',
+      actor: { user: 'claire.benoit', role: 'KB Admin' },
+      target: { type: 'tag', label: name, id: name },
+      summary: `Tag ${name} ${suffix}`,
+      meta: { tag: name, action: suffix },
+    },
+    ...activityState,
+  ];
+}
+
 function authGateResponse(
   request: Request,
 ): ReturnType<typeof HttpResponse.json> | undefined {
@@ -188,7 +232,10 @@ export const handlers = [
     return HttpResponse.json({ ok: true, scenario: e2eScenario });
   }),
   http.get(`${ANY}/__e2e/stats`, () =>
-    HttpResponse.json({ approveCalls: e2eStats.approveCalls }),
+    HttpResponse.json({
+      approveCalls: e2eStats.approveCalls,
+      tagApproveCalls: e2eStats.tagApproveCalls,
+    }),
   ),
   http.post(`${ANY}/__e2e/documents`, async ({ request }) => {
     const body = (await request.json()) as
@@ -242,6 +289,12 @@ export const handlers = [
       file instanceof File && file.name
         ? file.name
         : `uploaded-${Date.now()}.txt`;
+    if (e2eScenario.uploadFailureNames?.includes(name)) {
+      return HttpResponse.json(
+        { detail: `${name} upload failed by e2e scenario` },
+        { status: 500 },
+      );
+    }
     uploadSeq += 1;
     const trackId = `track_${name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
     const docId = `uploaded_${uploadSeq}`;
@@ -343,14 +396,16 @@ export const handlers = [
     HttpResponse.json(WORKSPACE_FIXTURES),
   ),
   http.get(`${ANY}${TWIN}/notifications`, () =>
-    HttpResponse.json(NOTIFICATION_FIXTURES),
+    HttpResponse.json(notificationState),
   ),
-  http.post(`${ANY}${TWIN}/notifications/read-all`, () =>
-    HttpResponse.json({ ok: true }),
-  ),
-  http.delete(`${ANY}${TWIN}/notifications`, () =>
-    HttpResponse.json({ ok: true }),
-  ),
+  http.post(`${ANY}${TWIN}/notifications/read-all`, () => {
+    notificationState = notificationState.map((n) => ({ ...n, read: true }));
+    return HttpResponse.json({ ok: true });
+  }),
+  http.delete(`${ANY}${TWIN}/notifications`, () => {
+    notificationState = [];
+    return HttpResponse.json({ ok: true });
+  }),
 
   http.get(`${ANY}${TWIN}/health`, () => HttpResponse.json({ status: 'ok' })),
 
@@ -383,6 +438,28 @@ export const handlers = [
         { status: 400 },
       );
     }
+    const seen = new Set<string>();
+    const duplicate = body.findIndex((c) => {
+      if (!c.id) return false;
+      if (seen.has(c.id)) return true;
+      seen.add(c.id);
+      return false;
+    });
+    if (duplicate >= 0) {
+      return HttpResponse.json(
+        { detail: `Category[${duplicate}] duplicate id: ${body[duplicate].id}` },
+        { status: 400 },
+      );
+    }
+    const badColor = body.findIndex(
+      (c) => !/^#[0-9a-f]{6}$/i.test(String(c.color)),
+    );
+    if (badColor >= 0) {
+      return HttpResponse.json(
+        { detail: `Category[${badColor}] color must be a #RRGGBB hex value` },
+        { status: 400 },
+      );
+    }
     categoryState = body.map((c) => ({
       id: c.id!,
       label: c.label!,
@@ -404,8 +481,15 @@ export const handlers = [
     });
     return HttpResponse.json(next, { status: 201 });
   }),
-  http.post(`${ANY}${TWIN}/tags/:name/approve`, ({ params }) => {
+  http.post(`${ANY}${TWIN}/tags/:name/approve`, async ({ params }) => {
     const name = String(params.name);
+    e2eStats.tagApproveCalls[name] =
+      (e2eStats.tagApproveCalls[name] ?? 0) + 1;
+    if (e2eScenario.tagApproveDelayMs) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, e2eScenario.tagApproveDelayMs),
+      );
+    }
     const current = tagState.find((t) => t.tag === name);
     const next = upsertTag({
       ...(current ?? tagEntryStub(name, 'active', 'approved')),
@@ -413,6 +497,7 @@ export const handlers = [
       tier: 3,
       last_edit: { by: 'system', at: '2026-05-29', action: 'approved' },
     });
+    recordTagMutation(name, 'approved');
     return HttpResponse.json(next);
   }),
   http.post(`${ANY}${TWIN}/tags/:name/reject`, ({ params }) => {
@@ -470,7 +555,7 @@ export const handlers = [
 
   http.get(`${ANY}${TWIN}/activity`, ({ request }) => {
     const url = new URL(request.url);
-    const filtered = ACTIVITY_FIXTURES.filter((e) =>
+    const filtered = activityState.filter((e) =>
       matchActivityQuery(e, url.searchParams),
     );
     return HttpResponse.json({

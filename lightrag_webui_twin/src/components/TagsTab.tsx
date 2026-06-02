@@ -40,7 +40,7 @@ export interface TagsTabProps {
   categories: readonly TagCategory[];
   currentUser: TagCurrentUser;
   /** Direct approve (palier-3 fast path for a pending request). */
-  onApprove?: (action: TagApproveAction) => void;
+  onApprove?: (action: TagApproveAction) => void | Promise<void>;
   /** Commit handler for the 8-kind modal dispatch. */
   onCommit?: (commit: TagActionCommit) => void;
   /** Host-controlled tab navigation (replaces direct window.history mutation). */
@@ -68,6 +68,9 @@ export function TagsTab({
   const [selectedTag, setSelectedTag] = useUrlParam<string>('tag', tags[0]?.tag ?? '');
   const [pendingOpen, setPendingOpen] = useState(true);
   const [modal, setModal] = useState<TagAction | null>(null);
+  const [approvingTags, setApprovingTags] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   // ── Taxonomy import / template download ─────────────────────────
   // Doctrine: categories are governance taxonomy, not user-generated.
@@ -348,9 +351,20 @@ export function TagsTab({
                     <div className="pending-actions">
                       <button
                         className="primary-btn small"
-                        onClick={() => onApprove?.({ tag: t })}
+                        disabled={approvingTags.has(t.tag)}
+                        onClick={() => {
+                          if (approvingTags.has(t.tag)) return;
+                          setApprovingTags((current) => new Set(current).add(t.tag));
+                          void Promise.resolve(onApprove?.({ tag: t })).finally(() => {
+                            setApprovingTags((current) => {
+                              const next = new Set(current);
+                              next.delete(t.tag);
+                              return next;
+                            });
+                          });
+                        }}
                       >
-                        Approve
+                        {approvingTags.has(t.tag) ? 'Approving…' : 'Approve'}
                       </button>
                       <button
                         className="ghost-btn small"

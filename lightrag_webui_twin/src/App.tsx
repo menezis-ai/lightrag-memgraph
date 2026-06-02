@@ -130,7 +130,7 @@ function AppShell() {
 
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
-  const docs = useDocuments();
+  const docs = useDocuments({ workspace });
   const workspaces = useWorkspaces();
   const notificationsQ = useNotifications();
   const thesaurus = useThesaurus();
@@ -441,27 +441,27 @@ function AppShell() {
   const updateSynonyms = useUpdateTagSynonyms();
   const deleteTag = useDeleteTag();
 
-  const onTagApprove = (action: TagApproveAction) => {
-    approveTag.mutate(
-      { name: action.tag.tag, actor: CURRENT_USER.name },
-      {
-        onSuccess: () =>
-          pushToast({
-            kind: 'done',
-            title: 'Tag',
-            tagname: action.tag.tag,
-            titleSuffix: 'approved',
-            sub: 'Added to thesaurus · Tier 3',
-          }),
-        onError: (err) =>
-          pushToast({
-            kind: 'error',
-            title: 'Tag approval failed',
-            tagname: action.tag.tag,
-            sub: err instanceof Error ? err.message : 'Mutation rejected',
-          }),
-      },
-    );
+  const onTagApprove = async (action: TagApproveAction) => {
+    try {
+      await approveTag.mutateAsync({
+        name: action.tag.tag,
+        actor: CURRENT_USER.name,
+      });
+      pushToast({
+        kind: 'done',
+        title: 'Tag',
+        tagname: action.tag.tag,
+        titleSuffix: 'approved',
+        sub: 'Added to thesaurus · Tier 3',
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Tag approval failed',
+        tagname: action.tag.tag,
+        sub: err instanceof Error ? err.message : 'Mutation rejected',
+      });
+    }
   };
 
   const commitTagMutation = (
@@ -646,9 +646,27 @@ function AppShell() {
     setTab(nextTab);
   };
 
+  const onSwitchWorkspace = (nextWorkspace: string) => {
+    window.history.replaceState(null, '', window.location.pathname);
+    setWorkspace(nextWorkspace);
+    setReadNotificationIds(new Set());
+    setClearedNotificationIds(new Set());
+    setDetailDoc(null);
+    setReadSourceDoc(null);
+    setRetagDoc(null);
+    setRetagBulk(null);
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
+      queryClient.invalidateQueries({ queryKey: ['tags'] }),
+      queryClient.invalidateQueries({ queryKey: ['activity'] }),
+      queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+    ]);
+  };
+
   // Resolved props — fall back to the local fixtures while the first fetch is
   // in flight so the UI never shows an empty shell on cold start.
-  const docList = docs.data?.items ?? DOCUMENT_FIXTURES;
+  const docList =
+    docs.data?.items ?? DOCUMENT_FIXTURES.filter((doc) => doc.workspace === workspace);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — Fabrice 2026-05-26 spec). Sort so pending-review cards come
@@ -681,7 +699,7 @@ function AppShell() {
         onTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
         workspace={workspace}
         kbName={kbName}
-        onSwitchWorkspace={(w) => setWorkspace(w.id)}
+        onSwitchWorkspace={(w) => onSwitchWorkspace(w.id)}
         workspaces={workspaceList}
         notifications={notifications}
         unreadCount={unreadCount}
@@ -706,7 +724,7 @@ function AppShell() {
           position: 'relative',
         }}
       >
-        <div className="tab-pane" key={tab}>
+        <div className="tab-pane" key={`${tab}:${workspace}`}>
           {tab === 'documents' && (
             <DocumentsTab
               docs={nonPendingDocs}

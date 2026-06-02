@@ -13,7 +13,9 @@ import type { Document } from '../types/document';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 
-export function useDocuments(query: { status?: string; q?: string; tag?: string } = {}) {
+export function useDocuments(
+  query: { status?: string; q?: string; tag?: string; workspace?: string } = {},
+) {
   return useQuery({
     queryKey: ['documents', query] as const,
     queryFn: ({ signal }) => api.listDocuments(query, { signal }),
