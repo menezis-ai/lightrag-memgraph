@@ -127,16 +127,14 @@ function ToastCard({ toast, onUndo, onDismiss }: ToastCardProps) {
           Undo
         </button>
       )}
-      {kind === 'error' && (
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => onDismiss(toast)}
-          aria-label="Dismiss"
-        >
-          <Icon name="x" size={14} />
-        </button>
-      )}
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={() => onDismiss(toast)}
+        aria-label="Dismiss"
+      >
+        <Icon name="x" size={14} />
+      </button>
       {kind === 'done' && toast.undo !== undefined && (
         <span className="undo-progress" />
       )}

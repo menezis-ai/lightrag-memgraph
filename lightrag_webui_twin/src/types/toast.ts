@@ -21,3 +21,8 @@ export interface Toast {
 }
 
 export const TOAST_MAX_VISIBLE = 3;
+
+/** Toast auto-dismiss timeout. After this, the toast fades out regardless
+ *  of its kind. User-triggered dismiss via the × button still works the
+ *  same way; the timer is a safety net so toasts never pile up forever. */
+export const TOAST_AUTO_DISMISS_MS = 25_000;

@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AddSourceModal,
+  formatFileSize,
   type AddSourceAction,
   type FileUpload,
   type LinkedSource,
@@ -233,5 +234,26 @@ describe('AddSourceModal — submit & close', () => {
     expect(action.urls).toHaveLength(1);
     expect(action.tags).toEqual([]);
     expect(p.onClose).toHaveBeenCalled();
+  });
+});
+
+describe('formatFileSize', () => {
+  it('renders bytes for tiny payloads', () => {
+    expect(formatFileSize(512)).toBe('512 B');
+  });
+
+  it('renders KB (no decimals) for sub-MB payloads — no more "0 MB"', () => {
+    // 47 KB JSON file: was displayed as "0 MB" before the fix.
+    expect(formatFileSize(47_000)).toBe('46 KB');
+  });
+
+  it('renders MB (1 decimal) above one MB', () => {
+    expect(formatFileSize(2_400_000)).toBe('2.3 MB');
+  });
+
+  it('handles zero + negative + NaN safely', () => {
+    expect(formatFileSize(0)).toBe('0 B');
+    expect(formatFileSize(-1)).toBe('0 B');
+    expect(formatFileSize(NaN)).toBe('0 B');
   });
 });

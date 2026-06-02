@@ -58,12 +58,38 @@ export type FileUploadState = 'uploading' | 'uploaded' | 'error';
 
 export interface FileUpload {
   name: string;
-  /** Megabytes (1 decimal place from proto). */
+  /** Megabytes (1 decimal place). Retained for backwards compat with
+   *  fixtures; display uses `sizeBytes` when present so files smaller
+   *  than 0.1 MB show in KB instead of "0 MB". */
   size: number;
+  /** Raw byte count from the picked File. Optional so existing test
+   *  fixtures keep working. */
+  sizeBytes?: number;
   state: FileUploadState;
   progress?: number;
   uploaded?: number;
   error?: string;
+}
+
+/** Format a byte count as "B / KB / MB" depending on magnitude. */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function displaySize(f: FileUpload): string {
+  if (typeof f.sizeBytes === 'number') return formatFileSize(f.sizeBytes);
+  return `${f.size} MB`;
+}
+
+function displayUploadedOverTotal(f: FileUpload): string {
+  if (typeof f.sizeBytes === 'number') {
+    const uploadedBytes = ((f.progress ?? 0) / 100) * f.sizeBytes;
+    return `${formatFileSize(uploadedBytes)} / ${formatFileSize(f.sizeBytes)}`;
+  }
+  return `${(f.uploaded ?? 0).toFixed(1)} / ${f.size} MB`;
 }
 
 export type LinkedSourceType = 'confluence' | 'sharepoint' | 'url';
@@ -146,6 +172,7 @@ export function AddSourceModal({
       const base = {
         name: f.name,
         size: Number((f.size / (1024 * 1024)).toFixed(1)),
+        sizeBytes: f.size,
       };
       if (error) {
         rawFilesRef.current.delete(f.name);
@@ -358,7 +385,7 @@ export function AddSourceModal({
                     <div className="info">
                       <div className="row1">
                         <span className="name">{f.name}</span>
-                        <span className="size">{f.size} MB</span>
+                        <span className="size">{displaySize(f)}</span>
                       </div>
                       {f.state === 'uploading' && (
                         <div className="row2">
@@ -369,8 +396,7 @@ export function AddSourceModal({
                             />
                           </div>
                           <span style={{ fontFamily: 'var(--font-mono)' }}>
-                            {f.progress ?? 0}% · {(f.uploaded ?? 0).toFixed(1)} /{' '}
-                            {f.size} MB
+                            {f.progress ?? 0}% · {displayUploadedOverTotal(f)}
                           </span>
                         </div>
                       )}
