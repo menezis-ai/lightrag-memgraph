@@ -44,6 +44,17 @@ describe('useModalA11y', () => {
     vi.useRealTimers();
   });
 
+  it('does not steal focus when the user focuses inside the modal before the defer fires', () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(<Modal open />);
+    getByTestId('cancel').focus();
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(document.activeElement?.getAttribute('data-testid')).toBe('cancel');
+    vi.useRealTimers();
+  });
+
   it('Escape inside the modal calls onClose', () => {
     const onClose = vi.fn();
     render(<Modal open onClose={onClose} />);

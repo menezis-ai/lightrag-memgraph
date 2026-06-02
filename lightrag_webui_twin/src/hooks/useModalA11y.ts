@@ -50,9 +50,14 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
       items[0] ??
       node;
 
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
     if (typeof (first as HTMLElement).focus === 'function') {
       // Defer to let layout settle (modal mount animation, etc.)
-      setTimeout(() => (first as HTMLElement).focus(), 30);
+      focusTimer = setTimeout(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && node.contains(active)) return;
+        (first as HTMLElement).focus();
+      }, 30);
     }
 
     const onKey = (e: KeyboardEvent) => {
@@ -84,6 +89,7 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
 
     node.addEventListener('keydown', onKey);
     return () => {
+      if (focusTimer !== null) clearTimeout(focusTimer);
       node.removeEventListener('keydown', onKey);
       const fallback = document.querySelector<HTMLElement>(
         '[data-focus-fallback="app-main"]',

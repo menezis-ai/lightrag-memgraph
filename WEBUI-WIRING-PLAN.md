@@ -126,25 +126,22 @@ Still to do:
 The 2026-06-03 async/a11y audit fixed the most urgent regressions:
 bulk delete now uses `/documents/bulk-delete`, toast live-region updates
 batch simultaneous announcements, tag autocomplete Escape is isolated from
-modal close handlers, and the graph canvas blocks scroll chaining. Three
-follow-up items remain worth scheduling before BNP/CIB production demos:
+modal close handlers, and the graph canvas blocks scroll chaining. The
+follow-up hardening pass is now implemented as well:
 
-- **P1 — Bound bulk upload concurrency.** `App.tsx` still uploads dropped
-  files with `Promise.allSettled(action.rawFiles.map(uploadDoc.mutateAsync))`.
-  Limit concurrent uploads to 3-4 files, then invalidate `documents` and
-  `pipeline_status` once after the batch instead of once per file. Add a
-  regression test that 20 files do not create 20 simultaneous fetches.
-- **P1 — Make `useModalA11y` autofocus non-stealing.** The hook defers focus
-  with `setTimeout(..., 30)`, which can steal focus from an input the operator
-  already selected. Store and clear the timeout on cleanup, and only autofocus
-  when `document.activeElement` is not already inside the modal node. Remove
-  the `await 60ms` workarounds from affected tests where possible.
-- **P2 — Harden Knowledge Graph wheel handling.** The CSS
-  `touch-action: none` / `overscroll-behavior: none` patch is acceptable for
-  scroll chaining, but the most robust implementation is a native `wheel`
-  listener on the canvas with `{ passive: false }`, cleaned up in `useEffect`.
-  Keep the visible behavior unchanged: wheel over the graph zooms the graph,
-  never the page.
+- **Done — Bound bulk upload concurrency.** Upload batches now run through a
+  TanStack mutation that caps concurrent `/documents/upload` calls at 4 and
+  invalidates `documents` + `pipeline_status` once after the batch. Regression
+  coverage asserts that 20 files do not create more than 4 simultaneous
+  fetches.
+- **Done — Make `useModalA11y` autofocus non-stealing.** The deferred autofocus
+  now clears its timeout on cleanup and skips autofocus when focus is already
+  inside the modal. The direct `AddSourceModal` / `RetagModal` sleep
+  workarounds were removed.
+- **Done — Harden Knowledge Graph wheel handling.** The graph canvas now uses
+  a native `wheel` listener with `{ passive: false }`, cleaned up in
+  `useEffect`, while keeping `touch-action: none` /
+  `overscroll-behavior: none` for scroll-chain isolation.
 
 ## Plan e2e renforcé — recette v2 + Couche 3
 
@@ -354,6 +351,11 @@ Progress as of 2026-06-03:
     of the Documents table.
 - `AddSourceModal.test.tsx` covers the same validation at component level for
   fast feedback.
+- Tags validation is already enforced in both RTL and Playwright:
+  - `TWIN-TAG-03`: `Request new tag` keeps `Submit request` disabled until
+    the required proposed name is filled.
+  - `TWIN-TAG-07`: `Reject request` keeps the destructive submit disabled until
+    a non-empty reason is provided.
 - `lightrag_webui_twin/e2e/retrieval.spec.ts` covers `TWIN-RET-01`: clicking
   a citation navigates to Documents with the cited source as the search filter.
 
@@ -405,6 +407,19 @@ Progress as of 2026-06-03:
   the non-pending table rows. Documents currently shown in the pending review
   panel, such as modified source `d2`, are not double-counted in the table
   counters until they leave the review queue.
+- `GraphTab` entity type counters now derive from the active graph search,
+  tag, and source filters before applying type toggles, so the rail reflects
+  the currently inspectable graph subset.
+- Graph entity drill-down now navigates to Documents with an exact
+  comma-separated `source` URL filter derived from the entity source map,
+  falling back to text search only when no source map exists. This avoids the
+  previous lossy `q=entity name` behavior.
+- `lightrag_webui_twin/src/components/GraphTab.test.tsx` covers filtered type
+  counters and exact-source navigation.
+- `lightrag_webui_twin/e2e/graph.spec.ts` covers:
+  - `TWIN-KG-01`: entity drill-down writes the full exact source list and
+    hides unrelated document rows;
+  - `TWIN-KG-03`: entity type counts update after graph search filters.
 
 ### Recipe ticket coverage matrix
 

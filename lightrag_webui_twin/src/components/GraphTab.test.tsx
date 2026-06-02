@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GraphTab } from './GraphTab';
@@ -83,6 +83,15 @@ describe('GraphTab — filters', () => {
     expect(screen.queryByTestId('kg-node-e_oracle')).toBeNull();
   });
 
+  it('entity type counts are scoped by the active search filter', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.type(screen.getByLabelText('Search entities'), 'swift');
+
+    expect(within(screen.getByTestId('kg-type-ORG')).getByText('1')).toBeInTheDocument();
+    expect(within(screen.getByTestId('kg-type-CONCEPT')).getByText('1')).toBeInTheDocument();
+    expect(within(screen.getByTestId('kg-type-PRODUCT')).getByText('0')).toBeInTheDocument();
+  });
+
   it('no-match search shows empty state with Clear filter CTA', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.type(
@@ -138,7 +147,7 @@ describe('GraphTab — selection + detail', () => {
     expect(entityPanel?.textContent).toMatch(/Red Hat Enterprise Linux/);
   });
 
-  it('"View N sources" CTA navigates to documents with q=entity name', async () => {
+  it('"View N sources" CTA navigates to documents with exact source filters', async () => {
     const p = defaultProps();
     renderWithClient(<GraphTab {...p} />);
     const detail = document.querySelector('.kg-detail') as HTMLElement;
@@ -146,7 +155,9 @@ describe('GraphTab — selection + detail', () => {
       b.textContent?.match(/View \d+ sources mentioning/),
     );
     await userEvent.click(cta!);
-    expect(p.onNavigate).toHaveBeenCalledWith('documents', { q: 'Oracle Database' });
+    expect(p.onNavigate).toHaveBeenCalledWith('documents', {
+      source: 'oracle-restart-procedure.pdf,/cib/runbooks/oracle-pga-tuning',
+    });
   });
 });
 
@@ -172,5 +183,21 @@ describe('GraphTab — zoom + reset', () => {
     await userEvent.click(screen.getByLabelText('Zoom in'));
     await userEvent.click(screen.getByRole('button', { name: /Reset view/ }));
     expect(screen.getByTestId('kg-zoom-value').textContent).toBe('100%');
+  });
+
+  it('wheel over the canvas zooms the graph and prevents page scroll', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    const canvas = screen.getByTestId('kg-canvas');
+    const event = new WheelEvent('wheel', {
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    });
+    canvas.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(screen.getByTestId('kg-zoom-value').textContent).toBe('110%'),
+    );
   });
 });

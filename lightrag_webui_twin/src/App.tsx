@@ -44,7 +44,7 @@ import {
   useBulkDeleteDocuments,
   useBulkRetagDocuments,
   useDeleteDocument,
-  useUploadDocument,
+  useUploadDocumentsBatch,
   useDeleteTag,
   useDeprecateTag,
   useDocuments,
@@ -243,7 +243,7 @@ function AppShell() {
     }
   };
 
-  const uploadDoc = useUploadDocument();
+  const uploadDocs = useUploadDocumentsBatch();
   const deleteDoc = useDeleteDocument();
   const bulkDeleteDocs = useBulkDeleteDocuments();
 
@@ -313,9 +313,7 @@ function AppShell() {
       sub: `${action.rawFiles.length} file${action.rawFiles.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
     });
 
-    const results = await Promise.allSettled(
-      action.rawFiles.map((f) => uploadDoc.mutateAsync(f)),
-    );
+    const results = await uploadDocs.mutateAsync(action.rawFiles);
 
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     const ko = results.filter((r) => r.status === 'rejected').length;

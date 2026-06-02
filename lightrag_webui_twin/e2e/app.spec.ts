@@ -98,7 +98,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('kg-zoom-value')).not.toHaveText('100%');
     await page.getByRole('button', { name: /View .* sources mentioning this entity/ }).click();
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
-    await expect(page.getByLabel('Search source')).toHaveValue(/Oracle/i);
+    await expect(page).toHaveURL(/source=/);
 
     await openTab(page, 'Activity');
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
