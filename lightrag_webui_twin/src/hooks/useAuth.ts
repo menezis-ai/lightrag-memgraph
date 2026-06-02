@@ -35,11 +35,17 @@ function getDevFlag(): boolean {
 
 let cachedConfig: TwinRuntimeConfig | null = null;
 
-const TWIN_BROWSER_STORAGE_KEYS = ['twin-rag.threads.v2'] as const;
+const TWIN_BROWSER_STORAGE_PREFIXES = ['twin-rag.'] as const;
 
 export function clearTwinBrowserState(): void {
   if (typeof window === 'undefined') return;
-  TWIN_BROWSER_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+  for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+    const key = window.localStorage.key(i);
+    if (!key) continue;
+    if (TWIN_BROWSER_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      window.localStorage.removeItem(key);
+    }
+  }
 }
 
 function getRuntimeConfig(): TwinRuntimeConfig {

@@ -25,21 +25,15 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-empty')).toBeVisible();
     await page.getByRole('button', { name: /Clear/ }).click();
 
-    await page.getByRole('button', { name: 'Add source' }).click();
-    await expect(page.getByRole('dialog', { name: /Add source/ })).toBeVisible();
-    await page.getByTestId('addsource-file-input').setInputFiles({
-      name: 'runbook-smoke.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Smoke\nE2E upload fixture'),
-    });
-    await expect(page.getByText('runbook-smoke.md')).toBeVisible();
-    await page.getByLabel('Tag input').fill('oracle');
-    await page.getByTestId('tag-sugg-oracle').click();
-    await expect(page.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Add 1 source' })).toBeEnabled({
-      timeout: 12_000,
-    });
-    await page.getByRole('button', { name: 'Add 1 source' }).click();
+    await addSourceFile(
+      page,
+      {
+        name: 'runbook-smoke.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# Smoke\nE2E upload fixture'),
+      },
+      'oracle',
+    );
     await expect(page.getByRole('status')).toContainText('Sources queued for ingestion');
 
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
@@ -112,6 +106,53 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('heading', { name: 'huge-archive.zip' })).toBeVisible();
     await page.getByRole('button', { name: /Replay ingestion/ }).click();
     await expect(page.getByRole('status')).toContainText('Replay queued');
+  });
+
+  test('@doctrine @a11y keyboard activates graph nodes, retrieval history and switches', async ({
+    page,
+  }) => {
+    await openTab(page, 'Graph');
+    await page.getByTestId('kg-node-e_rman').focus();
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('heading', { name: 'RMAN' })).toBeVisible();
+
+    await openTab(page, 'Retrieval');
+    await page.getByTestId('thread-th_seed_2').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('thread-th_seed_2')).toHaveAttribute('aria-current', 'true');
+    const onlyContext = page.getByRole('switch', { name: 'Only need context' });
+    await onlyContext.focus();
+    await page.keyboard.press('Space');
+    await expect(onlyContext).toHaveAttribute('aria-checked', 'true');
+    const onlyPrompt = page.getByRole('switch', { name: 'Only need prompt' });
+    await onlyPrompt.focus();
+    await page.keyboard.press('Enter');
+    await expect(onlyPrompt).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('@doctrine @workspace workspace switch refreshes documents and clears local filters', async ({
+    page,
+  }) => {
+    await seedDocuments(page, [
+      {
+        doc_id: 'infra_doc_1',
+        file_path: '/infra/runbooks/kernel-panic-runbook.md',
+        content_summary: 'Infra workspace document seeded by e2e',
+        tags: ['rhel9'],
+        workspace: 'infra',
+      },
+    ]);
+    await page.getByLabel('Search source').fill('oracle');
+    await expect(page).toHaveURL(/q=oracle/);
+    await page.getByTitle('Switch workspace').click();
+    await page.getByRole('menuitemradio', { name: /infra/ }).click();
+    await expect(page.getByTitle('Switch workspace')).toContainText('infra');
+    await expect(page).not.toHaveURL(/q=oracle/);
+    await expect(page.getByLabel('Search source')).toHaveValue('');
+    await expect(page.getByTestId('docs-row-infra_doc_1')).toContainText(
+      'kernel-panic-runbook.md',
+    );
+    await expect(page.getByTestId('docs-row-d1')).toBeHidden();
   });
 
   test('@documents @reviewer read extracted text, edit-approve and reject pending sources', async ({
@@ -235,6 +276,45 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('button', { name: 'Reject request' })).toBeEnabled();
     await page.getByRole('button', { name: 'Reject request' }).click();
     await expect(page.getByRole('status')).toContainText('Tag pacs008 rejected');
+  });
+
+  test('@doctrine @tags double-click tag approve sends one mutation', async ({
+    page,
+  }) => {
+    await setMswScenario(page, { tagApproveDelayMs: 600 });
+    await openTab(page, 'Tags');
+    const approve = page
+      .getByTestId('pending-argocd')
+      .getByRole('button', { name: 'Approve', exact: true });
+    await approve.click();
+    await expect(page.getByTestId('pending-argocd')).toContainText('Approving');
+    await approve.click({ timeout: 200 }).catch(() => undefined);
+    await expect(page.locator('.toast-viewport')).toContainText('argocd');
+    await expect(page.locator('.toast-viewport')).toContainText('approved');
+    const stats = await getMswStats(page);
+    expect(stats.tagApproveCalls.argocd).toBe(1);
+  });
+
+  test('@doctrine @tags @notifications tag approval appears in bell and activity', async ({
+    page,
+  }) => {
+    await openTab(page, 'Tags');
+    await page
+      .getByTestId('pending-argocd')
+      .getByRole('button', { name: 'Approve', exact: true })
+      .click();
+    await expect(page.locator('.toast-viewport')).toContainText('argocd');
+    await expect(page.locator('.toast-viewport')).toContainText('approved');
+
+    await page.getByRole('button', { name: /Notifications, \d+ unread/ }).click();
+    const popover = page.getByRole('dialog', { name: 'Notifications' });
+    await expect(popover).toContainText('argocd');
+    await expect(popover).toContainText('approved');
+
+    await openTab(page, 'Activity');
+    await page.getByLabel('Search events').fill('argocd');
+    await expect(page.getByRole('heading', { name: 'argocd' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Tag argocd approved/ })).toBeVisible();
   });
 
   test('@tags @governance synonyms, deprecate and delete migration actions persist', async ({
@@ -415,6 +495,63 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-uploaded_2')).toContainText('multi-b.md');
   });
 
+  test('@doctrine @upload add source drag-drop accepts multiple files', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await page.evaluate(() => {
+      const dropzone = document.querySelector('[aria-label="Drop files or click to browse"]');
+      if (!dropzone) throw new Error('dropzone not found');
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['# Drag A'], 'drag-a.md', { type: 'text/markdown' }));
+      transfer.items.add(new File(['# Drag B'], 'drag-b.md', { type: 'text/markdown' }));
+      dropzone.dispatchEvent(
+        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }),
+      );
+    });
+    await expect(page.getByText('drag-a.md')).toBeVisible();
+    await expect(page.getByText('drag-b.md')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add 2 sources' })).toBeEnabled({
+      timeout: 12_000,
+    });
+    await page.getByRole('button', { name: 'Add 2 sources' }).click();
+    await expect(page.getByRole('status')).toContainText('Sources queued for ingestion');
+    await page.getByLabel('Search source').fill('drag-');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('drag-a.md');
+    await expect(page.getByTestId('docs-row-uploaded_2')).toContainText('drag-b.md');
+  });
+
+  test('@doctrine @upload partial multi-file failure reports accurate counts', async ({
+    page,
+  }) => {
+    await setMswScenario(page, { uploadFailureNames: ['partial-fail.md'] });
+    await page.getByRole('button', { name: 'Add source' }).click();
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Drop files or click to browse' }).click();
+    const chooser = await chooserPromise;
+    await chooser.setFiles([
+      {
+        name: 'partial-ok.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# OK'),
+      },
+      {
+        name: 'partial-fail.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# Fail'),
+      },
+    ]);
+    await expect(page.getByRole('button', { name: 'Add 2 sources' })).toBeEnabled({
+      timeout: 12_000,
+    });
+    await page.getByRole('button', { name: 'Add 2 sources' }).click();
+    await expect(page.getByRole('alert')).toContainText('1 upload failed');
+    await expect(page.getByRole('alert')).toContainText('1 ok · 1 ko');
+    await page.getByLabel('Search source').fill('partial-');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('partial-ok.md');
+    await expect(page.getByText('partial-fail.md')).toBeHidden();
+  });
+
   test('@doctrine @documents single delete requires confirm and removes the document', async ({ page }) => {
     await page.getByTestId('docs-row-delete-d4').click();
     await expect(page.getByTestId('doc-detail-panel')).toBeVisible();
@@ -457,6 +594,50 @@ test.describe('Twin WebUI operator journeys', () => {
       'Categories imported',
     );
     await expect(page.getByTestId('rail-reliability')).toContainText('Reliability');
+  });
+
+  test('@doctrine @tags invalid category JSON syntax shows a precise banner', async ({
+    page,
+  }) => {
+    await openTab(page, 'Tags');
+    await page.getByTestId('taxonomy-import-file').setInputFiles({
+      name: 'syntax-error-categories.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('[{"id":"x",]'),
+    });
+    await expect(page.getByTestId('taxonomy-import-status')).toContainText(
+      'Invalid JSON file',
+    );
+  });
+
+  test('@doctrine @tags invalid category duplicates and colors show server messages', async ({
+    page,
+  }) => {
+    await openTab(page, 'Tags');
+    await page.getByTestId('taxonomy-import-file').setInputFiles({
+      name: 'duplicate-categories.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify([
+          { id: 'reliability', label: 'Reliability', color: '#3366cc' },
+          { id: 'reliability', label: 'Reliability again', color: '#224466' },
+        ]),
+      ),
+    });
+    await expect(page.getByTestId('taxonomy-import-status')).toContainText(
+      'duplicate id: reliability',
+    );
+
+    await page.getByTestId('taxonomy-import-file').setInputFiles({
+      name: 'bad-color-categories.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify([{ id: 'reliability', label: 'Reliability', color: 'blue' }]),
+      ),
+    });
+    await expect(page.getByTestId('taxonomy-import-status')).toContainText(
+      'color must be a #RRGGBB hex value',
+    );
   });
 
   test('@doctrine @tags imported tag domain drives request, approve and filtering workflow', async ({
@@ -547,6 +728,33 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
+  test('@doctrine @tags bulk retag 600 selected documents surfaces backend 413', async ({
+    page,
+  }) => {
+    const docs = Array.from({ length: 600 }, (_, index) => {
+      const n = String(index + 1).padStart(3, '0');
+      return {
+        doc_id: `bulk_${n}`,
+        file_path: `/cib/e2e/bulk-massive-${n}.md`,
+        content_summary: 'Bulk 413 fixture',
+        tags: ['oracle'],
+        workspace: 'cib',
+      };
+    });
+    await seedDocuments(page, docs);
+    await setMswScenario(page, { bulkRetagStatus: 413 });
+    await page.getByLabel('Search source').fill('bulk-massive-');
+    await expect(page.getByTestId('docs-row-bulk_001')).toBeVisible();
+    await page.getByLabel('Select all visible').check();
+    await expect(page.getByLabel('Bulk actions')).toContainText('600 selected');
+    await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 600 sources/ }).click();
+    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByTestId('sugg-memgraph').click();
+    await page.getByRole('button', { name: 'Apply tag' }).click();
+    await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
+    await expect(page.getByRole('alert')).toContainText('413');
+  });
+
   test('@doctrine @auth twin api without auth returns 401 challenge', async ({ page }) => {
     await setMswScenario(page, { authGate: true });
     const response = await page.evaluate(async () => {
@@ -623,6 +831,9 @@ test.describe('Twin WebUI operator journeys', () => {
 
   test('@doctrine @auth sign out purges retrieval thread localStorage', async ({ page }) => {
     await openTab(page, 'Retrieval');
+    await page.evaluate(() => {
+      localStorage.setItem('twin-rag.extra-cache.v1', 'stale');
+    });
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('Persisted before signout');
     await page.getByRole('button', { name: 'Send' }).click();
@@ -633,7 +844,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await openTab(page, 'Settings');
     await page.getByTestId('settings-signout').click();
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('twin-rag.threads.v2')))
-      .toBeNull();
+      .poll(async () =>
+        page
+          .evaluate(() => ({
+            threads: localStorage.getItem('twin-rag.threads.v2'),
+            extra: localStorage.getItem('twin-rag.extra-cache.v1'),
+          }))
+          .catch(() => 'navigation-in-progress'),
+      )
+      .toMatchObject({ threads: null, extra: null });
   });
 });

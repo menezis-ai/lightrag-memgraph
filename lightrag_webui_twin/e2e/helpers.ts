@@ -33,7 +33,10 @@ export async function setMswScenario(page: Page, scenario: Record<string, unknow
 
 export async function getMswStats(
   page: Page,
-): Promise<{ approveCalls: Record<string, number> }> {
+): Promise<{
+  approveCalls: Record<string, number>;
+  tagApproveCalls: Record<string, number>;
+}> {
   return page.evaluate(async () => {
     const res = await fetch('/__e2e/stats');
     return res.json();

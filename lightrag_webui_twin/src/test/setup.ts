@@ -21,15 +21,20 @@ function makeStorage(): Storage {
   };
 }
 
-if (typeof window !== 'undefined' && !window.localStorage) {
-  Object.defineProperty(window, 'localStorage', {
-    value: makeStorage(),
-    writable: true,
-  });
+function installStorage(name: 'localStorage' | 'sessionStorage'): void {
+  if (typeof window === 'undefined') return;
+  const storage = makeStorage();
+  for (const target of [window, globalThis]) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, name);
+    if (descriptor?.configurable === false) continue;
+    Object.defineProperty(target, name, {
+      value: storage,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  }
 }
-if (typeof window !== 'undefined' && !window.sessionStorage) {
-  Object.defineProperty(window, 'sessionStorage', {
-    value: makeStorage(),
-    writable: true,
-  });
-}
+
+installStorage('localStorage');
+installStorage('sessionStorage');

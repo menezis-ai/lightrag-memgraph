@@ -36,6 +36,7 @@ export interface DocumentsQuery {
   status?: string;
   q?: string;
   tag?: string;
+  workspace?: string;
   cursor?: string;
 }
 
