@@ -35,16 +35,23 @@ export function ToastViewport({ toasts, onUndo, onDismiss }: ToastViewportProps)
   const [assertiveMsg, setAssertiveMsg] = useState('');
 
   useEffect(() => {
+    let newPolite = '';
+    let newAssertive = '';
+
     toasts.forEach((t) => {
       const key = `${t.id}:${t.kind}`;
       if (announcedRef.current.has(key)) return;
       announcedRef.current.add(key);
       const parts = [t.title, t.tagname, t.titleSuffix].filter(Boolean).join(' ');
       const msg = t.sub ? `${parts}. ${t.sub}` : parts;
-      // Suffix forces re-announce when text is identical.
-      if (t.kind === 'error') setAssertiveMsg(`${msg} · ${Date.now()}`);
-      else setPoliteMsg(`${msg} · ${Date.now()}`);
+      if (t.kind === 'error') newAssertive += `${msg}. `;
+      else newPolite += `${msg}. `;
     });
+
+    // Suffix forces re-announce when text is identical.
+    if (newAssertive) setAssertiveMsg(`${newAssertive} · ${Date.now()}`);
+    if (newPolite) setPoliteMsg(`${newPolite} · ${Date.now()}`);
+
     // GC announced IDs that no longer have any matching toast.
     const live = new Set(
       toasts.flatMap((t) => [

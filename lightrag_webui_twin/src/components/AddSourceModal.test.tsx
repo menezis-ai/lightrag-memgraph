@@ -125,6 +125,34 @@ describe('AddSourceModal — files', () => {
     await userEvent.click(x);
     expect(screen.queryByText('oracle-config-guide.pdf')).toBeNull();
   });
+
+  it('marks unsupported files as errors and excludes them from the ready count', async () => {
+    render(<AddSourceModal {...defaultProps()} />);
+    const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    await userEvent.upload(
+      input,
+      new File(['zip payload'], 'unsupported.zip', { type: 'application/zip' }),
+    );
+    expect(screen.getByText('unsupported.zip')).toBeInTheDocument();
+    expect(screen.getByText('unsupported type')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
+  });
+
+  it('marks oversized files as errors and excludes them from the ready count', async () => {
+    render(<AddSourceModal {...defaultProps()} />);
+    const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    const oversized = new File(['pdf payload'], 'oversized.pdf', {
+      type: 'application/pdf',
+    });
+    Object.defineProperty(oversized, 'size', {
+      value: 51 * 1024 * 1024,
+    });
+
+    await userEvent.upload(input, oversized);
+    expect(screen.getByText('oversized.pdf')).toBeInTheDocument();
+    expect(screen.getByText('Exceeds 50 MB')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
+  });
 });
 
 describe('AddSourceModal — tag autocomplete', () => {
@@ -163,6 +191,22 @@ describe('AddSourceModal — tag autocomplete', () => {
         Array.from(chips).some((c) => c.textContent?.includes('rman')),
       ).toBe(true);
     });
+  });
+
+  it('Escape in tag input clears autocomplete without closing the modal', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} />);
+    await new Promise((r) => setTimeout(r, 60));
+    const input = screen.getByLabelText('Tag input') as HTMLInputElement;
+    input.focus();
+    await userEvent.type(input, 'rman');
+    await waitFor(() =>
+      expect(screen.getByTestId('tag-sugg-rman')).toBeInTheDocument(),
+    );
+    await userEvent.keyboard('{Escape}');
+    expect(input.value).toBe('');
+    expect(p.onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
 

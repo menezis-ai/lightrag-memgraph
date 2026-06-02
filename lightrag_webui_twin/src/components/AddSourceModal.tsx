@@ -18,6 +18,42 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import type { FormatCategory } from '../types/format';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
+const MAX_FILE_MB = 50;
+const SUPPORTED_EXTENSIONS = new Set([
+  'csv',
+  'doc',
+  'docx',
+  'htm',
+  'html',
+  'json',
+  'log',
+  'md',
+  'pdf',
+  'ppt',
+  'pptx',
+  'rtf',
+  'text',
+  'txt',
+  'xls',
+  'xlsx',
+  'xml',
+  'yaml',
+  'yml',
+]);
+const SUPPORTED_MIME_PREFIXES = ['text/'];
+const SUPPORTED_MIME_TYPES = new Set([
+  'application/json',
+  'application/msword',
+  'application/pdf',
+  'application/rtf',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/xml',
+]);
+
 export type FileUploadState = 'uploading' | 'uploaded' | 'error';
 
 export interface FileUpload {
@@ -63,6 +99,25 @@ export interface AddSourceModalProps {
   onSubmit: (action: AddSourceAction) => void;
 }
 
+function fileExtension(name: string): string {
+  const idx = name.lastIndexOf('.');
+  return idx >= 0 ? name.slice(idx + 1).toLowerCase() : '';
+}
+
+function unsupportedFileType(file: File): boolean {
+  const ext = fileExtension(file.name);
+  if (ext && SUPPORTED_EXTENSIONS.has(ext)) return false;
+  if (file.type && SUPPORTED_MIME_TYPES.has(file.type)) return false;
+  return !SUPPORTED_MIME_PREFIXES.some((prefix) => file.type.startsWith(prefix));
+}
+
+function validateFile(file: File): string | null {
+  const errors: string[] = [];
+  if (file.size > MAX_FILE_MB * 1024 * 1024) errors.push('Exceeds 50 MB');
+  if (unsupportedFileType(file)) errors.push('unsupported type');
+  return errors.length ? errors.join(' · ') : null;
+}
+
 export function AddSourceModal({
   open,
   thesaurus,
@@ -86,14 +141,24 @@ export function AddSourceModal({
   const appendDroppedFiles = (incoming: FileList | null): void => {
     const incomingArr = Array.from(incoming || []);
     if (incomingArr.length === 0) return;
-    const dropped = incomingArr.map<FileUpload>((f) => ({
-      name: f.name,
-      size: Number((f.size / (1024 * 1024)).toFixed(1)),
-      state: 'uploading',
-      progress: 0,
-      uploaded: 0,
-    }));
-    incomingArr.forEach((f) => rawFilesRef.current.set(f.name, f));
+    const dropped = incomingArr.map<FileUpload>((f) => {
+      const error = validateFile(f);
+      const base = {
+        name: f.name,
+        size: Number((f.size / (1024 * 1024)).toFixed(1)),
+      };
+      if (error) {
+        rawFilesRef.current.delete(f.name);
+        return { ...base, state: 'error', error };
+      }
+      rawFilesRef.current.set(f.name, f);
+      return {
+        ...base,
+        state: 'uploading',
+        progress: 0,
+        uploaded: 0,
+      };
+    });
     setFiles((current) => [...current, ...dropped]);
   };
   // Linked sources are gated until the RAG 1.5 connector lands — see the
@@ -158,6 +223,7 @@ export function AddSourceModal({
     // Collect raw File objects in the same order as `files` so callers
     // (host App) can correlate progress feedback per file.
     const rawFiles = files
+      .filter((f) => f.state === 'uploaded')
       .map((f) => rawFilesRef.current.get(f.name))
       .filter((f): f is File => f !== undefined);
     onSubmit({ files, rawFiles, urls, tags, readyCount: ready });
@@ -382,8 +448,16 @@ export function AddSourceModal({
               <input
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
+                onKeyDownCapture={(e) => {
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setTagInput('');
+                  }
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && tagSugg[0]) addTag(tagSugg[0].tag);
+                  if (e.key === 'Enter' && tagSugg[0]) {
+                    addTag(tagSugg[0].tag);
+                  }
                 }}
                 placeholder={tags.length ? '' : 'Search tags from thesaurus…'}
                 aria-label="Tag input"

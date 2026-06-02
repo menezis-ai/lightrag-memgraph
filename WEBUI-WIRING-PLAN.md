@@ -121,6 +121,31 @@ Still to do:
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility until then.
 
+## WebUI hardening backlog — 2026-06-03 audit follow-up
+
+The 2026-06-03 async/a11y audit fixed the most urgent regressions:
+bulk delete now uses `/documents/bulk-delete`, toast live-region updates
+batch simultaneous announcements, tag autocomplete Escape is isolated from
+modal close handlers, and the graph canvas blocks scroll chaining. Three
+follow-up items remain worth scheduling before BNP/CIB production demos:
+
+- **P1 — Bound bulk upload concurrency.** `App.tsx` still uploads dropped
+  files with `Promise.allSettled(action.rawFiles.map(uploadDoc.mutateAsync))`.
+  Limit concurrent uploads to 3-4 files, then invalidate `documents` and
+  `pipeline_status` once after the batch instead of once per file. Add a
+  regression test that 20 files do not create 20 simultaneous fetches.
+- **P1 — Make `useModalA11y` autofocus non-stealing.** The hook defers focus
+  with `setTimeout(..., 30)`, which can steal focus from an input the operator
+  already selected. Store and clear the timeout on cleanup, and only autofocus
+  when `document.activeElement` is not already inside the modal node. Remove
+  the `await 60ms` workarounds from affected tests where possible.
+- **P2 — Harden Knowledge Graph wheel handling.** The CSS
+  `touch-action: none` / `overscroll-behavior: none` patch is acceptable for
+  scroll chaining, but the most robust implementation is a native `wheel`
+  listener on the canvas with `{ passive: false }`, cleaned up in `useEffect`.
+  Keep the visible behavior unchanged: wheel over the graph zooms the graph,
+  never the page.
+
 ## Plan e2e renforcé — recette v2 + Couche 3
 
 This section translates the 2026-05-29 WebUI recipe findings into an
@@ -317,6 +342,21 @@ Playwright cases:
   - sign out calls `/twin/api/auth/logout`, clears local caches, and leaves no
     retrieval thread state behind.
 
+Progress as of 2026-06-03:
+
+- `lightrag_webui_twin/e2e/upload.spec.ts` covers Add source validation:
+  - `TWIN-DOC-05` browse opens the native file chooser and accepts selected
+    files.
+  - `TWIN-DOC-06` unsupported extensions and files over 50 MB are rendered as
+    errors before submit.
+  - `TWIN-DOC-07` mixed valid/invalid uploads count only valid files in
+    `Add n sources`, submit only valid raw files, and leave invalid files out
+    of the Documents table.
+- `AddSourceModal.test.tsx` covers the same validation at component level for
+  fast feedback.
+- `lightrag_webui_twin/e2e/retrieval.spec.ts` covers `TWIN-RET-01`: clicking
+  a citation navigates to Documents with the cited source as the search filter.
+
 ### Priority 4 — classification Couche 2 in real wiring
 
 Backend `pytest` cases:
@@ -344,6 +384,27 @@ Playwright cases:
 - Knowledge Graph entity drill-down to Documents uses a complete tag/entity
   filter, not a lossy text search.
 - Entity type counters update after graph filters.
+
+Progress as of 2026-06-03:
+
+- `DocumentsTab` counters now derive from the search + tag filtered table
+  collection instead of the global document list. The active status filter is
+  then applied to rows, while all status pills keep showing the distribution
+  within the same search/tag subset so operators can still switch statuses.
+- `lightrag_webui_twin/src/components/DocumentsTab.test.tsx` covers:
+  - default status counts,
+  - search-scoped counts (`oracle`),
+  - tag-scoped counts (`rman`),
+  - URL-backed status and tag filters.
+- `lightrag_webui_twin/e2e/documents.spec.ts` covers:
+  - `TWIN-DOC-08`: visible Documents counters follow the active search filter
+    instead of the global fixture count;
+  - `TWIN-DOC-09`: explicit status and tag filters update URL state, visible
+    rows, counters, and survive reload for tag filters.
+- Nuance locked by e2e: the "Uploaded" table counters intentionally count only
+  the non-pending table rows. Documents currently shown in the pending review
+  panel, such as modified source `d2`, are not double-counted in the table
+  counters until they leave the review queue.
 
 ### Recipe ticket coverage matrix
 

@@ -300,6 +300,7 @@ export function GraphTab({
           onMouseDown={onMouseDown}
           onWheel={onWheel}
           data-testid="kg-canvas"
+          style={{ touchAction: 'none', overscrollBehavior: 'none' }}
         >
           <svg
             viewBox="0 0 1000 680"

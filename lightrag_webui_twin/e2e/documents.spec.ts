@@ -89,3 +89,47 @@ test.describe('Documents RC-1 persistence', () => {
     await expect(page.getByTestId('pending-doc-d7')).toBeHidden();
   });
 });
+
+test.describe('Documents RC-2 filters and counters', () => {
+  test.beforeEach(async ({ page }) => {
+    await boot(page);
+  });
+
+  test('@documents @rc2 counters follow the active search filter', async ({ page }) => {
+    await page.getByLabel('Search source').fill('oracle');
+
+    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Completed \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Failed \(0\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Processing \(0\)/ })).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).toBeVisible();
+    await expect(page.getByTestId('docs-row-d4')).toBeHidden();
+  });
+
+  test('@documents @rc2 status and tag filters are URL-backed and update rows', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: /^Failed \(1\)/ }).click();
+    await expect(page).toHaveURL(/status=failed/);
+    await expect(page.getByTestId('docs-row-d3')).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).toBeHidden();
+
+    await page.getByRole('button', { name: /Clear$/ }).click();
+    await addDocumentTagFilter(page, 'rman');
+    await expect(page).toHaveURL(/tag=rman/);
+    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Completed \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Failed \(0\)/ })).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).toBeVisible();
+    await expect(page.getByTestId('docs-row-d2')).toBeHidden();
+    await expect(page.getByTestId('docs-row-d4')).toBeHidden();
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/tag=rman/);
+    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).toBeVisible();
+    await expect(page.getByTestId('docs-row-d2')).toBeHidden();
+    await expect(page.getByTestId('docs-row-d4')).toBeHidden();
+  });
+});

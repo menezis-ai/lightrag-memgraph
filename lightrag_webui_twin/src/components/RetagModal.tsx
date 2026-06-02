@@ -348,6 +348,12 @@ function RetagModalBody({
                 setInput(e.target.value);
                 setFocusIdx(0);
               }}
+              onKeyDownCapture={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  setInput('');
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();

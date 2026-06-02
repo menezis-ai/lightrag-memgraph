@@ -13,6 +13,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
   useApproveTag,
+  useBulkDeleteDocuments,
   useDeleteTag,
   useDeprecateTag,
   useEditTag,
@@ -166,5 +167,27 @@ describe('useDeleteTag', () => {
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.strategy).toBe('migrate');
     expect(body.to).toBe('oracle');
+  });
+});
+
+describe('useBulkDeleteDocuments', () => {
+  it('POSTs /documents/bulk-delete once with all selected ids', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ deleted: 2 }));
+    const { result } = renderHook(() => useBulkDeleteDocuments(), {
+      wrapper: wrapper(),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({
+        doc_ids: ['doc-a', 'doc-b'],
+        actor: 'claire.benoit',
+      });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/documents/bulk-delete');
+    expect((init as RequestInit).method).toBe('POST');
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.doc_ids).toEqual(['doc-a', 'doc-b']);
+    expect(body.actor).toBe('claire.benoit');
   });
 });

@@ -313,14 +313,24 @@ export function useDeleteTag() {
  * The shim calls ``rag.adelete_by_doc_id`` which cascades to entities,
  * relations, chunks, vector embeddings — full removal from Memgraph.
  *
- * Doctrine: every UI-visible mutation persists. Bulk-delete is
- * implemented in the host (Promise.allSettled over N of these) to
- * keep the server endpoint surface narrow.
+ * Doctrine: every UI-visible mutation persists.
  */
 export function useDeleteDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(docId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useBulkDeleteDocuments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.bulkDeleteDocuments>[0]) =>
+      api.bulkDeleteDocuments(body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
       qc.invalidateQueries({ queryKey: ['activity'] });

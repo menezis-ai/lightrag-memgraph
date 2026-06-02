@@ -56,6 +56,8 @@ export interface RetrievalTabProps {
   initialThreads?: readonly RetrievalThread[];
   /** Suggestions displayed in the empty state. */
   suggestions?: readonly string[];
+  /** Host-controlled tab navigation for citation/source drill-downs. */
+  onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -70,6 +72,7 @@ export function RetrievalTab({
   answerSources,
   initialThreads = [],
   suggestions = DEFAULT_SUGGESTIONS,
+  onNavigate,
 }: RetrievalTabProps) {
   const [query, setQuery] = useState('');
   const [threads, setThreads] = useState<readonly RetrievalThread[]>(() => {
@@ -224,8 +227,15 @@ export function RetrievalTab({
 
   const onCiteHover = (n: number) => setHighlightSrc(n);
   const onCiteLeave = () => setTimeout(() => setHighlightSrc(null), 200);
-  const onCiteClick = (n: number) => {
+  const onCiteClick = (
+    n: number,
+    sources: readonly RetrievalSource[] | undefined,
+  ) => {
     setHighlightSrc(n);
+    const source = sources?.find((s) => s.n === n);
+    if (source) {
+      onNavigate?.('documents', { q: source.name });
+    }
     setTimeout(() => setHighlightSrc(null), 1400);
   };
 
@@ -535,7 +545,7 @@ interface TurnProps {
   highlightSrc: number | null;
   onCiteHover: (n: number) => void;
   onCiteLeave: () => void;
-  onCiteClick: (n: number) => void;
+  onCiteClick: (n: number, sources: readonly RetrievalSource[] | undefined) => void;
 }
 
 function Turn({
@@ -565,7 +575,7 @@ function Turn({
               className="citation"
               onMouseEnter={() => onCiteHover(p.value)}
               onMouseLeave={onCiteLeave}
-              onClick={() => onCiteClick(p.value)}
+              onClick={() => onCiteClick(p.value, msg.sources)}
               aria-label={`Source ${p.value}`}
               data-testid={`citation-${p.value}`}
             >

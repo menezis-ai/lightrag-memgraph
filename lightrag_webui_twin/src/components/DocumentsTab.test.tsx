@@ -82,6 +82,23 @@ describe('DocumentsTab — filters', () => {
     expect(screen.queryByTestId('docs-row-d4')).toBeNull();
   });
 
+  it('status counts are scoped by the active search filter', async () => {
+    render(<DocumentsTab {...defaultProps()} />);
+    const searchBox = screen.getByLabelText('Search source');
+    await userEvent.type(searchBox, 'oracle');
+
+    expect(screen.getByRole('button', { name: /^All \(2\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Completed \(2\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Failed \(0\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Processing \(0\)/ }),
+    ).toBeInTheDocument();
+  });
+
   it('clicking a tag on a row adds it as a filter', async () => {
     render(<DocumentsTab {...defaultProps()} />);
     // d1 has tags rman + oracle; click the chip in the row
@@ -92,6 +109,34 @@ describe('DocumentsTab — filters', () => {
     expect(screen.getByTestId('docs-row-d1')).toBeInTheDocument();
     // d4 has no rman tag → filtered out
     expect(screen.queryByTestId('docs-row-d4')).toBeNull();
+  });
+
+  it('status counts are scoped by the active tag filter', async () => {
+    render(<DocumentsTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
+
+    expect(screen.getByRole('button', { name: /^All \(2\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Completed \(2\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Failed \(0\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Processing \(0\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('status and tag filters are URL backed', async () => {
+    render(<DocumentsTab {...defaultProps()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Failed \(1\)/ }));
+    expect(window.location.search).toContain('status=failed');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add tag' }));
+    await userEvent.type(screen.getByLabelText('Add tag filter'), 'rman');
+    await userEvent.click(screen.getByTestId('docs-tag-sugg-rman'));
+    expect(window.location.search).toContain('tag=rman');
   });
 
   it('empty state appears when filters match nothing', async () => {
