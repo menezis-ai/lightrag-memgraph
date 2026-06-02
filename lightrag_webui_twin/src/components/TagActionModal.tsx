@@ -34,6 +34,10 @@ export interface TagActionCommit {
   tag: TagEntry | null;
   /** Proposed canonical name (only for `request` / `edit` / `edit-approve`). */
   name?: string;
+  /** Definition text for request/edit flows. */
+  def?: string;
+  /** Governance domain/category for request/edit flows. */
+  category?: string;
   /** Reason for `reject`. */
   reason?: string;
   /** New synonym to add (only for `synonyms`). */
@@ -84,6 +88,8 @@ export function TagActionModal({
 
   const tag = action.tag ?? null;
   const [name, setName] = useState(tag?.tag ?? '');
+  const [definition, setDefinition] = useState(tag?.def ?? '');
+  const [category, setCategory] = useState(tag?.category ?? categories[0]?.id ?? '');
   const [migrateTo, setMigrateTo] = useState('');
   const [migrateStrategy, setMigrateStrategy] = useState<'migrate' | 'untag'>('migrate');
   const [newSyn, setNewSyn] = useState('');
@@ -106,6 +112,8 @@ export function TagActionModal({
     const payload: TagActionCommit = { kind: action.kind, tag };
     if (action.kind === 'request' || action.kind === 'edit' || action.kind === 'edit-approve') {
       payload.name = name;
+      payload.def = definition;
+      payload.category = category;
     }
     if (action.kind === 'synonyms' && newSyn.trim()) {
       payload.newSynonym = newSyn.trim();
@@ -179,7 +187,8 @@ export function TagActionModal({
                   id="tagaction-def"
                   className="text-input"
                   rows={3}
-                  defaultValue={tag.def}
+                  value={definition}
+                  onChange={(e) => setDefinition(e.target.value)}
                 />
                 <label className="field-label" htmlFor="tagaction-longdef">
                   Long description (optional)
@@ -371,6 +380,8 @@ export function TagActionModal({
                 className="text-input"
                 rows={3}
                 maxLength={200}
+                value={definition}
+                onChange={(e) => setDefinition(e.target.value)}
                 placeholder="What should this tag mean? When should it be applied?"
               />
               <label className="field-label" htmlFor="tagaction-reqdomain">
@@ -379,7 +390,8 @@ export function TagActionModal({
               <select
                 id="tagaction-reqdomain"
                 className="text-input"
-                defaultValue={categories[0]?.id ?? ''}
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
               >
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>

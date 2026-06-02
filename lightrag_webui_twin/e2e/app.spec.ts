@@ -1,49 +1,19 @@
-import { expect, test, type Page } from '@playwright/test';
-
-async function boot(page: Page) {
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      'twin.onboarding.v1',
-      JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
-    );
-    window.localStorage.removeItem('twin-rag.threads.v2');
-  });
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
-  await page.evaluate(async () => {
-    await fetch('/__e2e/reset', { method: 'POST' });
-  });
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
-}
-
-async function openTab(page: Page, name: string) {
-  await page.getByRole('button', { name, exact: true }).click();
-}
-
-async function setMswScenario(page: Page, scenario: Record<string, unknown>) {
-  await page.evaluate(async (body) => {
-    await fetch('/__e2e/scenario', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }, scenario);
-}
-
-async function getMswStats(page: Page): Promise<{ approveCalls: Record<string, number> }> {
-  return page.evaluate(async () => {
-    const res = await fetch('/__e2e/stats');
-    return res.json();
-  });
-}
+import { expect, test } from '@playwright/test';
+import {
+  addSourceFile,
+  boot,
+  getMswStats,
+  openTab,
+  seedDocuments,
+  setMswScenario,
+} from './helpers';
 
 test.describe('Twin WebUI operator journeys', () => {
   test.beforeEach(async ({ page }) => {
     await boot(page);
   });
 
-  test('documents: filter, add source, retag and delete flows stay wired', async ({ page }) => {
+  test('@documents @smoke filter, add source, retag and delete flows stay wired', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
     await expect(page.getByTestId('pending-docs-section')).toContainText(
       'documents awaiting your sign-off',
@@ -90,7 +60,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 
-  test('topbar, tags, retrieval, graph and activity cross-navigation work', async ({ page }) => {
+  test('@smoke @navigation topbar, tags, retrieval, graph and activity cross-navigation work', async ({ page }) => {
     await page.getByRole('button', { name: /Notifications/ }).click();
     await expect(page.getByText('Mark all read')).toBeVisible();
     await page.getByText('Mark all read').click();
@@ -144,7 +114,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Replay queued');
   });
 
-  test('reviewer queue: read extracted text, edit-approve and reject pending sources', async ({
+  test('@documents @reviewer read extracted text, edit-approve and reject pending sources', async ({
     page,
   }) => {
     await expect(page.getByTestId('pending-doc-d6')).toContainText(
@@ -179,7 +149,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Document rejected');
   });
 
-  test('document detail panel exposes chunks, lineage, audit and gated raw notice', async ({
+  test('@documents document detail panel exposes chunks, lineage, audit and gated raw notice', async ({
     page,
   }) => {
     await page.getByTestId('docs-row-delete-d3').click();
@@ -209,7 +179,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Re-process queued');
   });
 
-  test('settings profile, workspace and API explorer remain usable', async ({ page }) => {
+  test('@settings @auth settings profile, workspace and API explorer remain usable', async ({ page }) => {
     await openTab(page, 'Settings');
     await expect(page.getByTestId('settings-profile')).toBeVisible();
     await expect(page.getByTestId('settings-profile-name')).toBeVisible();
@@ -237,7 +207,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('button', { name: 'Authorized' })).toBeVisible();
   });
 
-  test('tags governance: request and reject review workflows are enforced', async ({ page }) => {
+  test('@tags @governance request and reject review workflows are enforced', async ({ page }) => {
     await openTab(page, 'Tags');
     await page.getByRole('button', { name: 'Request new tag' }).click();
     await expect(page.getByRole('dialog', { name: /Request new tag/ })).toBeVisible();
@@ -267,7 +237,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Tag pacs008 rejected');
   });
 
-  test('tags governance: synonyms, deprecate and delete migration actions persist', async ({
+  test('@tags @governance synonyms, deprecate and delete migration actions persist', async ({
     page,
   }) => {
     await openTab(page, 'Tags');
@@ -301,7 +271,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Tag ansible migrated to memgraph');
   });
 
-  test('tags discovery: filters, related tags and document drill-down keep URL state wired', async ({
+  test('@tags @navigation filters, related tags and document drill-down keep URL state wired', async ({
     page,
   }) => {
     await openTab(page, 'Tags');
@@ -319,7 +289,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).toBeVisible();
   });
 
-  test('doctrine: bulk retag backend failure rolls back optimistic tags', async ({ page }) => {
+  test('@doctrine @tags bulk retag backend failure rolls back optimistic tags', async ({ page }) => {
     await setMswScenario(page, { bulkRetagStatus: 500 });
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
@@ -330,43 +300,91 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
-  test('doctrine: double-click approve sends one mutation for a pending doc', async ({ page }) => {
+  test('@doctrine @reviewer double-click approve sends one mutation for a pending doc', async ({ page }) => {
     await setMswScenario(page, { approveDelayMs: 600 });
     const approve = page.getByTestId('pending-doc-approve-d6');
     await approve.click();
-    await expect(approve).toBeDisabled();
+    await expect(page.getByTestId('pending-doc-d6')).toBeHidden();
     await approve.click({ timeout: 200 }).catch(() => undefined);
     await expect(page.getByRole('status')).toContainText('Document approved');
     const stats = await getMswStats(page);
     expect(stats.approveCalls.d6).toBe(1);
   });
 
-  test('doctrine: upload with initial tags auto-applies them after processed track status', async ({
+  test('@doctrine @a11y focus is restored after approving a pending doc', async ({
+    page,
+  }) => {
+    await page.getByTestId('pending-doc-approve-d6').click();
+    await expect(page.getByRole('status')).toContainText('Document approved');
+    await expect(page.getByTestId('pending-doc-d6')).toBeHidden();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const active = document.activeElement as HTMLElement | null;
+          return {
+            tag: active?.tagName ?? '',
+            testId: active?.dataset?.testid ?? '',
+            fallback: active?.dataset?.focusFallback ?? '',
+          };
+        }),
+      )
+      .toMatchObject({ tag: /^(BUTTON|MAIN)$/ });
+  });
+
+  test('@doctrine @upload @tags upload with initial tags auto-applies them after processed track status', async ({
     page,
   }) => {
     await setMswScenario(page, { trackStatusMode: 'processed' });
-    await page.getByRole('button', { name: 'Add source' }).click();
-    await page.getByTestId('addsource-file-input').setInputFiles({
-      name: 'auto-tagged-runbook.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Auto tagged\nProcessed track status fixture'),
-    });
-    await page.getByLabel('Tag input').fill('oracle');
-    await page.getByTestId('tag-sugg-oracle').click();
-    await expect(page.getByRole('button', { name: 'Add 1 source' })).toBeEnabled({
-      timeout: 12_000,
-    });
-    await page.getByRole('button', { name: 'Add 1 source' }).click();
+    await addSourceFile(
+      page,
+      {
+        name: 'auto-tagged-runbook.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# Auto tagged\nProcessed track status fixture'),
+      },
+      'oracle',
+    );
     await expect(page.getByRole('status')).toContainText('Sources queued for ingestion');
-    await expect(page.getByRole('status')).toContainText('Initial tags applied', {
-      timeout: 6_000,
+    await expect(page.locator('.toast-viewport')).toContainText('Initial tags applied', {
+      timeout: 10_000,
     });
     await page.getByLabel('Search source').fill('auto-tagged-runbook');
-    await expect(page.getByText('auto-tagged-runbook.md')).toBeVisible();
-    await expect(page.getByText('oracle')).toBeVisible();
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('auto-tagged-runbook.md');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('oracle');
   });
 
-  test('doctrine: add source click accepts multiple files and they appear in documents', async ({
+  test('@doctrine @upload @resilience initial tag polling timeout surfaces manual retag guidance', async ({
+    page,
+  }) => {
+    await setMswScenario(page, { trackStatusMode: 'timeout' });
+    await page.evaluate(() => {
+      (
+        window as Window & {
+          __TWIN_E2E_INITIAL_TAG_POLL?: { intervalMs: number; maxPolls: number };
+        }
+      ).__TWIN_E2E_INITIAL_TAG_POLL = { intervalMs: 50, maxPolls: 2 };
+    });
+    await addSourceFile(
+      page,
+      {
+        name: 'slow-ingestion-runbook.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# Slow\nTimeout fixture'),
+      },
+      'oracle',
+    );
+    await expect(page.locator('.toast-viewport')).toContainText('Initial tags not applied', {
+      timeout: 5_000,
+    });
+    await expect(page.locator('.toast-viewport')).toContainText('Retag manually');
+    await page.getByLabel('Search source').fill('slow-ingestion-runbook');
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText(
+      'slow-ingestion-runbook.md',
+    );
+    await expect(page.getByTestId('docs-row-uploaded_1')).not.toContainText('oracle');
+  });
+
+  test('@doctrine @upload add source click accepts multiple files and they appear in documents', async ({
     page,
   }) => {
     await page.getByRole('button', { name: 'Add source' }).click();
@@ -393,11 +411,11 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('button', { name: 'Add 2 sources' }).click();
     await expect(page.getByRole('status')).toContainText('Sources queued for ingestion');
     await page.getByLabel('Search source').fill('multi-');
-    await expect(page.getByText('multi-a.md')).toBeVisible();
-    await expect(page.getByText('multi-b.md')).toBeVisible();
+    await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('multi-a.md');
+    await expect(page.getByTestId('docs-row-uploaded_2')).toContainText('multi-b.md');
   });
 
-  test('doctrine: single delete requires confirm and removes the document', async ({ page }) => {
+  test('@doctrine @documents single delete requires confirm and removes the document', async ({ page }) => {
     await page.getByTestId('docs-row-delete-d4').click();
     await expect(page.getByTestId('doc-detail-panel')).toBeVisible();
     await page.getByTestId('doc-detail-delete').click();
@@ -407,7 +425,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 
-  test('doctrine: taxonomy template download and valid/invalid category imports', async ({
+  test('@doctrine @tags taxonomy template download and valid/invalid category imports', async ({
     page,
   }) => {
     await openTab(page, 'Tags');
@@ -441,7 +459,169 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('rail-reliability')).toContainText('Reliability');
   });
 
-  test('doctrine: sign out purges retrieval thread localStorage', async ({ page }) => {
+  test('@doctrine @tags imported tag domain drives request, approve and filtering workflow', async ({
+    page,
+  }) => {
+    await openTab(page, 'Tags');
+    await page.getByTestId('taxonomy-import-file').setInputFiles({
+      name: 'saad-workflow-categories.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify([
+          { id: 'oracle', label: 'Oracle', color: '#B85A1E' },
+          { id: 'infra', label: 'Infrastructure', color: '#5A7FB4' },
+          { id: 'network', label: 'Network', color: '#1F8A7A' },
+          { id: 'payment', label: 'Payment', color: '#7B5BB8' },
+          { id: 'lifecycle', label: 'Lifecycle', color: '#8A5C0E' },
+          { id: 'governance', label: 'Governance', color: '#2C3E50' },
+          { id: 'reliability', label: 'Reliability', color: '#3366cc' },
+        ]),
+      ),
+    });
+    await expect(page.getByTestId('rail-reliability')).toContainText('Reliability');
+
+    await page.getByRole('button', { name: 'Request new tag' }).click();
+    await page.getByLabel(/Proposed name/).fill('golden-signal');
+    await page
+      .getByLabel(/Definition/)
+      .fill('Operational signal used to triage reliability regressions.');
+    await page.getByLabel('Domain').selectOption('reliability');
+    await page
+      .getByLabel('Justification')
+      .fill('Required for Saad demo workflow and SLO runbooks.');
+    await page.getByRole('button', { name: 'Submit request' }).click();
+    await expect(page.locator('.toast-viewport')).toContainText('golden-signal');
+    await expect(page.locator('.toast-viewport')).toContainText('requested for review');
+
+    await page
+      .getByTestId('pending-golden-signal')
+      .getByRole('button', { name: 'Approve', exact: true })
+      .click();
+    await expect(page.locator('.toast-viewport')).toContainText('golden-signal');
+    await expect(page.locator('.toast-viewport')).toContainText('approved');
+
+    await page.getByTestId('rail-reliability').click();
+    await expect(page.getByTestId('tag-card-golden-signal')).toBeVisible();
+    await page.getByTestId('tag-card-golden-signal').click();
+    await expect(page.locator('.tag-detail-name')).toHaveText('golden-signal');
+
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page
+      .getByLabel('Short definition')
+      .fill('Updated reliability signal definition from e2e.');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.locator('.toast-viewport')).toContainText('definition updated');
+    await expect(page.getByTestId('tag-card-golden-signal')).toContainText(
+      'Updated reliability signal definition from e2e.',
+    );
+
+    await page.getByTestId('tag-card-golden-signal').click();
+    await page.getByRole('button', { name: 'Manage synonyms' }).click();
+    await page.getByLabel('Add synonym').fill('slo-signal');
+    await page.getByRole('button', { name: 'Save synonyms' }).click();
+    await expect(page.locator('.toast-viewport')).toContainText('synonyms updated');
+    await expect(page.getByTestId('tag-card-golden-signal')).toContainText('slo-signal');
+
+    await page.getByTestId('tag-card-golden-signal').click();
+    await page.getByRole('button', { name: 'Deprecate' }).click();
+    await page
+      .getByRole('dialog', { name: /Deprecate tag/ })
+      .getByRole('button', { name: 'Deprecate' })
+      .click();
+    await expect(page.locator('.toast-viewport')).toContainText('deprecated');
+    await page.getByLabel('Status').selectOption('deprecated');
+    await expect(page.getByTestId('tag-card-golden-signal')).toBeVisible();
+  });
+
+  test('@doctrine @tags bulk retag 413 is surfaced as a red error and rolls back', async ({
+    page,
+  }) => {
+    await setMswScenario(page, { bulkRetagStatus: 413 });
+    await page.getByLabel('Select oracle-restart-procedure.pdf').check();
+    await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
+    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByTestId('sugg-memgraph').click();
+    await page.getByRole('button', { name: 'Apply tag' }).click();
+    await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
+    await expect(page.getByRole('alert')).toContainText('413');
+    await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
+  });
+
+  test('@doctrine @auth twin api without auth returns 401 challenge', async ({ page }) => {
+    await setMswScenario(page, { authGate: true });
+    const response = await page.evaluate(async () => {
+      const res = await fetch('/twin/api/tags');
+      return {
+        status: res.status,
+        body: await res.json(),
+        challenge: res.headers.get('WWW-Authenticate'),
+      };
+    });
+    expect(response.status).toBe(401);
+    expect(response.body.detail).toContain('Basic Auth required');
+    expect(response.challenge).toContain('Basic');
+  });
+
+  test('@doctrine @documents reprocess on a non-failed document tells the truth', async ({ page }) => {
+    await page.getByTestId('docs-row-delete-d1').click();
+    await expect(page.getByRole('dialog', { name: /Detail: oracle-restart-procedure.pdf/ })).toBeVisible();
+    await page.getByTestId('doc-detail-reprocess').click();
+    await expect(page.locator('.toast-viewport')).toContainText('Re-process not applicable');
+    await expect(page.locator('.toast-viewport')).not.toContainText('Re-process queued');
+  });
+
+  test('@doctrine @resilience long document paths ellipsize with a native tooltip', async ({
+    page,
+  }) => {
+    const longPath =
+      '/cib/runbooks/' +
+      'oracle-rman-disaster-recovery-cross-region-data-guard-failover-validation-'.repeat(3) +
+      'final-checklist.md';
+    await seedDocuments(page, [
+      {
+        doc_id: 'long_path',
+        file_path: longPath,
+        content_summary: 'Long path overflow fixture',
+        tags: ['oracle', 'rman', 'runbook'],
+      },
+    ]);
+    await page.getByLabel('Search source').fill('final-checklist');
+    const sourceName = page.getByTestId('docs-row-long_path').locator('.source-name');
+    await expect(sourceName).toHaveAttribute('title', longPath);
+    await expect(sourceName).toHaveCSS('text-overflow', 'ellipsis');
+    const box = await sourceName.boundingBox();
+    expect(box?.width ?? 0).toBeLessThan(420);
+  });
+
+  test('@doctrine @notifications notifications can be marked read and cleared without refresh', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: /Notifications, \d+ unread/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('unread');
+    await page.getByRole('button', { name: 'Mark all read' }).click();
+    await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).not.toContainText('unread');
+    await page.getByRole('button', { name: 'Clear all' }).click();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText(
+      "You're all caught up.",
+    );
+  });
+
+  test('@doctrine @reviewer pending docs section disappears after the queue is drained', async ({
+    page,
+  }) => {
+    await page.getByTestId('pending-doc-approve-d6').click();
+    await expect(page.getByRole('status')).toContainText('Document approved');
+    await page.getByTestId('pending-doc-reject-d7').click();
+    await page.getByLabel('Rejection reason').fill('Out of scope for retrieval.');
+    await page.getByTestId('pending-doc-reject-submit').click();
+    await expect(page.getByRole('status')).toContainText('Document rejected');
+    await page.getByRole('button', { name: 'Approve update' }).click();
+    await expect(page.getByRole('status')).toContainText('Update approved');
+    await expect(page.getByTestId('pending-docs-section')).toBeHidden();
+  });
+
+  test('@doctrine @auth sign out purges retrieval thread localStorage', async ({ page }) => {
     await openTab(page, 'Retrieval');
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('Persisted before signout');

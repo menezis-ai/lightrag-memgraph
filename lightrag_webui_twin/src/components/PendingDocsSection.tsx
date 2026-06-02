@@ -79,6 +79,16 @@ export function PendingDocsSection({
     setBusyDocIds(next);
   };
 
+  const restoreFocusAfterRemovedAction = (): void => {
+    window.requestAnimationFrame(() => {
+      if (document.activeElement && document.activeElement !== document.body) return;
+      const target = document.querySelector<HTMLElement>(
+        '[data-testid^="pending-doc-"] button:not(:disabled), [data-focus-fallback="app-main"]',
+      );
+      target?.focus({ preventScroll: true });
+    });
+  };
+
   const updateDocumentReview = (
     docId: string,
     state: 'approved' | 'rejected',
@@ -115,6 +125,7 @@ export function PendingDocsSection({
         [key: string]: unknown;
       }>({ queryKey: ['documents'] });
       updateDocumentReview(variables.doc.doc_id, 'approved', variables.edits);
+      restoreFocusAfterRemovedAction();
       return { previousDocuments };
     },
     onSuccess: (_data, variables) => {
@@ -154,6 +165,7 @@ export function PendingDocsSection({
         [key: string]: unknown;
       }>({ queryKey: ['documents'] });
       updateDocumentReview(variables.doc.doc_id, 'rejected');
+      restoreFocusAfterRemovedAction();
       return { previousDocuments };
     },
     onSuccess: (_data, variables) => {
