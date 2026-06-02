@@ -11,6 +11,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { __resetAuthConfigCacheForTests, useAuth } from './useAuth';
 import { resolveRuntimeConfig, DEV_CONFIG } from '../config/devConfig';
 
+const logoutMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../api/resources', () => ({
+  api: {
+    logout: logoutMock,
+  },
+}));
+
 function wrap(qc: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -22,6 +30,7 @@ const originalConfig = (window as Window & typeof globalThis).__twinConfig;
 
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
+  logoutMock.mockResolvedValue({ ok: true });
   (window as Window & typeof globalThis).__twinConfig = undefined;
   Object.defineProperty(window, 'location', {
     value: {
@@ -34,6 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.clearAllMocks();
   (window as Window & typeof globalThis).__twinConfig = originalConfig;
   Object.defineProperty(window, 'location', {
     value: ORIGINAL_LOCATION,
@@ -111,6 +121,7 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
+    expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['documents'])).toBeUndefined();
     expect(window.localStorage.getItem('twin-rag.threads.v2')).toBeNull();
     expect(window.location.href).toMatch(/realms\/twin\/protocol/);
@@ -121,9 +132,7 @@ describe('useAuth — signout', () => {
     const qc = new QueryClient();
     qc.setQueryData(['notifications'], [{ id: 'n1' }]);
 
-    // Force the logout fetch to fail.
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    logoutMock.mockRejectedValue(new Error('network down'));
 
     const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
 
@@ -131,9 +140,8 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
+    expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['notifications'])).toBeUndefined();
     expect(window.location.href).toMatch(/realms\/twin/);
-
-    globalThis.fetch = originalFetch;
   });
 });
