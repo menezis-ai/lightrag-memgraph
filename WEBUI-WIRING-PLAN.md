@@ -121,6 +121,233 @@ Still to do:
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility until then.
 
+## Plan e2e renforcé — recette v2 + Couche 3
+
+This section translates the 2026-05-29 WebUI recipe findings into an
+actionable e2e test plan. `WEBUI-WIRING-PLAN.md` remains the source of truth:
+the old recipe vocabulary says "workspace", but the active contract now says
+"space" for Twin sub-scopes.
+
+### Preconditions
+
+- Keep the existing Playwright smoke green before adding new coverage. Current
+  selectors must use the active UI contract (`Switch space`, not the old
+  `Switch workspace` wording).
+- Split the current monolithic `lightrag_webui_twin/e2e/app.spec.ts` into
+  domain files before adding many new cases:
+  - `documents.spec.ts`
+  - `tags.spec.ts`
+  - `retrieval.spec.ts`
+  - `graph.spec.ts`
+  - `activity.spec.ts`
+  - `settings-auth.spec.ts`
+  - `spaces-runtime.spec.ts`
+- Keep Playwright focused on operator journeys. Use Python `pytest` for real
+  backend contracts and Memgraph isolation.
+
+### Test layers
+
+| Layer | Scope | Tool |
+|---|---|---|
+| WebUI journeys | Visible operator behavior, forms, toasts, refresh, reload persistence | Playwright + MSW |
+| Front/API contract | `window.__twinConfig`, URL bases, headers, cache invalidation | Vitest + Playwright request interception |
+| Real backend contract | Space isolation, Memgraph stores, classification metadata, auth | `pytest tests/test_server/*` |
+
+### Priority 0 — stabilize existing e2e
+
+- Fix stale selectors from the workspace → space migration.
+- Keep the two `@smoke` journeys green locally before expanding coverage.
+- Add helper assertions in `e2e/helpers.ts`:
+  - `expectToast(page, text)`
+  - `expectDocumentTags(page, docId, tags)`
+  - `reloadAndExpectVisible(page, locatorFactory)`
+  - `expectMswMutationCount(page, resource, id, count)`
+
+### Priority 1 — RC-1 persisted mutations
+
+The core recipe failure is "toast success without commit". Every S1/S2
+mutation e2e must prove all three outcomes:
+
+1. The UI changes immediately.
+2. The data survives a refetch or `page.reload()`.
+3. The expected Activity/Notification side effect appears when the contract
+   says it should.
+
+Playwright cases:
+
+- Documents:
+  - Add source valid file → document appears with initial status → reload
+    still shows it.
+  - Retag one document → row tags update → reload keeps tags.
+  - Bulk retag N documents → every selected row updates → failure rolls back.
+  - Bulk delete → confirmation required → rows removed → counters refresh.
+  - Pending approve/reject/edit-approve → item leaves pending queue → reload
+    preserves review state.
+- Tags:
+  - Request new tag → pending queue updates.
+  - Approve tag → pending item disappears, active tag appears, Activity and
+    notification are created.
+  - Reject tag → reason required, pending item disappears.
+  - Edit tag → edited definition/synonyms persist after reload.
+  - Deprecate/delete with migration → tag status/list and affected documents
+    reflect the selected strategy.
+- Activity:
+  - Refresh loads newly available events and clears the "new events" counter.
+  - Clear events never reports removed items when none were purgeable.
+
+Backend `pytest` cases:
+
+- `POST /twin/api/documents/{id}/approve`
+- `POST /twin/api/documents/{id}/reject`
+- `POST /twin/api/documents/bulk-delete`
+- `POST /twin/api/tags`, approve/reject/edit/synonyms/delete
+- Assert persisted store state per space and emitted activity events.
+
+### Priority 2 — Twin spaces and runtime config
+
+This is the 2026-06-02 Couche 3 contract and must be covered independently
+from generic navigation.
+
+Playwright cases:
+
+- Initial active space comes from `window.__twinConfig.defaultSpaceId`.
+- The space menu lists `window.__twinConfig.spaces` and uses visible "Space"
+  copy.
+- Switching space:
+  - clears URL filters,
+  - closes open modals/detail panels,
+  - resets notification local overrides,
+  - refetches documents, tags, activity, and notifications,
+  - sends subsequent requests with the new active space.
+- Empty configured space list shows exactly:
+  `No space available for this KB. Please contact Twincore Team`.
+
+Front/API contract cases:
+
+- Every `apiFetch` request carries `X-Twin-Space`.
+- During migration it also carries `X-Twin-Workspace`.
+- Per-call `space` override wins over the global active space.
+- `VITE_FORCE_MSW=true` keeps the standalone OVH demo on MSW; production
+  without that flag hits the real backend.
+
+Backend `pytest` cases:
+
+- `X-Twin-Space` is read before `X-Twin-Workspace`.
+- Legacy `X-Twin-Workspace` remains accepted while the compatibility window is
+  open.
+- Unknown space returns the configured empty-state error.
+- Native document shims filter by `DocStatus.metadata.space`.
+- Legacy docs without space metadata are visible only from the default space.
+- Chunks and delete routes reject documents from another space.
+- WebUI tag/activity/notification stores are isolated per configured space.
+
+### Priority 3 — validations and no-op actions
+
+Playwright cases:
+
+- Add source:
+  - unsupported file type is visibly rejected,
+  - file over limit is visibly rejected,
+  - mixed valid/invalid upload only counts valid files in the submit button,
+  - partial upload failure reports exact `ok/ko` counts.
+- Tags:
+  - request tag cannot submit without required fields,
+  - reject tag cannot submit without reason,
+  - invalid taxonomy JSON shows a precise validation banner.
+- Retrieval:
+  - clicking a citation opens the referenced document/chunk source.
+- Settings/Auth:
+  - sign out calls `/twin/api/auth/logout`, clears local caches, and leaves no
+    retrieval thread state behind.
+
+### Priority 4 — classification Couche 2 in real wiring
+
+Backend `pytest` cases:
+
+- `GET /twin/api/documents/{id}/metadata` returns structured
+  `classification` when present in DocStatus metadata.
+- A synthetic C3/C4 document above `TWIN_MIP_MAX_CLASSIFICATION` is rejected,
+  leaves DocStatus `FAILED`, and emits `classification-rejected`.
+- Missing/unknown label map fails closed as documented in the activation
+  matrix.
+
+Playwright cases:
+
+- Structured C1/C2/C3/C4 metadata renders the expected `ClassPill`.
+- Legacy string classification stays silent.
+- Above-internal classification gates raw/chunk access with the notice.
+
+### Priority 5 — counters, filters, and drill-downs
+
+Playwright cases:
+
+- Documents counters reflect the currently filtered collection, not the global
+  fixture count.
+- Status and tag filters update URL state and visible rows coherently.
+- Knowledge Graph entity drill-down to Documents uses a complete tag/entity
+  filter, not a lossy text search.
+- Entity type counters update after graph filters.
+
+### Recipe ticket coverage matrix
+
+The table below maps every 2026-05-29 recipe ticket to the intended e2e
+coverage. Items marked "PO gate" must first be confirmed as still in scope for
+the current React port and Couche 3 contract.
+
+| Ticket | Coverage target | Layer |
+|---|---|---|
+| TWIN-DOC-04 | Add source commits a valid file, updates list/counters, survives reload | Playwright + backend upload/track-status |
+| TWIN-DOC-01 | Single and bulk retag persist tags, refresh documents, emit activity | Playwright + backend `_bulk-retag` |
+| TWIN-DOC-02 | Bulk delete action is present after selection, requires confirmation, persists removal | Playwright + backend bulk-delete, PO gate if removal was intentional |
+| TWIN-DOC-03 | Edit & Approve opens the edit form, commits edits, leaves pending queue | Playwright + backend approve-with-edits |
+| TWIN-DOC-05 | Browse button opens the native file chooser and accepts selected files | Playwright `filechooser` |
+| TWIN-DOC-06 | Unsupported type / oversized file shows an error and is excluded | Playwright |
+| TWIN-DOC-07 | Submit button count includes valid files only | Playwright |
+| TWIN-DOC-08 | Document counters reflect active filters | Playwright |
+| TWIN-DOC-09 | Status and tag filters are explicit, URL-backed, and update rows/counters | Playwright |
+| TWIN-DOC-10 | Lifecycle auto-approve checkbox toggles and persists | Playwright, PO gate if lifecycle is out of current UI scope |
+| TWIN-TAG-01 | Tag edit persists changed fields and history | Playwright + backend tag PATCH |
+| TWIN-TAG-02 | Tag edit toast is field-aware or uses a truthful generic message | Playwright/RTL |
+| TWIN-TAG-03 | Request new tag blocks empty required fields | Playwright |
+| TWIN-TAG-04 | Requested tag appears in pending queue and survives reload | Playwright + backend tag POST |
+| TWIN-TAG-05 | Approve removes pending item, creates active tag, emits activity/notification | Playwright + backend approve |
+| TWIN-TAG-06 | Approve-with-edits preserves steward edits | Playwright + backend approve/edit path, PO gate if flow is not exposed |
+| TWIN-TAG-07 | Reject requires a non-empty reason | Playwright |
+| TWIN-TAG-08 | Reject removes pending item and persists rejected state | Playwright + backend reject |
+| TWIN-TAG-09 | Manage synonyms persists aliases and refreshes tag detail/list | Playwright + backend synonyms |
+| TWIN-TAG-10 | Delete migrate/untag strategies persist tag and affected document changes | Playwright + backend delete |
+| TWIN-TAG-11 | Delete strategy labels remain readable in dark theme | Playwright visual/CSS assertion |
+| TWIN-TAG-12 | Pending tag banner uses tag-specific wording | Playwright/RTL copy assertion |
+| TWIN-RET-01 | Citation click opens referenced source/chunk | Playwright |
+| TWIN-KG-01 | Graph entity drill-down uses complete source filter | Playwright |
+| TWIN-KG-02 | Pin/Pinned state persists for session or reload per PO decision | Playwright, PO gate for persistence level |
+| TWIN-KG-03 | Entity type counters reflect active graph filters | Playwright |
+| TWIN-ACT-01 | Refresh fetches new events and resets new-event indicator | Playwright + backend activity list |
+| TWIN-ACT-02 | Clear activity message and removed count match actual purge result | Playwright + backend activity clear if implemented |
+| TWIN-SET-01 | Provider Configure buttons open an editable panel | Playwright, PO gate if Providers section is out of current UI scope |
+| TWIN-SET-02 | Sign out calls logout, clears client state, reaches non-auth/redirect path | Playwright + backend auth/logout |
+| TWIN-SET-03 | Revoke token requires confirmation | Playwright, PO gate if token management remains in scope |
+| TWIN-SET-04 | Default ingestion tags are constrained to thesaurus entries | Playwright, PO gate if setting remains editable |
+| TWIN-SET-05 | Member invite rejects invalid email formats | Playwright, PO gate if Members section remains in scope |
+| TWIN-SET-06 | Delete member requires confirmation | Playwright, PO gate if Members section remains in scope |
+| TWIN-TRX-01 | Role perspective selector exists and changes available actions | Playwright, PO gate because current contract may rely on real JWT/MyAccess instead |
+| TWIN-TRX-02 | Space switch visibly refetches/re-evaluates state; full reload only if PO requires it | Playwright + front/API contract |
+| TWIN-TRX-03 | Logo returns to Documents/home | Playwright/RTL, PO gate if no home affordance is desired |
+| TWIN-TRX-04 | Header and pending cards remain usable on mobile viewport | Playwright responsive screenshot/assertions |
+
+Baseline "do not regress" coverage should stay split across the existing
+smoke journeys plus focused domain tests. Out-of-scope recipe items remain
+out-of-scope unless the PO explicitly brings them into the Couche 3 contract.
+
+### CI recommendation
+
+- Keep existing `webui-tests` as typecheck + Vitest + build.
+- Add a lightweight Playwright smoke job first: `bun run test:e2e -- --grep
+  @smoke`.
+- Add full Playwright later, after splitting specs and stabilizing selectors.
+- Keep backend space/classification tests in the existing Python integration
+  job with Memgraph service.
+
 ---
 
 ## Couche 2 — Classification BNP (as-built)
