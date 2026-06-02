@@ -133,6 +133,10 @@ the old recipe vocabulary says "workspace", but the active contract now says
 - Keep the existing Playwright smoke green before adding new coverage. Current
   selectors must use the active UI contract (`Switch space`, not the old
   `Switch workspace` wording).
+- Run Playwright with one worker while the prototype uses MSW mutable state.
+  Multiple spec files can otherwise race through shared `/__e2e/reset`
+  handlers. Revisit this once e2e targets the real Couche 3 backend or each
+  worker gets an isolated mock namespace.
 - Split the current monolithic `lightrag_webui_twin/e2e/app.spec.ts` into
   domain files before adding many new cases:
   - `documents.spec.ts`
@@ -203,6 +207,42 @@ Backend `pytest` cases:
 - `POST /twin/api/tags`, approve/reject/edit/synonyms/delete
 - Assert persisted store state per space and emitted activity events.
 
+Progress as of 2026-06-02:
+
+- Playwright smoke selectors were aligned with the active "space" contract.
+- MSW e2e mutable stores now persist across page reloads for documents, tags,
+  tag categories, notifications, and activity; `POST /__e2e/reset` clears that
+  session state between tests.
+- `TWIN-DOC-04` is covered by the upload-with-initial-tags journey: uploaded
+  document + auto-applied tag remain visible after `page.reload()`.
+- `lightrag_webui_twin/e2e/documents.spec.ts` adds focused RC-1 coverage for:
+  - `TWIN-DOC-01`: bulk retag is verified through a tag-filtered document view
+    and remains valid after reload.
+  - `TWIN-DOC-02`: bulk delete action is present, requires the existing
+    two-click confirmation, removes the row, and stays removed after reload.
+  - `TWIN-DOC-03`: Edit & Approve opens the form, commits edited summary/tags,
+    removes the item from pending review, and survives reload.
+  - Document reject baseline: rejected pending source leaves the review queue
+    and remains absent after reload.
+- `TWIN-TAG-05` is covered by the tag approval journey: approved tag remains
+  visible after reload, leaves pending, and keeps notification/activity side
+  effects.
+- `lightrag_webui_twin/e2e/tags.spec.ts` adds focused RC-1 coverage for:
+  - `TWIN-TAG-01` direct tag edit updates the tag data and survives reload,
+  - `TWIN-TAG-04` requested tag remains pending after reload,
+  - `TWIN-TAG-06` Edit & Approve applies steward definition/category edits
+    before approving the request and keeps those edits after reload; canonical
+    rename is not covered by the current API contract,
+  - `TWIN-TAG-08` rejected request leaves pending after reload,
+  - `TWIN-TAG-09` synonym updates remain visible after reload,
+  - `TWIN-TAG-10` delete/migration removes the tag after reload.
+- `lightrag_webui_twin/e2e/activity.spec.ts` adds focused RC-1 coverage for:
+  - `TWIN-ACT-01` explicit Refresh refetches newly available events from the
+    store and the fetched event survives reload.
+  - `TWIN-ACT-02` is now covered as an immutable-ledger decision: there is no
+    manual "Clear activity events" / purge affordance in the UI, so the old
+    contradictory purge toast cannot be triggered.
+
 ### Priority 2 — Twin spaces and runtime config
 
 This is the 2026-06-02 Couche 3 contract and must be covered independently
@@ -240,6 +280,23 @@ Backend `pytest` cases:
 - Legacy docs without space metadata are visible only from the default space.
 - Chunks and delete routes reject documents from another space.
 - WebUI tag/activity/notification stores are isolated per configured space.
+
+Progress as of 2026-06-03:
+
+- `lightrag_webui_twin/e2e/spaces-runtime.spec.ts` covers the runtime-config
+  UI contract:
+  - initial active space comes from `window.__twinE2eRuntimeConfig.defaultSpaceId`
+    in e2e, mirroring the server-substituted `window.__twinConfig` contract;
+  - the topbar space menu renders the configured `spaces` list and visible
+    "Spaces" copy;
+  - switching to `sandbox` causes subsequent Twin overlay requests to carry
+    both `X-Twin-Space: sandbox` and transitional `X-Twin-Workspace: sandbox`;
+  - an explicitly empty configured space list shows
+    `No space available for this KB. Please contact Twincore Team`.
+- `api/client.test.ts` now covers per-call `space` override, legacy
+  `workspace` override, and explicit `space: null` header suppression.
+- `useAuth.test.tsx` covers the dev/e2e runtime override that lets Playwright
+  test server-injected config despite the Vite HTML placeholder.
 
 ### Priority 3 — validations and no-op actions
 

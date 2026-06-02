@@ -72,6 +72,7 @@ export interface TwinRuntimeConfig {
 declare global {
   interface Window {
     __twinConfig?: TwinRuntimeConfig | string;
+    __twinE2eRuntimeConfig?: TwinRuntimeConfig;
   }
 }
 

@@ -181,7 +181,7 @@ function AppShell() {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const configuredSpaces = runtimeConfig.spaces;
   const workspaceList = useMemo<readonly Workspace[]>(() => {
-    if (configuredSpaces && configuredSpaces.length > 0) {
+    if (configuredSpaces) {
       return configuredSpaces.map((space) => ({
         id: space.id,
         kb: space.label,
@@ -628,11 +628,27 @@ function AppShell() {
         );
         break;
       case 'edit-approve':
-        commitTagMutation(
-          (cb) => approveTag.mutate({ name: tagname, actor }, cb),
-          successToast,
-          failureTitle,
-        );
+        void (async () => {
+          try {
+            if (commit.def || commit.category) {
+              await editTag.mutateAsync({
+                name: tagname,
+                def: commit.def,
+                category: commit.category,
+                actor,
+              });
+            }
+            await approveTag.mutateAsync({ name: tagname, actor });
+            pushToast(successToast);
+          } catch (err) {
+            pushToast({
+              kind: 'error',
+              title: failureTitle,
+              tagname: successToast.tagname,
+              sub: err instanceof Error ? err.message : 'Mutation rejected',
+            });
+          }
+        })();
         break;
       case 'request':
         if (commit.name) {
@@ -830,6 +846,7 @@ function AppShell() {
               live={true}
               onPushToast={pushToast}
               onNavigate={onNavigate}
+              onRefresh={() => activity.refetch()}
             />
           )}
           {tab === 'graph' && (

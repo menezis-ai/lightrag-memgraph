@@ -13,6 +13,7 @@ type FetchMock = ReturnType<typeof vi.fn>;
 let originalFetch: typeof fetch;
 let fetchMock: FetchMock;
 const originalConfig = window.__twinConfig;
+const originalE2eConfig = window.__twinE2eRuntimeConfig;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -37,6 +38,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setActiveSpace(null);
   window.__twinConfig = originalConfig;
+  window.__twinE2eRuntimeConfig = originalE2eConfig;
 });
 
 describe('apiFetch', () => {
@@ -128,6 +130,27 @@ describe('apiFetch', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Space']).toBe('sandbox');
+    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+  });
+
+  it('keeps the legacy workspace override during the migration window', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveSpace('default');
+    await apiFetch('/twin/api/tags', { workspace: 'sandbox' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Space']).toBe('sandbox');
+    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+  });
+
+  it('allows disabling the space header for a per-call request', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveSpace('default');
+    await apiFetch('/health', { space: null });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Space']).toBeUndefined();
+    expect(headers['X-Twin-Workspace']).toBeUndefined();
   });
 
   it('throws ApiError with parsed JSON body on 4xx', async () => {

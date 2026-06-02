@@ -35,6 +35,117 @@ import type { TagCategory, TagEntry } from '../types/tag';
 const ANY = '*';
 const TWIN = '/twin/api';
 
+const E2E_DOCUMENTS_STORAGE_KEY = 'twin.e2e.documentsState.v1';
+const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
+const E2E_TAGS_STORAGE_KEY = 'twin.e2e.tagsState.v1';
+const E2E_NOTIFICATIONS_STORAGE_KEY = 'twin.e2e.notificationsState.v1';
+const E2E_ACTIVITY_STORAGE_KEY = 'twin.e2e.activityState.v1';
+
+function cloneDocuments(docs: readonly Document[]): Document[] {
+  return docs.map((doc) => ({
+    ...doc,
+    tags: [...doc.tags],
+    metadata:
+      doc.metadata && typeof doc.metadata === 'object'
+        ? { ...doc.metadata }
+        : doc.metadata,
+    review:
+      doc.review && typeof doc.review === 'object'
+        ? { ...doc.review }
+        : doc.review,
+  }));
+}
+
+function e2eStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function loadDocumentsState(): Document[] {
+  const raw = e2eStorage()?.getItem(E2E_DOCUMENTS_STORAGE_KEY);
+  if (!raw) return cloneDocuments(DOCUMENT_FIXTURES);
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) return cloneDocuments(parsed as Document[]);
+  } catch {
+    // Ignore corrupt e2e state and fall back to fixtures.
+  }
+  return cloneDocuments(DOCUMENT_FIXTURES);
+}
+
+function persistDocumentsState(): void {
+  e2eStorage()?.setItem(E2E_DOCUMENTS_STORAGE_KEY, JSON.stringify(documentsState));
+}
+
+function loadState<T>(
+  key: string,
+  fallback: readonly T[],
+  clone: (items: readonly T[]) => T[],
+): T[] {
+  const raw = e2eStorage()?.getItem(key);
+  if (!raw) return clone(fallback);
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) return clone(parsed as T[]);
+  } catch {
+    // Ignore corrupt e2e state and fall back to fixtures.
+  }
+  return clone(fallback);
+}
+
+function persistState(key: string, value: unknown): void {
+  e2eStorage()?.setItem(key, JSON.stringify(value));
+}
+
+function cloneTagCategories(items: readonly TagCategory[]): TagCategory[] {
+  return items.map((category) => ({ ...category }));
+}
+
+function cloneTags(items: readonly TagEntry[]): TagEntry[] {
+  return items.map((tag) => ({
+    ...tag,
+    aliases: [...tag.aliases],
+    deprecates: [...tag.deprecates],
+    related: tag.related.map((related) => ({ ...related })),
+    examples: [...tag.examples],
+    created: { ...tag.created },
+    last_edit: { ...tag.last_edit },
+  }));
+}
+
+function cloneNotifications(items: readonly Notification[]): Notification[] {
+  return items.map((notification) => ({ ...notification }));
+}
+
+function cloneActivity(items: readonly ActivityEvent[]): ActivityEvent[] {
+  return items.map((event) => ({
+    ...event,
+    actor: { ...event.actor },
+    target: { ...event.target },
+    meta: { ...event.meta },
+  }));
+}
+
+function persistTagCategoriesState(): void {
+  persistState(E2E_TAG_CATEGORIES_STORAGE_KEY, categoryState);
+}
+
+function persistTagState(): void {
+  persistState(E2E_TAGS_STORAGE_KEY, tagState);
+}
+
+function persistNotificationState(): void {
+  persistState(E2E_NOTIFICATIONS_STORAGE_KEY, notificationState);
+}
+
+function persistActivityState(): void {
+  persistState(E2E_ACTIVITY_STORAGE_KEY, activityState);
+}
+
 /**
  * Mutable document store. Initialized from DOCUMENT_FIXTURES at module load,
  * then mutated by approve / reject / delete handlers so the UI sees state
@@ -43,11 +154,23 @@ const TWIN = '/twin/api';
  * Reset via `resetDocumentsState()` between tests so suites don't pollute
  * each other.
  */
-let documentsState: Document[] = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
-let categoryState: TagCategory[] = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
-let tagState: TagEntry[] = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
-let notificationState: Notification[] = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
-let activityState: ActivityEvent[] = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
+let documentsState: Document[] = loadDocumentsState();
+let categoryState: TagCategory[] = loadState(
+  E2E_TAG_CATEGORIES_STORAGE_KEY,
+  TAG_CATEGORY_FIXTURES,
+  cloneTagCategories,
+);
+let tagState: TagEntry[] = loadState(E2E_TAGS_STORAGE_KEY, TAG_FIXTURES, cloneTags);
+let notificationState: Notification[] = loadState(
+  E2E_NOTIFICATIONS_STORAGE_KEY,
+  NOTIFICATION_FIXTURES,
+  cloneNotifications,
+);
+let activityState: ActivityEvent[] = loadState(
+  E2E_ACTIVITY_STORAGE_KEY,
+  ACTIVITY_FIXTURES,
+  cloneActivity,
+);
 let graphEntityState: GraphEntity[] = GRAPH_ENTITY_FIXTURES.map((e) => ({
   ...e,
   tags: e.tags ? [...e.tags] : [],
@@ -73,14 +196,34 @@ const e2eScenario: E2eScenario = {};
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
   tagApproveCalls: {} as Record<string, number>,
+  spaceRequests: [] as Array<{
+    path: string;
+    space: string | null;
+    workspace: string | null;
+  }>,
 };
 
+function recordTwinSpaceRequest(request: Request): void {
+  const url = new URL(request.url);
+  e2eStats.spaceRequests.push({
+    path: url.pathname,
+    space: request.headers.get('X-Twin-Space'),
+    workspace: request.headers.get('X-Twin-Workspace'),
+  });
+}
+
 export function resetDocumentsState(): void {
-  documentsState = DOCUMENT_FIXTURES.map((d) => ({ ...d }));
-  categoryState = TAG_CATEGORY_FIXTURES.map((c) => ({ ...c }));
-  tagState = TAG_FIXTURES.map((t) => ({ ...t, aliases: [...t.aliases] }));
-  notificationState = NOTIFICATION_FIXTURES.map((n) => ({ ...n }));
-  activityState = ACTIVITY_FIXTURES.map((e) => ({ ...e, meta: { ...e.meta } }));
+  const storage = e2eStorage();
+  storage?.removeItem(E2E_DOCUMENTS_STORAGE_KEY);
+  storage?.removeItem(E2E_TAG_CATEGORIES_STORAGE_KEY);
+  storage?.removeItem(E2E_TAGS_STORAGE_KEY);
+  storage?.removeItem(E2E_NOTIFICATIONS_STORAGE_KEY);
+  storage?.removeItem(E2E_ACTIVITY_STORAGE_KEY);
+  documentsState = cloneDocuments(DOCUMENT_FIXTURES);
+  categoryState = cloneTagCategories(TAG_CATEGORY_FIXTURES);
+  tagState = cloneTags(TAG_FIXTURES);
+  notificationState = cloneNotifications(NOTIFICATION_FIXTURES);
+  activityState = cloneActivity(ACTIVITY_FIXTURES);
   graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
     ...e,
     tags: e.tags ? [...e.tags] : [],
@@ -100,12 +243,14 @@ export function resetDocumentsState(): void {
   e2eScenario.uploadFailureNames = undefined;
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
+  e2eStats.spaceRequests = [];
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
   const idx = documentsState.findIndex((d) => d.doc_id === id);
   if (idx < 0) return null;
   documentsState[idx] = { ...documentsState[idx], ...patch };
+  persistDocumentsState();
   return documentsState[idx];
 }
 
@@ -165,6 +310,7 @@ function upsertTag(tag: TagEntry): TagEntry {
   const idx = tagState.findIndex((t) => t.tag === tag.tag);
   if (idx >= 0) tagState[idx] = tag;
   else tagState = [tag, ...tagState];
+  persistTagState();
   return tag;
 }
 
@@ -197,6 +343,8 @@ function recordTagMutation(name: string, suffix: string): void {
     },
     ...activityState,
   ];
+  persistNotificationState();
+  persistActivityState();
 }
 
 function authGateResponse(
@@ -229,7 +377,7 @@ function makeE2eDocument(patch: Partial<Document>, index: number): Document {
     metadata: patch.metadata ?? { classification: 'internal' },
     type: patch.type ?? 'file',
     tags: patch.tags ?? [],
-    workspace: patch.workspace ?? 'cib',
+    workspace: patch.workspace ?? 'default',
     visibility: patch.visibility ?? 'private',
     review: patch.review,
     extracted_text: patch.extracted_text,
@@ -254,6 +402,7 @@ export const handlers = [
     HttpResponse.json({
       approveCalls: e2eStats.approveCalls,
       tagApproveCalls: e2eStats.tagApproveCalls,
+      spaceRequests: e2eStats.spaceRequests,
     }),
   ),
   http.post(`${ANY}/__e2e/documents`, async ({ request }) => {
@@ -265,7 +414,17 @@ export const handlers = [
       makeE2eDocument(patch, documentsState.length + index + 1),
     );
     documentsState = [...next, ...documentsState];
+    persistDocumentsState();
     return HttpResponse.json({ ok: true, ids: next.map((doc) => doc.doc_id) });
+  }),
+  http.post(`${ANY}/__e2e/activity`, async ({ request }) => {
+    const body = (await request.json()) as
+      | { events?: ActivityEvent[] }
+      | ActivityEvent[];
+    const events = Array.isArray(body) ? body : body.events ?? [];
+    activityState = [...cloneActivity(events), ...activityState];
+    persistActivityState();
+    return HttpResponse.json({ ok: true, ids: events.map((event) => event.id) });
   }),
 
   // -------------------------------------------------------------------------
@@ -338,6 +497,7 @@ export const handlers = [
       },
       ...documentsState,
     ];
+    persistDocumentsState();
     return HttpResponse.json({
       status: 'success',
       message: `${name} queued for ingestion`,
@@ -392,6 +552,7 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const id = String(params.id);
     documentsState = documentsState.filter((d) => d.doc_id !== id);
+    persistDocumentsState();
     return HttpResponse.json({ ok: true });
   }),
   http.get(`${ANY}/health`, ({ request }) => {
@@ -411,32 +572,44 @@ export const handlers = [
   // -------------------------------------------------------------------------
   // Twin overlay endpoints
   // -------------------------------------------------------------------------
-  http.get(`${ANY}${TWIN}/workspaces`, () =>
-    HttpResponse.json(WORKSPACE_FIXTURES),
-  ),
-  http.get(`${ANY}${TWIN}/notifications`, () =>
-    HttpResponse.json(notificationState),
-  ),
+  http.get(`${ANY}${TWIN}/workspaces`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(WORKSPACE_FIXTURES);
+  }),
+  http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(notificationState);
+  }),
   http.post(`${ANY}${TWIN}/notifications/read-all`, () => {
     notificationState = notificationState.map((n) => ({ ...n, read: true }));
+    persistNotificationState();
     return HttpResponse.json({ ok: true });
   }),
   http.delete(`${ANY}${TWIN}/notifications`, () => {
     notificationState = [];
+    persistNotificationState();
     return HttpResponse.json({ ok: true });
   }),
 
-  http.get(`${ANY}${TWIN}/health`, () => HttpResponse.json({ status: 'ok' })),
+  http.get(`${ANY}${TWIN}/health`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json({ status: 'ok' });
+  }),
 
-  http.get(`${ANY}${TWIN}/thesaurus`, () =>
-    HttpResponse.json(THESAURUS_FIXTURES),
-  ),
+  http.get(`${ANY}${TWIN}/thesaurus`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(THESAURUS_FIXTURES);
+  }),
   http.get(`${ANY}${TWIN}/tags`, ({ request }) => {
+    recordTwinSpaceRequest(request);
     const gate = authGateResponse(request);
     if (gate) return gate;
     return HttpResponse.json(tagState);
   }),
-  http.get(`${ANY}${TWIN}/tags/categories`, () => HttpResponse.json(categoryState)),
+  http.get(`${ANY}${TWIN}/tags/categories`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(categoryState);
+  }),
   http.get(`${ANY}${TWIN}/tags/categories/template`, () =>
     HttpResponse.json(TAG_CATEGORY_FIXTURES),
   ),
@@ -484,6 +657,7 @@ export const handlers = [
       label: c.label!,
       color: c.color!,
     }));
+    persistTagCategoriesState();
     return HttpResponse.json({ ok: true, count: categoryState.length });
   }),
 
@@ -525,7 +699,7 @@ export const handlers = [
     const next = upsertTag({
       ...(current ?? tagEntryStub(name, 'rejected', 'rejected')),
       status: 'rejected',
-      tier: 'requested',
+      tier: 3,
       last_edit: { by: 'system', at: '2026-05-29', action: 'rejected' },
     });
     return HttpResponse.json(next);
@@ -569,10 +743,12 @@ export const handlers = [
   ),
   http.delete(`${ANY}${TWIN}/tags/:name`, ({ params }) => {
     tagState = tagState.filter((t) => t.tag !== String(params.name));
+    persistTagState();
     return HttpResponse.json({ ok: true });
   }),
 
   http.get(`${ANY}${TWIN}/activity`, ({ request }) => {
+    recordTwinSpaceRequest(request);
     const url = new URL(request.url);
     const filtered = activityState.filter((e) =>
       matchActivityQuery(e, url.searchParams),
@@ -639,6 +815,7 @@ export const handlers = [
     const body = (await request.json()) as { doc_ids: string[] };
     const ids = new Set(body.doc_ids);
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
+    persistDocumentsState();
     return HttpResponse.json({ deleted: body.doc_ids.length });
   }),
   http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {
@@ -665,6 +842,7 @@ export const handlers = [
       (body.removes ?? []).forEach((tag) => tags.delete(tag));
       return { ...doc, tags: Array.from(tags) };
     });
+    persistDocumentsState();
     return HttpResponse.json({
       updated: body.targets.length - failed.length,
       failed,
@@ -711,6 +889,7 @@ export const handlers = [
       },
       ...activityState,
     ];
+    persistActivityState();
     return HttpResponse.json(next);
   }),
   http.patch(`${ANY}${TWIN}/graph/relations/:id`, async ({ params, request }) => {
@@ -741,6 +920,7 @@ export const handlers = [
       },
       ...activityState,
     ];
+    persistActivityState();
     return HttpResponse.json(next);
   }),
 ];

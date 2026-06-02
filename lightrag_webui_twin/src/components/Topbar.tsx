@@ -194,6 +194,17 @@ function SpaceMenu({
     <div className="ws-menu" role="menu" aria-label="Switch space">
       <div className="ws-menu-h">Spaces</div>
       <ul className="ws-menu-list">
+        {workspaces.length === 0 && (
+          <li>
+            <div
+              className="muted"
+              style={{ padding: 12 }}
+              data-testid="topbar-workspace-empty"
+            >
+              No space available for this KB. Please contact Twincore Team
+            </div>
+          </li>
+        )}
         {workspaces.map((w) => {
           const active = w.id === current;
           return (

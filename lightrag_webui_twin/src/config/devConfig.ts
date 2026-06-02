@@ -75,6 +75,9 @@ export function resolveRuntimeConfig(
   source: TwinRuntimeConfig | string | undefined,
   isDev: boolean,
 ): TwinRuntimeConfig {
+  if (isDev && typeof window !== 'undefined' && window.__twinE2eRuntimeConfig) {
+    return window.__twinE2eRuntimeConfig;
+  }
   if (!source || source === PLACEHOLDER) {
     if (isDev) return DEV_CONFIG;
     // PROD standalone demo path — VITE_FORCE_MSW=true means we deliberately
