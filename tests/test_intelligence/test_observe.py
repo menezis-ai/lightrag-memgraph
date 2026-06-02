@@ -45,6 +45,16 @@ class TestSynthesisEngine:
         assert 0 in indices
         assert 2 in indices
 
+    async def test_synthesize_ignores_phantom_citations(
+        self, engine, sample_chunks, mock_openai_client
+    ):
+        answer_text = "Unsupported claim [Passage 99]. Real fact [Passage 1]."
+        client = mock_openai_client(answer_text)
+        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
+            result = await engine.synthesize("Question", sample_chunks)
+        assert [c.passage_index for c in result.citations] == [1]
+        assert "[Passage" not in result.answer
+
     async def test_synthesize_cleans_passage_refs(self, engine, sample_chunks, mock_openai_client):
         answer_text = "La reponse est X [Passage 0]."
         client = mock_openai_client(answer_text)
