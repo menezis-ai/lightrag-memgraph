@@ -281,4 +281,26 @@ describe('RetagModal — submit & close', () => {
     );
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('Escape in tag input clears autocomplete without closing the dialog', async () => {
+    const onClose = vi.fn();
+    render(
+      <RetagModal
+        open
+        doc={makeDoc()}
+        thesaurus={THESAURUS_FIXTURES}
+        onClose={onClose}
+        onSubmit={() => {}}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    const input = screen.getByLabelText('Tag input') as HTMLInputElement;
+    input.focus();
+    await userEvent.type(input, 'ora');
+    expect(input.value).toBe('ora');
+    await userEvent.keyboard('{Escape}');
+    expect(input.value).toBe('');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });

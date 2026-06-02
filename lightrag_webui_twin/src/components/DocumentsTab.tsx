@@ -103,28 +103,8 @@ export function DocumentsTab({
   const [tagAddVal, setTagAddVal] = useState('');
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
 
-  const counts = useMemo(() => {
-    const c: Record<StatusFilterKey, number> = {
-      all: docs.length,
-      completed: 0,
-      processing: 0,
-      pending: 0,
-      failed: 0,
-    };
-    docs.forEach((d) => {
-      c[STATUS_TO_FILTER[d.status]]++;
-    });
-    return c;
-  }, [docs]);
-  const failedCount = counts.failed;
-
-  const filtered = useMemo(() => {
+  const searchAndTagFiltered = useMemo(() => {
     return docs.filter((d) => {
-      if (
-        statusFilter !== 'all' &&
-        d.status !== FILTER_TO_STATUS[statusFilter]
-      )
-        return false;
       if (
         search &&
         !d.file_path.toLowerCase().includes(search.toLowerCase())
@@ -134,7 +114,33 @@ export function DocumentsTab({
         return false;
       return true;
     });
-  }, [docs, statusFilter, search, tagFilters]);
+  }, [docs, search, tagFilters]);
+
+  const counts = useMemo(() => {
+    const c: Record<StatusFilterKey, number> = {
+      all: searchAndTagFiltered.length,
+      completed: 0,
+      processing: 0,
+      pending: 0,
+      failed: 0,
+    };
+    searchAndTagFiltered.forEach((d) => {
+      c[STATUS_TO_FILTER[d.status]]++;
+    });
+    return c;
+  }, [searchAndTagFiltered]);
+  const failedCount = counts.failed;
+
+  const filtered = useMemo(() => {
+    return searchAndTagFiltered.filter((d) => {
+      if (
+        statusFilter !== 'all' &&
+        d.status !== FILTER_TO_STATUS[statusFilter]
+      )
+        return false;
+      return true;
+    });
+  }, [searchAndTagFiltered, statusFilter]);
 
   const removeTagFilter = (t: string) =>
     setTagFilters(tagFilters.filter((x) => x !== t));

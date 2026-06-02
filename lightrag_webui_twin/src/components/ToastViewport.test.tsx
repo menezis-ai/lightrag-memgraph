@@ -114,4 +114,22 @@ describe('ToastViewport — ARIA announcements', () => {
     const assertive = document.querySelector('[role="alert"]');
     expect(assertive?.textContent).toMatch(/Failed\. unsupported MIME/);
   });
+
+  it('announces simultaneous errors in one assertive update', () => {
+    render(
+      <ToastViewport
+        toasts={[
+          { id: 'e1', kind: 'error', title: 'Upload failed', sub: 'a.pdf' },
+          { id: 'e2', kind: 'error', title: 'Upload failed', sub: 'b.pdf' },
+          { id: 'e3', kind: 'error', title: 'Upload failed', sub: 'c.pdf' },
+        ]}
+        onUndo={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+    const assertive = document.querySelector('[role="alert"]');
+    expect(assertive?.textContent).toContain('a.pdf');
+    expect(assertive?.textContent).toContain('b.pdf');
+    expect(assertive?.textContent).toContain('c.pdf');
+  });
 });

@@ -41,6 +41,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
+  useBulkDeleteDocuments,
   useBulkRetagDocuments,
   useDeleteDocument,
   useUploadDocument,
@@ -244,6 +245,7 @@ function AppShell() {
 
   const uploadDoc = useUploadDocument();
   const deleteDoc = useDeleteDocument();
+  const bulkDeleteDocs = useBulkDeleteDocuments();
 
   const onDeleteSingle = async (doc: { doc_id: string; file_path: string }) => {
     try {
@@ -272,21 +274,25 @@ function AppShell() {
     pushToast({
       kind: 'propagating',
       title: 'Deleting sources…',
-      sub: `${docs.length} source${docs.length === 1 ? '' : 's'} → DELETE /documents/{id}`,
+      sub: `${docs.length} source${docs.length === 1 ? '' : 's'} → DELETE /documents/bulk-delete`,
     });
-    const results = await Promise.allSettled(
-      docs.map((d) => deleteDoc.mutateAsync(d.doc_id)),
-    );
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    const ko = results.filter((r) => r.status === 'rejected').length;
-    pushToast({
-      kind: ko === 0 ? 'done' : 'error',
-      title:
-        ko === 0
-          ? `${ok} source${ok === 1 ? '' : 's'} deleted`
-          : `${ko} delete${ko === 1 ? '' : 's'} failed`,
-      sub: `${ok} ok · ${ko} ko`,
-    });
+    try {
+      const result = await bulkDeleteDocs.mutateAsync({
+        doc_ids: docs.map((d) => d.doc_id),
+        actor: CURRENT_USER.name,
+      });
+      pushToast({
+        kind: 'done',
+        title: `${result.deleted} source${result.deleted === 1 ? '' : 's'} deleted`,
+        sub: 'Cascade removal successful',
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Bulk delete failed',
+        sub: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
 
   const onAddSourceSubmit = async (action: AddSourceAction) => {
@@ -836,6 +842,7 @@ function AppShell() {
               answerTokens={ANSWER_TOKENS_FIXTURE}
               answerSources={RETRIEVAL_SOURCES_FIXTURE}
               initialThreads={makeSampleThreads()}
+              onNavigate={onNavigate}
             />
           )}
           {tab === 'activity' && (
