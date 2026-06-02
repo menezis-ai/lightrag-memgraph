@@ -87,6 +87,16 @@ const CURRENT_USER: TagCurrentUser = {
   role: 'admin / steward',
 };
 
+declare global {
+  interface Window {
+    __TWIN_E2E_INITIAL_TAG_POLL?: {
+      intervalMs?: number;
+      maxPolls?: number;
+    };
+    __TWIN_E2E_QUERY_CLIENT?: QueryClient;
+  }
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -95,6 +105,10 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  window.__TWIN_E2E_QUERY_CLIENT = queryClient;
+}
 
 function AppShell() {
   const [tab, setTab] = useState('documents');
@@ -332,8 +346,9 @@ function AppShell() {
     trackIds: readonly string[],
     tags: readonly string[],
   ): Promise<void> => {
-    const POLL_INTERVAL_MS = 2000;
-    const MAX_POLLS = 30;
+    const e2ePoll = window.__TWIN_E2E_INITIAL_TAG_POLL;
+    const POLL_INTERVAL_MS = e2ePoll?.intervalMs ?? 2000;
+    const MAX_POLLS = e2ePoll?.maxPolls ?? 30;
     const TERMINAL_STATUSES = new Set([
       'processed',
       'PROCESSED',
@@ -497,7 +512,16 @@ function AppShell() {
     switch (commit.kind) {
       case 'edit':
         commitTagMutation(
-          (cb) => editTag.mutate({ name: tagname, actor }, cb),
+          (cb) =>
+            editTag.mutate(
+              {
+                name: tagname,
+                def: commit.def,
+                category: commit.category,
+                actor,
+              },
+              cb,
+            ),
           successToast,
           failureTitle,
         );
@@ -593,8 +617,8 @@ function AppShell() {
               requestTag.mutate(
                 {
                   tag: commit.name!,
-                  def: commit.tag?.def ?? '',
-                  category: commit.tag?.category ?? 'infra',
+                  def: commit.def ?? '',
+                  category: commit.category ?? 'infra',
                   actor,
                 },
                 cb,
