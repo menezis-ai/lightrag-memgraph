@@ -46,6 +46,25 @@ class TestCognitiveReranker:
         assert len(result) <= reranker.config.final_limit
         assert len(result) > 0
 
+    async def test_rerank_accepts_compact_scores(self, reranker, sample_chunks, mock_openai_client):
+        compact = json.dumps(
+            {"s": [{"p": 0, "v": 9}, {"p": 1, "v": 8}, {"p": 2, "v": 3}]}
+        )
+        client = mock_openai_client(compact)
+        with patch("twindb_lightrag_memgraph.intelligence.features.cognitive_reranker.AsyncOpenAI", return_value=client):
+            result = await reranker.rerank("ORA-04030 memory", sample_chunks)
+        assert [c.chunk_id for c in result] == ["chunk_0", "chunk_1"]
+
+    async def test_rerank_fallback_on_invalid_scores_payload(
+        self, reranker, sample_chunks, mock_openai_client
+    ):
+        client = mock_openai_client(json.dumps({"scores": {"passage": 0, "score": 9}}))
+        with patch("twindb_lightrag_memgraph.intelligence.features.cognitive_reranker.AsyncOpenAI", return_value=client):
+            result = await reranker.rerank("ORA-04030 memory", sample_chunks)
+        assert [c.chunk_id for c in result] == ["chunk_0", "chunk_1", "chunk_2", "chunk_3"][
+            : reranker.config.final_limit
+        ]
+
     async def test_rerank_empty_chunks(self, reranker):
         result = await reranker.rerank("ORA-04030", [])
         assert result == []
