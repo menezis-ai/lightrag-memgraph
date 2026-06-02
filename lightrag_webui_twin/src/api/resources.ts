@@ -165,6 +165,31 @@ export const lightragApi = {
       '/openapi',
       init,
     ),
+  /**
+   * Issue a retrieval query against LightRAG native POST /query.
+   * Returns the synthesized response string. Sources are not exposed by
+   * the native endpoint in this version — callers should display the
+   * response text and treat sources as empty until streaming + structured
+   * context land. The endpoint accepts the standard LightRAG query body
+   * (`query`, `mode`, `top_k`, `max_total_tokens`, optional `only_need_context`,
+   * `only_need_prompt`).
+   */
+  query: (
+    body: {
+      query: string;
+      mode?: string;
+      top_k?: number;
+      max_total_tokens?: number;
+      only_need_context?: boolean;
+      only_need_prompt?: boolean;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ response: string }>('/query', {
+      ...init,
+      method: 'POST',
+      body,
+    }),
 };
 
 // ============================================================================
@@ -443,6 +468,7 @@ export const api = {
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,
+  query: lightragApi.query,
 
   // Twin overlay
   listWorkspaces: twinApi.listWorkspaces,

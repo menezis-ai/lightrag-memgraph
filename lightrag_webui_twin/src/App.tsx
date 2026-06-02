@@ -842,6 +842,17 @@ function AppShell() {
               thesaurus={thesaurusList}
               answerTokens={ANSWER_TOKENS_FIXTURE}
               answerSources={RETRIEVAL_SOURCES_FIXTURE}
+              onSendQuery={async (params) => {
+                const res = await api.query({
+                  query: params.query,
+                  mode: params.mode,
+                  top_k: params.topK,
+                  max_total_tokens: params.maxTokens,
+                  only_need_context: params.onlyContext,
+                  only_need_prompt: params.onlyPrompt,
+                });
+                return { response: res.response };
+              }}
               initialThreads={makeSampleThreads()}
               onNavigate={onNavigate}
             />
