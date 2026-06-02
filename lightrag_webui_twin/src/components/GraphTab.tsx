@@ -43,6 +43,21 @@ const shortDoc = (d: string): string =>
   d.includes('/') ? d.split('/').filter(Boolean).pop() ?? d : d;
 
 const TYPE_KEYS = Object.keys(GRAPH_TYPE_LABEL) as readonly GraphEntityType[];
+const PINNED_STORAGE_KEY = 'twin.kg.pinned.v1';
+
+const readPinnedEntityIds = (): readonly string[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(PINNED_STORAGE_KEY) ?? '[]',
+    );
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+};
 
 export interface GraphTabProps {
   entities: readonly GraphEntity[];
@@ -85,6 +100,9 @@ export function GraphTab({
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pinnedIds, setPinnedIds] = useState<readonly string[]>(() =>
+    readPinnedEntityIds(),
+  );
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(
     null,
@@ -155,6 +173,18 @@ export function GraphTab({
     neighbors.nodes.forEach((n) => ids.add(n.id));
     return ids;
   }, [selected, neighbors]);
+
+  useEffect(() => {
+    window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedIds));
+  }, [pinnedIds]);
+
+  const togglePinned = (id: string) => {
+    setPinnedIds((current) =>
+      current.includes(id)
+        ? current.filter((pinnedId) => pinnedId !== id)
+        : [...current, id],
+    );
+  };
 
   const toggleType = (t: GraphEntityType) => {
     if (activeTypes.includes(t)) {
@@ -493,6 +523,8 @@ export function GraphTab({
           }}
           onSelectRelation={(id) => setSelectedRelId(id)}
           onClearRelation={() => setSelectedRelId(null)}
+          pinnedIds={pinnedIds}
+          onTogglePinned={togglePinned}
           onNavigate={onNavigate}
         />
       </div>
@@ -510,6 +542,8 @@ interface GraphDetailPanelProps {
   onSelect: (id: string) => void;
   onSelectRelation: (id: string) => void;
   onClearRelation: () => void;
+  pinnedIds: readonly string[];
+  onTogglePinned: (id: string) => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
@@ -523,6 +557,8 @@ function GraphDetailPanel({
   onSelect,
   onSelectRelation,
   onClearRelation,
+  pinnedIds,
+  onTogglePinned,
   onNavigate,
 }: GraphDetailPanelProps) {
   // Relation editor takes priority when an edge is selected.
@@ -564,6 +600,8 @@ function GraphDetailPanel({
         colors={colors}
         typeLabels={typeLabels}
         onSelectRelation={onSelectRelation}
+        isPinned={pinnedIds.includes(entity.id)}
+        onTogglePinned={() => onTogglePinned(entity.id)}
         onNavigate={onNavigate}
       />
     </aside>
@@ -577,6 +615,8 @@ interface EntityEditorProps {
   colors: Record<GraphEntityType, string>;
   typeLabels: Record<GraphEntityType, string>;
   onSelectRelation: (id: string) => void;
+  isPinned: boolean;
+  onTogglePinned: () => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
@@ -594,6 +634,8 @@ function EntityEditor({
   colors,
   typeLabels,
   onSelectRelation,
+  isPinned,
+  onTogglePinned,
   onNavigate,
 }: EntityEditorProps) {
   const [editing, setEditing] = useState(false);
@@ -661,15 +703,25 @@ function EntityEditor({
             <h2>{entity.name}</h2>
           )}
           {!editing && (
-            <button
-              className="ghost-btn small"
-              onClick={startEdit}
-              title="Edit metadata"
-              style={{ marginLeft: 'auto' }}
-              data-testid="kg-entity-edit"
-            >
-              <Icon name="edit" size={11} /> Edit
-            </button>
+            <div className="kg-detail-title-actions">
+              <button
+                className={`ghost-btn small${isPinned ? ' primary' : ''}`}
+                onClick={onTogglePinned}
+                title={isPinned ? 'Unpin entity' : 'Pin entity'}
+                data-testid="kg-entity-pin"
+                aria-pressed={isPinned}
+              >
+                <Icon name="pin" size={11} /> {isPinned ? 'Pinned' : 'Pin'}
+              </button>
+              <button
+                className="ghost-btn small"
+                onClick={startEdit}
+                title="Edit metadata"
+                data-testid="kg-entity-edit"
+              >
+                <Icon name="edit" size={11} /> Edit
+              </button>
+            </div>
           )}
         </div>
         {editing && draft ? (

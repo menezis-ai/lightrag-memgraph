@@ -150,6 +150,57 @@ actionable e2e test plan. `WEBUI-WIRING-PLAN.md` remains the source of truth:
 the old recipe vocabulary says "workspace", but the active contract now says
 "space" for Twin sub-scopes.
 
+### Update 2026-06-03 — recipe hardening status
+
+The current React WebUI test plan now covers the highest-risk recipe failures
+that are in scope for the standalone prototype and Couche 3 frontend contract.
+
+Closed by focused e2e/RTL coverage:
+
+- **RC-1 persisted mutations:** Documents retag/delete/review decisions, Tags
+  request/approve/reject/edit/synonyms/delete, and Activity refresh/immutable
+  ledger behavior.
+- **RC-2 counters and drill-downs:** Documents counters/status/tag filters,
+  Knowledge Graph exact source drill-down, entity type counters, and pinned
+  KG entities restored after reload.
+- **RC-3 validation:** Add source file type/size/counting, tag request required
+  name, tag reject required reason, taxonomy JSON validation, and Settings
+  absence assertions for MyAccess-owned member/default-tag surfaces.
+- **RC-4 no-op actions:** Add source browse/file chooser, Retrieval citation
+  navigation, API bearer revoke confirmation, and sign-out client cleanup.
+- **RC-5/RC-7 UI regressions and wording:** bulk delete remains present,
+  document Edit & Approve opens and persists, topbar brand routes back to
+  Documents, Tags edit toast uses truthful generic wording, and the Tags
+  pending banner uses tag-specific copy.
+- **Async/a11y hardening:** bounded upload concurrency, non-stealing modal
+  autofocus, toast live-region batching, tag autocomplete Escape isolation,
+  and native non-passive graph wheel handling.
+
+Still open or PO-gated in the current React port:
+
+- `TWIN-DOC-10`: no current React component exposes the lifecycle
+  "Auto-approve future modifications" checkbox; wiring it would create new
+  product surface.
+- `TWIN-SET-01`: provider Configure panels remain PO-gated/out of current
+  Settings scope.
+- `TWIN-SET-02`: sign-out local cleanup is covered; real IdP/JWT revocation
+  remains Couche 3/backend contract work.
+- `TWIN-TRX-01`: role perspective selector remains PO-gated because the
+  current direction is real MyAccess/JWT-driven authorization, not UI role
+  simulation.
+- `TWIN-TRX-02`: the implemented space switch uses dynamic refetch/state
+  reset; a full page reload should only be restored if PO explicitly requires
+  that behavior.
+- `TWIN-TRX-04` and `TWIN-TAG-11`: responsive/dark-theme visual assertions are
+  still good candidates for a later visual-regression pass.
+
+Latest frontend validation baseline:
+
+- `npm run typecheck` — OK.
+- `npm run test:run` — OK, 345 Vitest tests.
+- `npm run test:e2e` — OK, 59 Playwright tests.
+- `git diff --check` — OK.
+
 ### Preconditions
 
 - Keep the existing Playwright smoke green before adding new coverage. Current
@@ -338,6 +389,10 @@ Playwright cases:
 - Settings/Auth:
   - sign out calls `/twin/api/auth/logout`, clears local caches, and leaves no
     retrieval thread state behind.
+  - local API bearer revoke in the OpenAPI explorer requires a second
+    confirmation click.
+  - Members/invites/deletes and editable default ingestion tags stay out of
+    Settings scope; MyAccess and the controlled tag picker own those surfaces.
 
 Progress as of 2026-06-03:
 
@@ -356,8 +411,27 @@ Progress as of 2026-06-03:
     the required proposed name is filled.
   - `TWIN-TAG-07`: `Reject request` keeps the destructive submit disabled until
     a non-empty reason is provided.
+- Tags wording cleanup is covered in component/e2e tests:
+  - `TWIN-TAG-02`: tag edit now uses the truthful generic toast suffix
+    `updated` instead of hardcoding `definition updated`.
+  - `TWIN-TAG-12`: the pending section uses tag-specific wording:
+    `Tag requests` / `n tag requests awaiting review`.
 - `lightrag_webui_twin/e2e/retrieval.spec.ts` covers `TWIN-RET-01`: clicking
   a citation navigates to Documents with the cited source as the search filter.
+- Settings/Auth guardrails are covered without reintroducing member/admin
+  surfaces into Settings:
+  - `TWIN-SET-03`: `ApiTab`'s local bearer revoke is a two-step action
+    (`Revoke token` → `Confirm revoke token`), covered by
+    `ApiTab.test.tsx` and `lightrag_webui_twin/e2e/settings.spec.ts`.
+  - `TWIN-SET-04`: default ingestion tags are not editable from Settings;
+    tag entry remains constrained to thesaurus-backed pickers in Add source /
+    Retag flows. Settings absence is covered by `SettingsTab.test.tsx` and
+    `settings.spec.ts`.
+  - `TWIN-SET-05` / `TWIN-SET-06`: member invite/delete remain MyAccess-owned
+    and absent from the Settings rail/body, covered by `SettingsTab.test.tsx`
+    and `settings.spec.ts`.
+  - Validation run: `bun run typecheck`, `bun run test:run`, and
+    `npx playwright test e2e/settings.spec.ts`.
 
 ### Priority 4 — classification Couche 2 in real wiring
 
@@ -419,7 +493,14 @@ Progress as of 2026-06-03:
 - `lightrag_webui_twin/e2e/graph.spec.ts` covers:
   - `TWIN-KG-01`: entity drill-down writes the full exact source list and
     hides unrelated document rows;
+  - `TWIN-KG-02`: Pin/Pinned state is persisted in localStorage and restored
+    after reload;
   - `TWIN-KG-03`: entity type counts update after graph search filters.
+- `TWIN-DOC-10` remains a PO/UI gate in this React port: no current component
+  exposes an "Auto-approve future modifications" lifecycle checkbox to wire or
+  test without inventing new product surface.
+- `TWIN-TRX-03` is covered at component level: the topbar brand is now an
+  accessible button that routes back to Documents.
 
 ### Recipe ticket coverage matrix
 
@@ -459,10 +540,10 @@ the current React port and Couche 3 contract.
 | TWIN-ACT-02 | Clear activity message and removed count match actual purge result | Playwright + backend activity clear if implemented |
 | TWIN-SET-01 | Provider Configure buttons open an editable panel | Playwright, PO gate if Providers section is out of current UI scope |
 | TWIN-SET-02 | Sign out calls logout, clears client state, reaches non-auth/redirect path | Playwright + backend auth/logout |
-| TWIN-SET-03 | Revoke token requires confirmation | Playwright, PO gate if token management remains in scope |
-| TWIN-SET-04 | Default ingestion tags are constrained to thesaurus entries | Playwright, PO gate if setting remains editable |
-| TWIN-SET-05 | Member invite rejects invalid email formats | Playwright, PO gate if Members section remains in scope |
-| TWIN-SET-06 | Delete member requires confirmation | Playwright, PO gate if Members section remains in scope |
+| TWIN-SET-03 | API explorer bearer revoke requires confirmation | Playwright + RTL |
+| TWIN-SET-04 | Default ingestion tags are not editable in Settings; tag entry remains constrained to thesaurus pickers | Settings absence assertion + Add source/Retag coverage |
+| TWIN-SET-05 | Member invite remains out of Settings scope (MyAccess-owned) | Settings absence assertion |
+| TWIN-SET-06 | Delete member remains out of Settings scope (MyAccess-owned) | Settings absence assertion |
 | TWIN-TRX-01 | Role perspective selector exists and changes available actions | Playwright, PO gate because current contract may rely on real JWT/MyAccess instead |
 | TWIN-TRX-02 | Space switch visibly refetches/re-evaluates state; full reload only if PO requires it | Playwright + front/API contract |
 | TWIN-TRX-03 | Logo returns to Documents/home | Playwright/RTL, PO gate if no home affordance is desired |

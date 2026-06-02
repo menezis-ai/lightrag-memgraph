@@ -151,6 +151,35 @@ describe('ApiTab — Authorize dialog', () => {
     ).toBeInTheDocument();
   });
 
+  it('revoke token requires a second confirmation click', async () => {
+    render(<ApiTab {...defaultProps()} />);
+    await userEvent.click(screen.getByRole('button', { name: /Authorize$/ }));
+    let dialog = await screen.findByRole('dialog', { name: 'Authorize' });
+    const input = within(dialog).getByLabelText('Value');
+    await new Promise((r) => setTimeout(r, 60));
+    (input as HTMLInputElement).focus();
+    await userEvent.type(input, 'eyJtest-token-xyz');
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Authorize' }),
+    );
+    expect(screen.getByRole('button', { name: /Authorized/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Authorized/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Authorize' });
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Revoke token' }),
+    );
+    expect(
+      within(dialog).getByRole('button', { name: 'Confirm revoke token' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Authorized/ })).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Confirm revoke token' }),
+    );
+    expect(screen.getByRole('button', { name: /Authorize$/ })).toBeInTheDocument();
+  });
+
   it('clicking the backdrop closes the Authorize dialog', async () => {
     render(<ApiTab {...defaultProps()} />);
     await userEvent.click(screen.getByRole('button', { name: /Authorize$/ }));

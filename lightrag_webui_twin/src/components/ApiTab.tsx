@@ -457,6 +457,7 @@ interface AuthorizeDialogProps {
 
 function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogProps) {
   const [val, setVal] = useState(token);
+  const [revokeArmed, setRevokeArmed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useModalA11y({ open: true, onClose, ref });
   return (
@@ -502,7 +503,10 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
             type="password"
             autoFocus
             value={val}
-            onChange={(e) => setVal(e.target.value)}
+            onChange={(e) => {
+              setVal(e.target.value);
+              setRevokeArmed(false);
+            }}
             placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…"
             style={{
               width: '100%',
@@ -528,9 +532,24 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
         </div>
         <div className="modal-footer">
           {token && (
-            <button className="ghost-btn" onClick={onLogout}>
-              Logout
+            <button
+              className="ghost-btn"
+              onClick={() => {
+                if (!revokeArmed) {
+                  setRevokeArmed(true);
+                  return;
+                }
+                onLogout();
+              }}
+              aria-describedby={revokeArmed ? 'auth-revoke-confirm' : undefined}
+            >
+              {revokeArmed ? 'Confirm revoke token' : 'Revoke token'}
             </button>
+          )}
+          {revokeArmed && (
+            <span id="auth-revoke-confirm" className="muted" style={{ fontSize: 11 }}>
+              Click again to remove the bearer token from this session.
+            </span>
           )}
           <button
             className="ghost-btn"

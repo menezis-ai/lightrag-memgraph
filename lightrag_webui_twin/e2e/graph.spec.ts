@@ -4,6 +4,7 @@ import { boot, openTab } from './helpers';
 test.describe('Knowledge Graph filters and drill-downs', () => {
   test.beforeEach(async ({ page }) => {
     await boot(page);
+    await page.evaluate(() => window.localStorage.removeItem('twin.kg.pinned.v1'));
     await openTab(page, 'Graph');
   });
 
@@ -41,5 +42,26 @@ test.describe('Knowledge Graph filters and drill-downs', () => {
       'oracle-restart-procedure.pdf',
       '/cib/runbooks/oracle-pga-tuning',
     ]);
+  });
+
+  test('@graph @rc1 pinned entity state survives reload', async ({ page }) => {
+    await page.getByTestId('kg-node-e_memgraph').click();
+    await expect(page.getByTestId('kg-detail-entity')).toContainText('Memgraph');
+    await page.getByTestId('kg-entity-pin').click();
+    await expect(page.getByTestId('kg-entity-pin')).toContainText('Pinned');
+    await expect(page.getByTestId('kg-entity-pin')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
+    await openTab(page, 'Graph');
+    await page.getByTestId('kg-node-e_memgraph').click();
+    await expect(page.getByTestId('kg-entity-pin')).toContainText('Pinned');
+    await expect(page.getByTestId('kg-entity-pin')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });

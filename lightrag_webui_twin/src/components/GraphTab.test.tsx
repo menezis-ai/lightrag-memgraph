@@ -33,9 +33,11 @@ function renderWithClient(ui: React.ReactElement) {
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
+  window.localStorage.removeItem('twin.kg.pinned.v1');
 });
 afterEach(() => {
   window.history.replaceState(null, '', '/');
+  window.localStorage.removeItem('twin.kg.pinned.v1');
 });
 
 describe('GraphTab — rendering', () => {
@@ -158,6 +160,21 @@ describe('GraphTab — selection + detail', () => {
     expect(p.onNavigate).toHaveBeenCalledWith('documents', {
       source: 'oracle-restart-procedure.pdf,/cib/runbooks/oracle-pga-tuning',
     });
+  });
+
+  it('pinning an entity persists in localStorage and is restored on remount', async () => {
+    const { unmount } = renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
+    await userEvent.click(screen.getByTestId('kg-entity-pin'));
+    expect(screen.getByTestId('kg-entity-pin')).toHaveTextContent('Pinned');
+    expect(JSON.parse(window.localStorage.getItem('twin.kg.pinned.v1') ?? '[]')).toContain(
+      'e_memgraph',
+    );
+
+    unmount();
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
+    expect(screen.getByTestId('kg-entity-pin')).toHaveTextContent('Pinned');
   });
 });
 

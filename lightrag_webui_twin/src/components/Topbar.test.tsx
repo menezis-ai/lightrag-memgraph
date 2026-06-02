@@ -100,6 +100,13 @@ describe('Topbar — tabs', () => {
     expect(p.onTab).toHaveBeenCalledWith('tags');
   });
 
+  it('opens Documents when the brand is clicked', async () => {
+    const p = baseProps();
+    render(<Topbar {...p} tab="graph" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open Documents' }));
+    expect(p.onTab).toHaveBeenCalledWith('documents');
+  });
+
   it('honors custom tabs prop', () => {
     render(
       <Topbar

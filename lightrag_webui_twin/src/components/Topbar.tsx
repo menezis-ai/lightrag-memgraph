@@ -87,14 +87,20 @@ export function Topbar({
 
   return (
     <header className="topbar">
-      <div className="brand">
+      <button
+        type="button"
+        className="brand"
+        onClick={() => onTab('documents')}
+        aria-label="Open Documents"
+        title="Open Documents"
+      >
         <div className="brand-mark">TR</div>
         <span className="brand-name">Twin</span>
         <span className="brand-sep">|</span>
         <span className="brand-kb" title="TWIN_KB_DISPLAY_NAME (env)">
           {kbName}
         </span>
-      </div>
+      </button>
       <nav className="tabs">
         {TABS.map((t) => (
           <button

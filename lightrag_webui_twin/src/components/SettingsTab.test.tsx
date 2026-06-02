@@ -50,6 +50,14 @@ describe('SettingsTab — rail', () => {
     expect(screen.queryByTestId('settings-rail-danger')).toBeNull();
     expect(screen.queryByTestId('settings-rail-tokens')).toBeNull();
   });
+
+  it('keeps editable token/member/provider Settings surfaces out of scope', () => {
+    renderWith(new QueryClient());
+    expect(screen.queryByText(/Default ingestion tags/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Invite member/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Delete member/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revoke token/i })).toBeNull();
+  });
 });
 
 describe('SettingsTab — Profile', () => {
