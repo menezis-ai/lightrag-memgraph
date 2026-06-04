@@ -1299,7 +1299,6 @@ sweep once the desired BNP behavior is fixed.
 
 ## References
 
-- **Brief sprint coder (Couches 1+2)** : `docs/handoff/SPRINT-2026-05-30-coder-brief.md`
 - **Pitch deck Fabrice 2026-06-01** : `docs/presentations/pitch-fabrice-2026-06-01.md`
 - **Install runbook (production)** : `docs/operations/install-runbook.md`
 - **Rapport recette Alberto** : `docs/audits/TwinRAG - Rapport de recette v2.md`
