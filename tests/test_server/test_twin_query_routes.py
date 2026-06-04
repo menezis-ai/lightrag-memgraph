@@ -47,16 +47,24 @@ class FakeRag:
         self,
         *,
         answer: str = "synthesised answer",
+        stream_chunks: list[Any] | None = None,
         chunks: list[dict[str, Any]] | None = None,
         chunk_to_doc: dict[str, str] | None = None,
     ):
         self.answer = answer
+        self.stream_chunks = stream_chunks
         self.calls: list[tuple[str, Any]] = []
         self.chunks_vdb = FakeChunksVdb(chunks or [])
         self.doc_status = FakeDocStatus(chunk_to_doc or {})
 
     async def aquery(self, query: str, *, param):
         self.calls.append((query, param))
+        if getattr(param, "stream", False) and self.stream_chunks is not None:
+            async def gen():
+                for chunk in self.stream_chunks or []:
+                    yield chunk
+
+            return gen()
         return self.answer
 
 
@@ -132,6 +140,37 @@ class TestQueryEndpoint:
         # chunks_vdb should not have been touched in context-only mode
         assert rag.chunks_vdb.last_query is None
 
+    async def test_advanced_query_params_forward_to_aquery(self, make_client):
+        rag = FakeRag(answer="advanced")
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "advanced retrieval",
+                    "mode": "hybrid",
+                    "top_k": 11,
+                    "chunk_top_k": 7,
+                    "max_total_tokens": 1234,
+                    "history_turns": 2,
+                    "user_prompt": "prefer runbook citations",
+                    "enable_rerank": False,
+                },
+            )
+
+        assert r.status_code == 200
+        assert len(rag.calls) == 1
+        query, param = rag.calls[0]
+        assert query == "advanced retrieval"
+        assert param.mode == "hybrid"
+        assert param.top_k == 11
+        assert param.chunk_top_k == 7
+        assert param.max_total_tokens == 1234
+        assert param.history_turns == 2
+        assert param.user_prompt == "prefer runbook citations"
+        assert param.enable_rerank is False
+        assert param.stream is False
+
     async def test_only_need_prompt_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="prompt that would be sent")
         client = await make_client(rag)
@@ -176,6 +215,40 @@ class TestQueryEndpoint:
 
         assert r.status_code == 500
         assert "LLM down" in r.json()["detail"]
+
+    async def test_stream_endpoint_forwards_stream_true_and_returns_text(
+        self, make_client
+    ):
+        rag = FakeRag(
+            stream_chunks=[
+                "Restart ",
+                {"response": "Oracle "},
+                b"safely",
+            ]
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={
+                    "query": "How do I restart Oracle?",
+                    "mode": "mix",
+                    "chunk_top_k": 4,
+                    "enable_rerank": True,
+                    "user_prompt": "short answer",
+                },
+            )
+
+        assert r.status_code == 200
+        assert r.text == "Restart Oracle safely"
+        assert r.headers["content-type"].startswith("text/plain")
+        assert len(rag.calls) == 1
+        query, param = rag.calls[0]
+        assert query == "How do I restart Oracle?"
+        assert param.stream is True
+        assert param.chunk_top_k == 4
+        assert param.enable_rerank is True
+        assert param.user_prompt == "short answer"
 
     async def test_score_falls_back_to_rank_when_absent(self, make_client):
         rag = FakeRag(

@@ -64,13 +64,11 @@ import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
-  ANSWER_TOKENS_FIXTURE,
   DOCUMENT_FIXTURES,
   FORMAT_CATEGORY_FIXTURES,
   GRAPH_ENTITY_FIXTURES,
   GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
-  RETRIEVAL_SOURCES_FIXTURE,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   THESAURUS_FIXTURES,
@@ -934,16 +932,18 @@ function AppShell() {
           {tab === 'retrieval' && (
             <RetrievalTab
               thesaurus={thesaurusList}
-              answerTokens={ANSWER_TOKENS_FIXTURE}
-              answerSources={RETRIEVAL_SOURCES_FIXTURE}
               onSendQuery={async (params) => {
                 const res = await api.query({
                   query: params.query,
                   mode: params.mode,
                   top_k: params.topK,
+                  chunk_top_k: params.chunkTopK,
                   max_total_tokens: params.maxTokens,
+                  history_turns: params.historyTurns,
                   only_need_context: params.onlyContext,
                   only_need_prompt: params.onlyPrompt,
+                  user_prompt: params.userPrompt,
+                  enable_rerank: params.enableRerank,
                 });
                 // Map the backend SourceRow shape to the RetrievalSource
                 // contract the chat panel consumes. `type` is the WebUI
@@ -964,6 +964,24 @@ function AppShell() {
                   score: s.score,
                 }));
                 return { response: res.response, sources };
+              }}
+              onStreamQuery={async (params, onChunk) => {
+                const res = await api.queryStream(
+                  {
+                    query: params.query,
+                    mode: params.mode,
+                    top_k: params.topK,
+                    chunk_top_k: params.chunkTopK,
+                    max_total_tokens: params.maxTokens,
+                    history_turns: params.historyTurns,
+                    only_need_context: params.onlyContext,
+                    only_need_prompt: params.onlyPrompt,
+                    user_prompt: params.userPrompt,
+                    enable_rerank: params.enableRerank,
+                  },
+                  onChunk,
+                );
+                return { response: res.response, sources: [] };
               }}
               initialThreads={makeSampleThreads()}
               onNavigate={onNavigate}

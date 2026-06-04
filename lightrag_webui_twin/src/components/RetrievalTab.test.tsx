@@ -20,12 +20,10 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RetrievalTab } from './RetrievalTab';
 import {
-  ANSWER_TOKENS_FIXTURE,
-  RETRIEVAL_SOURCES_FIXTURE,
   THESAURUS_FIXTURES,
   makeSampleThreads,
 } from '../fixtures';
@@ -33,8 +31,6 @@ import {
 function defaultProps() {
   return {
     thesaurus: THESAURUS_FIXTURES,
-    answerTokens: ANSWER_TOKENS_FIXTURE,
-    answerSources: RETRIEVAL_SOURCES_FIXTURE,
     initialThreads: makeSampleThreads(),
   };
 }
@@ -130,6 +126,31 @@ describe('RetrievalTab — send', () => {
     const userMsg = document.querySelector('.msg-user');
     expect(userMsg?.textContent).toBe('Quick question');
   });
+
+  it('streams backend chunks into the assistant message', async () => {
+    const onStreamQuery = vi.fn(async (_params, onChunk: (chunk: string) => void) => {
+      onChunk('hello ');
+      onChunk('world');
+      return { response: 'hello world', sources: [] };
+    });
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'Stream this');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() => expect(onStreamQuery).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(document.querySelector('.msg-assistant')?.textContent).toContain(
+        'hello world',
+      ),
+    );
+  });
 });
 
 describe('RetrievalTab — localStorage persistence', () => {
@@ -188,6 +209,48 @@ describe('RetrievalTab — params panel', () => {
     const chips = document.querySelectorAll('.tag-chip');
     expect(Array.from(chips).some((c) => c.textContent?.includes('oracle'))).toBe(
       true,
+    );
+  });
+
+  it('passes advanced retrieval params to onSendQuery', async () => {
+    const onSendQuery = vi.fn(async () => ({ response: 'ok', sources: [] }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText('Query mode'), 'hybrid');
+    await userEvent.clear(screen.getByLabelText('Top K'));
+    await userEvent.type(screen.getByLabelText('Top K'), '12');
+    await userEvent.clear(screen.getByLabelText('Chunk top K'));
+    await userEvent.type(screen.getByLabelText('Chunk top K'), '6');
+    await userEvent.clear(screen.getByLabelText('Max tokens'));
+    await userEvent.type(screen.getByLabelText('Max tokens'), '2048');
+    await userEvent.clear(screen.getByLabelText('History turns'));
+    await userEvent.type(screen.getByLabelText('History turns'), '2');
+    await userEvent.type(
+      screen.getByLabelText('User prompt'),
+      'prefer operational runbooks',
+    );
+    await userEvent.click(screen.getByLabelText('Enable rerank'));
+    await userEvent.type(screen.getByLabelText('Query input'), 'Advanced query');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: 'Advanced query',
+        mode: 'hybrid',
+        topK: 12,
+        chunkTopK: 6,
+        maxTokens: 2048,
+        historyTurns: 2,
+        userPrompt: 'prefer operational runbooks',
+        enableRerank: false,
+      }),
     );
   });
 });

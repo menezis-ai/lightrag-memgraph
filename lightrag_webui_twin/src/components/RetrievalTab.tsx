@@ -10,8 +10,8 @@
  *
  * Behavior delta vs the proto:
  *   - thesaurus injected via prop (no window.MOCK_THESAURUS)
- *   - The streamed-answer source comes from props (`answerTokens` +
- *     `answerSources`) so tests can substitute a synchronous fake.
+ *   - Real-backend callbacks drive assistant responses; tests inject
+ *     callbacks when they need deterministic answer content.
  *   - The streaming timer (70ms/token in the proto) is preserved; tests use
  *     vi.useFakeTimers to drive it.
  *   - LocalStorage key matches the proto: "twin-rag.threads".
@@ -39,35 +39,50 @@ import {
 } from '../types/retrieval';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
-// Versioned key — bumped to invalidate stale demo seeds when the fixture
-// shape changes (v2: full ANSWER_TOKENS_FIXTURE + citations on the first
-// seed thread; v1 had a "To restart RMAN…" stub that made the tab look
+// Versioned key — bumped to invalidate stale demo seeds when the seeded
+// conversation shape changes (v2: full assistant answer + citations on the
+// first seed thread; v1 had a "To restart RMAN…" stub that made the tab look
 // broken on first paint).
 const THREADS_STORAGE_KEY = 'twin-rag.threads.v2';
 const STREAM_TICK_MS = 70;
 
 export interface RetrievalTabProps {
   thesaurus: readonly ThesaurusEntry[];
-  /** Fallback tokens streamed when `onSendQuery` is not provided. Same
-   *  tokens for every query — mock-only. In production this stays empty
-   *  and `onSendQuery` drives the real backend response. */
-  answerTokens: readonly AnswerToken[];
-  answerSources: readonly RetrievalSource[];
-  /** Real-backend callback. When provided, `send()` calls this with the
-   *  user's query + active params instead of streaming the static
-   *  fixture. The returned `response` string is split into whitespace
-   *  tokens and streamed via the existing animator. Sources are passed
-   *  through as-is (the LightRAG native endpoint does not return
-   *  structured sources yet, so callers may omit). */
+  /** Real-backend callback. The returned `response` string is split into
+   *  whitespace tokens and streamed via the existing animator. Sources are
+   *  passed through as-is. */
   onSendQuery?: (params: {
     query: string;
     mode: QueryMode;
     topK: number;
+    chunkTopK: number;
     maxTokens: number;
+    historyTurns: number;
     onlyContext: boolean;
     onlyPrompt: boolean;
+    userPrompt: string;
+    enableRerank: boolean;
     tagFilters: readonly string[];
   }) => Promise<{
+    response: string;
+    sources?: readonly RetrievalSource[];
+  }>;
+  onStreamQuery?: (
+    params: {
+      query: string;
+      mode: QueryMode;
+      topK: number;
+      chunkTopK: number;
+      maxTokens: number;
+      historyTurns: number;
+      onlyContext: boolean;
+      onlyPrompt: boolean;
+      userPrompt: string;
+      enableRerank: boolean;
+      tagFilters: readonly string[];
+    },
+    onChunk: (chunk: string) => void,
+  ) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
   }>;
@@ -79,6 +94,12 @@ export interface RetrievalTabProps {
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
+const missingRetrievalBackend: NonNullable<RetrievalTabProps['onSendQuery']> =
+  async () => ({
+    response: '⚠ Retrieval backend is not configured',
+    sources: [],
+  });
+
 const DEFAULT_SUGGESTIONS = [
   'How do I restart Oracle on RHEL 9?',
   'Common RMAN backup errors',
@@ -87,9 +108,8 @@ const DEFAULT_SUGGESTIONS = [
 
 export function RetrievalTab({
   thesaurus,
-  answerTokens,
-  answerSources,
   onSendQuery,
+  onStreamQuery,
   initialThreads = [],
   suggestions = DEFAULT_SUGGESTIONS,
   onNavigate,
@@ -117,10 +137,13 @@ export function RetrievalTab({
     validate: (v) => QUERY_MODES.includes(v as QueryMode),
   });
   const [topK, setTopK] = useUrlNumberParam('topk', 10);
+  const [chunkTopK, setChunkTopK] = useUrlNumberParam('chunktopk', 20);
   const [maxTok, setMaxTok] = useUrlNumberParam('maxtok', 4000);
   const [history, setHistory] = useUrlNumberParam('hist', 3);
   const [onlyCtx, setOnlyCtx] = useState(false);
   const [onlyPrompt, setOnlyPrompt] = useState(false);
+  const [userPrompt, setUserPrompt] = useState('');
+  const [enableRerank, setEnableRerank] = useState(true);
 
   const convRef = useRef<HTMLDivElement>(null);
 
@@ -238,6 +261,20 @@ export function RetrievalTab({
     }, STREAM_TICK_MS);
   };
 
+  const activeParams = (q: string) => ({
+    query: q,
+    mode: queryMode,
+    topK,
+    chunkTopK,
+    maxTokens: maxTok,
+    historyTurns: history,
+    onlyContext: onlyCtx,
+    onlyPrompt,
+    userPrompt,
+    enableRerank,
+    tagFilters,
+  });
+
   const send = (text?: string) => {
     const q = (text ?? query).trim();
     if (!q) return;
@@ -246,21 +283,30 @@ export function RetrievalTab({
     setStreamedTokens([]);
     setStreaming(true);
 
-    if (!onSendQuery) {
-      // No backend wired — stream the fixture tokens (test/dev path).
-      streamTokens(answerTokens, answerSources);
+    if (onStreamQuery) {
+      const streamed: AnswerToken[] = [];
+      onStreamQuery(activeParams(q), (chunk) => {
+        streamed.push(chunk);
+        setStreamedTokens([...streamed]);
+      })
+        .then(({ sources }) => {
+          setStreaming(false);
+          setConvo((c) => [
+            ...c,
+            { role: 'assistant', tokens: streamed, sources: sources ?? [] },
+          ]);
+          setStreamedTokens([]);
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : 'Query failed';
+          streamTokens([`⚠ ${msg}`], []);
+        });
       return;
     }
 
-    onSendQuery({
-      query: q,
-      mode: queryMode,
-      topK,
-      maxTokens: maxTok,
-      onlyContext: onlyCtx,
-      onlyPrompt,
-      tagFilters,
-    })
+    const sendQuery = onSendQuery ?? missingRetrievalBackend;
+
+    sendQuery(activeParams(q))
       .then(({ response, sources }) => {
         // Tokenize on whitespace, keeping word boundaries — matches the
         // proto's per-word streaming animation.
@@ -436,7 +482,7 @@ export function RetrievalTab({
               msg={{
                 role: 'assistant',
                 tokens: streamedTokens,
-                sources: answerSources,
+                sources: [],
               }}
               highlightSrc={highlightSrc}
               onCiteHover={onCiteHover}
@@ -550,6 +596,15 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
+          <label className="field-label">Chunk top K</label>
+          <input
+            type="number"
+            aria-label="Chunk top K"
+            value={chunkTopK}
+            onChange={(e) => setChunkTopK(parseInt(e.target.value || '0', 10))}
+          />
+        </div>
+        <div className="field">
           <label className="field-label">Max tokens · text unit</label>
           <input
             type="number"
@@ -566,6 +621,33 @@ export function RetrievalTab({
             value={history}
             onChange={(e) => setHistory(parseInt(e.target.value || '0', 10))}
           />
+        </div>
+        <div className="field">
+          <label className="field-label">User prompt</label>
+          <textarea
+            aria-label="User prompt"
+            value={userPrompt}
+            onChange={(e) => setUserPrompt(e.target.value)}
+            rows={3}
+            placeholder="Optional retrieval instruction"
+          />
+        </div>
+        <div className="toggle">
+          <span
+            className={`switch${enableRerank ? ' on' : ''}`}
+            onClick={() => setEnableRerank(!enableRerank)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setEnableRerank((v) => !v);
+              }
+            }}
+            role="switch"
+            tabIndex={0}
+            aria-checked={enableRerank}
+            aria-label="Enable rerank"
+          />
+          Enable rerank
         </div>
         <div className="toggle">
           <span

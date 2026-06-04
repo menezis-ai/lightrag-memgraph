@@ -26,9 +26,11 @@ Deliberate trade-offs:
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -38,9 +40,13 @@ class TwinQueryBody(BaseModel):
     query: str
     mode: str = Field(default="mix")
     top_k: int = Field(default=10, ge=1, le=200)
+    chunk_top_k: int | None = Field(default=None, ge=1, le=200)
     max_total_tokens: int | None = Field(default=None, ge=1)
     only_need_context: bool = Field(default=False)
     only_need_prompt: bool = Field(default=False)
+    history_turns: int | None = Field(default=None, ge=0, le=20)
+    user_prompt: str | None = Field(default=None, max_length=4000)
+    enable_rerank: bool | None = Field(default=None)
 
 
 class TwinRetrievalSource(BaseModel):
@@ -56,6 +62,62 @@ class TwinRetrievalSource(BaseModel):
 class TwinQueryResponse(BaseModel):
     response: str
     sources: list[TwinRetrievalSource] = Field(default_factory=list)
+
+
+def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[str, Any]:
+    param_kwargs: dict[str, Any] = {
+        "mode": body.mode,
+        "top_k": body.top_k,
+        "only_need_context": body.only_need_context,
+        "only_need_prompt": body.only_need_prompt,
+        "stream": stream,
+    }
+    if body.chunk_top_k is not None:
+        param_kwargs["chunk_top_k"] = body.chunk_top_k
+    if body.max_total_tokens is not None:
+        param_kwargs["max_total_tokens"] = body.max_total_tokens
+    if body.history_turns is not None:
+        param_kwargs["history_turns"] = body.history_turns
+    if body.user_prompt is not None and body.user_prompt.strip():
+        param_kwargs["user_prompt"] = body.user_prompt.strip()
+    if body.enable_rerank is not None:
+        param_kwargs["enable_rerank"] = body.enable_rerank
+    return param_kwargs
+
+
+def _answer_chunk_to_text(chunk: Any) -> str:
+    if isinstance(chunk, bytes):
+        return chunk.decode("utf-8", errors="replace")
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        for key in ("response", "content", "text", "delta"):
+            value = chunk.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
+    return str(chunk)
+
+
+async def _iter_answer_text(answer: Any) -> AsyncIterator[str]:
+    if isinstance(answer, str):
+        yield answer
+        return
+    if hasattr(answer, "__aiter__"):
+        async for chunk in answer:
+            text = _answer_chunk_to_text(chunk)
+            if text:
+                yield text
+        return
+    if isinstance(answer, Iterable) and not isinstance(answer, (bytes, dict)):
+        for chunk in answer:
+            text = _answer_chunk_to_text(chunk)
+            if text:
+                yield text
+        return
+    text = _answer_chunk_to_text(answer)
+    if text:
+        yield text
 
 
 def _safe_get_score(result: dict[str, Any], rank: int, total: int) -> float:
@@ -133,14 +195,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
 
         from lightrag.base import QueryParam
 
-        param_kwargs: dict[str, Any] = {
-            "mode": body.mode,
-            "top_k": body.top_k,
-            "only_need_context": body.only_need_context,
-            "only_need_prompt": body.only_need_prompt,
-        }
-        if body.max_total_tokens is not None:
-            param_kwargs["max_total_tokens"] = body.max_total_tokens
+        param_kwargs = _query_param_kwargs(body)
 
         # --- 1) Synthesised response ----------------------------------
         try:
@@ -197,6 +252,32 @@ def build_twin_query_router(get_rag) -> APIRouter:
             )
 
         return {"response": answer, "sources": sources}
+
+    @router.post("/query/stream")
+    async def query_stream_endpoint(
+        body: TwinQueryBody, request: Request
+    ) -> StreamingResponse:
+        del request  # currently unused; kept for future X-Twin-Space scoping
+        try:
+            rag = get_rag()
+        except RuntimeError as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+        from lightrag.base import QueryParam
+
+        async def generate() -> AsyncIterator[str]:
+            try:
+                answer = await rag.aquery(
+                    body.query,
+                    param=QueryParam(**_query_param_kwargs(body, stream=True)),
+                )
+                async for text in _iter_answer_text(answer):
+                    yield text
+            except Exception as exc:
+                logger.exception("twin_query: streaming aquery failed")
+                yield f"\n[query failed: {exc}]"
+
+        return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
     return router
 

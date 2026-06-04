@@ -59,6 +59,43 @@ export interface DocumentChunk {
   redacted?: boolean;
 }
 
+export interface TwinQueryRequest {
+  query: string;
+  mode?: string;
+  top_k?: number;
+  chunk_top_k?: number;
+  max_total_tokens?: number;
+  only_need_context?: boolean;
+  only_need_prompt?: boolean;
+  history_turns?: number;
+  user_prompt?: string;
+  enable_rerank?: boolean;
+}
+
+export interface TwinQuerySource {
+  n: number;
+  type: string;
+  name: string;
+  meta?: string | null;
+  score: number;
+  doc_id?: string | null;
+  chunk_id?: string | null;
+}
+
+export interface TwinQueryResponse {
+  response: string;
+  sources: readonly TwinQuerySource[];
+}
+
+function parseMaybeJson(text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 // ============================================================================
 // LightRAG-native endpoints (NO /twin/api prefix)
 // ============================================================================
@@ -187,33 +224,56 @@ export const twinApi = {
    * scores) so the chat surface can render citations. The endpoint
    * accepts the standard LightRAG query body.
    */
-  query: (
-    body: {
-      query: string;
-      mode?: string;
-      top_k?: number;
-      max_total_tokens?: number;
-      only_need_context?: boolean;
-      only_need_prompt?: boolean;
-    },
-    init?: ApiRequestInit,
-  ) =>
-    apiFetch<{
-      response: string;
-      sources: readonly {
-        n: number;
-        type: string;
-        name: string;
-        meta?: string | null;
-        score: number;
-        doc_id?: string | null;
-        chunk_id?: string | null;
-      }[];
-    }>(`${TWIN}/query`, {
+  query: (body: TwinQueryRequest, init?: ApiRequestInit) =>
+    apiFetch<TwinQueryResponse>(`${TWIN}/query`, {
       ...init,
       method: 'POST',
       body,
     }),
+  queryStream: async (
+    body: TwinQueryRequest,
+    onChunk: (chunk: string) => void,
+    init?: ApiRequestInit,
+  ): Promise<TwinQueryResponse> => {
+    const res = await fetch(buildApiUrl(`${TWIN}/query/stream`), {
+      method: 'POST',
+      headers: buildApiHeaders(init, { json: true }),
+      body: JSON.stringify(body),
+      signal: init?.signal,
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(
+        `POST ${TWIN}/query/stream → ${res.status} ${res.statusText}`,
+        res.status,
+        parseMaybeJson(text),
+      );
+    }
+
+    if (!res.body) {
+      return { response: '', sources: [] };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let response = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      if (!chunk) continue;
+      response += chunk;
+      onChunk(chunk);
+    }
+    const tail = decoder.decode();
+    if (tail) {
+      response += tail;
+      onChunk(tail);
+    }
+    return { response, sources: [] };
+  },
   createSpace: (
     body: { id: string; label: string; kind?: string; description?: string },
     init?: ApiRequestInit,
@@ -547,6 +607,7 @@ export const api = {
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,
   query: twinApi.query,
+  queryStream: twinApi.queryStream,
 
   // Twin overlay
   listWorkspaces: twinApi.listWorkspaces,
