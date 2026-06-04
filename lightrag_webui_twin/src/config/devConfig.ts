@@ -55,6 +55,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
       'read:activity',
       'admin:tags',
       'admin:workspace',
+      'admin:spaces',
     ],
   },
 };

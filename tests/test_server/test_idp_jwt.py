@@ -171,6 +171,33 @@ class TestIdpConfigFromEnv:
             "twin-reader": 1,
         }
 
+    def test_admin_groups_default_when_unset(self):
+        cfg = idp_jwt.IdpConfig.from_env(env={"TWIN_IDP_JWKS_URL": "https://idp/jwks"})
+        assert cfg is not None
+        assert cfg.admin_groups == frozenset({"twin-admin", "twin-steward"})
+
+    def test_admin_groups_csv_overrides_default(self):
+        cfg = idp_jwt.IdpConfig.from_env(
+            env={
+                "TWIN_IDP_JWKS_URL": "https://idp/jwks",
+                "TWIN_IDP_ADMIN_GROUPS": "bnp.cib.kb-admin , bnp.cib.platform-ops",
+            }
+        )
+        assert cfg is not None
+        assert cfg.admin_groups == frozenset(
+            {"bnp.cib.kb-admin", "bnp.cib.platform-ops"}
+        )
+
+    def test_admin_groups_explicit_empty_string_means_nobody(self):
+        cfg = idp_jwt.IdpConfig.from_env(
+            env={
+                "TWIN_IDP_JWKS_URL": "https://idp/jwks",
+                "TWIN_IDP_ADMIN_GROUPS": "",
+            }
+        )
+        assert cfg is not None
+        assert cfg.admin_groups == frozenset()
+
 
 # ---------------------------------------------------------------------------
 # Claims → AuthenticatedUser
@@ -204,9 +231,12 @@ class TestClaimsMapping:
             "scopes": ["twin:read", "twin:write", "twin:approve"],
         }
         assert user["workspaces"] == ["default", "sandbox"]
+        # `twin-steward` is in the default admin_groups → `admin:spaces`
+        # is appended to gateway_scopes by claims_to_user.
         assert user["gateway_scopes"] == [
             "read:documents",
             "write:documents",
+            idp_jwt.ADMIN_SPACES_SCOPE,
         ]
         assert user["session_expires"].startswith("2100-01-01T")
 
@@ -244,6 +274,53 @@ class TestClaimsMapping:
         )
         assert user["sso_subject"] == "u-99"
         assert user["name"] == "a@b"  # name → email fallback
+
+    def test_admin_scope_injected_when_user_in_admin_group(self):
+        cfg = idp_jwt.IdpConfig(
+            jwks_url="https://idp/jwks",
+            admin_groups=frozenset({"twin-admin"}),
+        )
+        user = idp_jwt.claims_to_user(
+            {"sub": "u", "groups": ["twin-admin"], "scope": "read write"},
+            cfg,
+        )
+        assert idp_jwt.ADMIN_SPACES_SCOPE in user["gateway_scopes"]
+
+    def test_admin_scope_not_injected_for_non_admin(self):
+        cfg = idp_jwt.IdpConfig(
+            jwks_url="https://idp/jwks",
+            admin_groups=frozenset({"twin-admin"}),
+        )
+        user = idp_jwt.claims_to_user(
+            {"sub": "u", "groups": ["twin-reader"], "scope": "read"},
+            cfg,
+        )
+        assert idp_jwt.ADMIN_SPACES_SCOPE not in user["gateway_scopes"]
+
+    def test_admin_scope_not_duplicated_when_already_in_jwt(self):
+        cfg = idp_jwt.IdpConfig(
+            jwks_url="https://idp/jwks",
+            admin_groups=frozenset({"twin-admin"}),
+        )
+        user = idp_jwt.claims_to_user(
+            {
+                "sub": "u",
+                "groups": ["twin-admin"],
+                "scope": f"read {idp_jwt.ADMIN_SPACES_SCOPE}",
+            },
+            cfg,
+        )
+        assert user["gateway_scopes"].count(idp_jwt.ADMIN_SPACES_SCOPE) == 1
+
+    def test_empty_admin_groups_never_injects_even_for_matching_name(self):
+        cfg = idp_jwt.IdpConfig(
+            jwks_url="https://idp/jwks",
+            admin_groups=frozenset(),
+        )
+        user = idp_jwt.claims_to_user(
+            {"sub": "u", "groups": ["twin-admin"]}, cfg
+        )
+        assert idp_jwt.ADMIN_SPACES_SCOPE not in user["gateway_scopes"]
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +547,110 @@ class TestRequireIdpUser:
             r = await c.get("/me")
         assert r.status_code == 401
         assert 'error="expired"' in r.headers["www-authenticate"]
+
+
+# ---------------------------------------------------------------------------
+# require_admin_user
+# ---------------------------------------------------------------------------
+
+
+def _build_admin_app() -> FastAPI:
+    app = FastAPI()
+    from fastapi import Depends
+
+    @app.get("/admin/ping")
+    async def admin_ping(user=Depends(idp_jwt.require_admin_user)):
+        return JSONResponse({"user": user})
+
+    return app
+
+
+class TestRequireAdminUser:
+    async def test_dormant_returns_none_no_403(self):
+        idp_jwt.configure_idp(None)
+        app = _build_admin_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            r = await c.get("/admin/ping")
+        # Dormant IdP → dep returns None, route lets it through.
+        # Critical for dev / OVH standalone / maquette compat.
+        assert r.status_code == 200
+        assert r.json() == {"user": None}
+
+    async def test_active_idp_missing_token_401(self, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        app = _build_admin_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            r = await c.get("/admin/ping")
+        assert r.status_code == 401
+        assert 'error="missing_token"' in r.headers["www-authenticate"]
+
+    async def test_non_admin_user_403(self, rsa_keypair, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        token = _make_token(
+            rsa_keypair,
+            groups=["twin-reader"],  # not in default admin_groups
+        )
+        app = _build_admin_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={"twin_idp_token": token},
+        ) as c:
+            r = await c.get("/admin/ping")
+        assert r.status_code == 403
+        assert idp_jwt.ADMIN_SPACES_SCOPE in r.json()["detail"]
+
+    async def test_admin_user_allowed(self, rsa_keypair, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        # twin-steward is in the default admin_groups
+        token = _make_token(rsa_keypair, groups=["twin-steward"])
+        app = _build_admin_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={"twin_idp_token": token},
+        ) as c:
+            r = await c.get("/admin/ping")
+        assert r.status_code == 200
+        assert (
+            idp_jwt.ADMIN_SPACES_SCOPE
+            in r.json()["user"]["gateway_scopes"]
+        )
+
+    async def test_admin_via_explicit_admin_group_env(
+        self, rsa_keypair, fake_jwks
+    ):
+        # Re-config with custom admin_groups: twin-steward no longer
+        # admin, only bnp.kb-admin is.
+        cfg = idp_jwt.IdpConfig(
+            jwks_url="https://idp.example/jwks",
+            issuer="https://idp.example/realms/twin",
+            audience="twin",
+            admin_groups=frozenset({"bnp.kb-admin"}),
+        )
+        _activate(cfg, fake_jwks)
+        # A token with only the default twin-steward should now be denied.
+        steward_token = _make_token(rsa_keypair, groups=["twin-steward"])
+        admin_token = _make_token(rsa_keypair, groups=["bnp.kb-admin"])
+        app = _build_admin_app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            r_steward = await c.get(
+                "/admin/ping", cookies={"twin_idp_token": steward_token}
+            )
+            r_admin = await c.get(
+                "/admin/ping", cookies={"twin_idp_token": admin_token}
+            )
+        assert r_steward.status_code == 403
+        assert r_admin.status_code == 200
 
 
 # ---------------------------------------------------------------------------

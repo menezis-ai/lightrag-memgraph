@@ -921,6 +921,7 @@ function AppShell() {
                   window.setTimeout(() => window.location.reload(), logoutFailed ? 1200 : 0);
                 })();
               }}
+              onToast={pushToast}
               onRestartTutorial={() =>
                 pushToast({
                   kind: 'done',

@@ -24,12 +24,14 @@ import { ProfileSection } from './Settings/ProfileSection';
 import { SpacesAdminSection } from './Settings/SpacesAdminSection';
 import { WorkspaceSection } from './Settings/WorkspaceSection';
 import { Icon } from './Icon';
+import { useAuth } from '../hooks/useAuth';
 import {
   API_BASE_URL,
   API_SERVERS,
   API_VERSION,
   OPENAPI_GROUPS,
 } from '../fixtures';
+import type { Toast } from '../types/toast';
 
 type SectionKey = 'profile' | 'api' | 'workspace';
 
@@ -48,13 +50,16 @@ export interface SettingsTabProps {
   onSignOut?: () => void;
   /** Reopen the onboarding wizard at step 1. */
   onRestartTutorial?: () => void;
+  onToast?: (toast: Omit<Toast, 'id'>) => void;
 }
 
 export function SettingsTab({
   onSignOut,
   onRestartTutorial,
+  onToast,
 }: SettingsTabProps) {
   const [section, setSection] = useState<SectionKey>('profile');
+  const { user } = useAuth();
 
   return (
     <div className="settings" data-testid="settings-tab">
@@ -102,7 +107,7 @@ export function SettingsTab({
         {section === 'workspace' && (
           <>
             <WorkspaceSection />
-            <SpacesAdminSection />
+            <SpacesAdminSection user={user} onToast={onToast} />
           </>
         )}
       </main>

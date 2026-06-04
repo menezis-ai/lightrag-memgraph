@@ -5,6 +5,10 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 
 ---
 
+## 2026-06-04
+
+- Admin-only Twin Space CRUD via `TWIN_IDP_ADMIN_GROUPS` env + `admin:spaces` gateway scope.
+
 ## v1.0.0 — 2026-05-12 — Major release
 
 **Première release "all-in-one"** du package complet. Marque la consolidation Forgejo-only avec storage backends (KV/Vector/DocStatus) + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module + sub-projet WebUI fork (`lightrag_webui_twin/`). La WebUI affichera désormais `core_version: v1.4.x+memgraph-1.0.0` via `register()` qui patche `lightrag.__version__`.

@@ -13,13 +13,39 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setupServer } from 'msw/node';
 import { SpacesAdminSection } from './SpacesAdminSection';
 import { handlers, resetDocumentsState } from '../../mocks/handlers';
+import type { AuthenticatedUser, TwinRuntimeConfig } from '../../types/auth';
 
 const server = setupServer(...handlers);
+
+const adminUser: AuthenticatedUser = {
+  sso_subject: 'steward@example.test',
+  email: 'steward@example.test',
+  name: 'Steward',
+  palier: {
+    level: 3,
+    label: 'Steward',
+    scopes: ['twin:read', 'twin:write', 'twin:approve'],
+  },
+  workspaces: ['cib'],
+  idp: 'keycloak',
+  idp_realm: 'twin-cib',
+  sub: 'steward-1',
+  session_expires: '2026-06-04T23:59:00Z',
+  gateway_scopes: ['read:documents', 'admin:spaces'],
+};
+
+const readonlyUser: AuthenticatedUser = {
+  ...adminUser,
+  gateway_scopes: ['read:documents'],
+};
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
 afterAll(() => server.close());
 
-function renderSection(qc?: QueryClient) {
+function renderSection(
+  qc?: QueryClient,
+  props: Partial<Parameters<typeof SpacesAdminSection>[0]> = {},
+) {
   const client =
     qc ??
     new QueryClient({
@@ -30,18 +56,22 @@ function renderSection(qc?: QueryClient) {
     });
   return render(
     <QueryClientProvider client={client}>
-      <SpacesAdminSection />
+      <SpacesAdminSection {...props} />
     </QueryClientProvider>,
   );
 }
 
 beforeEach(() => {
   resetDocumentsState();
+  window.__twinE2eRuntimeConfig = undefined;
+  window.__twinConfig = undefined;
 });
 
 afterEach(() => {
   server.resetHandlers();
   resetDocumentsState();
+  window.__twinE2eRuntimeConfig = undefined;
+  window.__twinConfig = undefined;
 });
 
 describe('SpacesAdminSection — list rendering', () => {
@@ -125,6 +155,70 @@ describe('SpacesAdminSection — Add space', () => {
     expect(
       screen.getByTestId('settings-space-delete-sandbox'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('SpacesAdminSection — admin gating', () => {
+  it('hides write controls and shows readonly badge when user lacks admin:spaces', async () => {
+    const adminView = renderSection(undefined, { user: adminUser });
+    await userEvent.click(
+      await screen.findByTestId('settings-add-space-btn'),
+    );
+    await userEvent.type(
+      screen.getByTestId('settings-add-space-id'),
+      'sandbox',
+    );
+    await userEvent.type(
+      screen.getByTestId('settings-add-space-label'),
+      'Sandbox',
+    );
+    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
+    await screen.findByTestId('settings-space-row-sandbox');
+    adminView.unmount();
+
+    renderSection(undefined, { user: readonlyUser });
+    await screen.findByTestId('settings-space-row-sandbox');
+
+    expect(screen.getByTestId('spaces-admin-readonly-badge')).toHaveTextContent(
+      /Read-only — admin scope required/,
+    );
+    expect(screen.queryByTestId('settings-add-space-btn')).toBeNull();
+    expect(screen.queryByTestId('settings-add-space-form')).toBeNull();
+    expect(screen.queryByTestId('settings-space-edit-sandbox')).toBeNull();
+    expect(screen.queryByTestId('settings-space-delete-sandbox')).toBeNull();
+  });
+
+  it('emits an Admin scope required toast when the backend unexpectedly returns 403', async () => {
+    const onToast = vi.fn();
+    window.__twinE2eRuntimeConfig = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '',
+      idpLogoutUrl: '',
+      debugUser: readonlyUser,
+    } satisfies TwinRuntimeConfig;
+
+    renderSection(undefined, { user: adminUser, onToast });
+    await userEvent.click(
+      await screen.findByTestId('settings-add-space-btn'),
+    );
+    await userEvent.type(
+      screen.getByTestId('settings-add-space-id'),
+      'sandbox',
+    );
+    await userEvent.type(
+      screen.getByTestId('settings-add-space-label'),
+      'Sandbox',
+    );
+    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
+
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'error',
+          title: 'Admin scope required',
+        }),
+      ),
+    );
   });
 });
 

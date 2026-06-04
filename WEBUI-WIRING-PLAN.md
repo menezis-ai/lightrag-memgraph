@@ -20,6 +20,92 @@ The standalone OVH demo at https://maquette.sigilum.fr/ uses the React
 port with **MSW client-side** (everything mocked in the browser, no
 backend). Couche 3 replaces MSW with the real LightRAG + Twin overlay.
 
+## Audit 2026-06-04 — LightRAG WebUI parity vs Twin UI
+
+Conclusion for the Monday weekly: the React Twin UI is a credible replacement
+for the LightRAG WebUI on the Twin knowledge-management workflow. It is not
+yet a strict replacement for every upstream LightRAG v1.5 operations feature.
+
+Recommended wording:
+
+> We can replace the LightRAG UI for Twin users: documents, retrieval, graph,
+> spaces, tags, auth, audit, and Memgraph-backed real backend are covered. The
+> remaining gaps are advanced LightRAG operations/configuration features, not
+> core Twin product workflows.
+
+Sources checked for parity:
+
+- Upstream LightRAG WebUI scope: document indexing, knowledge graph
+  exploration, simple RAG query interface, and Ollama-compatible API support.
+- Current upstream LightRAG v1.5 docs/news: parser routing, multimodal
+  processing through MinerU/Docling/RAG-Anything, role-specific LLM/VLM
+  configuration, selectable chunking strategies, reranking, queue/pipeline
+  status, retrieved contexts/citations, setup wizard, and cache/export
+  operations.
+- Local Twin implementation: `lightrag_webui_twin/src/api/resources.ts`,
+  `lightrag_webui_twin/src/App.tsx`, `server/native_shims.py`,
+  `server/webui_router.py`, route parity tests, and real-backend e2e.
+
+### Feature comparison
+
+| Domain | LightRAG WebUI upstream | Twin UI status | Verdict |
+|---|---|---|---|
+| Document upload/indexing | File upload + async pipeline | File upload + tags + classification hook + track-status polling | Covered, stronger for BNP |
+| Document list/status | Paginated status table, filters, sorting | Documents tab with filters, counters, detail panel, tags, classification, space scoping | Covered |
+| Document delete | Single/multi delete with KG regeneration | Single delete + bulk delete wired to real backend | Covered |
+| Failed document reprocess | Reprocess failed files | Retry failed batch exposed from document detail | Covered with UX nuance |
+| Text insert | `/documents/text` and `/documents/texts` | Not exposed as a primary UI action | Gap if strict upstream parity is required |
+| Scan input directory | `/documents/scan` global scan | Per-doc scan is a safe no-op shim; retry failed batch exists | Gap / ops decision |
+| Retrieval query | Query UI with modes and advanced params | Retrieval tab with sources/citations and Twin query endpoint | Covered for Twin workflow |
+| Streaming query | `/query/stream`, `stream: true` | UI simulates streaming, real endpoint is non-streaming | Gap |
+| Query modes | `naive`, `local`, `global`, `hybrid`, `mix`, `bypass`, context prefixes | UI/API support common modes; not every upstream prefix/param is surfaced | Partial |
+| Advanced query params | `chunk_top_k`, entity/relation token budgets, `user_prompt`, rerank toggle, prompt/context-only modes, history controls | API type accepts part of this; UI intentionally exposes a smaller operator surface | Partial |
+| Citations/contexts | Upstream returns retrieved contexts for evaluation/citations | Twin query returns structured sources for citation cards | Covered |
+| Knowledge graph view | Graph visualization | Graph tab + real Memgraph GET/PATCH/POST/DELETE lifecycle | Covered, stronger for Twin graph governance |
+| Graph settings | Node/edge labels, depth, max nodes, layout settings | Twin graph has filters/search/detail/CRUD; fewer low-level viewer settings | Partial but acceptable |
+| API explorer | Swagger/API surface | API tab exists, but "Try it out" is deterministic/mock-only | Partial |
+| Auth | API key + JWT account credentials; guest mode caveats upstream | IdP/JWKS + static key + local JWT, default-credential and CORS hardening | Stronger for production |
+| Spaces/workspaces | LightRAG workspace/storage config | Twin Spaces with runtime config, CRUD, scoping headers | Stronger for Twin |
+| Tags/thesaurus/governance | Not native LightRAG WebUI focus | Tag lifecycle, approval/reject, synonyms, delete migrate/untag, activity | Stronger |
+| Activity/notifications | Not central upstream | Activity feed + notification store + Memgraph persistence | Stronger |
+| Pipeline diagnostics | Detailed health/pipeline/queue status upstream | Health indicators and activity; no full queue diagnostic panel | Gap for ops |
+| Runtime provider config | Setup wizard/env for LLM, embedding, rerank, storage | Providers/tokens removed from Settings by design; ops/MyAccess owns config | Intentional gap |
+| Multimodal/parser/chunker v1.5 | MinerU/Docling/RAG-Anything, parser routing, chunk strategies, VLM | No UI control/status specific to these capabilities | Gap if upstream v1.5 parity is required |
+| Cache/export | Cache clear and graph data export available in upstream docs/API | Not a Twin UI workflow today | Gap / ops decision |
+| Ollama-compatible chat surface | Server exposes Ollama-compatible API for Open WebUI | Not represented as a user-facing Twin screen | Out of Twin UI scope |
+
+### Missing items to decide
+
+P0 only if Fabrice expects strict "LightRAG WebUI replacement" wording:
+
+- Real streaming retrieval: route `POST /twin/api/query/stream` or direct
+  native `/query/stream` adaptation, with browser e2e.
+- Advanced query controls: `chunk_top_k`, entity/relation token budgets,
+  `user_prompt`, `enable_rerank`, prompt-only/context-only, and explicit
+  `mix/bypass` behavior.
+- Text insert: visible action for `/documents/text` and `/documents/texts`, or
+  explicit statement that Twin only accepts governed source files.
+- Pipeline diagnostics: surface native detailed `/health` and
+  `/documents/pipeline_status` queue fields for ops.
+- API explorer real execution: replace mock "Try it out" with real calls in
+  authenticated real-backend mode, or clearly label it as documentation-only.
+
+P1 / ops-feature backlog:
+
+- Global input-directory scan (`/documents/scan`) as an ops-only command.
+- Cache clear and graph export actions, behind admin/ops authorization.
+- Graph viewer low-level settings: max nodes, depth, labels, edge display,
+  layout iterations.
+- Multimodal/parser/chunker status and configuration once BNP decides whether
+  MinerU/Docling/RAG-Anything is in scope.
+- Role-specific LLM/VLM configuration visibility: read-only health panel at
+  minimum, editable wizard only if ops wants it in the UI.
+
+Current position: call the product "ready to replace LightRAG UI for Twin
+knowledge-management workflows"; avoid claiming complete upstream LightRAG
+v1.5 operations parity until the items above are either implemented or
+explicitly declared out of scope.
+
 ## Update 2026-06-02 — Runtime config + Twin spaces
 
 Implementation status:
@@ -114,8 +200,9 @@ Validated:
 
 Still to do:
 
-- Add admin-only authorization checks for runtime Space CRUD once the BNP
-  MyAccess group/scope → palier policy is finalized.
+- Admin-only authorization checks for runtime Space CRUD are done as of
+  2026-06-04 via `TWIN_IDP_ADMIN_GROUPS` and the `admin:spaces` gateway
+  scope.
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility headers until then.
 - Run the deployment checklist and host smoke.
@@ -199,8 +286,8 @@ Commit `173b09f` closes the backend half of the "spaces beyond
 - Mutations emit `settings` activity events with structured
   `operation: create | update | delete` metadata.
 - Validation reported for the batch: `661/661` pytest, `97` skipped.
-
-Still open for spaces: JWT/MyAccess admin-only gating for runtime Space CRUD.
+- Done 2026-06-04: JWT/MyAccess admin-only gating for runtime Space CRUD
+  uses `TWIN_IDP_ADMIN_GROUPS` to grant the `admin:spaces` gateway scope.
 
 ### P0 — Contract drift blockers
 
@@ -252,9 +339,9 @@ Still open for spaces: JWT/MyAccess admin-only gating for runtime Space CRUD.
 ### P3 — Production auth and integration confidence
 
 - **Done —** Replace local username/password JWT with real IdP/JWKS
-  validation for production mode. Remaining MyAccess-specific work is deploy
-  configuration: `TWIN_IDP_JWKS_URL`, issuer/audience, claim names, and the
-  group/scope → palier policy for admin-only operations.
+  validation for production mode. MyAccess Space CRUD admin policy is wired
+  through `TWIN_IDP_ADMIN_GROUPS` → `admin:spaces`; remaining deploy
+  configuration is `TWIN_IDP_JWKS_URL`, issuer/audience, and claim names.
 - **Done —** CI has an `integration-tests` job with a Memgraph service; local
   runs still skip `@pytest.mark.integration` tests when `MEMGRAPH_URI` is
   absent.
@@ -1188,13 +1275,11 @@ Still to do:
 
 Most Couche 3 implementation work is already landed. The remaining order is:
 
-1. MyAccess admin-only authorization policy once BNP claim/group mapping is
-   finalized.
-2. Deployment checklist and host smoke.
-3. Retention/sweep for activity and notifications after PO/compliance answers.
+1. Deployment checklist and host smoke.
+2. Retention/sweep for activity and notifications after PO/compliance answers.
 
-Rough remaining estimate: **deployment smoke + admin policy follow-up**, plus
-the deferred retention sweep once the desired BNP behavior is fixed.
+Rough remaining estimate: **deployment smoke**, plus the deferred retention
+sweep once the desired BNP behavior is fixed.
 
 ---
 

@@ -224,6 +224,23 @@ function recordTwinSpaceRequest(request: Request): void {
   });
 }
 
+export function mockCurrentScopes(): readonly string[] | null {
+  if (typeof window === 'undefined') return null;
+  const config =
+    window.__twinE2eRuntimeConfig ??
+    (typeof window.__twinConfig === 'object' ? window.__twinConfig : undefined);
+  return config?.debugUser?.gateway_scopes ?? null;
+}
+
+function rejectSpaceAdminMutationIfNeeded() {
+  const scopes = mockCurrentScopes();
+  if (scopes === null || scopes.includes('admin:spaces')) return null;
+  return HttpResponse.json(
+    { detail: "Admin scope 'admin:spaces' required" },
+    { status: 403 },
+  );
+}
+
 export function resetDocumentsState(): void {
   const storage = e2eStorage();
   storage?.removeItem(E2E_DOCUMENTS_STORAGE_KEY);
@@ -632,6 +649,8 @@ export const handlers = [
     return HttpResponse.json(spaceState);
   }),
   http.post(`${ANY}${TWIN}/spaces`, async ({ request }) => {
+    const forbidden = rejectSpaceAdminMutationIfNeeded();
+    if (forbidden) return forbidden;
     const body = (await request.json()) as {
       id: string;
       label: string;
@@ -690,6 +709,8 @@ export const handlers = [
     return HttpResponse.json(created, { status: 201 });
   }),
   http.patch(`${ANY}${TWIN}/spaces/:id`, async ({ params, request }) => {
+    const forbidden = rejectSpaceAdminMutationIfNeeded();
+    if (forbidden) return forbidden;
     const id = String(params.id);
     if (envSeededSpaceIds.has(id)) {
       return HttpResponse.json(
@@ -733,6 +754,8 @@ export const handlers = [
     return HttpResponse.json(next);
   }),
   http.delete(`${ANY}${TWIN}/spaces/:id`, ({ params }) => {
+    const forbidden = rejectSpaceAdminMutationIfNeeded();
+    if (forbidden) return forbidden;
     const id = String(params.id);
     if (envSeededSpaceIds.has(id)) {
       return HttpResponse.json(

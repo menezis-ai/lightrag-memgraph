@@ -26,12 +26,17 @@ import {
   useUpdateSpace,
 } from '../../api/queries';
 import { ApiError } from '../../api/client';
+import { canManageSpaces } from '../../lib/permissions';
+import type { AuthenticatedUser } from '../../types/auth';
+import type { Toast } from '../../types/toast';
 import type { Workspace } from '../../types/topbar';
 
 const SPACE_ID_RE = /^[A-Za-z0-9_-]+$/;
 const MAX_SPACES = 5;
 
 export interface SpacesAdminSectionProps {
+  user?: AuthenticatedUser | null;
+  onToast?: (toast: Omit<Toast, 'id'>) => void;
   /** When the operator deletes the currently-active space, the host
    *  needs to swap to a fallback. Returning the new active id is
    *  optional — leave undefined to let the host pick. */
@@ -39,6 +44,8 @@ export interface SpacesAdminSectionProps {
 }
 
 export function SpacesAdminSection({
+  user = null,
+  onToast,
   onActiveSpaceDeleted,
 }: SpacesAdminSectionProps = {}) {
   const spaces = useSpaces();
@@ -49,6 +56,16 @@ export function SpacesAdminSection({
   const [addOpen, setAddOpen] = useState(false);
   const list = spaces.data ?? [];
   const atMax = list.length >= MAX_SPACES;
+  const canManage = canManageSpaces(user);
+
+  const notifyAdminScope403 = (err: unknown) => {
+    if (!(err instanceof ApiError) || err.status !== 403) return;
+    onToast?.({
+      kind: 'error',
+      title: 'Admin scope required',
+      sub: "Admin scope 'admin:spaces' required",
+    });
+  };
 
   return (
     <div className="settings-section" data-testid="settings-spaces-admin">
@@ -58,45 +75,53 @@ export function SpacesAdminSection({
         managed via the deploy env — operator additions are persisted to
         the runtime catalog.
       </p>
+      {!canManage && (
+        <span className="env-badge" data-testid="spaces-admin-readonly-badge">
+          <Icon name="lock" size={10} /> Read-only — admin scope required
+        </span>
+      )}
 
-      {addOpen ? (
-        <AddSpaceForm
-          existingIds={list.map((s) => s.id)}
-          pending={createSpace.isPending}
-          error={errorToMessage(createSpace.error)}
-          onCancel={() => setAddOpen(false)}
-          onSubmit={(payload) => {
-            createSpace.mutate(payload, {
-              onSuccess: () => setAddOpen(false),
-            });
-          }}
-        />
-      ) : (
-        <div style={{ margin: '8px 0' }}>
-          <button
-            type="button"
-            className="ghost-btn primary"
-            onClick={() => setAddOpen(true)}
-            disabled={atMax}
-            data-testid="settings-add-space-btn"
-            title={
-              atMax
-                ? `Cannot add more spaces — already at the cap of ${MAX_SPACES}.`
-                : undefined
-            }
-          >
-            <Icon name="plus" size={12} /> Add space
-          </button>
-          {atMax && (
-            <span
-              className="muted"
-              style={{ marginLeft: 10, fontSize: 12 }}
-              data-testid="settings-spaces-at-max"
+      {canManage && (
+        addOpen ? (
+          <AddSpaceForm
+            existingIds={list.map((s) => s.id)}
+            pending={createSpace.isPending}
+            error={errorToMessage(createSpace.error)}
+            onCancel={() => setAddOpen(false)}
+            onSubmit={(payload) => {
+              createSpace.mutate(payload, {
+                onSuccess: () => setAddOpen(false),
+                onError: notifyAdminScope403,
+              });
+            }}
+          />
+        ) : (
+          <div style={{ margin: '8px 0' }}>
+            <button
+              type="button"
+              className="ghost-btn primary"
+              onClick={() => setAddOpen(true)}
+              disabled={atMax}
+              data-testid="settings-add-space-btn"
+              title={
+                atMax
+                  ? `Cannot add more spaces — already at the cap of ${MAX_SPACES}.`
+                  : undefined
+              }
             >
-              At max — {MAX_SPACES} space cap reached.
-            </span>
-          )}
-        </div>
+              <Icon name="plus" size={12} /> Add space
+            </button>
+            {atMax && (
+              <span
+                className="muted"
+                style={{ marginLeft: 10, fontSize: 12 }}
+                data-testid="settings-spaces-at-max"
+              >
+                At max — {MAX_SPACES} space cap reached.
+              </span>
+            )}
+          </div>
+        )
       )}
 
       <ul className="settings-spaces-list" style={{ padding: 0, margin: 0 }}>
@@ -114,12 +139,19 @@ export function SpacesAdminSection({
               pendingDelete={deleteSpace.isPending}
               updateError={errorToMessage(updateSpace.error)}
               deleteError={errorToMessage(deleteSpace.error)}
-              onSave={(patch) => updateSpace.mutate({ id: space.id, patch })}
+              canManage={canManage}
+              onSave={(patch) =>
+                updateSpace.mutate(
+                  { id: space.id, patch },
+                  { onError: notifyAdminScope403 },
+                )
+              }
               onDelete={() =>
                 deleteSpace.mutate(space.id, {
                   onSuccess: () => {
                     if (space.current) onActiveSpaceDeleted?.(space.id);
                   },
+                  onError: notifyAdminScope403,
                 })
               }
             />
@@ -296,6 +328,7 @@ interface SpaceRowProps {
   pendingDelete: boolean;
   updateError: string | null;
   deleteError: string | null;
+  canManage: boolean;
   onSave: (patch: { label?: string }) => void;
   onDelete: () => void;
 }
@@ -307,6 +340,7 @@ function SpaceRow({
   pendingDelete,
   updateError,
   deleteError,
+  canManage,
   onSave,
   onDelete,
 }: SpaceRowProps) {
@@ -408,7 +442,7 @@ function SpaceRow({
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ flex: 1, fontSize: 13 }}>{space.kb}</span>
-          {!envSeeded && (
+          {!envSeeded && canManage && (
             <>
               <button
                 type="button"

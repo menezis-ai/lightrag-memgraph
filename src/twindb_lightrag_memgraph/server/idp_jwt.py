@@ -51,10 +51,15 @@ The module is intentionally side-effect free at import time — the
 | ``TWIN_IDP_CLAIM_WORKSPACES`` | ``twin_spaces`` | List of space ids the user can switch into. |
 | ``TWIN_IDP_CLAIM_SCOPES`` | ``scope`` | Space-delimited string OR list. |
 | ``TWIN_IDP_GROUP_TO_PALIER_JSON`` | built-in | JSON mapping group → palier level. |
+| ``TWIN_IDP_ADMIN_GROUPS`` | ``twin-admin,twin-steward`` | CSV of MyAccess groups whose members get ``admin:spaces`` in ``gateway_scopes``. Set to an empty string to deny admin to everyone. |
 
 The built-in group→palier fallback maps:
 ``{"twin-steward": 3, "twin-contributor": 2, "twin-reader": 1}``.
 Louis can drop in the BNP MyAccess group names without touching code.
+
+Admin gating is orthogonal to palier: the default ``admin_groups`` set
+includes ``twin-steward`` to mirror the doctrine *Steward = admin by
+default*, but BNP can configure either dimension independently via env.
 """
 
 from __future__ import annotations
@@ -95,6 +100,16 @@ _DEFAULT_PALIER_SCOPES: dict[int, list[str]] = {
     3: ["twin:read", "twin:write", "twin:approve"],
 }
 
+# Default admin groups. Mirrors the Steward-equals-admin doctrine while
+# leaving room for a dedicated ``twin-admin`` group.
+_DEFAULT_ADMIN_GROUPS: frozenset[str] = frozenset({"twin-admin", "twin-steward"})
+
+# Gateway scope token granted when a user is in any of the configured
+# admin groups. The Space CRUD routes gate on this; the React port
+# reads it via ``user.gateway_scopes`` (cf. ``canManageSpaces`` in
+# ``lightrag_webui_twin/src/lib/permissions.ts``).
+ADMIN_SPACES_SCOPE = "admin:spaces"
+
 
 @dataclass(frozen=True)
 class IdpConfig:
@@ -120,6 +135,9 @@ class IdpConfig:
     claim_scopes: str = "scope"
     group_to_palier: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_GROUP_TO_PALIER)
+    )
+    admin_groups: frozenset[str] = field(
+        default_factory=lambda: frozenset(_DEFAULT_ADMIN_GROUPS)
     )
 
     @property
@@ -157,6 +175,18 @@ class IdpConfig:
                 logger.exception(
                     "TWIN_IDP_GROUP_TO_PALIER_JSON invalid; using built-in default"
                 )
+        admin_groups_raw = env.get("TWIN_IDP_ADMIN_GROUPS")
+        if admin_groups_raw is None:
+            admin_groups: frozenset[str] = frozenset(_DEFAULT_ADMIN_GROUPS)
+        else:
+            # An explicit empty string is meaningful: "no admin group →
+            # admin gating denies everyone". Useful for paranoid deploys
+            # that wire admin via JWT scope directly and never via group.
+            admin_groups = frozenset(
+                part.strip()
+                for part in admin_groups_raw.split(",")
+                if part.strip()
+            )
         return cls(
             jwks_url=jwks_url,
             issuer=(env.get("TWIN_IDP_ISSUER") or None),
@@ -173,6 +203,7 @@ class IdpConfig:
             claim_workspaces=env.get("TWIN_IDP_CLAIM_WORKSPACES", "twin_spaces"),
             claim_scopes=env.get("TWIN_IDP_CLAIM_SCOPES", "scope"),
             group_to_palier=group_to_palier,
+            admin_groups=admin_groups,
         )
 
 
@@ -372,6 +403,10 @@ def claims_to_user(
     palier_label = _PALIER_LABEL[palier_level]
     palier_scopes = _DEFAULT_PALIER_SCOPES[palier_level]
 
+    if config.admin_groups and not set(groups).isdisjoint(config.admin_groups):
+        if ADMIN_SPACES_SCOPE not in scopes:
+            scopes = [*scopes, ADMIN_SPACES_SCOPE]
+
     exp = claims.get("exp")
     session_expires: str
     if isinstance(exp, (int, float)):
@@ -457,7 +492,41 @@ def require_idp_user(request: Request) -> dict[str, Any] | None:
     return claims_to_user(claims, _active_config)
 
 
+def require_admin_user(request: Request) -> dict[str, Any] | None:
+    """FastAPI dependency: only let through requests whose IdP token
+    carries the ``admin:spaces`` gateway scope.
+
+    Activation contract mirrors ``require_idp_user``:
+
+    - **Dormant IdP** (``TWIN_IDP_JWKS_URL`` unset) → returns ``None``
+      without raising. Dev / OVH standalone / maquette stay usable.
+    - **Active IdP** → resolves the user via ``require_idp_user`` (401
+      on missing/invalid token), then raises 403 unless the user's
+      ``gateway_scopes`` contains :data:`ADMIN_SPACES_SCOPE`. The scope
+      is injected by :func:`claims_to_user` whenever the user's
+      ``groups`` intersect ``IdpConfig.admin_groups``.
+    """
+    if _active_config is None:
+        return None
+    user = require_idp_user(request)
+    if user is None:
+        # Defensive: should be unreachable when ``_active_config`` is
+        # set, since ``require_idp_user`` raises rather than returns
+        # ``None`` in that branch. Treat as 401 just in case.
+        raise IdpAuthError(
+            error="missing_token",
+            description="Missing IdP credentials",
+        )
+    if ADMIN_SPACES_SCOPE not in (user.get("gateway_scopes") or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Admin scope '{ADMIN_SPACES_SCOPE}' required",
+        )
+    return user
+
+
 __all__ = [
+    "ADMIN_SPACES_SCOPE",
     "IdpAuthError",
     "IdpConfig",
     "JwksCache",
@@ -466,5 +535,6 @@ __all__ = [
     "decode_idp_token",
     "extract_bearer_token",
     "get_active_config",
+    "require_admin_user",
     "require_idp_user",
 ]

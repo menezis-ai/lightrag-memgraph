@@ -31,6 +31,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import webui_seed
+from .idp_jwt import require_admin_user
 from .space import (
     bind_request_space,
     current_space_id,
@@ -673,7 +674,12 @@ async def list_spaces() -> list[dict[str, Any]]:
     ]
 
 
-@router.post("/spaces", response_model=Workspace, status_code=201)
+@router.post(
+    "/spaces",
+    response_model=Workspace,
+    status_code=201,
+    dependencies=[Depends(require_admin_user)],
+)
 async def create_space(body: SpaceCreate) -> dict[str, Any]:
     """Admin: provision a new Twin space at runtime.
 
@@ -725,7 +731,11 @@ async def create_space(body: SpaceCreate) -> dict[str, Any]:
     return space.as_workspace_compat(current=False)
 
 
-@router.patch("/spaces/{space_id}", response_model=Workspace)
+@router.patch(
+    "/spaces/{space_id}",
+    response_model=Workspace,
+    dependencies=[Depends(require_admin_user)],
+)
 async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
     """Admin: edit label / kind / description of a runtime space.
 
@@ -765,7 +775,11 @@ async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
     return space.as_workspace_compat(current=space.id == active)
 
 
-@router.delete("/spaces/{space_id}", status_code=204)
+@router.delete(
+    "/spaces/{space_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin_user)],
+)
 async def delete_space(space_id: str) -> None:
     """Admin: remove a runtime space.
 
