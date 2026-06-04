@@ -1000,9 +1000,9 @@ Still to do:
   - `NOTIFICATION_FIXTURES`
   Dev/MSW can keep fixture first paint, but prod must show loading/error when
   the backend is unavailable.
-- [ ] Retrieval should stop displaying fixture answer sources in real mode.
-      Until structured source extraction lands, show the backend response with
-      an honest empty/unknown sources state.
+- [x] Retrieval stops displaying fixture-only answer sources in real mode.
+      `POST /twin/api/query` now returns structured sources for clickable
+      citation cards; MSW mirrors that contract for standalone/dev parity.
 
 #### 3.7 — Integration tests (3h)
 
@@ -1036,7 +1036,7 @@ Still to do:
 - [ ] Add the new tests to the `integration-tests` job in
       `.forgejo/workflows/ci.yml` (already includes a Memgraph service
       container).
-- [ ] Add one real-backend WebUI smoke with MSW disabled
+- [x] Add one real-backend WebUI smoke with MSW disabled
       (`VITE_USE_MSW=false`) against a running FastAPI app.
 
 #### 3.8 — Deployment (2h)

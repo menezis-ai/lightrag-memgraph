@@ -8,8 +8,25 @@ and workspace resolution logic.
 import os
 import re
 
-# Environment variable keys
+# Environment variable keys.
+#
+# Workspace resolution chain (`resolve_workspace()`):
+#   1. ``MEMGRAPH_WORKSPACE`` — historical alias kept for back-compat
+#      with deploys that set it explicitly alongside ``WORKSPACE``.
+#   2. ``WORKSPACE`` — the canonical LightRAG-core variable. Setting
+#      this single value is now enough for both LightRAG core *and*
+#      our Memgraph storage backends.
+#   3. ``TWIN_DEFAULT_SPACE`` — Twin overlay's source of truth; honoured
+#      as a fallback so a "space-only" deploy boots without setting a
+#      legacy variable.
+#   4. ``DEFAULT_WORKSPACE`` ("base") — the LightRAG-internal default.
+#
+# Aligning on the chain lets new deploys ship a single ``WORKSPACE``
+# or ``TWIN_DEFAULT_SPACE`` without the old "set both" footgun
+# documented in ``deploy/ovh-twin/stack.yml``.
 MEMGRAPH_WORKSPACE_ENV = "MEMGRAPH_WORKSPACE"
+WORKSPACE_ENV = "WORKSPACE"
+TWIN_DEFAULT_SPACE_ENV = "TWIN_DEFAULT_SPACE"
 
 # Default values
 DEFAULT_WORKSPACE = "base"
@@ -52,14 +69,23 @@ def validate_identifier(value: str, name: str = "identifier") -> str:
 
 
 def resolve_workspace() -> str:
-    """Resolve the active workspace from the environment.
+    """Resolve the active workspace (Memgraph label) from the
+    environment.
 
-    Reads ``MEMGRAPH_WORKSPACE`` env var, strips whitespace,
-    and falls back to :data:`DEFAULT_WORKSPACE` when empty or unset.
+    Falls through the alias chain in order, returning the first
+    non-empty value:
+
+      1. ``MEMGRAPH_WORKSPACE``
+      2. ``WORKSPACE`` (LightRAG-core canonical)
+      3. ``TWIN_DEFAULT_SPACE`` (Twin overlay)
+      4. :data:`DEFAULT_WORKSPACE` (``"base"``)
 
     Raises:
-        ValueError: If the workspace name contains unsafe characters.
+        ValueError: If the resolved workspace contains unsafe
+        characters.
     """
-    ws = os.environ.get(MEMGRAPH_WORKSPACE_ENV, "").strip()
-    ws = ws if ws else DEFAULT_WORKSPACE
-    return validate_identifier(ws, "workspace")
+    for env_key in (MEMGRAPH_WORKSPACE_ENV, WORKSPACE_ENV, TWIN_DEFAULT_SPACE_ENV):
+        candidate = os.environ.get(env_key, "").strip()
+        if candidate:
+            return validate_identifier(candidate, "workspace")
+    return validate_identifier(DEFAULT_WORKSPACE, "workspace")
