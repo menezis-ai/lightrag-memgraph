@@ -83,7 +83,13 @@ test.describe('Twin WebUI operator journeys', () => {
     await openTab(page, 'Retrieval');
     await page.getByLabel('Query input').fill('How do I restart Oracle?');
     await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByText('How do I restart Oracle?')).toBeVisible();
+    // `exact: true` avoids a strict-mode collision with the MSW
+    // streaming response, which echoes the query inside the
+    // assistant message ("Mock retrieval response for: How do I
+    // restart Oracle?").
+    await expect(
+      page.getByText('How do I restart Oracle?', { exact: true }),
+    ).toBeVisible();
     await expect(page.getByTestId('source-1')).toBeVisible({ timeout: 12_000 });
     await page.getByLabel('Retrieval tag input').fill('oracle');
     await page.getByTestId('rtag-sugg-oracle').click();
@@ -96,9 +102,15 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel(/Select entity Oracle/).click();
     await page.getByLabel('Zoom in').click();
     await expect(page.getByTestId('kg-zoom-value')).not.toHaveText('100%');
-    await page.getByRole('button', { name: /View .* sources mentioning this entity/ }).click();
+    // Mock-kill F3 — the CTA label is now "View documents mentioning
+    // this entity" and navigation falls back to `?q=<entity name>`
+    // (the per-entity `?source=` filter was dropped because the fixture
+    // map keyed on prototype ids missed real Memgraph entities).
+    await page
+      .getByRole('button', { name: /View documents mentioning this entity/ })
+      .click();
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
-    await expect(page).toHaveURL(/source=/);
+    await expect(page).toHaveURL(/[?&]q=/);
 
     await openTab(page, 'Activity');
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
@@ -231,7 +243,11 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByTestId('settings-rail-workspace').click();
     await expect(page.getByTestId('settings-workspace')).toBeVisible();
     await expect(page.getByTestId('settings-active-ws')).toContainText('default');
-    await expect(page.getByText('Retention policy')).toBeVisible();
+    // Mock-kill F1 — Visibility / Region / Retention cards were
+    // dropped because their values were fixture-only inventions
+    // (eu-west-3 dc-paris, hardcoded TTLs). Identity card is now the
+    // single source of truth for the active-space view.
+    await expect(page.getByTestId('settings-space-display-name')).toBeVisible();
 
     await page.getByTestId('settings-rail-api').click();
     await expect(page.getByTestId('settings-api')).toBeVisible();
