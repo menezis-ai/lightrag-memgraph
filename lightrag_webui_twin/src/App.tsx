@@ -4,11 +4,10 @@
  * Data flow (S4a):
  *   - Each resource has a typed query hook (`useDocuments`, `useTags`, ...)
  *     that hits `/documents`, `/tags`, etc. via `apiFetch`.
- *   - In dev, MSW intercepts those fetches and answers from the fixtures —
- *     the contract template lives in `src/fixtures/`.
- *   - Each `useQuery` is seeded with `initialData = FIXTURE` so the first
- *     paint is instant. Fetched data replaces the fixture as soon as the
- *     query resolves (background revalidation pattern).
+ *   - In dev/MSW demo mode, unresolved queries may display fixtures so first
+ *     paint stays useful while the worker boots.
+ *   - In production real-backend mode, local fixture fallbacks are disabled:
+ *     backend failures render an explicit error instead of stale CIB data.
  *   - Components keep their prop-driven signature so unit tests pass arrays
  *     directly without a QueryClient wrapper.
  *
@@ -89,6 +88,53 @@ const CURRENT_USER: TagCurrentUser = {
   role: 'admin / steward',
 };
 
+const FIXTURE_FALLBACK_ENABLED = shouldUseFixtureFallback({
+  dev: Boolean(import.meta.env.DEV),
+  forceMsw: import.meta.env.VITE_FORCE_MSW,
+  useMsw: import.meta.env.VITE_USE_MSW,
+});
+
+export function shouldUseFixtureFallback(env: {
+  dev: boolean;
+  forceMsw?: string;
+  useMsw?: string;
+}): boolean {
+  if (env.forceMsw === 'true') return true;
+  return env.dev && env.useMsw !== 'false';
+}
+
+type QueryLike<T> = {
+  data?: T;
+  isError: boolean;
+  isLoading: boolean;
+  error: unknown;
+};
+
+interface BackendResourceError {
+  label: string;
+  message: string;
+}
+
+function resolveQueryData<T>(query: QueryLike<T>, fixture: T): T | undefined {
+  return query.data ?? (FIXTURE_FALLBACK_ENABLED ? fixture : undefined);
+}
+
+function resourceError<T>(
+  label: string,
+  query: QueryLike<T>,
+): BackendResourceError | null {
+  if (FIXTURE_FALLBACK_ENABLED || query.data || query.isLoading || !query.isError) {
+    return null;
+  }
+  return { label, message: formatBackendError(query.error) };
+}
+
+function formatBackendError(error: unknown): string {
+  if (error instanceof ApiError) return `${error.status} ${error.message}`;
+  if (error instanceof Error) return error.message;
+  return 'Backend request failed';
+}
+
 declare global {
   interface Window {
     __TWIN_E2E_INITIAL_TAG_POLL?: {
@@ -158,9 +204,11 @@ function AppShell() {
   const [readNotificationIds, setReadNotificationIds] = useState<ReadonlySet<string>>(
     () =>
       new Set(
-        NOTIFICATION_FIXTURES.filter((notification) => notification.read).map(
-          (notification) => notification.id,
-        ),
+        FIXTURE_FALLBACK_ENABLED
+          ? NOTIFICATION_FIXTURES.filter((notification) => notification.read).map(
+              (notification) => notification.id,
+            )
+          : [],
       ),
   );
   const [clearedNotificationIds, setClearedNotificationIds] = useState<
@@ -171,7 +219,8 @@ function AppShell() {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  const notificationSource = notificationsQ.data ?? NOTIFICATION_FIXTURES;
+  const notificationSource =
+    resolveQueryData(notificationsQ, NOTIFICATION_FIXTURES) ?? [];
   const notifications = notificationSource
     .filter((notification) => !clearedNotificationIds.has(notification.id))
     .map((notification) =>
@@ -192,7 +241,7 @@ function AppShell() {
         current: space.id === workspace,
       }));
     }
-    return workspaces.data ?? WORKSPACE_FIXTURES;
+    return resolveQueryData(workspaces, WORKSPACE_FIXTURES) ?? [];
   }, [configuredSpaces, workspace, workspaces.data]);
   const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
 
@@ -711,10 +760,26 @@ function AppShell() {
     ]);
   };
 
-  // Resolved props — fall back to the local fixtures while the first fetch is
-  // in flight so the UI never shows an empty shell on cold start.
+  const backendErrors = [
+    resourceError('Documents', docs),
+    resourceError('Spaces', workspaces),
+    resourceError('Notifications', notificationsQ),
+    resourceError('Thesaurus', thesaurus),
+    resourceError('Tags', tags),
+    resourceError('Tag categories', tagCategories),
+    resourceError('Activity', activity),
+    resourceError('Graph entities', graphEntities),
+    resourceError('Graph relations', graphRelations),
+  ].filter((err): err is BackendResourceError => err !== null);
+
+  // Resolved props. In prod real-backend mode, do not silently fall back to
+  // local fixtures: empty arrays + the backend error banner make the failure
+  // visible instead of showing stale demo data.
   const docList =
-    docs.data?.items ?? DOCUMENT_FIXTURES.filter((doc) => doc.workspace === workspace);
+    docs.data?.items ??
+    (FIXTURE_FALLBACK_ENABLED
+      ? DOCUMENT_FIXTURES.filter((doc) => doc.workspace === workspace)
+      : []);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — Fabrice 2026-05-26 spec). Sort so pending-review cards come
@@ -730,13 +795,19 @@ function AppShell() {
         (b.review!.state === 'modified' ? 1 : 0),
     );
   const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
-  const thesaurusList = thesaurus.data ?? THESAURUS_FIXTURES;
-  const tagList = tags.data ?? TAG_FIXTURES;
-  const tagCategoryList = tagCategories.data ?? TAG_CATEGORY_FIXTURES;
-  const activityEvents = activity.data?.items ?? ACTIVITY_FIXTURES;
-  const activityNow = activity.data?.nowMs ?? ACTIVITY_NOW_MS;
-  const graphEntityList = graphEntities.data ?? GRAPH_ENTITY_FIXTURES;
-  const graphRelationList = graphRelations.data ?? GRAPH_RELATION_FIXTURES;
+  const thesaurusList = resolveQueryData(thesaurus, THESAURUS_FIXTURES) ?? [];
+  const tagList = resolveQueryData(tags, TAG_FIXTURES) ?? [];
+  const tagCategoryList = resolveQueryData(tagCategories, TAG_CATEGORY_FIXTURES) ?? [];
+  const activityFallback = resolveQueryData(activity, {
+    items: ACTIVITY_FIXTURES,
+    total: ACTIVITY_FIXTURES.length,
+    nowMs: ACTIVITY_NOW_MS,
+  });
+  const activityEvents = activity.data?.items ?? activityFallback?.items ?? [];
+  const activityNow = activity.data?.nowMs ?? activityFallback?.nowMs;
+  const graphEntityList = resolveQueryData(graphEntities, GRAPH_ENTITY_FIXTURES) ?? [];
+  const graphRelationList =
+    resolveQueryData(graphRelations, GRAPH_RELATION_FIXTURES) ?? [];
 
   return (
     <div className="app">
@@ -762,6 +833,28 @@ function AppShell() {
           )
         }
       />
+      {backendErrors.length > 0 && (
+        <div className="sys-banner-stack" role="status" aria-live="polite">
+          <div className="sys-banner sys-error" data-testid="backend-data-error">
+            <span className="sys-banner-ico" aria-hidden="true">
+              !
+            </span>
+            <div className="sys-banner-body">
+              <div className="sys-banner-line1">
+                <span className="sys-banner-title">Backend data unavailable</span>
+                <span className="sys-banner-sub">
+                  Production fixture fallback is disabled.
+                </span>
+              </div>
+              <div className="sys-banner-meta">
+                {backendErrors
+                  .map((err) => `${err.label}: ${err.message}`)
+                  .join(' | ')}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <main
         tabIndex={-1}
         data-focus-fallback="app-main"

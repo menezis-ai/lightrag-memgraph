@@ -149,11 +149,7 @@ LIGHTRAG_NATIVE_PASSTHROUGH: set[Route] = {
 
 # Known Couche 3 gaps. If one of these starts passing, remove it from this set
 # and update WEBUI-WIRING-PLAN.md.
-KNOWN_BACKEND_GAPS: set[Route] = {
-    Route("GET", "/twin/api/documents/{param}/metadata"),
-    Route("POST", "/twin/api/documents/bulk-delete"),
-    Route("GET", "/twin/api/health"),
-}
+KNOWN_BACKEND_GAPS: set[Route] = set()
 
 
 def test_frontend_contract_paths_are_declared_in_resources_ts():

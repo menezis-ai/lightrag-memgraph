@@ -173,6 +173,7 @@ class ActivityEvent(_Base):
         "doc-approved",
         "doc-rejected",
         "doc-deleted",
+        "classification-rejected",
         "source-uploaded",
         "source-ready",
         "source-failed",
