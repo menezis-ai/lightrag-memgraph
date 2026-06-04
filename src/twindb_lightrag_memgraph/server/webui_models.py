@@ -263,6 +263,39 @@ class GraphRelationPatch(_Base):
     properties: dict[str, str] | None = None
 
 
+class GraphEntityCreate(_Base):
+    """Create payload for a manual graph entity addition.
+
+    ``name`` is also used as the LightRAG ``entity_id`` (the PK). A
+    409 is returned if a node with this id already exists in the
+    workspace — manual creation deliberately doesn't silently overwrite
+    an LLM-extracted entity.
+    """
+
+    name: str
+    type: Literal[
+        "PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"
+    ]
+    summary: str | None = None
+    tags: list[str] | None = None
+    properties: dict[str, str] | None = None
+
+
+class GraphRelationCreate(_Base):
+    """Create payload for a manual graph relation addition.
+
+    ``source`` and ``target`` are WebUI ids (the ``kg_`` prefixed form
+    returned by `/graph/entities`). Both endpoints must already exist
+    in Memgraph — 422 otherwise.
+    """
+
+    source: str
+    target: str
+    label: str
+    strength: float | None = None
+    properties: dict[str, str] | None = None
+
+
 # ---------------------------------------------------------------------------
 # Simple ack envelopes for mutations
 # ---------------------------------------------------------------------------

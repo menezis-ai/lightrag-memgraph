@@ -38,8 +38,10 @@ from .webui_models import (
     ActivityEnvelope,
     Document,
     GraphEntity,
+    GraphEntityCreate,
     GraphEntityPatch,
     GraphRelation,
+    GraphRelationCreate,
     GraphRelationPatch,
     ListEnvelope,
     Notification,
@@ -991,6 +993,148 @@ async def update_graph_entity_endpoint(
     )
     await store.record_activity(event)
     return updated
+
+
+@router.post(
+    "/graph/entities", response_model=GraphEntity, status_code=201
+)
+async def create_graph_entity_endpoint(
+    body: GraphEntityCreate,
+) -> dict[str, Any]:
+    """Manually add a new entity to the KB.
+
+    Returns 201 + the projected entity. 409 if an entity with the
+    same name already exists in the workspace (manual creation never
+    silently overwrites LLM-extracted entries).
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    payload = body.model_dump(exclude_unset=True)
+    entity = await graph_reader.create_graph_entity(label, payload)
+    if entity is None:
+        raise HTTPException(
+            409,
+            f"Graph entity '{body.name}' already exists in workspace '{label}'",
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-entity-edited",
+        sev="info",
+        actor="operator",
+        target_label=entity.get("name") or body.name,
+        summary=f"Graph entity '{entity.get('name') or body.name}' created",
+        meta={
+            "entity_id": entity["id"],
+            "patch_keys": list(payload.keys()),
+            "operation": "create",
+        },
+        target_type="entity",
+    )
+    await store.record_activity(event)
+    return entity
+
+
+@router.delete("/graph/entities/{entity_id}", status_code=204)
+async def delete_graph_entity_endpoint(entity_id: str) -> None:
+    """Remove an entity from the KB (cascade-deletes its edges).
+
+    Returns 204 on success, 404 if the entity wasn't found. Stale
+    relation ids referencing the deleted node are evicted from the
+    endpoint cache so subsequent PATCH/DELETE on those edges fail
+    cleanly with 404.
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    ok = await graph_reader.delete_graph_entity(label, entity_id)
+    if not ok:
+        raise HTTPException(
+            404, f"Graph entity '{entity_id}' not found in workspace '{label}'"
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-entity-edited",
+        sev="info",
+        actor="operator",
+        target_label=entity_id,
+        summary=f"Graph entity '{entity_id}' deleted",
+        meta={"entity_id": entity_id, "operation": "delete"},
+        target_type="entity",
+    )
+    await store.record_activity(event)
+    return None
+
+
+@router.post(
+    "/graph/relations", response_model=GraphRelation, status_code=201
+)
+async def create_graph_relation_endpoint(
+    body: GraphRelationCreate,
+) -> dict[str, Any]:
+    """Manually add a new relation between two entities.
+
+    Returns 201 + projected relation. 422 if either endpoint doesn't
+    exist in the workspace. The route is idempotent: re-issuing the
+    same source/target pair MERGEs onto the existing edge instead of
+    erroring.
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    payload = body.model_dump(exclude_unset=True)
+    relation = await graph_reader.create_graph_relation(label, payload)
+    if relation is None:
+        raise HTTPException(
+            422,
+            "Cannot create relation — one or both endpoints are missing, "
+            "or the label is empty.",
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-relation-edited",
+        sev="info",
+        actor="operator",
+        target_label=relation.get("label") or body.label,
+        summary=f"Graph relation '{relation.get('label') or body.label}' created",
+        meta={
+            "rel_id": relation["id"],
+            "source": body.source,
+            "target": body.target,
+            "operation": "create",
+        },
+        target_type="relation",
+    )
+    await store.record_activity(event)
+    return relation
+
+
+@router.delete("/graph/relations/{rel_id}", status_code=204)
+async def delete_graph_relation_endpoint(rel_id: str) -> None:
+    """Remove a relation from the KB."""
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    ok = await graph_reader.delete_graph_relation(label, rel_id)
+    if not ok:
+        raise HTTPException(
+            404,
+            f"Graph relation '{rel_id}' not found. The relation may have "
+            "been removed, or the server restarted since the last read — "
+            "refresh the Graph tab to repopulate the endpoint cache.",
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-relation-edited",
+        sev="info",
+        actor="operator",
+        target_label=rel_id,
+        summary=f"Graph relation '{rel_id}' deleted",
+        meta={"rel_id": rel_id, "operation": "delete"},
+        target_type="relation",
+    )
+    await store.record_activity(event)
+    return None
 
 
 @router.patch("/graph/relations/{rel_id}", response_model=GraphRelation)

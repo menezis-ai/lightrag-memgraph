@@ -580,8 +580,236 @@ async def _read_one_relation(
     return _edge_record_to_relation(row, 0)
 
 
+# ----------------------------------------------------------------------
+# Lifecycle — create + delete (M12 batch 3)
+# ----------------------------------------------------------------------
+
+
+async def entity_exists(workspace: str, entity_id: str) -> bool:
+    """Cheap existence probe used by the POST/DELETE routes."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) RETURN n.entity_id AS eid LIMIT 1"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, eid=entity_id)
+            found = False
+            async for _ in result:
+                found = True
+                break
+            await result.consume()
+        return found
+    except Exception:
+        logger.exception(
+            "graph_reader.entity_exists: probe failed for %s", entity_id
+        )
+        return False
+
+
+async def create_graph_entity(
+    workspace: str, payload: dict[str, Any], *, actor: str = "operator"
+) -> dict[str, Any] | None:
+    """Manually add an entity to the KB.
+
+    Returns the projected entity on success, ``None`` if the entity
+    already exists (the route maps this to 409).
+    """
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return None
+    entity_id = name  # LightRAG uses the canonical name as the PK
+    label = _sanitize_workspace(workspace)
+
+    if await entity_exists(workspace, entity_id):
+        return None
+
+    # Build the property map. We seed ``source_id`` with a
+    # ``manual:<actor>`` marker so the audit feed can distinguish
+    # operator-added entities from LLM-extracted ones, and so the
+    # mention/sources badges show a non-zero count instead of 0.
+    props: dict[str, Any] = {
+        "entity_id": entity_id,
+        "entity_type": payload.get("type") or _DEFAULT_TYPE,
+        "description": (payload.get("summary") or "").strip(),
+        "source_id": f"manual:{actor}",
+    }
+    if "name" in payload and payload["name"] is not None:
+        props["display_name"] = payload["name"]
+    if payload.get("tags"):
+        props["twin_tags_json"] = json.dumps(list(payload["tags"]))
+    if payload.get("properties"):
+        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+
+    async with acquire_write_slot():
+        async with get_session() as session:
+            query = (
+                f"CREATE (n:`{label}`) "
+                "SET n = $props "
+                "RETURN n.entity_id AS entity_id"
+            )
+            try:
+                result = await session.run(query, props=props)
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.create_graph_entity: insert failed for %s",
+                    entity_id,
+                )
+                return None
+            if not rows:
+                return None
+    return await _read_one_entity(workspace, entity_id)
+
+
+async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
+    """Remove the entity and cascade its edges. Returns ``True`` if a
+    node was deleted, ``False`` if nothing matched."""
+    entity_id = _strip_node_prefix(webui_id)
+    label = _sanitize_workspace(workspace)
+
+    if not await entity_exists(workspace, entity_id):
+        return False
+
+    async with acquire_write_slot():
+        async with get_session() as session:
+            query = (
+                f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+                "DETACH DELETE n"
+            )
+            try:
+                result = await session.run(query, eid=entity_id)
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.delete_graph_entity: delete failed for %s",
+                    entity_id,
+                )
+                return False
+
+    # Evict any cached relations that referenced this entity so future
+    # PATCH requests on stale edges return a clean 404 instead of
+    # trying to write to a vanished node.
+    stale_ids = [
+        rid
+        for rid, (ws, src, tgt) in list(_RELATION_ENDPOINT_CACHE.items())
+        if ws == workspace and (src == entity_id or tgt == entity_id)
+    ]
+    for rid in stale_ids:
+        _RELATION_ENDPOINT_CACHE.pop(rid, None)
+
+    return True
+
+
+async def create_graph_relation(
+    workspace: str, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Manually add a relation between two existing entities.
+
+    Returns the projected relation on success; ``None`` if either
+    endpoint is missing (route maps to 422). Idempotent: re-issuing
+    the same source/target pair MERGEs onto the existing edge.
+    """
+    src = _strip_node_prefix(str(payload.get("source") or ""))
+    tgt = _strip_node_prefix(str(payload.get("target") or ""))
+    if not src or not tgt:
+        return None
+    if not (
+        await entity_exists(workspace, src)
+        and await entity_exists(workspace, tgt)
+    ):
+        return None
+
+    label_kw = (payload.get("label") or "").strip()
+    if not label_kw:
+        return None
+    strength = payload.get("strength")
+    try:
+        weight = float(strength) if strength is not None else 0.5
+    except (TypeError, ValueError):
+        weight = 0.5
+
+    props: dict[str, Any] = {"keywords": label_kw, "weight": weight}
+    if payload.get("properties"):
+        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+
+    label = _sanitize_workspace(workspace)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            query = (
+                f"MATCH (s:`{label}` {{entity_id: $src}}), "
+                f"(t:`{label}` {{entity_id: $tgt}}) "
+                "MERGE (s)-[r:DIRECTED]->(t) "
+                "SET r += $props "
+                "RETURN s.entity_id AS source_id"
+            )
+            try:
+                result = await session.run(
+                    query, src=src, tgt=tgt, props=props
+                )
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.create_graph_relation: insert failed for %s→%s",
+                    src,
+                    tgt,
+                )
+                return None
+            if not rows:
+                return None
+    relation = await _read_one_relation(workspace, src, tgt)
+    if relation is not None:
+        _remember_relation(workspace, relation["id"], src, tgt)
+    return relation
+
+
+async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
+    """Remove the relation identified by ``rel_id``. Returns ``True``
+    on success, ``False`` when the cache doesn't know the id (cold
+    process) or no edge matches in Memgraph."""
+    endpoints = lookup_relation_endpoints(rel_id)
+    if endpoints is None:
+        return False
+    cached_workspace, src, tgt = endpoints
+    if cached_workspace != workspace:
+        return False
+
+    label = _sanitize_workspace(workspace)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            query = (
+                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+                f"(t:`{label}` {{entity_id: $tgt}}) "
+                "DELETE r "
+                "RETURN s.entity_id AS source_id"
+            )
+            try:
+                result = await session.run(query, src=src, tgt=tgt)
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.delete_graph_relation: delete failed for %s",
+                    rel_id,
+                )
+                return False
+            if not rows:
+                return False
+
+    _RELATION_ENDPOINT_CACHE.pop(rel_id, None)
+    return True
+
+
 __all__ = [
+    "create_graph_entity",
+    "create_graph_relation",
+    "delete_graph_entity",
+    "delete_graph_relation",
+    "entity_exists",
     "layout_position",
+    "lookup_relation_endpoints",
     "map_entity_type",
     "read_graph_entities",
     "read_graph_relations",

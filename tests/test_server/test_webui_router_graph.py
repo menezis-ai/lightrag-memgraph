@@ -237,3 +237,154 @@ class TestGraphPatchPersistence:
         assert r.status_code == 404
         # The 404 message should include a hint about refreshing
         assert "refresh" in r.json()["detail"].lower()
+
+
+class TestGraphLifecycle:
+    async def test_post_entity_created_201_with_projection(
+        self, monkeypatch, client
+    ):
+        async def fake_create(workspace, payload, *, actor="operator"):
+            return {
+                "id": "kg_NewEntity",
+                "name": "NewEntity",
+                "type": "PRODUCT",
+                "x": 400,
+                "y": 300,
+                "mentions": 0,
+                "sources": 0,
+                "summary": "Operator-added.",
+            }
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "NewEntity", "type": "PRODUCT", "summary": "Operator-added."},
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["id"] == "kg_NewEntity"
+        assert body["type"] == "PRODUCT"
+
+        activity = await client.get("/activity")
+        events = activity.json().get("items", [])
+        creates = [
+            e
+            for e in events
+            if e["kind"] == "graph-entity-edited"
+            and e["meta"].get("operation") == "create"
+        ]
+        assert len(creates) == 1
+
+    async def test_post_entity_409_on_duplicate(self, monkeypatch, client):
+        async def fake_create_dup(workspace, payload, *, actor="operator"):
+            return None  # signals existing
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_dup)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "Existing", "type": "PRODUCT"},
+        )
+        assert r.status_code == 409
+        assert "already exists" in r.json()["detail"]
+
+    async def test_delete_entity_204_and_audit(self, monkeypatch, client):
+        async def fake_delete(workspace, webui_id):
+            return True
+
+        monkeypatch.setattr(gr, "delete_graph_entity", fake_delete)
+
+        r = await client.delete("/graph/entities/kg_to-remove")
+        assert r.status_code == 204
+
+        activity = await client.get("/activity")
+        events = activity.json().get("items", [])
+        deletes = [
+            e
+            for e in events
+            if e["kind"] == "graph-entity-edited"
+            and e["meta"].get("operation") == "delete"
+        ]
+        assert len(deletes) == 1
+
+    async def test_delete_entity_404_when_missing(self, monkeypatch, client):
+        async def fake_delete_missing(workspace, webui_id):
+            return False
+
+        monkeypatch.setattr(gr, "delete_graph_entity", fake_delete_missing)
+
+        r = await client.delete("/graph/entities/kg_nope")
+        assert r.status_code == 404
+
+    async def test_post_relation_created_201(self, monkeypatch, client):
+        async def fake_create_rel(workspace, payload):
+            return {
+                "id": "kr_xyz",
+                "source": payload["source"],
+                "target": payload["target"],
+                "label": payload["label"].upper().replace(" ", "_"),
+                "strength": payload.get("strength", 0.5),
+            }
+
+        monkeypatch.setattr(gr, "create_graph_relation", fake_create_rel)
+
+        r = await client.post(
+            "/graph/relations",
+            json={
+                "source": "kg_A",
+                "target": "kg_B",
+                "label": "uses",
+                "strength": 0.9,
+            },
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["source"] == "kg_A"
+        assert body["target"] == "kg_B"
+        assert body["label"] == "USES"
+
+        activity = await client.get("/activity")
+        events = activity.json().get("items", [])
+        creates = [
+            e
+            for e in events
+            if e["kind"] == "graph-relation-edited"
+            and e["meta"].get("operation") == "create"
+        ]
+        assert len(creates) == 1
+
+    async def test_post_relation_422_when_endpoint_missing(
+        self, monkeypatch, client
+    ):
+        async def fake_create_rel_missing(workspace, payload):
+            return None
+
+        monkeypatch.setattr(gr, "create_graph_relation", fake_create_rel_missing)
+
+        r = await client.post(
+            "/graph/relations",
+            json={"source": "kg_A", "target": "kg_phantom", "label": "uses"},
+        )
+        assert r.status_code == 422
+
+    async def test_delete_relation_204(self, monkeypatch, client):
+        async def fake_delete_rel(workspace, rel_id):
+            return True
+
+        monkeypatch.setattr(gr, "delete_graph_relation", fake_delete_rel)
+
+        r = await client.delete("/graph/relations/kr_xyz")
+        assert r.status_code == 204
+
+    async def test_delete_relation_404(self, monkeypatch, client):
+        async def fake_delete_rel_missing(workspace, rel_id):
+            return False
+
+        monkeypatch.setattr(
+            gr, "delete_graph_relation", fake_delete_rel_missing
+        )
+
+        r = await client.delete("/graph/relations/kr_phantom")
+        assert r.status_code == 404
+        assert "refresh" in r.json()["detail"].lower()
