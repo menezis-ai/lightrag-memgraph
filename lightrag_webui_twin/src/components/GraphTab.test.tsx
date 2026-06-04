@@ -304,3 +304,51 @@ describe('GraphTab — lifecycle: Delete relation', () => {
     expect(screen.getByTestId('kg-rel-delete-cancel')).toBeInTheDocument();
   });
 });
+
+describe('GraphTab — lifecycle: Add relation', () => {
+  it('Add relation button opens the inline form scoped to the selected entity', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
+    // From label shows the active entity (default = Oracle Database)
+    expect(screen.getByText('From').parentElement?.textContent).toMatch(
+      /Oracle Database/,
+    );
+  });
+
+  it('blocks submit when label is empty', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    expect(screen.getByTestId('kg-add-rel-submit')).toBeDisabled();
+  });
+
+  it('flags a duplicate outgoing relation between same endpoints', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    // Default-selected entity is Oracle (e_oracle); pick RHEL 9 as target —
+    // there is already RUNS_ON between them in the fixtures.
+    await userEvent.selectOptions(
+      screen.getByTestId('kg-add-rel-target'),
+      'e_rhel',
+    );
+    await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'RUNS_ON');
+    expect(screen.getByTestId('kg-add-rel-duplicate')).toBeInTheDocument();
+    expect(screen.getByTestId('kg-add-rel-submit')).toBeDisabled();
+  });
+
+  it('Cancel closes the form', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    await userEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+    expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
+  });
+
+  it('switching entity disarms a pending Add relation form', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
+    expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
+  });
+});

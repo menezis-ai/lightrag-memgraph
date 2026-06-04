@@ -32,6 +32,7 @@ import {
 } from '../fixtures/graph';
 import {
   useCreateGraphEntity,
+  useCreateGraphRelation,
   useDeleteGraphEntity,
   useDeleteGraphRelation,
   useUpdateGraphEntity,
@@ -546,6 +547,7 @@ export function GraphTab({
           neighbors={neighbors}
           colors={colors}
           entities={entities}
+          relations={relations}
           typeLabels={GRAPH_TYPE_LABEL}
           onSelect={(id) => {
             setSelectedRelId(null);
@@ -568,6 +570,7 @@ interface GraphDetailPanelProps {
   neighbors: { rels: GraphRelation[]; nodes: GraphEntity[] };
   colors: Record<GraphEntityType, string>;
   entities: readonly GraphEntity[];
+  relations: readonly GraphRelation[];
   typeLabels: Record<GraphEntityType, string>;
   onSelect: (id: string) => void;
   onSelectRelation: (id: string) => void;
@@ -583,6 +586,7 @@ function GraphDetailPanel({
   neighbors,
   colors,
   entities,
+  relations,
   typeLabels,
   onSelect,
   onSelectRelation,
@@ -627,6 +631,8 @@ function GraphDetailPanel({
       <EntityEditor
         entity={entity}
         neighbors={neighbors}
+        entities={entities}
+        relations={relations}
         colors={colors}
         typeLabels={typeLabels}
         onSelectRelation={onSelectRelation}
@@ -642,6 +648,12 @@ function GraphDetailPanel({
 interface EntityEditorProps {
   entity: GraphEntity;
   neighbors: { rels: GraphRelation[]; nodes: GraphEntity[] };
+  /** Full entity list — used as the target picker source when drawing
+   *  a new outgoing relation. The current entity is filtered out. */
+  entities: readonly GraphEntity[];
+  /** Full relation list — used to dedupe a new outgoing relation
+   *  against an existing edge between the same endpoints. */
+  relations: readonly GraphRelation[];
   colors: Record<GraphEntityType, string>;
   typeLabels: Record<GraphEntityType, string>;
   onSelectRelation: (id: string) => void;
@@ -661,6 +673,8 @@ interface EntityDraft {
 function EntityEditor({
   entity,
   neighbors,
+  entities,
+  relations,
   colors,
   typeLabels,
   onSelectRelation,
@@ -672,6 +686,8 @@ function EntityEditor({
   const [draft, setDraft] = useState<EntityDraft | null>(null);
   const updateEntity = useUpdateGraphEntity();
   const deleteEntity = useDeleteGraphEntity();
+  const createRelation = useCreateGraphRelation();
+  const [addRelOpen, setAddRelOpen] = useState(false);
   // Two-step destructive confirmation. First click arms the action,
   // second click within the timeout fires the mutation. Reset on
   // entity change so navigating away cancels.
@@ -682,11 +698,13 @@ function EntityEditor({
     return () => window.clearTimeout(t);
   }, [armedDelete]);
 
-  // Reset edit mode + armed-delete when switching entities.
+  // Reset edit mode + armed-delete + Add relation form when switching
+  // entities — every transient panel should start fresh on the next node.
   useEffect(() => {
     setEditing(false);
     setDraft(null);
     setArmedDelete(false);
+    setAddRelOpen(false);
   }, [entity.id]);
 
   const startEdit = () => {
@@ -919,11 +937,44 @@ function EntityEditor({
       {!editing && (
         <>
           <div className="kg-detail-section">
-            <div className="section-label">
+            <div
+              className="section-label"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+            >
               <span>
                 Outgoing ({outgoing.length}) <em>— click to edit</em>
               </span>
+              {!addRelOpen && (
+                <button
+                  type="button"
+                  className="ghost-btn small"
+                  onClick={() => setAddRelOpen(true)}
+                  data-testid="kg-add-rel-btn"
+                >
+                  <Icon name="plus" size={11} /> Add relation
+                </button>
+              )}
             </div>
+            {addRelOpen && (
+              <AddRelationForm
+                source={entity}
+                entities={entities}
+                relations={relations}
+                colors={colors}
+                pending={createRelation.isPending}
+                onCancel={() => setAddRelOpen(false)}
+                onSubmit={(payload) => {
+                  createRelation.mutate(payload, {
+                    onSuccess: () => setAddRelOpen(false),
+                  });
+                }}
+              />
+            )}
             {outgoing.length === 0 ? (
               <div className="muted-sm">No outgoing relations.</div>
             ) : (
@@ -1853,6 +1904,202 @@ function AddEntityForm({
           data-testid="kg-add-entity-duplicate"
         >
           An entity named “{trimmed}” already exists.
+        </div>
+      )}
+    </form>
+  );
+}
+
+// ─── Lifecycle: Add outgoing relation inline form ─────────────────────
+interface AddRelationFormProps {
+  source: GraphEntity;
+  entities: readonly GraphEntity[];
+  relations: readonly GraphRelation[];
+  colors: Record<GraphEntityType, string>;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: {
+    source: string;
+    target: string;
+    label: string;
+    strength: number;
+  }) => void;
+}
+
+function AddRelationForm({
+  source,
+  entities,
+  relations,
+  colors,
+  pending,
+  onCancel,
+  onSubmit,
+}: AddRelationFormProps) {
+  // Targets = every other entity in the graph. Sorted by name for a
+  // predictable picker order.
+  const targetOptions = useMemo(
+    () =>
+      entities
+        .filter((e) => e.id !== source.id)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [entities, source.id],
+  );
+  const [targetId, setTargetId] = useState<string>(
+    targetOptions[0]?.id ?? '',
+  );
+  const [label, setLabel] = useState('');
+  const [strength, setStrength] = useState(0.7);
+
+  const trimmedLabel = label.trim().toUpperCase().replace(/\s+/g, '_');
+  const duplicate =
+    targetId !== '' &&
+    relations.some((r) => r.source === source.id && r.target === targetId);
+  const canSubmit =
+    targetId !== '' && trimmedLabel.length > 0 && !duplicate && !pending;
+
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      source: source.id,
+      target: targetId,
+      label: trimmedLabel,
+      strength: Math.max(0, Math.min(1, strength)),
+    });
+  };
+
+  const target = targetOptions.find((e) => e.id === targetId) ?? null;
+
+  return (
+    <form
+      className="kg-add-relation"
+      data-testid="kg-add-rel-form"
+      onSubmit={submit}
+      style={{
+        display: 'flex',
+        gap: 10,
+        flexWrap: 'wrap',
+        alignItems: 'flex-end',
+        padding: '10px 12px',
+        margin: '8px 0',
+        background: 'var(--color-surface-alt, #f5f7fa)',
+        border: '1px solid var(--color-border, #e2e6ec)',
+        borderRadius: 6,
+      }}
+    >
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          From
+        </span>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 8px',
+            border: '1px solid var(--color-border, #e2e6ec)',
+            borderRadius: 4,
+            fontSize: 12,
+            background: 'var(--color-surface, #fff)',
+          }}
+        >
+          <span
+            className="kg-type-swatch"
+            style={{ background: colors[source.type] }}
+            aria-hidden
+          />
+          {source.name}
+        </span>
+      </label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          To
+        </span>
+        <select
+          value={targetId}
+          onChange={(e) => setTargetId(e.target.value)}
+          aria-label="Relation target entity"
+          data-testid="kg-add-rel-target"
+        >
+          {targetOptions.length === 0 ? (
+            <option value="">No other entities</option>
+          ) : (
+            targetOptions.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} · {e.type}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+      <label
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          flex: '1 1 180px',
+        }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          Label
+        </span>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="USES, RUNS_ON, …"
+          aria-label="New relation label"
+          data-testid="kg-add-rel-label"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            textTransform: 'uppercase',
+          }}
+        />
+      </label>
+      <label
+        style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 160 }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          Strength — {strength.toFixed(2)}
+        </span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={strength}
+          onChange={(e) => setStrength(parseFloat(e.target.value))}
+          aria-label="New relation strength"
+          data-testid="kg-add-rel-strength"
+        />
+      </label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        {target && (
+          <span
+            className="kg-type-swatch"
+            style={{ background: colors[target.type], width: 14, height: 14 }}
+            aria-hidden
+          />
+        )}
+        <button type="button" className="ghost-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="ghost-btn primary"
+          disabled={!canSubmit}
+          data-testid="kg-add-rel-submit"
+        >
+          <Icon name="check" size={11} /> {pending ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+      {duplicate && (
+        <div
+          role="alert"
+          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          data-testid="kg-add-rel-duplicate"
+        >
+          A relation from “{source.name}” to this target already exists.
         </div>
       )}
     </form>
