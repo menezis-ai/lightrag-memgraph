@@ -29,22 +29,30 @@ class TestConfigureAuth:
         assert auth._static_api_key == "test-key"
 
     def test_enabled_with_jwt(self):
-        configure_auth(jwt_secret="secret-123")
+        configure_auth(jwt_secret="secret-123", jwt_password="test-password")
         from twindb_lightrag_memgraph.server import auth
 
         assert auth._auth_enabled is True
         assert auth._jwt_secret == "secret-123"
 
     def test_enabled_with_both(self):
-        configure_auth(api_key="key", jwt_secret="secret")
+        configure_auth(api_key="key", jwt_secret="secret", jwt_password="test-password")
         from twindb_lightrag_memgraph.server import auth
 
         assert auth._auth_enabled is True
 
+    def test_jwt_secret_rejects_default_password(self):
+        with pytest.raises(ValueError, match="changeme"):
+            configure_auth(jwt_secret="secret-123")
+
 
 class TestJWT:
     def setup_method(self):
-        configure_auth(jwt_secret="test-jwt-secret", jwt_expiration_hours=4)
+        configure_auth(
+            jwt_secret="test-jwt-secret",
+            jwt_password="test-password",
+            jwt_expiration_hours=4,
+        )
 
     def test_create_and_decode(self):
         token = _create_jwt({"sub": "admin"})
@@ -113,7 +121,9 @@ class TestRequireAuth:
         assert exc_info.value.status_code == 401
 
     async def test_jwt_fallback(self):
-        configure_auth(api_key="my-key", jwt_secret="secret")
+        configure_auth(
+            api_key="my-key", jwt_secret="secret", jwt_password="test-password"
+        )
         token = _create_jwt({"sub": "user1"})
         from fastapi.security import HTTPAuthorizationCredentials
 
@@ -158,7 +168,11 @@ class TestRequireAuthEdgeCases:
     async def test_require_auth_wrong_key_falls_through_to_jwt(self):
         """When both api_key and jwt_secret are configured, a valid JWT that
         does not match the static key should authenticate via the JWT path."""
-        configure_auth(api_key="static-key", jwt_secret="jwt-secret")
+        configure_auth(
+            api_key="static-key",
+            jwt_secret="jwt-secret",
+            jwt_password="test-password",
+        )
         token = _create_jwt({"sub": "jwt-user"})
         from fastapi.security import HTTPAuthorizationCredentials
 
@@ -173,7 +187,11 @@ class TestRequireAuthEdgeCases:
         that is neither the static key nor a valid JWT must return 401."""
         from fastapi import HTTPException
 
-        configure_auth(api_key="static-key", jwt_secret="jwt-secret")
+        configure_auth(
+            api_key="static-key",
+            jwt_secret="jwt-secret",
+            jwt_password="test-password",
+        )
         from fastapi.security import HTTPAuthorizationCredentials
 
         creds = HTTPAuthorizationCredentials(
@@ -189,7 +207,11 @@ class TestRequireAuthEdgeCases:
         from fastapi import HTTPException
         from fastapi.security import HTTPAuthorizationCredentials
 
-        configure_auth(api_key=None, jwt_secret="only-jwt-secret")
+        configure_auth(
+            api_key=None,
+            jwt_secret="only-jwt-secret",
+            jwt_password="test-password",
+        )
 
         # Valid JWT should succeed.
         token = _create_jwt({"sub": "jwt-only-user"})
@@ -207,7 +229,11 @@ class TestRequireAuthEdgeCases:
 
     async def test_jwt_payload_missing_sub(self):
         """A JWT with no 'sub' claim should authenticate but return 'unknown'."""
-        configure_auth(api_key=None, jwt_secret="sub-test-secret")
+        configure_auth(
+            api_key=None,
+            jwt_secret="sub-test-secret",
+            jwt_password="test-password",
+        )
         from fastapi.security import HTTPAuthorizationCredentials
 
         # Create a JWT with no "sub" key at all.
@@ -241,7 +267,11 @@ class TestJWTEdgeCases:
         exp claim is approximately 1 hour from now."""
         from datetime import datetime, timezone
 
-        configure_auth(jwt_secret="exp-test-secret", jwt_expiration_hours=1)
+        configure_auth(
+            jwt_secret="exp-test-secret",
+            jwt_password="test-password",
+            jwt_expiration_hours=1,
+        )
         now_before = datetime.now(timezone.utc)
         token = _create_jwt({"sub": "expiry-test"})
         now_after = datetime.now(timezone.utc)
@@ -263,11 +293,11 @@ class TestJWTEdgeCases:
         from fastapi import HTTPException
 
         # Create token with secret "alpha".
-        configure_auth(jwt_secret="alpha")
+        configure_auth(jwt_secret="alpha", jwt_password="test-password")
         token = _create_jwt({"sub": "user"})
 
         # Reconfigure with a different secret "beta".
-        configure_auth(jwt_secret="beta")
+        configure_auth(jwt_secret="beta", jwt_password="test-password")
 
         with pytest.raises(HTTPException) as exc_info:
             _decode_jwt(token)
@@ -275,7 +305,11 @@ class TestJWTEdgeCases:
 
     def test_configure_auth_custom_algorithm(self):
         """Configure HS384 algorithm, create and decode a JWT successfully."""
-        configure_auth(jwt_secret="algo-test-secret", jwt_algorithm="HS384")
+        configure_auth(
+            jwt_secret="algo-test-secret",
+            jwt_password="test-password",
+            jwt_algorithm="HS384",
+        )
         token = _create_jwt({"sub": "algo-user"})
 
         # Decode should work with the same algorithm.

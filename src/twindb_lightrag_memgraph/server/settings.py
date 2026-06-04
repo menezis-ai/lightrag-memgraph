@@ -5,8 +5,11 @@ For API keys, if the LIGHTRAG_* key is not set, code may fall back
 to OPENAI_API_KEY where applicable.
 """
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
+from typing import Annotated
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class LightRAGServerSettings(BaseSettings):
@@ -174,6 +177,43 @@ class LightRAGServerSettings(BaseSettings):
     jwt_password: str = Field(
         default="changeme", description="Password for /login endpoint"
     )
+
+    # -- CORS --
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:9621",
+            "http://127.0.0.1:9621",
+        ],
+        description=(
+            "Allowed browser origins for credentialed CORS. Use a JSON list or "
+            "comma-separated string in LIGHTRAG_CORS_ALLOWED_ORIGINS."
+        ),
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description=(
+            "Whether CORS responses may include credentials. Must be false "
+            "when LIGHTRAG_CORS_ALLOWED_ORIGINS contains '*'."
+        ),
+    )
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _parse_cors_allowed_origins(cls, value):
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                return json.loads(stripped)
+            return [part.strip() for part in stripped.split(",") if part.strip()]
+        return value
 
 
 def get_settings() -> LightRAGServerSettings:

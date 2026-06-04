@@ -29,13 +29,16 @@ logger = logging.getLogger(__name__)
 auth_router = APIRouter(tags=["auth"])
 _security = HTTPBearer(auto_error=False)
 
+DEFAULT_JWT_USERNAME = "admin"
+DEFAULT_JWT_PASSWORD = "changeme"
+
 # Module-level config -- set by configure_auth()
 _static_api_key: str | None = None
 _jwt_secret: str | None = None
 _jwt_algorithm: str = "HS256"
 _jwt_expiration_hours: int = 4
-_jwt_username: str = "admin"
-_jwt_password: str = "changeme"
+_jwt_username: str = DEFAULT_JWT_USERNAME
+_jwt_password: str = DEFAULT_JWT_PASSWORD
 _auth_enabled: bool = False
 
 
@@ -56,12 +59,18 @@ def configure_auth(
     jwt_secret: str | None = None,
     jwt_algorithm: str = "HS256",
     jwt_expiration_hours: int = 4,
-    jwt_username: str = "admin",
-    jwt_password: str = "changeme",
+    jwt_username: str = DEFAULT_JWT_USERNAME,
+    jwt_password: str = DEFAULT_JWT_PASSWORD,
 ) -> None:
     """Configure auth parameters.  Called once at startup."""
     global _static_api_key, _jwt_secret, _jwt_algorithm
     global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_enabled
+
+    if jwt_secret and jwt_password == DEFAULT_JWT_PASSWORD:
+        raise ValueError(
+            "LIGHTRAG_JWT_SECRET enables /login, but LIGHTRAG_JWT_PASSWORD "
+            "is still the insecure default 'changeme'"
+        )
 
     _static_api_key = api_key
     _jwt_secret = jwt_secret
@@ -165,11 +174,11 @@ async def require_auth(
                     return user.get("sso_subject") or user.get("sub") or "idp_user"
 
     if not _auth_enabled:
-        # IdP is the only auth source: when it's not active and no
-        # legacy mode is configured either, we let the request through
-        # to preserve the v1.0.x storage-only behaviour. The
-        # ``TWIN_IDP_JWKS_URL`` setting is the explicit opt-in for
-        # production gating.
+        if idp_config is not None and request is not None:
+            idp_jwt.require_idp_user(request)
+        # No auth configured at all: preserve the v1.0.x storage-only
+        # behaviour. When IdP is configured, the call above fails closed
+        # instead of allowing anonymous access.
         return None
 
     if credentials is None:

@@ -216,10 +216,16 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     )
 
     # -- CORS --
+    if settings.cors_allow_credentials and "*" in settings.cors_allowed_origins:
+        raise ValueError(
+            "LIGHTRAG_CORS_ALLOWED_ORIGINS='*' cannot be combined with "
+            "LIGHTRAG_CORS_ALLOW_CREDENTIALS=true"
+        )
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=settings.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

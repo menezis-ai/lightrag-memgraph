@@ -23,6 +23,8 @@ class TestLightRAGServerSettings:
         assert s.api_key is None
         assert s.jwt_secret is None
         assert s.jwt_expiration_hours == 4
+        assert s.cors_allow_credentials is True
+        assert "http://127.0.0.1:4173" in s.cors_allowed_origins
         assert s.embedding_dim == 1024
         assert s.chunk_token_size == 1200
         assert s.chunk_overlap_token_size == 100
@@ -44,6 +46,17 @@ class TestLightRAGServerSettings:
         assert s.api_key == "sk-test-123"
         assert s.jwt_secret == "super-secret"
         assert s.jwt_expiration_hours == 8
+
+    def test_cors_allowed_origins_comma_separated(self, monkeypatch):
+        monkeypatch.setenv(
+            "LIGHTRAG_CORS_ALLOWED_ORIGINS",
+            "https://spa.example, https://admin.example",
+        )
+        s = LightRAGServerSettings()
+        assert s.cors_allowed_origins == [
+            "https://spa.example",
+            "https://admin.example",
+        ]
 
     def test_get_settings_returns_instance(self):
         s = get_settings()

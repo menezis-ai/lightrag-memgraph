@@ -114,6 +114,49 @@ def _stub_llm_func(settings, api_key):
     return _llm
 
 
+class TestCorsConfiguration:
+    def test_rejects_wildcard_with_credentials(self):
+        settings = _make_settings(
+            cors_allowed_origins=["*"],
+            cors_allow_credentials=True,
+        )
+
+        with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS"):
+            create_app(settings)
+
+    async def test_allows_only_configured_credentialed_origin(self):
+        settings = _make_settings(
+            cors_allowed_origins=["https://spa.example"],
+            cors_allow_credentials=True,
+        )
+        app = create_app(settings)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://api.example",
+        ) as client:
+            allowed = await client.options(
+                "/health",
+                headers={
+                    "Origin": "https://spa.example",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+            denied = await client.options(
+                "/health",
+                headers={
+                    "Origin": "https://evil.example",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == "https://spa.example"
+        assert allowed.headers["access-control-allow-credentials"] == "true"
+        assert denied.status_code == 400
+        assert "access-control-allow-origin" not in denied.headers
+
+
 def _apply_lifespan_patches(stack, mock_rag, register_mock=None):
     """Enter patches needed for lifespan tests on an ExitStack."""
     stack.enter_context(

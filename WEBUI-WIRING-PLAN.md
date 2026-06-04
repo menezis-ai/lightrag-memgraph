@@ -14,7 +14,7 @@
 | **0** | Decisions + branch hygiene + visual snapshot | ✅ Done | session log |
 | **1** | Visual port from `~/Downloads/prototype/` to React/TS | ✅ Done | PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158), [#159](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/159) |
 | **2** | BNP classification (TS types + ClassPill + DocDetailPanel gating + Python extractor + pre-insert hook) | ✅ Done | PR [#157](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/157) (Python) + PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158) (TS UI) |
-| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Mostly wired** — route parity, JWT IdP, Space CRUD/UI, production fixture kill-switch, and Space scoping are done; remaining work is retention/fresh-store tests, `/webui/` smoke, tag migration cascade, and deployment | this document |
+| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Mostly wired** — route parity, JWT IdP, Space CRUD/UI, production fixture kill-switch, Space scoping, fresh-store guard, `/webui/` substitution smoke, and tag migration cascade are done; remaining work is MyAccess admin policy, deployment smoke, and retention policy once PO/compliance decides | this document |
 
 The standalone OVH demo at https://maquette.sigilum.fr/ uses the React
 port with **MSW client-side** (everything mocked in the browser, no
@@ -118,7 +118,9 @@ Still to do:
   MyAccess group/scope → palier policy is finalized.
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility headers until then.
-- Add the `/webui/` substitution smoke test and run the deployment checklist.
+- Run the deployment checklist and host smoke.
+- Keep retention/sweep for activity and notifications in Couche 4 until
+  TTL/mechanism/scope/BCE-DORA audit-retention decisions are explicit.
 
 ## Audit 2026-06-04 — priorités de câblage réel
 
@@ -151,7 +153,36 @@ Commits in the local M12 stack:
 | `7da28d3` | batch 3 frontend — Add relation form |
 
 Remaining P0/P1 focus after M12 + route closure: hardening approve/reject
-space checks, tag delete migration cascade, and deployment smoke coverage.
+space checks, MyAccess admin-only policy, and deployment smoke coverage.
+
+### Update 2026-06-04 — G3/G1 hardening + tag cascade
+
+Claude's follow-up commit closes the highest-ROI Couche 3 guardrails:
+
+- **G3 `/webui/` substitution smoke:** `tests/test_server/test_webui_mount.py`
+  fetches both `/webui/` and `/webui/index.html`, asserts
+  `__TWIN_CONFIG_JSON__` is gone, and checks `apiBaseUrl == "/twin/api"`.
+- **G1 fresh-store boot:** `server/app.py` now mirrors the
+  `register(..., webui_stores="memgraph")` behavior: fresh Memgraph-backed
+  spaces do not bootstrap demo tags/activity/notifications. Only governance
+  tag categories are bootstrapped unless an explicit seed/bootstrap path is
+  used. Regression coverage lives in
+  `tests/test_server/test_app.py::TestLifespan::test_memgraph_webui_stores_boot_fresh_without_seed`.
+- **Tag delete migration cascade:** `DELETE /tags/{name}` now applies the
+  selected migrate/untag strategy to affected documents before deleting the
+  tag catalog entry. The seed/dev document store is updated, and production
+  Memgraph `DocStatus -> TAGGED_WITH -> WebuiTag` edges are migrated/removed.
+  Regression coverage lives in `tests/test_server/test_webui_router_mutations.py`.
+- **G2 retention sweep remains deferred:** no code was added without PO /
+  compliance answers. Open decisions: TTL per store, sweep mechanism, per-space
+  vs global scope, sandbox vs primary behavior, and BCE/DORA audit retention.
+
+Focused validation reported for this hardening pass:
+
+- `.venv/bin/pytest tests/test_server/test_webui_mount.py tests/test_server/test_app.py::TestLifespan::test_memgraph_webui_stores_boot_fresh_without_seed tests/test_server/test_webui_router_mutations.py::TestDeleteTag -q` — 7 passed
+- `.venv/bin/pytest tests/test_server/test_app.py::TestLifespan tests/test_server/test_webui_router_mutations.py tests/test_server/test_webui_mount.py tests/test_server/test_webui_router.py -q` — 56 passed
+- `.venv/bin/pytest tests/test_server/test_metadata_endpoint.py tests/test_server/test_bulk_delete_endpoint.py tests/test_server/test_space_scoping.py -q` — 9 passed
+- `git diff --check` — OK
 
 ### Update 2026-06-04 — Admin Space CRUD backend
 
@@ -232,9 +263,22 @@ Still open for spaces: JWT/MyAccess admin-only gating for runtime Space CRUD.
   `VITE_USE_MSW=false`, asserts no `mockServiceWorker` registration is active,
   and reaches `/health`, `/documents`, `/twin/api/spaces`, and
   `/twin/api/graph/entities` on the configured backend.
-- Expand the real-backend lane from smoke to mutation coverage: login/auth
-  failure modes, retag, bulk delete, document metadata, and the retrieval query
-  journey. `/query` remains opt-in because it may call the LLM path.
+- **In progress — Expand the real-backend lane from smoke to mutation
+  coverage.** `real-backend.spec.ts` now includes:
+  - auth failure checks for missing/invalid bearer tokens, gated by
+    `REAL_E2E_EXPECT_AUTH=true`;
+  - document metadata coverage using `REAL_E2E_MUTATION_DOC_ID` when provided,
+    otherwise the first real document if one exists;
+  - retag mutation coverage, gated by `REAL_E2E_MUTATION_DOC_ID`, with
+    add/verify/activity/cleanup around `POST /twin/api/documents/_bulk-retag`;
+    it uses `REAL_E2E_RETAG_TAG` when provided, otherwise the first existing
+    active tag, so the test does not auto-create catalog tags by default;
+  - bulk-delete coverage, gated by either `REAL_E2E_BULK_DELETE_DOC_ID` or
+    `REAL_E2E_UPLOAD_FOR_DELETE=true`;
+  - retrieval query coverage now drives the Retrieval UI, intercepts the
+    WebUI-used `POST /twin/api/query` call, and validates the structured
+    `{response, sources}` contract; still gated by `REAL_E2E_QUERY=true`
+    because it may call the LLM path.
 
 ## WebUI hardening backlog — 2026-06-03 audit follow-up
 
@@ -362,6 +406,41 @@ Optional retrieval/LLM smoke:
 
 ```bash
 REAL_BACKEND_URL=http://127.0.0.1:9621 REAL_E2E_QUERY=true npm run test:e2e:real
+```
+
+Real-backend mutation/auth expansion:
+
+```bash
+cd lightrag_webui_twin
+REAL_BACKEND_URL=http://127.0.0.1:9621 \
+REAL_BACKEND_SPACE=default \
+REAL_BACKEND_AUTH_TOKEN="$TOKEN" \
+REAL_E2E_EXPECT_AUTH=true \
+REAL_E2E_MUTATION_DOC_ID="doc-id-safe-to-retag" \
+npm run test:e2e:real
+```
+
+`REAL_E2E_RETAG_TAG` is optional; when omitted, the retag test uses the first
+existing active tag returned by `/twin/api/tags`.
+
+Bulk-delete coverage is intentionally destructive and stays behind an explicit
+target:
+
+```bash
+REAL_BACKEND_URL=http://127.0.0.1:9621 \
+REAL_BACKEND_AUTH_TOKEN="$TOKEN" \
+REAL_E2E_BULK_DELETE_DOC_ID="known-disposable-doc-id" \
+npm run test:e2e:real
+```
+
+Alternatively, on a disposable staging KB, let the test upload a tiny text file
+and delete only that uploaded document:
+
+```bash
+REAL_BACKEND_URL=http://127.0.0.1:9621 \
+REAL_BACKEND_AUTH_TOKEN="$TOKEN" \
+REAL_E2E_UPLOAD_FOR_DELETE=true \
+npm run test:e2e:real
 ```
 
 ### Priority 0 — stabilize existing e2e
@@ -699,10 +778,17 @@ out-of-scope unless the PO explicitly brings them into the Couche 3 contract.
 
 ### CI recommendation
 
-- Keep existing `webui-tests` as typecheck + Vitest + build.
-- Add a lightweight Playwright smoke job first: `bun run test:e2e -- --grep
-  @smoke`.
-- Add full Playwright later, after splitting specs and stabilizing selectors.
+- Forgejo `webui-tests` remains typecheck + Vitest + build.
+- Forgejo `webui-e2e` now runs the full MSW-backed Playwright suite with
+  `bun run test:e2e`. `real-backend.spec.ts` is included in that command but
+  skips unless `REAL_BACKEND_URL` is provided.
+- Forgejo `webui-e2e-real` now runs the non-LLM real-backend Playwright lane
+  against a Memgraph service and a local patched LightRAG server:
+  browser smoke, auth failure, metadata, retag, and bulk-delete coverage.
+  It seeds disposable `real-e2e-*` DocStatus/tag fixtures through
+  `scripts/real_backend_e2e_fixtures.py` and cleans them up in `always()`.
+- The Retrieval UI query case remains `REAL_E2E_QUERY=true` opt-in because CI
+  has no LLM credentials/model endpoint.
 - Keep backend space/classification tests in the existing Python integration
   job with Memgraph service.
 

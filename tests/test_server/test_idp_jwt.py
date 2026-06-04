@@ -505,6 +505,52 @@ class TestRequireAuthIntegration:
         assert r.status_code == 200
         assert r.json()["identity"] == "user-42"
 
+    async def test_idp_only_missing_token_rejects_anonymous_request(self, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        from twindb_lightrag_memgraph.server.auth import (
+            configure_auth,
+            require_auth,
+        )
+
+        configure_auth()  # no api key, no jwt secret
+        app = FastAPI()
+
+        @app.get("/who")
+        async def who(identity=__import__("fastapi").Depends(require_auth)):
+            return {"identity": identity}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            r = await c.get("/who")
+        assert r.status_code == 401
+        assert 'error="missing_token"' in r.headers["www-authenticate"]
+
+    async def test_idp_only_non_jwt_bearer_rejects_request(self, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        from twindb_lightrag_memgraph.server.auth import (
+            configure_auth,
+            require_auth,
+        )
+
+        configure_auth()  # no api key, no jwt secret
+        app = FastAPI()
+
+        @app.get("/who")
+        async def who(identity=__import__("fastapi").Depends(require_auth)):
+            return {"identity": identity}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": "Bearer not-a-jwt"},
+        ) as c:
+            r = await c.get("/who")
+        assert r.status_code == 401
+
     async def test_idp_invalid_token_rejects_request_even_with_static_key(
         self, rsa_keypair, fake_jwks
     ):
