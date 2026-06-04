@@ -923,4 +923,152 @@ export const handlers = [
     persistActivityState();
     return HttpResponse.json(next);
   }),
+
+  // M12 batch 3 — lifecycle (POST + DELETE)
+  http.post(`${ANY}${TWIN}/graph/entities`, async ({ request }) => {
+    const body = (await request.json()) as {
+      name: string;
+      type: GraphEntity['type'];
+      summary?: string;
+      tags?: readonly string[];
+    };
+    if (graphEntityState.some((e) => e.name === body.name)) {
+      return HttpResponse.json(
+        { detail: `Graph entity '${body.name}' already exists` },
+        { status: 409 },
+      );
+    }
+    const id = `kg_${body.name}`;
+    const entity: GraphEntity = {
+      id,
+      name: body.name,
+      type: body.type,
+      x: 480,
+      y: 310,
+      mentions: 0,
+      sources: 0,
+      summary: body.summary ?? '',
+      tags: body.tags,
+    };
+    graphEntityState = [...graphEntityState, entity];
+    activityState = [
+      {
+        id: `evt_graph_entity_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-entity-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'entity', label: entity.name, id },
+        summary: `Graph entity ${entity.name} created`,
+        meta: { entity_id: id, operation: 'create' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return HttpResponse.json(entity, { status: 201 });
+  }),
+
+  http.delete(`${ANY}${TWIN}/graph/entities/:id`, async ({ params }) => {
+    const id = String(params.id);
+    const idx = graphEntityState.findIndex((e) => e.id === id);
+    if (idx < 0) {
+      return HttpResponse.json({ detail: 'Unknown entity' }, { status: 404 });
+    }
+    const removed = graphEntityState[idx];
+    graphEntityState = graphEntityState.filter((e) => e.id !== id);
+    // Cascade — drop edges that touch the removed node so the UI stays
+    // consistent with the backend's DETACH DELETE semantics.
+    graphRelationState = graphRelationState.filter(
+      (r) => r.source !== id && r.target !== id,
+    );
+    activityState = [
+      {
+        id: `evt_graph_entity_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-entity-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'entity', label: removed.name, id },
+        summary: `Graph entity ${removed.name} deleted`,
+        meta: { entity_id: id, operation: 'delete' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.post(`${ANY}${TWIN}/graph/relations`, async ({ request }) => {
+    const body = (await request.json()) as {
+      source: string;
+      target: string;
+      label: string;
+      strength?: number;
+    };
+    const sourceExists = graphEntityState.some((e) => e.id === body.source);
+    const targetExists = graphEntityState.some((e) => e.id === body.target);
+    if (!sourceExists || !targetExists) {
+      return HttpResponse.json(
+        { detail: 'One or both endpoints are missing' },
+        { status: 422 },
+      );
+    }
+    const id = `kr_${body.source}_${body.target}_${Date.now().toString(16)}`;
+    const relation: GraphRelation = {
+      id,
+      source: body.source,
+      target: body.target,
+      label: body.label.toUpperCase().replace(/\s+/g, '_'),
+      strength: body.strength ?? 0.5,
+    };
+    graphRelationState = [...graphRelationState, relation];
+    activityState = [
+      {
+        id: `evt_graph_relation_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-relation-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'relation', label: relation.label, id },
+        summary: `Graph relation ${relation.label} created`,
+        meta: { rel_id: id, operation: 'create' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return HttpResponse.json(relation, { status: 201 });
+  }),
+
+  http.delete(`${ANY}${TWIN}/graph/relations/:id`, async ({ params }) => {
+    const id = String(params.id);
+    const idx = graphRelationState.findIndex((r) => r.id === id);
+    if (idx < 0) {
+      return HttpResponse.json({ detail: 'Unknown relation' }, { status: 404 });
+    }
+    const removed = graphRelationState[idx];
+    graphRelationState = graphRelationState.filter((r) => r.id !== id);
+    activityState = [
+      {
+        id: `evt_graph_relation_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'graph-relation-edited',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'relation', label: removed.label, id },
+        summary: `Graph relation ${removed.label} deleted`,
+        meta: { rel_id: id, operation: 'delete' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];

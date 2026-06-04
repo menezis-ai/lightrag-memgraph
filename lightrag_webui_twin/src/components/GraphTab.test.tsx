@@ -218,3 +218,89 @@ describe('GraphTab — zoom + reset', () => {
     );
   });
 });
+
+describe('GraphTab — lifecycle: Add entity', () => {
+  it('Add entity button opens the inline form', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    expect(screen.queryByTestId('kg-add-entity-form')).toBeNull();
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    expect(screen.getByTestId('kg-add-entity-form')).toBeInTheDocument();
+  });
+
+  it('blocks submit when no name typed', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    expect(screen.getByTestId('kg-add-entity-submit')).toBeDisabled();
+  });
+
+  it('flags a duplicate name from the existing entities', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'Oracle Database',
+    );
+    expect(screen.getByTestId('kg-add-entity-duplicate')).toBeInTheDocument();
+    expect(screen.getByTestId('kg-add-entity-submit')).toBeDisabled();
+  });
+
+  it('Cancel closes the form without submitting', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+    expect(screen.queryByTestId('kg-add-entity-form')).toBeNull();
+  });
+});
+
+describe('GraphTab — lifecycle: Delete entity', () => {
+  it('first click arms the delete, second click is the confirmation step', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    const btn = screen.getByTestId('kg-entity-delete');
+    expect(btn.textContent).toMatch(/Delete entity/);
+
+    await userEvent.click(btn);
+    expect(btn.textContent).toMatch(/Click again to confirm/);
+    expect(screen.getByTestId('kg-entity-delete-cancel')).toBeInTheDocument();
+  });
+
+  it('Cancel rolls back the armed state', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-entity-delete'));
+    await userEvent.click(screen.getByTestId('kg-entity-delete-cancel'));
+    expect(screen.getByTestId('kg-entity-delete').textContent).toMatch(
+      /Delete entity/,
+    );
+  });
+
+  it('switching to another entity disarms a pending delete', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-entity-delete'));
+    await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
+    expect(screen.getByTestId('kg-entity-delete').textContent).toMatch(
+      /Delete entity/,
+    );
+  });
+});
+
+describe('GraphTab — lifecycle: Delete relation', () => {
+  it('first click arms, second click is the confirmation step', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    // Open an outgoing relation row from the default-selected Oracle entity.
+    const rhelRow = Array.from(
+      document.querySelectorAll('[role="button"]'),
+    ).find(
+      (el) =>
+        el.textContent?.includes('RHEL 9') &&
+        el.className.includes('kg-rel-row'),
+    );
+    expect(rhelRow).toBeDefined();
+    await userEvent.click(rhelRow! as HTMLElement);
+
+    const btn = screen.getByTestId('kg-rel-delete');
+    expect(btn.textContent).toMatch(/Delete relation/);
+
+    await userEvent.click(btn);
+    expect(btn.textContent).toMatch(/Click again to confirm/);
+    expect(screen.getByTestId('kg-rel-delete-cancel')).toBeInTheDocument();
+  });
+});

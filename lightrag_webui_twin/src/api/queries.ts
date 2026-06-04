@@ -207,6 +207,109 @@ export function useUpdateGraphRelation() {
   });
 }
 
+/**
+ * Graph lifecycle mutations (M12 batch 3 backend wiring).
+ *
+ * Doctrine: no optimistic mutation on create/delete — the new
+ * server-minted id (entity id, relation id) needs the real response
+ * before the UI can address the row. We just invalidate the relevant
+ * queries on settle so the next refetch picks up the change. The
+ * caller wraps the call to surface the toast.
+ */
+export function useCreateGraphEntity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createGraphEntity>[0]) =>
+      api.createGraphEntity(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-entities'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useDeleteGraphEntity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteGraphEntity(id),
+    onMutate: async (id) => {
+      // Optimistically prune the entity + any incident relation so
+      // the canvas reflows immediately. Roll back on error.
+      await qc.cancelQueries({ queryKey: ['graph-entities'] });
+      await qc.cancelQueries({ queryKey: ['graph-relations'] });
+      const prevEntities = qc.getQueryData<readonly GraphEntity[]>([
+        'graph-entities',
+      ]);
+      const prevRelations = qc.getQueryData<readonly GraphRelation[]>([
+        'graph-relations',
+      ]);
+      if (prevEntities) {
+        qc.setQueryData<readonly GraphEntity[]>(
+          ['graph-entities'],
+          prevEntities.filter((e) => e.id !== id),
+        );
+      }
+      if (prevRelations) {
+        qc.setQueryData<readonly GraphRelation[]>(
+          ['graph-relations'],
+          prevRelations.filter((r) => r.source !== id && r.target !== id),
+        );
+      }
+      return { prevEntities, prevRelations };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prevEntities)
+        qc.setQueryData(['graph-entities'], ctx.prevEntities);
+      if (ctx?.prevRelations)
+        qc.setQueryData(['graph-relations'], ctx.prevRelations);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-entities'] });
+      void qc.invalidateQueries({ queryKey: ['graph-relations'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useCreateGraphRelation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createGraphRelation>[0]) =>
+      api.createGraphRelation(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-relations'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useDeleteGraphRelation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteGraphRelation(id),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['graph-relations'] });
+      const prev = qc.getQueryData<readonly GraphRelation[]>([
+        'graph-relations',
+      ]);
+      if (prev) {
+        qc.setQueryData<readonly GraphRelation[]>(
+          ['graph-relations'],
+          prev.filter((r) => r.id !== id),
+        );
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['graph-relations'], ctx.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['graph-relations'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
 // Helper: unwrap a ListEnvelope into just the items array. Returns an empty
 // readonly array while loading so tab props stay non-null. Errors are surfaced
 // upstream — components are free to render their existing empty states.

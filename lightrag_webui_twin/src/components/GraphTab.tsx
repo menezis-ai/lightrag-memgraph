@@ -31,6 +31,9 @@ import {
   GRAPH_ENTITY_TAGS,
 } from '../fixtures/graph';
 import {
+  useCreateGraphEntity,
+  useDeleteGraphEntity,
+  useDeleteGraphRelation,
   useUpdateGraphEntity,
   useUpdateGraphRelation,
 } from '../api/queries';
@@ -81,6 +84,8 @@ export function GraphTab({
   );
   const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
   const [srcFilter, setSrcFilter] = useUrlArrayParam('gsrc', []);
+  const [addOpen, setAddOpen] = useState(false);
+  const createEntity = useCreateGraphEntity();
 
   const allTags = useMemo(() => {
     const s = new Set<string>();
@@ -279,11 +284,36 @@ export function GraphTab({
               </button>
             )}
           </div>
+          <button
+            className="ghost-btn primary"
+            onClick={() => setAddOpen(true)}
+            type="button"
+            data-testid="kg-add-entity-btn"
+          >
+            <Icon name="plus" size={12} /> Add entity
+          </button>
           <button className="ghost-btn" onClick={resetView} title="Reset view">
             <Icon name="refresh" size={12} /> Reset view
           </button>
         </div>
       </div>
+
+      {addOpen && (
+        <AddEntityForm
+          colors={colors}
+          existingNames={entities.map((e) => e.name)}
+          pending={createEntity.isPending}
+          onCancel={() => setAddOpen(false)}
+          onSubmit={(payload) => {
+            createEntity.mutate(payload, {
+              onSuccess: (created) => {
+                setAddOpen(false);
+                setSelectedId(created.id);
+              },
+            });
+          }}
+        />
+      )}
 
       <div className="kg-body">
         <aside className="kg-rail">
@@ -641,11 +671,22 @@ function EntityEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EntityDraft | null>(null);
   const updateEntity = useUpdateGraphEntity();
+  const deleteEntity = useDeleteGraphEntity();
+  // Two-step destructive confirmation. First click arms the action,
+  // second click within the timeout fires the mutation. Reset on
+  // entity change so navigating away cancels.
+  const [armedDelete, setArmedDelete] = useState(false);
+  useEffect(() => {
+    if (!armedDelete) return;
+    const t = window.setTimeout(() => setArmedDelete(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armedDelete]);
 
-  // Reset edit mode when switching entities.
+  // Reset edit mode + armed-delete when switching entities.
   useEffect(() => {
     setEditing(false);
     setDraft(null);
+    setArmedDelete(false);
   }, [entity.id]);
 
   const startEdit = () => {
@@ -1001,6 +1042,52 @@ function EntityEditor({
               </span>
             </div>
           </div>
+
+          <div
+            className="kg-detail-section kg-lifecycle"
+            data-testid="kg-entity-lifecycle"
+            style={{ borderTop: '1px solid var(--color-border, #e2e6ec)' }}
+          >
+            <button
+              type="button"
+              className={armedDelete ? 'ghost-btn danger' : 'ghost-btn'}
+              onClick={() => {
+                if (!armedDelete) {
+                  setArmedDelete(true);
+                  return;
+                }
+                deleteEntity.mutate(entity.id);
+                setArmedDelete(false);
+              }}
+              disabled={deleteEntity.isPending}
+              data-testid="kg-entity-delete"
+              style={
+                armedDelete
+                  ? {
+                      color: 'var(--twin-red-vivid, #b03060)',
+                      borderColor: 'var(--twin-red-vivid, #b03060)',
+                    }
+                  : undefined
+              }
+            >
+              <Icon name={armedDelete ? 'alert-triangle' : 'trash'} size={11} />{' '}
+              {deleteEntity.isPending
+                ? 'Deleting…'
+                : armedDelete
+                  ? 'Click again to confirm'
+                  : 'Delete entity'}
+            </button>
+            {armedDelete && (
+              <button
+                type="button"
+                className="ghost-btn small"
+                onClick={() => setArmedDelete(false)}
+                data-testid="kg-entity-delete-cancel"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
         </>
       )}
     </>
@@ -1034,10 +1121,18 @@ function RelationEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<RelationDraft | null>(null);
   const updateRelation = useUpdateGraphRelation();
+  const deleteRelation = useDeleteGraphRelation();
+  const [armedDelete, setArmedDelete] = useState(false);
+  useEffect(() => {
+    if (!armedDelete) return;
+    const t = window.setTimeout(() => setArmedDelete(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armedDelete]);
 
   useEffect(() => {
     setEditing(false);
     setDraft(null);
+    setArmedDelete(false);
   }, [rel.id]);
 
   const startEdit = () => {
@@ -1237,6 +1332,56 @@ function RelationEditor({
             <Icon name="check" size={11} />{' '}
             {updateRelation.isPending ? 'Saving…' : 'Save'}
           </button>
+        </div>
+      )}
+
+      {!editing && (
+        <div
+          className="kg-detail-section kg-lifecycle"
+          data-testid="kg-rel-lifecycle"
+          style={{ borderTop: '1px solid var(--color-border, #e2e6ec)' }}
+        >
+          <button
+            type="button"
+            className={armedDelete ? 'ghost-btn danger' : 'ghost-btn'}
+            onClick={() => {
+              if (!armedDelete) {
+                setArmedDelete(true);
+                return;
+              }
+              deleteRelation.mutate(rel.id, {
+                onSuccess: () => onBack(),
+              });
+              setArmedDelete(false);
+            }}
+            disabled={deleteRelation.isPending}
+            data-testid="kg-rel-delete"
+            style={
+              armedDelete
+                ? {
+                    color: 'var(--twin-red-vivid, #b03060)',
+                    borderColor: 'var(--twin-red-vivid, #b03060)',
+                  }
+                : undefined
+            }
+          >
+            <Icon name={armedDelete ? 'alert-triangle' : 'trash'} size={11} />{' '}
+            {deleteRelation.isPending
+              ? 'Deleting…'
+              : armedDelete
+                ? 'Click again to confirm'
+                : 'Delete relation'}
+          </button>
+          {armedDelete && (
+            <button
+              type="button"
+              className="ghost-btn small"
+              onClick={() => setArmedDelete(false)}
+              data-testid="kg-rel-delete-cancel"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       )}
     </>
@@ -1574,5 +1719,142 @@ function FilterPicker({
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Lifecycle: Add entity inline form ────────────────────────────────
+interface AddEntityFormProps {
+  colors: Record<GraphEntityType, string>;
+  existingNames: readonly string[];
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: {
+    name: string;
+    type: GraphEntityType;
+    summary?: string;
+  }) => void;
+}
+
+function AddEntityForm({
+  colors,
+  existingNames,
+  pending,
+  onCancel,
+  onSubmit,
+}: AddEntityFormProps) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<GraphEntityType>('PRODUCT');
+  const [summary, setSummary] = useState('');
+  const trimmed = name.trim();
+  const duplicate = trimmed.length > 0 && existingNames.includes(trimmed);
+  const canSubmit = trimmed.length > 0 && !duplicate && !pending;
+
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      name: trimmed,
+      type,
+      summary: summary.trim() || undefined,
+    });
+  };
+
+  return (
+    <form
+      className="kg-add-entity"
+      data-testid="kg-add-entity-form"
+      onSubmit={submit}
+      style={{
+        display: 'flex',
+        gap: 10,
+        flexWrap: 'wrap',
+        alignItems: 'flex-end',
+        padding: '10px 14px',
+        margin: '8px 0',
+        background: 'var(--color-surface-alt, #f5f7fa)',
+        border: '1px solid var(--color-border, #e2e6ec)',
+        borderRadius: 6,
+      }}
+    >
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          Name
+        </span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Oracle Database"
+          aria-label="New entity name"
+          autoFocus
+          data-testid="kg-add-entity-name"
+          style={{ minWidth: 200 }}
+        />
+      </label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          Type
+        </span>
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value as GraphEntityType)}
+          aria-label="New entity type"
+          data-testid="kg-add-entity-type"
+        >
+          {TYPE_KEYS.map((t) => (
+            <option key={t} value={t}>
+              {GRAPH_TYPE_LABEL[t]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          flex: '1 1 240px',
+        }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+          Summary <em style={{ opacity: 0.6 }}>(optional)</em>
+        </span>
+        <input
+          type="text"
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="What is this?"
+          aria-label="New entity summary"
+          data-testid="kg-add-entity-summary"
+        />
+      </label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span
+          className="kg-type-swatch"
+          style={{ background: colors[type], width: 14, height: 14 }}
+          aria-hidden
+        />
+        <button type="button" className="ghost-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="ghost-btn primary"
+          disabled={!canSubmit}
+          data-testid="kg-add-entity-submit"
+        >
+          <Icon name="check" size={11} /> {pending ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+      {duplicate && (
+        <div
+          role="alert"
+          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          data-testid="kg-add-entity-duplicate"
+        >
+          An entity named “{trimmed}” already exists.
+        </div>
+      )}
+    </form>
   );
 }

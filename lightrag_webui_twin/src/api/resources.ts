@@ -448,6 +448,46 @@ export const twinApi = {
       method: 'PATCH',
       body: patch,
     }),
+  createGraphEntity: (
+    body: {
+      name: string;
+      type: GraphEntity['type'];
+      summary?: string;
+      tags?: readonly string[];
+      properties?: Record<string, string>;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<GraphEntity>(`${TWIN}/graph/entities`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  deleteGraphEntity: (id: string, init?: ApiRequestInit) =>
+    apiFetch<void>(`${TWIN}/graph/entities/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'DELETE',
+    }),
+  createGraphRelation: (
+    body: {
+      source: string;
+      target: string;
+      label: string;
+      strength?: number;
+      properties?: Record<string, string>;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<GraphRelation>(`${TWIN}/graph/relations`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  deleteGraphRelation: (id: string, init?: ApiRequestInit) =>
+    apiFetch<void>(`${TWIN}/graph/relations/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'DELETE',
+    }),
 };
 
 // ============================================================================
@@ -499,6 +539,10 @@ export const api = {
   listGraphRelations: twinApi.listGraphRelations,
   updateGraphEntity: twinApi.updateGraphEntity,
   updateGraphRelation: twinApi.updateGraphRelation,
+  createGraphEntity: twinApi.createGraphEntity,
+  deleteGraphEntity: twinApi.deleteGraphEntity,
+  createGraphRelation: twinApi.createGraphRelation,
+  deleteGraphRelation: twinApi.deleteGraphRelation,
 };
 
 export type ApiClient = typeof api;
