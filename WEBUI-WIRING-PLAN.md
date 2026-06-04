@@ -7,14 +7,14 @@
 > picking up this work has the full contract without reading the entire
 > session log.
 
-## TL;DR — state of play, 2026-06-02
+## TL;DR — state of play, 2026-06-04
 
 | Couche | Scope | Status | Reference |
 |---|---|---|---|
 | **0** | Decisions + branch hygiene + visual snapshot | ✅ Done | session log |
 | **1** | Visual port from `~/Downloads/prototype/` to React/TS | ✅ Done | PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158), [#159](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/159) |
 | **2** | BNP classification (TS types + ClassPill + DocDetailPanel gating + Python extractor + pre-insert hook) | ✅ Done | PR [#157](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/157) (Python) + PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158) (TS UI) |
-| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Partial** — runtime config + frontend space cutover done; backend enforcement remains | this document |
+| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Mostly wired** — route parity, JWT IdP, Space CRUD/UI, production fixture kill-switch, and Space scoping are done; remaining work is retention/fresh-store tests, `/webui/` smoke, tag migration cascade, and deployment | this document |
 
 The standalone OVH demo at https://maquette.sigilum.fr/ uses the React
 port with **MSW client-side** (everything mocked in the browser, no
@@ -114,12 +114,11 @@ Validated:
 
 Still to do:
 
-- Frontend Admin UI: add a Settings "Manage spaces" section for runtime
-  create/update/delete of non-env-seeded spaces.
-- Real JWT/MyAccess enforcement: validate the parent KB access through IdP
-  claims before exposing the configured space list.
+- Add admin-only authorization checks for runtime Space CRUD once the BNP
+  MyAccess group/scope → palier policy is finalized.
 - Clean up remaining internal `workspace` names once the backend contract has
-  fully migrated; keep compatibility until then.
+  fully migrated; keep compatibility headers until then.
+- Add the `/webui/` substitution smoke test and run the deployment checklist.
 
 ## Audit 2026-06-04 — priorités de câblage réel
 
@@ -151,8 +150,8 @@ Commits in the local M12 stack:
 | `4a0b53e` | batch 3 frontend — Add entity + Delete entity/relation |
 | `7da28d3` | batch 3 frontend — Add relation form |
 
-Remaining P0 focus after M12 + route closure: production fixture fallbacks,
-real auth, and hardening approve/reject space checks.
+Remaining P0/P1 focus after M12 + route closure: hardening approve/reject
+space checks, tag delete migration cascade, and deployment smoke coverage.
 
 ### Update 2026-06-04 — Admin Space CRUD backend
 
@@ -170,8 +169,7 @@ Commit `173b09f` closes the backend half of the "spaces beyond
   `operation: create | update | delete` metadata.
 - Validation reported for the batch: `661/661` pytest, `97` skipped.
 
-Still open for spaces: frontend Settings UI and JWT/MyAccess admin-only
-gating.
+Still open for spaces: JWT/MyAccess admin-only gating for runtime Space CRUD.
 
 ### P0 — Contract drift blockers
 
@@ -196,14 +194,14 @@ gating.
 
 ### P1 — Remove silent fixture fallbacks in production
 
-- Replace production fallbacks from local fixtures with explicit loading/error
+- **Done —** Replace production fallbacks from local fixtures with explicit loading/error
   states for documents, tags, activity, thesaurus, graph, and notifications.
   In dev/MSW, fixtures remain acceptable; in prod, stale local data must not
   look like backend truth.
-- Keep `VITE_FORCE_MSW=true` restricted to standalone demo builds. Production
+- **Done —** Keep `VITE_FORCE_MSW=true` restricted to standalone demo builds. Production
   builds without that flag must hit real `/documents` and `/twin/api/*`.
-- Add a runtime assertion that fails loudly when `window.__twinConfig` was not
-  substituted outside dev/MSW demo mode.
+- **Done —** Runtime config resolution fails loudly when
+  `window.__twinConfig` was not substituted outside dev/MSW demo mode.
 
 ### P2 — Persist all operator-visible mutations
 
@@ -220,21 +218,21 @@ gating.
 
 ### P3 — Production auth and integration confidence
 
-- Replace local username/password JWT with real MyAccess/IdP validation:
-  JWKS validation, parent KB access check, allowed spaces derived from claims,
-  and fail-closed behavior.
-- Run CI with a real Memgraph service for Couche 3 backend contracts. The
-  current pytest setup skips integration tests when `MEMGRAPH_URI` is absent,
-  so local green does not prove real persistence.
+- **Done —** Replace local username/password JWT with real IdP/JWKS
+  validation for production mode. Remaining MyAccess-specific work is deploy
+  configuration: `TWIN_IDP_JWKS_URL`, issuer/audience, claim names, and the
+  group/scope → palier policy for admin-only operations.
+- **Done —** CI has an `integration-tests` job with a Memgraph service; local
+  runs still skip `@pytest.mark.integration` tests when `MEMGRAPH_URI` is
+  absent.
 - **Done — Add a real-backend e2e smoke lane with MSW disabled.**
   `lightrag_webui_twin/e2e/real-backend.spec.ts` boots the browser app with
   `VITE_USE_MSW=false`, asserts no `mockServiceWorker` registration is active,
   and reaches `/health`, `/documents`, `/twin/api/spaces`, and
   `/twin/api/graph/entities` on the configured backend.
-- Expand the real-backend lane after the remaining P0 routes land, covering
-  login/auth failure modes, retag, bulk delete, document metadata, and the
-  retrieval query journey. `/query` is already available as an opt-in smoke
-  because it may call the LLM path.
+- Expand the real-backend lane from smoke to mutation coverage: login/auth
+  failure modes, retag, bulk delete, document metadata, and the retrieval query
+  journey. `/query` remains opt-in because it may call the LLM path.
 
 ## WebUI hardening backlog — 2026-06-03 audit follow-up
 
@@ -298,8 +296,8 @@ Still open or PO-gated in the current React port:
   product surface.
 - `TWIN-SET-01`: provider Configure panels remain PO-gated/out of current
   Settings scope.
-- `TWIN-SET-02`: sign-out local cleanup is covered; real IdP/JWT revocation
-  remains Couche 3/backend contract work.
+- `TWIN-SET-02`: sign-out local cleanup is covered; remaining work is the
+  deployment smoke for the real IdP logout URL/revocation path.
 - `TWIN-TRX-01`: role perspective selector remains PO-gated because the
   current direction is real MyAccess/JWT-driven authorization, not UI role
   simulation.
@@ -366,8 +364,9 @@ REAL_BACKEND_URL=http://127.0.0.1:9621 REAL_E2E_QUERY=true npm run test:e2e:real
 
 ### Priority 0 — stabilize existing e2e
 
-- Fix stale selectors from the workspace → space migration.
-- Keep the two `@smoke` journeys green locally before expanding coverage.
+- Keep selectors aligned with the active Space vocabulary; do not reintroduce
+  old `workspace` labels in visible UI assertions.
+- Keep the smoke journeys green locally before expanding coverage.
 - Add helper assertions in `e2e/helpers.ts`:
   - `expectToast(page, text)`
   - `expectDocumentTags(page, docId, tags)`
@@ -449,7 +448,9 @@ Progress as of 2026-06-02:
     rename is not covered by the current API contract,
   - `TWIN-TAG-08` rejected request leaves pending after reload,
   - `TWIN-TAG-09` synonym updates remain visible after reload,
-  - `TWIN-TAG-10` delete/migration removes the tag after reload.
+  - `TWIN-TAG-10` delete/migration removes the tag after reload in the
+    frontend/MSW recipe. Real backend cascade remains open: affected documents
+    are not retagged yet.
 - `lightrag_webui_twin/e2e/activity.spec.ts` adds focused RC-1 coverage for:
   - `TWIN-ACT-01` explicit Refresh refetches newly available events from the
     store and the fetched event survives reload.
@@ -806,7 +807,7 @@ notice gate on `isAboveInternal(cls)` = "above C2 on the BNP ladder".
 
 ---
 
-## Couche 3 — LightRAG wiring real (TODO)
+## Couche 3 — LightRAG wiring real (mostly wired)
 
 Replaces MSW with the real LightRAG + Twin overlay. After Couche 3, the
 React port runs as a sub-app mounted by `register()` on the LightRAG
@@ -826,7 +827,7 @@ classification hook active.
 │  │             with __TWIN_CONFIG_JSON__ substitution       │
 │  └─ Mounted via register(mount_server=True):                │
 │      /twin/api/* → Twin overlay sub-app                     │
-│        ├─ /workspaces, /notifications, /tags, /activity     │
+│        ├─ /spaces, /notifications, /tags, /activity         │
 │        ├─ /documents/{id}/metadata, /approve, /reject       │
 │        ├─ /graph/entities, /graph/relations                 │
 │        └─ /auth/logout                                      │
@@ -850,16 +851,16 @@ refactor is intentional; first close the contract gaps in the existing
 |---|---|---|
 | `src/twindb_lightrag_memgraph/server/webui_router.py` | **DONE + HARDEN** | Missing real routes `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health` are implemented; remaining hardening is approve/reject space checks |
 | `src/twindb_lightrag_memgraph/server/space_store.py` | **DONE** | Runtime CRUD catalog for non-env-seeded spaces, with optional atomic JSON persistence via `TWIN_SPACES_RUNTIME_FILE` |
-| `src/twindb_lightrag_memgraph/server/native_shims.py` | **EDIT** | Keep native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` aligned with React contract and space filtering |
-| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, document overlay metadata, and graph lifecycle mutations persist per space in Memgraph |
-| `src/twindb_lightrag_memgraph/server/auth.py` | **EDIT** | Replace local JWT username/password path with MyAccess/IdP/JWKS validation for production mode |
+| `src/twindb_lightrag_memgraph/server/native_shims.py` | **DONE + VERIFY** | Native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` are aligned with React contract and space filtering; keep route parity green |
+| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **PARTIAL** | Tags, activity, notifications have Memgraph stores; remaining work is fresh-store tests and retention/sweep for activity + notifications |
+| `src/twindb_lightrag_memgraph/server/auth.py` | **DONE + HARDEN** | IdP/JWKS validation is wired for production mode; remaining work is MyAccess-specific admin authorization policy |
 | `src/twindb_lightrag_memgraph/server/space.py` | **EDIT** | Keep `X-Twin-Space` as canonical and retire `X-Twin-Workspace` only after all callers migrate |
-| `src/twindb_lightrag_memgraph/__init__.py` | **EDIT** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, and direct Twin router mount already exist; keep extending these paths rather than booting a second LightRAG |
-| `tests/test_server/` | **EDIT** | Add real backend contract tests, including route parity and Memgraph persistence. Integration tests remain `@pytest.mark.integration` |
+| `src/twindb_lightrag_memgraph/__init__.py` | **DONE + TEST** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, direct Twin router mount, IdP activation, and `debugUser` stripping exist; remaining work is `/webui/` substitution smoke |
+| `tests/test_server/` | **EDIT** | Route parity, IdP, Space scoping, P0 routes, classification rejection are covered; remaining tests are fresh Memgraph store boot and `/webui/` substitution smoke |
 | `lightrag_webui_twin/index.html` | **VERIFY** | Confirm the `__TWIN_CONFIG_JSON__` placeholder is still in place (already there per `useAuth.ts`) |
-| `lightrag_webui_twin/src/api/client.ts` | **VERIFY** | Runtime API bases and `X-Twin-Space` are already wired; add prod error behavior for missing backend/config |
+| `lightrag_webui_twin/src/api/client.ts` | **DONE** | Runtime API bases and `X-Twin-Space` are wired; missing runtime config fails loudly outside dev/MSW demo mode |
 | `lightrag_webui_twin/src/api/resources.ts` | **VERIFY + TEST** | Treat as the frontend source of expected paths; route parity test must catch path drift |
-| `lightrag_webui_twin/src/App.tsx` | **EDIT** | Remove silent production fallbacks to local fixtures; keep fixtures only for dev/MSW first paint |
+| `lightrag_webui_twin/src/App.tsx` | **DONE** | Silent production fixture fallbacks are removed; fixtures remain only for dev/MSW/demo first paint |
 | `pyproject.toml` | **EDIT** | Move `olefile` and `pikepdf` from optional to a new extra `pip install twindb-lightrag-memgraph[classification]` |
 | `README.md` | **EDIT** | New "Couche 3 — Real backend wiring" section linking to this doc |
 
@@ -895,7 +896,7 @@ refactor is intentional; first close the contract gaps in the existing
   - `DELETE /spaces/{id}`
   - optional `TWIN_SPACES_RUNTIME_FILE` persistence
   - env-seeded spaces immutable; delete refuses spaces with docs/tags
-- [ ] Keep tag/activity/notification routes in `webui_router.py`; do not
+- [x] Keep tag/activity/notification routes in `webui_router.py`; do not
       create duplicate `routes_tags.py` etc. unless the router is intentionally
       split as a refactor after parity tests are green.
 
@@ -967,7 +968,7 @@ Still to do:
       cannot serve a wide-open debug identity through `window.__twinConfig`.
       Regression covered by
       `test_idp_jwt.py::TestRuntimeConfigDebugUserStripped`.
-- [ ] Keep the runtime config shape aligned with:
+- [x] Keep the runtime config shape aligned with:
       ```python
       json.dumps({
         "apiBaseUrl": "/twin/api",
@@ -976,7 +977,7 @@ Still to do:
         "defaultSpaceId": os.environ["TWIN_DEFAULT_SPACE"],
         "spaces": json.loads(os.environ["TWIN_SPACES_JSON"]),
         "maxSpaces": 5,
-        "debugUser": None,  # PROD: no debug user, real JWT decoded server-side
+        # PROD IdP active: debugUser is omitted, not set to None.
       })
       ```
 - [ ] Add a smoke test that starts the patched LightRAG app, fetches
@@ -1054,9 +1055,10 @@ Still to do:
       shadow a refused IdP cookie. `test_runtime_config_debug_user`
       asserts the `debugUser` shim is stripped when the middleware
       activates. Filed under `tests/test_server/test_idp_jwt.py`.
-- [ ] Add the new tests to the `integration-tests` job in
-      `.forgejo/workflows/ci.yml` (already includes a Memgraph service
-      container).
+- [x] Add the new tests to the `integration-tests` job in
+      `.forgejo/workflows/ci.yml`: the job runs `pytest tests/` with
+      `MEMGRAPH_URI`, so new backend tests under `tests/test_server/` are
+      picked up automatically.
 - [x] Add one real-backend WebUI smoke with MSW disabled
       (`VITE_USE_MSW=false`) against a running FastAPI app.
 
@@ -1072,7 +1074,8 @@ Still to do:
       (extra includes `olefile` + `pikepdf` for non-OOXML formats).
 - [ ] Set env vars: `MEMGRAPH_URI`, `TWIN_MIP_LABEL_MAP`,
       `TWIN_MIP_MAX_CLASSIFICATION`, `TWIN_IDP_LOGOUT_URL`,
-      `TWIN_JWKS_URL`, etc.
+      `TWIN_IDP_JWKS_URL`, `TWIN_IDP_ISSUER`, `TWIN_IDP_AUDIENCE`,
+      and BNP-specific `TWIN_IDP_CLAIM_*` mappings.
 - [ ] Start the LightRAG server with `register(replace_ui=True,
       mount_server=True, webui_dist_path="/opt/twin/webui")`.
 - [ ] Smoke check `https://<host>/webui/` loads the React port +
@@ -1091,23 +1094,18 @@ Still to do:
 
 ### Sequencing recommendation
 
-```
-3.1 route parity + missing routes (4-6h) ─┬─→ 3.5 classification hook (1h) ─┐
-                             │                                  │
-3.2 persistence (4h) ────────┤                                  │
-                             │                                  ├─→ 3.8 deploy (2h)
-3.3 JWT + space (3h) ────────┤                                  │
-                             │                                  │
-3.4 index.html mount (2h) ───┤                                  │
-                             │                                  │
-                             └─→ 3.6 frontend cutover (2h) ─────┤
-                                                                │
-                              3.7 integration tests (3h) ───────┘
-```
+Most Couche 3 implementation work is already landed. The remaining order is:
 
-Total estimate: **18-22h of focused work** for a single engineer who
-knows the codebase. Realistic shipping window: a focused 3-day sprint
-once the tenant label map is in hand from Louis HORVAT.
+1. Fresh-store + `/webui/` smoke tests, because they prove the deployed shape
+   without adding new product behavior.
+2. Retention/sweep for activity and notifications.
+3. Tag delete migration cascade for affected documents.
+4. MyAccess admin-only authorization policy once BNP claim/group mapping is
+   finalized.
+5. Deployment checklist and host smoke.
+
+Rough remaining estimate: **1 focused day for tests + deployment smoke**, plus
+the tag cascade/admin policy work once the desired BNP behavior is fixed.
 
 ---
 
