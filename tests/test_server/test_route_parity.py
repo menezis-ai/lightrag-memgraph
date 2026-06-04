@@ -19,6 +19,9 @@ from twindb_lightrag_memgraph.server.native_shims import (
     build_health_shim,
     build_native_shims_router,
 )
+from twindb_lightrag_memgraph.server.twin_query_routes import (
+    build_twin_query_router,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +68,9 @@ def _backend_routes() -> set[Route]:
         _fastapi_routes_from_router(webui_router.router, prefix="/twin/api")
         | _fastapi_routes_from_router(build_native_shims_router(_fake_rag))
         | _fastapi_routes_from_router(build_health_shim(_fake_rag))
+        | _fastapi_routes_from_router(
+            build_twin_query_router(_fake_rag), prefix="/twin/api"
+        )
     )
 
 
@@ -94,6 +100,7 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/pipeline_status"),
     Route("GET", "/openapi"),
     Route("POST", "/query"),
+    Route("POST", "/twin/api/query"),
     Route("GET", "/twin/api/workspaces"),
     Route("GET", "/twin/api/spaces"),
     Route("POST", "/twin/api/spaces"),

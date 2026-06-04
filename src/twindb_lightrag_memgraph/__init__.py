@@ -1409,6 +1409,36 @@ def _mount_twin_subapp(
         dependencies=[Depends(require_auth)],
     )
 
+    # Twin overlay query route — wraps LightRAG `aquery` and returns
+    # structured `{response, sources}` so the React port can render
+    # clickable citations. Mounted under the same prefix so the
+    # frontend just calls `${TWIN}/query` instead of LightRAG's
+    # native `/query`.
+    try:
+        from .server.twin_query_routes import build_twin_query_router
+
+        def _get_rag_for_twin_query():
+            rag = _twindb_state.get("rag")
+            if rag is None:
+                raise RuntimeError(
+                    "twindb twin_query: host LightRAG instance not captured. "
+                    "register(mount_server=True) requires shim_native_routes=True "
+                    "so the rag instance is available."
+                )
+            return rag
+
+        twin_query_router = build_twin_query_router(_get_rag_for_twin_query)
+        app.include_router(
+            twin_query_router,
+            prefix=prefix,
+            dependencies=[Depends(require_auth)],
+        )
+    except ImportError:
+        # twin_query_routes is part of the server extra; if the
+        # extra wasn't installed we silently skip — the legacy
+        # LightRAG native /query still works for the React port.
+        pass
+
     if webui_stores == "seed":
         # Sync setup; the seed includes pre-populated tags / activity /
         # notifications visible from the very first request.

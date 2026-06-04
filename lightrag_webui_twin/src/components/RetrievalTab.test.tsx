@@ -16,6 +16,7 @@ import {
   describe,
   expect,
   it,
+  vi,
   beforeEach,
   afterEach,
 } from 'vitest';
@@ -188,5 +189,34 @@ describe('RetrievalTab — params panel', () => {
     expect(Array.from(chips).some((c) => c.textContent?.includes('oracle'))).toBe(
       true,
     );
+  });
+});
+
+describe('RetrievalTab — source cards', () => {
+  it('clicking a source card navigates to documents with a source filter for file paths', async () => {
+    const onNavigate = vi.fn();
+    render(<RetrievalTab {...defaultProps()} onNavigate={onNavigate} />);
+    // The seed threads include an assistant message with the fixture
+    // sources rendered after streaming completes.
+    const sourceCards = document.querySelectorAll('[data-testid^="source-"]');
+    expect(sourceCards.length).toBeGreaterThan(0);
+    const fileCard = Array.from(sourceCards).find((card) =>
+      card.textContent?.includes('.pdf'),
+    ) as HTMLButtonElement | undefined;
+    expect(fileCard).toBeDefined();
+    await userEvent.click(fileCard!);
+    expect(onNavigate).toHaveBeenCalledWith(
+      'documents',
+      expect.objectContaining({ source: expect.stringContaining('.pdf') }),
+    );
+  });
+
+  it('source cards are disabled when no onNavigate prop is provided', async () => {
+    render(<RetrievalTab {...defaultProps()} />);
+    const sourceCards = document.querySelectorAll('[data-testid^="source-"]');
+    expect(sourceCards.length).toBeGreaterThan(0);
+    sourceCards.forEach((card) => {
+      expect((card as HTMLButtonElement).disabled).toBe(true);
+    });
   });
 });

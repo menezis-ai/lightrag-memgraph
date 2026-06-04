@@ -294,6 +294,19 @@ export function RetrievalTab({
     }
     setTimeout(() => setHighlightSrc(null), 1400);
   };
+  const onSourceClick = onNavigate
+    ? (source: RetrievalSource) => {
+        // Prefer the exact source filter when the backend gave a doc id
+        // or a file-path-shaped name; fall back to a search by name so
+        // confluence / URL-shaped sources still resolve.
+        const looksLikePath =
+          source.type === 'file' && source.name.includes('.');
+        const params: Record<string, string> = looksLikePath
+          ? { source: source.name }
+          : { q: source.name };
+        onNavigate('documents', params);
+      }
+    : undefined;
 
   const removeTag = (t: string) =>
     setTagFilters(tagFilters.filter((x) => x !== t));
@@ -414,6 +427,7 @@ export function RetrievalTab({
               onCiteHover={onCiteHover}
               onCiteLeave={onCiteLeave}
               onCiteClick={onCiteClick}
+              onSourceClick={onSourceClick}
             />
           ))}
           {streaming && streamedTokens.length > 0 && (
@@ -428,6 +442,7 @@ export function RetrievalTab({
               onCiteHover={onCiteHover}
               onCiteLeave={onCiteLeave}
               onCiteClick={onCiteClick}
+              onSourceClick={onSourceClick}
             />
           )}
         </div>
@@ -602,6 +617,8 @@ interface TurnProps {
   onCiteHover: (n: number) => void;
   onCiteLeave: () => void;
   onCiteClick: (n: number, sources: readonly RetrievalSource[] | undefined) => void;
+  /** Click on a source card in the sidebar — host navigates to docs. */
+  onSourceClick?: (source: RetrievalSource) => void;
 }
 
 function Turn({
@@ -611,6 +628,7 @@ function Turn({
   onCiteHover,
   onCiteLeave,
   onCiteClick,
+  onSourceClick,
 }: TurnProps) {
   if (msg.role === 'user') {
     return <div className="msg-user">{msg.text}</div>;
@@ -658,27 +676,44 @@ function Turn({
         <>
           <div className="sources-header">Sources</div>
           <div className="sources-list">
-            {msg.sources.map((s) => (
-              <div
-                key={s.n}
-                id={`src-${s.n}`}
-                className={`source-card${highlightSrc === s.n ? ' hl' : ''}`}
-                data-testid={`source-${s.n}`}
-              >
-                <span className="src-pill">{s.n}</span>
-                <SourceIcon type={s.type} size={13} />
-                <span
-                  className={s.type !== 'file' ? 'src-name mono' : 'src-name'}
+            {msg.sources.map((s) => {
+              const clickable = Boolean(onSourceClick);
+              const className = `source-card${highlightSrc === s.n ? ' hl' : ''}${
+                clickable ? ' clickable' : ''
+              }`;
+              const handleClick = () => onSourceClick?.(s);
+              return (
+                <button
+                  key={s.n}
+                  type="button"
+                  id={`src-${s.n}`}
+                  className={className}
+                  data-testid={`source-${s.n}`}
+                  onClick={clickable ? handleClick : undefined}
+                  disabled={!clickable}
+                  title={clickable ? `Open ${s.name}` : undefined}
+                  style={{
+                    background: 'none',
+                    textAlign: 'left',
+                    font: 'inherit',
+                    cursor: clickable ? 'pointer' : 'default',
+                  }}
                 >
-                  {s.name}
-                </span>
-                {s.meta && <span className="src-meta">{s.meta}</span>}
-                <span className="src-score">{s.score.toFixed(2)}</span>
-                <span className="src-ext" title="Open source">
-                  <Icon name="external-link" size={12} />
-                </span>
-              </div>
-            ))}
+                  <span className="src-pill">{s.n}</span>
+                  <SourceIcon type={s.type} size={13} />
+                  <span
+                    className={s.type !== 'file' ? 'src-name mono' : 'src-name'}
+                  >
+                    {s.name}
+                  </span>
+                  {s.meta && <span className="src-meta">{s.meta}</span>}
+                  <span className="src-score">{s.score.toFixed(2)}</span>
+                  <span className="src-ext" title="Open source">
+                    <Icon name="external-link" size={12} />
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </>
       )}

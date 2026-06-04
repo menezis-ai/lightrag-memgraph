@@ -165,31 +165,6 @@ export const lightragApi = {
       '/openapi',
       init,
     ),
-  /**
-   * Issue a retrieval query against LightRAG native POST /query.
-   * Returns the synthesized response string. Sources are not exposed by
-   * the native endpoint in this version — callers should display the
-   * response text and treat sources as empty until streaming + structured
-   * context land. The endpoint accepts the standard LightRAG query body
-   * (`query`, `mode`, `top_k`, `max_total_tokens`, optional `only_need_context`,
-   * `only_need_prompt`).
-   */
-  query: (
-    body: {
-      query: string;
-      mode?: string;
-      top_k?: number;
-      max_total_tokens?: number;
-      only_need_context?: boolean;
-      only_need_prompt?: boolean;
-    },
-    init?: ApiRequestInit,
-  ) =>
-    apiFetch<{ response: string }>('/query', {
-      ...init,
-      method: 'POST',
-      body,
-    }),
 };
 
 // ============================================================================
@@ -204,6 +179,41 @@ export const twinApi = {
   // Spaces (M12 Admin CRUD — runtime additions on top of the env seed)
   listSpaces: (init?: ApiRequestInit) =>
     apiFetch<readonly Workspace[]>(`${TWIN}/spaces`, init),
+
+  /**
+   * Issue a retrieval query against the Twin overlay POST /query.
+   * Returns the synthesised response string AND a structured sources
+   * list (top-k chunks the retrieval grounded on, with file paths and
+   * scores) so the chat surface can render citations. The endpoint
+   * accepts the standard LightRAG query body.
+   */
+  query: (
+    body: {
+      query: string;
+      mode?: string;
+      top_k?: number;
+      max_total_tokens?: number;
+      only_need_context?: boolean;
+      only_need_prompt?: boolean;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{
+      response: string;
+      sources: readonly {
+        n: number;
+        type: string;
+        name: string;
+        meta?: string | null;
+        score: number;
+        doc_id?: string | null;
+        chunk_id?: string | null;
+      }[];
+    }>(`${TWIN}/query`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
   createSpace: (
     body: { id: string; label: string; kind?: string; description?: string },
     init?: ApiRequestInit,
@@ -536,7 +546,7 @@ export const api = {
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,
-  query: lightragApi.query,
+  query: twinApi.query,
 
   // Twin overlay
   listWorkspaces: twinApi.listWorkspaces,

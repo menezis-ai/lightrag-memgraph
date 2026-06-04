@@ -225,9 +225,15 @@ gating.
 - Run CI with a real Memgraph service for Couche 3 backend contracts. The
   current pytest setup skips integration tests when `MEMGRAPH_URI` is absent,
   so local green does not prove real persistence.
-- Add one end-to-end smoke against MSW disabled (`VITE_USE_MSW=false`) and a
-  running backend, covering login/auth headers, documents list, retag, bulk
-  delete, and retrieval query.
+- **Done — Add a real-backend e2e smoke lane with MSW disabled.**
+  `lightrag_webui_twin/e2e/real-backend.spec.ts` boots the browser app with
+  `VITE_USE_MSW=false`, asserts no `mockServiceWorker` registration is active,
+  and reaches `/health`, `/documents`, `/twin/api/spaces`, and
+  `/twin/api/graph/entities` on the configured backend.
+- Expand the real-backend lane after the remaining P0 routes land, covering
+  login/auth failure modes, retag, bulk delete, document metadata, and the
+  retrieval query journey. `/query` is already available as an opt-in smoke
+  because it may call the LLM path.
 
 ## WebUI hardening backlog — 2026-06-03 audit follow-up
 
@@ -307,6 +313,7 @@ Latest frontend validation baseline:
 - `npm run typecheck` — OK.
 - `npm run test:run` — OK, 345 Vitest tests.
 - `npm run test:e2e` — OK, 59 Playwright tests.
+- `npm run test:e2e:real` — OK; skips unless `REAL_BACKEND_URL` is set.
 - `git diff --check` — OK.
 
 ### Preconditions
@@ -337,7 +344,24 @@ Latest frontend validation baseline:
 | WebUI journeys | Visible operator behavior, forms, toasts, refresh, reload persistence | Playwright + MSW |
 | Front/API contract | `window.__twinConfig`, URL bases, headers, cache invalidation | Vitest + Playwright request interception |
 | Route parity contract | Frontend `resources.ts` paths, MSW handlers, and real FastAPI router must match | `tests/test_server/test_route_parity.py` |
+| Real WebUI smoke | Browser app with MSW disabled against a running backend | `npm run test:e2e:real` |
 | Real backend contract | Space isolation, Memgraph stores, classification metadata, auth | `pytest tests/test_server/*` |
+
+Real-backend e2e invocation:
+
+```bash
+cd lightrag_webui_twin
+REAL_BACKEND_URL=http://127.0.0.1:9621 \
+REAL_BACKEND_SPACE=default \
+REAL_BACKEND_AUTH_TOKEN="$TOKEN" \
+npm run test:e2e:real
+```
+
+Optional retrieval/LLM smoke:
+
+```bash
+REAL_BACKEND_URL=http://127.0.0.1:9621 REAL_E2E_QUERY=true npm run test:e2e:real
+```
 
 ### Priority 0 — stabilize existing e2e
 

@@ -591,6 +591,29 @@ export const handlers = [
         : 'Mock retrieval response',
     });
   }),
+  // Twin overlay query — mirrors the structured `{response, sources}`
+  // contract from the backend so dev / standalone parity is honest.
+  http.post(`${ANY}${TWIN}/query`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      query?: string;
+      top_k?: number;
+    };
+    const q = body.query ?? '';
+    const topK = body.top_k ?? 3;
+    const responseText = q
+      ? `Mock retrieval response for: ${q}`
+      : 'Mock retrieval response';
+    const sources = Array.from({ length: Math.min(topK, 3) }).map((_, i) => ({
+      n: i + 1,
+      type: 'file',
+      name: `/cib/runbooks/mock-source-${i + 1}.pdf`,
+      meta: `chunk ${i + 1}`,
+      score: Number((0.95 - i * 0.1).toFixed(2)),
+      doc_id: `mock-doc-${i + 1}`,
+      chunk_id: `mock-chunk-${i + 1}`,
+    }));
+    return HttpResponse.json({ response: responseText, sources });
+  }),
 
   // -------------------------------------------------------------------------
   // Twin overlay endpoints

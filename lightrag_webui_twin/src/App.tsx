@@ -851,7 +851,25 @@ function AppShell() {
                   only_need_context: params.onlyContext,
                   only_need_prompt: params.onlyPrompt,
                 });
-                return { response: res.response };
+                // Map the backend SourceRow shape to the RetrievalSource
+                // contract the chat panel consumes. `type` is the WebUI
+                // SourceIcon key — backend currently always emits "file"
+                // (LightRAG-stored chunks); fall back defensively for
+                // any future expansion.
+                const sources = (res.sources ?? []).map((s) => ({
+                  n: s.n,
+                  type:
+                    s.type === 'file' ||
+                    s.type === 'url' ||
+                    s.type === 'confluence' ||
+                    s.type === 'sharepoint'
+                      ? (s.type as 'file' | 'url' | 'confluence' | 'sharepoint')
+                      : ('file' as const),
+                  name: s.name,
+                  meta: s.meta ?? undefined,
+                  score: s.score,
+                }));
+                return { response: res.response, sources };
               }}
               initialThreads={makeSampleThreads()}
               onNavigate={onNavigate}
