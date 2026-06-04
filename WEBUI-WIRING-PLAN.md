@@ -14,7 +14,7 @@
 | **0** | Decisions + branch hygiene + visual snapshot | ✅ Done | session log |
 | **1** | Visual port from `~/Downloads/prototype/` to React/TS | ✅ Done | PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158), [#159](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/159) |
 | **2** | BNP classification (TS types + ClassPill + DocDetailPanel gating + Python extractor + pre-insert hook) | ✅ Done | PR [#157](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/157) (Python) + PR [#158](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/pulls/158) (TS UI) |
-| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Mostly wired** — route parity, JWT IdP, Space CRUD/UI, production fixture kill-switch, Space scoping, fresh-store guard, `/webui/` substitution smoke, and tag migration cascade are done; remaining work is MyAccess admin policy, deployment smoke, and retention policy once PO/compliance decides | this document |
+| **3** | LightRAG wiring real (server FastAPI sub-app, JWT, real fetch, X-Twin-Space header, drop MSW in prod) | 🚧 **Mostly wired** — route parity, JWT IdP, Space CRUD/UI (incl. admin-only gating via `TWIN_IDP_ADMIN_GROUPS` + `admin:spaces` scope, commit `a62b4b4`), production fixture kill-switch, Space scoping, fresh-store guard, `/webui/` substitution smoke, tag migration cascade, real-backend Retrieval streaming + advanced query controls (`524b2a8`), and mock-kill remediation F1+F2+F3+F5+F6 (`731f0d1`) are done; remaining work is **deployment smoke**, and **retention policy** (deferred by PO/compliance — see §Retention sweep) | this document |
 
 The standalone OVH demo at https://maquette.sigilum.fr/ uses the React
 port with **MSW client-side** (everything mocked in the browser, no
@@ -239,8 +239,10 @@ Commits in the local M12 stack:
 | `4a0b53e` | batch 3 frontend — Add entity + Delete entity/relation |
 | `7da28d3` | batch 3 frontend — Add relation form |
 
-Remaining P0/P1 focus after M12 + route closure: hardening approve/reject
-space checks, MyAccess admin-only policy, and deployment smoke coverage.
+Remaining P0/P1 focus after M12 + route closure: deployment smoke
+coverage. (MyAccess admin-only policy landed `a62b4b4` via
+`TWIN_IDP_ADMIN_GROUPS` env + `admin:spaces` gateway scope; see
+§«Sequencing recommendation» for the final list.)
 
 ### Update 2026-06-04 — G3/G1 hardening + tag cascade
 
@@ -260,9 +262,21 @@ Claude's follow-up commit closes the highest-ROI Couche 3 guardrails:
   tag catalog entry. The seed/dev document store is updated, and production
   Memgraph `DocStatus -> TAGGED_WITH -> WebuiTag` edges are migrated/removed.
   Regression coverage lives in `tests/test_server/test_webui_router_mutations.py`.
-- **G2 retention sweep remains deferred:** no code was added without PO /
-  compliance answers. Open decisions: TTL per store, sweep mechanism, per-space
-  vs global scope, sandbox vs primary behavior, and BCE/DORA audit retention.
+- **G2 retention sweep — DEFERRED BY POLICY** (status as of 2026-06-04):
+  no code will be written until PO / compliance arbitrates the four axes
+  below. This is *not* a tech-debt item — it's an explicit "do nothing
+  silently" stance because the wrong default (e.g. a 90-day TTL applied
+  uniformly) could violate BCE/DORA retention obligations or wipe
+  evidence under a legal-hold scenario.
+  - **TTL per store**: separate values for `WebuiTag`, `ActivityEvent`,
+    `Notification`, audit logs.
+  - **Sweep mechanism**: cron-style Cypher purge vs read-time predicate
+    (Memgraph TTL primitives).
+  - **Scope**: per-space vs global ; sandbox vs primary behavior.
+  - **BCE / DORA / legal-hold**: minimum-retention contracts + how a
+    legal-hold flag suspends sweeping.
+
+  Re-open when the PO + compliance decision lands in writing.
 
 Focused validation reported for this hardening pass:
 

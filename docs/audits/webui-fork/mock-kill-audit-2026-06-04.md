@@ -1,5 +1,12 @@
 # Mock-kill audit — 2026-06-04
 
+> **Statut 2026-06-04 — REMEDIATED.** Findings F1/F2/F3/F5/F6 closed
+> by commit `731f0d1` (mock-kill remediation). Finding F4 closed by
+> commit `524b2a8` (retrieval streaming + advanced controls + dead-code
+> purge). This audit is kept as the historical "before remediation"
+> snapshot — the contract it documents is the regression line that
+> future contributors must not cross.
+
 **Mandat :** Fabrice 2026-06-01 ([transcription][tr] [1466s]) — *« Et en revanche, c'est fonctionnel. Je ne veux plus de moquer, de machin, de truc. »*
 **Deadline implicite :** [1458s] — *« Dans 15 jours, il faut tout ce que tu peux mettre. Et en revanche, c'est fonctionnel. »* → **2026-06-16**.
 **Périmètre :** `lightrag_webui_twin/src/` + `src/twindb_lightrag_memgraph/server/` + `src/twindb_lightrag_memgraph/__init__.py`.
