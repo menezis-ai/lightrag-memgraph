@@ -121,6 +121,67 @@ Still to do:
 - Clean up remaining internal `workspace` names once the backend contract has
   fully migrated; keep compatibility until then.
 
+## Audit 2026-06-04 — priorités de câblage réel
+
+This section deduplicates the current Couche 3 backlog after a code audit.
+The frontend client and MSW know more routes than the Python backend currently
+serves; the priorities below are the shortest path from "demo green" to "real
+backend green".
+
+### P0 — Contract drift blockers
+
+- Add an automated **route parity test** that compares:
+  - `lightrag_webui_twin/src/api/resources.ts` expected paths,
+  - `lightrag_webui_twin/src/mocks/handlers.ts` MSW paths,
+  - actual FastAPI routes from `webui_router` + `native_shims`.
+  This test must fail when MSW implements a route that the real Python router
+  does not expose.
+- Implement or deliberately remove these frontend/MSW-only routes:
+  - `GET /twin/api/documents/{id}/metadata`
+  - `POST /twin/api/documents/bulk-delete`
+  - `GET /twin/api/health`
+  - `PATCH /twin/api/graph/entities/{id}`
+  - `PATCH /twin/api/graph/relations/{id}`
+- Add backend contract tests for those routes before expanding Playwright
+  coverage. Current Playwright/MSW success is not enough because it can mask
+  real-backend `404`/`405` failures.
+
+### P1 — Remove silent fixture fallbacks in production
+
+- Replace production fallbacks from local fixtures with explicit loading/error
+  states for documents, tags, activity, thesaurus, graph, and notifications.
+  In dev/MSW, fixtures remain acceptable; in prod, stale local data must not
+  look like backend truth.
+- Keep `VITE_FORCE_MSW=true` restricted to standalone demo builds. Production
+  builds without that flag must hit real `/documents` and `/twin/api/*`.
+- Add a runtime assertion that fails loudly when `window.__twinConfig` was not
+  substituted outside dev/MSW demo mode.
+
+### P2 — Persist all operator-visible mutations
+
+- `bulk-delete`: implement the real backend path called by the UI and emit one
+  activity event per deleted doc. The existing MSW handler already proves the
+  frontend journey, but the Python router has no matching route yet.
+- `document metadata`: serve tags, space, review, and classification from
+  DocStatus + tag graph relations, not from WebUI seed data.
+- `graph edit`: either persist entity/relation PATCHes in Memgraph or remove
+  the edit affordance from the prod UI until it is supported.
+- `tag delete migration`: current backend records migration intent, but does
+  not retag affected documents. Either implement the migration/untag cascade or
+  change the UI wording to say only the tag catalog changed.
+
+### P3 — Production auth and integration confidence
+
+- Replace local username/password JWT with real MyAccess/IdP validation:
+  JWKS validation, parent KB access check, allowed spaces derived from claims,
+  and fail-closed behavior.
+- Run CI with a real Memgraph service for Couche 3 backend contracts. The
+  current pytest setup skips integration tests when `MEMGRAPH_URI` is absent,
+  so local green does not prove real persistence.
+- Add one end-to-end smoke against MSW disabled (`VITE_USE_MSW=false`) and a
+  running backend, covering login/auth headers, documents list, retag, bulk
+  delete, and retrieval query.
+
 ## WebUI hardening backlog — 2026-06-03 audit follow-up
 
 The 2026-06-03 async/a11y audit fixed the most urgent regressions:
@@ -228,6 +289,7 @@ Latest frontend validation baseline:
 |---|---|---|
 | WebUI journeys | Visible operator behavior, forms, toasts, refresh, reload persistence | Playwright + MSW |
 | Front/API contract | `window.__twinConfig`, URL bases, headers, cache invalidation | Vitest + Playwright request interception |
+| Route parity contract | Frontend `resources.ts` paths, MSW handlers, and real FastAPI router must match | Python route introspection + Vitest static path audit |
 | Real backend contract | Space isolation, Memgraph stores, classification metadata, auth | `pytest tests/test_server/*` |
 
 ### Priority 0 — stabilize existing e2e
@@ -274,9 +336,16 @@ Playwright cases:
 
 Backend `pytest` cases:
 
+- Route parity: every frontend path in `resources.ts` either exists in the
+  real FastAPI router or is explicitly marked dev/MSW-only. MSW handlers must
+  not be treated as the source of truth.
+- `GET /twin/api/documents/{id}/metadata`
 - `POST /twin/api/documents/{id}/approve`
 - `POST /twin/api/documents/{id}/reject`
 - `POST /twin/api/documents/bulk-delete`
+- `GET /twin/api/health`
+- `PATCH /twin/api/graph/entities/{id}`
+- `PATCH /twin/api/graph/relations/{id}`
 - `POST /twin/api/tags`, approve/reject/edit/synonyms/delete
 - Assert persisted store state per space and emitted activity events.
 
@@ -700,65 +769,76 @@ classification hook active.
 
 ### Files to create / extend
 
+Current state after the 2026-06-04 audit: the server package and most shared
+plumbing already exist. Do not recreate parallel `routes_*` modules unless a
+refactor is intentional; first close the contract gaps in the existing
+`webui_router.py`, `native_shims.py`, stores, and tests.
+
 | File | Action | Why |
 |---|---|---|
-| `src/twindb_lightrag_memgraph/server/__init__.py` | **NEW** | FastAPI sub-app factory `build_twin_overlay(audit_store, classification_hook, ...)` |
-| `src/twindb_lightrag_memgraph/server/routes_documents.py` | **NEW** | `/twin/api/documents/{id}/metadata`, `/approve`, `/reject`, `/bulk-delete` |
-| `src/twindb_lightrag_memgraph/server/routes_tags.py` | **NEW** | `/twin/api/tags` + mutations (proxy to a Memgraph-backed tag store) |
-| `src/twindb_lightrag_memgraph/server/routes_activity.py` | **NEW** | `/twin/api/activity` audit feed (read from `activity` kind in Memgraph) |
-| `src/twindb_lightrag_memgraph/server/routes_workspaces.py` | **NEW** | `/twin/api/workspaces`, `/twin/api/notifications` |
-| `src/twindb_lightrag_memgraph/server/routes_graph.py` | **NEW** | `/twin/api/graph/entities`, `/twin/api/graph/relations` |
-| `src/twindb_lightrag_memgraph/server/routes_auth.py` | **NEW** | `/twin/api/auth/logout` (revoke server-side session + Set-Cookie clear) |
-| `src/twindb_lightrag_memgraph/server/middleware_space.py` | **NEW** | Read `X-Twin-Space` header on every request, scope downstream queries |
-| `src/twindb_lightrag_memgraph/server/middleware_jwt.py` | **NEW** | Decode Keycloak/IdP JWT cookie → set `request.state.user: AuthenticatedUser` |
-| `src/twindb_lightrag_memgraph/server/serve_webui.py` | **NEW** | `GET /webui/` reads `dist/index.html`, substitutes `__TWIN_CONFIG_JSON__` with JSON built from env + JWT claims |
-| `src/twindb_lightrag_memgraph/__init__.py` | **EDIT** | Add `replace_ui: bool`, `mount_server: bool`, `webui_dist_path: str` kwargs to `register()`; wire the sub-app + WebUI mount when set |
-| `tests/test_server/` | **NEW DIRECTORY** | Integration tests against a real Memgraph (`@pytest.mark.integration`) covering each route |
+| `src/twindb_lightrag_memgraph/server/webui_router.py` | **EDIT** | Add missing real routes: `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health`, graph PATCH endpoints; remove seed-only behavior from prod paths where possible |
+| `src/twindb_lightrag_memgraph/server/native_shims.py` | **EDIT** | Keep native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` aligned with React contract and space filtering |
+| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, and future document/graph overlay mutations persist per space in Memgraph |
+| `src/twindb_lightrag_memgraph/server/auth.py` | **EDIT** | Replace local JWT username/password path with MyAccess/IdP/JWKS validation for production mode |
+| `src/twindb_lightrag_memgraph/server/space.py` | **EDIT** | Keep `X-Twin-Space` as canonical and retire `X-Twin-Workspace` only after all callers migrate |
+| `src/twindb_lightrag_memgraph/__init__.py` | **EDIT** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, and direct Twin router mount already exist; keep extending these paths rather than booting a second LightRAG |
+| `tests/test_server/` | **EDIT** | Add real backend contract tests, including route parity and Memgraph persistence. Integration tests remain `@pytest.mark.integration` |
 | `lightrag_webui_twin/index.html` | **VERIFY** | Confirm the `__TWIN_CONFIG_JSON__` placeholder is still in place (already there per `useAuth.ts`) |
-| `lightrag_webui_twin/src/api/client.ts` | **EDIT** | Read `apiBaseUrl` from `window.__twinConfig`; switch off MSW when not `VITE_FORCE_MSW=true` |
-| `lightrag_webui_twin/src/api/resources.ts` | **VERIFY** | The 1:1 endpoint mapping should already match — confirm no path drift |
+| `lightrag_webui_twin/src/api/client.ts` | **VERIFY** | Runtime API bases and `X-Twin-Space` are already wired; add prod error behavior for missing backend/config |
+| `lightrag_webui_twin/src/api/resources.ts` | **VERIFY + TEST** | Treat as the frontend source of expected paths; route parity test must catch path drift |
+| `lightrag_webui_twin/src/App.tsx` | **EDIT** | Remove silent production fallbacks to local fixtures; keep fixtures only for dev/MSW first paint |
 | `pyproject.toml` | **EDIT** | Move `olefile` and `pikepdf` from optional to a new extra `pip install twindb-lightrag-memgraph[classification]` |
 | `README.md` | **EDIT** | New "Couche 3 — Real backend wiring" section linking to this doc |
 
 ### Concrete tasks (ordered)
 
-#### 3.1 — FastAPI sub-app skeleton (4-6h)
+#### 3.1 — FastAPI route parity + missing routes (4-6h)
 
-- [ ] Create `src/twindb_lightrag_memgraph/server/` package with
-      `__init__.py` exposing `build_twin_overlay(...)` factory returning a
-      FastAPI `APIRouter` (NOT a full FastAPI app — we mount it under
-      the LightRAG server).
-- [ ] Implement `routes_documents.py`:
+- [x] Server package, WebUI router, space binding, native shims, direct
+      Twin router mount, and runtime config substitution exist.
+- [ ] Add route parity tests that diff frontend `resources.ts`, MSW handlers,
+      and the actual FastAPI route table. MSW must never be the only
+      implementation of a production path.
+- [ ] Complete document overlay routes in `webui_router.py`:
   - `GET /documents/{id}/metadata` → reads DocStatus from
     `MemgraphDocStatusStorage`, returns `{tags, space, review,
-    classification}` (extract `classification` from
-    `DocStatus.metadata.classification`).
-  - `POST /documents/{id}/approve` body `{actor, edits?}` → updates
-    `review.state = "approved"`, optionally applies `edits` (merge into
-    DocStatus), emits activity event `kind="doc-approved"`.
-  - `POST /documents/{id}/reject` body `{reason, actor}` → updates
-    `review.state = "rejected"` + `review.justification = reason`,
-    emits activity event.
-  - `POST /documents/bulk-delete` body `{doc_ids, actor}` → deletes
-    each + emits one activity per doc.
-- [ ] Implement `routes_tags.py`, `routes_activity.py`,
-      `routes_workspaces.py`, `routes_graph.py`,
-      `routes_auth.py` following the same shape as the MSW handlers in
-      `lightrag_webui_twin/src/mocks/handlers.ts` (path-by-path 1:1).
+    classification}` (classification from `DocStatus.metadata.classification`,
+    tags from `[:TAGGED_WITH]` graph relations).
+  - `POST /documents/bulk-delete` body `{doc_ids, actor}` → deletes each doc
+    via LightRAG, emits one activity per doc, returns `{deleted}`.
+  - `POST /documents/{id}/approve` and `/reject` already exist; harden them
+    with space checks and response shape matching the frontend `Document`
+    contract.
+- [ ] Add Twin overlay health:
+  - `GET /health` under `/twin/api` → reports overlay status and backing store
+    availability separately from native LightRAG `/health`.
+- [ ] Complete graph mutation routes or remove the edit affordance:
+  - `PATCH /graph/entities/{id}`
+  - `PATCH /graph/relations/{id}`
+  - Persist to Memgraph and emit activity, or make GraphTab read-only in prod.
+- [ ] Keep tag/activity/notification routes in `webui_router.py`; do not
+      create duplicate `routes_tags.py` etc. unless the router is intentionally
+      split as a refactor after parity tests are green.
 
 #### 3.2 — Tag + activity + notifications persistence (4h)
 
-The MSW handlers fake these; the real backend needs a place to put
-them. Options:
-- **Simplest**: new Memgraph labels `Twin_Tag`, `Twin_Activity`,
-  `Twin_Notification` (one node per row, JSON `data` property).
-  Reuses the existing `_pool.get_driver()` pattern from KV/Vector.
-- **Alternative**: a tiny SQLite alongside Memgraph for these.
-  Lower latency for the audit feed but adds a moving part.
+Current state:
 
-Go with Memgraph labels — keeps the "one DB, three pools" story
-intact and the audit feed query is a simple `MATCH (n:Twin_Activity)
-WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
+- [x] Tags, activity, and notifications have in-memory and Memgraph-backed
+      stores.
+- [x] `register(..., mount_server=True, webui_stores="memgraph")` wires those
+      stores per configured Twin space during lifespan startup.
+- [x] Tag mutations emit synthesized activity and notification events.
+
+Still to do:
+
+- [ ] Add backend tests proving a fresh Memgraph-backed space boots without
+      demo tags/activity/notifications unless explicit seed/bootstrap is
+      requested.
+- [ ] Add retention/sweep strategy for activity and notifications.
+- [ ] Extend persistence beyond tags/activity/notifications where the UI
+      currently reads seed-only surfaces: graph entities/relations, thesaurus
+      if it becomes operator-editable, and document overlay metadata.
 
 #### 3.3 — JWT middleware + space scoping (3h)
 
@@ -782,9 +862,15 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 
 #### 3.4 — index.html substitution + WebUI mount (2h)
 
-- [ ] `serve_webui.py`: read `lightrag_webui_twin/dist/index.html` once
-      at startup, cache it as a template, substitute
-      `__TWIN_CONFIG_JSON__` per-request with:
+- [x] `register(replace_ui=True)` can replace the native `/webui` mount with
+      the React `dist/` and substitute `__TWIN_CONFIG_JSON__`.
+- [x] Root `/assets`, favicon/icons, and `mockServiceWorker.js` side mounts are
+      handled so a Vite build with absolute asset paths can run under
+      `/webui/`.
+- [ ] Verify production config generation does not ship a wide-open
+      `debugUser`; debug identity must remain dev/local only once MyAccess is
+      wired.
+- [ ] Keep the runtime config shape aligned with:
       ```python
       json.dumps({
         "apiBaseUrl": "/twin/api",
@@ -796,11 +882,9 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
         "debugUser": None,  # PROD: no debug user, real JWT decoded server-side
       })
       ```
-      Return `HTMLResponse(substituted_html)`.
-- [ ] Mount under `/webui/` via `app.mount("/webui", ...)` — also serve
-      the `dist/assets/*` and `dist/mockServiceWorker.js` (latter only
-      relevant for OVH standalone; PROD won't load it because
-      `VITE_FORCE_MSW` is unset).
+- [ ] Add a smoke test that starts the patched LightRAG app, fetches
+      `/webui/`, and asserts the placeholder is gone and `apiBaseUrl` points
+      to `/twin/api`.
 
 #### 3.5 — Classification hook integration (1h)
 
@@ -825,13 +909,40 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 - [x] `useAuth.signout()` is already wired correctly (POST
       `/twin/api/auth/logout` → `queryClient.clear()` → redirect IdP).
       Confirm the IdP URL is read from `window.__twinConfig.idpLogoutUrl`.
+- [ ] Remove silent production fallbacks from `App.tsx`:
+  - `DOCUMENT_FIXTURES`
+  - `TAG_FIXTURES`
+  - `TAG_CATEGORY_FIXTURES`
+  - `ACTIVITY_FIXTURES`
+  - `GRAPH_ENTITY_FIXTURES`
+  - `GRAPH_RELATION_FIXTURES`
+  - `THESAURUS_FIXTURES`
+  - `NOTIFICATION_FIXTURES`
+  Dev/MSW can keep fixture first paint, but prod must show loading/error when
+  the backend is unavailable.
+- [ ] Retrieval should stop displaying fixture answer sources in real mode.
+      Until structured source extraction lands, show the backend response with
+      an honest empty/unknown sources state.
 
 #### 3.7 — Integration tests (3h)
 
-- [ ] Create `tests/test_server/` package.
+- [x] `tests/test_server/` package exists.
+- [ ] Add `test_route_parity.py`: inspect FastAPI routes from the patched app,
+      compare against `resources.ts` production paths, and flag any route that
+      exists only in MSW.
 - [ ] `test_metadata_endpoint.py`: insert a doc with structured
       `metadata.classification`, GET `/twin/api/documents/{id}/metadata`,
       assert the classification is in the response.
+- [ ] `test_bulk_delete_endpoint.py`: insert N docs, POST
+      `/twin/api/documents/bulk-delete`, assert docs disappear from
+      `/documents`, chunks are not retrievable, and activity events are
+      written.
+- [ ] `test_graph_patch_endpoints.py`: PATCH graph entity/relation metadata,
+      assert the update persists in Memgraph and activity is emitted, or assert
+      the prod UI does not expose graph editing if the endpoints remain absent.
+- [ ] `test_twin_health_endpoint.py`: assert `/twin/api/health` reports overlay
+      store status and fails/degrades when Memgraph-backed stores cannot
+      initialize.
 - [ ] `test_classification_rejection.py`: ingest a synthetic .docx
       tagged C3 with `TWIN_MIP_MAX_CLASSIFICATION=C2`, assert the
       DocStatus is `FAILED` with the expected `error_msg`, and an
@@ -845,6 +956,8 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 - [ ] Add the new tests to the `integration-tests` job in
       `.forgejo/workflows/ci.yml` (already includes a Memgraph service
       container).
+- [ ] Add one real-backend WebUI smoke with MSW disabled
+      (`VITE_USE_MSW=false`) against a running FastAPI app.
 
 #### 3.8 — Deployment (2h)
 
@@ -878,7 +991,7 @@ WHERE n.space = $space RETURN n ORDER BY n.ts DESC LIMIT $limit`.
 ### Sequencing recommendation
 
 ```
-3.1 sub-app skeleton (4-6h) ─┬─→ 3.5 classification hook (1h) ─┐
+3.1 route parity + missing routes (4-6h) ─┬─→ 3.5 classification hook (1h) ─┐
                              │                                  │
 3.2 persistence (4h) ────────┤                                  │
                              │                                  ├─→ 3.8 deploy (2h)

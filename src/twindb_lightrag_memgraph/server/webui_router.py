@@ -901,13 +901,54 @@ async def get_openapi_groups() -> dict[str, Any]:
     return {"groups": groups, "version": version}
 
 
+def _graph_memgraph_label() -> str:
+    """Resolve the Cypher label LightRAG uses for entity nodes.
+
+    Until per-space isolation lands at the LightRAG layer (one
+    workspace per Twin space), the KG view is globally scoped to the
+    single LightRAG workspace configured by the deploy (env var
+    `MEMGRAPH_WORKSPACE` / `WORKSPACE`). The Twin space catalog still
+    drives UX (default vs sandbox) but the underlying graph is shared.
+    """
+    from .._constants import resolve_workspace
+
+    return resolve_workspace()
+
+
 @router.get("/graph/entities", response_model=list[GraphEntity])
 async def list_graph_entities() -> list[dict[str, Any]]:
+    """Return the live Memgraph-backed entities for the deployed KB.
+
+    Falls back to the in-memory seed when Memgraph is unreachable or
+    contains no nodes yet (typical pre-ingestion). The fallback keeps
+    demo / dev / standalone OVH paths working without a backend.
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    entities = await graph_reader.read_graph_entities(label)
+    if entities:
+        return entities
     return get_store().list_graph_entities()
 
 
 @router.get("/graph/relations", response_model=list[GraphRelation])
 async def list_graph_relations() -> list[dict[str, Any]]:
+    """Return the live Memgraph-backed relations for the deployed KB.
+
+    Same fallback policy as `/graph/entities`. Relations are filtered to
+    endpoints that survived the entity read so a truncated node set
+    doesn't show dangling edges.
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    entities = await graph_reader.read_graph_entities(label)
+    if entities:
+        valid_ids = [e["id"] for e in entities]
+        return await graph_reader.read_graph_relations(
+            label, valid_node_ids=valid_ids
+        )
     return get_store().list_graph_relations()
 
 
