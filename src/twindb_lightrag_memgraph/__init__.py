@@ -46,6 +46,9 @@ def register(
     mount_server: bool = False,
     shim_native_routes: bool = False,
     security_baseline: bool = True,
+    classify: bool | None = None,
+    classification_label_map_path: str | None = None,
+    classification_ceiling: str | None = None,
     webui_dist: str | None = None,
     twin_api_prefix: str = "/twin/api",
     webui_stores: str = "seed",
@@ -108,6 +111,13 @@ def register(
             ``check_and_install_dependencies`` call in ``lightrag_server``.
             Cf. audit Prisme G §1 — required for BNP production deployment.
             Disable only in dev environments where you accept runtime pip calls.
+        classify: Enable the pre-ingestion MIP classification hook. ``None``
+            means auto-enable only when ``TWIN_MIP_LABEL_MAP`` is configured.
+            ``True`` forces the hook on; ``False`` disables it.
+        classification_label_map_path: Optional JSON label map path passed to
+            the classifier. Defaults to ``TWIN_MIP_LABEL_MAP``.
+        classification_ceiling: Optional max class accepted at ingest.
+            Defaults to ``TWIN_MIP_MAX_CLASSIFICATION`` then ``"C2"``.
         webui_dist: Optional explicit path to the WebUI fork's ``dist/``.
             When ``None`` and ``replace_ui=True``, falls back to
             ``<package>/webui_dist`` (set up by ``scripts/build_webui.sh``).
@@ -167,6 +177,20 @@ def register(
 
     # 6. Post-indexation hook on LightRAG._insert_done
     _patch_insert_done()
+
+    # 6b. Optional MIP pre-ingestion classification gate.
+    import os
+
+    classify_enabled = (
+        bool(os.environ.get("TWIN_MIP_LABEL_MAP")) if classify is None else classify
+    )
+    if classify_enabled:
+        from ._classification_hook import install_lightrag_ingestion_hook
+
+        install_lightrag_ingestion_hook(
+            label_map_path=classification_label_map_path,
+            ceiling=classification_ceiling,
+        )
 
     # 7. Append our version to lightrag.__version__ so the WebUI displays it
     #    next to the LightRAG version string in the top-right corner.
@@ -1130,9 +1154,12 @@ def _build_runtime_config() -> dict[str, object]:
 
     Shape mirrors ``lightrag_webui_twin/src/types/auth.ts:TwinRuntimeConfig``.
 
-    Until Couche 3 §3.3 lands (real JWT decoding from the BNP IdP cookie),
-    we ship a ``debugUser`` with a wide-open palier so the operator console
-    is usable against a local LightRAG without standing up Keycloak.
+    When the IdP middleware is configured (``TWIN_IDP_JWKS_URL`` set), the
+    ``debugUser`` shim is omitted — the React port then requires a real
+    server-validated user instead of falling back to a wide-open dev
+    identity. Without the JWKS URL, ``debugUser`` is emitted so the
+    operator console stays usable against a local LightRAG without
+    standing up Keycloak.
 
     Override per-deploy via env vars (read late so a single ``register()``
     call can re-render against a different identity without re-importing).
@@ -1140,6 +1167,9 @@ def _build_runtime_config() -> dict[str, object]:
     import os
 
     from ._spaces import build_runtime_space_config, load_space_catalog
+    from .server.idp_jwt import IdpConfig as _IdpConfig
+
+    _idp_active = _IdpConfig.from_env() is not None
 
     api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
@@ -1172,13 +1202,18 @@ def _build_runtime_config() -> dict[str, object]:
             "admin:workspace",
         ],
     }
-    return {
+    config: dict[str, object] = {
         "apiBaseUrl": api_base,
         "lightragBaseUrl": lightrag_base,
         "idpLogoutUrl": idp_logout,
         **runtime_space_config,
-        "debugUser": debug_user,
     }
+    # debugUser is the dev escape hatch. When the IdP middleware is
+    # active (TWIN_IDP_JWKS_URL set) we strip it so the React port
+    # cannot silently fall back to a wide-open identity in production.
+    if not _idp_active:
+        config["debugUser"] = debug_user
+    return config
 
 
 def _replace_webui_mount(app, webui_dist: str) -> None:
@@ -1364,6 +1399,7 @@ def _mount_twin_subapp(
     from fastapi import Depends
 
     from .server.auth import configure_auth, require_auth
+    from .server.idp_jwt import IdpConfig as _IdpConfig, configure_idp
 
     def _arg_value(*names: str):
         if auth_args is None:
@@ -1390,6 +1426,10 @@ def _mount_twin_subapp(
         jwt_password=_arg_value("jwt_password", "lightrag_jwt_password")
         or os.environ.get("LIGHTRAG_JWT_PASSWORD", "changeme"),
     )
+
+    # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in
+    # the env. Idempotent: dormant when no URL is configured.
+    configure_idp(_IdpConfig.from_env())
 
     try:
         from .server.webui_router import (

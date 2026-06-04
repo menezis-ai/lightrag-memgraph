@@ -151,8 +151,8 @@ Commits in the local M12 stack:
 | `4a0b53e` | batch 3 frontend — Add entity + Delete entity/relation |
 | `7da28d3` | batch 3 frontend — Add relation form |
 
-Remaining P0 focus after M12: document metadata, bulk delete, Twin overlay
-health, route parity, production fixture fallbacks, and real auth.
+Remaining P0 focus after M12 + route closure: production fixture fallbacks,
+real auth, and hardening approve/reject space checks.
 
 ### Update 2026-06-04 — Admin Space CRUD backend
 
@@ -179,19 +179,20 @@ gating.
   - `lightrag_webui_twin/src/api/resources.ts` expected paths,
   - `lightrag_webui_twin/src/mocks/handlers.ts` MSW paths,
   - actual FastAPI routes from `webui_router` + `native_shims`.
-  Current implementation: `tests/test_server/test_route_parity.py`, with a
-  short `KNOWN_BACKEND_GAPS` allow-list for the three documented Couche 3
-  holes.
+  Current implementation: `tests/test_server/test_route_parity.py`; the
+  previous `KNOWN_BACKEND_GAPS` allow-list is now empty.
 - **Done — MSW `/query` drift fixed.** The parity test caught that
   `resources.ts` called `POST /query` without an MSW handler; the handler now
   returns a minimal `{response}` payload.
-- Implement or deliberately remove these frontend/MSW-only routes:
+- **Done — Close the remaining frontend/MSW-only backend routes:**
   - `GET /twin/api/documents/{id}/metadata`
   - `POST /twin/api/documents/bulk-delete`
   - `GET /twin/api/health`
-- Add backend contract tests for those routes before expanding Playwright
-  coverage. Current Playwright/MSW success is not enough because it can mask
-  real-backend `404`/`405` failures.
+- **Done — Add backend contract tests for those routes** before expanding
+  Playwright coverage:
+  - `tests/test_server/test_metadata_endpoint.py`
+  - `tests/test_server/test_bulk_delete_endpoint.py`
+  - `tests/test_server/test_twin_health_endpoint.py`
 
 ### P1 — Remove silent fixture fallbacks in production
 
@@ -206,11 +207,11 @@ gating.
 
 ### P2 — Persist all operator-visible mutations
 
-- `bulk-delete`: implement the real backend path called by the UI and emit one
-  activity event per deleted doc. The existing MSW handler already proves the
-  frontend journey, but the Python router has no matching route yet.
-- `document metadata`: serve tags, space, review, and classification from
-  DocStatus + tag graph relations, not from WebUI seed data.
+- `bulk-delete`: done for the real backend path called by the UI; it deletes
+  existing in-space docs through LightRAG and emits one activity event per
+  deleted doc.
+- `document metadata`: done for tags, space, review, and classification from
+  DocStatus, with best-effort `[:TAGGED_WITH]` graph tags when available.
 - `graph lifecycle`: done in M12 for read/write/create/delete against Memgraph.
   Keep it covered by route parity + regression tests.
 - `tag delete migration`: current backend records migration intent, but does
@@ -847,7 +848,7 @@ refactor is intentional; first close the contract gaps in the existing
 
 | File | Action | Why |
 |---|---|---|
-| `src/twindb_lightrag_memgraph/server/webui_router.py` | **EDIT** | Add missing real routes: `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health`; Graph GET/PATCH/POST/DELETE lifecycle is M12-complete and should stay covered |
+| `src/twindb_lightrag_memgraph/server/webui_router.py` | **DONE + HARDEN** | Missing real routes `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health` are implemented; remaining hardening is approve/reject space checks |
 | `src/twindb_lightrag_memgraph/server/space_store.py` | **DONE** | Runtime CRUD catalog for non-env-seeded spaces, with optional atomic JSON persistence via `TWIN_SPACES_RUNTIME_FILE` |
 | `src/twindb_lightrag_memgraph/server/native_shims.py` | **EDIT** | Keep native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` aligned with React contract and space filtering |
 | `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, document overlay metadata, and graph lifecycle mutations persist per space in Memgraph |
@@ -871,17 +872,16 @@ refactor is intentional; first close the contract gaps in the existing
 - [x] Add route parity tests that diff frontend `resources.ts`, MSW handlers,
       and the actual FastAPI route table. MSW must never be the only
       implementation of a production path.
-- [ ] Complete document overlay routes in `webui_router.py`:
+- [x] Complete document overlay routes in `webui_router.py`:
   - `GET /documents/{id}/metadata` → reads DocStatus from
     `MemgraphDocStatusStorage`, returns `{tags, space, review,
     classification}` (classification from `DocStatus.metadata.classification`,
     tags from `[:TAGGED_WITH]` graph relations).
   - `POST /documents/bulk-delete` body `{doc_ids, actor}` → deletes each doc
     via LightRAG, emits one activity per doc, returns `{deleted}`.
-  - `POST /documents/{id}/approve` and `/reject` already exist; harden them
-    with space checks and response shape matching the frontend `Document`
-    contract.
-- [ ] Add Twin overlay health:
+  - Remaining hardening: `POST /documents/{id}/approve` and `/reject` already
+    exist, but should gain explicit space checks and response-shape tests.
+- [x] Add Twin overlay health:
   - `GET /health` under `/twin/api` → reports overlay status and backing store
     availability separately from native LightRAG `/health`.
 - [x] Complete graph lifecycle routes:
@@ -922,13 +922,27 @@ Still to do:
 
 #### 3.3 — JWT middleware + space scoping (3h)
 
-- [ ] `middleware_jwt.py`: decode the BNP IdP / Keycloak JWT from
-      cookie (HttpOnly, SameSite=Lax). Validate signature against the
-      IdP's JWKS. On valid token: set `request.state.user =
-      AuthenticatedUser(...)` matching the TS type.
-      Failure modes: missing cookie → 401, expired → 401 with
-      `WWW-Authenticate: Bearer error="expired"`, signature mismatch
-      → 401.
+- [x] `server/idp_jwt.py` lands the IdP middleware: extracts the JWT
+      from the configured HttpOnly cookie (default `twin_idp_token`)
+      or `Authorization: Bearer …`, verifies the signature against
+      the IdP JWKS (TTL-bounded in-process cache), validates the
+      standard registered claims (`iss`, `aud`, `exp`), and projects
+      the verified claim set into the `AuthenticatedUser` shape the
+      React port consumes. Failure modes match the doctrine: missing
+      cookie → 401 `error="missing_token"`; expired → 401
+      `error="expired"`; signature mismatch / wrong audience / wrong
+      issuer → 401 `error="invalid_token"` with a discriminating
+      `error_description`. Claim names are fully env-configurable
+      (`TWIN_IDP_CLAIM_*`) plus a JSON group→palier map so Louis can
+      wire BNP-specific claims without touching code. Wired into
+      `auth.require_auth` so an IdP cookie is authoritative — a stale
+      static key cannot shadow a refused session. `register()` calls
+      `configure_idp(IdpConfig.from_env())` at startup; setting
+      `TWIN_IDP_JWKS_URL` activates the middleware and also strips
+      `debugUser` from the runtime config so the React port loses its
+      dev escape hatch in production. Covered by
+      `tests/test_server/test_idp_jwt.py` (32 tests against an
+      in-test RSA keypair).
 - [x] Frontend side: `apiFetch` sets `X-Twin-Space` on every request
       from the active runtime-configured space. It also sends
       `X-Twin-Workspace` temporarily for old route code.
@@ -947,9 +961,12 @@ Still to do:
 - [x] Root `/assets`, favicon/icons, and `mockServiceWorker.js` side mounts are
       handled so a Vite build with absolute asset paths can run under
       `/webui/`.
-- [ ] Verify production config generation does not ship a wide-open
-      `debugUser`; debug identity must remain dev/local only once MyAccess is
-      wired.
+- [x] `_build_runtime_config()` strips the `debugUser` shim whenever
+      `IdpConfig.from_env()` returns a config (i.e. `TWIN_IDP_JWKS_URL`
+      is set). Production deploys with the IdP middleware active
+      cannot serve a wide-open debug identity through `window.__twinConfig`.
+      Regression covered by
+      `test_idp_jwt.py::TestRuntimeConfigDebugUserStripped`.
 - [ ] Keep the runtime config shape aligned with:
       ```python
       json.dumps({
@@ -968,11 +985,10 @@ Still to do:
 
 #### 3.5 — Classification hook integration (1h)
 
-- [ ] In the FastAPI startup (`@app.on_event("startup")` or lifespan),
-      call `install_classification_hook(label_map_path,
-      ceiling=os.environ.get("TWIN_MIP_MAX_CLASSIFICATION", "C2"),
-      audit_emit=emit_to_memgraph_activity)`.
-- [ ] Patch LightRAG's `insert()` call site to run the hook BEFORE
+- [x] `register(classify=True)` / auto-enable via `TWIN_MIP_LABEL_MAP`
+      installs the LightRAG pre-ingestion hook with
+      `TWIN_MIP_MAX_CLASSIFICATION` as the default ceiling.
+- [x] Patch LightRAG's `insert()`/`ainsert()` call path to run the hook BEFORE
       passing the file to LightRAG. On `ClassificationRejection`, mark
       the DocStatus `status="FAILED"` + `error_msg=str(exc)` instead of
       ingesting.
@@ -1010,29 +1026,34 @@ Still to do:
 - [x] Add `test_route_parity.py`: inspect FastAPI routes from the patched app,
       compare against `resources.ts` production paths, and flag any route that
       exists only in MSW.
-- [ ] `test_metadata_endpoint.py`: insert a doc with structured
+- [x] `test_metadata_endpoint.py`: insert a doc with structured
       `metadata.classification`, GET `/twin/api/documents/{id}/metadata`,
       assert the classification is in the response.
-- [ ] `test_bulk_delete_endpoint.py`: insert N docs, POST
+- [x] `test_bulk_delete_endpoint.py`: insert N docs, POST
       `/twin/api/documents/bulk-delete`, assert docs disappear from
       `/documents`, chunks are not retrievable, and activity events are
       written.
 - [x] Graph backend/frontend regression coverage: M12 reports real Memgraph
       GET/PATCH/POST/DELETE lifecycle covered in the `634/634` pytest and
       `364/364` vitest baseline.
-- [ ] `test_twin_health_endpoint.py`: assert `/twin/api/health` reports overlay
+- [x] `test_twin_health_endpoint.py`: assert `/twin/api/health` reports overlay
       store status and fails/degrades when Memgraph-backed stores cannot
       initialize.
-- [ ] `test_classification_rejection.py`: ingest a synthetic .docx
+- [x] `test_classification_rejection.py`: ingest a synthetic .docx
       tagged C3 with `TWIN_MIP_MAX_CLASSIFICATION=C2`, assert the
       DocStatus is `FAILED` with the expected `error_msg`, and an
       activity event of kind `classification-rejected` exists.
 - [ ] `test_space_scoping.py`: insert docs in spaces `default` and
       `sandbox`, GET `/documents` with `X-Twin-Space: default`, assert
       only `default` docs returned.
-- [ ] `test_jwt_middleware.py`: GET `/twin/api/workspaces` without
-      cookie → 401; with a valid JWT for a user allowed on the parent
-      KB → 200 with the configured space list.
+- [x] `test_idp_jwt.py`: cookie + bearer extraction priority, full
+      claim mapping, palier resolution, JWKS cache TTL, every 401
+      failure mode (`missing_token`, `expired`, `invalid_token` for
+      wrong audience / wrong issuer / signature mismatch), and the
+      auth integration that ensures a stale `LIGHTRAG_API_KEY` cannot
+      shadow a refused IdP cookie. `test_runtime_config_debug_user`
+      asserts the `debugUser` shim is stripped when the middleware
+      activates. Filed under `tests/test_server/test_idp_jwt.py`.
 - [ ] Add the new tests to the `integration-tests` job in
       `.forgejo/workflows/ci.yml` (already includes a Memgraph service
       container).

@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -115,14 +115,61 @@ def _decode_jwt(token: str) -> dict[str, Any]:
 
 
 async def require_auth(
+    request: Request = None,  # type: ignore[assignment]
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
 ) -> str | None:
-    """FastAPI dependency: validate Bearer token (static key or JWT).
+    """FastAPI dependency: validate auth (IdP JWT cookie, static key, or
+    legacy local JWT).
 
-    Returns the authenticated identity (username or "api_key") or None
-    if auth is disabled.
+    Resolution order:
+      1. IdP JWT — when ``TWIN_IDP_JWKS_URL`` is configured. Token may
+         come from the configured HttpOnly cookie or the ``Authorization``
+         header. Returns the verified ``sso_subject``.
+      2. Static API key (``LIGHTRAG_API_KEY``) carried via Authorization.
+      3. Legacy local JWT (``LIGHTRAG_JWT_SECRET``) carried via
+         Authorization — kept for the CFT agent until it migrates to the
+         IdP.
+
+    Returns the authenticated identity (username, sso_subject, or
+    ``"api_key"``) or ``None`` if no auth path is configured.
     """
+    from . import idp_jwt
+
+    # 1. IdP JWT (Couche 3 §3.3) — active when JWKS URL is set.
+    #
+    # An IdP-shaped cookie is treated as authoritative: present →
+    # verify or 401. We deliberately do NOT silently fall through to
+    # the legacy paths when an IdP cookie is rejected, so a stale
+    # static key can't shadow a refused session.
+    #
+    # An ``Authorization: Bearer`` header with a JWT-shaped value also
+    # routes through IdP verification. Non-JWT bearer values (e.g. the
+    # ``LIGHTRAG_API_KEY`` literal carried by the CFT agent) are left
+    # for the legacy branches below.
+    idp_config = idp_jwt.get_active_config()
+    if idp_config is not None and request is not None:
+        cookie_token = request.cookies.get(idp_config.cookie_name)
+        if cookie_token:
+            user = idp_jwt.require_idp_user(request)
+            if user is not None:
+                return user.get("sso_subject") or user.get("sub") or "idp_user"
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            bearer = auth_header.split(" ", 1)[1].strip()
+            # JWTs always carry exactly two ``.`` separators (header,
+            # payload, signature). Anything else is treated as a
+            # legacy bearer and falls through.
+            if bearer.count(".") == 2:
+                user = idp_jwt.require_idp_user(request)
+                if user is not None:
+                    return user.get("sso_subject") or user.get("sub") or "idp_user"
+
     if not _auth_enabled:
+        # IdP is the only auth source: when it's not active and no
+        # legacy mode is configured either, we let the request through
+        # to preserve the v1.0.x storage-only behaviour. The
+        # ``TWIN_IDP_JWKS_URL`` setting is the explicit opt-in for
+        # production gating.
         return None
 
     if credentials is None:
@@ -134,11 +181,11 @@ async def require_auth(
 
     token = credentials.credentials
 
-    # 1. Try static API key
+    # 2. Static API key
     if _static_api_key and token == _static_api_key:
         return "api_key"
 
-    # 2. Try JWT
+    # 3. Legacy local JWT
     if _jwt_secret:
         payload = _decode_jwt(token)
         return payload.get("sub", "unknown")
