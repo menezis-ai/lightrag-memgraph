@@ -1429,7 +1429,26 @@ def _mount_twin_subapp(
 
     # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in
     # the env. Idempotent: dormant when no URL is configured.
-    configure_idp(_IdpConfig.from_env())
+    _idp_cfg = _IdpConfig.from_env()
+    configure_idp(_idp_cfg)
+
+    # Mock-kill safeguard (mandate Fabrice 2026-06-01 — "je ne veux
+    # plus de moquer"): if the operator activates an IdP (a strong
+    # signal that this is a real deployment, not OVH standalone),
+    # warn loudly when ``webui_stores`` is still the demo "seed"
+    # backend. The visible Twin overlay (tags / activity /
+    # notifications / documents) would otherwise be in-memory fixtures
+    # that look like real production data until the first restart
+    # erases them.
+    if _idp_cfg is not None and webui_stores == "seed":
+        logger.warning(
+            "twindb: DEMO STORES IN PROD — webui_stores='seed' with "
+            "active IdP (%s). Tags, activity, notifications, documents, "
+            "and graph entities are in-memory fixtures and WILL NOT "
+            "survive a restart. Pass webui_stores='memgraph' on the "
+            "deployment runbook before going live.",
+            _idp_cfg.idp_name,
+        )
 
     try:
         from .server.webui_router import (
@@ -1554,7 +1573,7 @@ def _mount_twin_subapp(
                     notif_store = MemgraphNotificationStore(workspace=space.id)
                     await notif_store.initialize()
 
-                    store = WebuiStore.for_space(space.id)
+                    store = WebuiStore.for_space(space.id, mode="memgraph")
                     store._tag_backend = tag_store
                     store._activity_backend = activity_store
                     store._notification_backend = notif_store

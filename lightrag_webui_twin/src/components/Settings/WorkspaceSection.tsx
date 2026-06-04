@@ -1,27 +1,43 @@
 /**
  * Settings → Space section.
  *
- * Read-only view of the active Twin space identity (id / display name / visibility /
- * region) and the retention policy table. Values are env-controlled at Helm
- * install time — the env-badge makes this explicit so an operator doesn't
- * waste a click looking for an "Edit" button.
+ * Read-only view of the active Twin space identity (id + display name).
+ * Both values come from props (the AppShell already resolves them from
+ * the runtime config + active-space state); we avoid duplicating that
+ * resolution here.
  *
- * Retention table covers the 6 retention areas (Source mgmt / Tag mgmt /
- * Retrieval / Admin / Auth / Policy·System) the BNP doctrine demands. TTLs
- * align with the `twin-cib-retention-v2.1` policy.
+ * Historical note: this section used to render hardcoded
+ * visibility / region / retention TTL cards from
+ * `fixtures/settings.ts`. They were removed 2026-06-04 as part of the
+ * mock-kill audit (Fabrice 2026-06-01 — "je ne veux plus de moquer")
+ * because the backend doesn't expose those fields and the displayed
+ * values were inventions (`eu-west-3 · dc-paris`,
+ * `twin-default-space-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).
+ * They risked being read as a compliance commitment.
+ * See `docs/audits/webui-fork/mock-kill-audit-2026-06-04.md` finding F1.
  */
 
-import { WORKSPACE_SETTINGS } from '../../fixtures/settings';
 import { Icon } from '../Icon';
 
-export function WorkspaceSection() {
-  const ws = WORKSPACE_SETTINGS;
+export interface WorkspaceSectionProps {
+  /** Active Twin space id — comes from AppShell state, kept in sync with
+   *  `setActiveSpace()` in `api/client.ts`. */
+  activeSpaceId: string;
+  /** Display name of the active space — derived from the runtime config
+   *  catalog at the AppShell level. */
+  displayName: string;
+}
+
+export function WorkspaceSection({
+  activeSpaceId,
+  displayName,
+}: WorkspaceSectionProps) {
   return (
     <div className="settings-section" data-testid="settings-workspace">
       <h3>Space</h3>
       <p className="muted">
-        Configuration for space {ws.workspace_id}. Some values are set at
-        Helm install time and cannot be changed at runtime.
+        Configuration for space {activeSpaceId}. Identity is set at
+        deployment time and cannot be changed from the UI.
       </p>
 
       <div className="set-card">
@@ -34,49 +50,13 @@ export function WorkspaceSection() {
         <dl className="set-dl">
           <dt>Space ID</dt>
           <dd className="mono" data-testid="settings-active-ws">
-            {ws.workspace_id}
+            {activeSpaceId}
           </dd>
           <dt>Display name</dt>
-          <dd>{ws.display_name}</dd>
-          <dt>Visibility</dt>
-          <dd className="mono">
-            {ws.visibility}{' '}
-            <span className="muted">({ws.visibility_env})</span>
+          <dd data-testid="settings-space-display-name">
+            {displayName || <span className="muted">(unset)</span>}
           </dd>
-          <dt>Region</dt>
-          <dd className="mono">{ws.region}</dd>
         </dl>
-      </div>
-
-      <div className="set-card">
-        <div className="set-card-h">
-          Retention policy{' '}
-          <span className="env-badge">
-            <Icon name="lock" size={10} /> env-controlled
-          </span>
-        </div>
-        <table className="retention-table">
-          <thead>
-            <tr>
-              <th>Area</th>
-              <th>TTL</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ws.retention.map((r) => (
-              <tr key={r.area}>
-                <td>{r.area}</td>
-                <td className="mono">{r.ttl}</td>
-                <td className="muted">{r.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="retention-foot">
-          Aligned with policy <code>{ws.retention_policy}</code>. Override
-          requires a Tier-1 governance ticket.
-        </div>
       </div>
     </div>
   );

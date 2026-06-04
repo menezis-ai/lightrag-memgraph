@@ -19,19 +19,20 @@ import {
   type MockResponse,
   type OpenApiEndpoint,
   type OpenApiGroup,
-  type OpenApiServer,
 } from '../types/api';
 
 export interface ApiTabProps {
   apiVersion: string;
   groups: readonly OpenApiGroup[];
-  servers: readonly OpenApiServer[];
-  baseUrl: Record<string, string>;
+  /** Origin used in the curl preview. Defaults to the current browser
+   *  origin — the previous prod/stg dropdown was removed as part of
+   *  mock-kill F2 because the displayed hostnames (`cib-kb.twin.internal`)
+   *  didn't exist. */
+  baseUrl: string;
 }
 
-export function ApiTab({ apiVersion, groups, servers, baseUrl }: ApiTabProps) {
+export function ApiTab({ apiVersion, groups, baseUrl }: ApiTabProps) {
   const [filter, setFilter] = useState('');
-  const [server, setServer] = useState(servers[0]?.id ?? '');
   const [authOpen, setAuthOpen] = useState(false);
   const [token, setToken] = useState('');
   const norm = filter.trim().toLowerCase();
@@ -49,7 +50,7 @@ export function ApiTab({ apiVersion, groups, servers, baseUrl }: ApiTabProps) {
     }))
     .filter((g) => g.endpoints.length);
 
-  const currentBase = baseUrl[server] ?? '';
+  const currentBase = baseUrl;
 
   return (
     <div className="swagger">
@@ -75,18 +76,9 @@ export function ApiTab({ apiVersion, groups, servers, baseUrl }: ApiTabProps) {
           </span>
         </div>
         <div className="swagger-servers">
-          <label htmlFor="swagger-server-select">Servers</label>
-          <select
-            id="swagger-server-select"
-            value={server}
-            onChange={(e) => setServer(e.target.value)}
-          >
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+          <span className="swagger-server-current">
+            <Icon name="world" size={12} /> {currentBase || '(no server)'}
+          </span>
           <button
             className={'swagger-auth' + (token ? ' is-on' : '')}
             onClick={() => setAuthOpen(true)}
@@ -219,14 +211,47 @@ function EndpointRow({ ep, secured, token, baseUrl }: EndpointRowProps) {
   const [resp, setResp] = useState<MockResponse | null>(null);
   const [running, setRunning] = useState(false);
 
-  const execute = () => {
+  const execute = async () => {
     setRunning(true);
     setResp(null);
-    setTimeout(() => {
-      const unauth = secured && !token;
+    const start =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (ep.m !== 'GET') headers['Content-Type'] = 'application/json';
+      const r = await fetch(baseUrl + ep.p, {
+        method: ep.m,
+        headers,
+        body: ep.m !== 'GET' ? reqBody : undefined,
+      });
+      const text = await r.text();
+      const tookMs = Math.round(
+        (typeof performance !== 'undefined'
+          ? performance.now()
+          : Date.now()) - start,
+      );
+      setResp({
+        status: r.status,
+        statusText: r.statusText || (r.ok ? 'OK' : 'Error'),
+        tookMs,
+        body: tryPrettyJson(text),
+      });
+    } catch (err) {
+      const tookMs = Math.round(
+        (typeof performance !== 'undefined'
+          ? performance.now()
+          : Date.now()) - start,
+      );
+      setResp({
+        status: 0,
+        statusText: 'Network error',
+        tookMs,
+        body: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
       setRunning(false);
-      setResp(unauth ? mockUnauthorized(ep) : mockResponseFor(ep, reqBody));
-    }, 480);
+    }
   };
   const reset = () => {
     setReqBody(requestBodyFor(ep));
@@ -621,7 +646,19 @@ export function curlFor(
   return lines.join('\n');
 }
 
-/** Mock 401 response. Exported for testing. */
+/** Best-effort prettify of a response body. Returns the raw string if
+ *  it doesn't parse as JSON (HTML errors, plain text, etc.). */
+function tryPrettyJson(text: string): string {
+  if (!text) return '';
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+/** @deprecated kept for `ApiTab.test.tsx` legacy coverage of the mock
+ *  request-body templates. The component now uses real `fetch` (mock-kill F2). */
 // eslint-disable-next-line react-refresh/only-export-components
 export function mockUnauthorized(ep: OpenApiEndpoint): MockResponse {
   void ep;

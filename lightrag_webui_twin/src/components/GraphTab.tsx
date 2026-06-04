@@ -26,10 +26,14 @@ import {
   type GraphRelation,
   type GraphRelationPatch,
 } from '../types/graph';
-import {
-  GRAPH_ENTITY_DOCS,
-  GRAPH_ENTITY_TAGS,
-} from '../fixtures/graph';
+// Mock-kill F3 — the legacy `GRAPH_ENTITY_TAGS` / `GRAPH_ENTITY_DOCS`
+// fixtures were keyed by prototype entity ids (`e_oracle`, `e_rman`…)
+// and always returned `[]` for real Memgraph entities (hashed ids),
+// showing misleading "0 tags · 0 sources" on every detail panel. The
+// fixture maps were removed; tag data now reads `entity.tags` (an
+// optional property already in the GraphEntity contract). Source-id
+// lookup is dropped entirely until graph_reader.py exposes
+// `source_doc_ids` per entity.
 import {
   useCreateGraphEntity,
   useCreateGraphRelation,
@@ -39,12 +43,7 @@ import {
   useUpdateGraphRelation,
 } from '../api/queries';
 
-const tagsOf = (e: GraphEntity): readonly string[] =>
-  GRAPH_ENTITY_TAGS[e.id] ?? [];
-const docsOf = (e: GraphEntity): readonly string[] =>
-  GRAPH_ENTITY_DOCS[e.id] ?? [];
-const shortDoc = (d: string): string =>
-  d.includes('/') ? d.split('/').filter(Boolean).pop() ?? d : d;
+const tagsOf = (e: GraphEntity): readonly string[] => e.tags ?? [];
 
 const TYPE_KEYS = Object.keys(GRAPH_TYPE_LABEL) as readonly GraphEntityType[];
 const PINNED_STORAGE_KEY = 'twin.kg.pinned.v1';
@@ -84,18 +83,12 @@ export function GraphTab({
     TYPE_KEYS,
   );
   const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
-  const [srcFilter, setSrcFilter] = useUrlArrayParam('gsrc', []);
   const [addOpen, setAddOpen] = useState(false);
   const createEntity = useCreateGraphEntity();
 
   const allTags = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => tagsOf(e).forEach((t) => s.add(t)));
-    return Array.from(s).sort();
-  }, [entities]);
-  const allSources = useMemo(() => {
-    const s = new Set<string>();
-    entities.forEach((e) => docsOf(e).forEach((d) => s.add(d)));
     return Array.from(s).sort();
   }, [entities]);
   const [selectedId, setSelectedId] = useUrlParam<string>(
@@ -122,18 +115,13 @@ export function GraphTab({
         !tagsOf(e).some((t) => tagFilter.includes(t))
       )
         return false;
-      if (
-        srcFilter.length > 0 &&
-        !docsOf(e).some((d) => srcFilter.includes(d))
-      )
-        return false;
       if (!needle) return true;
       return (
         e.name.toLowerCase().includes(needle) ||
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, tagFilter, srcFilter]);
+  }, [entities, q, tagFilter]);
 
   const typeCounts = useMemo(() => {
     const c: Partial<Record<GraphEntityType, number>> = {};
@@ -348,14 +336,10 @@ export function GraphTab({
             onChange={setTagFilter}
             placeholder="Search tags…"
           />
-          <FilterPicker
-            label="Filter by source"
-            options={allSources}
-            selected={srcFilter}
-            onChange={setSrcFilter}
-            placeholder="Search sources…"
-            format={shortDoc}
-          />
+          {/* Mock-kill F3 — source filter dropped (no `source_doc_ids`
+            on the GraphEntity contract yet; the previous picker keyed
+            off a fixture map that always returned `[]` on real
+            Memgraph entities). Restore once graph_reader exposes it. */}
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>
             <ul>
@@ -1073,18 +1057,15 @@ function EntityEditor({
             <button
               className="ghost-btn"
               onClick={() => {
-                const sources = docsOf(entity);
-                onNavigate?.(
-                  'documents',
-                  sources.length
-                    ? { source: sources.join(',') }
-                    : { q: entity.name },
-                );
+                // Mock-kill F3 — navigation falls back to a text query
+                // on the entity name; the previous per-entity source
+                // list came from a fixture map keyed by prototype ids.
+                onNavigate?.('documents', { q: entity.name });
               }}
               type="button"
             >
-              <Icon name="external-link" size={11} /> View {entity.sources}{' '}
-              sources mentioning this entity
+              <Icon name="external-link" size={11} /> View documents
+              mentioning this entity
             </button>
             <div className="kg-detail-locked">
               <Icon name="lock" size={11} />

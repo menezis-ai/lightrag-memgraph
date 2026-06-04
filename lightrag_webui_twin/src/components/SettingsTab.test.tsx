@@ -93,17 +93,30 @@ describe('SettingsTab — Profile', () => {
 });
 
 describe('SettingsTab — Space', () => {
-  it('renders the space id + retention table rows', async () => {
+  it('renders the active space identity from props (not a fixture)', async () => {
+    renderWith(new QueryClient(), {
+      activeWorkspace: 'cib-prod',
+      kbName: 'CIB Production',
+    });
+    await userEvent.click(screen.getByTestId('settings-rail-workspace'));
+    expect(screen.getByTestId('settings-active-ws').textContent).toBe(
+      'cib-prod',
+    );
+    expect(
+      screen.getByTestId('settings-space-display-name').textContent,
+    ).toBe('CIB Production');
+  });
+
+  it('no longer renders the removed visibility / region / retention cards', async () => {
+    // Mock-kill F1 — these were fixture-only invented values
+    // (eu-west-3, twin-default-space-retention-v1, hardcoded TTLs) and
+    // were dropped 2026-06-04.
     renderWith(new QueryClient());
     await userEvent.click(screen.getByTestId('settings-rail-workspace'));
-    expect(screen.getByTestId('settings-active-ws').textContent).toBe('default');
-    // 6 retention rows present
-    expect(screen.getByText('Source mgmt')).toBeInTheDocument();
-    expect(screen.getByText('Tag mgmt')).toBeInTheDocument();
-    expect(screen.getByText('Retrieval')).toBeInTheDocument();
-    expect(screen.getByText('Admin')).toBeInTheDocument();
-    expect(screen.getByText('Auth')).toBeInTheDocument();
-    expect(screen.getByText('Policy / System')).toBeInTheDocument();
+    expect(screen.queryByText('Source mgmt')).toBeNull();
+    expect(screen.queryByText('Retention policy')).toBeNull();
+    expect(screen.queryByText(/eu-west-3/i)).toBeNull();
+    expect(screen.queryByText(/twin-default-space-retention/i)).toBeNull();
   });
 });
 

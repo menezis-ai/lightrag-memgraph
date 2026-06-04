@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './resources';
+import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 
@@ -171,9 +172,22 @@ export function useActivity(
 }
 
 export function useOpenApi() {
+  // Hit the FastAPI-auto `/openapi.json` directly so the Twin ApiTab is
+  // ISO with the LightRAG WebUI by construction — any route added to
+  // the host app (LightRAG native + Twin overlay via `include_router`)
+  // appears here automatically without a manual catalog. See
+  // `openapi-parser.ts` for the reshape into `OpenApiGroup[]`.
   return useQuery({
     queryKey: ['openapi'] as const,
-    queryFn: ({ signal }) => api.getOpenApi({ signal }),
+    queryFn: async ({ signal }) => {
+      const resp = await fetch('/openapi.json', { signal });
+      if (!resp.ok) {
+        throw new Error(
+          `OpenAPI fetch failed: ${resp.status} ${resp.statusText}`,
+        );
+      }
+      return parseOpenApiSpec(await resp.json());
+    },
     ...DEFAULTS,
   });
 }

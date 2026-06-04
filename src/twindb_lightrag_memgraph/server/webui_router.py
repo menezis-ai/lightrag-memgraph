@@ -211,7 +211,36 @@ class WebuiStore:
         )
 
     @classmethod
-    def for_space(cls, space: str) -> WebuiStore:
+    def for_space(cls, space: str, *, mode: str = "seed") -> WebuiStore:
+        """Build a per-space WebuiStore.
+
+        ``mode``:
+
+        - ``"seed"`` (default) — the default space gets the full demo
+          payload from :meth:`from_seed`; non-default spaces start empty
+          for user-generated stores (documents / tags / graph) while
+          keeping reference data (workspaces / thesaurus / openapi).
+          Useful for ``python -m twindb_lightrag_memgraph.server``
+          standalone demo and CI.
+
+        - ``"memgraph"`` — every space, **including the default**, boots
+          empty for user-generated stores. Prevents `WebuiStore._documents`
+          and `_graph_entities` from leaking demo content through
+          ``/twin/api/documents`` and ``/twin/api/graph/*`` on a real BNP
+          deploy where the operator expects a clean slate.
+        """
+        if mode == "memgraph":
+            return cls(
+                documents=[],
+                workspaces=copy.deepcopy(webui_seed.WORKSPACES),
+                thesaurus=copy.deepcopy(webui_seed.THESAURUS),
+                tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
+                tags_seed=[],
+                openapi_groups=copy.deepcopy(webui_seed.OPENAPI_GROUPS),
+                openapi_version=webui_seed.OPENAPI_VERSION,
+                graph_entities=[],
+                graph_relations=[],
+            )
         default_space = load_space_catalog().default_space_id
         if space == default_space:
             return cls.from_seed()

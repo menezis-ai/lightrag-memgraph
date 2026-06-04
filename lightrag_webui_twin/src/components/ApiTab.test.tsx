@@ -5,7 +5,7 @@
  * (mock success + unauthorized), authorize dialog flow, curl/mock helpers.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -15,19 +15,15 @@ import {
   mockUnauthorized,
   requestBodyFor,
 } from './ApiTab';
-import {
-  API_BASE_URL,
-  API_SERVERS,
-  API_VERSION,
-  OPENAPI_GROUPS,
-} from '../fixtures';
+import { API_VERSION, OPENAPI_GROUPS } from '../fixtures';
 
 function defaultProps() {
   return {
     apiVersion: API_VERSION,
     groups: OPENAPI_GROUPS,
-    servers: API_SERVERS,
-    baseUrl: API_BASE_URL,
+    // After mock-kill F2 the servers dropdown was removed — the curl
+    // preview uses the current browser origin as a single source.
+    baseUrl: 'http://localhost',
   };
 }
 
@@ -92,44 +88,71 @@ describe('ApiTab — endpoint expand + Try it out', () => {
     expect(within(row).getByText('Responses')).toBeInTheDocument();
   });
 
-  it('Try it out on a public endpoint executes and renders 200 mock response', async () => {
-    render(<ApiTab {...defaultProps()} />);
-    const row = screen.getByTestId('endpoint-GET-/health');
-    await userEvent.click(within(row).getByRole('button'));
-    await userEvent.click(
-      within(row).getByRole('button', { name: 'Try it out' }),
-    );
-    await userEvent.click(within(row).getByRole('button', { name: /Execute/ }));
-    await waitFor(
-      () => {
+  it('Try it out fires a real fetch against baseUrl + path and renders the response', async () => {
+    // Mock-kill F2 — Try it out now does a real fetch, not a synthetic
+    // mock. We stub `fetch` directly so the test asserts the call shape
+    // and a happy-path 200 render.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    try {
+      render(<ApiTab {...defaultProps()} />);
+      const row = screen.getByTestId('endpoint-GET-/health');
+      await userEvent.click(within(row).getByRole('button'));
+      await userEvent.click(
+        within(row).getByRole('button', { name: 'Try it out' }),
+      );
+      await userEvent.click(within(row).getByRole('button', { name: /Execute/ }));
+      await waitFor(() => {
         const resp = row.querySelector('.swagger-resp');
         expect(resp).not.toBeNull();
         expect(resp!.textContent).toMatch(/200/);
-      },
-      { timeout: 2000 },
-    );
-    const resp = row.querySelector('.swagger-resp') as HTMLElement;
-    expect(resp.textContent).toMatch(/200OK/);
+      });
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://localhost/health',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({ Accept: 'application/json' }),
+        }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
-  it('Try it out on a secured endpoint without token returns 401 mock', async () => {
-    render(<ApiTab {...defaultProps()} />);
-    const row = screen.getByTestId('endpoint-GET-/documents');
-    await userEvent.click(within(row).getByRole('button'));
-    await userEvent.click(
-      within(row).getByRole('button', { name: 'Try it out' }),
-    );
-    await userEvent.click(within(row).getByRole('button', { name: /Execute/ }));
-    await waitFor(
-      () => {
+  it('Try it out surfaces a 401 from the real backend with WWW-Authenticate', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: 'Missing bearer' }), {
+          status: 401,
+          statusText: 'Unauthorized',
+        }),
+      );
+    try {
+      render(<ApiTab {...defaultProps()} />);
+      const row = screen.getByTestId('endpoint-GET-/documents');
+      await userEvent.click(within(row).getByRole('button'));
+      await userEvent.click(
+        within(row).getByRole('button', { name: 'Try it out' }),
+      );
+      await userEvent.click(within(row).getByRole('button', { name: /Execute/ }));
+      await waitFor(() => {
         const resp = row.querySelector('.swagger-resp');
         expect(resp).not.toBeNull();
         expect(resp!.textContent).toMatch(/401/);
-      },
-      { timeout: 2000 },
-    );
-    const resp = row.querySelector('.swagger-resp') as HTMLElement;
-    expect(resp.textContent).toMatch(/Unauthorized/);
+      });
+      const resp = row.querySelector('.swagger-resp') as HTMLElement;
+      expect(resp.textContent).toMatch(/Unauthorized/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

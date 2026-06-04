@@ -25,12 +25,7 @@ import { SpacesAdminSection } from './Settings/SpacesAdminSection';
 import { WorkspaceSection } from './Settings/WorkspaceSection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
-import {
-  API_BASE_URL,
-  API_SERVERS,
-  API_VERSION,
-  OPENAPI_GROUPS,
-} from '../fixtures';
+import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
 type SectionKey = 'profile' | 'api' | 'workspace';
@@ -42,9 +37,11 @@ const SECTIONS: { key: SectionKey; label: string; icon: 'circle-dot' | 'world' |
 ];
 
 export interface SettingsTabProps {
-  /** Active space id. Currently informational — display lives in WorkspaceSection. */
+  /** Active space id — forwarded to WorkspaceSection's Identity card.
+   *  Comes from the AppShell state kept in sync with `setActiveSpace()`. */
   activeWorkspace?: string;
-  /** Active space display name. Same status as above. */
+  /** Active space display name — forwarded to WorkspaceSection's
+   *  Identity card. Resolved by AppShell from the runtime spaces catalog. */
   kbName?: string;
   /** Bearer-token revoke + redirect to IdP. Pushed up so the host owns the toast queue. */
   onSignOut?: () => void;
@@ -54,6 +51,8 @@ export interface SettingsTabProps {
 }
 
 export function SettingsTab({
+  activeWorkspace,
+  kbName,
   onSignOut,
   onRestartTutorial,
   onToast,
@@ -88,29 +87,70 @@ export function SettingsTab({
             onRestartTutorial={onRestartTutorial}
           />
         )}
-        {section === 'api' && (
-          <div className="settings-section settings-api" data-testid="settings-api">
-            <h3>API</h3>
-            <p className="muted">
-              LightRAG OpenAPI surface. Bearer (OIDC) auth only — the gateway
-              injects <code>tag_filter</code> and <code>visibility</code> scoping
-              from the active space.
-            </p>
-            <ApiTab
-              apiVersion={API_VERSION}
-              groups={OPENAPI_GROUPS}
-              servers={API_SERVERS}
-              baseUrl={API_BASE_URL}
-            />
-          </div>
-        )}
+        {section === 'api' && <ApiSection />}
         {section === 'workspace' && (
           <>
-            <WorkspaceSection />
+            <WorkspaceSection
+              activeSpaceId={activeWorkspace ?? 'default'}
+              displayName={kbName ?? ''}
+            />
             <SpacesAdminSection user={user} onToast={onToast} />
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+/**
+ * API section — fetches the live OpenAPI surface from
+ * `/twin/api/openapi` instead of bundling a hardcoded fixture (mock-kill
+ * F2). Pure prod URL list (`API_SERVERS`) was also removed because the
+ * `cib-kb.twin.internal` hostnames didn't exist; the curl preview now
+ * uses the current browser origin which always reflects the live deploy.
+ */
+function ApiSection() {
+  const { data, isLoading, isError, error, refetch } = useOpenApi();
+  const baseUrl =
+    typeof window !== 'undefined' ? window.location.origin : '';
+
+  return (
+    <div className="settings-section settings-api" data-testid="settings-api">
+      <h3>API</h3>
+      <p className="muted">
+        LightRAG OpenAPI surface. Bearer (OIDC) auth only — the gateway
+        injects <code>tag_filter</code> and <code>visibility</code>{' '}
+        scoping from the active space.
+      </p>
+      {isLoading && (
+        <div className="muted" data-testid="settings-api-loading">
+          Loading OpenAPI surface…
+        </div>
+      )}
+      {isError && (
+        <div
+          className="error-banner"
+          role="alert"
+          data-testid="settings-api-error"
+        >
+          OpenAPI surface unavailable
+          {error instanceof Error ? ` — ${error.message}` : ''}.{' '}
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() => refetch()}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {data && (
+        <ApiTab
+          apiVersion={data.version}
+          groups={data.groups}
+          baseUrl={baseUrl}
+        />
+      )}
     </div>
   );
 }

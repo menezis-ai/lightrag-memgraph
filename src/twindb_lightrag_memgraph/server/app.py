@@ -169,7 +169,13 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
                 backends_applied.append("notifications")
             if backends_applied:
                 for space in load_space_catalog().spaces:
-                    store = WebuiStore.for_space(space.id)
+                    # `mode="memgraph"` so the default space doesn't
+                    # silently expose the demo documents/graph from
+                    # `webui_seed` through /twin/api/documents and
+                    # /twin/api/graph/* on a real deploy (cf.
+                    # docs/audits/webui-fork/mock-kill-audit-2026-06-04.md
+                    # finding F6).
+                    store = WebuiStore.for_space(space.id, mode="memgraph")
                     if settings.webui_tag_backend == "memgraph":
                         tag_store = MemgraphTagStore(workspace=space.id)
                         await tag_store.initialize()

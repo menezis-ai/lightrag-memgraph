@@ -394,3 +394,74 @@ class TestAuthGate:
             # Same call with the right bearer succeeds
             r = await c.get("/documents", headers={"Authorization": "Bearer secret"})
             assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# WebuiStore.for_space(mode=...) — mock-kill F6
+# ---------------------------------------------------------------------------
+
+
+class TestForSpaceMode:
+    """Regression for mock-kill audit 2026-06-04 finding F6.
+
+    In ``memgraph`` mode, ``for_space()`` must NOT seed the in-memory
+    `_documents` / `_graph_entities` / `_graph_relations` lists even for
+    the default space — otherwise ``/twin/api/documents`` and
+    ``/twin/api/graph/*`` silently expose the demo payload on a real
+    BNP deploy.
+    """
+
+    def _default_space(self) -> str:
+        from twindb_lightrag_memgraph.server.space import load_space_catalog
+        return load_space_catalog().default_space_id
+
+    def test_default_space_seed_mode_keeps_full_payload(self):
+        # Sanity: the legacy `seed` mode (CI + standalone demo) still
+        # populates documents/graph for the default space.
+        store = webui_router.WebuiStore.for_space(self._default_space())
+        # Probe internals — these are intentionally private but the
+        # contract is what /twin/api/documents reads from.
+        assert len(store._documents) > 0  # noqa: SLF001
+        assert len(store._graph_entities) > 0  # noqa: SLF001
+
+    def test_default_space_memgraph_mode_starts_empty(self):
+        store = webui_router.WebuiStore.for_space(
+            self._default_space(), mode="memgraph"
+        )
+        assert store._documents == []  # noqa: SLF001
+        assert store._graph_entities == []  # noqa: SLF001
+        assert store._graph_relations == []  # noqa: SLF001
+        # Reference data still loads (workspaces / thesaurus / openapi
+        # are NOT user-generated — they're catalog metadata).
+        assert len(store._workspaces) > 0  # noqa: SLF001
+        assert len(store._thesaurus) > 0  # noqa: SLF001
+
+    def test_non_default_space_memgraph_mode_starts_empty(self):
+        store = webui_router.WebuiStore.for_space(
+            "sandbox-that-does-not-exist", mode="memgraph"
+        )
+        assert store._documents == []  # noqa: SLF001
+        assert store._graph_entities == []  # noqa: SLF001
+
+    def test_non_default_space_seed_mode_already_empty_for_user_data(self):
+        # Existing behaviour — non-default spaces don't get user data
+        # in seed mode either. Lock it in.
+        store = webui_router.WebuiStore.for_space("sandbox-yes")
+        assert store._documents == []  # noqa: SLF001
+        assert store._graph_entities == []  # noqa: SLF001
+
+    async def test_default_space_memgraph_mode_documents_endpoint_returns_empty(
+        self, client
+    ):
+        """End-to-end: /twin/api/documents reads the (now empty) `_documents`."""
+        # Swap the active store to a memgraph-mode one for the default
+        # space and assert the endpoint reflects the empty state.
+        empty_store = webui_router.WebuiStore.for_space(
+            self._default_space(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        r = await client.get("/documents")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["items"] == []
+        assert body["total"] == 0

@@ -598,6 +598,30 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     return HttpResponse.json({ groups: OPENAPI_GROUPS, version: API_VERSION });
   }),
+  // Standard FastAPI auto OpenAPI 3.1 spec — the React Settings → API
+  // tab hits this directly so it stays ISO with LightRAG by
+  // construction (mock-kill F2). Synthesise a minimal but valid OpenAPI
+  // 3.1 doc from the local OPENAPI_GROUPS fixture so the OVH standalone
+  // demo still renders the API tab.
+  http.get(`${ANY}/openapi.json`, () => {
+    const paths: Record<string, Record<string, unknown>> = {};
+    for (const g of OPENAPI_GROUPS) {
+      for (const ep of g.endpoints) {
+        paths[ep.p] ??= {};
+        paths[ep.p][ep.m.toLowerCase()] = {
+          tags: [g.id],
+          summary: ep.s,
+          responses: { '200': { description: 'OK' } },
+        };
+      }
+    }
+    return HttpResponse.json({
+      openapi: '3.1.0',
+      info: { title: 'LightRAG Server API (mocked)', version: API_VERSION },
+      tags: OPENAPI_GROUPS.map((g) => ({ name: g.id, description: g.desc })),
+      paths,
+    });
+  }),
   http.post(`${ANY}/query`, async ({ request }) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
@@ -614,6 +638,9 @@ export const handlers = [
     const body = (await request.json().catch(() => ({}))) as {
       query?: string;
       top_k?: number;
+      chunk_top_k?: number;
+      user_prompt?: string;
+      enable_rerank?: boolean;
     };
     const q = body.query ?? '';
     const topK = body.top_k ?? 3;
@@ -630,6 +657,19 @@ export const handlers = [
       chunk_id: `mock-chunk-${i + 1}`,
     }));
     return HttpResponse.json({ response: responseText, sources });
+  }),
+  http.post(`${ANY}${TWIN}/query/stream`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      query?: string;
+    };
+    const q = body.query ?? '';
+    return new HttpResponse(
+      q ? `Mock retrieval response for: ${q}` : 'Mock retrieval response',
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      },
+    );
   }),
 
   // -------------------------------------------------------------------------

@@ -149,17 +149,24 @@ describe('GraphTab — selection + detail', () => {
     expect(entityPanel?.textContent).toMatch(/Red Hat Enterprise Linux/);
   });
 
-  it('"View N sources" CTA navigates to documents with exact source filters', async () => {
+  it('"View documents" CTA navigates with the entity name as the query', async () => {
+    // Mock-kill F3 — the legacy per-entity `source` filter was dropped
+    // because it was indexed by prototype entity ids (e_oracle, e_rman,
+    // ...) and always missed real Memgraph entities. Navigation now
+    // falls back to a text query on the entity name.
     const p = defaultProps();
     renderWithClient(<GraphTab {...p} />);
     const detail = document.querySelector('.kg-detail') as HTMLElement;
     const cta = Array.from(detail.querySelectorAll('button')).find((b) =>
-      b.textContent?.match(/View \d+ sources mentioning/),
+      b.textContent?.match(/View documents mentioning/),
     );
+    expect(cta).toBeDefined();
     await userEvent.click(cta!);
-    expect(p.onNavigate).toHaveBeenCalledWith('documents', {
-      source: 'oracle-restart-procedure.pdf,/cib/runbooks/oracle-pga-tuning',
-    });
+    expect(p.onNavigate).toHaveBeenCalledTimes(1);
+    const [tabArg, paramsArg] = p.onNavigate.mock.calls[0];
+    expect(tabArg).toBe('documents');
+    expect(paramsArg).toHaveProperty('q');
+    expect(typeof paramsArg.q).toBe('string');
   });
 
   it('pinning an entity persists in localStorage and is restored on remount', async () => {
