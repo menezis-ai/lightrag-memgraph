@@ -1910,7 +1910,21 @@ async def delete_tag(
         actor=actor,
         strict=isinstance(store.tags, MemgraphTagStore),
     )
-    affected_docs = graph_affected if graph_affected is not None else seed_affected
+    # The two cascades target disjoint stores:
+    #   - `_cascade_seed_document_tags` mutates `WebuiStore._documents` (the
+    #     in-memory list seeded from `webui_seed.DOCUMENTS` in dev / CI
+    #     without `webui_tag_backend="memgraph"`).
+    #   - `_cascade_graph_tag_edges` rewrites Memgraph
+    #     `DocStatus_{ws} -[:TAGGED_WITH]-> WebuiTag_{space}` edges in
+    #     production. With mock-kill F6 in memgraph mode, `_documents` is
+    #     empty so the seed count contributes 0 — no double-count risk.
+    # The previous expression (`graph_affected if graph_affected is not None
+    # else seed_affected`) silently dropped the seed count whenever the
+    # pool was reachable, even against a fresh Memgraph DB returning 0.
+    # That made `test_migrate_with_to_succeeds` fail in the CI integration
+    # job (Memgraph reachable but empty + default memory tag backend that
+    # still seeds `_documents`).
+    affected_docs = (graph_affected or 0) + seed_affected
 
     deleted = await store.tags.delete_tag(name)
     suffix = (
