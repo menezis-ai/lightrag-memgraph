@@ -429,6 +429,113 @@ async def _graph_tags_for_doc(doc_id: str) -> list[str]:
         return []
 
 
+def _cascade_seed_document_tags(
+    store: WebuiStore,
+    *,
+    name: str,
+    strategy: str,
+    to: str | None,
+) -> int:
+    """Apply tag delete/migrate semantics to the in-memory document seed."""
+    default_space = load_space_catalog().default_space_id
+    active_space = current_space_id()
+    affected = 0
+
+    def _rewrite(tags: Any) -> list[str] | None:
+        if not isinstance(tags, list) or name not in tags:
+            return None
+        rewritten = [tag for tag in tags if tag != name]
+        if strategy == "migrate" and to and to not in rewritten:
+            rewritten.append(to)
+        return rewritten
+
+    with store._lock:  # noqa: SLF001 - same-module store maintenance
+        for doc in store._documents:  # noqa: SLF001 - same-module store maintenance
+            metadata = doc.get("metadata") or {}
+            space = doc.get("space") or metadata.get("space") or default_space
+            if space != active_space:
+                continue
+            rewritten = _rewrite(doc.get("tags"))
+            if rewritten is None:
+                continue
+            doc["tags"] = rewritten
+            if isinstance(metadata, dict):
+                metadata_tags = _rewrite(metadata.get("tags"))
+                if metadata_tags is not None:
+                    metadata["tags"] = metadata_tags
+            affected += 1
+    return affected
+
+
+async def _cascade_graph_tag_edges(
+    *,
+    name: str,
+    strategy: str,
+    to: str | None,
+    actor: str,
+    strict: bool,
+) -> int | None:
+    """Retag or untag DocStatus->WebuiTag edges for the active space.
+
+    Returns ``None`` when the graph pool is unavailable in non-strict seed/dev
+    mode. In strict Memgraph-backed mode, failures surface as 500 so the API
+    does not report a successful migration while documents were left stale.
+    """
+    try:
+        from .. import _pool
+        from .._constants import resolve_workspace, validate_identifier
+
+        validate_identifier(name, "tag")
+        if to:
+            validate_identifier(to, "tag")
+        workspace = resolve_workspace()
+        space = current_space_id()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = f"WebuiTag_{space}"
+        now = _utcnow_iso()
+
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                if strategy == "migrate":
+                    result = await session.run(
+                        f"""
+                        MATCH (from:`{tag_label}` {{id: $from_tag}})
+                        MATCH (to:`{tag_label}` {{id: $to_tag}})
+                        MATCH (d:`{doc_label}`)-[old:TAGGED_WITH]->(from)
+                        MERGE (d)-[new_rel:TAGGED_WITH]->(to)
+                          ON CREATE SET
+                            new_rel.at = $now,
+                            new_rel.actor = $actor,
+                            new_rel.migrated_from = $from_tag
+                        DELETE old
+                        RETURN count(DISTINCT d) AS affected
+                        """,
+                        from_tag=name,
+                        to_tag=to,
+                        now=now,
+                        actor=actor,
+                    )
+                else:
+                    result = await session.run(
+                        f"""
+                        MATCH (d:`{doc_label}`)-[old:TAGGED_WITH]->(:`{tag_label}` {{id: $tag}})
+                        DELETE old
+                        RETURN count(DISTINCT d) AS affected
+                        """,
+                        tag=name,
+                    )
+                record = await result.single()
+                await result.consume()
+        return int(record["affected"]) if record else 0
+    except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise HTTPException(
+                status_code=500,
+                detail="Tag delete migration cascade failed.",
+            ) from exc
+        return None
+
+
 async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
     if hasattr(rag, "adelete_by_doc_id"):
         await rag.adelete_by_doc_id(doc_id)
@@ -1731,9 +1838,7 @@ async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
 async def delete_tag(
     name: str, body: TagDeleteBody | None = None
 ) -> dict[str, bool]:
-    """Delete a tag. With strategy='migrate' the request must carry `to`; the
-    endpoint surfaces the migration intent in audit + notification but
-    document re-tagging (which lives elsewhere) is out of scope for slice 2."""
+    """Delete a tag and cascade the selected migration strategy to documents."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -1741,7 +1846,29 @@ async def delete_tag(
     payload = body or TagDeleteBody()
     if payload.strategy == "migrate" and not payload.to:
         raise HTTPException(422, "strategy=migrate requires 'to'")
+    if payload.strategy == "migrate" and payload.to == name:
+        raise HTTPException(422, "strategy=migrate requires a different target tag")
+    if payload.strategy == "migrate" and payload.to:
+        target = await store.tags.get_tag(payload.to)
+        if target is None:
+            raise HTTPException(404, f"Migration target tag '{payload.to}' not found")
     actor = payload.actor or "system"
+
+    seed_affected = _cascade_seed_document_tags(
+        store,
+        name=name,
+        strategy=payload.strategy,
+        to=payload.to,
+    )
+    graph_affected = await _cascade_graph_tag_edges(
+        name=name,
+        strategy=payload.strategy,
+        to=payload.to,
+        actor=actor,
+        strict=isinstance(store.tags, MemgraphTagStore),
+    )
+    affected_docs = graph_affected if graph_affected is not None else seed_affected
+
     deleted = await store.tags.delete_tag(name)
     suffix = (
         f"migrated to {payload.to}"
@@ -1758,13 +1885,14 @@ async def delete_tag(
         meta={
             "strategy": payload.strategy,
             "to": payload.to,
+            "affected_docs": affected_docs,
             "sources_count_at_delete": entry.get("sources_count", 0),
         },
         notification=_make_notification(
             title="Tag",
             tagname=name,
             suffix=suffix,
-            sub=f"{entry.get('sources_count', 0)} docs affected",
+            sub=f"{affected_docs} docs affected",
         ),
     )
     return {"ok": deleted}

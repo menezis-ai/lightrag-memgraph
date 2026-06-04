@@ -133,8 +133,9 @@ class LightRAGServerSettings(BaseSettings):
             "Persistence backend for WebUI tag governance. 'memory' (default) "
             "keeps tags + categories in the seed-loaded in-process store. "
             "'memgraph' persists them as :WebuiTag_{workspace} / "
-            ":WebuiTagCategory_{workspace} nodes and bootstraps from the seed "
-            "on first init when the workspace KV is empty."
+            ":WebuiTagCategory_{workspace} nodes. Production app wiring boots "
+            "fresh spaces without demo tags; only governance categories are "
+            "bootstrapped unless an explicit seed/bootstrap path is used."
         ),
     )
     webui_activity_backend: str = Field(

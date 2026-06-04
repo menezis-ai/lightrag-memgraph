@@ -155,9 +155,9 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         # -- L2 Patch: WebUI store backends (S4c) --
         if settings.enable_webui_routes:
             from .webui_router import WebuiStore, set_store
-            from .webui_activitystore import make_memgraph_activity_store
-            from .webui_notificationstore import make_memgraph_notification_store
-            from .webui_tagstore import make_memgraph_store
+            from .webui_activitystore import MemgraphActivityStore
+            from .webui_notificationstore import MemgraphNotificationStore
+            from .webui_tagstore import MemgraphTagStore
             from .space import load_space_catalog
 
             backends_applied: list[str] = []
@@ -171,16 +171,21 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
                 for space in load_space_catalog().spaces:
                     store = WebuiStore.for_space(space.id)
                     if settings.webui_tag_backend == "memgraph":
-                        store._tag_backend = await make_memgraph_store(  # noqa: SLF001
+                        tag_store = MemgraphTagStore(workspace=space.id)
+                        await tag_store.initialize()
+                        await tag_store.bootstrap_categories_if_empty()
+                        store._tag_backend = tag_store  # noqa: SLF001
+                    if settings.webui_activity_backend == "memgraph":
+                        activity_store = MemgraphActivityStore(workspace=space.id)
+                        await activity_store.initialize()
+                        store._activity_backend = activity_store  # noqa: SLF001
+                    if settings.webui_notifications_backend == "memgraph":
+                        notification_store = MemgraphNotificationStore(
                             workspace=space.id
                         )
-                    if settings.webui_activity_backend == "memgraph":
-                        store._activity_backend = (  # noqa: SLF001
-                            await make_memgraph_activity_store(workspace=space.id)
-                        )
-                    if settings.webui_notifications_backend == "memgraph":
+                        await notification_store.initialize()
                         store._notification_backend = (  # noqa: SLF001
-                            await make_memgraph_notification_store(workspace=space.id)
+                            notification_store
                         )
                     set_store(store, space=space.id)
                 logger.info(

@@ -212,9 +212,11 @@ Still open for spaces: JWT/MyAccess admin-only gating for runtime Space CRUD.
   DocStatus, with best-effort `[:TAGGED_WITH]` graph tags when available.
 - `graph lifecycle`: done in M12 for read/write/create/delete against Memgraph.
   Keep it covered by route parity + regression tests.
-- `tag delete migration`: current backend records migration intent, but does
-  not retag affected documents. Either implement the migration/untag cascade or
-  change the UI wording to say only the tag catalog changed.
+- **Done —** `tag delete migration`: backend now applies the selected
+  migrate/untag strategy to affected documents before deleting the tag catalog
+  entry. In-memory seed documents are updated for dev/test, and real
+  `DocStatus -> TAGGED_WITH -> WebuiTag` Memgraph edges are migrated/removed
+  for production.
 
 ### P3 — Production auth and integration confidence
 
@@ -852,11 +854,11 @@ refactor is intentional; first close the contract gaps in the existing
 | `src/twindb_lightrag_memgraph/server/webui_router.py` | **DONE + HARDEN** | Missing real routes `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health` are implemented; remaining hardening is approve/reject space checks |
 | `src/twindb_lightrag_memgraph/server/space_store.py` | **DONE** | Runtime CRUD catalog for non-env-seeded spaces, with optional atomic JSON persistence via `TWIN_SPACES_RUNTIME_FILE` |
 | `src/twindb_lightrag_memgraph/server/native_shims.py` | **DONE + VERIFY** | Native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` are aligned with React contract and space filtering; keep route parity green |
-| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **PARTIAL** | Tags, activity, notifications have Memgraph stores; remaining work is fresh-store tests and retention/sweep for activity + notifications |
+| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **PARTIAL** | Tags, activity, notifications have Memgraph stores and fresh-store boot coverage; retention/sweep for activity + notifications is deferred pending PO/compliance decisions |
 | `src/twindb_lightrag_memgraph/server/auth.py` | **DONE + HARDEN** | IdP/JWKS validation is wired for production mode; remaining work is MyAccess-specific admin authorization policy |
 | `src/twindb_lightrag_memgraph/server/space.py` | **EDIT** | Keep `X-Twin-Space` as canonical and retire `X-Twin-Workspace` only after all callers migrate |
-| `src/twindb_lightrag_memgraph/__init__.py` | **DONE + TEST** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, direct Twin router mount, IdP activation, and `debugUser` stripping exist; remaining work is `/webui/` substitution smoke |
-| `tests/test_server/` | **EDIT** | Route parity, IdP, Space scoping, P0 routes, classification rejection are covered; remaining tests are fresh Memgraph store boot and `/webui/` substitution smoke |
+| `src/twindb_lightrag_memgraph/__init__.py` | **DONE** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, direct Twin router mount, IdP activation, and `debugUser` stripping exist; `/webui/` substitution smoke is covered |
+| `tests/test_server/` | **EDIT** | Route parity, IdP, Space scoping, P0 routes, classification rejection, fresh Memgraph store boot, and `/webui/` substitution smoke are covered |
 | `lightrag_webui_twin/index.html` | **VERIFY** | Confirm the `__TWIN_CONFIG_JSON__` placeholder is still in place (already there per `useAuth.ts`) |
 | `lightrag_webui_twin/src/api/client.ts` | **DONE** | Runtime API bases and `X-Twin-Space` are wired; missing runtime config fails loudly outside dev/MSW demo mode |
 | `lightrag_webui_twin/src/api/resources.ts` | **VERIFY + TEST** | Treat as the frontend source of expected paths; route parity test must catch path drift |
@@ -912,10 +914,14 @@ Current state:
 
 Still to do:
 
-- [ ] Add backend tests proving a fresh Memgraph-backed space boots without
+- [x] Add backend tests proving a fresh Memgraph-backed space boots without
       demo tags/activity/notifications unless explicit seed/bootstrap is
       requested.
-- [ ] Add retention/sweep strategy for activity and notifications.
+- [ ] Retention/sweep strategy for activity and notifications is deferred to
+      Couche 4 / PO decision. Open questions before code:
+      TTL per store, sweep mechanism (ops cron vs on-write vs app job),
+      per-space/global scope, sandbox vs primary behavior, and BCE/DORA audit
+      retention requirements.
 - [ ] Extend persistence beyond tags/activity/notifications where the UI
       currently reads seed-only surfaces: thesaurus if it becomes
       operator-editable, and document overlay metadata. Graph entities and
@@ -980,7 +986,7 @@ Still to do:
         # PROD IdP active: debugUser is omitted, not set to None.
       })
       ```
-- [ ] Add a smoke test that starts the patched LightRAG app, fetches
+- [x] Add a smoke test that starts the patched WebUI mount, fetches
       `/webui/`, and asserts the placeholder is gone and `apiBaseUrl` points
       to `/twin/api`.
 
@@ -1086,7 +1092,7 @@ Still to do:
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Keycloak JWKS endpoint unreachable from the LightRAG host | Medium | Cache the JWKS at startup with a TTL; fail closed (401) if cache stale + refresh fails. |
-| Memgraph labels for tags/activity grow unbounded | Low (90d retention per Settings) | Implement the retention sweep job — see `docs/operations/install-runbook.md` §5 |
+| Memgraph labels for tags/activity grow unbounded | Low (90d retention per Settings) | Defer implementation until PO/compliance confirms TTL, mechanism, scope, and BCE/DORA audit-retention constraints |
 | `register()` flag explosion (replace_ui, mount_server, classify, ...) | High if not designed carefully | Group under a single `extensions=ExtensionConfig(...)` dataclass; keep `register()` signature small |
 | Frontend MSW removal breaks the dev story | Low (MSW stays on in DEV by default) | The activation matrix in `main.tsx` is already documented — don't regress |
 | BNP tenant label map mismatched with Compliance Center | Medium | Add a `/twin/api/classification/_self_check` debug endpoint that returns the loaded map + lets ops validate visually |
@@ -1096,16 +1102,13 @@ Still to do:
 
 Most Couche 3 implementation work is already landed. The remaining order is:
 
-1. Fresh-store + `/webui/` smoke tests, because they prove the deployed shape
-   without adding new product behavior.
-2. Retention/sweep for activity and notifications.
-3. Tag delete migration cascade for affected documents.
-4. MyAccess admin-only authorization policy once BNP claim/group mapping is
+1. MyAccess admin-only authorization policy once BNP claim/group mapping is
    finalized.
-5. Deployment checklist and host smoke.
+2. Deployment checklist and host smoke.
+3. Retention/sweep for activity and notifications after PO/compliance answers.
 
-Rough remaining estimate: **1 focused day for tests + deployment smoke**, plus
-the tag cascade/admin policy work once the desired BNP behavior is fixed.
+Rough remaining estimate: **deployment smoke + admin policy follow-up**, plus
+the deferred retention sweep once the desired BNP behavior is fixed.
 
 ---
 

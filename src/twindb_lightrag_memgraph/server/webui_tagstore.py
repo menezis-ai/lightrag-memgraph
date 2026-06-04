@@ -2,8 +2,9 @@
 
 Defines a small protocol so the router can read tags + categories without
 caring whether they come from the in-memory seed or a Memgraph KV namespace.
-The Memgraph backend bootstraps from the seed on first init when its KV is
-empty, so dev/demo experience is identical regardless of backend.
+The low-level Memgraph factory can explicitly bootstrap demo data for dev/test;
+production app wiring instantiates the store directly so fresh spaces start
+without demo tags.
 
 Why this slice is read-only:
 - The WebUI's tag-action toasts (Approve / Edit / Deprecate / …) are still
@@ -493,8 +494,11 @@ def make_in_memory_store() -> InMemoryTagStore:
 
 
 async def make_memgraph_store(workspace: str = "default") -> MemgraphTagStore:
-    """Build a Memgraph-backed store, ensure indexes, and bootstrap-from-seed
-    on the first call for a fresh workspace."""
+    """Build a Memgraph-backed store and explicitly bootstrap demo seed data.
+
+    Production server wiring does not call this factory; it instantiates
+    ``MemgraphTagStore`` directly and only bootstraps governance categories.
+    """
     store = MemgraphTagStore(workspace=workspace)
     await store.initialize()
     await store.bootstrap_if_empty()

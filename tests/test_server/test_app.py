@@ -602,6 +602,153 @@ class TestLifespan:
             async with app.router.lifespan_context(app):
                 _mock_rag.initialize.assert_awaited_once()
 
+    async def test_memgraph_webui_stores_boot_fresh_without_seed(
+        self, monkeypatch, _mock_rag
+    ):
+        """Memgraph-backed WebUI stores must not seed demo tags/feed/notifs."""
+        import json
+
+        from twindb_lightrag_memgraph.server import webui_activitystore
+        from twindb_lightrag_memgraph.server import webui_notificationstore
+        from twindb_lightrag_memgraph.server import webui_router
+        from twindb_lightrag_memgraph.server import webui_tagstore
+
+        calls: list[str] = []
+
+        class FakeTagStore:
+            def __init__(self, workspace: str = "default") -> None:
+                self.workspace = workspace
+                self._tags: list[dict] = []
+                self._categories: list[dict] = []
+
+            async def initialize(self) -> None:
+                calls.append(f"tag:init:{self.workspace}")
+
+            async def bootstrap_categories_if_empty(self) -> bool:
+                calls.append(f"tag:categories:{self.workspace}")
+                self._categories = [
+                    {"id": "governance", "label": "Governance", "color": "#000000"}
+                ]
+                return True
+
+            async def bootstrap_if_empty(self) -> bool:
+                calls.append(f"tag:seed:{self.workspace}")
+                self._tags = [{"tag": "rman"}]
+                return True
+
+            def list_tags(self) -> list[dict]:
+                return list(self._tags)
+
+            def list_categories(self) -> list[dict]:
+                return list(self._categories)
+
+        class FakeActivityStore:
+            def __init__(self, workspace: str = "default") -> None:
+                self.workspace = workspace
+                self._events: list[dict] = []
+
+            async def initialize(self) -> None:
+                calls.append(f"activity:init:{self.workspace}")
+
+            async def bootstrap_if_empty(self) -> bool:
+                calls.append(f"activity:seed:{self.workspace}")
+                self._events = [{"id": "evt_seed"}]
+                return True
+
+            async def list(self, **_filters):
+                return list(self._events), 0
+
+            async def append(self, event: dict) -> dict:
+                self._events.insert(0, dict(event))
+                return dict(event)
+
+        class FakeNotificationStore:
+            def __init__(self, workspace: str = "default") -> None:
+                self.workspace = workspace
+                self._items: list[dict] = []
+
+            async def initialize(self) -> None:
+                calls.append(f"notification:init:{self.workspace}")
+
+            async def bootstrap_if_empty(self) -> bool:
+                calls.append(f"notification:seed:{self.workspace}")
+                self._items = [{"id": "n_seed"}]
+                return True
+
+            async def list(self) -> list[dict]:
+                return list(self._items)
+
+            async def mark_all_read(self) -> None:
+                pass
+
+            async def clear(self) -> None:
+                self._items.clear()
+
+            async def push(self, notification: dict) -> dict:
+                self._items.insert(0, dict(notification))
+                return dict(notification)
+
+        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+        monkeypatch.setenv(
+            "TWIN_SPACES_JSON",
+            json.dumps(
+                [
+                    {"id": "default", "label": "Default", "kind": "primary"},
+                    {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
+                ]
+            ),
+        )
+        monkeypatch.setattr(webui_tagstore, "MemgraphTagStore", FakeTagStore)
+        monkeypatch.setattr(
+            webui_activitystore, "MemgraphActivityStore", FakeActivityStore
+        )
+        monkeypatch.setattr(
+            webui_notificationstore,
+            "MemgraphNotificationStore",
+            FakeNotificationStore,
+        )
+
+        webui_router.reset_store()
+        settings = _make_settings(
+            webui_tag_backend="memgraph",
+            webui_activity_backend="memgraph",
+            webui_notifications_backend="memgraph",
+        )
+
+        try:
+            with ExitStack() as stack:
+                _apply_lifespan_patches(stack, _mock_rag)
+                app = create_app(settings)
+
+                async with app.router.lifespan_context(app):
+                    default_store = webui_router.get_store("default")
+                    sandbox_store = webui_router.get_store("sandbox")
+
+                    assert await default_store.list_tags() == []
+                    assert await sandbox_store.list_tags() == []
+                    assert await default_store.list_notifications() == []
+                    assert await sandbox_store.list_notifications() == []
+                    default_activity, _ = await default_store.list_activity()
+                    sandbox_activity, _ = await sandbox_store.list_activity()
+                    assert default_activity == []
+                    assert sandbox_activity == []
+                    assert await default_store.list_tag_categories() == [
+                        {
+                            "id": "governance",
+                            "label": "Governance",
+                            "color": "#000000",
+                        }
+                    ]
+        finally:
+            webui_router.reset_store()
+
+        assert "tag:seed:default" not in calls
+        assert "tag:seed:sandbox" not in calls
+        assert "activity:seed:default" not in calls
+        assert "activity:seed:sandbox" not in calls
+        assert "notification:seed:default" not in calls
+        assert "notification:seed:sandbox" not in calls
+
     async def test_rag_set_during_startup(self, _mock_rag):
         """_rag is set to the LightRAG instance during lifespan startup."""
         settings = _make_settings()

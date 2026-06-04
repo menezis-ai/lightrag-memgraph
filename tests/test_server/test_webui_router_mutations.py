@@ -316,14 +316,30 @@ class TestDeleteTag:
         # GET confirms it's gone
         tag = await _get_tag(client, "rman")
         assert tag is None
+        rman_docs = await client.get("/documents", params={"tag": "rman"})
+        assert rman_docs.json()["items"] == []
+        oracle_docs = await client.get("/documents", params={"tag": "oracle"})
+        assert oracle_docs.json()["total"] >= 1
+        assert all("rman" not in doc["tags"] for doc in oracle_docs.json()["items"])
         events = await _get_activity(client)
         assert "migrated to oracle" in events[0]["summary"]
+        assert events[0]["meta"]["affected_docs"] >= 1
 
     async def test_untag_strategy_default(self, client):
         r = await client.request("DELETE", "/tags/vault")
         assert r.status_code == 200
+        vault_docs = await client.get("/documents", params={"tag": "vault"})
+        assert vault_docs.json()["items"] == []
         events = await _get_activity(client)
         assert "deleted (docs untagged)" in events[0]["summary"]
+
+    async def test_migrate_requires_existing_target(self, client):
+        r = await client.request(
+            "DELETE",
+            "/tags/rman",
+            json={"strategy": "migrate", "to": "zzz-no-tag"},
+        )
+        assert r.status_code == 404
 
     async def test_unknown_returns_404(self, client):
         r = await client.request("DELETE", "/tags/zzz-no-tag")
