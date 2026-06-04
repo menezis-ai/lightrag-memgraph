@@ -149,11 +149,34 @@ class TestEdgeRecordProjection:
             "weight": 0.88,
         }
         out = _edge_record_to_relation(row, 0)
-        assert out["id"] == "kr_000000"
+        # id is endpoint-derived, stable, opaque
+        assert out["id"].startswith("kr_")
+        assert len(out["id"]) == 3 + 12
         assert out["source"] == "kg_Oracle Database"
         assert out["target"] == "kg_RHEL 9"
         assert out["label"] == "RUNS_ON"
         assert out["strength"] == 0.88
+
+    def test_edge_id_stable_across_calls(self):
+        row = {
+            "source_id": "a",
+            "target_id": "b",
+            "keywords": "uses",
+            "weight": 0.5,
+        }
+        out1 = _edge_record_to_relation(row, 0)
+        out2 = _edge_record_to_relation(row, 99)  # different index — same id
+        assert out1["id"] == out2["id"]
+
+    def test_edge_id_distinguishes_direction(self):
+        # a→b ≠ b→a (LightRAG :DIRECTED edges are direction-bearing on read)
+        a_to_b = _edge_record_to_relation(
+            {"source_id": "a", "target_id": "b", "keywords": "", "weight": 0.5}, 0
+        )
+        b_to_a = _edge_record_to_relation(
+            {"source_id": "b", "target_id": "a", "keywords": "", "weight": 0.5}, 0
+        )
+        assert a_to_b["id"] != b_to_a["id"]
 
     def test_weight_above_one_is_normalised(self):
         # LightRAG sometimes outputs weights on a 0..10 scale.
@@ -190,3 +213,109 @@ class TestEdgeRecordProjection:
         # Ensure the same prefix is applied on both sides so endpoints
         # match the entities returned by `_node_record_to_entity`.
         assert _entity_id_to_node_id("x") == "kg_x"
+
+
+class TestPatchTranslators:
+    def test_entity_patch_summary_maps_to_description(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        props = _entity_patch_to_props({"summary": "New summary"})
+        assert props == {"description": "New summary"}
+
+    def test_entity_patch_type_maps_to_entity_type(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        props = _entity_patch_to_props({"type": "TECHNOLOGY"})
+        assert props == {"entity_type": "TECHNOLOGY"}
+
+    def test_entity_patch_name_maps_to_display_name_not_pk(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        # The immutable entity_id (Memgraph PK) must NOT be touched —
+        # only an auxiliary display_name property.
+        props = _entity_patch_to_props({"name": "Renamed"})
+        assert props == {"display_name": "Renamed"}
+        assert "entity_id" not in props
+
+    def test_entity_patch_tags_serialized_as_json(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        props = _entity_patch_to_props({"tags": ["a", "b", "c"]})
+        assert props == {"twin_tags_json": '["a", "b", "c"]'}
+
+    def test_entity_patch_properties_serialized_as_json(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        props = _entity_patch_to_props({"properties": {"k": "v"}})
+        assert props == {"twin_props_json": '{"k": "v"}'}
+
+    def test_entity_patch_empty_returns_empty(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        assert _entity_patch_to_props({}) == {}
+
+    def test_entity_patch_ignores_none_fields(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _entity_patch_to_props,
+        )
+
+        # Pydantic's exclude_unset is the caller's responsibility, but
+        # if a None slips through it shouldn't write a property.
+        props = _entity_patch_to_props({"summary": None, "type": "ORG"})
+        assert props == {"entity_type": "ORG"}
+
+    def test_relation_patch_label_maps_to_keywords(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _relation_patch_to_props,
+        )
+
+        props = _relation_patch_to_props({"label": "USES"})
+        assert props == {"keywords": "USES"}
+
+    def test_relation_patch_strength_maps_to_weight_float(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _relation_patch_to_props,
+        )
+
+        props = _relation_patch_to_props({"strength": 0.42})
+        assert props == {"weight": 0.42}
+        assert isinstance(props["weight"], float)
+
+    def test_relation_patch_properties_serialized(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _relation_patch_to_props,
+        )
+
+        props = _relation_patch_to_props({"properties": {"note": "x"}})
+        assert props == {"twin_props_json": '{"note": "x"}'}
+
+
+class TestRelationEndpointCache:
+    def test_lookup_returns_none_for_unknown_id(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            lookup_relation_endpoints,
+        )
+
+        assert lookup_relation_endpoints("kr_nonexistent") is None
+
+    def test_lookup_returns_workspace_and_endpoints(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            _remember_relation,
+            lookup_relation_endpoints,
+        )
+
+        _remember_relation("cib", "kr_test123", "A", "B")
+        got = lookup_relation_endpoints("kr_test123")
+        assert got == ("cib", "A", "B")

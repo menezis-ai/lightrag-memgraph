@@ -29,7 +29,9 @@ import logging
 import math
 from typing import Any, Sequence
 
-from .._pool import get_read_session
+import json
+
+from .._pool import acquire_write_slot, get_read_session, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,9 @@ _TYPE_MAP: dict[str, str] = {
     "procedure": "CONCEPT",
     "topic": "CONCEPT",
 }
+# All closed-enum lowercase names (org/person/product/...) are already
+# covered above, so a value written by a PATCH and then re-read by
+# `read_graph_entities` round-trips cleanly.
 
 _DEFAULT_TYPE = "CONCEPT"
 
@@ -204,8 +209,44 @@ def _node_record_to_entity(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# In-process cache of relation_id → (workspace, src, tgt). Populated on
+# every `read_graph_relations` call so the PATCH route can reverse the
+# hash back to a Cypher MATCH. Eviction is intentionally lazy — for a
+# typical KB with O(10³) relations the memory cost is trivial; multi-
+# process deploys are tolerable because every worker rebuilds its own
+# cache as soon as the React port re-fetches.
+_RELATION_ENDPOINT_CACHE: dict[str, tuple[str, str, str]] = {}
+
+
+def _remember_relation(workspace: str, rel_id: str, src: str, tgt: str) -> None:
+    _RELATION_ENDPOINT_CACHE[rel_id] = (workspace, src, tgt)
+
+
+def lookup_relation_endpoints(rel_id: str) -> tuple[str, str, str] | None:
+    """Return ``(workspace, src, tgt)`` for a relation id known from a
+    previous read, or ``None`` if the cache was never primed for it."""
+    return _RELATION_ENDPOINT_CACHE.get(rel_id)
+
+
+def _relation_id_from_endpoints(src: str, tgt: str) -> str:
+    """Stable relation id derived from the endpoint pair.
+
+    Since LightRAG MERGEs a single :DIRECTED edge per source/target
+    pair, encoding the pair as the public id gives the WebUI a key
+    that PATCH can resolve back to a Cypher MATCH without storing an
+    extra property on the edge.
+    """
+    h = hashlib.sha1(f"{src}->{tgt}".encode("utf-8")).hexdigest()[:12]
+    return f"kr_{h}"
+
+
 def _edge_record_to_relation(record: dict[str, Any], index: int) -> dict[str, Any]:
-    """Project a Cypher edge row into the WebUI ``GraphRelation`` shape."""
+    """Project a Cypher edge row into the WebUI ``GraphRelation`` shape.
+
+    ``index`` is accepted for backwards compatibility but ignored; the
+    relation id is now derived from the endpoint pair.
+    """
+    del index  # ignored — id is endpoint-derived
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
     keywords = record.get("keywords") or ""
@@ -220,7 +261,7 @@ def _edge_record_to_relation(record: dict[str, Any], index: int) -> dict[str, An
         strength = min(1.0, strength / 10.0)
     label = str(keywords).strip().upper().replace(" ", "_") or "RELATED_TO"
     return {
-        "id": f"kr_{index:06d}",
+        "id": _relation_id_from_endpoints(str(src), str(tgt)),
         "source": _entity_id_to_node_id(str(src)),
         "target": _entity_id_to_node_id(str(tgt)),
         "label": label,
@@ -313,6 +354,11 @@ async def read_graph_relations(
                 rel["source"] not in valid or rel["target"] not in valid
             ):
                 continue
+            # Prime the endpoint cache so PATCH can reverse the relation
+            # id back to the underlying LightRAG entity_ids.
+            _remember_relation(
+                workspace, rel["id"], str(row["source_id"]), str(row["target_id"])
+            )
             out.append(rel)
         return out
     except Exception:
@@ -322,9 +368,223 @@ async def read_graph_relations(
         return []
 
 
+# ----------------------------------------------------------------------
+# Writes (M12 batch 2 — PATCH persistence)
+# ----------------------------------------------------------------------
+
+
+def _strip_node_prefix(webui_id: str) -> str:
+    """Reverse `_entity_id_to_node_id` — strip the ``kg_`` prefix so we
+    can target the underlying LightRAG entity_id in Cypher.
+    """
+    if webui_id.startswith("kg_"):
+        return webui_id[3:]
+    return webui_id
+
+
+def _entity_patch_to_props(patch: dict[str, Any]) -> dict[str, Any]:
+    """Translate the WebUI ``GraphEntityPatch`` shape into a flat dict
+    of Memgraph node properties suitable for ``SET n += $props``.
+
+    Mapping:
+    - ``summary`` → ``description``
+    - ``type``    → ``entity_type``  (closed enum string; lower-cased
+                                     on read by `map_entity_type`)
+    - ``name``    → ``display_name`` (the immutable ``entity_id`` PK
+                                     is never rewritten by an edit)
+    - ``tags``    → ``twin_tags_json`` (JSON-encoded list — Memgraph
+                                       doesn't store native arrays of
+                                       strings through Bolt cleanly)
+    - ``properties`` → ``twin_props_json`` (free-form k/v store)
+    """
+    props: dict[str, Any] = {}
+    if "summary" in patch and patch["summary"] is not None:
+        props["description"] = patch["summary"]
+    if "type" in patch and patch["type"] is not None:
+        props["entity_type"] = patch["type"]
+    if "name" in patch and patch["name"] is not None:
+        props["display_name"] = patch["name"]
+    if "tags" in patch and patch["tags"] is not None:
+        props["twin_tags_json"] = json.dumps(list(patch["tags"]))
+    if "properties" in patch and patch["properties"] is not None:
+        props["twin_props_json"] = json.dumps(dict(patch["properties"]))
+    return props
+
+
+def _relation_patch_to_props(patch: dict[str, Any]) -> dict[str, Any]:
+    """Translate ``GraphRelationPatch`` into Memgraph edge properties."""
+    props: dict[str, Any] = {}
+    if "label" in patch and patch["label"] is not None:
+        # Store as-is; on read we upper-snake the label.
+        props["keywords"] = patch["label"]
+    if "strength" in patch and patch["strength"] is not None:
+        props["weight"] = float(patch["strength"])
+    if "properties" in patch and patch["properties"] is not None:
+        props["twin_props_json"] = json.dumps(dict(patch["properties"]))
+    return props
+
+
+async def update_graph_entity(
+    workspace: str,
+    webui_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """MERGE the given properties onto a Memgraph entity node, then
+    re-read and return the canonical WebUI shape. Returns ``None`` when
+    the node doesn't exist.
+    """
+    entity_id = _strip_node_prefix(webui_id)
+    props = _entity_patch_to_props(patch)
+    label = _sanitize_workspace(workspace)
+    if not props:
+        # Nothing to write — still return the current state if the node exists.
+        return await _read_one_entity(workspace, entity_id)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            update_query = (
+                f"MATCH (n:`{label}` {{entity_id: $entity_id}}) "
+                "SET n += $props "
+                "RETURN n.entity_id AS entity_id"
+            )
+            try:
+                result = await session.run(
+                    update_query, entity_id=entity_id, props=props
+                )
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.update_graph_entity: write failed for %s",
+                    entity_id,
+                )
+                return None
+            if not rows:
+                return None
+    return await _read_one_entity(workspace, entity_id)
+
+
+async def update_graph_relation(
+    workspace: str,
+    rel_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """MERGE properties on the DIRECTED edge whose WebUI id is
+    ``rel_id``. The endpoint pair is recovered from
+    ``_RELATION_ENDPOINT_CACHE`` populated on previous reads — callers
+    that haven't fetched the relations recently get ``None``.
+    """
+    endpoints = lookup_relation_endpoints(rel_id)
+    if endpoints is None:
+        return None
+    cached_workspace, src, tgt = endpoints
+    if cached_workspace != workspace:
+        # Defensive — should not happen with our single-workspace
+        # deploy, but if a future multi-tenant config swaps workspace
+        # between calls we want to refuse the write rather than
+        # silently update a different KB.
+        return None
+    props = _relation_patch_to_props(patch)
+    label = _sanitize_workspace(workspace)
+    if not props:
+        return await _read_one_relation(workspace, src, tgt)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            update_query = (
+                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+                f"(t:`{label}` {{entity_id: $tgt}}) "
+                "SET r += $props "
+                "RETURN s.entity_id AS source_id"
+            )
+            try:
+                result = await session.run(
+                    update_query, src=src, tgt=tgt, props=props
+                )
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.update_graph_relation: write failed for %s→%s",
+                    src,
+                    tgt,
+                )
+                return None
+            if not rows:
+                return None
+    return await _read_one_relation(workspace, src, tgt)
+
+
+async def _read_one_entity(
+    workspace: str, entity_id: str
+) -> dict[str, Any] | None:
+    """Re-fetch a single entity to return its canonical projection."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+        "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
+        "n.description AS description, n.source_id AS source_id"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, eid=entity_id)
+            row = None
+            async for record in result:
+                row = {
+                    "entity_id": record["entity_id"],
+                    "entity_type": record["entity_type"],
+                    "description": record["description"],
+                    "source_id": record["source_id"],
+                }
+                break
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader._read_one_entity: read failed for %s", entity_id
+        )
+        return None
+    if not row or not row.get("entity_id"):
+        return None
+    return _node_record_to_entity(row)
+
+
+async def _read_one_relation(
+    workspace: str, src: str, tgt: str
+) -> dict[str, Any] | None:
+    """Re-fetch a single relation to return its canonical projection."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+        f"(t:`{label}` {{entity_id: $tgt}}) "
+        "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        "r.keywords AS keywords, r.weight AS weight"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, src=src, tgt=tgt)
+            row = None
+            async for record in result:
+                row = {
+                    "source_id": record["source_id"],
+                    "target_id": record["target_id"],
+                    "keywords": record["keywords"],
+                    "weight": record["weight"],
+                }
+                break
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader._read_one_relation: read failed for %s→%s", src, tgt
+        )
+        return None
+    if not row:
+        return None
+    return _edge_record_to_relation(row, 0)
+
+
 __all__ = [
     "layout_position",
     "map_entity_type",
     "read_graph_entities",
     "read_graph_relations",
+    "update_graph_entity",
+    "update_graph_relation",
 ]

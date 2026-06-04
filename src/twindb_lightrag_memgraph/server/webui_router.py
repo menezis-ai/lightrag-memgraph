@@ -38,7 +38,9 @@ from .webui_models import (
     ActivityEnvelope,
     Document,
     GraphEntity,
+    GraphEntityPatch,
     GraphRelation,
+    GraphRelationPatch,
     ListEnvelope,
     Notification,
     OpenApiEnvelope,
@@ -950,6 +952,87 @@ async def list_graph_relations() -> list[dict[str, Any]]:
             label, valid_node_ids=valid_ids
         )
     return get_store().list_graph_relations()
+
+
+@router.patch("/graph/entities/{entity_id}", response_model=GraphEntity)
+async def update_graph_entity_endpoint(
+    entity_id: str, body: GraphEntityPatch
+) -> dict[str, Any]:
+    """Persist an edit to a graph entity in Memgraph.
+
+    Returns the updated canonical projection on success, 404 if no
+    node matches. The Twin overlay store also receives a
+    ``graph-entity-edited`` activity event so the audit feed picks
+    the action up.
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    patch_dict = body.model_dump(exclude_unset=True)
+    updated = await graph_reader.update_graph_entity(
+        label, entity_id, patch_dict
+    )
+    if updated is None:
+        raise HTTPException(
+            404, f"Graph entity '{entity_id}' not found in workspace '{label}'"
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-entity-edited",
+        sev="info",
+        actor="operator",
+        target_label=updated.get("name") or entity_id,
+        summary=f"Graph entity '{updated.get('name') or entity_id}' updated",
+        meta={
+            "entity_id": entity_id,
+            "patch_keys": list(patch_dict.keys()),
+        },
+        target_type="entity",
+    )
+    await store.record_activity(event)
+    return updated
+
+
+@router.patch("/graph/relations/{rel_id}", response_model=GraphRelation)
+async def update_graph_relation_endpoint(
+    rel_id: str, body: GraphRelationPatch
+) -> dict[str, Any]:
+    """Persist an edit to a graph relation in Memgraph.
+
+    The relation id is opaque to the client; resolution back to the
+    Cypher MATCH happens via an in-process cache primed by the last
+    `/graph/relations` read. A 404 with a hint guides the client to
+    refresh when the cache is cold (process restart, etc.).
+    """
+    from . import graph_reader
+
+    label = _graph_memgraph_label()
+    patch_dict = body.model_dump(exclude_unset=True)
+    updated = await graph_reader.update_graph_relation(
+        label, rel_id, patch_dict
+    )
+    if updated is None:
+        raise HTTPException(
+            404,
+            f"Graph relation '{rel_id}' not found. The relation may have "
+            "been removed, or the server restarted since the last read — "
+            "refresh the Graph tab to repopulate the endpoint cache.",
+        )
+    store = get_store()
+    event = _make_event(
+        kind="graph-relation-edited",
+        sev="info",
+        actor="operator",
+        target_label=updated.get("label") or rel_id,
+        summary=f"Graph relation '{updated.get('label') or rel_id}' updated",
+        meta={
+            "rel_id": rel_id,
+            "patch_keys": list(patch_dict.keys()),
+        },
+        target_type="relation",
+    )
+    await store.record_activity(event)
+    return updated
 
 
 # -- Tag mutation endpoints (S4c slice 2) -----------------------------------

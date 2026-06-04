@@ -145,3 +145,95 @@ class TestGraphRoutesMemgraphFirst:
         # Seed has 21 relations
         assert len(body) > 0
         assert any(rel["id"] == "r_01" for rel in body)
+
+
+class TestGraphPatchPersistence:
+    async def test_patch_entity_returns_updated_shape_and_emits_activity(
+        self, monkeypatch, client
+    ):
+        async def fake_update(workspace, entity_id, patch):
+            return {
+                "id": entity_id,
+                "name": "Renamed",
+                "type": "PRODUCT",
+                "x": 100,
+                "y": 200,
+                "mentions": 3,
+                "sources": 3,
+                "summary": "After edit",
+            }
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update)
+
+        r = await client.patch(
+            "/graph/entities/kg_oracle",
+            json={"name": "Renamed", "summary": "After edit"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "Renamed"
+        assert body["summary"] == "After edit"
+
+        # Activity event should be appended
+        activity = await client.get("/activity")
+        assert activity.status_code == 200
+        events = activity.json().get("items", [])
+        graph_events = [e for e in events if e["kind"] == "graph-entity-edited"]
+        assert len(graph_events) == 1
+        assert graph_events[0]["target"]["label"] == "Renamed"
+        assert "name" in graph_events[0]["meta"]["patch_keys"]
+        assert "summary" in graph_events[0]["meta"]["patch_keys"]
+
+    async def test_patch_entity_404_when_not_found(self, monkeypatch, client):
+        async def fake_update_missing(workspace, entity_id, patch):
+            return None
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update_missing)
+
+        r = await client.patch(
+            "/graph/entities/kg_nope",
+            json={"summary": "x"},
+        )
+        assert r.status_code == 404
+        assert "not found" in r.json()["detail"].lower()
+
+    async def test_patch_relation_returns_updated_shape_and_emits_activity(
+        self, monkeypatch, client
+    ):
+        async def fake_update(workspace, rel_id, patch):
+            return {
+                "id": rel_id,
+                "source": "kg_A",
+                "target": "kg_B",
+                "label": "USES",
+                "strength": 0.95,
+            }
+
+        monkeypatch.setattr(gr, "update_graph_relation", fake_update)
+
+        r = await client.patch(
+            "/graph/relations/kr_abc123",
+            json={"label": "USES", "strength": 0.95},
+        )
+        assert r.status_code == 200
+        assert r.json()["label"] == "USES"
+
+        activity = await client.get("/activity")
+        events = activity.json().get("items", [])
+        rel_events = [e for e in events if e["kind"] == "graph-relation-edited"]
+        assert len(rel_events) == 1
+        assert rel_events[0]["target"]["label"] == "USES"
+
+    async def test_patch_relation_404_when_cache_cold(self, monkeypatch, client):
+        async def fake_update_missing(workspace, rel_id, patch):
+            return None
+
+        monkeypatch.setattr(gr, "update_graph_relation", fake_update_missing)
+
+        r = await client.patch(
+            "/graph/relations/kr_unknown",
+            json={"strength": 0.5},
+        )
+        assert r.status_code == 404
+        # The 404 message should include a hint about refreshing
+        assert "refresh" in r.json()["detail"].lower()

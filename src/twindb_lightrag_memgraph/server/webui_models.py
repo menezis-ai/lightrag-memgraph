@@ -177,6 +177,8 @@ class ActivityEvent(_Base):
         "source-ready",
         "source-failed",
         "pipeline-warning",
+        "graph-entity-edited",
+        "graph-relation-edited",
         "auth",
         "settings",
     ]
@@ -238,6 +240,27 @@ class GraphRelation(_Base):
     target: str
     label: str
     strength: float
+
+
+class GraphEntityPatch(_Base):
+    """Partial update payload for a graph entity. Every field optional;
+    only the keys present in the request body are applied."""
+
+    name: str | None = None
+    type: Literal[
+        "PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"
+    ] | None = None
+    summary: str | None = None
+    tags: list[str] | None = None
+    properties: dict[str, str] | None = None
+
+
+class GraphRelationPatch(_Base):
+    """Partial update payload for a graph relation."""
+
+    label: str | None = None
+    strength: float | None = None
+    properties: dict[str, str] | None = None
 
 
 # ---------------------------------------------------------------------------
