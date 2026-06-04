@@ -15,6 +15,7 @@ export type ActivityKind =
   | 'doc-approved'
   | 'doc-rejected'
   | 'doc-deleted'
+  | 'classification-rejected'
   | 'source-uploaded'
   | 'source-ready'
   | 'source-failed'
@@ -33,6 +34,11 @@ export type ActivityTargetType =
   | 'source'
   | 'bulk'
   | 'session'
+  /** Canonical term per the 2026-06-01 Fabrice meeting ("space alors").
+   *  ``workspace`` stays in the union for backwards-compat with historical
+   *  audit records emitted before the rename, but new events use
+   *  ``space``. */
+  | 'space'
   | 'workspace';
 
 export interface ActivityActor {
@@ -87,6 +93,11 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     label: 'Document deleted',
     icon: 'trash',
     color: 'var(--color-text-secondary)',
+  },
+  'classification-rejected': {
+    label: 'Classification rejected',
+    icon: 'alert-triangle',
+    color: 'var(--twin-red-vivid)',
   },
   'source-uploaded': {
     label: 'Source uploaded',

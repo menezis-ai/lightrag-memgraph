@@ -366,6 +366,77 @@ def reset_store() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Document overlay helpers
+# ---------------------------------------------------------------------------
+
+
+def _status_to_dict(doc: Any) -> dict[str, Any]:
+    """Normalize LightRAG DocStatus rows returned as dicts or dataclasses."""
+    if isinstance(doc, dict):
+        payload = dict(doc)
+    else:
+        import dataclasses
+
+        payload = dataclasses.asdict(doc) if dataclasses.is_dataclass(doc) else {}
+    status = payload.get("status")
+    if hasattr(status, "value"):
+        payload["status"] = status.value
+    metadata = payload.get("metadata") or {}
+    payload["metadata"] = dict(metadata) if isinstance(metadata, dict) else {}
+    return payload
+
+
+def _doc_matches_active_space(doc: dict[str, Any]) -> bool:
+    metadata = doc.get("metadata") or {}
+    default_space = load_space_catalog().default_space_id
+    return metadata.get("space", default_space) == current_space_id()
+
+
+async def _get_doc_for_active_space(doc_id: str) -> dict[str, Any]:
+    rag = _get_rag()
+    raw = await rag.doc_status.get_by_id(doc_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+    doc = _status_to_dict(raw)
+    if not _doc_matches_active_space(doc):
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+    return doc
+
+
+async def _graph_tags_for_doc(doc_id: str) -> list[str]:
+    """Best-effort doc tag lookup through [:TAGGED_WITH] relations."""
+    try:
+        from .. import _pool
+        from .._constants import resolve_workspace
+
+        workspace = resolve_workspace()
+        space = current_space_id()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = f"WebuiTag_{space}"
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (d:`{doc_label}` {{id: $doc_id}})
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+                RETURN collect(t.id) AS tags
+                """,
+                doc_id=doc_id,
+            )
+            record = await result.single()
+            await result.consume()
+        return sorted(tid for tid in ((record or {}).get("tags") or []) if tid)
+    except Exception:
+        return []
+
+
+async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
+    if hasattr(rag, "adelete_by_doc_id"):
+        await rag.adelete_by_doc_id(doc_id)
+        return
+    await rag.doc_status.delete([doc_id])
+
+
+# ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
 
@@ -384,6 +455,94 @@ async def list_documents(
 ) -> dict[str, Any]:
     items = get_store().list_documents(status=status, q=q, tag=tag)
     return {"items": items, "total": len(items)}
+
+
+@router.get("/documents/{doc_id}/metadata")
+async def get_document_metadata(doc_id: str) -> dict[str, Any]:
+    doc = await _get_doc_for_active_space(doc_id)
+    metadata = doc.get("metadata") or {}
+    graph_tags = await _graph_tags_for_doc(doc_id)
+    tags = graph_tags or list(metadata.get("tags") or doc.get("tags") or [])
+    space = metadata.get("space") or current_space_id()
+    return {
+        "tags": tags,
+        "workspace": metadata.get("workspace") or space,
+        "space": space,
+        "review": metadata.get("review"),
+        "classification": metadata.get("classification"),
+        "metadata": metadata,
+    }
+
+
+@router.post("/documents/bulk-delete")
+async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
+    doc_ids = body.get("doc_ids")
+    actor = body.get("actor") or "system"
+    if not isinstance(doc_ids, list) or not doc_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="doc_ids must be a non-empty list of document ids.",
+        )
+    if len(doc_ids) > 500:
+        raise HTTPException(
+            status_code=413,
+            detail="bulk-delete accepts at most 500 target documents.",
+        )
+
+    rag = _get_rag()
+    deleted = 0
+    failed: list[str] = []
+    for doc_id in doc_ids:
+        if not isinstance(doc_id, str) or not doc_id:
+            failed.append(str(doc_id))
+            continue
+        try:
+            doc = await _get_doc_for_active_space(doc_id)
+            await _delete_doc_from_rag(rag, doc_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                failed.append(doc_id)
+                continue
+            raise
+        except Exception:
+            failed.append(doc_id)
+            continue
+
+        deleted += 1
+        event = _make_event(
+            kind="doc-deleted",
+            sev="info",
+            actor=actor,
+            target_label=doc.get("file_path") or doc_id,
+            summary=f"deleted by {actor}",
+            meta={"doc_id": doc_id, "operation": "bulk-delete"},
+            target_type="document",
+        )
+        await get_store().record_activity(event)
+
+    return {"deleted": deleted, "failed": failed}
+
+
+@router.get("/health")
+async def twin_health() -> dict[str, Any]:
+    try:
+        _get_rag()
+        rag_captured = True
+    except HTTPException:
+        rag_captured = False
+
+    store = get_store()
+    stores = {
+        "tags": store.tags.__class__.__name__,
+        "activity": store.activity.__class__.__name__,
+        "notifications": store.notifications.__class__.__name__,
+    }
+    return {
+        "status": "ok" if rag_captured else "degraded",
+        "space": current_space_id(),
+        "ragCaptured": rag_captured,
+        "stores": stores,
+    }
 
 
 @router.get("/workspaces", response_model=list[Workspace])
@@ -453,7 +612,7 @@ async def create_space(body: SpaceCreate) -> dict[str, Any]:
         target_label=space.label,
         summary=f"Space '{space.id}' created ({space.kind})",
         meta={"space_id": space.id, "operation": "create"},
-        target_type="workspace",
+        target_type="space",
     )
     await store.record_activity(event)
     return space.as_workspace_compat(current=False)
@@ -492,7 +651,7 @@ async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
             "operation": "update",
             "patch_keys": list(patch.keys()),
         },
-        target_type="workspace",
+        target_type="space",
     )
     await store.record_activity(event)
     active = current_space_id()
@@ -541,7 +700,7 @@ async def delete_space(space_id: str) -> None:
         target_label=space_id,
         summary=f"Space '{space_id}' deleted",
         meta={"space_id": space_id, "operation": "delete"},
-        target_type="workspace",
+        target_type="space",
     )
     await store.record_activity(event)
     return None

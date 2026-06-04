@@ -148,7 +148,7 @@ Sibling Vite + Bun + React 19 + TypeScript strict + Tailwind v3 sub-project. Por
 
 **Roadmap** — S1/S2/S3/S4a/S4b/S4c are landed (see memory `project_webui_fork.md`). The live end-to-end mutation loop (WebUI → FastAPI → Memgraph store → cache invalidation → refetch) is in place. **Couche 3** of the wiring plan is now **partial**: runtime config injection + frontend space cutover landed 2026-06-02 (PR #170); backend `X-Twin-Space` enforcement + admin space CRUD remain. Authoritative spec is `WEBUI-WIRING-PLAN.md` at the repo root, *not* memory.
 
-**Spaces vs workspaces (2026-06-02 cutover):** The user-facing term is **Space**; the backend still uses `workspace` internally during the transition. The React port no longer hardcodes any space id — initial space comes from `window.__twinConfig.defaultSpaceId`. The server injects spaces via `_build_runtime_config()` from env vars:
+**Spaces vs workspaces (2026-06-01 Fabrice doctrine, 2026-06-02 cutover):** The canonical term is **Space** — confirmed by Fabrice during the 2026-06-01 meeting ("Space alors. Juste enlève le workspace, c'est space."). The Twin overlay surface (routes, Pydantic models, audit events, frontend props) uses `space`. The LightRAG-aligned label that lands on Memgraph nodes (`KV_{ws}`, `Vec_{ws}`, `DocStatus_{ws}`, …) is still spelled `workspace` because that's an upstream contract we don't get to rename — see the module docstring in `src/twindb_lightrag_memgraph/_constants.py`. The React port no longer hardcodes any space id — initial space comes from `window.__twinConfig.defaultSpaceId`. The server injects spaces via `_build_runtime_config()` from env vars:
 
 - `TWIN_DEFAULT_SPACE` (fallback `WORKSPACE`, then `default`)
 - `TWIN_DEFAULT_SPACE_LABEL`

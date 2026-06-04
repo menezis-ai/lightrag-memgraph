@@ -3,6 +3,20 @@ Centralized constants and helpers shared across all Memgraph storage backends.
 
 Single source of truth for default values, environment variable keys,
 and workspace resolution logic.
+
+## Naming: ``workspace`` here ≠ Twin space
+
+The token ``workspace`` in this module refers strictly to the LightRAG-core
+notion: the backtick-safe identifier that becomes the Memgraph node label
+(`KV_{workspace}`, `Vec_{workspace}`, `DocStatus_{workspace}`, ...). That
+contract is defined upstream by LightRAG and we don't get to rename it.
+
+The user-facing Twin sub-scope is called **space** everywhere else in this
+codebase (per the 2026-06-01 Fabrice meeting — "Space alors"). The two
+concepts overlap today because the deploy maps a single LightRAG workspace
+per Twin instance, but the wording in this module deliberately stays
+"workspace" so anyone touching the storage backends recognises it as the
+LightRAG-aligned label and not the Twin overlay surface.
 """
 
 import os
