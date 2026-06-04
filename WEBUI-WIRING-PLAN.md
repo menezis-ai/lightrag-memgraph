@@ -1005,7 +1005,7 @@ Still to do:
 - [x] `useAuth.signout()` is already wired correctly (POST
       `/twin/api/auth/logout` → `queryClient.clear()` → redirect IdP).
       Confirm the IdP URL is read from `window.__twinConfig.idpLogoutUrl`.
-- [ ] Remove silent production fallbacks from `App.tsx`:
+- [x] Remove silent production fallbacks from `App.tsx`:
   - `DOCUMENT_FIXTURES`
   - `TAG_FIXTURES`
   - `TAG_CATEGORY_FIXTURES`
@@ -1043,7 +1043,7 @@ Still to do:
       tagged C3 with `TWIN_MIP_MAX_CLASSIFICATION=C2`, assert the
       DocStatus is `FAILED` with the expected `error_msg`, and an
       activity event of kind `classification-rejected` exists.
-- [ ] `test_space_scoping.py`: insert docs in spaces `default` and
+- [x] `test_space_scoping.py`: insert docs in spaces `default` and
       `sandbox`, GET `/documents` with `X-Twin-Space: default`, assert
       only `default` docs returned.
 - [x] `test_idp_jwt.py`: cookie + bearer extraction priority, full
