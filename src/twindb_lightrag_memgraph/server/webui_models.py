@@ -296,6 +296,28 @@ class GraphRelationCreate(_Base):
     properties: dict[str, str] | None = None
 
 
+class SpaceCreate(_Base):
+    """Create payload for a new Twin space.
+
+    ``id`` must validate against the safe-identifier rule (the same
+    backtick-safe rule used for Memgraph labels). ``label`` is the
+    human-facing name shown in the picker.
+    """
+
+    id: str
+    label: str
+    kind: str = "custom"
+    description: str = ""
+
+
+class SpacePatch(_Base):
+    """Partial update payload for a Twin space. Every field optional."""
+
+    label: str | None = None
+    kind: str | None = None
+    description: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Simple ack envelopes for mutations
 # ---------------------------------------------------------------------------

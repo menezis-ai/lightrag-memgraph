@@ -128,6 +128,32 @@ The frontend client and MSW know more routes than the Python backend currently
 serves; the priorities below are the shortest path from "demo green" to "real
 backend green".
 
+### Update 2026-06-04 — M12 Graph real Memgraph
+
+M12 is functionally closed on branch `feat/webui-graph-real-memgraph`:
+
+- `GET /twin/api/graph/entities` and `/graph/relations` read from Memgraph.
+- `PATCH /twin/api/graph/entities/{id}` and `/graph/relations/{id}` persist.
+- Entity/relation creation and deletion are wired end-to-end from GraphTab to
+  Memgraph.
+- Frontend GraphTab supports add entity, delete entity/relation, and add
+  relation.
+- Local validation reported for the M12 stack: backend `634/634` pytest,
+  frontend `364/364` vitest.
+
+Commits in the local M12 stack:
+
+| Commit | Scope |
+|---|---|
+| `c805609` | batch 1 backend — real Memgraph GET + layout |
+| `8b616d0` | batch 2 backend — PATCH persistence |
+| `58f5e14` | batch 3 backend — POST/DELETE lifecycle |
+| `4a0b53e` | batch 3 frontend — Add entity + Delete entity/relation |
+| `7da28d3` | batch 3 frontend — Add relation form |
+
+Remaining P0 focus after M12: document metadata, bulk delete, Twin overlay
+health, route parity, production fixture fallbacks, and real auth.
+
 ### P0 — Contract drift blockers
 
 - Add an automated **route parity test** that compares:
@@ -140,8 +166,6 @@ backend green".
   - `GET /twin/api/documents/{id}/metadata`
   - `POST /twin/api/documents/bulk-delete`
   - `GET /twin/api/health`
-  - `PATCH /twin/api/graph/entities/{id}`
-  - `PATCH /twin/api/graph/relations/{id}`
 - Add backend contract tests for those routes before expanding Playwright
   coverage. Current Playwright/MSW success is not enough because it can mask
   real-backend `404`/`405` failures.
@@ -164,8 +188,8 @@ backend green".
   frontend journey, but the Python router has no matching route yet.
 - `document metadata`: serve tags, space, review, and classification from
   DocStatus + tag graph relations, not from WebUI seed data.
-- `graph edit`: either persist entity/relation PATCHes in Memgraph or remove
-  the edit affordance from the prod UI until it is supported.
+- `graph lifecycle`: done in M12 for read/write/create/delete against Memgraph.
+  Keep it covered by route parity + regression tests.
 - `tag delete migration`: current backend records migration intent, but does
   not retag affected documents. Either implement the migration/untag cascade or
   change the UI wording to say only the tag catalog changed.
@@ -344,8 +368,8 @@ Backend `pytest` cases:
 - `POST /twin/api/documents/{id}/reject`
 - `POST /twin/api/documents/bulk-delete`
 - `GET /twin/api/health`
-- `PATCH /twin/api/graph/entities/{id}`
-- `PATCH /twin/api/graph/relations/{id}`
+- Graph endpoints are M12-complete; keep GET/PATCH/POST/DELETE lifecycle in
+  regression coverage and route parity.
 - `POST /twin/api/tags`, approve/reject/edit/synonyms/delete
 - Assert persisted store state per space and emitted activity events.
 
@@ -776,9 +800,9 @@ refactor is intentional; first close the contract gaps in the existing
 
 | File | Action | Why |
 |---|---|---|
-| `src/twindb_lightrag_memgraph/server/webui_router.py` | **EDIT** | Add missing real routes: `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health`, graph PATCH endpoints; remove seed-only behavior from prod paths where possible |
+| `src/twindb_lightrag_memgraph/server/webui_router.py` | **EDIT** | Add missing real routes: `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health`; Graph GET/PATCH/POST/DELETE lifecycle is M12-complete and should stay covered |
 | `src/twindb_lightrag_memgraph/server/native_shims.py` | **EDIT** | Keep native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` aligned with React contract and space filtering |
-| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, and future document/graph overlay mutations persist per space in Memgraph |
+| `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, document overlay metadata, and graph lifecycle mutations persist per space in Memgraph |
 | `src/twindb_lightrag_memgraph/server/auth.py` | **EDIT** | Replace local JWT username/password path with MyAccess/IdP/JWKS validation for production mode |
 | `src/twindb_lightrag_memgraph/server/space.py` | **EDIT** | Keep `X-Twin-Space` as canonical and retire `X-Twin-Workspace` only after all callers migrate |
 | `src/twindb_lightrag_memgraph/__init__.py` | **EDIT** | `replace_ui`, `mount_server`, `shim_native_routes`, runtime config substitution, and direct Twin router mount already exist; keep extending these paths rather than booting a second LightRAG |
@@ -812,10 +836,11 @@ refactor is intentional; first close the contract gaps in the existing
 - [ ] Add Twin overlay health:
   - `GET /health` under `/twin/api` → reports overlay status and backing store
     availability separately from native LightRAG `/health`.
-- [ ] Complete graph mutation routes or remove the edit affordance:
-  - `PATCH /graph/entities/{id}`
-  - `PATCH /graph/relations/{id}`
-  - Persist to Memgraph and emit activity, or make GraphTab read-only in prod.
+- [x] Complete graph lifecycle routes:
+  - `GET /graph/entities` and `/graph/relations`
+  - `PATCH /graph/entities/{id}` and `/graph/relations/{id}`
+  - entity/relation creation and deletion
+  - GraphTab add entity, delete entity/relation, and add relation forms
 - [ ] Keep tag/activity/notification routes in `webui_router.py`; do not
       create duplicate `routes_tags.py` etc. unless the router is intentionally
       split as a refactor after parity tests are green.
@@ -837,8 +862,9 @@ Still to do:
       requested.
 - [ ] Add retention/sweep strategy for activity and notifications.
 - [ ] Extend persistence beyond tags/activity/notifications where the UI
-      currently reads seed-only surfaces: graph entities/relations, thesaurus
-      if it becomes operator-editable, and document overlay metadata.
+      currently reads seed-only surfaces: thesaurus if it becomes
+      operator-editable, and document overlay metadata. Graph entities and
+      relations are M12-complete.
 
 #### 3.3 — JWT middleware + space scoping (3h)
 
@@ -937,9 +963,9 @@ Still to do:
       `/twin/api/documents/bulk-delete`, assert docs disappear from
       `/documents`, chunks are not retrievable, and activity events are
       written.
-- [ ] `test_graph_patch_endpoints.py`: PATCH graph entity/relation metadata,
-      assert the update persists in Memgraph and activity is emitted, or assert
-      the prod UI does not expose graph editing if the endpoints remain absent.
+- [x] Graph backend/frontend regression coverage: M12 reports real Memgraph
+      GET/PATCH/POST/DELETE lifecycle covered in the `634/634` pytest and
+      `364/364` vitest baseline.
 - [ ] `test_twin_health_endpoint.py`: assert `/twin/api/health` reports overlay
       store status and fails/degrades when Memgraph-backed stores cannot
       initialize.

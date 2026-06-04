@@ -31,7 +31,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import webui_seed
-from .space import bind_request_space, current_space_id, load_space_catalog
+from .space import (
+    bind_request_space,
+    current_space_id,
+    is_env_seeded_space,
+    load_space_catalog,
+)
+from . import space_store
 from .webui_activitystore import InMemoryActivityStore, MemgraphActivityStore
 from .webui_models import (
     AckResponse,
@@ -47,6 +53,8 @@ from .webui_models import (
     Notification,
     OpenApiEnvelope,
     OpenApiGroup,
+    SpaceCreate,
+    SpacePatch,
     TagApproveBody,
     TagCategory,
     TagDeleteBody,
@@ -353,6 +361,7 @@ def set_store(store: WebuiStore, space: str | None = None) -> None:
 
 def reset_store() -> None:
     _stores.clear()
+    space_store.reset_runtime_store()
     set_store(WebuiStore.from_seed())
 
 
@@ -396,6 +405,146 @@ async def list_spaces() -> list[dict[str, Any]]:
         space.as_workspace_compat(current=space.id == active)
         for space in load_space_catalog().spaces
     ]
+
+
+@router.post("/spaces", response_model=Workspace, status_code=201)
+async def create_space(body: SpaceCreate) -> dict[str, Any]:
+    """Admin: provision a new Twin space at runtime.
+
+    Returns 201 + the new space in workspace-compat shape. Errors:
+    - 409 if an env-seeded space already owns this id (operator cannot
+      shadow an SRE-provisioned default).
+    - 409 if a runtime space with this id already exists.
+    - 422 if the id fails the safe-identifier rule.
+    - 422 if adding this space would exceed `max_spaces` from the env
+      configuration.
+    """
+    catalog = load_space_catalog()
+    if len(catalog.spaces) >= catalog.max_spaces:
+        raise HTTPException(
+            422,
+            f"Cannot create space: catalog already at max ({catalog.max_spaces}). "
+            "Remove an existing space first.",
+        )
+    if is_env_seeded_space(body.id):
+        raise HTTPException(
+            409,
+            f"Space id '{body.id}' is provisioned by the deploy env "
+            "and cannot be re-created via the API.",
+        )
+    try:
+        space = space_store.add_runtime_space(
+            space_id=body.id,
+            label=body.label,
+            kind=body.kind,
+            description=body.description,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            409, f"Space '{exc.args[0]}' already exists"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    store = get_store()
+    event = _make_event(
+        kind="settings",
+        sev="info",
+        actor="operator",
+        target_label=space.label,
+        summary=f"Space '{space.id}' created ({space.kind})",
+        meta={"space_id": space.id, "operation": "create"},
+        target_type="workspace",
+    )
+    await store.record_activity(event)
+    return space.as_workspace_compat(current=False)
+
+
+@router.patch("/spaces/{space_id}", response_model=Workspace)
+async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
+    """Admin: edit label / kind / description of a runtime space.
+
+    Env-seeded spaces are 403 — those changes must go through the
+    deploy env (`TWIN_SPACES_JSON`).
+    """
+    if is_env_seeded_space(space_id):
+        raise HTTPException(
+            403,
+            f"Space '{space_id}' is env-seeded and cannot be edited via the API.",
+        )
+    patch = body.model_dump(exclude_unset=True)
+    space = space_store.update_runtime_space(
+        space_id,
+        label=patch.get("label"),
+        kind=patch.get("kind"),
+        description=patch.get("description"),
+    )
+    if space is None:
+        raise HTTPException(404, f"Space '{space_id}' not found")
+    store = get_store()
+    event = _make_event(
+        kind="settings",
+        sev="info",
+        actor="operator",
+        target_label=space.label,
+        summary=f"Space '{space.id}' updated",
+        meta={
+            "space_id": space.id,
+            "operation": "update",
+            "patch_keys": list(patch.keys()),
+        },
+        target_type="workspace",
+    )
+    await store.record_activity(event)
+    active = current_space_id()
+    return space.as_workspace_compat(current=space.id == active)
+
+
+@router.delete("/spaces/{space_id}", status_code=204)
+async def delete_space(space_id: str) -> None:
+    """Admin: remove a runtime space.
+
+    - 403 if env-seeded (only the deploy env can remove those).
+    - 404 if no runtime space with this id exists.
+    - 409 if the space still has WebUI data (tags, activity events,
+      docs scoped to it). Refusing to delete avoids orphaning state.
+    """
+    if is_env_seeded_space(space_id):
+        raise HTTPException(
+            403,
+            f"Space '{space_id}' is env-seeded and cannot be deleted via the API.",
+        )
+    # Probe the in-memory store for residual data before deleting.
+    bound_store = _stores.get(space_id)
+    if bound_store is not None:
+        has_docs = len(bound_store._documents) > 0  # noqa: SLF001
+        # `list_tags` is sync on the in-memory backend, async on the
+        # Memgraph one — normalise via inspect.iscoroutine.
+        tags_result = bound_store.tags.list_tags()
+        if hasattr(tags_result, "__await__"):
+            tags_result = await tags_result  # type: ignore[assignment]
+        has_tags = len(tags_result) > 0
+        if has_docs or has_tags:
+            raise HTTPException(
+                409,
+                f"Space '{space_id}' still has data (docs and/or tags). "
+                "Remove the contents before deleting the space.",
+            )
+    if not space_store.delete_runtime_space(space_id):
+        raise HTTPException(404, f"Space '{space_id}' not found")
+    # Evict the per-space WebUI store so future GETs don't resurrect it.
+    _stores.pop(space_id, None)
+    store = get_store()
+    event = _make_event(
+        kind="settings",
+        sev="info",
+        actor="operator",
+        target_label=space_id,
+        summary=f"Space '{space_id}' deleted",
+        meta={"space_id": space_id, "operation": "delete"},
+        target_type="workspace",
+    )
+    await store.record_activity(event)
+    return None
 
 
 @router.get("/notifications", response_model=list[Notification])
