@@ -21,6 +21,7 @@
 import { useState } from 'react';
 import { ApiTab } from './ApiTab';
 import { ProfileSection } from './Settings/ProfileSection';
+import { SpacesAdminSection } from './Settings/SpacesAdminSection';
 import { WorkspaceSection } from './Settings/WorkspaceSection';
 import { Icon } from './Icon';
 import {
@@ -98,7 +99,12 @@ export function SettingsTab({
             />
           </div>
         )}
-        {section === 'workspace' && <WorkspaceSection />}
+        {section === 'workspace' && (
+          <>
+            <WorkspaceSection />
+            <SpacesAdminSection />
+          </>
+        )}
       </main>
     </div>
   );

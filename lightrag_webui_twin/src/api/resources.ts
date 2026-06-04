@@ -200,6 +200,34 @@ export const twinApi = {
   // Workspaces / notifications
   listWorkspaces: (init?: ApiRequestInit) =>
     apiFetch<readonly Workspace[]>(`${TWIN}/workspaces`, init),
+
+  // Spaces (M12 Admin CRUD — runtime additions on top of the env seed)
+  listSpaces: (init?: ApiRequestInit) =>
+    apiFetch<readonly Workspace[]>(`${TWIN}/spaces`, init),
+  createSpace: (
+    body: { id: string; label: string; kind?: string; description?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<Workspace>(`${TWIN}/spaces`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  updateSpace: (
+    id: string,
+    patch: { label?: string; kind?: string; description?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<Workspace>(`${TWIN}/spaces/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'PATCH',
+      body: patch,
+    }),
+  deleteSpace: (id: string, init?: ApiRequestInit) =>
+    apiFetch<void>(`${TWIN}/spaces/${encodeURIComponent(id)}`, {
+      ...init,
+      method: 'DELETE',
+    }),
   listNotifications: (init?: ApiRequestInit) =>
     apiFetch<readonly Notification[]>(`${TWIN}/notifications`, init),
   markAllNotificationsRead: (init?: ApiRequestInit) =>
@@ -543,6 +571,10 @@ export const api = {
   deleteGraphEntity: twinApi.deleteGraphEntity,
   createGraphRelation: twinApi.createGraphRelation,
   deleteGraphRelation: twinApi.deleteGraphRelation,
+  listSpaces: twinApi.listSpaces,
+  createSpace: twinApi.createSpace,
+  updateSpace: twinApi.updateSpace,
+  deleteSpace: twinApi.deleteSpace,
 };
 
 export type ApiClient = typeof api;

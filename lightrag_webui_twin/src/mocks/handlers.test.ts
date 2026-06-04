@@ -79,6 +79,18 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
     expect(data.version).toBe(API_VERSION);
     expect(data.groups).toHaveLength(5);
   });
+
+  it('POST /query returns a response envelope', async () => {
+    const r = await fetch(BASE + '/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'oracle rman status' }),
+    });
+    expect(r.ok).toBe(true);
+    expect(await r.json()).toEqual({
+      response: 'Mock retrieval response for: oracle rman status',
+    });
+  });
 });
 
 describe('MSW handlers — Twin overlay endpoints', () => {

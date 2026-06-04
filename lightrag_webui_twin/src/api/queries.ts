@@ -62,6 +62,56 @@ export function useWorkspaces() {
   });
 }
 
+// Spaces — admin CRUD on top of the env seed.
+export function useSpaces() {
+  return useQuery({
+    queryKey: ['spaces'] as const,
+    queryFn: ({ signal }) => api.listSpaces({ signal }),
+    ...DEFAULTS,
+  });
+}
+
+export function useCreateSpace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createSpace>[0]) =>
+      api.createSpace(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['spaces'] });
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useUpdateSpace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: { id: string; patch: Parameters<typeof api.updateSpace>[1] }) =>
+      api.updateSpace(id, patch),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['spaces'] });
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useDeleteSpace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteSpace(id),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['spaces'] });
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
 export function useNotifications() {
   return useQuery({
     queryKey: ['notifications'] as const,

@@ -183,6 +183,18 @@ let graphRelationState: GraphRelation[] = GRAPH_RELATION_FIXTURES.map((r) => ({
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 
+// Spaces — admin CRUD mirror of the backend. The first WORKSPACE
+// fixture is treated as the SRE-provisioned default (env-seeded) and
+// rejects mutations with 403; the remaining ones are seeded as
+// runtime entries that an operator could realistically add. SPACE_MAX
+// matches the backend's clamp so the "at max" path is reachable in
+// tests without re-seeding.
+const SPACE_MAX = 5;
+let spaceState = WORKSPACE_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
+const envSeededSpaceIds = new Set(
+  WORKSPACE_FIXTURES.slice(0, 1).map((w) => w.id),
+);
+
 interface E2eScenario {
   bulkRetagStatus?: number;
   approveDelayMs?: number;
@@ -235,6 +247,7 @@ export function resetDocumentsState(): void {
   }));
   uploadedTrackDocs.clear();
   uploadSeq = 0;
+  spaceState = WORKSPACE_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
   e2eScenario.bulkRetagStatus = undefined;
   e2eScenario.approveDelayMs = undefined;
   e2eScenario.tagApproveDelayMs = undefined;
@@ -568,6 +581,16 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     return HttpResponse.json({ groups: OPENAPI_GROUPS, version: API_VERSION });
   }),
+  http.post(`${ANY}/query`, async ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const body = (await request.json().catch(() => ({}))) as { query?: string };
+    return HttpResponse.json({
+      response: body.query
+        ? `Mock retrieval response for: ${body.query}`
+        : 'Mock retrieval response',
+    });
+  }),
 
   // -------------------------------------------------------------------------
   // Twin overlay endpoints
@@ -575,6 +598,150 @@ export const handlers = [
   http.get(`${ANY}${TWIN}/workspaces`, ({ request }) => {
     recordTwinSpaceRequest(request);
     return HttpResponse.json(WORKSPACE_FIXTURES);
+  }),
+
+  // Spaces — admin CRUD on top of an env-seeded entry. The first
+  // fixture is the env-seeded default and rejects mutations with the
+  // same status codes as the backend (403). Any space added through
+  // the API is "runtime" and mutable.
+  http.get(`${ANY}${TWIN}/spaces`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(spaceState);
+  }),
+  http.post(`${ANY}${TWIN}/spaces`, async ({ request }) => {
+    const body = (await request.json()) as {
+      id: string;
+      label: string;
+      kind?: string;
+      description?: string;
+    };
+    if (!/^[A-Za-z0-9_-]+$/.test(body.id)) {
+      return HttpResponse.json(
+        { detail: `Invalid space id '${body.id}'` },
+        { status: 422 },
+      );
+    }
+    if (spaceState.length >= SPACE_MAX) {
+      return HttpResponse.json(
+        { detail: `Cannot create space: catalog already at max (${SPACE_MAX})` },
+        { status: 422 },
+      );
+    }
+    if (envSeededSpaceIds.has(body.id)) {
+      return HttpResponse.json(
+        { detail: `Space '${body.id}' is provisioned by the deploy env` },
+        { status: 409 },
+      );
+    }
+    if (spaceState.some((s) => s.id === body.id)) {
+      return HttpResponse.json(
+        { detail: `Space '${body.id}' already exists` },
+        { status: 409 },
+      );
+    }
+    const created = {
+      id: body.id,
+      kb: body.label,
+      visibility: 'internal' as const,
+      sources: 0,
+      role: 'admin / steward' as const,
+      current: false,
+    };
+    spaceState = [...spaceState, created];
+    activityState = [
+      {
+        id: `evt_space_${body.id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'settings',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'workspace', label: body.label, id: body.id },
+        summary: `Space '${body.id}' created`,
+        meta: { space_id: body.id, operation: 'create' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.patch(`${ANY}${TWIN}/spaces/:id`, async ({ params, request }) => {
+    const id = String(params.id);
+    if (envSeededSpaceIds.has(id)) {
+      return HttpResponse.json(
+        { detail: `Space '${id}' is env-seeded and cannot be edited` },
+        { status: 403 },
+      );
+    }
+    const idx = spaceState.findIndex((s) => s.id === id);
+    if (idx < 0) {
+      return HttpResponse.json(
+        { detail: `Space '${id}' not found` },
+        { status: 404 },
+      );
+    }
+    const patch = (await request.json()) as { label?: string };
+    const next = {
+      ...spaceState[idx],
+      kb: patch.label ?? spaceState[idx].kb,
+    };
+    spaceState = [
+      ...spaceState.slice(0, idx),
+      next,
+      ...spaceState.slice(idx + 1),
+    ];
+    activityState = [
+      {
+        id: `evt_space_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'settings',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'workspace', label: next.kb, id },
+        summary: `Space '${id}' updated`,
+        meta: { space_id: id, operation: 'update' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return HttpResponse.json(next);
+  }),
+  http.delete(`${ANY}${TWIN}/spaces/:id`, ({ params }) => {
+    const id = String(params.id);
+    if (envSeededSpaceIds.has(id)) {
+      return HttpResponse.json(
+        { detail: `Space '${id}' is env-seeded and cannot be deleted` },
+        { status: 403 },
+      );
+    }
+    const idx = spaceState.findIndex((s) => s.id === id);
+    if (idx < 0) {
+      return HttpResponse.json(
+        { detail: `Space '${id}' not found` },
+        { status: 404 },
+      );
+    }
+    spaceState = spaceState.filter((s) => s.id !== id);
+    activityState = [
+      {
+        id: `evt_space_${id}_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'settings',
+        sev: 'info',
+        actor: { user: 'julien.dabert', role: 'KB Steward' },
+        target: { type: 'workspace', label: id, id },
+        summary: `Space '${id}' deleted`,
+        meta: { space_id: id, operation: 'delete' },
+      },
+      ...activityState,
+    ];
+    persistActivityState();
+    return new HttpResponse(null, { status: 204 });
   }),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinSpaceRequest(request);

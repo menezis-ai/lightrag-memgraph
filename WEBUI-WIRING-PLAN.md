@@ -114,8 +114,8 @@ Validated:
 
 Still to do:
 
-- Admin lifecycle: create/update/delete up to four additional spaces beyond
-  the SRE-provisioned default.
+- Frontend Admin UI: add a Settings "Manage spaces" section for runtime
+  create/update/delete of non-env-seeded spaces.
 - Real JWT/MyAccess enforcement: validate the parent KB access through IdP
   claims before exposing the configured space list.
 - Clean up remaining internal `workspace` names once the backend contract has
@@ -154,14 +154,37 @@ Commits in the local M12 stack:
 Remaining P0 focus after M12: document metadata, bulk delete, Twin overlay
 health, route parity, production fixture fallbacks, and real auth.
 
+### Update 2026-06-04 — Admin Space CRUD backend
+
+Commit `173b09f` closes the backend half of the "spaces beyond
+`TWIN_SPACES_JSON`" gap:
+
+- `server/space_store.py` provides FastAPI-free runtime CRUD with optional
+  atomic JSON persistence via `TWIN_SPACES_RUNTIME_FILE`.
+- `load_space_catalog()` merges env seed + runtime additions; env-seeded
+  spaces win on id collision and remain immutable.
+- `POST /twin/api/spaces`, `PATCH /twin/api/spaces/{id}`, and
+  `DELETE /twin/api/spaces/{id}` are wired in `webui_router.py`.
+- Delete refuses to orphan state when the target space still has docs or tags.
+- Mutations emit `settings` activity events with structured
+  `operation: create | update | delete` metadata.
+- Validation reported for the batch: `661/661` pytest, `97` skipped.
+
+Still open for spaces: frontend Settings UI and JWT/MyAccess admin-only
+gating.
+
 ### P0 — Contract drift blockers
 
-- Add an automated **route parity test** that compares:
+- **Done — Add an automated route parity test** that compares:
   - `lightrag_webui_twin/src/api/resources.ts` expected paths,
   - `lightrag_webui_twin/src/mocks/handlers.ts` MSW paths,
   - actual FastAPI routes from `webui_router` + `native_shims`.
-  This test must fail when MSW implements a route that the real Python router
-  does not expose.
+  Current implementation: `tests/test_server/test_route_parity.py`, with a
+  short `KNOWN_BACKEND_GAPS` allow-list for the three documented Couche 3
+  holes.
+- **Done — MSW `/query` drift fixed.** The parity test caught that
+  `resources.ts` called `POST /query` without an MSW handler; the handler now
+  returns a minimal `{response}` payload.
 - Implement or deliberately remove these frontend/MSW-only routes:
   - `GET /twin/api/documents/{id}/metadata`
   - `POST /twin/api/documents/bulk-delete`
@@ -313,7 +336,7 @@ Latest frontend validation baseline:
 |---|---|---|
 | WebUI journeys | Visible operator behavior, forms, toasts, refresh, reload persistence | Playwright + MSW |
 | Front/API contract | `window.__twinConfig`, URL bases, headers, cache invalidation | Vitest + Playwright request interception |
-| Route parity contract | Frontend `resources.ts` paths, MSW handlers, and real FastAPI router must match | Python route introspection + Vitest static path audit |
+| Route parity contract | Frontend `resources.ts` paths, MSW handlers, and real FastAPI router must match | `tests/test_server/test_route_parity.py` |
 | Real backend contract | Space isolation, Memgraph stores, classification metadata, auth | `pytest tests/test_server/*` |
 
 ### Priority 0 — stabilize existing e2e
@@ -360,7 +383,7 @@ Playwright cases:
 
 Backend `pytest` cases:
 
-- Route parity: every frontend path in `resources.ts` either exists in the
+- Done: route parity now asserts every frontend path in `resources.ts` either exists in the
   real FastAPI router or is explicitly marked dev/MSW-only. MSW handlers must
   not be treated as the source of truth.
 - `GET /twin/api/documents/{id}/metadata`
@@ -801,6 +824,7 @@ refactor is intentional; first close the contract gaps in the existing
 | File | Action | Why |
 |---|---|---|
 | `src/twindb_lightrag_memgraph/server/webui_router.py` | **EDIT** | Add missing real routes: `/documents/{id}/metadata`, `/documents/bulk-delete`, `/health`; Graph GET/PATCH/POST/DELETE lifecycle is M12-complete and should stay covered |
+| `src/twindb_lightrag_memgraph/server/space_store.py` | **DONE** | Runtime CRUD catalog for non-env-seeded spaces, with optional atomic JSON persistence via `TWIN_SPACES_RUNTIME_FILE` |
 | `src/twindb_lightrag_memgraph/server/native_shims.py` | **EDIT** | Keep native `/documents`, `/documents/{id}/chunks`, `/health`, `/pipeline_status`, `/openapi` aligned with React contract and space filtering |
 | `src/twindb_lightrag_memgraph/server/webui_*store.py` | **EDIT** | Ensure tags, activity, notifications, document overlay metadata, and graph lifecycle mutations persist per space in Memgraph |
 | `src/twindb_lightrag_memgraph/server/auth.py` | **EDIT** | Replace local JWT username/password path with MyAccess/IdP/JWKS validation for production mode |
@@ -820,7 +844,7 @@ refactor is intentional; first close the contract gaps in the existing
 
 - [x] Server package, WebUI router, space binding, native shims, direct
       Twin router mount, and runtime config substitution exist.
-- [ ] Add route parity tests that diff frontend `resources.ts`, MSW handlers,
+- [x] Add route parity tests that diff frontend `resources.ts`, MSW handlers,
       and the actual FastAPI route table. MSW must never be the only
       implementation of a production path.
 - [ ] Complete document overlay routes in `webui_router.py`:
@@ -841,6 +865,12 @@ refactor is intentional; first close the contract gaps in the existing
   - `PATCH /graph/entities/{id}` and `/graph/relations/{id}`
   - entity/relation creation and deletion
   - GraphTab add entity, delete entity/relation, and add relation forms
+- [x] Complete backend runtime space CRUD:
+  - `POST /spaces`
+  - `PATCH /spaces/{id}`
+  - `DELETE /spaces/{id}`
+  - optional `TWIN_SPACES_RUNTIME_FILE` persistence
+  - env-seeded spaces immutable; delete refuses spaces with docs/tags
 - [ ] Keep tag/activity/notification routes in `webui_router.py`; do not
       create duplicate `routes_tags.py` etc. unless the router is intentionally
       split as a refactor after parity tests are green.
@@ -953,7 +983,7 @@ Still to do:
 #### 3.7 — Integration tests (3h)
 
 - [x] `tests/test_server/` package exists.
-- [ ] Add `test_route_parity.py`: inspect FastAPI routes from the patched app,
+- [x] Add `test_route_parity.py`: inspect FastAPI routes from the patched app,
       compare against `resources.ts` production paths, and flag any route that
       exists only in MSW.
 - [ ] `test_metadata_endpoint.py`: insert a doc with structured
