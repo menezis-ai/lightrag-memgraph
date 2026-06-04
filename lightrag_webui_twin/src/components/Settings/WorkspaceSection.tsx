@@ -14,7 +14,6 @@
  * values were inventions (`eu-west-3 · dc-paris`,
  * `twin-default-space-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).
  * They risked being read as a compliance commitment.
- * See `docs/audits/webui-fork/mock-kill-audit-2026-06-04.md` finding F1.
  */
 
 import { Icon } from '../Icon';

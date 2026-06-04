@@ -1,7 +1,6 @@
 """Mock-kill safeguards — regression for findings F5 + F6.
 
-Covers the safeguards landed alongside
-``docs/audits/webui-fork/mock-kill-audit-2026-06-04.md``:
+Covers the safeguards landed during the 2026-06-04 mock-kill hardening:
 
 - **F5**: ``_mount_twin_subapp`` emits a loud WARNING when the operator
   enables the IdP middleware (``TWIN_IDP_JWKS_URL`` set) but leaves

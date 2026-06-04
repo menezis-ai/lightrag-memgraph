@@ -1274,6 +1274,28 @@ Still to do:
 - [ ] Smoke check `https://<host>/webui/` loads the React port +
       hits real `/twin/api/*` endpoints.
 
+#### 3.9 — Donnees externes encore manquantes
+
+Le code WebUI/Twin est maintenant cable pour les flux produit principaux. Les
+elements ci-dessous ne sont pas des mocks a coder : ce sont des donnees,
+parametres ou arbitrages BNP/ops a fournir pour prouver un deploiement reel.
+
+| Donnee manquante | Pourquoi elle est necessaire | Statut / source attendue |
+|---|---|---|
+| Host cible + URL publique `/webui/` | Permettre le smoke deploy reel, hors dev local et hors maquette MSW | A fournir par SRE/devOps BNP ou staging OVH |
+| `MEMGRAPH_URI` + mode TLS/credentials | Brancher les stores Memgraph reels et lancer les tests integration sur la cible | A fournir par infra ; verifier `bolt+s://` vs `neo4j+s://` si cluster |
+| IdP/JWKS: `TWIN_IDP_JWKS_URL`, issuer, audience, claim names | Activer MyAccess/JWT en fail-closed et verifier que `debugUser` est bien strippe | A fournir par MyAccess / IAM |
+| Groupes admin MyAccess (`TWIN_IDP_ADMIN_GROUPS`) | Donner `admin:spaces` uniquement aux bons groupes pour le CRUD Space | Valeur par defaut `twin-admin,twin-steward`; a confirmer avec IAM |
+| URL logout/revocation IdP (`TWIN_IDP_LOGOUT_URL`) | Fermer le parcours sign-out reel, pas seulement le cleanup local | A fournir par IAM ; smoke navigateur a faire sur host |
+| Catalog Space initial (`TWIN_DEFAULT_SPACE`, labels, descriptions, `TWIN_SPACES_JSON`) | Eviter un default generique et afficher les vrais espaces de la KB | A fournir par owner KB/SRE ; admin CRUD prend ensuite le relais runtime |
+| MIP label map BNP (`TWIN_MIP_LABEL_MAP`) | Mapper les GUID tenant Microsoft vers `C1..C4`; sans map, les labels inconnus rejettent fail-closed | A fournir par Compliance / Microsoft Purview admin |
+| Ceiling classification (`TWIN_MIP_MAX_CLASSIFICATION`) par KB/Space | Decider ce qui est ingestible (`C2`, `C3`, etc.) | Decision owner KB + compliance |
+| Corpus de smoke reel | Verifier documents, tags, graph, retrieval, MIP, bulk retag/delete sans fixtures | Au moins un document tagge, un document MIP, un tag actif, et si possible un doc jetable |
+| Variables e2e mutation (`REAL_E2E_MUTATION_DOC_ID`, `REAL_E2E_RETAG_TAG`, `REAL_E2E_BULK_DELETE_DOC_ID` ou `REAL_E2E_UPLOAD_FOR_DELETE=true`) | Activer la lane Playwright real-backend au-dela du smoke lecture seule | A renseigner seulement sur staging/preprod, jamais sur corpus prod sensible |
+| Semantique tags/domaines Retrieval | Le UI envoie maintenant `tag_filter: {all: [...]}` par defaut ; il faut confirmer si Fabrice veut AND ou OR et si "domaine" = tag, Space, ou autre facette | Produit/Fabrice ; code pret pour `{all, any}` cote API |
+| Retention activity/notifications | Eviter d'inventer une politique TTL visible ou un sweep non conforme | Deferred by policy : besoin TTL, legal hold, scope Space/global, et exigences BCE/DORA |
+| Code AP / naming BNP | Necessaire seulement si le deploiement doit afficher ou tracer l'application dans un referentiel BNP officiel | A fournir par owner applicatif / gouvernance BNP ; pas bloqueur du wiring WebUI actuel |
+
 ### Risks + mitigations
 
 | Risk | Likelihood | Mitigation |
