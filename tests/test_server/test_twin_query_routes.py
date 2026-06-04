@@ -171,6 +171,56 @@ class TestQueryEndpoint:
         assert param.enable_rerank is False
         assert param.stream is False
 
+    async def test_tag_filter_forwards_to_aquery(self, make_client):
+        rag = FakeRag(answer="tagged")
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "tagged retrieval",
+                    "tag_filter": {"all": ["oracle", "rman"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        assert len(rag.calls) == 1
+        _query, param = rag.calls[0]
+        assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
+
+    async def test_tag_filter_is_absent_when_omitted(self, make_client):
+        rag = FakeRag(answer="untagged")
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "untagged retrieval"})
+
+        assert r.status_code == 200
+        assert len(rag.calls) == 1
+        _query, param = rag.calls[0]
+        assert getattr(param, "tag_filter", None) is None
+
+    async def test_invalid_tag_filter_returns_422(self, make_client):
+        rag = FakeRag(answer="invalid")
+        client = await make_client(rag)
+        async with client:
+            unknown_key = await client.post(
+                "/query",
+                json={
+                    "query": "bad",
+                    "tag_filter": {"none": ["oracle"]},
+                },
+            )
+            non_list_value = await client.post(
+                "/query",
+                json={
+                    "query": "bad",
+                    "tag_filter": {"all": "oracle"},
+                },
+            )
+
+        assert unknown_key.status_code == 422
+        assert non_list_value.status_code == 422
+
     async def test_only_need_prompt_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="prompt that would be sent")
         client = await make_client(rag)

@@ -235,6 +235,10 @@ describe('RetrievalTab — params panel', () => {
       screen.getByLabelText('User prompt'),
       'prefer operational runbooks',
     );
+    await userEvent.type(
+      screen.getByLabelText('Retrieval tag input'),
+      'oracle{Enter}',
+    );
     await userEvent.click(screen.getByLabelText('Enable rerank'));
     await userEvent.type(screen.getByLabelText('Query input'), 'Advanced query');
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
@@ -250,6 +254,7 @@ describe('RetrievalTab — params panel', () => {
         historyTurns: 2,
         userPrompt: 'prefer operational runbooks',
         enableRerank: false,
+        tagFilters: ['oracle'],
       }),
     );
   });

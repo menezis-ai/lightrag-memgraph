@@ -31,7 +31,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,22 @@ class TwinQueryBody(BaseModel):
     history_turns: int | None = Field(default=None, ge=0, le=20)
     user_prompt: str | None = Field(default=None, max_length=4000)
     enable_rerank: bool | None = Field(default=None)
+    tag_filter: dict[str, list[str]] | None = Field(default=None)
+
+    @field_validator("tag_filter")
+    @classmethod
+    def _validate_tag_filter(
+        cls, value: dict[str, list[str]] | None
+    ) -> dict[str, list[str]] | None:
+        if value is None:
+            return None
+        allowed_keys = {"all", "any"}
+        unknown_keys = set(value) - allowed_keys
+        if unknown_keys:
+            raise ValueError(
+                "tag_filter keys must be a subset of {'all', 'any'}"
+            )
+        return value
 
 
 class TwinRetrievalSource(BaseModel):
@@ -82,7 +98,24 @@ def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[st
         param_kwargs["user_prompt"] = body.user_prompt.strip()
     if body.enable_rerank is not None:
         param_kwargs["enable_rerank"] = body.enable_rerank
+    if body.tag_filter is not None:
+        param_kwargs["tag_filter"] = body.tag_filter
     return param_kwargs
+
+
+def _make_query_param(query_param_cls: Any, param_kwargs: dict[str, Any]) -> Any:
+    try:
+        return query_param_cls(**param_kwargs)
+    except TypeError:
+        if "tag_filter" not in param_kwargs:
+            raise
+        # LightRAG versions before the tag-filter constructor field can still
+        # carry the runtime attribute for downstream code that understands it.
+        fallback_kwargs = dict(param_kwargs)
+        tag_filter = fallback_kwargs.pop("tag_filter")
+        param = query_param_cls(**fallback_kwargs)
+        setattr(param, "tag_filter", tag_filter)
+        return param
 
 
 def _answer_chunk_to_text(chunk: Any) -> str:
@@ -196,10 +229,11 @@ def build_twin_query_router(get_rag) -> APIRouter:
         from lightrag.base import QueryParam
 
         param_kwargs = _query_param_kwargs(body)
+        param = _make_query_param(QueryParam, param_kwargs)
 
         # --- 1) Synthesised response ----------------------------------
         try:
-            answer = await rag.aquery(body.query, param=QueryParam(**param_kwargs))
+            answer = await rag.aquery(body.query, param=param)
         except Exception as exc:
             logger.exception("twin_query: aquery failed")
             raise HTTPException(500, f"Query failed: {exc}") from exc
@@ -267,10 +301,10 @@ def build_twin_query_router(get_rag) -> APIRouter:
 
         async def generate() -> AsyncIterator[str]:
             try:
-                answer = await rag.aquery(
-                    body.query,
-                    param=QueryParam(**_query_param_kwargs(body, stream=True)),
+                param = _make_query_param(
+                    QueryParam, _query_param_kwargs(body, stream=True)
                 )
+                answer = await rag.aquery(body.query, param=param)
                 async for text in _iter_answer_text(answer):
                     yield text
             except Exception as exc:

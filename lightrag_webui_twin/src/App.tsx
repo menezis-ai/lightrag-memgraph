@@ -933,6 +933,9 @@ function AppShell() {
             <RetrievalTab
               thesaurus={thesaurusList}
               onSendQuery={async (params) => {
+                const tagFilter = params.tagFilters.length
+                  ? { all: [...params.tagFilters] }
+                  : undefined;
                 const res = await api.query({
                   query: params.query,
                   mode: params.mode,
@@ -944,6 +947,7 @@ function AppShell() {
                   only_need_prompt: params.onlyPrompt,
                   user_prompt: params.userPrompt,
                   enable_rerank: params.enableRerank,
+                  tag_filter: tagFilter,
                 });
                 // Map the backend SourceRow shape to the RetrievalSource
                 // contract the chat panel consumes. `type` is the WebUI
@@ -966,6 +970,9 @@ function AppShell() {
                 return { response: res.response, sources };
               }}
               onStreamQuery={async (params, onChunk) => {
+                const tagFilter = params.tagFilters.length
+                  ? { all: [...params.tagFilters] }
+                  : undefined;
                 const res = await api.queryStream(
                   {
                     query: params.query,
@@ -978,6 +985,7 @@ function AppShell() {
                     only_need_prompt: params.onlyPrompt,
                     user_prompt: params.userPrompt,
                     enable_rerank: params.enableRerank,
+                    tag_filter: tagFilter,
                   },
                   onChunk,
                 );

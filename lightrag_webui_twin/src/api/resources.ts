@@ -70,6 +70,10 @@ export interface TwinQueryRequest {
   history_turns?: number;
   user_prompt?: string;
   enable_rerank?: boolean;
+  tag_filter?: {
+    all?: readonly string[];
+    any?: readonly string[];
+  };
 }
 
 export interface TwinQuerySource {
