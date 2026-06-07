@@ -130,6 +130,16 @@ def _read_connection_config(*, pool_size_override: int | None = None):
             pool_size_override if pool_size_override is not None else _read_pool_size()
         ),
         "connection_acquisition_timeout": _read_connection_acquire_timeout(),
+        # Memgraph can drop idle Bolt connections (server-side reset) while
+        # the driver still holds them in the pool. Without a liveness probe
+        # the next `session.run(...)` fails with `ConnectionResetError(104,
+        # 'Connection reset by peer')` and returns 500 to the caller. Cap
+        # connection age at 30 min and ping any idle connection older than
+        # 30 s before reuse so the driver transparently recycles defunct
+        # sockets. Requires neo4j-driver >= 5.17 (pinned >= 5.0,<7 — actual
+        # runtime version asserted in tests/test_pool_resilience.py).
+        "max_connection_lifetime": 1800,
+        "liveness_check_timeout": 30,
     }
 
     if encrypted_env == "true":

@@ -415,6 +415,12 @@ function invalidateTagSideEffects(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['tags'] });
   qc.invalidateQueries({ queryKey: ['activity'] });
   qc.invalidateQueries({ queryKey: ['notifications'] });
+  // Delete (untag/migrate), rename (edit), and approve all change the
+  // tag-set displayed on documents — the backend cascades
+  // [:TAGGED_WITH] edges, but the DocumentsTab keeps showing stale
+  // chips until ['documents'] is refetched. Forgetting this here was
+  // the cause of the 2026-06-07 "untag doesn't untag" report.
+  qc.invalidateQueries({ queryKey: ['documents'] });
 }
 
 function updateDocumentTags(

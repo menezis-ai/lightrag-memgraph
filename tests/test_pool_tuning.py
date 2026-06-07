@@ -157,3 +157,35 @@ class TestConnectionConfig:
             kwargs["connection_acquisition_timeout"]
             == DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
         )
+
+    def test_liveness_check_and_max_lifetime_set(self, monkeypatch):
+        """Bolt connection resilience: idle Memgraph sockets get recycled.
+
+        Without these two, the driver hands out defunct connections and
+        the next ``session.run(...)`` fails with
+        ``ConnectionResetError(104, 'Connection reset by peer')`` — the
+        exact 500 chain seen on 2026-06-07 (POST /tags, GET /activity,
+        GET /notifications) before the fix.
+        """
+        _, _, kwargs = pool._read_connection_config()
+        assert kwargs["liveness_check_timeout"] == 30
+        assert kwargs["max_connection_lifetime"] == 1800
+
+    def test_driver_kwargs_accepted_by_async_driver(self):
+        """Smoke-check: the runtime neo4j driver accepts the new kwargs.
+
+        Guards against the pinned range ``neo4j>=5,<7`` shipping a build
+        that drops ``liveness_check_timeout`` (added in 5.17). We
+        construct a driver against an unreachable URI — the assert is
+        that ``AsyncGraphDatabase.driver(...)`` itself does not raise
+        ``TypeError`` because of an unknown kwarg.
+        """
+        from neo4j import AsyncGraphDatabase
+
+        _, _, kwargs = pool._read_connection_config()
+        # Drop auth so the constructor is pure kwarg-validation.
+        kwargs.pop("auth", None)
+        driver = AsyncGraphDatabase.driver("bolt://127.0.0.1:1", **kwargs)
+        # No await close — sync close on an unopened driver is a no-op
+        # for our purpose (no socket was opened by the constructor).
+        assert driver is not None
