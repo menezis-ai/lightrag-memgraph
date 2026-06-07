@@ -534,6 +534,12 @@ test.describe('Twin WebUI operator journeys', () => {
     page,
   }) => {
     await page.getByRole('button', { name: 'Add source' }).click();
+    // The Add Source modal body is lazy-loaded via Suspense (perf
+    // optimization) — wait for the dropzone to actually be in the DOM
+    // before we reach into it with `page.evaluate`.
+    await expect(
+      page.getByLabel('Drop files or click to browse'),
+    ).toBeVisible();
     await page.evaluate(() => {
       const dropzone = document.querySelector('[aria-label="Drop files or click to browse"]');
       if (!dropzone) throw new Error('dropzone not found');

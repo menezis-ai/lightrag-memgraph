@@ -231,9 +231,20 @@ function AppShell() {
   const workspaces = useWorkspaces();
   const notificationsQ = useNotifications();
   const thesaurus = useThesaurus({ enabled: needsThesaurus });
-  const tags = useTags({ enabled: tab === 'tags' });
-  const tagCategories = useTagCategories({ enabled: tab === 'tags' });
-  const activity = useActivity({}, { enabled: tab === 'activity' });
+  // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
+  // are lightweight, the catalog is used cross-tab (badge counts, filter
+  // pickers, retag modal), and the e2e contract on "switching space
+  // rescopes /twin/api/tags immediately" depends on the query existing
+  // in the cache for `refetchQueries` to trigger. Gating heavy reads
+  // (documents, graph) preserves the bulk of the perf win.
+  const tags = useTags();
+  const tagCategories = useTagCategories();
+  // Activity stays always-enabled (vs. tab-gated): the feed drives the
+  // topbar unread counters cross-tab, and the e2e contract requires
+  // `/twin/api/activity` to refire under the new space header at switch
+  // time. Lightweight read (bounded via `limit`), so the perf cost is
+  // negligible compared to documents / graph which remain gated.
+  const activity = useActivity();
   const graphEntities = useGraphEntities({ enabled: tab === 'graph' });
   const graphRelations = useGraphRelations({ enabled: tab === 'graph' });
 
@@ -791,11 +802,18 @@ function AppShell() {
     setReadSourceDoc(null);
     setRetagDoc(null);
     setRetagBulk(null);
+    // Use `refetchQueries` with `type: 'all'` so disabled (tab-gated)
+    // queries also fetch immediately on space switch — otherwise the
+    // invariant "switching space rescopes every Twin overlay surface"
+    // breaks for inactive tabs and the e2e contract on
+    // `/twin/api/tags` (under sandbox header) fails. Preserves the
+    // perf gain at boot/tab switch; only the user-initiated space
+    // switch pays the cost of refreshing all four resources.
     void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['documents'] }),
-      queryClient.invalidateQueries({ queryKey: ['tags'] }),
-      queryClient.invalidateQueries({ queryKey: ['activity'] }),
-      queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      queryClient.refetchQueries({ queryKey: ['documents'], type: 'all' }),
+      queryClient.refetchQueries({ queryKey: ['tags'], type: 'all' }),
+      queryClient.refetchQueries({ queryKey: ['activity'], type: 'all' }),
+      queryClient.refetchQueries({ queryKey: ['notifications'], type: 'all' }),
     ]);
   };
 
