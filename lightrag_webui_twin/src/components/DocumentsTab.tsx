@@ -574,7 +574,9 @@ function DocRow({
         ))}
         {overflow > 0 && <span className="tag-overflow">+{overflow}</span>}
       </div>
-      <div className={`cell-status status-${filterStatus}`}>{filterStatus}</div>
+      <div className="cell-status">
+        <span className={`status-text ${filterStatus}`}>{filterStatus}</span>
+      </div>
       <div className="cell-chunks">{doc.chunks_count ?? 0}</div>
       <div className="cell-updated">{relativeTime(doc.updated_at, nowMs)}</div>
       <div className="cell-actions">
