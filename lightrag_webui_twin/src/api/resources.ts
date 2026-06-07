@@ -104,9 +104,35 @@ function parseMaybeJson(text: string): unknown {
 // LightRAG-native endpoints (NO /twin/api prefix)
 // ============================================================================
 
+/** LightRAG's DocStatus.value is lowercase (`'pending'`, `'processing'`,
+ *  `'processed'`, `'failed'`), but our `DocumentStatus` type and every
+ *  consumer in this codebase expects uppercase. Normalize at ingress so
+ *  the UI mapping/counters work regardless of which end of the contract
+ *  shifts later. Unknown values fall back to `PENDING` (same as the
+ *  Python `MemgraphDocStatusStorage._deserialize_status` does). */
+const ALLOWED_DOC_STATUS = new Set([
+  'PENDING',
+  'PROCESSING',
+  'PROCESSED',
+  'FAILED',
+]);
+function normalizeDocumentStatus(raw: unknown): Document['status'] {
+  const s = String(raw ?? '').toUpperCase();
+  return (
+    ALLOWED_DOC_STATUS.has(s) ? s : 'PENDING'
+  ) as Document['status'];
+}
+
 export const lightragApi = {
   listDocuments: (q: DocumentsQuery = {}, init?: ApiRequestInit) =>
-    apiFetch<ListEnvelope<Document>>('/documents', { ...init, query: { ...q } }),
+    apiFetch<ListEnvelope<Document>>('/documents', { ...init, query: { ...q } })
+      .then((env) => ({
+        ...env,
+        items: env.items.map((d) => ({
+          ...d,
+          status: normalizeDocumentStatus(d.status),
+        })),
+      })),
   listDocumentChunks: (docId: string, init?: ApiRequestInit) =>
     apiFetch<readonly DocumentChunk[]>(
       `/documents/${encodeURIComponent(docId)}/chunks`,
