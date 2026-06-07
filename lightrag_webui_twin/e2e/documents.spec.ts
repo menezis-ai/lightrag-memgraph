@@ -114,7 +114,9 @@ test.describe('Documents RC-2 filters and counters', () => {
     await expect(page.getByTestId('docs-row-d3')).toBeVisible();
     await expect(page.getByTestId('docs-row-d1')).toBeHidden();
 
-    await page.getByRole('button', { name: /Clear$/ }).click();
+    // Reset the status filter to All (the dedicated header Clear button
+    // was removed — pills carry their own dismiss UX).
+    await page.getByRole('button', { name: /^All/ }).click();
     await addDocumentTagFilter(page, 'rman');
     await expect(page).toHaveURL(/tag=rman/);
     await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
