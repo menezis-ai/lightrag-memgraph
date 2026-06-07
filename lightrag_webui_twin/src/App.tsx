@@ -889,6 +889,7 @@ function AppShell() {
             new Set(notificationSource.map((notification) => notification.id)),
           )
         }
+        onOpenActivity={() => setTab('activity')}
       />
       {backendErrors.length > 0 && (
         <div className="sys-banner-stack" role="status" aria-live="polite">
