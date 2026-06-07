@@ -321,12 +321,6 @@ export function RetrievalTab({
       });
   };
 
-  const clear = () => {
-    setConvo(() => []);
-    setStreamedTokens([]);
-    setStreaming(false);
-  };
-
   const onCiteHover = (n: number) => setHighlightSrc(n);
   const onCiteLeave = () => setTimeout(() => setHighlightSrc(null), 200);
   const onCiteClick = (
@@ -493,9 +487,6 @@ export function RetrievalTab({
           )}
         </div>
         <div className="querybar">
-          <button type="button" className="btn subtle" onClick={clear}>
-            <Icon name="x" size={13} /> Clear
-          </button>
           <textarea
             placeholder="Type your query…"
             aria-label="Query input"
