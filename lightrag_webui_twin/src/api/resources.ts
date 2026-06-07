@@ -437,11 +437,12 @@ export const twinApi = {
       sev?: string;
       actor?: string;
       q?: string;
+      limit?: number;
       resourceId?: string;
     } = {},
     init?: ApiRequestInit,
   ) => {
-    const params: Record<string, string | undefined> = { ...q };
+    const params: Record<string, string | number | undefined> = { ...q };
     if (q.resourceId) {
       params['resource.id'] = q.resourceId;
       delete params.resourceId;

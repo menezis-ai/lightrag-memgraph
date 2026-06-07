@@ -15,6 +15,7 @@ import type { GraphEntity, GraphRelation } from '../types/graph';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 const DEFAULT_UPLOAD_CONCURRENCY = 4;
+type QueryGate = { enabled?: boolean };
 
 async function mapSettledWithConcurrency<T, R>(
   items: readonly T[],
@@ -47,28 +48,32 @@ async function mapSettledWithConcurrency<T, R>(
 
 export function useDocuments(
   query: { status?: string; q?: string; tag?: string; workspace?: string } = {},
+  options: QueryGate = {},
 ) {
   return useQuery({
     queryKey: ['documents', query] as const,
     queryFn: ({ signal }) => api.listDocuments(query, { signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useWorkspaces() {
+export function useWorkspaces(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['workspaces'] as const,
     queryFn: ({ signal }) => api.listWorkspaces({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
 // Spaces — admin CRUD on top of the env seed.
-export function useSpaces() {
+export function useSpaces(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['spaces'] as const,
     queryFn: ({ signal }) => api.listSpaces({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
@@ -113,11 +118,12 @@ export function useDeleteSpace() {
   });
 }
 
-export function useNotifications() {
+export function useNotifications(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['notifications'] as const,
     queryFn: ({ signal }) => api.listNotifications({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
@@ -137,41 +143,53 @@ export function useClearNotifications() {
   });
 }
 
-export function useThesaurus() {
+export function useThesaurus(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['thesaurus'] as const,
     queryFn: ({ signal }) => api.listThesaurus({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useTags() {
+export function useTags(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['tags'] as const,
     queryFn: ({ signal }) => api.listTags({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useTagCategories() {
+export function useTagCategories(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['tag-categories'] as const,
     queryFn: ({ signal }) => api.listTagCategories({ signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
 export function useActivity(
-  query: { range?: string; kind?: string; sev?: string; actor?: string; q?: string } = {},
+  query: {
+    range?: string;
+    kind?: string;
+    sev?: string;
+    actor?: string;
+    q?: string;
+    limit?: number;
+  } = {},
+  options: QueryGate = {},
 ) {
   return useQuery({
     queryKey: ['activity', query] as const,
     queryFn: ({ signal }) => api.listActivity(query, { signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useOpenApi() {
+export function useOpenApi(options: QueryGate = {}) {
   // Hit the FastAPI-auto `/openapi.json` directly so the Twin ApiTab is
   // ISO with the LightRAG WebUI by construction — any route added to
   // the host app (LightRAG native + Twin overlay via `include_router`)
@@ -189,22 +207,25 @@ export function useOpenApi() {
       return parseOpenApiSpec(await resp.json());
     },
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useGraphEntities() {
+export function useGraphEntities(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['graph-entities'] as const,
     queryFn: ({ signal }) => api.listGraphEntities({}, { signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 
-export function useGraphRelations() {
+export function useGraphRelations(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['graph-relations'] as const,
     queryFn: ({ signal }) => api.listGraphRelations({}, { signal }),
     ...DEFAULTS,
+    ...options,
   });
 }
 

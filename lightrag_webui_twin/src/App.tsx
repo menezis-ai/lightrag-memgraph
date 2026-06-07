@@ -19,19 +19,13 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityTab } from './components/ActivityTab';
-import { AddSourceModal, type AddSourceAction } from './components/AddSourceModal';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import type { AddSourceAction } from './components/AddSourceModal';
 import { DocDetailPanel } from './components/DocDetailPanel';
 import { DocumentsTab } from './components/DocumentsTab';
-import { GraphTab } from './components/GraphTab';
-import { OnboardingWizard } from './components/OnboardingWizard';
 import { PendingDocsSection } from './components/PendingDocsSection';
-import { ReadSourceModal } from './components/ReadSourceModal';
-import { RetagModal, type RetagAction } from './components/RetagModal';
-import { RetrievalTab } from './components/RetrievalTab';
-import { SettingsTab } from './components/SettingsTab';
-import { TagsTab, type TagApproveAction } from './components/TagsTab';
+import type { RetagAction } from './components/RetagModal';
+import type { TagApproveAction } from './components/TagsTab';
 import type { TagActionCommit } from './components/TagActionModal';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
@@ -85,6 +79,50 @@ const CURRENT_USER: TagCurrentUser = {
   palier: 3,
   role: 'admin / steward',
 };
+
+// Keep the default Documents surface eager, but split secondary tabs and
+// modal bodies out of the entry bundle so first paint does less JS work.
+const ActivityTab = lazy(() =>
+  import('./components/ActivityTab').then(({ ActivityTab }) => ({
+    default: ActivityTab,
+  })),
+);
+const AddSourceModal = lazy(() =>
+  import('./components/AddSourceModal').then(({ AddSourceModal }) => ({
+    default: AddSourceModal,
+  })),
+);
+const GraphTab = lazy(() =>
+  import('./components/GraphTab').then(({ GraphTab }) => ({ default: GraphTab })),
+);
+const OnboardingWizard = lazy(() =>
+  import('./components/OnboardingWizard').then(({ OnboardingWizard }) => ({
+    default: OnboardingWizard,
+  })),
+);
+const ReadSourceModal = lazy(() =>
+  import('./components/ReadSourceModal').then(({ ReadSourceModal }) => ({
+    default: ReadSourceModal,
+  })),
+);
+const RetagModal = lazy(() =>
+  import('./components/RetagModal').then(({ RetagModal }) => ({
+    default: RetagModal,
+  })),
+);
+const RetrievalTab = lazy(() =>
+  import('./components/RetrievalTab').then(({ RetrievalTab }) => ({
+    default: RetrievalTab,
+  })),
+);
+const SettingsTab = lazy(() =>
+  import('./components/SettingsTab').then(({ SettingsTab }) => ({
+    default: SettingsTab,
+  })),
+);
+const TagsTab = lazy(() =>
+  import('./components/TagsTab').then(({ TagsTab }) => ({ default: TagsTab })),
+);
 
 const FIXTURE_FALLBACK_ENABLED = shouldUseFixtureFallback({
   dev: Boolean(import.meta.env.DEV),
@@ -183,18 +221,21 @@ function AppShell() {
   const runtimeConfig = auth.config;
   const onboarding = useOnboarding();
   const onboardingOpen = !onboarding.state.dismissed;
+  const retagOpen = retagDoc !== null || retagBulk !== null;
+  const needsThesaurus =
+    tab === 'documents' || tab === 'retrieval' || addOpen || retagOpen;
 
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
-  const docs = useDocuments({ workspace });
+  const docs = useDocuments({ workspace }, { enabled: tab === 'documents' });
   const workspaces = useWorkspaces();
   const notificationsQ = useNotifications();
-  const thesaurus = useThesaurus();
-  const tags = useTags();
-  const tagCategories = useTagCategories();
-  const activity = useActivity();
-  const graphEntities = useGraphEntities();
-  const graphRelations = useGraphRelations();
+  const thesaurus = useThesaurus({ enabled: needsThesaurus });
+  const tags = useTags({ enabled: tab === 'tags' });
+  const tagCategories = useTagCategories({ enabled: tab === 'tags' });
+  const activity = useActivity({}, { enabled: tab === 'activity' });
+  const graphEntities = useGraphEntities({ enabled: tab === 'graph' });
+  const graphRelations = useGraphRelations({ enabled: tab === 'graph' });
 
   // Notifications carry mutable client state (read/cleared) on top of the
   // query data. Keep only local overrides in React state so refetches can
@@ -864,6 +905,7 @@ function AppShell() {
         }}
       >
         <div className="tab-pane" key={`${tab}:${workspace}`}>
+          <Suspense fallback={<div className="tab-loading" aria-live="polite" />}>
           {tab === 'documents' && (
             <DocumentsTab
               docs={nonPendingDocs}
@@ -1023,27 +1065,34 @@ function AppShell() {
               onNavigate={onNavigate}
             />
           )}
+          </Suspense>
         </div>
       </main>
 
-      <AddSourceModal
-        open={addOpen}
-        thesaurus={thesaurusList}
-        formatCategories={FORMAT_CATEGORY_FIXTURES}
-        onClose={() => setAddOpen(false)}
-        onSubmit={onAddSourceSubmit}
-      />
-      <RetagModal
-        open={retagDoc !== null || retagBulk !== null}
-        doc={retagDoc}
-        docs={retagBulk ?? undefined}
-        thesaurus={thesaurusList}
-        onClose={() => {
-          setRetagDoc(null);
-          setRetagBulk(null);
-        }}
-        onSubmit={onRetagSubmit}
-      />
+      <Suspense fallback={null}>
+        {addOpen && (
+          <AddSourceModal
+            open={addOpen}
+            thesaurus={thesaurusList}
+            formatCategories={FORMAT_CATEGORY_FIXTURES}
+            onClose={() => setAddOpen(false)}
+            onSubmit={onAddSourceSubmit}
+          />
+        )}
+        {retagOpen && (
+          <RetagModal
+            open={retagOpen}
+            doc={retagDoc}
+            docs={retagBulk ?? undefined}
+            thesaurus={thesaurusList}
+            onClose={() => {
+              setRetagDoc(null);
+              setRetagBulk(null);
+            }}
+            onSubmit={onRetagSubmit}
+          />
+        )}
+      </Suspense>
       <DocDetailPanel
         doc={detailDoc}
         onClose={() => setDetailDoc(null)}
@@ -1090,15 +1139,21 @@ function AppShell() {
           void onDeleteSingle(d);
         }}
       />
-      <ReadSourceModal
-        doc={readSourceDoc}
-        onClose={() => setReadSourceDoc(null)}
-      />
-      <OnboardingWizard
-        open={onboardingOpen}
-        onAddSource={() => setAddOpen(true)}
-        onGoToRetrieval={() => setTab('retrieval')}
-      />
+      <Suspense fallback={null}>
+        {readSourceDoc && (
+          <ReadSourceModal
+            doc={readSourceDoc}
+            onClose={() => setReadSourceDoc(null)}
+          />
+        )}
+        {onboardingOpen && (
+          <OnboardingWizard
+            open={onboardingOpen}
+            onAddSource={() => setAddOpen(true)}
+            onGoToRetrieval={() => setTab('retrieval')}
+          />
+        )}
+      </Suspense>
       <ToastViewport
         toasts={toasts}
         onUndo={(t) =>

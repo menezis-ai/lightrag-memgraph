@@ -345,9 +345,10 @@ class WebuiStore:
         sev: str | None = None,
         actor: str | None = None,
         q: str | None = None,
+        limit: int | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         return await self._activity_backend.list(
-            kind=kind, sev=sev, actor=actor, q=q
+            kind=kind, sev=sev, actor=actor, q=q, limit=limit
         )
 
     async def record_activity(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -1350,9 +1351,10 @@ async def list_activity(
     sev: str | None = Query(default=None),
     actor: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
 ) -> dict[str, Any]:
     items, now_ms = await get_store().list_activity(
-        kind=kind, sev=sev, actor=actor, q=q
+        kind=kind, sev=sev, actor=actor, q=q, limit=limit
     )
     return {"items": items, "total": len(items), "nowMs": now_ms}
 
