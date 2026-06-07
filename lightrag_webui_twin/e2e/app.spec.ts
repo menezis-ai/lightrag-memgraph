@@ -23,7 +23,11 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d3')).toContainText('huge-archive.zip');
     await page.getByLabel('Search source').fill('oracle');
     await expect(page.getByTestId('docs-empty')).toBeVisible();
-    await page.getByRole('button', { name: /Clear/ }).click();
+    // Reset filters by clicking All + clearing the search input — the
+    // dedicated "Clear" button was removed (filters carry their own
+    // dismiss UX and the bulk bar handles selection).
+    await page.getByRole('button', { name: /^All/ }).click();
+    await page.getByLabel('Search source').fill('');
 
     await addSourceFile(
       page,

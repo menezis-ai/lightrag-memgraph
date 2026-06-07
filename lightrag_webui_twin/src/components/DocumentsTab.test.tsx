@@ -9,7 +9,6 @@
  *   - multi-select toggles + bulk Retag invokes onOpenBulkRetag
  *   - Add source button calls onOpenAdd
  *   - row Retag button calls onOpenRetag(doc)
- *   - Clear button resets filters and emits a "Filters cleared" toast
  *   - empty state appears when filters match no doc
  */
 
@@ -190,14 +189,4 @@ describe('DocumentsTab — header actions', () => {
     expect(p.onOpenRetag.mock.calls[0][0].doc_id).toBe('d1');
   });
 
-  it('Clear button resets filters and emits a toast', async () => {
-    const p = defaultProps();
-    render(<DocumentsTab {...p} />);
-    // Activate a filter first
-    const searchBox = screen.getByLabelText('Search source');
-    await userEvent.type(searchBox, 'oracle');
-    await userEvent.click(screen.getByRole('button', { name: /Clear$/i }));
-    expect(p.onAddToast).toHaveBeenCalled();
-    expect(p.onAddToast.mock.calls[0][0]).toBe('Filters cleared');
-  });
 });

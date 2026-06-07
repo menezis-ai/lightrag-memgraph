@@ -99,7 +99,7 @@ export function DocumentsTab({
   );
   const [search, setSearch] = useUrlParam<string>('q', '');
   const [tagFilters, setTagFilters] = useUrlArrayParam('tag', []);
-  const [sourceFilters, setSourceFilters] = useUrlArrayParam('source', []);
+  const [sourceFilters] = useUrlArrayParam('source', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
@@ -207,30 +207,6 @@ export function DocumentsTab({
     clearSelection();
   };
 
-  const hasFilters =
-    statusFilter !== 'all' ||
-    !!search ||
-    tagFilters.length > 0 ||
-    sourceFilters.length > 0 ||
-    selected.size > 0;
-  const clearAllFilters = () => {
-    const summary = [
-      statusFilter !== 'all' && `status: ${statusFilter}`,
-      search && `q: ${search}`,
-      tagFilters.length > 0 && `tags: ${tagFilters.join(', ')}`,
-      sourceFilters.length > 0 && `sources: ${sourceFilters.length}`,
-      selected.size > 0 && `${selected.size} selected`,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    setStatusFilter('all');
-    setSearch('');
-    setTagFilters([]);
-    setSourceFilters([]);
-    setSelected(new Set());
-    if (summary) onAddToast('Filters cleared', summary);
-  };
-
   return (
     <div className="docs">
       <div className="docs-header">
@@ -260,19 +236,6 @@ export function DocumentsTab({
                 {failedCount}
               </span>
             )}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={clearAllFilters}
-            disabled={!hasFilters}
-            title={
-              hasFilters
-                ? 'Clear status, search, tag filters and selection'
-                : 'No filters active'
-            }
-          >
-            <Icon name="x" size={14} /> Clear
           </button>
           <button type="button" className="btn primary" onClick={onOpenAdd}>
             <Icon name="cloud-upload" size={14} /> Add source
