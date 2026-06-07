@@ -14,8 +14,29 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph.server.twin_query_routes import (
+    _normalize_answer,
     build_twin_query_router,
 )
+
+
+class TestNormalizeAnswer:
+    def test_strips_references_block(self):
+        text = "Answer body.\n\n### References - [1] runbook.pdf"
+        assert _normalize_answer(text) == "Answer body."
+
+    def test_strips_h2_references_too(self):
+        text = "Answer.\n## References\n[1] foo"
+        assert _normalize_answer(text) == "Answer."
+
+    def test_case_insensitive(self):
+        assert _normalize_answer("x\n### references - [1] a") == "x"
+
+    def test_passthrough_when_no_references(self):
+        assert _normalize_answer("Just an answer.") == "Just an answer."
+
+    def test_inline_brackets_preserved(self):
+        text = "See [3] for the runbook.\n\n### References - [3] foo"
+        assert _normalize_answer(text) == "See [3] for the runbook."
 
 
 class FakeChunksVdb:
@@ -125,6 +146,28 @@ class TestQueryEndpoint:
 
         # The endpoint forwarded the requested top_k to chunks_vdb
         assert rag.chunks_vdb.last_top_k == 5
+
+    async def test_strips_trailing_references_block_from_response(
+        self, make_client
+    ):
+        rag = FakeRag(
+            answer=(
+                "Restart Oracle by stopping listeners [1] then `shutdown immediate` [2].\n\n"
+                "### References - [1] runbook.pdf [2] rhel.pdf"
+            ),
+            chunks=[
+                {"id": "c1", "file_path": "runbook.pdf", "score": 0.9},
+                {"id": "c2", "file_path": "rhel.pdf", "score": 0.8},
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "q", "top_k": 2})
+        assert r.status_code == 200
+        body = r.json()
+        assert "### References" not in body["response"]
+        assert body["response"].endswith("[2].")
+        assert len(body["sources"]) == 2
 
     async def test_only_need_context_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="raw context blob")

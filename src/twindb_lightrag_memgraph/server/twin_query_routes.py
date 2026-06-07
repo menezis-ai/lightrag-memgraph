@@ -26,6 +26,7 @@ Deliberate trade-offs:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
@@ -34,6 +35,19 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+# LightRAG's default prompt appends a trailing "### References - [N] file"
+# block. The Twin overlay returns a structured `sources` list alongside
+# the response, so the markdown References block is duplicate noise that
+# would otherwise render as raw text in the React port (the citation
+# parser only knows about `[N]` / `{cite:N}` inline markers, not the
+# heading). Strip it server-side so the HTTP contract is already clean.
+_REFERENCES_BLOCK_RE = re.compile(r"\n*#{2,6}\s*References?\b.*$", re.IGNORECASE | re.DOTALL)
+
+
+def _normalize_answer(text: str) -> str:
+    """Strip the trailing markdown References block from a LightRAG answer."""
+    return _REFERENCES_BLOCK_RE.sub("", text).rstrip()
 
 
 class TwinQueryBody(BaseModel):
@@ -240,6 +254,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
 
         if not isinstance(answer, str):
             answer = str(answer)
+        answer = _normalize_answer(answer)
 
         # If the operator asked for context-only or prompt-only the
         # answer body already carries everything they wanted — skip
