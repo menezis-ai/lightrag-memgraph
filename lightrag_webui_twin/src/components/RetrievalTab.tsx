@@ -30,6 +30,7 @@ import {
   parseAnswer,
   QUERY_MODES,
   relTime,
+  stripReferencesBlock,
   type AnswerPart,
   type AnswerToken,
   type ChatMessage,
@@ -308,9 +309,9 @@ export function RetrievalTab({
 
     sendQuery(activeParams(q))
       .then(({ response, sources }) => {
-        // Tokenize on whitespace, keeping word boundaries — matches the
-        // proto's per-word streaming animation.
-        const tokens = response
+        // Strip the trailing `### References` block LightRAG appends —
+        // the structured `sources` panel renders it as clickable cards.
+        const tokens = stripReferencesBlock(response)
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
         streamTokens(tokens, sources ?? []);

@@ -557,7 +557,8 @@ input:focus, textarea:focus, select:focus { outline: none; }
 /* ----- Retrieval tab ----- */
 .retrieval { display: flex; height: 100%; overflow: hidden; }
 .retrieval-main {
-  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  flex: 1; display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
   background: var(--color-background-primary);
 }
 .retrieval-conv {
@@ -1281,7 +1282,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 
 /* ─── Tab transition (slide/fade between top-level tabs) ─────────────── */
 .tab-pane {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; min-height: 0;
   display: flex;
   animation: tab-in 220ms cubic-bezier(0.22, 0.8, 0.28, 1);
 }

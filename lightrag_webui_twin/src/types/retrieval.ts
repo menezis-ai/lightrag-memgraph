@@ -65,22 +65,23 @@ export const QUERY_MODES: readonly QueryMode[] = [
 
 /**
  * Parse a token stream into typed AnswerParts. Tokens contain inline
- * `{cite:N}` and backtick-code markers.
+ * `{cite:N}` (proto/fixture format) or `[N]` (LightRAG prompt output)
+ * citation markers, plus backtick-code spans.
  */
 export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
   const out: AnswerPart[] = [];
   tokens.forEach((tk) => {
-    const re = /\{cite:(\d+)\}|`([^`]+)`/g;
+    const re = /\{cite:(\d+)\}|\[(\d+)\]|`([^`]+)`/g;
     let last = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(tk)) !== null) {
       if (m.index > last) {
         out.push({ type: 'text', value: tk.slice(last, m.index) });
       }
-      if (m[1]) {
-        out.push({ type: 'cite', value: parseInt(m[1], 10) });
-      } else if (m[2]) {
-        out.push({ type: 'code', value: m[2] });
+      if (m[1] || m[2]) {
+        out.push({ type: 'cite', value: parseInt(m[1] || m[2], 10) });
+      } else if (m[3]) {
+        out.push({ type: 'code', value: m[3] });
       }
       last = re.lastIndex;
     }
@@ -89,6 +90,17 @@ export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
     }
   });
   return out;
+}
+
+/**
+ * Strip the trailing `### References - [N] file` block LightRAG's default
+ * prompt appends to every answer. The structured `sources` panel renders
+ * the same info as clickable cards — we don't want the raw markdown to
+ * compete with it. Matches `##`/`###` `References` (any case, optional
+ * dash) and everything after, up to end-of-string.
+ */
+export function stripReferencesBlock(text: string): string {
+  return text.replace(/\n*#{2,6}\s*References?\b[^]*$/i, '').trimEnd();
 }
 
 /**

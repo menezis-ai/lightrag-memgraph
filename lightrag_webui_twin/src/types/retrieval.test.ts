@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { parseAnswer, relTime } from './retrieval';
+import { parseAnswer, relTime, stripReferencesBlock } from './retrieval';
 
 describe('parseAnswer', () => {
   it('returns empty array for an empty token list', () => {
@@ -42,6 +42,43 @@ describe('parseAnswer', () => {
       { type: 'cite', value: 7 },
       { type: 'text', value: ' for kernel notes' },
     ]);
+  });
+
+  it('extracts a [N] citation (LightRAG prompt format)', () => {
+    expect(parseAnswer(['See [2] for the runbook'])).toEqual([
+      { type: 'text', value: 'See ' },
+      { type: 'cite', value: 2 },
+      { type: 'text', value: ' for the runbook' },
+    ]);
+  });
+
+  it('treats {cite:N} and [N] interchangeably in one token', () => {
+    expect(parseAnswer(['first {cite:1} then [3]'])).toEqual([
+      { type: 'text', value: 'first ' },
+      { type: 'cite', value: 1 },
+      { type: 'text', value: ' then ' },
+      { type: 'cite', value: 3 },
+    ]);
+  });
+});
+
+describe('stripReferencesBlock', () => {
+  it('removes ### References block at the end', () => {
+    const input = 'Some answer paragraph.\n\n### References - [1] runbook.pdf';
+    expect(stripReferencesBlock(input)).toBe('Some answer paragraph.');
+  });
+
+  it('removes ## References too', () => {
+    const input = 'Body.\n## References\n[1] foo';
+    expect(stripReferencesBlock(input)).toBe('Body.');
+  });
+
+  it('is case-insensitive on the heading', () => {
+    expect(stripReferencesBlock('x\n### references - [1] a')).toBe('x');
+  });
+
+  it('leaves answers without a References block untouched', () => {
+    expect(stripReferencesBlock('Just an answer.')).toBe('Just an answer.');
   });
 });
 
