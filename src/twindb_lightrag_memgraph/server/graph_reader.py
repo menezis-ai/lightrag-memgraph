@@ -196,7 +196,14 @@ def _node_record_to_entity(
     entity_id = record.get("entity_id") or ""
     raw_type = record.get("entity_type") or ""
     mapped_type = map_entity_type(str(raw_type))
-    summary = (record.get("description") or "").strip()
+    # LightRAG joins per-chunk descriptions with `<SEP>` when an entity
+    # is mentioned in multiple chunks. Replace with a visible separator
+    # so the WebUI summary reads cleanly instead of leaking the marker.
+    summary = (
+        (record.get("description") or "")
+        .replace("<SEP>", " · ")
+        .strip()
+    )
     source_id = record.get("source_id") or ""
     chunks = {
         c.strip() for c in str(source_id).replace("<SEP>", ",").split(",") if c.strip()

@@ -160,6 +160,18 @@ class TestNodeRecordProjection:
         assert out["mentions"] == 2
         assert out["sources"] == 2
 
+    def test_description_sep_marker_replaced(self):
+        # LightRAG joins per-chunk descriptions with <SEP> — must not
+        # leak into the WebUI inspector summary.
+        row = {
+            "entity_id": "Ubuntu",
+            "entity_type": "org",
+            "description": "Ubuntu is Linux-based.<SEP>Ubuntu is popular.",
+        }
+        out = _node_record_to_entity(row)
+        assert "<SEP>" not in out["summary"]
+        assert out["summary"] == "Ubuntu is Linux-based. · Ubuntu is popular."
+
     def test_summary_truncated_at_600_chars(self):
         row = {
             "entity_id": "wordy",
