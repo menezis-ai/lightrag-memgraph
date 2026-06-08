@@ -130,6 +130,36 @@ class TestNodeRecordProjection:
         # de-dup: same chunk listed twice doesn't double-count
         assert out["mentions"] == 2
 
+    def test_sources_collapses_chunks_to_distinct_docs(self):
+        # 5 chunks → 2 parent docs → sources should be 2, mentions stays 5.
+        row = {
+            "entity_id": "Speaker 1",
+            "entity_type": "person",
+            "source_id": "c1,c2,c3,c4,c5",
+        }
+        chunk_to_doc = {
+            "c1": "doc-A",
+            "c2": "doc-A",
+            "c3": "doc-A",
+            "c4": "doc-B",
+            "c5": "doc-B",
+        }
+        out = _node_record_to_entity(row, chunk_to_doc)
+        assert out["mentions"] == 5
+        assert out["sources"] == 2
+
+    def test_sources_falls_back_to_mentions_for_orphan_chunks(self):
+        # Chunks not present in the index (e.g. DocStatus row missing
+        # chunks_list) should keep the legacy behaviour rather than 0.
+        row = {
+            "entity_id": "x",
+            "entity_type": "concept",
+            "source_id": "orphan-1,orphan-2",
+        }
+        out = _node_record_to_entity(row, {"unrelated": "doc-Z"})
+        assert out["mentions"] == 2
+        assert out["sources"] == 2
+
     def test_summary_truncated_at_600_chars(self):
         row = {
             "entity_id": "wordy",

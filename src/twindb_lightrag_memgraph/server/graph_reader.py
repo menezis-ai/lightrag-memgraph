@@ -178,24 +178,35 @@ def _entity_id_to_node_id(entity_id: str) -> str:
     return f"kg_{entity_id}"
 
 
-def _node_record_to_entity(record: dict[str, Any]) -> dict[str, Any]:
-    """Project a Cypher entity row into the WebUI ``GraphEntity`` shape."""
+def _node_record_to_entity(
+    record: dict[str, Any],
+    chunk_to_doc: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Project a Cypher entity row into the WebUI ``GraphEntity`` shape.
+
+    ``mentions`` is the count of distinct chunks the entity appears in
+    (LightRAG joins the chunk ids in ``source_id`` with ``<SEP>``).
+    ``sources`` is the count of distinct parent documents — computed by
+    joining each chunk id against ``chunk_to_doc`` (built once from
+    ``DocStatus.chunks_list``). When the map is missing or no chunks
+    can be resolved (orphan chunks, fresh KB, lookup failure) sources
+    falls back to mentions so the badge never reads 0 with non-empty
+    source_id.
+    """
     entity_id = record.get("entity_id") or ""
     raw_type = record.get("entity_type") or ""
     mapped_type = map_entity_type(str(raw_type))
     summary = (record.get("description") or "").strip()
     source_id = record.get("source_id") or ""
-    # source_id is a delimited list of chunk ids (LightRAG joins with
-    # `<SEP>` by default). Count distinct chunks for both the
-    # "mentions" badge and the "sources" badge — LightRAG doesn't
-    # encode the parent doc in the chunk id, so the WebUI uses chunk
-    # count as the best available proxy for "sources" until we join
-    # against DocStatus in a follow-up.
     chunks = {
         c.strip() for c in str(source_id).replace("<SEP>", ",").split(",") if c.strip()
     }
     mentions = len(chunks)
-    sources = mentions
+    if chunk_to_doc:
+        resolved = {chunk_to_doc[c] for c in chunks if c in chunk_to_doc}
+        sources = len(resolved) if resolved else mentions
+    else:
+        sources = mentions
     x, y = layout_position(str(entity_id), mapped_type)
     return {
         "id": _entity_id_to_node_id(str(entity_id)),
@@ -207,6 +218,51 @@ def _node_record_to_entity(record: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "summary": summary[:600],
     }
+
+
+async def _load_chunk_to_doc_index(workspace: str) -> dict[str, str]:
+    """Build a ``chunk_id → doc_id`` map from ``DocStatus_{workspace}``.
+
+    LightRAG stores the doc's chunk list as a JSON string under the
+    ``chunks_list`` property. We read every DocStatus row once and
+    invert the mapping so per-entity ``sources`` counts can be derived
+    in O(1) lookups. On any failure returns ``{}`` and callers fall
+    back to the legacy ``sources = mentions`` heuristic.
+    """
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (d:`DocStatus_{label}`) "
+        "WHERE d.chunks_list IS NOT NULL "
+        "RETURN d.id AS doc_id, d.chunks_list AS chunks_list"
+    )
+    chunk_to_doc: dict[str, str] = {}
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query)
+            async for record in result:
+                doc_id = str(record.get("doc_id") or "")
+                if not doc_id:
+                    continue
+                raw = record.get("chunks_list")
+                if not raw:
+                    continue
+                try:
+                    chunk_ids = json.loads(raw) if isinstance(raw, str) else raw
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(chunk_ids, list):
+                    continue
+                for chunk_id in chunk_ids:
+                    if isinstance(chunk_id, str) and chunk_id:
+                        chunk_to_doc[chunk_id] = doc_id
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: failed to load chunk→doc index for workspace=%s",
+            workspace,
+        )
+        return {}
+    return chunk_to_doc
 
 
 # In-process cache of relation_id → (workspace, src, tgt). Populated on
@@ -301,7 +357,12 @@ async def read_graph_entities(
                     }
                 )
             await result.consume()
-        return [_node_record_to_entity(row) for row in rows if row.get("entity_id")]
+        chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+        return [
+            _node_record_to_entity(row, chunk_to_doc)
+            for row in rows
+            if row.get("entity_id")
+        ]
     except Exception:
         logger.exception(
             "graph_reader: failed to read entities for workspace=%s", workspace
