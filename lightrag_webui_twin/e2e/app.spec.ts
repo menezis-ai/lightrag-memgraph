@@ -94,7 +94,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(
       page.getByText('How do I restart Oracle?', { exact: true }),
     ).toBeVisible();
-    await expect(page.getByTestId('source-1')).toBeVisible({ timeout: 12_000 });
+    // The seed thread already paints `source-1` from its sample
+    // turn, and the new assistant reply now also carries its own
+    // `source-1` once the NDJSON stream completes — scope to the
+    // latest assistant turn so the assertion is unambiguous.
+    const latestAssistant = page.locator('.msg-assistant').last();
+    await expect(
+      latestAssistant.getByTestId('source-1'),
+    ).toBeVisible({ timeout: 12_000 });
     await page.getByLabel('Retrieval tag input').fill('oracle');
     await page.getByTestId('rtag-sugg-oracle').click();
     await page.getByLabel('Only need context').click();
