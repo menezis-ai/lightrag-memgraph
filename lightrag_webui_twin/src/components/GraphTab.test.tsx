@@ -66,6 +66,30 @@ describe('GraphTab — rendering', () => {
     expect(detail.textContent).toMatch(/Oracle Database/);
     expect(detail.textContent).toMatch(/Product/);
   });
+
+  it('shows the neutral state when the selected entity no longer exists', () => {
+    // Simulate the post-delete state: URL still carries `gent=kg_gone`
+    // but `gone` is not in the entities[] array (deleted by cascade).
+    // The inspector must surface the empty state, not silently fall
+    // back to entities[0] (which was the 2026-06-08 prod bug).
+    window.history.replaceState(null, '', '/?gent=kg_gone');
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    expect(screen.getByText('Select a node to inspect')).toBeInTheDocument();
+  });
+
+  it('relation target name has truncating CSS so long names cannot overlap the strength badge', () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    // e_oracle is selected by default + has neighbors. The structural
+    // guarantee we want: each incoming/outgoing row wraps the target
+    // name in a span with the kg-rel-target-name class so the CSS
+    // (overflow: hidden + text-overflow: ellipsis on that span) can
+    // bite. Without this wrapper the strength badge gets pushed past
+    // the row and overlaps the arrow + label cluster.
+    const nameSpans = document.querySelectorAll(
+      '.kg-rel-row .kg-rel-target-name',
+    );
+    expect(nameSpans.length).toBeGreaterThan(0);
+  });
 });
 
 describe('GraphTab — filters', () => {

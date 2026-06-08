@@ -539,14 +539,61 @@ export function useDeleteTag() {
  *
  * Doctrine: every UI-visible mutation persists.
  */
+/**
+ * Mark the targeted documents with the UI-only `_deleting` flag so the
+ * row shows the "DELETING" badge instead of disappearing while the
+ * server-side cascade runs. Returns the previous cache snapshot so
+ * `onError` can roll back.
+ */
+function flagDocsAsDeleting(
+  qc: ReturnType<typeof useQueryClient>,
+  ids: readonly string[],
+): { previous: ReadonlyArray<[unknown, unknown]> } {
+  const idSet = new Set(ids);
+  const previous = qc.getQueriesData<{
+    items: readonly Document[];
+    [key: string]: unknown;
+  }>({ queryKey: ['documents'] });
+  qc.setQueriesData<{
+    items: readonly Document[];
+    [key: string]: unknown;
+  }>({ queryKey: ['documents'] }, (old) => {
+    if (!old) return old;
+    return {
+      ...old,
+      items: old.items.map((d) =>
+        idSet.has(d.doc_id) ? { ...d, _deleting: true } : d,
+      ),
+    };
+  });
+  return { previous };
+}
+
+function invalidateDeleteSideEffects(qc: ReturnType<typeof useQueryClient>) {
+  // The bulk-delete cascade nukes documents, graph entities, graph
+  // relations, and emits an audit event. Stale-cache on any of these
+  // produces the "I deleted the doc but nothing changed in the Graph
+  // tab" symptom (2026-06-08 prod report). Keep all four in sync.
+  qc.invalidateQueries({ queryKey: ['documents'] });
+  qc.invalidateQueries({ queryKey: ['graph-entities'] });
+  qc.invalidateQueries({ queryKey: ['graph-relations'] });
+  qc.invalidateQueries({ queryKey: ['activity'] });
+}
+
 export function useDeleteDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(docId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['documents'] });
-      qc.invalidateQueries({ queryKey: ['activity'] });
+    onMutate: async (docId) => {
+      await qc.cancelQueries({ queryKey: ['documents'] });
+      return flagDocsAsDeleting(qc, [docId]);
     },
+    onError: (_err, _docId, ctx) => {
+      ctx?.previous.forEach(([key, data]) =>
+        qc.setQueryData(key as readonly unknown[], data),
+      );
+    },
+    onSettled: () => invalidateDeleteSideEffects(qc),
   });
 }
 
@@ -555,10 +602,16 @@ export function useBulkDeleteDocuments() {
   return useMutation({
     mutationFn: (body: Parameters<typeof api.bulkDeleteDocuments>[0]) =>
       api.bulkDeleteDocuments(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['documents'] });
-      qc.invalidateQueries({ queryKey: ['activity'] });
+    onMutate: async (body) => {
+      await qc.cancelQueries({ queryKey: ['documents'] });
+      return flagDocsAsDeleting(qc, body.doc_ids);
     },
+    onError: (_err, _body, ctx) => {
+      ctx?.previous.forEach(([key, data]) =>
+        qc.setQueryData(key as readonly unknown[], data),
+      );
+    },
+    onSettled: () => invalidateDeleteSideEffects(qc),
   });
 }
 

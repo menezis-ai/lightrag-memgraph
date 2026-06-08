@@ -147,8 +147,15 @@ export function GraphTab({
     [relations, visibleIds],
   );
 
-  const selected =
-    entities.find((e) => e.id === selectedId) ?? entities[0] ?? null;
+  // Neutral state doctrine: only auto-pick the first entity when the
+  // user has not yet made an explicit selection (selectedId === '').
+  // Once a node has been chosen, a missing match (entity deleted,
+  // refetch dropped it) must surface the empty inspector — falling
+  // back to entities[0] hides the cascade and makes deletes look like
+  // no-ops.
+  const selected = !selectedId
+    ? (entities[0] ?? null)
+    : (entities.find((e) => e.id === selectedId) ?? null);
   const neighbors = useMemo(() => {
     if (!selected) return { rels: [] as GraphRelation[], nodes: [] as GraphEntity[] };
     const rels = relations.filter(
@@ -988,7 +995,7 @@ function EntityEditor({
                           className="kg-rel-swatch"
                           style={{ background: colors[t.type] }}
                         />
-                        {t.name}
+                        <span className="kg-rel-target-name">{t.name}</span>
                       </span>
                       <span
                         className="kg-rel-strength"
@@ -1036,7 +1043,7 @@ function EntityEditor({
                           className="kg-rel-swatch"
                           style={{ background: colors[s.type] }}
                         />
-                        {s.name}
+                        <span className="kg-rel-target-name">{s.name}</span>
                       </span>
                       <code className="kg-rel-label">{r.label}</code>
                       <span className="kg-rel-arrow">→</span>

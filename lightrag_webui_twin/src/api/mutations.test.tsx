@@ -195,6 +195,102 @@ describe('useBulkDeleteDocuments', () => {
     expect(body.doc_ids).toEqual(['doc-a', 'doc-b']);
     expect(body.actor).toBe('claire.benoit');
   });
+
+  it('flags targeted docs with _deleting in cache during the in-flight call', async () => {
+    let resolveDelete: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((res) => {
+          resolveDelete = res;
+        }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(['documents'], {
+      items: [
+        { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
+        { doc_id: 'doc-b', status: 'PROCESSED', file_path: 'b.pdf' },
+        { doc_id: 'doc-c', status: 'PROCESSED', file_path: 'c.pdf' },
+      ],
+    });
+
+    const { result } = renderHook(() => useBulkDeleteDocuments(), {
+      wrapper: wrapperForClient(client),
+    });
+
+    let mutPromise!: Promise<unknown>;
+    act(() => {
+      mutPromise = result.current.mutateAsync({
+        doc_ids: ['doc-a', 'doc-c'],
+        actor: 'claire.benoit',
+      });
+    });
+
+    await waitFor(() => {
+      const data = client.getQueryData<{ items: Array<{ doc_id: string; _deleting?: boolean }> }>(
+        ['documents'],
+      );
+      const flags = Object.fromEntries(
+        (data?.items ?? []).map((d) => [d.doc_id, d._deleting ?? false]),
+      );
+      expect(flags).toEqual({ 'doc-a': true, 'doc-b': false, 'doc-c': true });
+    });
+
+    resolveDelete!(jsonResponse({ deleted: 2 }));
+    await act(async () => {
+      await mutPromise;
+    });
+  });
+
+  it('invalidates all 4 cascade query keys on settle', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ deleted: 1 }));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useBulkDeleteDocuments(), {
+      wrapper: wrapperForClient(client),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ doc_ids: ['doc-a'], actor: 'x' });
+    });
+    const invalidatedKeys = invalidateSpy.mock.calls.map(
+      ([opts]) => (opts as { queryKey: unknown[] }).queryKey[0],
+    );
+    expect(invalidatedKeys).toEqual(
+      expect.arrayContaining([
+        'documents',
+        'graph-entities',
+        'graph-relations',
+        'activity',
+      ]),
+    );
+  });
+
+  it('rolls back the optimistic _deleting flag when the request fails', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'boom' }, 500));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const initialItems = [
+      { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
+    ];
+    client.setQueryData(['documents'], { items: initialItems });
+    const { result } = renderHook(() => useBulkDeleteDocuments(), {
+      wrapper: wrapperForClient(client),
+    });
+    await act(async () => {
+      await result.current
+        .mutateAsync({ doc_ids: ['doc-a'], actor: 'x' })
+        .catch(() => undefined);
+    });
+    const data = client.getQueryData<{ items: Array<{ _deleting?: boolean }> }>(
+      ['documents'],
+    );
+    expect(data?.items[0]._deleting).toBeUndefined();
+  });
 });
 
 describe('useUploadDocumentsBatch', () => {

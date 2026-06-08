@@ -535,6 +535,10 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .cell-status .status-text.processing { color: var(--twin-amber-vivid); font-weight: 500; }
 .cell-status .status-text.failed { color: var(--twin-red-vivid); font-weight: 500; }
 .cell-status .status-text.pending { color: var(--color-text-tertiary); }
+.cell-status .status-text.deleting {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
 .cell-status .status-text::before {
   content: "●"; margin-right: 4px;
 }
@@ -3338,10 +3342,20 @@ input:focus, textarea:focus, select:focus { outline: none; }
   min-width: 0;
 }
 .kg-rel-target:hover { background: var(--color-background-tertiary); }
+/* Long entity names must truncate, otherwise the strength badge on the
+   right is pushed off the row and overlaps the `→`/label cluster. */
+.kg-rel-target-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .kg-rel-swatch {
   width: 8px; height: 8px; border-radius: 2px;
   flex-shrink: 0;
 }
+.kg-rel-strength { flex-shrink: 0; }
+.kg-rel-label { flex-shrink: 0; }
 .kg-rel-strength {
   font-family: var(--font-mono);
   font-size: 10px;

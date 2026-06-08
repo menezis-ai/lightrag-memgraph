@@ -18,5 +18,9 @@ export {
 } from './retrieval';
 export { ACTIVITY_FIXTURES, ACTIVITY_NOW_MS } from './activity';
 export { API_VERSION, OPENAPI_GROUPS, API_SERVERS, API_BASE_URL } from './api';
-export { GRAPH_ENTITY_FIXTURES, GRAPH_RELATION_FIXTURES } from './graph';
+export {
+  DOC_TO_GRAPH_ENTITIES,
+  GRAPH_ENTITY_FIXTURES,
+  GRAPH_RELATION_FIXTURES,
+} from './graph';
 export { TAG_CATEGORY_FIXTURES, TAG_FIXTURES } from './tags';

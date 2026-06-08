@@ -16,6 +16,7 @@ import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
   API_VERSION,
+  DOC_TO_GRAPH_ENTITIES,
   DOCUMENT_FIXTURES,
   GRAPH_ENTITY_FIXTURES,
   GRAPH_RELATION_FIXTURES,
@@ -202,6 +203,10 @@ interface E2eScenario {
   trackStatusMode?: 'empty' | 'processed' | 'timeout';
   authGate?: boolean;
   uploadFailureNames?: string[];
+  /** Delay (ms) before the bulk-delete handler responds. Used by the
+   *  Playwright "DELETING badge" test to assert the optimistic state
+   *  is visible while the round-trip is in flight. */
+  bulkDeleteDelayMs?: number;
 }
 
 const e2eScenario: E2eScenario = {};
@@ -271,6 +276,7 @@ export function resetDocumentsState(): void {
   e2eScenario.trackStatusMode = undefined;
   e2eScenario.authGate = undefined;
   e2eScenario.uploadFailureNames = undefined;
+  e2eScenario.bulkDeleteDelayMs = undefined;
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
   e2eStats.spaceRequests = [];
@@ -1069,6 +1075,33 @@ export const handlers = [
     const ids = new Set(body.doc_ids);
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
     persistDocumentsState();
+    // Cascade graph entities + relations so the Graph tab refetch
+    // reflects the real backend behaviour (entities sourced ONLY by
+    // the deleted docs disappear). The reverse map is hand-curated
+    // in fixtures/graph.ts to avoid fragile file_path matching.
+    const orphanEntityIds = new Set<string>();
+    for (const docId of ids) {
+      for (const entityId of DOC_TO_GRAPH_ENTITIES[docId] ?? []) {
+        const stillSourced = Object.entries(DOC_TO_GRAPH_ENTITIES).some(
+          ([otherDoc, ents]) => !ids.has(otherDoc) && ents.includes(entityId),
+        );
+        if (!stillSourced) orphanEntityIds.add(entityId);
+      }
+    }
+    if (orphanEntityIds.size > 0) {
+      graphEntityState = graphEntityState.filter(
+        (e) => !orphanEntityIds.has(e.id),
+      );
+      graphRelationState = graphRelationState.filter(
+        (r) =>
+          !orphanEntityIds.has(r.source) && !orphanEntityIds.has(r.target),
+      );
+    }
+    if (e2eScenario.bulkDeleteDelayMs && e2eScenario.bulkDeleteDelayMs > 0) {
+      await new Promise((res) =>
+        setTimeout(res, e2eScenario.bulkDeleteDelayMs),
+      );
+    }
     return HttpResponse.json({ deleted: body.doc_ids.length });
   }),
   http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {

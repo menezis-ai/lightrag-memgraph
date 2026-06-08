@@ -24,6 +24,13 @@ export type DocumentType = 'file' | 'confluence' | 'sharepoint' | 'url';
 /** LightRAG-native status enum (uppercase, mirrors DocStatus.status). */
 export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'FAILED';
 
+/**
+ * UI-only display status. Strict superset of DocumentStatus that adds
+ * `DELETING` for the optimistic state between a bulk-delete call and
+ * the server-side cascade completing. Never travels over the wire.
+ */
+export type DocumentDisplayStatus = DocumentStatus | 'DELETING';
+
 export type ReviewState = 'pending-review' | 'approved' | 'rejected' | 'modified';
 
 /**
@@ -72,6 +79,14 @@ export interface Document {
   /** Total content length in chars. */
   content_length: number;
   status: DocumentStatus;
+  /**
+   * UI-only optimistic flag set by the bulk-delete mutation between
+   * the request and the server-side cascade completing. Never
+   * serialized back to the API. When true the row renders the
+   * DELETING badge and the user keeps seeing the doc until the
+   * subsequent refetch removes it.
+   */
+  _deleting?: boolean;
   /** Final chunk count; null while still PROCESSING. */
   chunks_count: number | null;
   created_at: string;

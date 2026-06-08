@@ -135,11 +135,12 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         # the next `session.run(...)` fails with `ConnectionResetError(104,
         # 'Connection reset by peer')` and returns 500 to the caller. Cap
         # connection age at 30 min and ping any idle connection older than
-        # 30 s before reuse so the driver transparently recycles defunct
-        # sockets. Requires neo4j-driver >= 5.17 (pinned >= 5.0,<7 — actual
-        # runtime version asserted in tests/test_pool_resilience.py).
+        # 5 s before reuse so the driver transparently recycles defunct
+        # sockets. (Dropped from 30 s to 5 s after a 2026-06-08 reset
+        # surfaced during a doc delete that idled longer than 5 s but
+        # less than 30.) Requires neo4j-driver >= 5.17 (pinned >= 5.0,<7).
         "max_connection_lifetime": 1800,
-        "liveness_check_timeout": 30,
+        "liveness_check_timeout": 5,
     }
 
     if encrypted_env == "true":

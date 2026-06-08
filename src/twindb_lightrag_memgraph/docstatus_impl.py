@@ -129,8 +129,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 chunks_list = []
 
         raw_status = props.get("status", "pending")
+        # LightRAG's DocStatus enum values are lowercase ("pending",
+        # "processing", "processed", "failed"). Some seed/imported nodes
+        # carry uppercase ("PROCESSED") — normalise so the cast doesn't
+        # fall back to PENDING and mis-report finished docs as queued.
         try:
-            status = DocStatus(raw_status)
+            status = DocStatus(str(raw_status).lower())
         except ValueError:
             logger.warning(
                 f"Unknown doc status '{raw_status}', falling back to PENDING"

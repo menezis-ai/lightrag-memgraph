@@ -90,6 +90,24 @@ export const GRAPH_ENTITY_TAGS: Record<string, readonly string[]> = {
 };
 
 /**
+ * Reverse index: doc_id → entity_ids it sourced. Used by the MSW
+ * bulk-delete handler so a doc removal cascades the same way the real
+ * Memgraph delete does (entities whose only source was the deleted doc
+ * vanish). Hand-curated rather than derived from file_path matching —
+ * the latter is fragile and was the reason the e2e bulk-delete spec
+ * couldn't detect a cascade-on-graph regression before 2026-06-08.
+ */
+export const DOC_TO_GRAPH_ENTITIES: Record<string, readonly string[]> = {
+  d1: ['e_oracle', 'e_rman', 'e_rhel', 'e_marc'],
+  d2: ['e_oracle', 'e_pga'],
+  d3: ['e_oracle', 'e_rman', 'e_archlog'],
+  d4: ['e_memgraph', 'e_mage', 'e_lightrag', 'e_cypher'],
+  d5: ['e_vmware', 'e_esxi', 'e_vmotion'],
+  d6: ['e_cft'],
+  d7: ['e_swift', 'e_iso20022'],
+};
+
+/**
  * Per-entity source-doc map for the Graph rail's "Filter by source" picker.
  * Values are file_path strings matching DOCUMENT_FIXTURES.
  */

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { boot } from './helpers';
+import { boot, openTab, setMswScenario } from './helpers';
 
 async function addDocumentTagFilter(page: Page, tag: string) {
   await page.getByRole('button', { name: '+ Add tag' }).click();
@@ -46,6 +46,61 @@ test.describe('Documents RC-1 persistence', () => {
     await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
     await expect(page.getByLabel('Search source')).toHaveValue('memgraph-mage');
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
+  });
+
+  test('@documents @rc1 deleting state stays visible during the round-trip and the Graph tab refetches', async ({
+    page,
+  }) => {
+    // Force a 1.5 s delay on the bulk-delete handler so the optimistic
+    // "deleting…" badge is observably present before the row vanishes.
+    await setMswScenario(page, { bulkDeleteDelayMs: 1500 });
+
+    await page.getByLabel('Select memgraph-mage-3.8-release-notes.md').check();
+    await page.getByTestId('docs-bulk-delete').click();
+    await expect(page.getByRole('status')).toContainText('Confirm bulk delete');
+    await page.getByTestId('docs-bulk-delete').click();
+
+    // While the round-trip is in flight, the doc row stays + status is
+    // the UI-only "deleting…" badge (not PROCESSING / not gone).
+    const row = page.getByTestId('docs-row-d4');
+    await expect(row).toBeVisible();
+    await expect(
+      row.locator('[data-testid="status-deleting"]'),
+    ).toHaveText(/deleting/i);
+
+    // After the cascade resolves the row disappears and the toast lands.
+    await expect(row).toBeHidden({ timeout: 5000 });
+    await expect(page.getByRole('status')).toContainText('1 source deleted');
+
+    // Navigate to the Graph tab — the entities sourced ONLY by d4 must
+    // be gone from the refetched graph (cascade invalidation of the
+    // ['graph-entities'] query key, not stale fixture data).
+    await openTab(page, 'Graph');
+    await expect(page.getByTestId('kg-node-e_memgraph')).toBeHidden();
+    await expect(page.getByTestId('kg-node-e_mage')).toBeHidden();
+    await expect(page.getByTestId('kg-node-e_lightrag')).toBeHidden();
+    await expect(page.getByTestId('kg-node-e_cypher')).toBeHidden();
+  });
+
+  test('@documents @rc1 deleting the selected graph node leaves the inspector empty (no auto-fallback)', async ({
+    page,
+  }) => {
+    // First, in the Graph tab, select e_memgraph explicitly.
+    await openTab(page, 'Graph');
+    await page.getByTestId('kg-node-e_memgraph').click();
+    await expect(page.getByTestId('kg-detail-entity')).toContainText('Memgraph');
+
+    // Now go delete d4 (the only doc sourcing e_memgraph). After cascade
+    // the inspector should NOT silently re-select another node — it
+    // should surface the empty state.
+    await openTab(page, 'Documents');
+    await page.getByLabel('Select memgraph-mage-3.8-release-notes.md').check();
+    await page.getByTestId('docs-bulk-delete').click();
+    await page.getByTestId('docs-bulk-delete').click(); // confirm
+    await expect(page.getByTestId('docs-row-d4')).toBeHidden({ timeout: 5000 });
+
+    await openTab(page, 'Graph');
+    await expect(page.getByText('Select a node to inspect')).toBeVisible();
   });
 
   test('@documents @rc1 edit-approve decision is committed and survives reload', async ({

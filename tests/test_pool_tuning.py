@@ -168,7 +168,7 @@ class TestConnectionConfig:
         GET /notifications) before the fix.
         """
         _, _, kwargs = pool._read_connection_config()
-        assert kwargs["liveness_check_timeout"] == 30
+        assert kwargs["liveness_check_timeout"] == 5
         assert kwargs["max_connection_lifetime"] == 1800
 
     def test_driver_kwargs_accepted_by_async_driver(self):
