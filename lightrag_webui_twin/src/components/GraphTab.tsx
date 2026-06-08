@@ -691,12 +691,14 @@ function EntityEditor({
 
   // Reset edit mode + armed-delete + Add relation form when switching
   // entities — every transient panel should start fresh on the next node.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on prop change; refactoring to a key prop would shed unrelated state. */
   useEffect(() => {
     setEditing(false);
     setDraft(null);
     setArmedDelete(false);
     setAddRelOpen(false);
   }, [entity.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const startEdit = () => {
     setDraft({
@@ -1168,11 +1170,13 @@ function RelationEditor({
     return () => window.clearTimeout(t);
   }, [armedDelete]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset of the relation editor panel when switching to a different edge. */
   useEffect(() => {
     setEditing(false);
     setDraft(null);
     setArmedDelete(false);
   }, [rel.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const startEdit = () => {
     setDraft({

@@ -181,6 +181,37 @@ let graphRelationState: GraphRelation[] = GRAPH_RELATION_FIXTURES.map((r) => ({
   ...r,
   properties: r.properties ? { ...r.properties } : {},
 }));
+
+/**
+ * Mirror the real backend cascade: an entity sourced *only* by docs in
+ * the deletion set vanishes from `graphEntityState`, and any relation
+ * touching such an entity disappears too. The reverse map is curated
+ * in `fixtures/graph.ts` to avoid fragile file_path matching.
+ * Shared between the unit `DELETE /documents/{id}` shim and the bulk
+ * `POST /documents/bulk-delete` Twin route so both code paths trigger
+ * the same Graph-tab refetch behaviour.
+ */
+function cascadeDocsFromGraph(deletedDocIds: Set<string>): void {
+  if (deletedDocIds.size === 0) return;
+  const orphanEntityIds = new Set<string>();
+  for (const docId of deletedDocIds) {
+    for (const entityId of DOC_TO_GRAPH_ENTITIES[docId] ?? []) {
+      const stillSourced = Object.entries(DOC_TO_GRAPH_ENTITIES).some(
+        ([otherDoc, ents]) =>
+          !deletedDocIds.has(otherDoc) && ents.includes(entityId),
+      );
+      if (!stillSourced) orphanEntityIds.add(entityId);
+    }
+  }
+  if (orphanEntityIds.size === 0) return;
+  graphEntityState = graphEntityState.filter(
+    (e) => !orphanEntityIds.has(e.id),
+  );
+  graphRelationState = graphRelationState.filter(
+    (r) => !orphanEntityIds.has(r.source) && !orphanEntityIds.has(r.target),
+  );
+}
+
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 
@@ -589,6 +620,7 @@ export const handlers = [
     const id = String(params.id);
     documentsState = documentsState.filter((d) => d.doc_id !== id);
     persistDocumentsState();
+    cascadeDocsFromGraph(new Set([id]));
     return HttpResponse.json({ ok: true });
   }),
   http.get(`${ANY}/health`, ({ request }) => {
@@ -665,17 +697,39 @@ export const handlers = [
     return HttpResponse.json({ response: responseText, sources });
   }),
   http.post(`${ANY}${TWIN}/query/stream`, async ({ request }) => {
+    // Wire format matches the real backend: NDJSON, one event per line.
+    //   {"type":"token","value":"<chunk>"}
+    //   {"type":"sources","value":[<RetrievalSource>, ...]}
+    // The client parses line-by-line and ignores anything else, so
+    // returning plain text here used to silently produce an empty
+    // assistant turn in MSW dev mode (no tokens, no sources).
     const body = (await request.json().catch(() => ({}))) as {
       query?: string;
+      top_k?: number;
     };
     const q = body.query ?? '';
-    return new HttpResponse(
-      q ? `Mock retrieval response for: ${q}` : 'Mock retrieval response',
-      {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      },
-    );
+    const topK = Math.min(body.top_k ?? 3, 3);
+    const text = q
+      ? `Mock retrieval response for: ${q}`
+      : 'Mock retrieval response';
+    const sources = Array.from({ length: topK }).map((_, i) => ({
+      n: i + 1,
+      type: 'file' as const,
+      name: `/cib/runbooks/mock-source-${i + 1}.pdf`,
+      meta: `chunk ${i + 1}`,
+      score: Number((0.95 - i * 0.1).toFixed(2)),
+      doc_id: `mock-doc-${i + 1}`,
+      chunk_id: `mock-chunk-${i + 1}`,
+    }));
+    const ndjson =
+      JSON.stringify({ type: 'token', value: text }) +
+      '\n' +
+      JSON.stringify({ type: 'sources', value: sources }) +
+      '\n';
+    return new HttpResponse(ndjson, {
+      status: 200,
+      headers: { 'Content-Type': 'application/x-ndjson' },
+    });
   }),
 
   // -------------------------------------------------------------------------
@@ -1075,28 +1129,7 @@ export const handlers = [
     const ids = new Set(body.doc_ids);
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
     persistDocumentsState();
-    // Cascade graph entities + relations so the Graph tab refetch
-    // reflects the real backend behaviour (entities sourced ONLY by
-    // the deleted docs disappear). The reverse map is hand-curated
-    // in fixtures/graph.ts to avoid fragile file_path matching.
-    const orphanEntityIds = new Set<string>();
-    for (const docId of ids) {
-      for (const entityId of DOC_TO_GRAPH_ENTITIES[docId] ?? []) {
-        const stillSourced = Object.entries(DOC_TO_GRAPH_ENTITIES).some(
-          ([otherDoc, ents]) => !ids.has(otherDoc) && ents.includes(entityId),
-        );
-        if (!stillSourced) orphanEntityIds.add(entityId);
-      }
-    }
-    if (orphanEntityIds.size > 0) {
-      graphEntityState = graphEntityState.filter(
-        (e) => !orphanEntityIds.has(e.id),
-      );
-      graphRelationState = graphRelationState.filter(
-        (r) =>
-          !orphanEntityIds.has(r.source) && !orphanEntityIds.has(r.target),
-      );
-    }
+    cascadeDocsFromGraph(ids);
     if (e2eScenario.bulkDeleteDelayMs && e2eScenario.bulkDeleteDelayMs > 0) {
       await new Promise((res) =>
         setTimeout(res, e2eScenario.bulkDeleteDelayMs),

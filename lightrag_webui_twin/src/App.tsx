@@ -130,6 +130,7 @@ const FIXTURE_FALLBACK_ENABLED = shouldUseFixtureFallback({
   useMsw: import.meta.env.VITE_USE_MSW,
 });
 
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper used by App; moving it costs more than the HMR full-reload it triggers.
 export function shouldUseFixtureFallback(env: {
   dev: boolean;
   forceMsw?: string;

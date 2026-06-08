@@ -157,3 +157,42 @@ describe('MSW handlers — Twin overlay endpoints', () => {
     expect(typeof data.workspace).toBe('string');
   });
 });
+
+describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
+  it('DELETE /documents/d4 cascades to graph entities orphaned by d4', async () => {
+    // d4 is the only fixture doc sourcing e_memgraph / e_mage / e_lightrag / e_cypher.
+    const before = await getJson<unknown[]>(`${TWIN}/graph/entities`);
+    const beforeIds = new Set((before as Array<{ id: string }>).map((e) => e.id));
+    expect(beforeIds.has('e_memgraph')).toBe(true);
+
+    const del = await fetch(`${BASE}/documents/d4`, { method: 'DELETE' });
+    expect(del.ok).toBe(true);
+
+    const after = await getJson<unknown[]>(`${TWIN}/graph/entities`);
+    const afterIds = new Set((after as Array<{ id: string }>).map((e) => e.id));
+    for (const id of ['e_memgraph', 'e_mage', 'e_lightrag', 'e_cypher']) {
+      expect(afterIds.has(id)).toBe(false);
+    }
+  });
+
+  it(`POST ${TWIN}/query/stream emits NDJSON token + sources events`, async () => {
+    const res = await fetch(`${BASE}${TWIN}/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'hello', top_k: 2 }),
+    });
+    expect(res.ok).toBe(true);
+    expect(res.headers.get('content-type')).toMatch(/application\/x-ndjson/);
+    const text = await res.text();
+    const events = text
+      .split('\n')
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as { type: string; value: unknown });
+    const tokens = events.filter((e) => e.type === 'token');
+    const sources = events.filter((e) => e.type === 'sources');
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(sources.length).toBe(1);
+    expect(Array.isArray(sources[0].value)).toBe(true);
+    expect((sources[0].value as unknown[]).length).toBe(2);
+  });
+});

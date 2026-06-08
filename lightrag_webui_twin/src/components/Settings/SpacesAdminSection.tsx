@@ -350,10 +350,12 @@ function SpaceRow({
 
   // Reset edit state when the cached space object changes (after a
   // refetch following a successful save).
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional re-sync with the new server-side value. */
   useEffect(() => {
     setLabel(space.kb);
     setEditing(false);
   }, [space.id, space.kb]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!armedDelete) return;

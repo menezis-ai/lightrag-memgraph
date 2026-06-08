@@ -72,6 +72,7 @@ export interface FileUpload {
 }
 
 /** Format a byte count as "B / KB / MB" depending on magnitude. */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper, tests import it directly.
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
