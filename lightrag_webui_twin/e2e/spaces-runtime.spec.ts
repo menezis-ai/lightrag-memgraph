@@ -54,10 +54,10 @@ test.describe('Twin spaces runtime config', () => {
       ],
     });
 
-    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
-    await page.getByTitle('Switch space').click();
-    const menu = page.getByRole('menu', { name: 'Switch space' });
-    await expect(menu).toContainText('Spaces');
+    await expect(page.getByTitle('Switch folder')).toContainText('sandbox');
+    await page.getByTitle('Switch folder').click();
+    const menu = page.getByRole('menu', { name: 'Switch folder' });
+    await expect(menu).toContainText('Folders');
     await expect(menu).toContainText('default');
     await expect(menu).toContainText('sandbox');
     await expect(menu).toContainText('ops');
@@ -80,9 +80,9 @@ test.describe('Twin spaces runtime config', () => {
       ],
     });
 
-    await page.getByTitle('Switch space').click();
+    await page.getByTitle('Switch folder').click();
     await page.getByRole('menuitemradio', { name: /sandbox/ }).click();
-    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
+    await expect(page.getByTitle('Switch folder')).toContainText('sandbox');
 
     await expect
       .poll(async () => {
@@ -118,9 +118,9 @@ test.describe('Twin spaces runtime config', () => {
       spaces: [],
     });
 
-    await page.getByTitle('Switch space').click();
+    await page.getByTitle('Switch folder').click();
     await expect(page.getByTestId('topbar-workspace-empty')).toHaveText(
-      'No space available for this KB. Please contact Twincore Team',
+      'No folder available for this KB. Please contact Twincore Team',
     );
   });
 });

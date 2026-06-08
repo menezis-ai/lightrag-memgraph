@@ -67,9 +67,9 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Theme').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
-    await page.getByTitle('Switch space').click();
+    await page.getByTitle('Switch folder').click();
     await page.getByRole('menuitemradio', { name: /sandbox/ }).click();
-    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
+    await expect(page.getByTitle('Switch folder')).toContainText('sandbox');
 
     await openTab(page, 'Tags');
     await expect(page.getByRole('heading', { name: 'Tags' })).toBeVisible();
@@ -167,9 +167,9 @@ test.describe('Twin WebUI operator journeys', () => {
     ]);
     await page.getByLabel('Search source').fill('oracle');
     await expect(page).toHaveURL(/q=oracle/);
-    await page.getByTitle('Switch space').click();
+    await page.getByTitle('Switch folder').click();
     await page.getByRole('menuitemradio', { name: /sandbox/ }).click();
-    await expect(page.getByTitle('Switch space')).toContainText('sandbox');
+    await expect(page.getByTitle('Switch folder')).toContainText('sandbox');
     await expect(page).not.toHaveURL(/q=oracle/);
     await expect(page.getByLabel('Search source')).toHaveValue('');
     await expect(page.getByTestId('docs-row-sandbox_doc_1')).toContainText(
