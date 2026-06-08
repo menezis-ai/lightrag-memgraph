@@ -25,6 +25,7 @@ Deliberate trade-offs:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import AsyncIterator, Iterable
@@ -37,12 +38,16 @@ from pydantic import BaseModel, Field, field_validator
 logger = logging.getLogger(__name__)
 
 # LightRAG's default prompt appends a trailing "### References - [N] file"
-# block. The Twin overlay returns a structured `sources` list alongside
-# the response, so the markdown References block is duplicate noise that
-# would otherwise render as raw text in the React port (the citation
-# parser only knows about `[N]` / `{cite:N}` inline markers, not the
-# heading). Strip it server-side so the HTTP contract is already clean.
-_REFERENCES_BLOCK_RE = re.compile(r"\n*#{2,6}\s*References?\b.*$", re.IGNORECASE | re.DOTALL)
+# block (English) or "### Références - ..." (French — LLM follows the
+# query language). The Twin overlay returns a structured `sources` list
+# alongside the response, so the markdown References block is duplicate
+# noise that would otherwise render as raw text in the React port (the
+# citation parser only knows about `[N]` / `{cite:N}` inline markers,
+# not the heading). Strip server-side so the HTTP contract is clean.
+_REFERENCES_BLOCK_RE = re.compile(
+    r"\n*#{2,6}\s*(?:References?|R[ée]f[ée]rences?)\b.*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _normalize_answer(text: str) -> str:
@@ -220,6 +225,55 @@ async def _resolve_doc_for_chunk(rag: Any, chunk_id: str) -> str | None:
     return None
 
 
+async def _build_sources(
+    rag: Any, query: str, top_k: int
+) -> list[dict[str, Any]]:
+    """Query chunks_vdb + DocStatus to build the WebUI RetrievalSource list.
+
+    Shared between the non-stream `/query` endpoint and the NDJSON
+    `/query/stream` endpoint so both routes return the same shape. On
+    any failure returns ``[]`` — the caller still has the answer text
+    and the sources panel just stays empty in the UI.
+    """
+    try:
+        chunks_vdb = getattr(rag, "chunks_vdb", None)
+        if chunks_vdb is None:
+            return []
+        raw = await chunks_vdb.query(query, top_k=top_k)
+    except Exception:
+        logger.exception("twin_query: chunks_vdb.query failed — empty sources")
+        return []
+
+    if not isinstance(raw, list):
+        raw = []
+
+    sources: list[dict[str, Any]] = []
+    total = len(raw)
+    for rank, chunk in enumerate(raw[:top_k]):
+        if not isinstance(chunk, dict):
+            continue
+        chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
+        file_path = (
+            chunk.get("file_path")
+            or chunk.get("source")
+            or chunk_id
+            or "unknown source"
+        )
+        doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
+        sources.append(
+            {
+                "n": rank + 1,
+                "type": "file",
+                "name": str(file_path),
+                "meta": _chunk_to_meta(chunk),
+                "score": _safe_get_score(chunk, rank, total),
+                "doc_id": doc_id,
+                "chunk_id": str(chunk_id) or None,
+            }
+        )
+    return sources
+
+
 def build_twin_query_router(get_rag) -> APIRouter:
     """Mount the Twin overlay query endpoint.
 
@@ -262,50 +316,27 @@ def build_twin_query_router(get_rag) -> APIRouter:
         if body.only_need_context or body.only_need_prompt:
             return {"response": answer, "sources": []}
 
-        # --- 2) Retrieval-anchored sources ----------------------------
-        sources: list[dict[str, Any]] = []
-        try:
-            chunks_vdb = getattr(rag, "chunks_vdb", None)
-            if chunks_vdb is None:
-                return {"response": answer, "sources": []}
-            raw = await chunks_vdb.query(body.query, top_k=body.top_k)
-        except Exception:
-            logger.exception("twin_query: chunks_vdb.query failed — empty sources")
-            return {"response": answer, "sources": []}
-
-        if not isinstance(raw, list):
-            raw = []
-
-        total = len(raw)
-        for rank, chunk in enumerate(raw[: body.top_k]):
-            if not isinstance(chunk, dict):
-                continue
-            chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
-            file_path = (
-                chunk.get("file_path")
-                or chunk.get("source")
-                or chunk_id
-                or "unknown source"
-            )
-            doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
-            sources.append(
-                {
-                    "n": rank + 1,
-                    "type": "file",
-                    "name": str(file_path),
-                    "meta": _chunk_to_meta(chunk),
-                    "score": _safe_get_score(chunk, rank, total),
-                    "doc_id": doc_id,
-                    "chunk_id": str(chunk_id) or None,
-                }
-            )
-
+        sources = await _build_sources(rag, body.query, body.top_k)
         return {"response": answer, "sources": sources}
 
     @router.post("/query/stream")
     async def query_stream_endpoint(
         body: TwinQueryBody, request: Request
     ) -> StreamingResponse:
+        """Stream the LightRAG answer as NDJSON and emit a final sources event.
+
+        Wire format (one JSON object per line):
+          {"type":"token","value":"<chunk text>"}
+          ... repeated for every LLM chunk ...
+          {"type":"sources","value":[<RetrievalSource>, ...]}
+
+        Client buffers tokens, calls onChunk for streaming UI, and uses
+        the final sources event to render the structured sources panel.
+        Strip of the `### References` / `### Références` block is the
+        client's responsibility on the joined token stream (the
+        per-chunk boundary can land inside the heading itself, so a
+        server-side strip would require buffering and defeat streaming).
+        """
         del request  # currently unused; kept for future X-Twin-Space scoping
         try:
             rag = get_rag()
@@ -321,12 +352,25 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 )
                 answer = await rag.aquery(body.query, param=param)
                 async for text in _iter_answer_text(answer):
-                    yield text
+                    yield json.dumps({"type": "token", "value": text}) + "\n"
             except Exception as exc:
                 logger.exception("twin_query: streaming aquery failed")
-                yield f"\n[query failed: {exc}]"
+                yield json.dumps(
+                    {"type": "token", "value": f"\n[query failed: {exc}]"}
+                ) + "\n"
+                yield json.dumps({"type": "sources", "value": []}) + "\n"
+                return
 
-        return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+            if body.only_need_context or body.only_need_prompt:
+                yield json.dumps({"type": "sources", "value": []}) + "\n"
+                return
+
+            sources = await _build_sources(rag, body.query, body.top_k)
+            yield json.dumps({"type": "sources", "value": sources}) + "\n"
+
+        return StreamingResponse(
+            generate(), media_type="application/x-ndjson"
+        )
 
     return router
 

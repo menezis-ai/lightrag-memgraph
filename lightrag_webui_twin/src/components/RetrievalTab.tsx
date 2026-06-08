@@ -292,9 +292,15 @@ export function RetrievalTab({
       })
         .then(({ sources }) => {
           setStreaming(false);
+          // Strip the ### References / Références tail once the full
+          // stream is in hand (per-chunk boundaries can land inside the
+          // heading, so we can't do this token-by-token).
+          const finalTokens = stripReferencesBlock(streamed.join(''))
+            .split(/(\s+)/)
+            .filter((t) => t.length > 0);
           setConvo((c) => [
             ...c,
-            { role: 'assistant', tokens: streamed, sources: sources ?? [] },
+            { role: 'assistant', tokens: finalTokens, sources: sources ?? [] },
           ]);
           setStreamedTokens([]);
         })

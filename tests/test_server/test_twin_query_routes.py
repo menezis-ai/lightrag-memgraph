@@ -38,6 +38,15 @@ class TestNormalizeAnswer:
         text = "See [3] for the runbook.\n\n### References - [3] foo"
         assert _normalize_answer(text) == "See [3] for the runbook."
 
+    def test_strips_french_references_with_accent(self):
+        text = "Réponse en français.\n\n### Références - Aucun document de référence."
+        assert _normalize_answer(text) == "Réponse en français."
+
+    def test_strips_french_references_without_accent(self):
+        # LLM sometimes drops the accent (encoding round-trip)
+        text = "Reponse.\n\n### References - [1] foo"
+        assert _normalize_answer(text) == "Reponse."
+
 
 class FakeChunksVdb:
     def __init__(self, rows: list[dict[str, Any]]):
@@ -309,15 +318,21 @@ class TestQueryEndpoint:
         assert r.status_code == 500
         assert "LLM down" in r.json()["detail"]
 
-    async def test_stream_endpoint_forwards_stream_true_and_returns_text(
+    async def test_stream_endpoint_emits_ndjson_tokens_then_sources(
         self, make_client
     ):
+        import json as _json
+
         rag = FakeRag(
             stream_chunks=[
                 "Restart ",
                 {"response": "Oracle "},
                 b"safely",
-            ]
+            ],
+            chunks=[
+                {"id": "c1", "file_path": "/a/runbook.pdf", "score": 0.9},
+                {"id": "c2", "file_path": "/a/rhel.pdf", "score": 0.7},
+            ],
         )
         client = await make_client(rag)
         async with client:
@@ -326,6 +341,7 @@ class TestQueryEndpoint:
                 json={
                     "query": "How do I restart Oracle?",
                     "mode": "mix",
+                    "top_k": 2,
                     "chunk_top_k": 4,
                     "enable_rerank": True,
                     "user_prompt": "short answer",
@@ -333,9 +349,18 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
-        assert r.text == "Restart Oracle safely"
-        assert r.headers["content-type"].startswith("text/plain")
-        assert len(rag.calls) == 1
+        assert r.headers["content-type"].startswith("application/x-ndjson")
+
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
+        token_events = [e for e in events if e["type"] == "token"]
+        source_events = [e for e in events if e["type"] == "sources"]
+        assert "".join(e["value"] for e in token_events) == "Restart Oracle safely"
+        assert len(source_events) == 1
+        sources = source_events[0]["value"]
+        assert [s["name"] for s in sources] == ["/a/runbook.pdf", "/a/rhel.pdf"]
+        assert [s["n"] for s in sources] == [1, 2]
+
+        # The original aquery stream-flag plumbing still works.
         query, param = rag.calls[0]
         assert query == "How do I restart Oracle?"
         assert param.stream is True

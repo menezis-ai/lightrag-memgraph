@@ -80,6 +80,17 @@ describe('stripReferencesBlock', () => {
   it('leaves answers without a References block untouched', () => {
     expect(stripReferencesBlock('Just an answer.')).toBe('Just an answer.');
   });
+
+  it('strips French "Références" (with accent)', () => {
+    const input = 'Réponse en français.\n\n### Références - Aucun document.';
+    expect(stripReferencesBlock(input)).toBe('Réponse en français.');
+  });
+
+  it('strips French "References" (LLM dropped the accent)', () => {
+    expect(stripReferencesBlock('Reponse.\n### References - [1] foo')).toBe(
+      'Reponse.',
+    );
+  });
 });
 
 describe('relTime', () => {

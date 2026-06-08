@@ -1050,7 +1050,20 @@ function AppShell() {
                   },
                   onChunk,
                 );
-                return { response: res.response, sources: [] };
+                const sources = (res.sources ?? []).map((s) => ({
+                  n: s.n,
+                  type:
+                    s.type === 'file' ||
+                    s.type === 'url' ||
+                    s.type === 'confluence' ||
+                    s.type === 'sharepoint'
+                      ? (s.type as 'file' | 'url' | 'confluence' | 'sharepoint')
+                      : ('file' as const),
+                  name: s.name,
+                  meta: s.meta ?? undefined,
+                  score: s.score,
+                }));
+                return { response: res.response, sources };
               }}
               initialThreads={makeSampleThreads()}
               onNavigate={onNavigate}

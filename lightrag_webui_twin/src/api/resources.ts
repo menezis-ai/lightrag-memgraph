@@ -286,23 +286,47 @@ export const twinApi = {
       return { response: '', sources: [] };
     }
 
+    // Wire format: NDJSON. One JSON object per line:
+    //   {"type":"token","value":"<chunk text>"}
+    //   {"type":"sources","value":[<RetrievalSource>, ...]}
+    // Token events stream the LLM answer (call onChunk for live UI);
+    // a single sources event arrives last with the structured panel data.
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let response = '';
+    let sources: TwinQuerySource[] = [];
+    let buffer = '';
+
+    const consumeLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let event: { type?: string; value?: unknown };
+      try {
+        event = JSON.parse(trimmed) as { type?: string; value?: unknown };
+      } catch {
+        return; // ignore malformed line, keep streaming
+      }
+      if (event.type === 'token' && typeof event.value === 'string') {
+        response += event.value;
+        onChunk(event.value);
+      } else if (event.type === 'sources' && Array.isArray(event.value)) {
+        sources = event.value as TwinQuerySource[];
+      }
+    };
+
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      if (!chunk) continue;
-      response += chunk;
-      onChunk(chunk);
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        consumeLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+      }
     }
-    const tail = decoder.decode();
-    if (tail) {
-      response += tail;
-      onChunk(tail);
-    }
-    return { response, sources: [] };
+    buffer += decoder.decode();
+    if (buffer) consumeLine(buffer);
+    return { response, sources };
   },
   createSpace: (
     body: { id: string; label: string; kind?: string; description?: string },

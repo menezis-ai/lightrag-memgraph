@@ -93,14 +93,15 @@ export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
 }
 
 /**
- * Strip the trailing `### References - [N] file` block LightRAG's default
- * prompt appends to every answer. The structured `sources` panel renders
- * the same info as clickable cards — we don't want the raw markdown to
- * compete with it. Matches `##`/`###` `References` (any case, optional
- * dash) and everything after, up to end-of-string.
+ * Strip the trailing `### References` / `### Références` block LightRAG's
+ * default prompt appends to every answer (LLM follows the query language).
+ * The structured `sources` panel renders the same info as clickable cards
+ * — we don't want the raw markdown to compete with it.
  */
 export function stripReferencesBlock(text: string): string {
-  return text.replace(/\n*#{2,6}\s*References?\b[^]*$/i, '').trimEnd();
+  return text
+    .replace(/\n*#{2,6}\s*(?:References?|R[ée]f[ée]rences?)\b[^]*$/i, '')
+    .trimEnd();
 }
 
 /**
