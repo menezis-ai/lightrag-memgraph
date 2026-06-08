@@ -336,6 +336,18 @@ def build_twin_query_router(get_rag) -> APIRouter:
         client's responsibility on the joined token stream (the
         per-chunk boundary can land inside the heading itself, so a
         server-side strip would require buffering and defeat streaming).
+
+        Error contract (post-stream-open): once the response has
+        started, an HTTP status flip is no longer possible — the
+        client has already committed to a 200 reader loop. Failures
+        from ``aquery`` are therefore surfaced as a final ``token``
+        event carrying ``"[query failed: <exc>]"`` followed by an
+        empty ``sources`` event. Callers MUST treat token events as
+        possibly-error-bearing and render the text verbatim; the
+        absence of a non-empty sources payload is the only signal
+        that the run did not complete cleanly. Pre-stream failures
+        (RAG bootstrap, body validation) still surface as real HTTP
+        4xx/5xx like the non-stream `/query` route.
         """
         del request  # currently unused; kept for future X-Twin-Space scoping
         try:

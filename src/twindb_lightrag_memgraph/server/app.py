@@ -308,11 +308,51 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(chunk_router, dependencies=[Depends(require_auth)])
 
     # -- WebUI phase-1 surface (auth-protected) --
+    #
+    # Doctrine: the React port assumes every Twin endpoint sits under
+    # `/twin/api/...`. The standalone server therefore mounts the same
+    # router twice:
+    #   * un-prefixed → backwards compat for the existing pytest suite
+    #     and any pre-React-port caller still on `/documents`, /spaces,
+    #     etc.
+    #   * `/twin/api`-prefixed → mirrors the plugin topology
+    #     (`register(mount_server=True)`), so the React port works
+    #     against the standalone server without proxy rewrites.
     if settings.enable_webui_routes:
         from .webui_router import router as webui_router
 
         app.include_router(webui_router, dependencies=[Depends(require_auth)])
-        logger.info("L2 patch applied (WebUI phase-1 router)")
+        app.include_router(
+            webui_router,
+            prefix="/twin/api",
+            dependencies=[Depends(require_auth)],
+        )
+        logger.info("L2 patch applied (WebUI phase-1 router; mounted at / and /twin/api)")
+
+    # -- Twin overlay query routes (`/twin/api/query` + `/twin/api/query/stream`)
+    # The native `POST /query` declared above is the legacy single-shot
+    # contract (no sources, plain string answer). The Twin overlay
+    # routes added here return `{response, sources}` + an NDJSON
+    # streaming variant that the React Retrieval tab consumes.
+    try:
+        from .twin_query_routes import build_twin_query_router
+
+        def _get_rag_for_twin_query():
+            rag = _get_rag()
+            if rag is None:
+                raise RuntimeError(
+                    "twindb twin_query: RAG instance not initialised yet."
+                )
+            return rag
+
+        app.include_router(
+            build_twin_query_router(_get_rag_for_twin_query),
+            prefix="/twin/api",
+            dependencies=[Depends(require_auth)],
+        )
+        logger.info("Twin overlay query routes mounted at /twin/api/query{,/stream}")
+    except ImportError:
+        pass
 
     return app
 

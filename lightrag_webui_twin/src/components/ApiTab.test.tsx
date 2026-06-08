@@ -229,6 +229,24 @@ describe('Helpers — requestBodyFor', () => {
   it('falls back to empty object for unknown endpoint', () => {
     expect(requestBodyFor({ m: 'POST', p: '/whatever', s: '' })).toBe('{}');
   });
+
+  it('also matches the Twin-prefixed /twin/api/query path', () => {
+    // OpenAPI under the plugin / standalone topology exposes
+    // /twin/api/query — without this matcher the Try-it-out body
+    // defaults to `{}` and round-trips a 422 instead of a real call.
+    const b = JSON.parse(
+      requestBodyFor({ m: 'POST', p: '/twin/api/query', s: '' }),
+    );
+    expect(b.mode).toBe('hybrid');
+    expect(b.tag_filter.all).toEqual(['rman']);
+  });
+
+  it('also matches /twin/api/query/stream', () => {
+    const b = JSON.parse(
+      requestBodyFor({ m: 'POST', p: '/twin/api/query/stream', s: '' }),
+    );
+    expect(b.query).toMatch(/Oracle RMAN/);
+  });
 });
 
 describe('Helpers — curlFor', () => {

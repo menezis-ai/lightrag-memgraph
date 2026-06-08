@@ -600,9 +600,21 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
  * Default request body for "Try it out" — deterministic per endpoint.
  * Exported for unit testing.
  */
-// eslint-disable-next-line react-refresh/only-export-components
+// The OpenAPI surface exposes the LightRAG-native `/query{,/stream}`
+// and the Twin overlay's prefixed `/twin/api/query{,/stream}`. Both
+// share the same QueryRequest schema, so a single matcher fills the
+// "Try it out" body for either form. Without this the prefixed
+// variants would default to `{}` and round-trip a 422.
+const QUERY_ENDPOINTS = new Set([
+  '/query',
+  '/query/stream',
+  '/twin/api/query',
+  '/twin/api/query/stream',
+]);
+
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
 export function requestBodyFor(ep: OpenApiEndpoint): string {
-  if (ep.p === '/query' || ep.p === '/query/stream') {
+  if (QUERY_ENDPOINTS.has(ep.p)) {
     return JSON.stringify(
       {
         query: 'How do I restart Oracle RMAN after a failed backup?',
@@ -685,7 +697,7 @@ export function mockResponseFor(
   tookMsOverride?: number,
 ): MockResponse {
   const tookMs = tookMsOverride ?? 120 + Math.floor(Math.random() * 380);
-  if (ep.p === '/query' || ep.p === '/query/stream') {
+  if (QUERY_ENDPOINTS.has(ep.p)) {
     return {
       status: 200,
       statusText: 'OK',

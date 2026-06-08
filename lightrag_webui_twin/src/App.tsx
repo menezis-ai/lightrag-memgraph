@@ -293,7 +293,7 @@ function AppShell() {
       }));
     }
     return resolveQueryData(workspaces, WORKSPACE_FIXTURES) ?? [];
-  }, [configuredSpaces, workspace, workspaces.data]);
+  }, [configuredSpaces, workspace, workspaces]);
   const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
