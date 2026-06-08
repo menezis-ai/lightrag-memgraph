@@ -670,6 +670,33 @@ export const handlers = [
         : 'Mock retrieval response',
     });
   }),
+  http.post(`${ANY}/query/data`, async ({ request }) => {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(TWIN)) return undefined;
+    const body = (await request.json().catch(() => ({}))) as { query?: string };
+    return HttpResponse.json({
+      status: 'success',
+      message: 'Query executed successfully',
+      data: {
+        entities: [],
+        relationships: [],
+        chunks: [
+          {
+            chunk_id: 'mock-chunk-1',
+            file_path: '/cib/runbooks/mock-source-1.pdf',
+            content: body.query
+              ? `Mock structured retrieval for: ${body.query}`
+              : 'Mock structured retrieval',
+            reference_id: '1',
+          },
+        ],
+        references: [
+          { reference_id: '1', file_path: '/cib/runbooks/mock-source-1.pdf' },
+        ],
+      },
+      metadata: { query_mode: 'hybrid' },
+    });
+  }),
   // Twin overlay query — mirrors the structured `{response, sources}`
   // contract from the backend so dev / standalone parity is honest.
   http.post(`${ANY}${TWIN}/query`, async ({ request }) => {
@@ -695,6 +722,45 @@ export const handlers = [
       chunk_id: `mock-chunk-${i + 1}`,
     }));
     return HttpResponse.json({ response: responseText, sources });
+  }),
+  http.post(`${ANY}${TWIN}/query/data`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      query?: string;
+      tag_filter?: { all?: string[]; any?: string[] };
+    };
+    return HttpResponse.json({
+      status: 'success',
+      message: 'Query executed successfully',
+      data: {
+        entities: [
+          {
+            entity_name: 'RMAN',
+            entity_type: 'TECHNOLOGY',
+            source_id: 'mock-chunk-1',
+            reference_id: '1',
+          },
+        ],
+        relationships: [],
+        chunks: [
+          {
+            chunk_id: 'mock-chunk-1',
+            full_doc_id: 'mock-doc-1',
+            file_path: '/cib/runbooks/mock-source-1.pdf',
+            content: body.query
+              ? `Mock structured Twin retrieval for: ${body.query}`
+              : 'Mock structured Twin retrieval',
+            reference_id: '1',
+          },
+        ],
+        references: [
+          { reference_id: '1', file_path: '/cib/runbooks/mock-source-1.pdf' },
+        ],
+      },
+      metadata: {
+        query_mode: 'hybrid',
+        ...(body.tag_filter ? { tag_filter: body.tag_filter } : {}),
+      },
+    });
   }),
   http.post(`${ANY}${TWIN}/query/stream`, async ({ request }) => {
     // Wire format matches the real backend: NDJSON, one event per line.

@@ -247,6 +247,15 @@ describe('Helpers — requestBodyFor', () => {
     );
     expect(b.query).toMatch(/Oracle RMAN/);
   });
+
+  it('also matches /twin/api/query/data with chunk_top_k', () => {
+    const b = JSON.parse(
+      requestBodyFor({ m: 'POST', p: '/twin/api/query/data', s: '' }),
+    );
+    expect(b.query).toMatch(/Oracle RMAN/);
+    expect(b.chunk_top_k).toBe(20);
+    expect(b.tag_filter.all).toEqual(['rman']);
+  });
 });
 
 describe('Helpers — curlFor', () => {
@@ -293,6 +302,19 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     const body = JSON.parse(r.body);
     expect(body.sources).toHaveLength(2);
     expect(body.mode).toBe('hybrid');
+  });
+
+  it('mockResponseFor /query/data returns structured retrieval data', () => {
+    const r = mockResponseFor(
+      { m: 'POST', p: '/twin/api/query/data', s: '' },
+      '{}',
+      200,
+    );
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body);
+    expect(body.status).toBe('success');
+    expect(body.data.chunks).toHaveLength(1);
+    expect(body.metadata.tag_filter.all).toEqual(['rman']);
   });
 
   it('mockResponseFor /documents (GET) returns paginated items + total', () => {

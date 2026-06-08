@@ -100,7 +100,9 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/pipeline_status"),
     Route("GET", "/openapi"),
     Route("POST", "/query"),
+    Route("POST", "/query/data"),
     Route("POST", "/twin/api/query"),
+    Route("POST", "/twin/api/query/data"),
     Route("POST", "/twin/api/query/stream"),
     Route("GET", "/twin/api/workspaces"),
     Route("GET", "/twin/api/spaces"),
@@ -146,6 +148,7 @@ LIGHTRAG_NATIVE_PASSTHROUGH: set[Route] = {
     Route("POST", "/documents/reprocess_failed"),
     Route("POST", "/documents/upload"),
     Route("POST", "/query"),
+    Route("POST", "/query/data"),
     # FastAPI auto-exposes the live OpenAPI 3.1 spec on /openapi.json.
     # The Twin React Settings → API tab hits this directly so it stays
     # ISO with the LightRAG WebUI by construction (mock-kill F2).

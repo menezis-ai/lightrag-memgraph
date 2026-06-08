@@ -607,19 +607,23 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
 // variants would default to `{}` and round-trip a 422.
 const QUERY_ENDPOINTS = new Set([
   '/query',
+  '/query/data',
   '/query/stream',
   '/twin/api/query',
+  '/twin/api/query/data',
   '/twin/api/query/stream',
 ]);
 
 // eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
 export function requestBodyFor(ep: OpenApiEndpoint): string {
   if (QUERY_ENDPOINTS.has(ep.p)) {
+    const dataEndpoint = ep.p.endsWith('/query/data');
     return JSON.stringify(
       {
         query: 'How do I restart Oracle RMAN after a failed backup?',
         mode: 'hybrid',
         top_k: 60,
+        ...(dataEndpoint ? { chunk_top_k: 20 } : {}),
         response_type: 'Multiple Paragraphs',
         tag_filter: { all: ['rman'], any: [] },
       },
@@ -698,6 +702,39 @@ export function mockResponseFor(
 ): MockResponse {
   const tookMs = tookMsOverride ?? 120 + Math.floor(Math.random() * 380);
   if (QUERY_ENDPOINTS.has(ep.p)) {
+    if (ep.p.endsWith('/query/data')) {
+      return {
+        status: 200,
+        statusText: 'OK',
+        tookMs,
+        body: JSON.stringify(
+          {
+            status: 'success',
+            message: 'Query executed successfully',
+            data: {
+              entities: [],
+              relationships: [],
+              chunks: [
+                {
+                  chunk_id: 'chunk_4a12',
+                  file_path: 'oracle-restart-procedure.pdf',
+                  reference_id: '1',
+                },
+              ],
+              references: [
+                { reference_id: '1', file_path: 'oracle-restart-procedure.pdf' },
+              ],
+            },
+            metadata: {
+              query_mode: 'hybrid',
+              tag_filter: { all: ['rman'] },
+            },
+          },
+          null,
+          2,
+        ),
+      };
+    }
     return {
       status: 200,
       statusText: 'OK',

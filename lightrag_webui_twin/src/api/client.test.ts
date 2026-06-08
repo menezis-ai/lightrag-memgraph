@@ -8,6 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch, setActiveSpace } from './client';
+import { api } from './resources';
 
 type FetchMock = ReturnType<typeof vi.fn>;
 let originalFetch: typeof fetch;
@@ -181,5 +182,38 @@ describe('apiFetch', () => {
     expect(err!.status).toBe(502);
     expect(typeof err!.body).toBe('string');
     expect(err!.body).toMatch(/502/);
+  });
+});
+
+describe('api resource facade', () => {
+  it('queryData posts to the Twin-prefixed data endpoint', async () => {
+    window.__twinConfig = {
+      apiBaseUrl: '/custom/twin',
+      lightragBaseUrl: '',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+    };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: 'success',
+        message: 'ok',
+        data: { chunks: [] },
+        metadata: {},
+      }),
+    );
+
+    await api.queryData({
+      query: 'structured retrieval',
+      tag_filter: { all: ['rman'] },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/custom/twin/query/data');
+    expect((init as RequestInit).method).toBe('POST');
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({
+        query: 'structured retrieval',
+        tag_filter: { all: ['rman'] },
+      }),
+    );
   });
 });

@@ -5,7 +5,7 @@
  *   - `lightragApi` : native LightRAG endpoints (no path prefix beyond the
  *     LightRAG mount root). These hit endpoints LightRAG already ships:
  *     /documents, /documents/{id}/chunks, /documents/{id}/scan, /query,
- *     /health, /pipeline_status, /openapi.
+ *     /query/data, /health, /pipeline_status, /openapi.
  *   - `twinApi` : Twin overlay endpoints, served by our FastAPI sub-app
  *     mounted via `register(mount_server=True)`. All paths share the
  *     `/twin/api/` prefix: /tags, /audit-events, /activity, /notifications,
@@ -89,6 +89,19 @@ export interface TwinQuerySource {
 export interface TwinQueryResponse {
   response: string;
   sources: readonly TwinQuerySource[];
+}
+
+export interface TwinQueryDataResponse {
+  status: string;
+  message: string;
+  data: {
+    entities?: readonly Record<string, unknown>[];
+    relationships?: readonly Record<string, unknown>[];
+    chunks?: readonly Record<string, unknown>[];
+    references?: readonly Record<string, unknown>[];
+    [key: string]: unknown;
+  };
+  metadata: Record<string, unknown>;
 }
 
 function parseMaybeJson(text: string): unknown {
@@ -256,6 +269,17 @@ export const twinApi = {
    */
   query: (body: TwinQueryRequest, init?: ApiRequestInit) =>
     apiFetch<TwinQueryResponse>(`${TWIN}/query`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  /**
+   * Structured retrieval data endpoint. This mirrors LightRAG's native
+   * /query/data through the Twin prefix so space headers and tag_filter
+   * stay on the same governed surface as the chat endpoints.
+   */
+  queryData: (body: TwinQueryRequest, init?: ApiRequestInit) =>
+    apiFetch<TwinQueryDataResponse>(`${TWIN}/query/data`, {
       ...init,
       method: 'POST',
       body,
@@ -662,6 +686,7 @@ export const api = {
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,
   query: twinApi.query,
+  queryData: twinApi.queryData,
   queryStream: twinApi.queryStream,
 
   // Twin overlay

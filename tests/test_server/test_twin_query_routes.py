@@ -61,8 +61,13 @@ class FakeChunksVdb:
 
 
 class FakeDocStatus:
-    def __init__(self, mapping: dict[str, str]):
+    def __init__(
+        self,
+        mapping: dict[str, str],
+        docs: dict[str, dict[str, Any]] | None = None,
+    ):
         self.mapping = mapping
+        self.docs = docs or {}
 
     async def get_docs_by_chunks(self, chunk_ids):
         return {
@@ -71,21 +76,33 @@ class FakeDocStatus:
             if cid in self.mapping
         }
 
+    async def get_by_id(self, doc_id: str):
+        return self.docs.get(doc_id)
+
 
 class FakeRag:
     def __init__(
         self,
         *,
         answer: str = "synthesised answer",
+        query_data: dict[str, Any] | None = None,
         stream_chunks: list[Any] | None = None,
         chunks: list[dict[str, Any]] | None = None,
         chunk_to_doc: dict[str, str] | None = None,
+        docs: dict[str, dict[str, Any]] | None = None,
     ):
         self.answer = answer
+        self.query_data = query_data or {
+            "status": "success",
+            "message": "Query executed successfully",
+            "data": {},
+            "metadata": {},
+        }
         self.stream_chunks = stream_chunks
         self.calls: list[tuple[str, Any]] = []
+        self.data_calls: list[tuple[str, Any]] = []
         self.chunks_vdb = FakeChunksVdb(chunks or [])
-        self.doc_status = FakeDocStatus(chunk_to_doc or {})
+        self.doc_status = FakeDocStatus(chunk_to_doc or {}, docs)
 
     async def aquery(self, query: str, *, param):
         self.calls.append((query, param))
@@ -96,6 +113,10 @@ class FakeRag:
 
             return gen()
         return self.answer
+
+    async def aquery_data(self, query: str, *, param):
+        self.data_calls.append((query, param))
+        return self.query_data
 
 
 @pytest.fixture()
@@ -367,6 +388,208 @@ class TestQueryEndpoint:
         assert param.chunk_top_k == 4
         assert param.enable_rerank is True
         assert param.user_prompt == "short answer"
+
+    async def test_query_data_returns_structured_lightrag_payload(
+        self, make_client
+    ):
+        payload = {
+            "status": "success",
+            "message": "Query executed successfully",
+            "data": {
+                "chunks": [
+                    {
+                        "chunk_id": "chunk-aa",
+                        "full_doc_id": "doc-oracle",
+                        "content": "Oracle RMAN restart",
+                        "reference_id": "1",
+                    }
+                ],
+                "references": [{"reference_id": "1", "file_path": "oracle.pdf"}],
+            },
+            "metadata": {"query_mode": "mix"},
+        }
+        rag = FakeRag(query_data=payload)
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "structured retrieval", "mode": "mix"},
+            )
+
+        assert r.status_code == 200
+        assert r.json() == payload
+        assert len(rag.data_calls) == 1
+        query, param = rag.data_calls[0]
+        assert query == "structured retrieval"
+        assert param.mode == "mix"
+        assert param.stream is False
+
+    async def test_query_data_forwards_extended_query_params(
+        self, make_client
+    ):
+        rag = FakeRag()
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "advanced structured retrieval",
+                    "mode": "hybrid",
+                    "response_type": "Bullet Points",
+                    "top_k": 12,
+                    "chunk_top_k": 6,
+                    "max_entity_tokens": 1000,
+                    "max_relation_tokens": 2000,
+                    "max_total_tokens": 3000,
+                    "hl_keywords": ["backup"],
+                    "ll_keywords": ["rman"],
+                    "conversation_history": [
+                        {"role": "user", "content": "previous question"}
+                    ],
+                    "history_turns": 1,
+                    "user_prompt": "return concise evidence",
+                    "enable_rerank": False,
+                    "tag_filter": {"all": ["rman"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        assert len(rag.data_calls) == 1
+        _query, param = rag.data_calls[0]
+        assert param.mode == "hybrid"
+        assert param.response_type == "Bullet Points"
+        assert param.top_k == 12
+        assert param.chunk_top_k == 6
+        assert param.max_entity_tokens == 1000
+        assert param.max_relation_tokens == 2000
+        assert param.max_total_tokens == 3000
+        assert param.hl_keywords == ["backup"]
+        assert param.ll_keywords == ["rman"]
+        assert param.conversation_history == [
+            {"role": "user", "content": "previous question"}
+        ]
+        assert param.history_turns == 1
+        assert param.user_prompt == "return concise evidence"
+        assert param.enable_rerank is False
+        assert param.tag_filter == {"all": ["rman"], "any": []}
+
+    async def test_query_data_tag_filter_filters_chunks_and_references(
+        self, make_client
+    ):
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "chunks": [
+                        {
+                            "chunk_id": "chunk-rman",
+                            "full_doc_id": "doc-rman",
+                            "content": "RMAN runbook",
+                            "reference_id": "1",
+                        },
+                        {
+                            "chunk_id": "chunk-vmware",
+                            "full_doc_id": "doc-vmware",
+                            "content": "VMware runbook",
+                            "reference_id": "2",
+                        },
+                    ],
+                    "entities": [
+                        {
+                            "entity_name": "RMAN",
+                            "source_id": "chunk-rman",
+                            "reference_id": "1",
+                        },
+                        {
+                            "entity_name": "vSphere",
+                            "source_id": "chunk-vmware",
+                            "reference_id": "2",
+                        },
+                    ],
+                    "relationships": [],
+                    "references": [
+                        {"reference_id": "1", "file_path": "oracle.pdf"},
+                        {"reference_id": "2", "file_path": "vmware.pdf"},
+                    ],
+                },
+                "metadata": {"query_mode": "mix"},
+            },
+            chunk_to_doc={
+                "chunk-rman": "doc-rman",
+                "chunk-vmware": "doc-vmware",
+            },
+            docs={
+                "doc-rman": {"metadata": {"tags": ["rman", "oracle"]}},
+                "doc-vmware": {"metadata": {"tags": ["vmware"]}},
+            },
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "tagged structured retrieval",
+                    "tag_filter": {"all": ["rman"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [c["chunk_id"] for c in body["data"]["chunks"]] == ["chunk-rman"]
+        assert [e["entity_name"] for e in body["data"]["entities"]] == ["RMAN"]
+        assert body["data"]["references"] == [
+            {"reference_id": "1", "file_path": "oracle.pdf"}
+        ]
+        assert body["metadata"]["tag_filter"] == {"all": ["rman"], "any": []}
+
+    async def test_query_data_empty_tag_filter_does_not_filter_unknown_rows(
+        self, make_client
+    ):
+        payload = {
+            "status": "success",
+            "message": "Query executed successfully",
+            "data": {
+                "chunks": [
+                    {
+                        "chunk_id": "chunk-without-doc-map",
+                        "content": "still visible",
+                        "reference_id": "1",
+                    }
+                ],
+                "references": [{"reference_id": "1", "file_path": "loose.txt"}],
+            },
+            "metadata": {"query_mode": "naive"},
+        }
+        rag = FakeRag(query_data=payload)
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "unfiltered structured retrieval",
+                    "tag_filter": {"all": [], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        assert r.json() == payload
+
+    async def test_query_data_aquery_data_failure_returns_500(
+        self, make_client
+    ):
+        rag = FakeRag()
+
+        async def boom(*_a, **_kw):
+            raise RuntimeError("KG unavailable")
+
+        rag.aquery_data = boom  # type: ignore[assignment]
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query/data", json={"query": "anything"})
+
+        assert r.status_code == 500
+        assert "KG unavailable" in r.json()["detail"]
 
     async def test_score_falls_back_to_rank_when_absent(self, make_client):
         rag = FakeRag(

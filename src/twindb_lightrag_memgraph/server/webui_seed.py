@@ -455,6 +455,8 @@ OPENAPI_GROUPS: list[dict[str, Any]] = [
         "id": "query", "name": "query", "desc": "Retrieval + LLM synthesis endpoints.",
         "endpoints": [
             {"m": "POST", "p": "/query", "s": "Query Text"},
+            {"m": "POST", "p": "/query/data", "s": "Query Data"},
+            {"m": "POST", "p": "/twin/api/query/data", "s": "Twin Query Data"},
             {"m": "POST", "p": "/query/stream", "s": "Query Text Stream"},
         ],
     },

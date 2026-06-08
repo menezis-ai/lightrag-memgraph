@@ -58,11 +58,17 @@ def _normalize_answer(text: str) -> str:
 class TwinQueryBody(BaseModel):
     query: str
     mode: str = Field(default="mix")
+    response_type: str | None = Field(default=None, min_length=1)
     top_k: int = Field(default=10, ge=1, le=200)
     chunk_top_k: int | None = Field(default=None, ge=1, le=200)
+    max_entity_tokens: int | None = Field(default=None, ge=1)
+    max_relation_tokens: int | None = Field(default=None, ge=1)
     max_total_tokens: int | None = Field(default=None, ge=1)
     only_need_context: bool = Field(default=False)
     only_need_prompt: bool = Field(default=False)
+    hl_keywords: list[str] = Field(default_factory=list)
+    ll_keywords: list[str] = Field(default_factory=list)
+    conversation_history: list[dict[str, Any]] = Field(default_factory=list)
     history_turns: int | None = Field(default=None, ge=0, le=20)
     user_prompt: str | None = Field(default=None, max_length=4000)
     enable_rerank: bool | None = Field(default=None)
@@ -99,6 +105,13 @@ class TwinQueryResponse(BaseModel):
     sources: list[TwinRetrievalSource] = Field(default_factory=list)
 
 
+class TwinQueryDataResponse(BaseModel):
+    status: str = "success"
+    message: str = "Query executed successfully"
+    data: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[str, Any]:
     param_kwargs: dict[str, Any] = {
         "mode": body.mode,
@@ -107,10 +120,22 @@ def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[st
         "only_need_prompt": body.only_need_prompt,
         "stream": stream,
     }
+    if body.response_type is not None:
+        param_kwargs["response_type"] = body.response_type
     if body.chunk_top_k is not None:
         param_kwargs["chunk_top_k"] = body.chunk_top_k
+    if body.max_entity_tokens is not None:
+        param_kwargs["max_entity_tokens"] = body.max_entity_tokens
+    if body.max_relation_tokens is not None:
+        param_kwargs["max_relation_tokens"] = body.max_relation_tokens
     if body.max_total_tokens is not None:
         param_kwargs["max_total_tokens"] = body.max_total_tokens
+    if body.hl_keywords:
+        param_kwargs["hl_keywords"] = body.hl_keywords
+    if body.ll_keywords:
+        param_kwargs["ll_keywords"] = body.ll_keywords
+    if body.conversation_history:
+        param_kwargs["conversation_history"] = body.conversation_history
     if body.history_turns is not None:
         param_kwargs["history_turns"] = body.history_turns
     if body.user_prompt is not None and body.user_prompt.strip():
@@ -225,6 +250,156 @@ async def _resolve_doc_for_chunk(rag: Any, chunk_id: str) -> str | None:
     return None
 
 
+def _split_source_ids(raw: Any) -> list[str]:
+    if not isinstance(raw, str):
+        return []
+    return [
+        item.strip()
+        for item in raw.replace("<SEP>", ",").split(",")
+        if item.strip()
+    ]
+
+
+def _doc_metadata(status: Any) -> dict[str, Any]:
+    if status is None:
+        return {}
+    if isinstance(status, dict):
+        metadata = status.get("metadata")
+    else:
+        metadata = getattr(status, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _tag_filter_terms(
+    tag_filter: dict[str, list[str]] | None,
+) -> tuple[set[str], set[str]]:
+    if not tag_filter:
+        return set(), set()
+    required = {
+        tag.strip().lower()
+        for tag in tag_filter.get("all", [])
+        if isinstance(tag, str) and tag.strip()
+    }
+    optional = {
+        tag.strip().lower()
+        for tag in tag_filter.get("any", [])
+        if isinstance(tag, str) and tag.strip()
+    }
+    return required, optional
+
+
+def _status_matches_tag_filter(
+    status: Any, tag_filter: dict[str, list[str]] | None
+) -> bool:
+    required, optional = _tag_filter_terms(tag_filter)
+    if not required and not optional:
+        return True
+    metadata = _doc_metadata(status)
+    tags = {
+        str(tag).strip().lower()
+        for tag in metadata.get("tags", [])
+        if str(tag).strip()
+    }
+    if required and not required.issubset(tags):
+        return False
+    if optional and tags.isdisjoint(optional):
+        return False
+    return True
+
+
+async def _get_doc_status(rag: Any, doc_id: str) -> Any:
+    get_by_id = getattr(getattr(rag, "doc_status", None), "get_by_id", None)
+    if callable(get_by_id):
+        return await get_by_id(doc_id)
+    aget_docs = getattr(rag, "aget_docs_by_ids", None)
+    if callable(aget_docs):
+        docs = await aget_docs([doc_id])
+        if isinstance(docs, dict):
+            return docs.get(doc_id)
+    return None
+
+
+async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
+    doc_ids = {
+        str(row[key])
+        for key in ("doc_id", "full_doc_id")
+        if isinstance(row.get(key), str) and row.get(key)
+    }
+    chunk_ids = set()
+    for key in ("chunk_id", "id"):
+        if isinstance(row.get(key), str) and row.get(key):
+            chunk_ids.add(str(row[key]))
+    chunk_ids.update(_split_source_ids(row.get("source_id")))
+    for chunk_id in chunk_ids:
+        doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
+        if doc_id:
+            doc_ids.add(doc_id)
+    return doc_ids
+
+
+async def _row_matches_tag_filter(
+    rag: Any, row: dict[str, Any], tag_filter: dict[str, list[str]] | None
+) -> bool:
+    required, optional = _tag_filter_terms(tag_filter)
+    if not required and not optional:
+        return True
+    doc_ids = await _doc_ids_for_query_data_row(rag, row)
+    if not doc_ids:
+        return False
+    for doc_id in doc_ids:
+        status = await _get_doc_status(rag, doc_id)
+        if _status_matches_tag_filter(status, tag_filter):
+            return True
+    return False
+
+
+async def _filter_query_data_by_tags(
+    rag: Any,
+    response: dict[str, Any],
+    tag_filter: dict[str, list[str]] | None,
+) -> dict[str, Any]:
+    required, optional = _tag_filter_terms(tag_filter)
+    if not required and not optional:
+        return response
+
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return response
+
+    filtered_data = dict(data)
+    kept_reference_ids: set[str] = set()
+    for key in ("chunks", "entities", "relationships"):
+        rows = data.get(key)
+        if not isinstance(rows, list):
+            continue
+        kept_rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if await _row_matches_tag_filter(rag, row, tag_filter):
+                kept_rows.append(row)
+                ref_id = row.get("reference_id")
+                if isinstance(ref_id, str) and ref_id:
+                    kept_reference_ids.add(ref_id)
+        filtered_data[key] = kept_rows
+
+    references = data.get("references")
+    if isinstance(references, list):
+        filtered_data["references"] = [
+            ref
+            for ref in references
+            if not isinstance(ref, dict)
+            or ref.get("reference_id") in kept_reference_ids
+        ]
+
+    filtered = dict(response)
+    filtered["data"] = filtered_data
+    metadata = dict(response.get("metadata") or {})
+    metadata["tag_filter"] = tag_filter
+    filtered["metadata"] = metadata
+    return filtered
+
+
 async def _build_sources(
     rag: Any, query: str, top_k: int
 ) -> list[dict[str, Any]]:
@@ -319,6 +494,53 @@ def build_twin_query_router(get_rag) -> APIRouter:
         sources = await _build_sources(rag, body.query, body.top_k)
         return {"response": answer, "sources": sources}
 
+    @router.post("/query/data", response_model=TwinQueryDataResponse)
+    async def query_data_endpoint(
+        body: TwinQueryBody, request: Request
+    ) -> dict[str, Any]:
+        """Return structured LightRAG retrieval data through the Twin prefix.
+
+        This mirrors LightRAG's native `/query/data` endpoint while keeping
+        the Twin contract (`/twin/api/*`, space headers, tag_filter) on the
+        same surface as `/query` and `/query/stream`.
+        """
+        del request
+        try:
+            rag = get_rag()
+        except RuntimeError as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+        from lightrag.base import QueryParam
+
+        param = _make_query_param(QueryParam, _query_param_kwargs(body))
+        try:
+            result = await rag.aquery_data(body.query, param=param)
+        except Exception as exc:
+            logger.exception("twin_query: aquery_data failed")
+            raise HTTPException(500, f"Query data failed: {exc}") from exc
+
+        if not isinstance(result, dict):
+            return {
+                "status": "failure",
+                "message": "Invalid response type",
+                "data": {},
+                "metadata": {},
+            }
+
+        result = await _filter_query_data_by_tags(rag, result, body.tag_filter)
+        return {
+            "status": result.get("status", "success"),
+            "message": result.get("message", "Query executed successfully"),
+            "data": (
+                result.get("data") if isinstance(result.get("data"), dict) else {}
+            ),
+            "metadata": (
+                result.get("metadata")
+                if isinstance(result.get("metadata"), dict)
+                else {}
+            ),
+        }
+
     @router.post("/query/stream")
     async def query_stream_endpoint(
         body: TwinQueryBody, request: Request
@@ -387,4 +609,9 @@ def build_twin_query_router(get_rag) -> APIRouter:
     return router
 
 
-__all__ = ["TwinQueryBody", "TwinQueryResponse", "build_twin_query_router"]
+__all__ = [
+    "TwinQueryBody",
+    "TwinQueryDataResponse",
+    "TwinQueryResponse",
+    "build_twin_query_router",
+]
