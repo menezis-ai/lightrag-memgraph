@@ -1,4 +1,4 @@
-"""Runtime-mutable Twin space store.
+"""Runtime-mutable Twin folder store.
 
 Sits beside `_spaces.py` (env-only catalog) and persists operator
 additions / edits / deletions. Two persistence modes:
@@ -6,10 +6,12 @@ additions / edits / deletions. Two persistence modes:
 - **In-memory** (default): mutations live for the lifetime of the
   process. Acceptable for dev / OVH standalone where the env catalog
   is the source of truth and runtime spaces are demo seeds.
-- **JSON file**: when ``TWIN_SPACES_RUNTIME_FILE`` is set, every
+- **JSON file**: when ``TWIN_FOLDERS_RUNTIME_FILE`` is set, every
   mutation rewrites the file atomically. Reads load it lazily on first
   access and on every restart. The file format is a flat list of
   ``TwinSpace.as_runtime_config()`` dicts.
+
+``TWIN_SPACES_RUNTIME_FILE`` remains accepted as a legacy alias.
 
 The store is FastAPI-free so unit tests can drive it without spinning
 the full app.
@@ -29,7 +31,8 @@ from .._spaces import TwinSpace
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_FILE_ENV = "TWIN_SPACES_RUNTIME_FILE"
+_RUNTIME_FILE_ENV = "TWIN_FOLDERS_RUNTIME_FILE"
+_LEGACY_RUNTIME_FILE_ENV = "TWIN_SPACES_RUNTIME_FILE"
 
 # Module-level state. Tests reset it via `reset_runtime_store()`.
 _runtime_spaces: dict[str, TwinSpace] = {}
@@ -38,7 +41,9 @@ _lock = Lock()
 
 
 def _runtime_file_path() -> str | None:
-    path = os.environ.get(_RUNTIME_FILE_ENV)
+    path = os.environ.get(_RUNTIME_FILE_ENV) or os.environ.get(
+        _LEGACY_RUNTIME_FILE_ENV
+    )
     return path.strip() if path and path.strip() else None
 
 
@@ -58,7 +63,7 @@ def _load_from_disk_if_configured() -> None:
             data = json.load(f)
         if not isinstance(data, list):
             logger.warning(
-                "TWIN_SPACES_RUNTIME_FILE %s: not a JSON list, ignored", path
+                "Twin folder runtime file %s: not a JSON list, ignored", path
             )
             return
         for item in data:
@@ -71,7 +76,7 @@ def _load_from_disk_if_configured() -> None:
                 sid = validate_identifier(sid_raw, "space")
             except ValueError:
                 logger.warning(
-                    "TWIN_SPACES_RUNTIME_FILE %s: skipping invalid id %r",
+                    "Twin folder runtime file %s: skipping invalid id %r",
                     path,
                     sid_raw,
                 )
@@ -85,7 +90,7 @@ def _load_from_disk_if_configured() -> None:
             )
     except Exception:
         logger.exception(
-            "TWIN_SPACES_RUNTIME_FILE %s: failed to load — starting empty",
+            "Twin folder runtime file %s: failed to load; starting empty",
             path,
         )
 
@@ -114,7 +119,7 @@ def _persist_to_disk_if_configured() -> None:
                     pass
     except Exception:
         logger.exception(
-            "TWIN_SPACES_RUNTIME_FILE %s: failed to persist mutation", path
+            "Twin folder runtime file %s: failed to persist mutation", path
         )
 
 

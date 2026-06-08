@@ -51,9 +51,9 @@ import {
   useTags,
   useThesaurus,
   useUpdateTagSynonyms,
-  useWorkspaces,
+  useFolders,
 } from './api/queries';
-import { ApiError, getTwinRuntimeConfig, setActiveSpace } from './api/client';
+import { ApiError, getTwinRuntimeConfig, setActiveFolder } from './api/client';
 import { api } from './api/resources';
 import {
   ACTIVITY_FIXTURES,
@@ -197,7 +197,13 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
 
 function getInitialSpaceId(): string {
   const cfg = getTwinRuntimeConfig();
-  return cfg.defaultSpaceId || cfg.spaces?.[0]?.id || 'default';
+  return (
+    cfg.defaultFolderId ||
+    cfg.folders?.[0]?.id ||
+    cfg.defaultSpaceId ||
+    cfg.spaces?.[0]?.id ||
+    'default'
+  );
 }
 
 function AppShell() {
@@ -205,7 +211,7 @@ function AppShell() {
   const [theme, setTheme] = useState<Theme>('light');
   const [workspace, setWorkspaceState] = useState(() => {
     const initial = getInitialSpaceId();
-    setActiveSpace(initial);
+    setActiveFolder(initial);
     return initial;
   });
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -228,8 +234,11 @@ function AppShell() {
 
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
-  const docs = useDocuments({ workspace }, { enabled: tab === 'documents' });
-  const workspaces = useWorkspaces();
+  const docs = useDocuments(
+    { folder: workspace, workspace },
+    { enabled: tab === 'documents' },
+  );
+  const workspaces = useFolders();
   const notificationsQ = useNotifications();
   const thesaurus = useThesaurus({ enabled: needsThesaurus });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
@@ -280,20 +289,20 @@ function AppShell() {
         : notification,
     );
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const configuredSpaces = runtimeConfig.spaces;
+  const configuredFolders = runtimeConfig.folders ?? runtimeConfig.spaces;
   const workspaceList = useMemo<readonly Workspace[]>(() => {
-    if (configuredSpaces) {
-      return configuredSpaces.map((space) => ({
-        id: space.id,
-        kb: space.label,
-        visibility: space.kind === 'sandbox' ? 'private' : 'internal',
-        sources: space.sources ?? 0,
+    if (configuredFolders) {
+      return configuredFolders.map((folder) => ({
+        id: folder.id,
+        kb: folder.label,
+        visibility: folder.kind === 'sandbox' ? 'private' : 'internal',
+        sources: folder.sources ?? 0,
         role: 'admin / steward',
-        current: space.id === workspace,
+        current: folder.id === workspace,
       }));
     }
     return resolveQueryData(workspaces, WORKSPACE_FIXTURES) ?? [];
-  }, [configuredSpaces, workspace, workspaces]);
+  }, [configuredFolders, workspace, workspaces]);
   const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
@@ -795,7 +804,7 @@ function AppShell() {
 
   const onSwitchWorkspace = (nextWorkspace: string) => {
     window.history.replaceState(null, '', window.location.pathname);
-    setActiveSpace(nextWorkspace);
+    setActiveFolder(nextWorkspace);
     setWorkspaceState(nextWorkspace);
     setReadNotificationIds(new Set());
     setClearedNotificationIds(new Set());
@@ -820,7 +829,7 @@ function AppShell() {
 
   const backendErrors = [
     resourceError('Documents', docs),
-    resourceError('Spaces', workspaces),
+    resourceError('Folders', workspaces),
     resourceError('Notifications', notificationsQ),
     resourceError('Thesaurus', thesaurus),
     resourceError('Tags', tags),

@@ -166,6 +166,16 @@ class TestCreateSpaceGating:
         assert r.status_code == 201
         assert r.json()["id"] == "sandbox"
 
+    async def test_folder_route_uses_same_admin_gate(self, client, rsa_keypair):
+        token = _make_token(rsa_keypair, groups=["twin-steward"])
+        r = await client.post(
+            "/folders",
+            json={"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
+            cookies={"twin_idp_token": token},
+        )
+        assert r.status_code == 201
+        assert r.json()["id"] == "sandbox"
+
 
 # ---------------------------------------------------------------------------
 # PATCH /spaces/{id}

@@ -1,7 +1,10 @@
-"""Twin space catalog parsing.
+"""Twin folder catalog parsing.
 
 This module is deliberately free of FastAPI/server imports: runtime WebUI
 config generation uses it even when only ``replace_ui=True`` is enabled.
+
+``space`` remains as a legacy wire name for existing deployments. Product and
+new API surfaces use ``folder``.
 """
 
 from __future__ import annotations
@@ -57,32 +60,43 @@ class TwinSpaceCatalog:
 
 
 def _parse_max_spaces() -> int:
+    raw = os.environ.get("TWIN_MAX_FOLDERS") or os.environ.get(
+        "TWIN_MAX_SPACES",
+        "5",
+    )
     try:
-        value = int(os.environ.get("TWIN_MAX_SPACES", "5"))
+        value = int(raw)
     except ValueError:
-        logger.exception("Invalid TWIN_MAX_SPACES; falling back to 5")
+        logger.exception("Invalid TWIN_MAX_FOLDERS/TWIN_MAX_SPACES; falling back to 5")
         value = 5
     return max(1, min(5, value))
 
 
 def _parse_default_space() -> str:
     raw = (
-        os.environ.get("TWIN_DEFAULT_SPACE")
+        os.environ.get("TWIN_DEFAULT_FOLDER")
+        or os.environ.get("TWIN_DEFAULT_SPACE")
         or os.environ.get("WORKSPACE")
         or "default"
     ).strip()
     try:
-        return validate_identifier(raw, "space")
+        return validate_identifier(raw, "folder")
     except ValueError:
-        logger.exception("Invalid default Twin space; falling back to 'default'")
+        logger.exception("Invalid default Twin folder; falling back to 'default'")
         return "default"
 
 
 def load_space_catalog() -> TwinSpaceCatalog:
-    """Load the configured Twin spaces from env vars."""
+    """Load the configured Twin folders from env vars.
+
+    Preferred env vars are ``TWIN_DEFAULT_FOLDER``, ``TWIN_FOLDERS_JSON`` and
+    ``TWIN_MAX_FOLDERS``. Legacy ``*_SPACE*`` names are still accepted.
+    """
     default_space = _parse_default_space()
     max_spaces = _parse_max_spaces()
-    spaces_raw = os.environ.get("TWIN_SPACES_JSON")
+    spaces_raw = os.environ.get("TWIN_FOLDERS_JSON") or os.environ.get(
+        "TWIN_SPACES_JSON"
+    )
     explicit = bool(spaces_raw)
     spaces: list[TwinSpace] = []
 
@@ -90,7 +104,7 @@ def load_space_catalog() -> TwinSpaceCatalog:
         try:
             parsed = json.loads(spaces_raw)
             if not isinstance(parsed, list):
-                raise ValueError("TWIN_SPACES_JSON must be a JSON array")
+                raise ValueError("TWIN_FOLDERS_JSON must be a JSON array")
             for item in parsed[:max_spaces]:
                 if not isinstance(item, dict):
                     continue
@@ -98,9 +112,9 @@ def load_space_catalog() -> TwinSpaceCatalog:
                 if not sid_raw:
                     continue
                 try:
-                    sid = validate_identifier(sid_raw, "space")
+                    sid = validate_identifier(sid_raw, "folder")
                 except ValueError:
-                    logger.exception("Skipping invalid Twin space id")
+                    logger.exception("Skipping invalid Twin folder id")
                     continue
                 spaces.append(
                     TwinSpace(
@@ -113,7 +127,7 @@ def load_space_catalog() -> TwinSpaceCatalog:
                 )
         except Exception:
             logger.exception(
-                "Invalid TWIN_SPACES_JSON; falling back to TWIN_DEFAULT_SPACE"
+                "Invalid TWIN_FOLDERS_JSON/TWIN_SPACES_JSON; falling back to default folder"
             )
             spaces = []
 
@@ -121,9 +135,13 @@ def load_space_catalog() -> TwinSpaceCatalog:
         spaces = [
             TwinSpace(
                 id=default_space,
-                label=os.environ.get("TWIN_DEFAULT_SPACE_LABEL", "Default space"),
+                label=(
+                    os.environ.get("TWIN_DEFAULT_FOLDER_LABEL")
+                    or os.environ.get("TWIN_DEFAULT_SPACE_LABEL")
+                    or "Default folder"
+                ),
                 kind="primary",
-                description="SRE-provisioned default space for this KB.",
+                description="SRE-provisioned default folder for this KB.",
                 sources=0,
             )
         ]
@@ -141,9 +159,18 @@ def load_space_catalog() -> TwinSpaceCatalog:
 
 def build_runtime_space_config() -> dict[str, object]:
     catalog = load_space_catalog()
+    folders = [space.as_runtime_config() for space in catalog.spaces]
     return {
+        "defaultFolderId": catalog.default_space_id,
+        "folders": folders,
+        "maxFolders": catalog.max_spaces,
         "defaultSpaceId": catalog.default_space_id,
-        "spaces": [space.as_runtime_config() for space in catalog.spaces],
+        "spaces": folders,
         "maxSpaces": catalog.max_spaces,
     }
 
+
+TwinFolder = TwinSpace
+TwinFolderCatalog = TwinSpaceCatalog
+load_folder_catalog = load_space_catalog
+build_runtime_folder_config = build_runtime_space_config

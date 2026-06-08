@@ -4,7 +4,7 @@
  * Runtime contract:
  *   window.__twinConfig.apiBaseUrl      — Twin overlay base, e.g. /twin/api.
  *   window.__twinConfig.lightragBaseUrl — LightRAG native base, usually empty.
- *   window.__twinConfig.defaultSpaceId  — SRE-provisioned default Twin space.
+ *   window.__twinConfig.defaultFolderId — SRE-provisioned default Twin folder.
  *   VITE_API_BASE_URL                   — optional dev/test origin fallback.
  *   VITE_AUTH_TOKEN                     — optional dev/test bearer fallback.
  *
@@ -19,21 +19,27 @@ const TWIN_PREFIX = '/twin/api';
 const ENV_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 const ENV_AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN ?? '';
 
-let activeSpace: string | null = null;
+let activeFolder: string | null = null;
 
-export function setActiveSpace(space: string | null): void {
-  activeSpace = space;
+export function setActiveFolder(folder: string | null): void {
+  activeFolder = folder;
 }
 
-export function getActiveSpace(): string | null {
-  return activeSpace;
+export function getActiveFolder(): string | null {
+  return activeFolder;
 }
 
-/** @deprecated Use setActiveSpace. Kept for transitional callers/tests. */
-export const setActiveWorkspace = setActiveSpace;
+/** @deprecated Use setActiveFolder. Kept for transitional callers/tests. */
+export const setActiveSpace = setActiveFolder;
 
-/** @deprecated Use getActiveSpace. Kept for transitional callers/tests. */
-export const getActiveWorkspace = getActiveSpace;
+/** @deprecated Use getActiveFolder. Kept for transitional callers/tests. */
+export const getActiveSpace = getActiveFolder;
+
+/** @deprecated Use setActiveFolder. Kept for transitional callers/tests. */
+export const setActiveWorkspace = setActiveFolder;
+
+/** @deprecated Use getActiveFolder. Kept for transitional callers/tests. */
+export const getActiveWorkspace = getActiveFolder;
 
 export class ApiError extends Error {
   status: number;
@@ -55,9 +61,11 @@ export interface ApiRequestInit {
   body?: unknown;
   /** Optional override for the global bearer token. */
   token?: string;
-  /** Optional override for X-Twin-Space. Null disables the header. */
+  /** Optional override for X-Twin-Folder. Null disables the header. */
+  folder?: string | null;
+  /** @deprecated Compatibility alias for folder. */
   space?: string | null;
-  /** @deprecated Compatibility alias for space. */
+  /** @deprecated Compatibility alias for folder. */
   workspace?: string | null;
   signal?: AbortSignal;
 }
@@ -117,7 +125,7 @@ export function buildApiUrl(
 }
 
 export function buildApiHeaders(
-  init: Pick<ApiRequestInit, 'token' | 'space' | 'workspace'> = {},
+  init: Pick<ApiRequestInit, 'token' | 'folder' | 'space' | 'workspace'> = {},
   options: { json?: boolean } = {},
 ): Record<string, string> {
   const headers: Record<string, string> = {
@@ -130,16 +138,19 @@ export function buildApiHeaders(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const space =
-    init.space === undefined
-      ? init.workspace === undefined
-        ? activeSpace
-        : init.workspace
-      : init.space;
-  if (space) {
-    headers['X-Twin-Space'] = space;
-    // Transitional compatibility until the backend stops accepting the old name.
-    headers['X-Twin-Workspace'] = space;
+  const folder =
+    init.folder === undefined
+      ? init.space === undefined
+        ? init.workspace === undefined
+          ? activeFolder
+          : init.workspace
+        : init.space
+      : init.folder;
+  if (folder) {
+    headers['X-Twin-Folder'] = folder;
+    // Transitional compatibility until older backend deployments are gone.
+    headers['X-Twin-Space'] = folder;
+    headers['X-Twin-Workspace'] = folder;
   }
   return headers;
 }

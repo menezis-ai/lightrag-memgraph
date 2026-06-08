@@ -18,20 +18,36 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
   apiBaseUrl: '/twin/api',
   lightragBaseUrl: '',
   idpLogoutUrl: 'https://idp.twin.internal/realms/twin/protocol/openid-connect/logout',
-  defaultSpaceId: 'default',
-  maxSpaces: 5,
-  spaces: [
+  defaultFolderId: 'default',
+  maxFolders: 5,
+  folders: [
     {
       id: 'default',
-      label: 'Default space',
+      label: 'Default folder',
       kind: 'primary',
-      description: 'SRE-provisioned default space for this KB.',
+      description: 'SRE-provisioned default folder for this KB.',
     },
     {
       id: 'sandbox',
       label: 'Sandbox',
       kind: 'sandbox',
-      description: 'Optional test space isolated from agent-facing data.',
+      description: 'Optional test folder isolated from agent-facing data.',
+    },
+  ],
+  defaultSpaceId: 'default',
+  maxSpaces: 5,
+  spaces: [
+    {
+      id: 'default',
+      label: 'Default folder',
+      kind: 'primary',
+      description: 'SRE-provisioned default folder for this KB.',
+    },
+    {
+      id: 'sandbox',
+      label: 'Sandbox',
+      kind: 'sandbox',
+      description: 'Optional test folder isolated from agent-facing data.',
     },
   ],
   debugUser: {

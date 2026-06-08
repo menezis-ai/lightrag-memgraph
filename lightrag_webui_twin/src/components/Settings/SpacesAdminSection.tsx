@@ -1,18 +1,18 @@
 /**
- * Settings → Spaces (Admin CRUD).
+ * Settings → Folders (Admin CRUD).
  *
- * Lists every Twin space currently provisioned (env seed + runtime
+ * Lists every Twin folder currently provisioned (env seed + runtime
  * additions) and lets an operator add, edit, or delete the runtime
- * ones. Env-seeded spaces are marked read-only with an explicit badge
+ * ones. Env-seeded folders are marked read-only with an explicit badge
  * so the operator can't waste a click on them.
  *
  * Backend contract:
- *   GET    /twin/api/spaces           → readonly Workspace[]
- *   POST   /twin/api/spaces           → 201 / 409 / 422
- *   PATCH  /twin/api/spaces/{id}      → 200 / 403 / 404
- *   DELETE /twin/api/spaces/{id}      → 204 / 403 / 404 / 409
+ *   GET    /twin/api/folders          → readonly Workspace[]
+ *   POST   /twin/api/folders          → 201 / 409 / 422
+ *   PATCH  /twin/api/folders/{id}     → 200 / 403 / 404
+ *   DELETE /twin/api/folders/{id}     → 204 / 403 / 404 / 409
  *
- * The 409 returned by DELETE means the space still has data (docs
+ * The 409 returned by DELETE means the folder still has data (docs
  * or tags) — we surface it as an inline warning instead of silently
  * dropping the click.
  */
@@ -20,10 +20,10 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../Icon';
 import {
-  useCreateSpace,
-  useDeleteSpace,
-  useSpaces,
-  useUpdateSpace,
+  useCreateFolder,
+  useDeleteFolder,
+  useFolders,
+  useUpdateFolder,
 } from '../../api/queries';
 import { ApiError } from '../../api/client';
 import { canManageSpaces } from '../../lib/permissions';
@@ -37,7 +37,7 @@ const MAX_SPACES = 5;
 export interface SpacesAdminSectionProps {
   user?: AuthenticatedUser | null;
   onToast?: (toast: Omit<Toast, 'id'>) => void;
-  /** When the operator deletes the currently-active space, the host
+  /** When the operator deletes the currently-active folder, the host
    *  needs to swap to a fallback. Returning the new active id is
    *  optional — leave undefined to let the host pick. */
   onActiveSpaceDeleted?: (deletedId: string) => void;
@@ -48,10 +48,10 @@ export function SpacesAdminSection({
   onToast,
   onActiveSpaceDeleted,
 }: SpacesAdminSectionProps = {}) {
-  const spaces = useSpaces();
-  const createSpace = useCreateSpace();
-  const updateSpace = useUpdateSpace();
-  const deleteSpace = useDeleteSpace();
+  const spaces = useFolders();
+  const createSpace = useCreateFolder();
+  const updateSpace = useUpdateFolder();
+  const deleteSpace = useDeleteFolder();
 
   const [addOpen, setAddOpen] = useState(false);
   const list = spaces.data ?? [];
@@ -69,9 +69,9 @@ export function SpacesAdminSection({
 
   return (
     <div className="settings-section" data-testid="settings-spaces-admin">
-      <h3>Spaces</h3>
+      <h3>Folders</h3>
       <p className="muted">
-        Runtime Twin spaces. The SRE-provisioned default is read-only and
+        Runtime Twin folders. The SRE-provisioned default is read-only and
         managed via the deploy env — operator additions are persisted to
         the runtime catalog.
       </p>
@@ -105,11 +105,11 @@ export function SpacesAdminSection({
               data-testid="settings-add-space-btn"
               title={
                 atMax
-                  ? `Cannot add more spaces — already at the cap of ${MAX_SPACES}.`
+                  ? `Cannot add more folders — already at the cap of ${MAX_SPACES}.`
                   : undefined
               }
             >
-              <Icon name="plus" size={12} /> Add space
+              <Icon name="plus" size={12} /> Add folder
             </button>
             {atMax && (
               <span
@@ -117,7 +117,7 @@ export function SpacesAdminSection({
                 style={{ marginLeft: 10, fontSize: 12 }}
                 data-testid="settings-spaces-at-max"
               >
-                At max — {MAX_SPACES} space cap reached.
+                At max — {MAX_SPACES} folder cap reached.
               </span>
             )}
           </div>
@@ -162,7 +162,7 @@ export function SpacesAdminSection({
   );
 }
 
-// ─── Add Space form ───────────────────────────────────────────────────
+// ─── Add Folder form ──────────────────────────────────────────────────
 interface AddSpaceFormProps {
   existingIds: readonly string[];
   pending: boolean;
@@ -214,7 +214,7 @@ function AddSpaceForm({
       style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
     >
       <div className="set-card-h">
-        Add space{' '}
+        Add folder{' '}
         <span className="env-badge">
           <Icon name="plus" size={10} /> runtime
         </span>
@@ -229,7 +229,7 @@ function AddSpaceForm({
           onChange={(e) => setId(e.target.value)}
           placeholder="sandbox"
           autoFocus
-          aria-label="New space id"
+          aria-label="New folder id"
           data-testid="settings-add-space-id"
           className="mono"
         />
@@ -243,7 +243,7 @@ function AddSpaceForm({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Sandbox"
-          aria-label="New space label"
+          aria-label="New folder label"
           data-testid="settings-add-space-label"
         />
       </label>
@@ -254,7 +254,7 @@ function AddSpaceForm({
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          aria-label="New space kind"
+          aria-label="New folder kind"
           data-testid="settings-add-space-kind"
         >
           <option value="custom">Custom</option>
@@ -271,8 +271,8 @@ function AddSpaceForm({
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="What is this space for?"
-          aria-label="New space description"
+          placeholder="What is this folder for?"
+          aria-label="New folder description"
           data-testid="settings-add-space-description"
         />
       </label>
@@ -304,7 +304,7 @@ function AddSpaceForm({
           style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
           data-testid="settings-add-space-duplicate"
         >
-          A space with id “{trimmedId}” already exists.
+          A folder with id “{trimmedId}” already exists.
         </div>
       )}
       {error && (
@@ -320,7 +320,7 @@ function AddSpaceForm({
   );
 }
 
-// ─── Row: shows + edits + deletes one space ───────────────────────────
+// ─── Row: shows + edits + deletes one folder ──────────────────────────
 interface SpaceRowProps {
   space: Workspace;
   envSeeded: boolean;
@@ -348,7 +348,7 @@ function SpaceRow({
   const [label, setLabel] = useState(space.kb);
   const [armedDelete, setArmedDelete] = useState(false);
 
-  // Reset edit state when the cached space object changes (after a
+  // Reset edit state when the cached folder object changes (after a
   // refetch following a successful save).
   /* eslint-disable react-hooks/set-state-in-effect -- intentional re-sync with the new server-side value. */
   useEffect(() => {
@@ -417,7 +417,7 @@ function SpaceRow({
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            aria-label={`Edit label for space ${space.id}`}
+            aria-label={`Edit label for folder ${space.id}`}
             data-testid={`settings-space-edit-label-${space.id}`}
             style={{ flex: 1 }}
           />

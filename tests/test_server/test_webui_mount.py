@@ -19,14 +19,14 @@ def _extract_twin_config(html: str) -> dict:
 
 
 async def test_webui_mount_substitutes_runtime_config(monkeypatch, tmp_path):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps(
             [
                 {
                     "id": "default",
-                    "label": "Default space",
+                    "label": "Default folder",
                     "kind": "primary",
                 }
             ]
@@ -78,11 +78,21 @@ async def test_webui_mount_substitutes_runtime_config(monkeypatch, tmp_path):
             config = _extract_twin_config(response.text)
             assert config["apiBaseUrl"] == "/twin/api"
             assert config["lightragBaseUrl"] == ""
+            assert config["defaultFolderId"] == "default"
+            assert config["folders"] == [
+                {
+                    "id": "default",
+                    "label": "Default folder",
+                    "kind": "primary",
+                    "description": "",
+                    "sources": 0,
+                }
+            ]
             assert config["defaultSpaceId"] == "default"
             assert config["spaces"] == [
                 {
                     "id": "default",
-                    "label": "Default space",
+                    "label": "Default folder",
                     "kind": "primary",
                     "description": "",
                     "sources": 0,

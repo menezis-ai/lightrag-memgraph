@@ -1,9 +1,9 @@
 /**
- * Settings → Space section.
+ * Settings → Folder section.
  *
- * Read-only view of the active Twin space identity (id + display name).
+ * Read-only view of the active Twin folder identity (id + display name).
  * Both values come from props (the AppShell already resolves them from
- * the runtime config + active-space state); we avoid duplicating that
+ * the runtime config + active-folder state); we avoid duplicating that
  * resolution here.
  *
  * Historical note: this section used to render hardcoded
@@ -12,17 +12,17 @@
  * mock-kill audit (Fabrice 2026-06-01 — "je ne veux plus de moquer")
  * because the backend doesn't expose those fields and the displayed
  * values were inventions (`eu-west-3 · dc-paris`,
- * `twin-default-space-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).
+ * `twin-default-folder-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).
  * They risked being read as a compliance commitment.
  */
 
 import { Icon } from '../Icon';
 
 export interface WorkspaceSectionProps {
-  /** Active Twin space id — comes from AppShell state, kept in sync with
-   *  `setActiveSpace()` in `api/client.ts`. */
+  /** Active Twin folder id — comes from AppShell state, kept in sync with
+   *  `setActiveFolder()` in `api/client.ts`. */
   activeSpaceId: string;
-  /** Display name of the active space — derived from the runtime config
+  /** Display name of the active folder — derived from the runtime config
    *  catalog at the AppShell level. */
   displayName: string;
 }
@@ -33,9 +33,9 @@ export function WorkspaceSection({
 }: WorkspaceSectionProps) {
   return (
     <div className="settings-section" data-testid="settings-workspace">
-      <h3>Space</h3>
+      <h3>Folder</h3>
       <p className="muted">
-        Configuration for space {activeSpaceId}. Identity is set at
+        Configuration for folder {activeSpaceId}. Identity is set at
         deployment time and cannot be changed from the UI.
       </p>
 
@@ -47,7 +47,7 @@ export function WorkspaceSection({
           </span>
         </div>
         <dl className="set-dl">
-          <dt>Space ID</dt>
+          <dt>Folder ID</dt>
           <dd className="mono" data-testid="settings-active-ws">
             {activeSpaceId}
           </dd>

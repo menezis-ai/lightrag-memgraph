@@ -1,8 +1,8 @@
 /**
- * Topbar — logo, tabs, space switcher, notifications, theme toggle.
+ * Topbar — logo, tabs, folder switcher, notifications, theme toggle.
  *
  * Ported from Desktop/UI/topbar.jsx. Key changes vs the proto:
- *   - Spaces and notifications are *injected* via props instead of
+ *   - Folders and notifications are *injected* via props instead of
  *     read from window.MOCK_WORKSPACES / window.MOCK_NOTIFICATIONS, so the
  *     component is fully testable with fixtures and ready to wire to a
  *     real fetcher later.
@@ -29,7 +29,7 @@ export interface TopbarProps {
   onTab: (id: string) => void;
   theme: Theme;
   onTheme: () => void;
-  /** Current Twin space id (kept as `workspace` prop for transition). */
+  /** Current Twin folder id (kept as `workspace` prop for transition). */
   workspace: string;
   kbName: string;
   onSwitchWorkspace: (w: Workspace) => void;
@@ -122,7 +122,7 @@ export function Topbar({
               setWsOpen((o) => !o);
               setNotifOpen(false);
             }}
-            title="Switch space"
+            title="Switch folder"
             aria-expanded={wsOpen}
             aria-haspopup="menu"
           >
@@ -197,8 +197,8 @@ function SpaceMenu({
   onClose,
 }: SpaceMenuProps) {
   return (
-    <div className="ws-menu" role="menu" aria-label="Switch space">
-      <div className="ws-menu-h">Spaces</div>
+    <div className="ws-menu" role="menu" aria-label="Switch folder">
+      <div className="ws-menu-h">Folders</div>
       <ul className="ws-menu-list">
         {workspaces.length === 0 && (
           <li>
@@ -207,7 +207,7 @@ function SpaceMenu({
               style={{ padding: 12 }}
               data-testid="topbar-workspace-empty"
             >
-              No space available for this KB. Please contact Twincore Team
+              No folder available for this KB. Please contact Twincore Team
             </div>
           </li>
         )}
@@ -261,7 +261,7 @@ function SpaceMenu({
       </ul>
       <div className="ws-menu-f">
         <button type="button" className="link-btn" onClick={onClose}>
-          Manage spaces →
+          Manage folders →
         </button>
       </div>
     </div>

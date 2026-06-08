@@ -298,7 +298,7 @@ class GraphRelationCreate(_Base):
 
 
 class SpaceCreate(_Base):
-    """Create payload for a new Twin space.
+    """Create payload for a new Twin folder.
 
     ``id`` must validate against the safe-identifier rule (the same
     backtick-safe rule used for Memgraph labels). ``label`` is the
@@ -312,11 +312,15 @@ class SpaceCreate(_Base):
 
 
 class SpacePatch(_Base):
-    """Partial update payload for a Twin space. Every field optional."""
+    """Partial update payload for a Twin folder. Every field optional."""
 
     label: str | None = None
     kind: str | None = None
     description: str | None = None
+
+
+FolderCreate = SpaceCreate
+FolderPatch = SpacePatch
 
 
 # ---------------------------------------------------------------------------

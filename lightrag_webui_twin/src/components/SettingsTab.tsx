@@ -3,18 +3,18 @@
  *
  *   - Profile   : read-only, lit useAuth()
  *   - API       : OpenAPI browser (delegates to ApiTab)
- *   - Space     : env vars + retention table read-only
+ *   - Folder    : env vars + retention table read-only
  *
  * REMOVED from the maquette pre-30/05:
  *   - Providers (removed 30/05 cleanup)
  *   - Members editable (lives in MyAccess)
  *   - Tokens / OAuth2 client management
  *   - API key generation
- *   - Danger zone (space deletion moves to ops tooling)
+ *   - Danger zone (folder deletion moves to ops tooling)
  *
  * Rationale: Twin is a knowledge-management console, not an identity / billing
  * console. Every section that asked the operator to manage capability tokens
- * or destructive space state was moved out of the UI surface — Louis 28/05
+ * or destructive folder state was moved out of the UI surface — Louis 28/05
  * + cleanup 30/05.
  */
 
@@ -33,15 +33,15 @@ type SectionKey = 'profile' | 'api' | 'workspace';
 const SECTIONS: { key: SectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
-  { key: 'workspace', label: 'Space', icon: 'folder' },
+  { key: 'workspace', label: 'Folder', icon: 'folder' },
 ];
 
 export interface SettingsTabProps {
-  /** Active space id — forwarded to WorkspaceSection's Identity card.
-   *  Comes from the AppShell state kept in sync with `setActiveSpace()`. */
+  /** Active folder id — forwarded to WorkspaceSection's Identity card.
+   *  Comes from the AppShell state kept in sync with `setActiveFolder()`. */
   activeWorkspace?: string;
-  /** Active space display name — forwarded to WorkspaceSection's
-   *  Identity card. Resolved by AppShell from the runtime spaces catalog. */
+  /** Active folder display name — forwarded to WorkspaceSection's
+   *  Identity card. Resolved by AppShell from the runtime folder catalog. */
   kbName?: string;
   /** Bearer-token revoke + redirect to IdP. Pushed up so the host owns the toast queue. */
   onSignOut?: () => void;
@@ -120,7 +120,7 @@ function ApiSection() {
       <p className="muted">
         LightRAG OpenAPI surface. Bearer (OIDC) auth only — the gateway
         injects <code>tag_filter</code> and <code>visibility</code>{' '}
-        scoping from the active space.
+        scoping from the active folder.
       </p>
       {isLoading && (
         <div className="muted" data-testid="settings-api-loading">

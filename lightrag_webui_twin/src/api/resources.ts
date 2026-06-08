@@ -9,7 +9,7 @@
  *   - `twinApi` : Twin overlay endpoints, served by our FastAPI sub-app
  *     mounted via `register(mount_server=True)`. All paths share the
  *     `/twin/api/` prefix: /tags, /audit-events, /activity, /notifications,
- *     /workspaces, /graph/*, /auth/logout, /documents/{id}/metadata,
+ *     /folders, /workspaces, /graph/*, /auth/logout, /documents/{id}/metadata,
  *     /documents/{id}/approve, /documents/{id}/reject.
  *
  * The single `api` export aggregates both for convenience; queries.ts hooks
@@ -47,6 +47,7 @@ export interface DocumentsQuery {
   status?: string;
   q?: string;
   tag?: string;
+  folder?: string;
   workspace?: string;
   cursor?: string;
 }
@@ -256,7 +257,10 @@ export const twinApi = {
   listWorkspaces: (init?: ApiRequestInit) =>
     apiFetch<readonly Workspace[]>(`${TWIN}/workspaces`, init),
 
-  // Spaces (M12 Admin CRUD — runtime additions on top of the env seed)
+  // Folders (runtime additions on top of the env seed)
+  listFolders: (init?: ApiRequestInit) =>
+    apiFetch<readonly Workspace[]>(`${TWIN}/folders`, init),
+  /** @deprecated Use listFolders. */
   listSpaces: (init?: ApiRequestInit) =>
     apiFetch<readonly Workspace[]>(`${TWIN}/spaces`, init),
 
@@ -352,30 +356,44 @@ export const twinApi = {
     if (buffer) consumeLine(buffer);
     return { response, sources };
   },
-  createSpace: (
+  createFolder: (
     body: { id: string; label: string; kind?: string; description?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Workspace>(`${TWIN}/spaces`, {
+    apiFetch<Workspace>(`${TWIN}/folders`, {
       ...init,
       method: 'POST',
       body,
     }),
-  updateSpace: (
+  /** @deprecated Use createFolder. */
+  createSpace: (
+    body: { id: string; label: string; kind?: string; description?: string },
+    init?: ApiRequestInit,
+  ) => twinApi.createFolder(body, init),
+  updateFolder: (
     id: string,
     patch: { label?: string; kind?: string; description?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Workspace>(`${TWIN}/spaces/${encodeURIComponent(id)}`, {
+    apiFetch<Workspace>(`${TWIN}/folders/${encodeURIComponent(id)}`, {
       ...init,
       method: 'PATCH',
       body: patch,
     }),
-  deleteSpace: (id: string, init?: ApiRequestInit) =>
-    apiFetch<void>(`${TWIN}/spaces/${encodeURIComponent(id)}`, {
+  /** @deprecated Use updateFolder. */
+  updateSpace: (
+    id: string,
+    patch: { label?: string; kind?: string; description?: string },
+    init?: ApiRequestInit,
+  ) => twinApi.updateFolder(id, patch, init),
+  deleteFolder: (id: string, init?: ApiRequestInit) =>
+    apiFetch<void>(`${TWIN}/folders/${encodeURIComponent(id)}`, {
       ...init,
       method: 'DELETE',
     }),
+  /** @deprecated Use deleteFolder. */
+  deleteSpace: (id: string, init?: ApiRequestInit) =>
+    twinApi.deleteFolder(id, init),
   listNotifications: (init?: ApiRequestInit) =>
     apiFetch<readonly Notification[]>(`${TWIN}/notifications`, init),
   markAllNotificationsRead: (init?: ApiRequestInit) =>
@@ -722,6 +740,10 @@ export const api = {
   deleteGraphEntity: twinApi.deleteGraphEntity,
   createGraphRelation: twinApi.createGraphRelation,
   deleteGraphRelation: twinApi.deleteGraphRelation,
+  listFolders: twinApi.listFolders,
+  createFolder: twinApi.createFolder,
+  updateFolder: twinApi.updateFolder,
+  deleteFolder: twinApi.deleteFolder,
   listSpaces: twinApi.listSpaces,
   createSpace: twinApi.createSpace,
   updateSpace: twinApi.updateSpace,

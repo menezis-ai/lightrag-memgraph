@@ -1,10 +1,10 @@
 /**
- * WorkspaceSwitcher — transitional wrapper for the Twin space selector.
+ * WorkspaceSwitcher — transitional wrapper for the Twin folder selector.
  *
  * The class/test ids keep their historical `workspace` name for now, but
- * visible copy and HTTP semantics now use Twin "spaces".
+ * visible copy and HTTP semantics now use Twin "folders".
  *
- * The `X-Twin-Space` HTTP header is set by the host App after
+ * The `X-Twin-Folder` HTTP header is set by the host App after
  * picking — this component just emits the id; it does not own the apiFetch
  * default headers.
  */
@@ -24,8 +24,8 @@ export function WorkspaceSwitcher({
   workspaces,
   onPick,
 }: WorkspaceSwitcherProps) {
-  // MyAccess gates the parent BNP/LGP workspace. Spaces are scoped inside
-  // that KB, so dev/prod both show the configured space list by default.
+  // MyAccess gates the parent BNP/LGP workspace. Folders are scoped inside
+  // that KB, so dev/prod both show the configured folder list by default.
   const visible = workspaces;
 
   const [open, setOpen] = useState(false);
@@ -57,10 +57,10 @@ export function WorkspaceSwitcher({
         <div
           className="ws-menu"
           role="menu"
-          aria-label="Switch space"
+          aria-label="Switch folder"
           data-testid="topbar-workspace-menu"
         >
-          <div className="ws-menu-h">Spaces ({visible.length})</div>
+          <div className="ws-menu-h">Folders ({visible.length})</div>
           <ul className="ws-menu-list">
             {visible.map((w) => {
               const isActive = w.id === active;
@@ -122,7 +122,7 @@ export function WorkspaceSwitcher({
                   style={{ padding: 12 }}
                   data-testid="topbar-workspace-empty"
                 >
-                  No space available for this KB. Please contact Twincore Team
+                  No folder available for this KB. Please contact Twincore Team
                 </div>
               </li>
             )}

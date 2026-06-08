@@ -4,15 +4,15 @@ Centralized constants and helpers shared across all Memgraph storage backends.
 Single source of truth for default values, environment variable keys,
 and workspace resolution logic.
 
-## Naming: ``workspace`` here ≠ Twin space
+## Naming: ``workspace`` here ≠ Twin folder
 
 The token ``workspace`` in this module refers strictly to the LightRAG-core
 notion: the backtick-safe identifier that becomes the Memgraph node label
 (`KV_{workspace}`, `Vec_{workspace}`, `DocStatus_{workspace}`, ...). That
 contract is defined upstream by LightRAG and we don't get to rename it.
 
-The user-facing Twin sub-scope is called **space** everywhere else in this
-codebase (per the 2026-06-01 Fabrice meeting — "Space alors"). The two
+The user-facing Twin sub-scope is called **folder** everywhere else in this
+codebase. The old name ``space`` remains as a legacy API/env alias. The two
 concepts overlap today because the deploy maps a single LightRAG workspace
 per Twin instance, but the wording in this module deliberately stays
 "workspace" so anyone touching the storage backends recognises it as the
@@ -30,16 +30,20 @@ import re
 #   2. ``WORKSPACE`` — the canonical LightRAG-core variable. Setting
 #      this single value is now enough for both LightRAG core *and*
 #      our Memgraph storage backends.
-#   3. ``TWIN_DEFAULT_SPACE`` — Twin overlay's source of truth; honoured
+#   3. ``TWIN_DEFAULT_FOLDER`` — Twin overlay's source of truth; honoured
+#      as a fallback so a "folder-only" deploy boots without setting a
+#      legacy variable.
+#   4. ``TWIN_DEFAULT_SPACE`` — legacy Twin overlay name; still honoured
 #      as a fallback so a "space-only" deploy boots without setting a
 #      legacy variable.
-#   4. ``DEFAULT_WORKSPACE`` ("base") — the LightRAG-internal default.
+#   5. ``DEFAULT_WORKSPACE`` ("base") — the LightRAG-internal default.
 #
 # Aligning on the chain lets new deploys ship a single ``WORKSPACE``
-# or ``TWIN_DEFAULT_SPACE`` without the old "set both" footgun
+# or ``TWIN_DEFAULT_FOLDER`` without the old "set both" footgun
 # documented in ``deploy/ovh-twin/stack.yml``.
 MEMGRAPH_WORKSPACE_ENV = "MEMGRAPH_WORKSPACE"
 WORKSPACE_ENV = "WORKSPACE"
+TWIN_DEFAULT_FOLDER_ENV = "TWIN_DEFAULT_FOLDER"
 TWIN_DEFAULT_SPACE_ENV = "TWIN_DEFAULT_SPACE"
 
 # Default values
@@ -91,14 +95,20 @@ def resolve_workspace() -> str:
 
       1. ``MEMGRAPH_WORKSPACE``
       2. ``WORKSPACE`` (LightRAG-core canonical)
-      3. ``TWIN_DEFAULT_SPACE`` (Twin overlay)
-      4. :data:`DEFAULT_WORKSPACE` (``"base"``)
+      3. ``TWIN_DEFAULT_FOLDER`` (Twin overlay)
+      4. ``TWIN_DEFAULT_SPACE`` (legacy Twin overlay)
+      5. :data:`DEFAULT_WORKSPACE` (``"base"``)
 
     Raises:
         ValueError: If the resolved workspace contains unsafe
         characters.
     """
-    for env_key in (MEMGRAPH_WORKSPACE_ENV, WORKSPACE_ENV, TWIN_DEFAULT_SPACE_ENV):
+    for env_key in (
+        MEMGRAPH_WORKSPACE_ENV,
+        WORKSPACE_ENV,
+        TWIN_DEFAULT_FOLDER_ENV,
+        TWIN_DEFAULT_SPACE_ENV,
+    ):
         candidate = os.environ.get(env_key, "").strip()
         if candidate:
             return validate_identifier(candidate, "workspace")

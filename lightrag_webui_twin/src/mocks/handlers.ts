@@ -246,6 +246,7 @@ const e2eStats = {
   tagApproveCalls: {} as Record<string, number>,
   spaceRequests: [] as Array<{
     path: string;
+    folder: string | null;
     space: string | null;
     workspace: string | null;
   }>,
@@ -255,6 +256,7 @@ function recordTwinSpaceRequest(request: Request): void {
   const url = new URL(request.url);
   e2eStats.spaceRequests.push({
     path: url.pathname,
+    folder: request.headers.get('X-Twin-Folder'),
     space: request.headers.get('X-Twin-Space'),
     workspace: request.headers.get('X-Twin-Workspace'),
   });
@@ -321,10 +323,155 @@ function updateDoc(id: string, patch: Partial<Document>): Document | null {
   return documentsState[idx];
 }
 
+async function handleCreateFolder(request: Request): Promise<Response> {
+  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  if (forbidden) return forbidden;
+  const body = (await request.json()) as {
+    id: string;
+    label: string;
+    kind?: string;
+    description?: string;
+  };
+  if (!/^[A-Za-z0-9_-]+$/.test(body.id)) {
+    return HttpResponse.json(
+      { detail: `Invalid folder id '${body.id}'` },
+      { status: 422 },
+    );
+  }
+  if (spaceState.length >= SPACE_MAX) {
+    return HttpResponse.json(
+      { detail: `Cannot create folder: catalog already at max (${SPACE_MAX})` },
+      { status: 422 },
+    );
+  }
+  if (envSeededSpaceIds.has(body.id)) {
+    return HttpResponse.json(
+      { detail: `Folder '${body.id}' is provisioned by the deploy env` },
+      { status: 409 },
+    );
+  }
+  if (spaceState.some((s) => s.id === body.id)) {
+    return HttpResponse.json(
+      { detail: `Folder '${body.id}' already exists` },
+      { status: 409 },
+    );
+  }
+  const created = {
+    id: body.id,
+    kb: body.label,
+    visibility: 'internal' as const,
+    sources: 0,
+    role: 'admin / steward' as const,
+    current: false,
+  };
+  spaceState = [...spaceState, created];
+  activityState = [
+    {
+      id: `evt_folder_${body.id}_${Date.now()}`,
+      ts: new Date().toISOString(),
+      rel: 'now',
+      day: 'Today',
+      kind: 'settings',
+      sev: 'info',
+      actor: { user: 'julien.dabert', role: 'KB Steward' },
+      target: { type: 'folder', label: body.label, id: body.id },
+      summary: `Folder '${body.id}' created`,
+      meta: { folder_id: body.id, space_id: body.id, operation: 'create' },
+    },
+    ...activityState,
+  ];
+  persistActivityState();
+  return HttpResponse.json(created, { status: 201 });
+}
+
+async function handleUpdateFolder(
+  id: string,
+  request: Request,
+): Promise<Response> {
+  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  if (forbidden) return forbidden;
+  if (envSeededSpaceIds.has(id)) {
+    return HttpResponse.json(
+      { detail: `Folder '${id}' is env-seeded and cannot be edited` },
+      { status: 403 },
+    );
+  }
+  const idx = spaceState.findIndex((s) => s.id === id);
+  if (idx < 0) {
+    return HttpResponse.json(
+      { detail: `Folder '${id}' not found` },
+      { status: 404 },
+    );
+  }
+  const patch = (await request.json()) as { label?: string };
+  const next = {
+    ...spaceState[idx],
+    kb: patch.label ?? spaceState[idx].kb,
+  };
+  spaceState = [
+    ...spaceState.slice(0, idx),
+    next,
+    ...spaceState.slice(idx + 1),
+  ];
+  activityState = [
+    {
+      id: `evt_folder_${id}_${Date.now()}`,
+      ts: new Date().toISOString(),
+      rel: 'now',
+      day: 'Today',
+      kind: 'settings',
+      sev: 'info',
+      actor: { user: 'julien.dabert', role: 'KB Steward' },
+      target: { type: 'folder', label: next.kb, id },
+      summary: `Folder '${id}' updated`,
+      meta: { folder_id: id, space_id: id, operation: 'update' },
+    },
+    ...activityState,
+  ];
+  persistActivityState();
+  return HttpResponse.json(next);
+}
+
+function handleDeleteFolder(id: string): Response {
+  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  if (forbidden) return forbidden;
+  if (envSeededSpaceIds.has(id)) {
+    return HttpResponse.json(
+      { detail: `Folder '${id}' is env-seeded and cannot be deleted` },
+      { status: 403 },
+    );
+  }
+  const idx = spaceState.findIndex((s) => s.id === id);
+  if (idx < 0) {
+    return HttpResponse.json(
+      { detail: `Folder '${id}' not found` },
+      { status: 404 },
+    );
+  }
+  spaceState = spaceState.filter((s) => s.id !== id);
+  activityState = [
+    {
+      id: `evt_folder_${id}_${Date.now()}`,
+      ts: new Date().toISOString(),
+      rel: 'now',
+      day: 'Today',
+      kind: 'settings',
+      sev: 'info',
+      actor: { user: 'julien.dabert', role: 'KB Steward' },
+      target: { type: 'folder', label: id, id },
+      summary: `Folder '${id}' deleted`,
+      meta: { folder_id: id, space_id: id, operation: 'delete' },
+    },
+    ...activityState,
+  ];
+  persistActivityState();
+  return new HttpResponse(null, { status: 204 });
+}
+
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
-  const workspace = params.get('workspace');
+  const workspace = params.get('folder') ?? params.get('workspace');
   if (workspace && d.workspace !== workspace) return false;
   const q = params.get('q');
   if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
@@ -806,155 +953,36 @@ export const handlers = [
     return HttpResponse.json(WORKSPACE_FIXTURES);
   }),
 
-  // Spaces — admin CRUD on top of an env-seeded entry. The first
+  // Folders — admin CRUD on top of an env-seeded entry. The first
   // fixture is the env-seeded default and rejects mutations with the
-  // same status codes as the backend (403). Any space added through
-  // the API is "runtime" and mutable.
+  // same status codes as the backend (403). Any folder added through
+  // the API is "runtime" and mutable. `/spaces` remains a legacy alias.
+  http.get(`${ANY}${TWIN}/folders`, ({ request }) => {
+    recordTwinSpaceRequest(request);
+    return HttpResponse.json(spaceState);
+  }),
   http.get(`${ANY}${TWIN}/spaces`, ({ request }) => {
     recordTwinSpaceRequest(request);
     return HttpResponse.json(spaceState);
   }),
-  http.post(`${ANY}${TWIN}/spaces`, async ({ request }) => {
-    const forbidden = rejectSpaceAdminMutationIfNeeded();
-    if (forbidden) return forbidden;
-    const body = (await request.json()) as {
-      id: string;
-      label: string;
-      kind?: string;
-      description?: string;
-    };
-    if (!/^[A-Za-z0-9_-]+$/.test(body.id)) {
-      return HttpResponse.json(
-        { detail: `Invalid space id '${body.id}'` },
-        { status: 422 },
-      );
-    }
-    if (spaceState.length >= SPACE_MAX) {
-      return HttpResponse.json(
-        { detail: `Cannot create space: catalog already at max (${SPACE_MAX})` },
-        { status: 422 },
-      );
-    }
-    if (envSeededSpaceIds.has(body.id)) {
-      return HttpResponse.json(
-        { detail: `Space '${body.id}' is provisioned by the deploy env` },
-        { status: 409 },
-      );
-    }
-    if (spaceState.some((s) => s.id === body.id)) {
-      return HttpResponse.json(
-        { detail: `Space '${body.id}' already exists` },
-        { status: 409 },
-      );
-    }
-    const created = {
-      id: body.id,
-      kb: body.label,
-      visibility: 'internal' as const,
-      sources: 0,
-      role: 'admin / steward' as const,
-      current: false,
-    };
-    spaceState = [...spaceState, created];
-    activityState = [
-      {
-        id: `evt_space_${body.id}_${Date.now()}`,
-        ts: new Date().toISOString(),
-        rel: 'now',
-        day: 'Today',
-        kind: 'settings',
-        sev: 'info',
-        actor: { user: 'julien.dabert', role: 'KB Steward' },
-        target: { type: 'space', label: body.label, id: body.id },
-        summary: `Space '${body.id}' created`,
-        meta: { space_id: body.id, operation: 'create' },
-      },
-      ...activityState,
-    ];
-    persistActivityState();
-    return HttpResponse.json(created, { status: 201 });
-  }),
-  http.patch(`${ANY}${TWIN}/spaces/:id`, async ({ params, request }) => {
-    const forbidden = rejectSpaceAdminMutationIfNeeded();
-    if (forbidden) return forbidden;
-    const id = String(params.id);
-    if (envSeededSpaceIds.has(id)) {
-      return HttpResponse.json(
-        { detail: `Space '${id}' is env-seeded and cannot be edited` },
-        { status: 403 },
-      );
-    }
-    const idx = spaceState.findIndex((s) => s.id === id);
-    if (idx < 0) {
-      return HttpResponse.json(
-        { detail: `Space '${id}' not found` },
-        { status: 404 },
-      );
-    }
-    const patch = (await request.json()) as { label?: string };
-    const next = {
-      ...spaceState[idx],
-      kb: patch.label ?? spaceState[idx].kb,
-    };
-    spaceState = [
-      ...spaceState.slice(0, idx),
-      next,
-      ...spaceState.slice(idx + 1),
-    ];
-    activityState = [
-      {
-        id: `evt_space_${id}_${Date.now()}`,
-        ts: new Date().toISOString(),
-        rel: 'now',
-        day: 'Today',
-        kind: 'settings',
-        sev: 'info',
-        actor: { user: 'julien.dabert', role: 'KB Steward' },
-        target: { type: 'space', label: next.kb, id },
-        summary: `Space '${id}' updated`,
-        meta: { space_id: id, operation: 'update' },
-      },
-      ...activityState,
-    ];
-    persistActivityState();
-    return HttpResponse.json(next);
-  }),
-  http.delete(`${ANY}${TWIN}/spaces/:id`, ({ params }) => {
-    const forbidden = rejectSpaceAdminMutationIfNeeded();
-    if (forbidden) return forbidden;
-    const id = String(params.id);
-    if (envSeededSpaceIds.has(id)) {
-      return HttpResponse.json(
-        { detail: `Space '${id}' is env-seeded and cannot be deleted` },
-        { status: 403 },
-      );
-    }
-    const idx = spaceState.findIndex((s) => s.id === id);
-    if (idx < 0) {
-      return HttpResponse.json(
-        { detail: `Space '${id}' not found` },
-        { status: 404 },
-      );
-    }
-    spaceState = spaceState.filter((s) => s.id !== id);
-    activityState = [
-      {
-        id: `evt_space_${id}_${Date.now()}`,
-        ts: new Date().toISOString(),
-        rel: 'now',
-        day: 'Today',
-        kind: 'settings',
-        sev: 'info',
-        actor: { user: 'julien.dabert', role: 'KB Steward' },
-        target: { type: 'space', label: id, id },
-        summary: `Space '${id}' deleted`,
-        meta: { space_id: id, operation: 'delete' },
-      },
-      ...activityState,
-    ];
-    persistActivityState();
-    return new HttpResponse(null, { status: 204 });
-  }),
+  http.post(`${ANY}${TWIN}/folders`, async ({ request }) =>
+    handleCreateFolder(request),
+  ),
+  http.post(`${ANY}${TWIN}/spaces`, async ({ request }) =>
+    handleCreateFolder(request),
+  ),
+  http.patch(`${ANY}${TWIN}/folders/:id`, async ({ params, request }) =>
+    handleUpdateFolder(String(params.id), request),
+  ),
+  http.patch(`${ANY}${TWIN}/spaces/:id`, async ({ params, request }) =>
+    handleUpdateFolder(String(params.id), request),
+  ),
+  http.delete(`${ANY}${TWIN}/folders/:id`, ({ params }) =>
+    handleDeleteFolder(String(params.id)),
+  ),
+  http.delete(`${ANY}${TWIN}/spaces/:id`, ({ params }) =>
+    handleDeleteFolder(String(params.id)),
+  ),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinSpaceRequest(request);
     return HttpResponse.json(notificationState);

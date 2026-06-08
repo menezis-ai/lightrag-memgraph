@@ -63,13 +63,164 @@ All backends read their connection settings from environment variables (`os.envi
 | `MEMGRAPH_USERNAME` | No | `""` | Auth username (empty = no auth) |
 | `MEMGRAPH_PASSWORD` | No | `""` | Auth password |
 | `MEMGRAPH_DATABASE` | No | `"memgraph"` | Database name passed to the Bolt driver. Enterprise supports multi-database. |
-| `MEMGRAPH_WORKSPACE` | No | `"base"` | Workspace prefix in node labels for multi-tenancy (e.g., `KV_{workspace}_chunks`) |
+| `MEMGRAPH_WORKSPACE` | No | `"base"` | LightRAG/Memgraph workspace prefix in node labels for storage isolation (e.g., `KV_{workspace}_chunks`). This is not the Twin user-facing Folder. |
 | `MEMGRAPH_WRITE_CONCURRENCY` | No | `10` | Max concurrent write operations (upsert/delete/drop). Prevents Bolt pool saturation during bulk uploads. |
 | `MEMGRAPH_POOL_SIZE` | No | `50` | Write pool size (max Bolt connections for write operations) |
 | `MEMGRAPH_READ_POOL_SIZE` | No | `20` | Read pool size (dedicated read-only Bolt connections, isolated from writes) |
 | `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | No | `5.0` | Seconds to wait for a free connection before failing (applies to both pools) |
+| `TWIN_DEFAULT_FOLDER` | No | `default` | Default Twin Folder id. Used as a fallback for `MEMGRAPH_WORKSPACE` resolution when no LightRAG workspace is set. |
+| `TWIN_DEFAULT_FOLDER_LABEL` | No | `Default folder` | Display label for the default Folder when no explicit Folder catalog is provided. |
+| `TWIN_FOLDERS_JSON` | No | (empty) | JSON array defining the available Twin Folders. See [Twin Folders](#twin-folders). |
+| `TWIN_MAX_FOLDERS` | No | `5` | Maximum number of configured runtime Folders. The implementation clamps this to 1..5. |
+| `TWIN_FOLDERS_RUNTIME_FILE` | No | (empty) | Optional JSON file used to persist runtime-created Folders across process restarts. |
+| `TWIN_API_BASE_URL` | No | `/twin/api` | Runtime API base injected into the React WebUI for Twin overlay routes. |
+| `TWIN_LIGHTRAG_BASE_URL` | No | `""` | Runtime API base injected into the React WebUI for native LightRAG routes (`/documents`, `/health`, `/pipeline_status`, etc.). |
 | `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. BNP `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
 | `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files outranking this are refused at the pre-insert hook. Unknown classes are treated as above the ceiling (fail-closed). |
+
+## Twin Folders
+
+The product concept is **Folder**. The preferred public contract is now:
+`TWIN_DEFAULT_FOLDER`, `TWIN_FOLDERS_JSON`, `X-Twin-Folder`, runtime config
+fields `defaultFolderId` / `folders` / `maxFolders`, and `/twin/api/folders`.
+
+Legacy `space` names (`TWIN_DEFAULT_SPACE`, `TWIN_SPACES_JSON`,
+`TWIN_MAX_SPACES`, `TWIN_SPACES_RUNTIME_FILE`, `X-Twin-Space`,
+`/twin/api/spaces`) remain accepted for compatibility with existing BNP
+deployments and older clients. They are aliases only; new code, docs, UI copy
+and operator language should say Folder.
+
+There are two different isolation concepts:
+
+- **LightRAG workspace**: storage-level namespace used in Memgraph labels such
+  as `KV_base_chunks`, `Vec_base_entities`, and `DocStatus_base`. It is resolved
+  from `MEMGRAPH_WORKSPACE`, then `WORKSPACE`, then `TWIN_DEFAULT_FOLDER`, then
+  `TWIN_DEFAULT_SPACE`, then `base`.
+- **Twin Folder**: operator-facing subdivision exposed in the WebUI switcher
+  and Twin overlay API. It scopes WebUI data, document metadata, tags, activity,
+  notifications, and runtime catalog entries.
+
+Minimal single-Folder deployment:
+
+```bash
+TWIN_DEFAULT_FOLDER=cib
+TWIN_DEFAULT_FOLDER_LABEL="CIB Knowledge Folder"
+```
+
+Explicit multi-Folder catalog:
+
+```bash
+TWIN_DEFAULT_FOLDER=cib
+TWIN_MAX_FOLDERS=5
+TWIN_FOLDERS_JSON='[
+  {"id":"cib","label":"CIB Knowledge Folder","kind":"primary","description":"Production KB"},
+  {"id":"sandbox","label":"Sandbox Folder","kind":"sandbox","description":"Operator test area"}
+]'
+```
+
+The browser sends the active Folder on every API call using
+`X-Twin-Folder`. During the compatibility window it also sends `X-Twin-Space`
+and `X-Twin-Workspace`. Backend code reads `X-Twin-Folder` first, then falls
+back to the legacy headers.
+
+Folder administration uses `/twin/api/folders`:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/twin/api/folders` | List configured Folders. |
+| `POST` | `/twin/api/folders` | Create a runtime Folder. Requires admin scope. |
+| `PATCH` | `/twin/api/folders/{folder_id}` | Update a runtime Folder label/kind/description. |
+| `DELETE` | `/twin/api/folders/{folder_id}` | Delete an empty runtime Folder. Env-seeded Folders cannot be deleted through the API. |
+
+`/twin/api/spaces` and `GET /twin/api/workspaces` are kept for older UI
+compatibility and return the same catalog in the WebUI's historical shape.
+
+## Twin WebUI and API routes
+
+Calling `register(replace_ui=True, mount_server=True, shim_native_routes=True)`
+extends a host LightRAG FastAPI app without patching LightRAG source files:
+
+- replaces the bundled WebUI with the React Twin WebUI;
+- mounts the Twin overlay under `/twin/api`;
+- adds native-route shims so the React port can call stable document routes;
+- captures the host `LightRAG` instance so Twin query endpoints use the same KB.
+
+```python
+from twindb_lightrag_memgraph import register
+
+register(
+    replace_ui=True,
+    mount_server=True,
+    shim_native_routes=True,
+    webui_stores="memgraph",
+    security_baseline=True,
+)
+```
+
+Core native/shimmed routes used by the WebUI:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/health` | Projected service health. |
+| `GET` | `/pipeline_status` | LightRAG pipeline status in the React contract shape. |
+| `GET` | `/documents` | List documents from DocStatus. |
+| `GET` | `/documents/{doc_id}/chunks` | Read chunks for one document. |
+| `POST` | `/documents/{doc_id}/scan` | Per-document scan compatibility endpoint. Currently an ack/no-op over LightRAG's global scan model. |
+| `DELETE` | `/documents/{doc_id}` | Delete one document by id through LightRAG deletion. |
+| `GET` | `/openapi` | Curated API groups for the WebUI tab. |
+
+Native LightRAG routes remain available unless the host deployment disables
+them. They are useful for integrators that want the upstream contract:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/query` | Native non-streaming LightRAG query. |
+| `POST` | `/query/stream` | Native LightRAG NDJSON stream. |
+| `POST` | `/query/data` | Native structured retrieval data from `LightRAG.aquery_data()`. |
+| `POST` | `/documents/upload` | Native multipart upload. |
+| `POST` | `/documents/text` | Insert one text document. |
+| `POST` | `/documents/texts` | Insert multiple text documents. |
+| `POST` | `/documents/scan` | Native global input-directory scan. |
+| `POST` | `/documents/reprocess_failed` | Requeue failed documents. |
+
+Twin overlay routes:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/twin/api/query` | Structured non-streaming retrieval response: `{response, sources}`. |
+| `POST` | `/twin/api/query/stream` | NDJSON streaming response. Emits token events and a final sources event. |
+| `POST` | `/twin/api/query/data` | Structured retrieval data wrapper around `LightRAG.aquery_data()`. Supports the Twin `tag_filter` contract on returned data. |
+| `GET` | `/twin/api/documents/{doc_id}/metadata` | Folder, tags, review, classification, and raw metadata for one document. |
+| `POST` | `/twin/api/documents/bulk-delete` | Bulk document deletion with activity logging. |
+| `POST` | `/twin/api/documents/_bulk-retag` | Add/remove tags on documents. |
+| `POST` | `/twin/api/documents/{doc_id}/approve` | Approve a pending document in the governance flow. |
+| `POST` | `/twin/api/documents/{doc_id}/reject` | Reject a pending document in the governance flow. |
+| `GET` | `/twin/api/tags` | List governed tags. |
+| `POST` | `/twin/api/tags` | Request/create a tag. |
+| `PATCH` | `/twin/api/tags/{name}` | Edit tag definition/category/aliases. |
+| `POST` | `/twin/api/tags/{name}/approve` | Approve a requested tag. |
+| `POST` | `/twin/api/tags/{name}/reject` | Reject a requested tag. |
+| `POST` | `/twin/api/tags/{name}/deprecate` | Deprecate a tag. |
+| `POST` | `/twin/api/tags/{name}/synonyms` | Replace tag synonyms. |
+| `DELETE` | `/twin/api/tags/{name}` | Delete or migrate a tag. |
+| `GET` | `/twin/api/tags/categories` | List tag taxonomy categories. |
+| `GET` | `/twin/api/tags/categories/template` | Download the canonical category template. |
+| `POST` | `/twin/api/tags/categories/_import` | Import category taxonomy JSON. |
+| `GET` | `/twin/api/graph/entities` | List projected knowledge-graph entities. |
+| `POST` | `/twin/api/graph/entities` | Create a manual graph entity. |
+| `PATCH` | `/twin/api/graph/entities/{entity_id}` | Edit a graph entity projection. |
+| `DELETE` | `/twin/api/graph/entities/{entity_id}` | Delete a graph entity and its edges. |
+| `GET` | `/twin/api/graph/relations` | List projected knowledge-graph relations. |
+| `POST` | `/twin/api/graph/relations` | Create a manual graph relation. |
+| `PATCH` | `/twin/api/graph/relations/{rel_id}` | Edit a graph relation projection. |
+| `DELETE` | `/twin/api/graph/relations/{rel_id}` | Delete a graph relation. |
+| `GET` | `/twin/api/activity` | Audit/activity feed. |
+| `GET` | `/twin/api/notifications` | Operator notifications. |
+| `POST` | `/twin/api/notifications/read-all` | Mark notifications as read. |
+| `DELETE` | `/twin/api/notifications` | Clear notifications. |
+| `GET` | `/twin/api/thesaurus` | Tag autocomplete/thesaurus entries. |
+| `GET` | `/twin/api/health` | Twin overlay component health. |
+| `POST` | `/twin/api/auth/logout` | Logout ack and future cookie clearing hook. |
 
 ## How it works
 
@@ -218,7 +369,7 @@ When you connect to Memgraph with `mgconsole` or Memgraph Lab, you'll see labels
 :DocStatus_base              <- Doc status, workspace "base"
 ```
 
-With multi-workspace, a second workspace "prod" would create `KV_prod_chunks`, `Vec_prod_entities`, etc. They are fully isolated: `drop()` on one workspace does not affect another.
+With multiple LightRAG workspaces, a second workspace "prod" would create `KV_prod_chunks`, `Vec_prod_entities`, etc. They are fully isolated: `drop()` on one workspace does not affect another.
 
 ## Tests
 

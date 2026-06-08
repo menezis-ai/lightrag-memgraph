@@ -2,12 +2,12 @@
  * Unit tests for `apiFetch` — the thin typed fetch wrapper.
  *
  * Covers: runtime-config URL resolution, GET path with query params, POST JSON
- * body, space + bearer header injection, ApiError on 4xx/5xx including
+ * body, folder + bearer header injection, ApiError on 4xx/5xx including
  * non-JSON 502 (the nginx pattern that crashed the BNP front in v0.5.2).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, setActiveSpace } from './client';
+import { ApiError, apiFetch, setActiveFolder } from './client';
 import { api } from './resources';
 
 type FetchMock = ReturnType<typeof vi.fn>;
@@ -27,7 +27,7 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   fetchMock = vi.fn();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
-  setActiveSpace(null);
+  setActiveFolder(null);
   window.__twinConfig = {
     apiBaseUrl: '/twin/api',
     lightragBaseUrl: '',
@@ -37,7 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  setActiveSpace(null);
+  setActiveFolder(null);
   window.__twinConfig = originalConfig;
   window.__twinE2eRuntimeConfig = originalE2eConfig;
 });
@@ -114,42 +114,57 @@ describe('apiFetch', () => {
     expect(headers.Authorization).toBe('Bearer eyJtest');
   });
 
-  it('attaches X-Twin-Space from the active space', async () => {
+  it('attaches X-Twin-Folder from the active folder', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
-    setActiveSpace('default');
+    setActiveFolder('default');
     await apiFetch('/twin/api/tags');
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('default');
     expect(headers['X-Twin-Space']).toBe('default');
     expect(headers['X-Twin-Workspace']).toBe('default');
   });
 
-  it('allows a per-call space override', async () => {
+  it('allows a per-call folder override', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
-    setActiveSpace('default');
+    setActiveFolder('default');
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Space']).toBe('sandbox');
+    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+  });
+
+  it('keeps the legacy space override during the migration window', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
     await apiFetch('/twin/api/tags', { space: 'sandbox' });
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
     expect(headers['X-Twin-Space']).toBe('sandbox');
     expect(headers['X-Twin-Workspace']).toBe('sandbox');
   });
 
   it('keeps the legacy workspace override during the migration window', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
-    setActiveSpace('default');
+    setActiveFolder('default');
     await apiFetch('/twin/api/tags', { workspace: 'sandbox' });
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
     expect(headers['X-Twin-Space']).toBe('sandbox');
     expect(headers['X-Twin-Workspace']).toBe('sandbox');
   });
 
-  it('allows disabling the space header for a per-call request', async () => {
+  it('allows disabling the folder header for a per-call request', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
-    setActiveSpace('default');
-    await apiFetch('/health', { space: null });
+    setActiveFolder('default');
+    await apiFetch('/health', { folder: null });
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBeUndefined();
     expect(headers['X-Twin-Space']).toBeUndefined();
     expect(headers['X-Twin-Workspace']).toBeUndefined();
   });

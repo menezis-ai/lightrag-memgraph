@@ -166,7 +166,7 @@ class TestSpaces:
         r = await client.get("/tags", headers={"X-Twin-Space": "rogue"})
         assert r.status_code == 403
         assert r.json()["detail"] == (
-            "No space available for this KB. Please contact Twincore Team"
+            "No folder available for this KB. Please contact Twincore Team"
         )
 
     async def test_legacy_workspace_header_is_accepted(self, monkeypatch, client):

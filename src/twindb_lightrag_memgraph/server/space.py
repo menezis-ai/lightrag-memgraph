@@ -1,4 +1,8 @@
-"""HTTP request binding for Twin spaces."""
+"""HTTP request binding for Twin folders.
+
+``space`` remains as a legacy wire name for existing clients. New clients send
+``X-Twin-Folder`` and use the folder runtime config/routes.
+"""
 
 from __future__ import annotations
 
@@ -53,25 +57,33 @@ def build_runtime_space_config() -> dict:
     merged catalog so the React port sees runtime additions in
     `window.__twinConfig.spaces`."""
     catalog = load_space_catalog()
+    folders = [space.as_runtime_config() for space in catalog.spaces]
     return {
+        "defaultFolderId": catalog.default_space_id,
+        "folders": folders,
+        "maxFolders": catalog.max_spaces,
         "defaultSpaceId": catalog.default_space_id,
-        "spaces": [space.as_runtime_config() for space in catalog.spaces],
+        "spaces": folders,
         "maxSpaces": catalog.max_spaces,
     }
 
 
 def resolve_space_from_headers(headers: Mapping[str, str]) -> str:
     catalog = load_space_catalog()
-    raw = headers.get("x-twin-space") or headers.get("x-twin-workspace")
+    raw = (
+        headers.get("x-twin-folder")
+        or headers.get("x-twin-space")
+        or headers.get("x-twin-workspace")
+    )
     candidate = (raw or catalog.default_space_id).strip()
     try:
-        space_id = validate_identifier(candidate, "space")
+        space_id = validate_identifier(candidate, "folder")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if space_id not in catalog.ids:
         raise HTTPException(
             status_code=403,
-            detail="No space available for this KB. Please contact Twincore Team",
+            detail="No folder available for this KB. Please contact Twincore Team",
         )
     return space_id
 
@@ -90,14 +102,31 @@ def current_space_id() -> str:
     return _active_space_id.get() or load_space_catalog().default_space_id
 
 
+TwinFolder = TwinSpace
+TwinFolderCatalog = TwinSpaceCatalog
+bind_request_folder = bind_request_space
+build_runtime_folder_config = build_runtime_space_config
+current_folder_id = current_space_id
+is_env_seeded_folder = is_env_seeded_space
+load_folder_catalog = load_space_catalog
+resolve_folder_from_headers = resolve_space_from_headers
+
+
 __all__ = [
+    "TwinFolder",
+    "TwinFolderCatalog",
     "TwinSpace",
     "TwinSpaceCatalog",
+    "bind_request_folder",
     "bind_request_space",
+    "build_runtime_folder_config",
     "build_runtime_space_config",
+    "current_folder_id",
     "current_space_id",
+    "is_env_seeded_folder",
     "is_env_seeded_space",
+    "load_folder_catalog",
     "load_space_catalog",
+    "resolve_folder_from_headers",
     "resolve_space_from_headers",
 ]
-

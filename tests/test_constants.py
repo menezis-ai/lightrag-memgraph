@@ -1,9 +1,9 @@
 """Unit tests for the workspace resolution chain.
 
-The fallback chain MEMGRAPH_WORKSPACE → WORKSPACE → TWIN_DEFAULT_SPACE
-→ DEFAULT_WORKSPACE is the load-bearing consolidation: deploys can now
-ship a single env var instead of the dual-write pattern previously
-required by stack.yml.
+The fallback chain MEMGRAPH_WORKSPACE → WORKSPACE → TWIN_DEFAULT_FOLDER →
+TWIN_DEFAULT_SPACE → DEFAULT_WORKSPACE is the load-bearing consolidation:
+deploys can now ship a single env var instead of the dual-write pattern
+previously required by stack.yml.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import pytest
 from twindb_lightrag_memgraph._constants import (
     DEFAULT_WORKSPACE,
     MEMGRAPH_WORKSPACE_ENV,
+    TWIN_DEFAULT_FOLDER_ENV,
     TWIN_DEFAULT_SPACE_ENV,
     WORKSPACE_ENV,
     resolve_workspace,
@@ -21,8 +22,13 @@ from twindb_lightrag_memgraph._constants import (
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Each test starts with all three workspace env vars cleared."""
-    for key in (MEMGRAPH_WORKSPACE_ENV, WORKSPACE_ENV, TWIN_DEFAULT_SPACE_ENV):
+    """Each test starts with all workspace/folder env vars cleared."""
+    for key in (
+        MEMGRAPH_WORKSPACE_ENV,
+        WORKSPACE_ENV,
+        TWIN_DEFAULT_FOLDER_ENV,
+        TWIN_DEFAULT_SPACE_ENV,
+    ):
         monkeypatch.delenv(key, raising=False)
     yield
 
@@ -36,8 +42,14 @@ class TestResolveWorkspace:
 
     def test_falls_back_to_workspace_env(self, monkeypatch):
         monkeypatch.setenv(WORKSPACE_ENV, "core_two")
+        monkeypatch.setenv(TWIN_DEFAULT_FOLDER_ENV, "folder_three")
         monkeypatch.setenv(TWIN_DEFAULT_SPACE_ENV, "space_three")
         assert resolve_workspace() == "core_two"
+
+    def test_falls_back_to_twin_default_folder(self, monkeypatch):
+        monkeypatch.setenv(TWIN_DEFAULT_FOLDER_ENV, "folder_three")
+        monkeypatch.setenv(TWIN_DEFAULT_SPACE_ENV, "space_four")
+        assert resolve_workspace() == "folder_three"
 
     def test_falls_back_to_twin_default_space(self, monkeypatch):
         monkeypatch.setenv(TWIN_DEFAULT_SPACE_ENV, "space_three")

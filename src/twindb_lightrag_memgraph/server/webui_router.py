@@ -695,8 +695,9 @@ async def list_workspaces() -> list[dict[str, Any]]:
     return get_store().list_workspaces()
 
 
+@router.get("/folders", response_model=list[Workspace])
 @router.get("/spaces", response_model=list[Workspace])
-async def list_spaces() -> list[dict[str, Any]]:
+async def list_folders() -> list[dict[str, Any]]:
     active = current_space_id()
     return [
         space.as_workspace_compat(current=space.id == active)
@@ -705,33 +706,39 @@ async def list_spaces() -> list[dict[str, Any]]:
 
 
 @router.post(
+    "/folders",
+    response_model=Workspace,
+    status_code=201,
+    dependencies=[Depends(require_admin_user)],
+)
+@router.post(
     "/spaces",
     response_model=Workspace,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
 )
-async def create_space(body: SpaceCreate) -> dict[str, Any]:
-    """Admin: provision a new Twin space at runtime.
+async def create_folder(body: SpaceCreate) -> dict[str, Any]:
+    """Admin: provision a new Twin folder at runtime.
 
-    Returns 201 + the new space in workspace-compat shape. Errors:
-    - 409 if an env-seeded space already owns this id (operator cannot
+    Returns 201 + the new folder in workspace-compat shape. Errors:
+    - 409 if an env-seeded folder already owns this id (operator cannot
       shadow an SRE-provisioned default).
-    - 409 if a runtime space with this id already exists.
+    - 409 if a runtime folder with this id already exists.
     - 422 if the id fails the safe-identifier rule.
-    - 422 if adding this space would exceed `max_spaces` from the env
+    - 422 if adding this folder would exceed `max_spaces` from the env
       configuration.
     """
     catalog = load_space_catalog()
     if len(catalog.spaces) >= catalog.max_spaces:
         raise HTTPException(
             422,
-            f"Cannot create space: catalog already at max ({catalog.max_spaces}). "
-            "Remove an existing space first.",
+            f"Cannot create folder: catalog already at max ({catalog.max_spaces}). "
+            "Remove an existing folder first.",
         )
     if is_env_seeded_space(body.id):
         raise HTTPException(
             409,
-            f"Space id '{body.id}' is provisioned by the deploy env "
+            f"Folder id '{body.id}' is provisioned by the deploy env "
             "and cannot be re-created via the API.",
         )
     try:
@@ -743,7 +750,7 @@ async def create_space(body: SpaceCreate) -> dict[str, Any]:
         )
     except KeyError as exc:
         raise HTTPException(
-            409, f"Space '{exc.args[0]}' already exists"
+            409, f"Folder '{exc.args[0]}' already exists"
         ) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -753,52 +760,58 @@ async def create_space(body: SpaceCreate) -> dict[str, Any]:
         sev="info",
         actor="operator",
         target_label=space.label,
-        summary=f"Space '{space.id}' created ({space.kind})",
-        meta={"space_id": space.id, "operation": "create"},
-        target_type="space",
+        summary=f"Folder '{space.id}' created ({space.kind})",
+        meta={"folder_id": space.id, "space_id": space.id, "operation": "create"},
+        target_type="folder",
     )
     await store.record_activity(event)
     return space.as_workspace_compat(current=False)
 
 
 @router.patch(
-    "/spaces/{space_id}",
+    "/folders/{folder_id}",
     response_model=Workspace,
     dependencies=[Depends(require_admin_user)],
 )
-async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
-    """Admin: edit label / kind / description of a runtime space.
+@router.patch(
+    "/spaces/{folder_id}",
+    response_model=Workspace,
+    dependencies=[Depends(require_admin_user)],
+)
+async def update_folder(folder_id: str, body: SpacePatch) -> dict[str, Any]:
+    """Admin: edit label / kind / description of a runtime folder.
 
-    Env-seeded spaces are 403 — those changes must go through the
-    deploy env (`TWIN_SPACES_JSON`).
+    Env-seeded folders are 403 — those changes must go through the
+    deploy env (`TWIN_FOLDERS_JSON`).
     """
-    if is_env_seeded_space(space_id):
+    if is_env_seeded_space(folder_id):
         raise HTTPException(
             403,
-            f"Space '{space_id}' is env-seeded and cannot be edited via the API.",
+            f"Folder '{folder_id}' is env-seeded and cannot be edited via the API.",
         )
     patch = body.model_dump(exclude_unset=True)
     space = space_store.update_runtime_space(
-        space_id,
+        folder_id,
         label=patch.get("label"),
         kind=patch.get("kind"),
         description=patch.get("description"),
     )
     if space is None:
-        raise HTTPException(404, f"Space '{space_id}' not found")
+        raise HTTPException(404, f"Folder '{folder_id}' not found")
     store = get_store()
     event = _make_event(
         kind="settings",
         sev="info",
         actor="operator",
         target_label=space.label,
-        summary=f"Space '{space.id}' updated",
+        summary=f"Folder '{space.id}' updated",
         meta={
+            "folder_id": space.id,
             "space_id": space.id,
             "operation": "update",
             "patch_keys": list(patch.keys()),
         },
-        target_type="space",
+        target_type="folder",
     )
     await store.record_activity(event)
     active = current_space_id()
@@ -806,25 +819,30 @@ async def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
 
 
 @router.delete(
-    "/spaces/{space_id}",
+    "/folders/{folder_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
 )
-async def delete_space(space_id: str) -> None:
-    """Admin: remove a runtime space.
+@router.delete(
+    "/spaces/{folder_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin_user)],
+)
+async def delete_folder(folder_id: str) -> None:
+    """Admin: remove a runtime folder.
 
     - 403 if env-seeded (only the deploy env can remove those).
-    - 404 if no runtime space with this id exists.
-    - 409 if the space still has WebUI data (tags, activity events,
+    - 404 if no runtime folder with this id exists.
+    - 409 if the folder still has WebUI data (tags, activity events,
       docs scoped to it). Refusing to delete avoids orphaning state.
     """
-    if is_env_seeded_space(space_id):
+    if is_env_seeded_space(folder_id):
         raise HTTPException(
             403,
-            f"Space '{space_id}' is env-seeded and cannot be deleted via the API.",
+            f"Folder '{folder_id}' is env-seeded and cannot be deleted via the API.",
         )
     # Probe the in-memory store for residual data before deleting.
-    bound_store = _stores.get(space_id)
+    bound_store = _stores.get(folder_id)
     if bound_store is not None:
         has_docs = len(bound_store._documents) > 0  # noqa: SLF001
         # `list_tags` is sync on the in-memory backend, async on the
@@ -836,22 +854,22 @@ async def delete_space(space_id: str) -> None:
         if has_docs or has_tags:
             raise HTTPException(
                 409,
-                f"Space '{space_id}' still has data (docs and/or tags). "
-                "Remove the contents before deleting the space.",
+                f"Folder '{folder_id}' still has data (docs and/or tags). "
+                "Remove the contents before deleting the folder.",
             )
-    if not space_store.delete_runtime_space(space_id):
-        raise HTTPException(404, f"Space '{space_id}' not found")
-    # Evict the per-space WebUI store so future GETs don't resurrect it.
-    _stores.pop(space_id, None)
+    if not space_store.delete_runtime_space(folder_id):
+        raise HTTPException(404, f"Folder '{folder_id}' not found")
+    # Evict the per-folder WebUI store so future GETs don't resurrect it.
+    _stores.pop(folder_id, None)
     store = get_store()
     event = _make_event(
         kind="settings",
         sev="info",
         actor="operator",
-        target_label=space_id,
-        summary=f"Space '{space_id}' deleted",
-        meta={"space_id": space_id, "operation": "delete"},
-        target_type="space",
+        target_label=folder_id,
+        summary=f"Folder '{folder_id}' deleted",
+        meta={"folder_id": folder_id, "space_id": folder_id, "operation": "delete"},
+        target_type="folder",
     )
     await store.record_activity(event)
     return None

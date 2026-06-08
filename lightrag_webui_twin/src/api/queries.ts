@@ -47,7 +47,13 @@ async function mapSettledWithConcurrency<T, R>(
 }
 
 export function useDocuments(
-  query: { status?: string; q?: string; tag?: string; workspace?: string } = {},
+  query: {
+    status?: string;
+    q?: string;
+    tag?: string;
+    folder?: string;
+    workspace?: string;
+  } = {},
   options: QueryGate = {},
 ) {
   return useQuery({
@@ -67,22 +73,26 @@ export function useWorkspaces(options: QueryGate = {}) {
   });
 }
 
-// Spaces — admin CRUD on top of the env seed.
-export function useSpaces(options: QueryGate = {}) {
+// Folders — admin CRUD on top of the env seed.
+export function useFolders(options: QueryGate = {}) {
   return useQuery({
-    queryKey: ['spaces'] as const,
-    queryFn: ({ signal }) => api.listSpaces({ signal }),
+    queryKey: ['folders'] as const,
+    queryFn: ({ signal }) => api.listFolders({ signal }),
     ...DEFAULTS,
     ...options,
   });
 }
 
-export function useCreateSpace() {
+/** @deprecated Use useFolders. */
+export const useSpaces = useFolders;
+
+export function useCreateFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Parameters<typeof api.createSpace>[0]) =>
-      api.createSpace(body),
+    mutationFn: (body: Parameters<typeof api.createFolder>[0]) =>
+      api.createFolder(body),
     onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['folders'] });
       void qc.invalidateQueries({ queryKey: ['spaces'] });
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
@@ -90,15 +100,19 @@ export function useCreateSpace() {
   });
 }
 
-export function useUpdateSpace() {
+/** @deprecated Use useCreateFolder. */
+export const useCreateSpace = useCreateFolder;
+
+export function useUpdateFolder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
       id,
       patch,
-    }: { id: string; patch: Parameters<typeof api.updateSpace>[1] }) =>
-      api.updateSpace(id, patch),
+    }: { id: string; patch: Parameters<typeof api.updateFolder>[1] }) =>
+      api.updateFolder(id, patch),
     onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['folders'] });
       void qc.invalidateQueries({ queryKey: ['spaces'] });
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
@@ -106,17 +120,24 @@ export function useUpdateSpace() {
   });
 }
 
-export function useDeleteSpace() {
+/** @deprecated Use useUpdateFolder. */
+export const useUpdateSpace = useUpdateFolder;
+
+export function useDeleteFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.deleteSpace(id),
+    mutationFn: (id: string) => api.deleteFolder(id),
     onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['folders'] });
       void qc.invalidateQueries({ queryKey: ['spaces'] });
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 }
+
+/** @deprecated Use useDeleteFolder. */
+export const useDeleteSpace = useDeleteFolder;
 
 export function useNotifications(options: QueryGate = {}) {
   return useQuery({
