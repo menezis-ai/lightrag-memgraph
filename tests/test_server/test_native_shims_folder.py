@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph.server import native_shims
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.native_shims import build_native_shims_router
 
 
@@ -128,3 +129,44 @@ class TestNativeShimFolders:
         )
         assert r.status_code == 200
         assert r.json()[0]["chunk_id"] == "c-sandbox"
+
+
+class TestNativeShimAuthStatus:
+    async def test_auth_routes_shadow_lightrag_guest_token_routes(self):
+        configure_auth(api_key=None, jwt_secret=None)
+        app = FastAPI()
+        app.include_router(build_native_shims_router(lambda: FakeRag()))
+
+        @app.get("/auth-status")
+        async def broken_native_auth_status():
+            raise RuntimeError("LightRAG native route should be shadowed")
+
+        @app.post("/login")
+        async def broken_native_login():
+            raise RuntimeError("LightRAG native route should be shadowed")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            status_response = await c.get("/auth-status")
+            login_response = await c.post(
+                "/login",
+                json={"username": "alice", "password": "secret"},
+            )
+            logout_response = await c.post("/logout")
+
+        assert status_response.status_code == 200
+        assert status_response.json() == {
+            "auth_enabled": False,
+            "authenticated": True,
+            "user": None,
+            "expires_at": None,
+            "login_required": False,
+        }
+        assert login_response.status_code == 501
+        assert login_response.json() == {
+            "detail": "JWT auth not configured on this server"
+        }
+        assert logout_response.status_code == 200
+        assert logout_response.json() == {"ok": True}

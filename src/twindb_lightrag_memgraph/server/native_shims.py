@@ -36,10 +36,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from .auth import LoginRequest, LoginResponse
+
 logger = logging.getLogger(__name__)
+_security = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +100,14 @@ class _SimplePipelineStatus(BaseModel):
 
 class _OkResponse(BaseModel):
     ok: bool = True
+
+
+class _AuthStatusResponse(BaseModel):
+    auth_enabled: bool
+    authenticated: bool
+    user: str | None = None
+    expires_at: str | None = None
+    login_required: bool
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +246,44 @@ def build_native_shims_router(get_rag) -> APIRouter:
             lifespan has finished instantiating the RAG.
     """
     router = APIRouter(tags=["twin-shim"])
+
+    @router.get("/auth-status", response_model=_AuthStatusResponse)
+    async def auth_status_shim(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    ) -> _AuthStatusResponse:
+        """Shadow LightRAG's native auth status without minting guest JWTs.
+
+        LightRAG 1.4.9.11 emits guest tokens from ``/auth-status`` and
+        ``/login`` when local accounts are disabled. With ``TOKEN_SECRET=""``
+        this raises ``InvalidKeyError: HMAC key must not be empty``. Twin does
+        not use guest tokens, so the shims delegate to our auth module, whose
+        disabled-auth responses are explicit and side-effect free.
+        """
+        from .auth import auth_status
+
+        return await auth_status(request, credentials)
+
+    @router.post("/login", response_model=LoginResponse)
+    async def login_shim(
+        body: LoginRequest,
+        response: Response,
+    ) -> LoginResponse:
+        """Shadow LightRAG's native login without minting guest JWTs.
+
+        The Twin WebUI posts JSON credentials here. The native LightRAG route
+        expects OAuth2 form data and also mints a guest token when accounts are
+        disabled, so it must not handle this path in Twin deployments.
+        """
+        from .auth import login
+
+        return await login(body, response)
+
+    @router.post("/logout", response_model=_OkResponse)
+    async def logout_shim(response: Response) -> dict[str, bool]:
+        from .auth import logout
+
+        return await logout(response)
 
     @router.get("/documents", response_model=_ListEnvelope)
     async def list_documents(
