@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const backendUrl = process.env.REAL_BACKEND_URL?.replace(/\/$/, '') ?? '';
 const authToken = process.env.REAL_BACKEND_AUTH_TOKEN ?? process.env.VITE_AUTH_TOKEN;
-const defaultSpace = process.env.REAL_BACKEND_SPACE ?? 'default';
+const defaultFolder = process.env.REAL_BACKEND_FOLDER ?? 'default';
 const expectAuth = process.env.REAL_E2E_EXPECT_AUTH === 'true';
 const mutationDocId = process.env.REAL_E2E_MUTATION_DOC_ID;
 const configuredRetagTag = process.env.REAL_E2E_RETAG_TAG;
@@ -22,8 +22,7 @@ interface DocumentListEnvelope {
 
 interface DocumentMetadata {
   tags: string[];
-  space: string;
-  workspace?: string;
+  folder: string;
   metadata?: Record<string, unknown>;
   classification?: unknown;
 }
@@ -53,8 +52,7 @@ interface TagEntry {
 function authHeaders(): Record<string, string> {
   return {
     Accept: 'application/json',
-    'X-Twin-Space': defaultSpace,
-    'X-Twin-Workspace': defaultSpace,
+    'X-Twin-Folder': defaultFolder,
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
   };
 }
@@ -62,8 +60,7 @@ function authHeaders(): Record<string, string> {
 function noAuthHeaders(): Record<string, string> {
   return {
     Accept: 'application/json',
-    'X-Twin-Space': defaultSpace,
-    'X-Twin-Workspace': defaultSpace,
+    'X-Twin-Folder': defaultFolder,
   };
 }
 
@@ -190,7 +187,7 @@ test.describe('real backend smoke', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(
-      ({ apiBaseUrl, lightragBaseUrl, space }) => {
+      ({ apiBaseUrl, lightragBaseUrl, folder }) => {
         window.localStorage.setItem(
           'twin.onboarding.v1',
           JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
@@ -200,14 +197,14 @@ test.describe('real backend smoke', () => {
           apiBaseUrl,
           lightragBaseUrl,
           idpLogoutUrl: 'https://idp.example.invalid/logout',
-          defaultSpaceId: space,
-          maxSpaces: 5,
-          spaces: [
+          defaultFolderId: folder,
+          maxFolders: 5,
+          folders: [
             {
-              id: space,
-              label: space,
+              id: folder,
+              label: folder,
               kind: 'primary',
-              description: 'Real backend e2e smoke space',
+              description: 'Real backend e2e smoke folder',
             },
           ],
           debugUser: {
@@ -219,7 +216,7 @@ test.describe('real backend smoke', () => {
               label: 'Steward',
               scopes: ['twin:read', 'twin:write', 'twin:approve'],
             },
-            workspaces: [space],
+            folders: [folder],
             idp: 'e2e',
             idp_realm: 'real-backend',
             sub: 'real-e2e',
@@ -231,7 +228,7 @@ test.describe('real backend smoke', () => {
       {
         apiBaseUrl: `${backendUrl}/twin/api`,
         lightragBaseUrl: backendUrl,
-        space: defaultSpace,
+        folder: defaultFolder,
       },
     );
   });
@@ -265,9 +262,9 @@ test.describe('real backend smoke', () => {
     expect(Array.isArray(documents.body.items)).toBe(true);
     expect(typeof documents.body.total).toBe('number');
 
-    const spaces = await fetchFromBrowser<unknown[]>(page, '/twin/api/spaces');
-    expect(spaces.ok, JSON.stringify(spaces.body)).toBe(true);
-    expect(Array.isArray(spaces.body)).toBe(true);
+    const folders = await fetchFromBrowser<unknown[]>(page, '/twin/api/folders');
+    expect(folders.ok, JSON.stringify(folders.body)).toBe(true);
+    expect(Array.isArray(folders.body)).toBe(true);
 
     const graphEntities = await fetchFromBrowser<unknown[]>(
       page,
@@ -287,12 +284,12 @@ test.describe('real backend smoke', () => {
 
     await page.goto('/');
 
-    const missing = await fetchFromBrowser<unknown>(page, '/twin/api/spaces', {
+    const missing = await fetchFromBrowser<unknown>(page, '/twin/api/folders', {
       headers: noAuthHeaders(),
     });
     expect(missing.status, JSON.stringify(missing.body)).toBe(401);
 
-    const invalid = await fetchFromBrowser<unknown>(page, '/twin/api/spaces', {
+    const invalid = await fetchFromBrowser<unknown>(page, '/twin/api/folders', {
       headers: {
         ...noAuthHeaders(),
         Authorization: 'Bearer real-e2e-invalid-token',
@@ -315,7 +312,7 @@ test.describe('real backend smoke', () => {
     );
     expect(metadata.ok, JSON.stringify(metadata.body)).toBe(true);
     expect(Array.isArray(metadata.body.tags)).toBe(true);
-    expect(metadata.body.space).toBe(defaultSpace);
+    expect(metadata.body.folder).toBe(defaultFolder);
     expect(metadata.body).toHaveProperty('metadata');
   });
 

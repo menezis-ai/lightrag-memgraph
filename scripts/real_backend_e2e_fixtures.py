@@ -16,6 +16,7 @@ BULK_DELETE_DOC_ID = os.environ.get(
 )
 RETAG_TAG = os.environ.get("REAL_E2E_RETAG_TAG", "real_e2e_tag")
 MEMGRAPH_URI = os.environ.get("MEMGRAPH_URI", "bolt://127.0.0.1:7687")
+FOLDER_ID = os.environ.get("REAL_BACKEND_FOLDER", "default")
 
 
 def _driver():
@@ -33,7 +34,7 @@ def seed() -> None:
             "content_length": 48,
             "chunks_count": 0,
             "chunks_list": json.dumps([]),
-            "metadata": json.dumps({"space": "default", "tags": [], "e2e": True}),
+            "metadata": json.dumps({"folder": FOLDER_ID, "tags": [], "e2e": True}),
             "created_at": now,
             "updated_at": now,
             "track_id": "real-e2e-retag-track",
@@ -46,7 +47,7 @@ def seed() -> None:
             "content_length": 50,
             "chunks_count": 0,
             "chunks_list": json.dumps([]),
-            "metadata": json.dumps({"space": "default", "tags": [], "e2e": True}),
+            "metadata": json.dumps({"folder": FOLDER_ID, "tags": [], "e2e": True}),
             "created_at": now,
             "updated_at": now,
             "track_id": "real-e2e-delete-track",

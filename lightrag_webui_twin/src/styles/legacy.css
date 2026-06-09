@@ -264,7 +264,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-radius: 999px;
   color: var(--color-text-secondary);
   cursor: pointer;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .folder-pill:hover { border-color: var(--color-border-secondary); }
 .icon-btn {
@@ -411,7 +411,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--twin-green-50);
   color: var(--twin-green-700);
   font-weight: 400;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .tag-chip.removable { padding-right: 4px; }
 .tag-chip.warning { background: var(--twin-amber-50); color: var(--twin-amber-vivid); font-weight: 500; }
@@ -475,7 +475,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .detail-source { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .detail-source h2 {
   font-size: 14px; font-weight: 500; margin: 0;
-  white-folder: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-family: var(--font-mono);
   color: var(--color-text-primary);
 }
@@ -619,10 +619,10 @@ input:focus, textarea:focus, select:focus { outline: none; }
 
 .cell-source { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cell-source .ico { color: var(--color-text-secondary); flex-shrink: 0; }
-.cell-source .name { overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.cell-source .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-source .name.mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--color-text-secondary); }
 .cell-summary {
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--color-text-secondary);
 }
 .cell-summary.failed { color: var(--twin-red-vivid); font-style: italic; }
@@ -745,7 +745,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .source-card .src-icon { color: var(--color-text-secondary); flex-shrink: 0; }
 .source-card .src-name {
   flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .source-card .src-name.mono { font-family: var(--font-mono); font-size: 11.5px; }
 .source-card .src-meta { color: var(--color-text-tertiary); font-size: 11px; flex-shrink: 0; }
@@ -998,7 +998,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .file-row .row1 {
   display: flex; align-items: center; gap: 10px; font-size: 12px;
 }
-.file-row .row1 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.file-row .row1 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row .row1 .size { color: var(--color-text-tertiary); font-size: 11px; font-family: var(--font-mono); }
 .file-row .row2 { font-size: 11px; color: var(--color-text-tertiary); display: flex; align-items: center; gap: 8px; }
 .file-row.error .row2 { color: var(--twin-red-vivid); }
@@ -1215,7 +1215,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   padding: 5px 0;
 }
 .pp-q-name {
-  white-folder: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-size: 11px;
 }
 .pp-q-bar {
@@ -1291,7 +1291,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   width: 1px; height: 1px;
   padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0,0,0,0);
-  white-folder: nowrap; border: 0;
+  white-space: nowrap; border: 0;
 }
 .toast-stack-more {
   align-self: flex-end;
@@ -1352,7 +1352,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .toast .sub {
   font-size: 11px; color: var(--color-text-secondary);
   margin-top: 2px;
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .toast .undo {
   font-size: 11.5px;
@@ -1540,7 +1540,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   cursor: pointer;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .retry-banner-btn:hover { background: var(--color-background-secondary); }
 .retry-banner-btn.primary {
@@ -1585,7 +1585,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .retry-label { color: var(--color-text-primary); font-weight: 500; }
 .retry-target {
   color: var(--color-text-secondary); font-size: 11px;
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .retry-meta {
   display: flex; gap: 5px; align-items: center;
@@ -1813,7 +1813,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 }
 .swagger-summary {
   font-size: 12.5px; color: var(--color-text-secondary);
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .swagger-lock { display: inline-flex; }
 
@@ -2111,12 +2111,12 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .row-target {
   font-size: 12.5px; color: var(--color-text-primary);
   font-family: var(--font-mono);
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
 .row-summary {
   font-size: 12px; color: var(--color-text-secondary);
-  overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .sev-badge {
@@ -2427,7 +2427,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-secondary);
   text-decoration: none;
 }
-.example-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.example-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .example-row:hover { border-color: var(--twin-accent); color: var(--twin-accent); }
 .example-more { font-size: 12px; color: var(--twin-accent); text-decoration: none; padding: 6px 10px; }
 
@@ -2806,7 +2806,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--color-text-primary);
   cursor: pointer;
   font: inherit; font-size: 12px;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .bulk-action:hover { background: var(--color-background-secondary); }
 .bulk-action.primary {
@@ -2846,7 +2846,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-tertiary);
   border: 0.5px solid var(--color-border-tertiary);
   color: var(--color-text-secondary);
-  white-folder: nowrap;
+  white-space: nowrap;
   overflow: hidden;
 }
 .bulk-target-chip > span {
@@ -2903,7 +2903,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   font-size: 11.5px;
   line-height: 1.5;
   overflow-x: auto;
-  white-folder: pre;
+  white-space: pre;
   color: var(--color-text-primary);
 }
 .swagger-body-edit {
@@ -3422,7 +3422,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--twin-accent-soft-bg);
   color: var(--twin-accent-soft-text);
   border-radius: 3px;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .kg-rel-target {
   background: transparent;
@@ -3445,7 +3445,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .kg-rel-target-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
   min-width: 0;
 }
 .kg-rel-swatch {
@@ -4003,7 +4003,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-radius: 999px;
   color: var(--color-text-secondary);
   cursor: pointer;
-  white-folder: nowrap;
+  white-space: nowrap;
   font: inherit;
   font-size: 11px;
 }
@@ -4182,7 +4182,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   cursor: pointer;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .sys-banner-btn:hover { background: var(--color-background-secondary); }
 .sys-banner-btn.primary {
@@ -4261,7 +4261,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
   max-width: 100%;
 }
 .conn-url:hover { color: var(--twin-accent); text-decoration: underline; }
@@ -4498,7 +4498,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .sync-history-row:last-child { border-bottom: none; }
 .sync-history-row:hover { background: var(--color-background-secondary); }
 .sync-h-name { color: var(--color-text-primary); font-weight: 500; }
-.sync-h-summary { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.sync-h-summary { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sync-h-time { color: var(--color-text-tertiary); font-size: 10.5px; }
 .sync-h-dur  { color: var(--color-text-tertiary); font-size: 10.5px; text-align: right; }
 .sync-history-row.outcome-error .sync-h-summary { color: var(--twin-red-vivid, #B03030); }
@@ -4709,7 +4709,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .onboard-dismiss {
   width: 22px; height: 22px;
@@ -4800,7 +4800,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border: 0;
   cursor: pointer;
   display: inline-flex; align-items: center; gap: 4px;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .onboard-cta:hover { filter: brightness(0.95); }
 .onboard-task:not(.is-next) .onboard-cta {
@@ -5146,7 +5146,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   .topbar { padding: 0 14px; }
   .brand-kb {
     max-width: 140px;
-    overflow: hidden; text-overflow: ellipsis; white-folder: nowrap;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   /* Documents: wrap actions, soften header */
@@ -5378,7 +5378,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 
 .onto-inbox-card-h { display: flex; align-items: center; gap: 6px; }
 .onto-card-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
-.onto-card-name { font-weight: 600; color: var(--color-text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.onto-card-name { font-weight: 600; color: var(--color-text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .onto-card-conf { font-size: 10.5px; font-weight: 600; padding: 1px 5px; border-radius: 999px; font-family: var(--font-mono); }
 .onto-card-conf.is-high { background: var(--twin-green-50); color: var(--twin-green-700); }
 .onto-card-conf.is-mid  { background: var(--twin-amber-50); color: var(--twin-amber-700); }
@@ -5391,7 +5391,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 }
 .onto-kind-tag.is-rel { background: var(--twin-accent-soft-bg); color: var(--twin-accent-soft-text); }
 .onto-kind-tag.is-fix { background: var(--twin-amber-50); color: var(--twin-amber-700); }
-.onto-card-evidence { font-size: 10.5px; color: var(--color-text-tertiary); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.onto-card-evidence { font-size: 10.5px; color: var(--color-text-tertiary); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .onto-card-actions { display: flex; gap: 4px; margin-top: 2px; }
 .onto-mini-btn {
   flex: 1; padding: 3px 6px; font-size: 11px; border-radius: 4px;
@@ -5462,7 +5462,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 }
 .onto-node-swatch { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
 .onto-node-text { flex: 1; min-width: 0; }
-.onto-node-name { font-weight: 600; color: var(--color-text-primary); white-folder: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 1.2; }
+.onto-node-name { font-weight: 600; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 1.2; }
 .onto-node-type { font-size: 10px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.2; margin-top: 1px; }
 .onto-node-pending-pill { color: var(--twin-amber-vivid); font-size: 8px; }
 .onto-node-origin-pill { color: var(--twin-red-vivid); font-size: 12px; }
@@ -5679,7 +5679,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .onto-audit-ts { color: var(--color-text-tertiary); font-size: 10.5px; }
 .onto-audit-who code { font-size: 10.5px; color: var(--twin-accent-soft-text); background: var(--twin-accent-soft-bg); padding: 0 4px; border-radius: 2px; }
 .onto-audit-action { color: var(--color-text-primary); font-weight: 500; }
-.onto-audit-target { grid-column: 1 / -1; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; }
+.onto-audit-target { grid-column: 1 / -1; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Wargame summary panel (right rail in split layout) */
 .onto-wargame-summary {
@@ -5724,7 +5724,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-radius: 4px; cursor: pointer;
 }
 .onto-wargame-group li:hover { background: var(--color-background-secondary); border-color: var(--twin-accent-soft-border); }
-.onto-wargame-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-folder: nowrap; color: var(--color-text-primary); font-weight: 500; }
+.onto-wargame-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); font-weight: 500; }
 .onto-wargame-typed { font-size: 9.5px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
 .onto-wargame-pra { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--twin-red-vivid); padding: 6px 8px; background: var(--color-background-primary); border-radius: 4px; border: 0.5px dashed var(--twin-red-border); }
 
@@ -5906,7 +5906,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .wargame-cta-btn {
   font-size: 11.5px; padding: 5px 11px; border-radius: 4px;
   background: var(--twin-accent); color: #fff; border: 0.5px solid var(--twin-accent-hover);
-  cursor: pointer; white-folder: nowrap; font-weight: 500;
+  cursor: pointer; white-space: nowrap; font-weight: 500;
 }
 .wargame-cta-btn:hover { background: var(--twin-accent-hover); }
 .wargame-cta-btn.is-on { background: var(--color-background-primary); color: var(--twin-accent-soft-text); border-color: var(--twin-accent-soft-border); }

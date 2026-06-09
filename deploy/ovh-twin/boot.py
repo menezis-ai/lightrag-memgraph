@@ -9,7 +9,7 @@ which must be wrapped before LightRAG's ``main()`` resolves them.
 Env vars consumed (in addition to the LightRAG-native ones):
 
   MEMGRAPH_URI       Bolt URI of the Memgraph service (compose)
-  WORKSPACE          Twin workspace id (default: "default")
+  WORKSPACE          LightRAG/Memgraph workspace id (default: "default")
   TWIN_API_BASE_URL  Optional override for the WebUI's apiBaseUrl
   TWIN_LIGHTRAG_BASE_URL  Optional override for lightragBaseUrl
   TWIN_IDP_LOGOUT_URL     Optional IdP logout URL (debug placeholder

@@ -397,7 +397,7 @@
 .doc-detail-title strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
   max-width: 260px;
   font-weight: 500;
 }
@@ -783,13 +783,13 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .cell-summary .summary-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-folder: nowrap;
+  white-space: nowrap;
 }
 .cell-actions {
   display: inline-flex;
@@ -835,7 +835,7 @@
   flex-wrap: wrap;
 }
 .toast .sub {
-  white-folder: normal;
+  white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;

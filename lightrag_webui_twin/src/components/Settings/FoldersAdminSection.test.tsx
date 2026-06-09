@@ -1,7 +1,7 @@
 /**
  * Unit tests for FoldersAdminSection — Admin Folder CRUD UI.
  *
- * Hits the MSW handlers wired to mutable `spaceState` so each test
+ * Hits the MSW handlers wired to mutable `folderState` so each test
  * exercises the full mutation loop (TanStack Query invalidation, list
  * refetch, optimistic rollback on error).
  */

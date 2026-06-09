@@ -131,7 +131,7 @@ export function FoldersAdminSection({
           // selection but the catalog returns env first.
           const envSeeded = idx === 0;
           return (
-            <SpaceRow
+            <FolderRow
               key={folder.id}
               folder={folder}
               envSeeded={envSeeded}
@@ -321,7 +321,7 @@ function AddFolderForm({
 }
 
 // ─── Row: shows + edits + deletes one folder ──────────────────────────
-interface SpaceRowProps {
+interface FolderRowProps {
   folder: Folder;
   envSeeded: boolean;
   pendingEdit: boolean;
@@ -333,7 +333,7 @@ interface SpaceRowProps {
   onDelete: () => void;
 }
 
-function SpaceRow({
+function FolderRow({
   folder,
   envSeeded,
   pendingEdit,
@@ -343,7 +343,7 @@ function SpaceRow({
   canManage,
   onSave,
   onDelete,
-}: SpaceRowProps) {
+}: FolderRowProps) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(folder.kb);
   const [armedDelete, setArmedDelete] = useState(false);

@@ -30,7 +30,7 @@ test.describe('Settings guardrails', () => {
   test('TWIN-SET-04/05/06 editable settings remain out of scope', async ({ page }) => {
     await expect(page.getByTestId('settings-rail-profile')).toBeVisible();
     await expect(page.getByTestId('settings-rail-api')).toBeVisible();
-    await expect(page.getByTestId('settings-rail-workspace')).toBeVisible();
+    await expect(page.getByTestId('settings-rail-folder')).toBeVisible();
 
     await expect(page.getByTestId('settings-tab')).not.toContainText(
       /Default ingestion tags|Invite member|Delete member|Revoke token/,

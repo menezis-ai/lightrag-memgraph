@@ -501,7 +501,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
         """Return structured LightRAG retrieval data through the Twin prefix.
 
         This mirrors LightRAG's native `/query/data` endpoint while keeping
-        the Twin contract (`/twin/api/*`, space headers, tag_filter) on the
+        the Twin contract (`/twin/api/*`, folder header, tag_filter) on the
         same surface as `/query` and `/query/stream`.
         """
         del request

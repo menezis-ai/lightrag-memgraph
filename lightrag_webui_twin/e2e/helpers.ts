@@ -36,10 +36,9 @@ export async function getMswStats(
 ): Promise<{
   approveCalls: Record<string, number>;
   tagApproveCalls: Record<string, number>;
-  spaceRequests: Array<{
+  folderRequests: Array<{
     path: string;
-    space: string | null;
-    workspace: string | null;
+    folder: string | null;
   }>;
 }> {
   return page.evaluate(async () => {

@@ -192,15 +192,15 @@ jobs:
     env:
       MEMGRAPH_URI: bolt://memgraph:7687
       REAL_BACKEND_URL: http://127.0.0.1:9621
-      REAL_BACKEND_SPACE: default
+      REAL_BACKEND_FOLDER: default
       REAL_BACKEND_AUTH_TOKEN: real-e2e-token
       VITE_AUTH_TOKEN: real-e2e-token
       REAL_E2E_EXPECT_AUTH: "true"
       REAL_E2E_MUTATION_DOC_ID: real-e2e-retag-doc
       REAL_E2E_BULK_DELETE_DOC_ID: real-e2e-delete-doc
       REAL_E2E_RETAG_TAG: real_e2e_tag
-      TWIN_DEFAULT_SPACE: default
-      TWIN_SPACES_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
+      TWIN_DEFAULT_FOLDER: default
+      TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
     steps:
       - uses: actions/checkout@v4
 
@@ -244,8 +244,8 @@ jobs:
             EMBEDDING_BINDING_API_KEY=ci-disabled \
             EMBEDDING_MODEL=text-embedding-3-small \
             EMBEDDING_DIM=1536 \
-            TWIN_DEFAULT_SPACE="$TWIN_DEFAULT_SPACE" \
-            TWIN_SPACES_JSON="$TWIN_SPACES_JSON" \
+            TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
+            TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores='memgraph'); from lightrag.api.lightrag_server import main; main()" \
             > real-backend.log 2>&1 &
           echo $! > real-backend.pid

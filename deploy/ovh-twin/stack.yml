@@ -52,7 +52,7 @@ services:
       MEMGRAPH_URI: "bolt://memgraph:7687"
       # Single workspace env var since `_constants.resolve_workspace`
       # falls back through MEMGRAPH_WORKSPACE → WORKSPACE →
-      # TWIN_DEFAULT_SPACE → "base". The dual-write era is over.
+      # TWIN_DEFAULT_FOLDER → "base". The dual-write era is over.
       WORKSPACE: "${WORKSPACE:-cib}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       LLM_BINDING_API_KEY: "${OPENAI_API_KEY}"

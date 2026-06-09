@@ -10,7 +10,7 @@ const runtimeUser = {
     label: 'Steward',
     scopes: ['twin:read', 'twin:write', 'twin:approve'],
   },
-  workspaces: ['default', 'sandbox', 'ops'],
+  folders: ['default', 'sandbox', 'ops'],
   idp: 'keycloak',
   idp_realm: 'twin-cib',
   sub: 'clb-7f4e',
@@ -36,18 +36,18 @@ async function bootWithRuntimeConfig(page: Page, config: Record<string, unknown>
   await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
 }
 
-test.describe('Twin spaces runtime config', () => {
-  test('@spaces runtime defaultSpaceId and configured spaces drive the topbar', async ({
+test.describe('Twin folders runtime config', () => {
+  test('@folders runtime defaultFolderId and configured folders drive the topbar', async ({
     page,
   }) => {
     await bootWithRuntimeConfig(page, {
       apiBaseUrl: '/twin/api',
       lightragBaseUrl: '',
       idpLogoutUrl: 'https://idp.example.com/logout',
-      defaultSpaceId: 'sandbox',
-      maxSpaces: 5,
+      defaultFolderId: 'sandbox',
+      maxFolders: 5,
       debugUser: runtimeUser,
-      spaces: [
+      folders: [
         { id: 'default', label: 'Default runtime', kind: 'primary', sources: 12 },
         { id: 'sandbox', label: 'Sandbox runtime', kind: 'sandbox', sources: 2 },
         { id: 'ops', label: 'Ops archive', kind: 'custom', sources: 4 },
@@ -64,17 +64,17 @@ test.describe('Twin spaces runtime config', () => {
     await expect(menu).toContainText('Ops archive');
   });
 
-  test('@spaces switching space sends subsequent Twin requests with the new header', async ({
+  test('@folders switching folder sends subsequent Twin requests with the new header', async ({
     page,
   }) => {
     await bootWithRuntimeConfig(page, {
       apiBaseUrl: '/twin/api',
       lightragBaseUrl: '',
       idpLogoutUrl: 'https://idp.example.com/logout',
-      defaultSpaceId: 'default',
-      maxSpaces: 5,
+      defaultFolderId: 'default',
+      maxFolders: 5,
       debugUser: runtimeUser,
-      spaces: [
+      folders: [
         { id: 'default', label: 'Default runtime', kind: 'primary', sources: 12 },
         { id: 'sandbox', label: 'Sandbox runtime', kind: 'sandbox', sources: 2 },
       ],
@@ -87,8 +87,8 @@ test.describe('Twin spaces runtime config', () => {
     await expect
       .poll(async () => {
         const stats = await getMswStats(page);
-        return stats.spaceRequests
-          .filter((request) => request.space === 'sandbox' && request.workspace === 'sandbox')
+        return stats.folderRequests
+          .filter((request) => request.folder === 'sandbox')
           .map((request) => request.path)
           .sort();
       })
@@ -96,30 +96,29 @@ test.describe('Twin spaces runtime config', () => {
 
     const stats = await getMswStats(page);
     expect(
-      stats.spaceRequests.some(
+      stats.folderRequests.some(
         (request) =>
           request.path === '/twin/api/activity' &&
-          request.space === 'sandbox' &&
-          request.workspace === 'sandbox',
+          request.folder === 'sandbox',
       ),
     ).toBe(true);
   });
 
-  test('@spaces empty configured space list shows the Twincore guidance', async ({
+  test('@folders empty configured folder list shows the Twincore guidance', async ({
     page,
   }) => {
     await bootWithRuntimeConfig(page, {
       apiBaseUrl: '/twin/api',
       lightragBaseUrl: '',
       idpLogoutUrl: 'https://idp.example.com/logout',
-      defaultSpaceId: '',
-      maxSpaces: 5,
-      debugUser: { ...runtimeUser, workspaces: [] },
-      spaces: [],
+      defaultFolderId: '',
+      maxFolders: 5,
+      debugUser: { ...runtimeUser, folders: [] },
+      folders: [],
     });
 
     await page.getByTitle('Switch folder').click();
-    await expect(page.getByTestId('topbar-workspace-empty')).toHaveText(
+    await expect(page.getByTestId('topbar-folder-empty')).toHaveText(
       'No folder available for this KB. Please contact Twincore Team',
     );
   });

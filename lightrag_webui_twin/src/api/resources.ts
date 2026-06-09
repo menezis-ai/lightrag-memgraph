@@ -402,9 +402,6 @@ export const twinApi = {
       ...init,
       method: 'DELETE',
     }),
-  /** @deprecated Use deleteFolder. */
-  deleteSpace: (id: string, init?: ApiRequestInit) =>
-    twinApi.deleteFolder(id, init),
   listNotifications: (init?: ApiRequestInit) =>
     apiFetch<readonly Notification[]>(`${TWIN}/notifications`, init),
   markAllNotificationsRead: (init?: ApiRequestInit) =>

@@ -153,16 +153,16 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(onlyPrompt).toHaveAttribute('aria-checked', 'true');
   });
 
-  test('@doctrine @workspace space switch refreshes documents and clears local filters', async ({
+  test('@doctrine @folder folder switch refreshes documents and clears local filters', async ({
     page,
   }) => {
     await seedDocuments(page, [
       {
         doc_id: 'sandbox_doc_1',
         file_path: '/sandbox/runbooks/kernel-panic-runbook.md',
-        content_summary: 'Sandbox space document seeded by e2e',
+        content_summary: 'Sandbox folder document seeded by e2e',
         tags: ['rhel9'],
-        workspace: 'sandbox',
+        folder: 'sandbox',
       },
     ]);
     await page.getByLabel('Search source').fill('oracle');
@@ -243,7 +243,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Re-process queued');
   });
 
-  test('@settings @auth settings profile, workspace and API explorer remain usable', async ({ page }) => {
+  test('@settings @auth settings profile, folder and API explorer remain usable', async ({ page }) => {
     await openTab(page, 'Settings');
     await expect(page.getByTestId('settings-profile')).toBeVisible();
     await expect(page.getByTestId('settings-profile-name')).toBeVisible();
@@ -251,14 +251,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByTestId('settings-restart-tutorial').click();
     await expect(page.getByRole('status')).toContainText('Tutorial restarted');
 
-    await page.getByTestId('settings-rail-workspace').click();
-    await expect(page.getByTestId('settings-workspace')).toBeVisible();
-    await expect(page.getByTestId('settings-active-ws')).toContainText('default');
+    await page.getByTestId('settings-rail-folder').click();
+    await expect(page.getByTestId('settings-folder')).toBeVisible();
+    await expect(page.getByTestId('settings-active-folder')).toContainText('default');
     // Mock-kill F1 — Visibility / Region / Retention cards were
     // dropped because their values were fixture-only inventions
     // (eu-west-3 dc-paris, hardcoded TTLs). Identity card is now the
-    // single source of truth for the active-space view.
-    await expect(page.getByTestId('settings-space-display-name')).toBeVisible();
+    // single source of truth for the active-folder view.
+    await expect(page.getByTestId('settings-folder-display-name')).toBeVisible();
 
     await page.getByTestId('settings-rail-api').click();
     await expect(page.getByTestId('settings-api')).toBeVisible();
@@ -791,7 +791,7 @@ test.describe('Twin WebUI operator journeys', () => {
         file_path: `/cib/e2e/bulk-massive-${n}.md`,
         content_summary: 'Bulk 413 fixture',
         tags: ['oracle'],
-        workspace: 'default',
+        folder: 'default',
       };
     });
     await seedDocuments(page, docs);

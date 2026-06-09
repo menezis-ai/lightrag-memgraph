@@ -22,7 +22,7 @@ test.describe('Activity RC-1 refresh and immutable ledger', () => {
         kind: 'settings',
         sev: 'info',
         actor: { user: 'system', role: 'pipeline' },
-        target: { type: 'workspace', label: 'e2e-activity-refresh' },
+        target: { type: 'folder', label: 'e2e-activity-refresh' },
         summary: 'e2e-activity-refresh · newly fetched by explicit Refresh',
         meta: { source: 'playwright' },
       },
