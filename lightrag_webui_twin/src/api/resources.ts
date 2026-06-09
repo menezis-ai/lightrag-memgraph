@@ -105,6 +105,20 @@ export interface TwinQueryDataResponse {
   metadata: Record<string, unknown>;
 }
 
+export interface AuthStatusResponse {
+  auth_enabled: boolean;
+  authenticated: boolean;
+  user?: string | null;
+  expires_at?: string | null;
+  login_required: boolean;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
 function parseMaybeJson(text: string): unknown {
   if (!text) return null;
   try {
@@ -138,6 +152,22 @@ function normalizeDocumentStatus(raw: unknown): Document['status'] {
 }
 
 export const lightragApi = {
+  authStatus: (init?: ApiRequestInit) =>
+    apiFetch<AuthStatusResponse>('/auth-status', init),
+  login: (
+    body: { username: string; password: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<LoginResponse>('/login', {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  logoutLocal: (init?: ApiRequestInit) =>
+    apiFetch<{ ok: true }>('/logout', {
+      ...init,
+      method: 'POST',
+    }),
   listDocuments: (q: DocumentsQuery = {}, init?: ApiRequestInit) =>
     apiFetch<ListEnvelope<Document>>('/documents', { ...init, query: { ...q } })
       .then((env) => ({
@@ -693,6 +723,9 @@ export const twinApi = {
 
 export const api = {
   // LightRAG-native
+  authStatus: lightragApi.authStatus,
+  login: lightragApi.login,
+  logoutLocal: lightragApi.logoutLocal,
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
   scanDocument: lightragApi.scanDocument,

@@ -64,6 +64,7 @@ function baseProps() {
     onMarkAllRead: vi.fn(),
     onClearNotifications: vi.fn(),
     onOpenActivity: vi.fn(),
+    onManageFolders: vi.fn(),
   };
 }
 
@@ -150,6 +151,15 @@ describe('Topbar — folder switcher', () => {
     await userEvent.click(screen.getByTitle('Switch folder'));
     expect(screen.queryByRole('menu')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('routes the manage folders action to the host', async () => {
+    const p = baseProps();
+    render(<Topbar {...p} />);
+    await userEvent.click(screen.getByTitle('Switch folder'));
+    await userEvent.click(screen.getByRole('button', { name: /Manage folders/i }));
+    expect(p.onManageFolders).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('menu')).toBeNull();
   });
 });

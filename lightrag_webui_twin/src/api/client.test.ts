@@ -7,7 +7,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, setActiveFolder } from './client';
+import {
+  ApiError,
+  apiFetch,
+  setActiveFolder,
+  setSessionAuthToken,
+} from './client';
 import { api } from './resources';
 
 type FetchMock = ReturnType<typeof vi.fn>;
@@ -28,6 +33,8 @@ beforeEach(() => {
   fetchMock = vi.fn();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   setActiveFolder(null);
+  setSessionAuthToken(null);
+  window.sessionStorage.clear();
   window.__twinConfig = {
     apiBaseUrl: '/twin/api',
     lightragBaseUrl: '',
@@ -38,6 +45,8 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   setActiveFolder(null);
+  setSessionAuthToken(null);
+  window.sessionStorage.clear();
   window.__twinConfig = originalConfig;
   window.__twinE2eRuntimeConfig = originalE2eConfig;
 });
@@ -112,6 +121,15 @@ describe('apiFetch', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer eyJtest');
+  });
+
+  it('attaches bearer token from the local login session', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setSessionAuthToken('session-jwt');
+    await apiFetch('/secure');
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer session-jwt');
   });
 
   it('attaches X-Twin-Folder from the active folder', async () => {

@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -39,7 +39,9 @@ _jwt_algorithm: str = "HS256"
 _jwt_expiration_hours: int = 4
 _jwt_username: str = DEFAULT_JWT_USERNAME
 _jwt_password: str = DEFAULT_JWT_PASSWORD
+_auth_accounts: dict[str, str] = {}
 _auth_enabled: bool = False
+_local_jwt_cookie_name = "twin_local_token"
 
 
 class LoginRequest(BaseModel):
@@ -53,6 +55,39 @@ class LoginResponse(BaseModel):
     expires_in: int  # seconds
 
 
+class AuthStatusResponse(BaseModel):
+    auth_enabled: bool
+    authenticated: bool
+    user: str | None = None
+    expires_at: str | None = None
+    login_required: bool
+
+
+def _parse_auth_accounts(raw: str | None) -> dict[str, str]:
+    """Parse LightRAG-compatible AUTH_ACCOUNTS.
+
+    Accepted shape: ``user:password,user2:password2``. Passwords may contain
+    additional ``:`` characters; empty entries are ignored.
+    """
+    if not raw:
+        return {}
+    accounts: dict[str, str] = {}
+    for entry in raw.split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            logger.warning("AUTH_ACCOUNTS entry without ':' ignored")
+            continue
+        username, password = item.split(":", 1)
+        username = username.strip()
+        if not username:
+            logger.warning("AUTH_ACCOUNTS entry with empty username ignored")
+            continue
+        accounts[username] = password
+    return accounts
+
+
 def configure_auth(
     *,
     api_key: str | None = None,
@@ -61,12 +96,21 @@ def configure_auth(
     jwt_expiration_hours: int = 4,
     jwt_username: str = DEFAULT_JWT_USERNAME,
     jwt_password: str = DEFAULT_JWT_PASSWORD,
+    auth_accounts: str | dict[str, str] | None = None,
+    local_jwt_cookie_name: str = "twin_local_token",
 ) -> None:
     """Configure auth parameters.  Called once at startup."""
     global _static_api_key, _jwt_secret, _jwt_algorithm
-    global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_enabled
+    global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_accounts
+    global _auth_enabled, _local_jwt_cookie_name
 
-    if jwt_secret and jwt_password == DEFAULT_JWT_PASSWORD:
+    accounts = (
+        dict(auth_accounts)
+        if isinstance(auth_accounts, dict)
+        else _parse_auth_accounts(auth_accounts)
+    )
+
+    if jwt_secret and not accounts and jwt_password == DEFAULT_JWT_PASSWORD:
         raise ValueError(
             "LIGHTRAG_JWT_SECRET enables /login, but LIGHTRAG_JWT_PASSWORD "
             "is still the insecure default 'changeme'"
@@ -78,6 +122,8 @@ def configure_auth(
     _jwt_expiration_hours = jwt_expiration_hours
     _jwt_username = jwt_username
     _jwt_password = jwt_password
+    _auth_accounts = accounts
+    _local_jwt_cookie_name = local_jwt_cookie_name
     _auth_enabled = bool(api_key or jwt_secret)
 
     if not _auth_enabled:
@@ -88,6 +134,8 @@ def configure_auth(
             modes.append("static-key")
         if jwt_secret:
             modes.append("JWT")
+        if accounts:
+            modes.append("multi-account-login")
         logger.info("Auth enabled: %s", " + ".join(modes))
 
 
@@ -121,6 +169,16 @@ def _decode_jwt(token: str) -> dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {exc}",
         )
+
+
+def _jwt_exp_to_iso(payload: dict[str, Any]) -> str | None:
+    exp = payload.get("exp")
+    if exp is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(exp), timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 async def require_auth(
@@ -181,6 +239,12 @@ async def require_auth(
         # instead of allowing anonymous access.
         return None
 
+    if credentials is None and _jwt_secret and request is not None:
+        cookie_token = request.cookies.get(_local_jwt_cookie_name)
+        if cookie_token:
+            payload = _decode_jwt(cookie_token)
+            return payload.get("sub", "unknown")
+
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -206,8 +270,65 @@ async def require_auth(
     )
 
 
+@auth_router.get("/auth-status", response_model=AuthStatusResponse)
+async def auth_status(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+) -> AuthStatusResponse:
+    if not _auth_enabled:
+        return AuthStatusResponse(
+            auth_enabled=False,
+            authenticated=True,
+            login_required=False,
+        )
+
+    token: str | None = None
+    if _jwt_secret:
+        token = request.cookies.get(_local_jwt_cookie_name)
+    if token is None and credentials is not None:
+        token = credentials.credentials
+
+    if not token:
+        return AuthStatusResponse(
+            auth_enabled=True,
+            authenticated=False,
+            login_required=True,
+        )
+
+    if _static_api_key and token == _static_api_key:
+        return AuthStatusResponse(
+            auth_enabled=True,
+            authenticated=True,
+            user="api_key",
+            login_required=False,
+        )
+
+    if _jwt_secret:
+        try:
+            payload = _decode_jwt(token)
+        except HTTPException:
+            return AuthStatusResponse(
+                auth_enabled=True,
+                authenticated=False,
+                login_required=True,
+            )
+        return AuthStatusResponse(
+            auth_enabled=True,
+            authenticated=True,
+            user=str(payload.get("sub", "unknown")),
+            expires_at=_jwt_exp_to_iso(payload),
+            login_required=False,
+        )
+
+    return AuthStatusResponse(
+        auth_enabled=True,
+        authenticated=False,
+        login_required=True,
+    )
+
+
 @auth_router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest) -> LoginResponse:
+async def login(body: LoginRequest, response: Response) -> LoginResponse:
     """Authenticate with username/password and receive a JWT token."""
     if not _jwt_secret:
         raise HTTPException(
@@ -215,7 +336,14 @@ async def login(body: LoginRequest) -> LoginResponse:
             detail="JWT auth not configured on this server",
         )
 
-    if body.username != _jwt_username or body.password != _jwt_password:
+    expected_password = (
+        _auth_accounts.get(body.username)
+        if _auth_accounts
+        else _jwt_password
+        if body.username == _jwt_username
+        else None
+    )
+    if expected_password is None or body.password != expected_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -223,5 +351,20 @@ async def login(body: LoginRequest) -> LoginResponse:
 
     token = _create_jwt({"sub": body.username})
     expires_in = _jwt_expiration_hours * 3600
+    response.set_cookie(
+        _local_jwt_cookie_name,
+        token,
+        max_age=expires_in,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
 
     return LoginResponse(access_token=token, expires_in=expires_in)
+
+
+@auth_router.post("/logout")
+async def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(_local_jwt_cookie_name, path="/")
+    return {"ok": True}

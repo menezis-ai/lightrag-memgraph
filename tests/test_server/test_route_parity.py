@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi.routing import APIRoute
 
+from twindb_lightrag_memgraph.server.auth import auth_router
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.native_shims import (
     build_health_shim,
@@ -66,6 +67,7 @@ def _backend_routes() -> set[Route]:
 
     return (
         _fastapi_routes_from_router(webui_router.router, prefix="/twin/api")
+        | _fastapi_routes_from_router(auth_router)
         | _fastapi_routes_from_router(build_native_shims_router(_fake_rag))
         | _fastapi_routes_from_router(build_health_shim(_fake_rag))
         | _fastapi_routes_from_router(
@@ -89,6 +91,9 @@ def _msw_routes() -> set[Route]:
 # Mirrors lightrag_webui_twin/src/api/resources.ts. Keep this list focused on
 # production client paths, not test-only MSW controls.
 FRONTEND_PRODUCTION_ROUTES: set[Route] = {
+    Route("GET", "/auth-status"),
+    Route("POST", "/login"),
+    Route("POST", "/logout"),
     Route("GET", "/documents"),
     Route("GET", "/documents/{param}/chunks"),
     Route("GET", "/documents/track_status/{param}"),
@@ -170,6 +175,9 @@ def test_frontend_contract_paths_are_declared_in_resources_ts():
         "/documents/track_status/",
         "/documents/reprocess_failed",
         "/documents/upload",
+        "/auth-status",
+        "/login",
+        "/logout",
         "/documents/bulk-delete",
         "/documents/_bulk-retag",
         "/documents/${encodeURIComponent(docId)}/metadata",

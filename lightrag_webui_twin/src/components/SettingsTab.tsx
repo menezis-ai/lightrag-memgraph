@@ -28,9 +28,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
-type SectionKey = 'profile' | 'api' | 'workspace';
+export type SettingsSectionKey = 'profile' | 'api' | 'workspace';
 
-const SECTIONS: { key: SectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
+const SECTIONS: { key: SettingsSectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
   { key: 'workspace', label: 'Folder', icon: 'folder' },
@@ -48,6 +48,7 @@ export interface SettingsTabProps {
   /** Reopen the onboarding wizard at step 1. */
   onRestartTutorial?: () => void;
   onToast?: (toast: Omit<Toast, 'id'>) => void;
+  initialSection?: SettingsSectionKey;
 }
 
 export function SettingsTab({
@@ -56,8 +57,17 @@ export function SettingsTab({
   onSignOut,
   onRestartTutorial,
   onToast,
+  initialSection = 'profile',
 }: SettingsTabProps) {
-  const [section, setSection] = useState<SectionKey>('profile');
+  const [sectionState, setSectionState] = useState<{
+    initial: SettingsSectionKey;
+    value: SettingsSectionKey;
+  }>({ initial: initialSection, value: initialSection });
+  const section =
+    sectionState.initial === initialSection ? sectionState.value : initialSection;
+  const setSection = (value: SettingsSectionKey) => {
+    setSectionState({ initial: initialSection, value });
+  };
   const { user } = useAuth();
 
   return (

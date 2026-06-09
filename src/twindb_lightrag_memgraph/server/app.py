@@ -237,11 +237,15 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # -- Auth --
     configure_auth(
         api_key=settings.api_key,
-        jwt_secret=settings.jwt_secret,
+        jwt_secret=settings.jwt_secret or os.environ.get("TOKEN_SECRET"),
         jwt_algorithm=settings.jwt_algorithm,
-        jwt_expiration_hours=settings.jwt_expiration_hours,
+        jwt_expiration_hours=int(
+            os.environ.get("TOKEN_EXPIRE_HOURS")
+            or settings.jwt_expiration_hours
+        ),
         jwt_username=settings.jwt_username,
         jwt_password=settings.jwt_password,
+        auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
     )
     app.include_router(auth_router)
 

@@ -18,8 +18,10 @@ import { resolveRuntimeConfig } from '../config/devConfig';
 const TWIN_PREFIX = '/twin/api';
 const ENV_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 const ENV_AUTH_TOKEN = import.meta.env.VITE_AUTH_TOKEN ?? '';
+const SESSION_AUTH_TOKEN_KEY = 'twin-rag.authToken';
 
 let activeFolder: string | null = null;
+let sessionAuthToken: string | null = null;
 
 export function setActiveFolder(folder: string | null): void {
   activeFolder = folder;
@@ -27,6 +29,33 @@ export function setActiveFolder(folder: string | null): void {
 
 export function getActiveFolder(): string | null {
   return activeFolder;
+}
+
+function readStoredAuthToken(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.sessionStorage.getItem(SESSION_AUTH_TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setSessionAuthToken(token: string | null): void {
+  sessionAuthToken = token;
+  if (typeof window === 'undefined') return;
+  try {
+    if (token) {
+      window.sessionStorage.setItem(SESSION_AUTH_TOKEN_KEY, token);
+    } else {
+      window.sessionStorage.removeItem(SESSION_AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // Session storage can be unavailable in privacy-restricted contexts.
+  }
+}
+
+export function getSessionAuthToken(): string | null {
+  return sessionAuthToken ?? (readStoredAuthToken() || null);
 }
 
 /** @deprecated Use setActiveFolder. Kept for transitional callers/tests. */
@@ -134,7 +163,7 @@ export function buildApiHeaders(
   if (options.json) {
     headers['Content-Type'] = 'application/json';
   }
-  const token = init.token ?? ENV_AUTH_TOKEN;
+  const token = init.token ?? getSessionAuthToken() ?? ENV_AUTH_TOKEN;
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }

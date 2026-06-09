@@ -93,6 +93,15 @@ describe('SettingsTab — Profile', () => {
 });
 
 describe('SettingsTab — Space', () => {
+  it('can open directly on the folder section', () => {
+    renderWith(new QueryClient(), { initialSection: 'workspace' });
+    expect(screen.getByTestId('settings-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-rail-workspace')).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+  });
+
   it('renders the active space identity from props (not a fixture)', async () => {
     renderWith(new QueryClient(), {
       activeWorkspace: 'cib-prod',

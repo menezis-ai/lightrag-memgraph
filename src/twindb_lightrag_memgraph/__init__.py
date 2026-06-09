@@ -1414,17 +1414,20 @@ def _mount_twin_subapp(
         api_key=_arg_value("api_key", "lightrag_api_key")
         or os.environ.get("LIGHTRAG_API_KEY"),
         jwt_secret=_arg_value("jwt_secret", "lightrag_jwt_secret")
-        or os.environ.get("LIGHTRAG_JWT_SECRET"),
+        or os.environ.get("LIGHTRAG_JWT_SECRET")
+        or os.environ.get("TOKEN_SECRET"),
         jwt_algorithm=_arg_value("jwt_algorithm", "lightrag_jwt_algorithm")
         or os.environ.get("LIGHTRAG_JWT_ALGORITHM", "HS256"),
         jwt_expiration_hours=int(
             _arg_value("jwt_expiration_hours", "lightrag_jwt_expiration_hours")
-            or os.environ.get("LIGHTRAG_JWT_EXPIRATION_HOURS", "4")
+            or os.environ.get("LIGHTRAG_JWT_EXPIRATION_HOURS")
+            or os.environ.get("TOKEN_EXPIRE_HOURS", "4")
         ),
         jwt_username=_arg_value("jwt_username", "lightrag_jwt_username")
         or os.environ.get("LIGHTRAG_JWT_USERNAME", "admin"),
         jwt_password=_arg_value("jwt_password", "lightrag_jwt_password")
         or os.environ.get("LIGHTRAG_JWT_PASSWORD", "changeme"),
+        auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
     )
 
     # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in

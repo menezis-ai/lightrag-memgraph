@@ -24,12 +24,14 @@ import type { AddSourceAction } from './components/AddSourceModal';
 import { DocDetailPanel } from './components/DocDetailPanel';
 import { DocumentsTab } from './components/DocumentsTab';
 import { PendingDocsSection } from './components/PendingDocsSection';
+import { LoginScreen } from './components/LoginScreen';
 import type { RetagAction } from './components/RetagModal';
 import type { TagApproveAction } from './components/TagsTab';
 import type { TagActionCommit } from './components/TagActionModal';
 import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
-import { clearTwinBrowserState, useAuth } from './hooks/useAuth';
+import type { SettingsSectionKey } from './components/SettingsTab';
+import { useAuth } from './hooks/useAuth';
 import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
@@ -209,6 +211,8 @@ function getInitialSpaceId(): string {
 function AppShell() {
   const [tab, setTab] = useState('documents');
   const [theme, setTheme] = useState<Theme>('light');
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSectionKey>('profile');
   const [workspace, setWorkspaceState] = useState(() => {
     const initial = getInitialSpaceId();
     setActiveFolder(initial);
@@ -226,6 +230,7 @@ function AppShell() {
   // Auth + onboarding
   const auth = useAuth();
   const runtimeConfig = auth.config;
+  const authReady = !auth.isCheckingAuth && !auth.needsLogin;
   const onboarding = useOnboarding();
   const onboardingOpen = !onboarding.state.dismissed;
   const retagOpen = retagDoc !== null || retagBulk !== null;
@@ -236,27 +241,27 @@ function AppShell() {
   // fixture so first paint is instant even if the worker is still booting.
   const docs = useDocuments(
     { folder: workspace, workspace },
-    { enabled: tab === 'documents' },
+    { enabled: authReady && tab === 'documents' },
   );
-  const workspaces = useFolders();
-  const notificationsQ = useNotifications();
-  const thesaurus = useThesaurus({ enabled: needsThesaurus });
+  const workspaces = useFolders({ enabled: authReady });
+  const notificationsQ = useNotifications({ enabled: authReady });
+  const thesaurus = useThesaurus({ enabled: authReady && needsThesaurus });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
   // are lightweight, the catalog is used cross-tab (badge counts, filter
   // pickers, retag modal), and the e2e contract on "switching space
   // rescopes /twin/api/tags immediately" depends on the query existing
   // in the cache for `refetchQueries` to trigger. Gating heavy reads
   // (documents, graph) preserves the bulk of the perf win.
-  const tags = useTags();
-  const tagCategories = useTagCategories();
+  const tags = useTags({ enabled: authReady });
+  const tagCategories = useTagCategories({ enabled: authReady });
   // Activity stays always-enabled (vs. tab-gated): the feed drives the
   // topbar unread counters cross-tab, and the e2e contract requires
   // `/twin/api/activity` to refire under the new space header at switch
   // time. Lightweight read (bounded via `limit`), so the perf cost is
   // negligible compared to documents / graph which remain gated.
-  const activity = useActivity();
-  const graphEntities = useGraphEntities({ enabled: tab === 'graph' });
-  const graphRelations = useGraphRelations({ enabled: tab === 'graph' });
+  const activity = useActivity({}, { enabled: authReady });
+  const graphEntities = useGraphEntities({ enabled: authReady && tab === 'graph' });
+  const graphRelations = useGraphRelations({ enabled: authReady && tab === 'graph' });
 
   // Notifications carry mutable client state (read/cleared) on top of the
   // query data. Keep only local overrides in React state so refetches can
@@ -876,11 +881,24 @@ function AppShell() {
   const graphRelationList =
     resolveQueryData(graphRelations, GRAPH_RELATION_FIXTURES) ?? [];
 
+  if (auth.isCheckingAuth || auth.needsLogin) {
+    return (
+      <LoginScreen
+        checking={auth.isCheckingAuth}
+        error={auth.loginError}
+        onLogin={auth.login}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <Topbar
         tab={tab}
-        onTab={setTab}
+        onTab={(nextTab) => {
+          if (nextTab === 'settings') setSettingsSection('profile');
+          setTab(nextTab);
+        }}
         theme={theme}
         onTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
         workspace={workspace}
@@ -900,6 +918,10 @@ function AppShell() {
           )
         }
         onOpenActivity={() => setTab('activity')}
+        onManageFolders={() => {
+          setSettingsSection('workspace');
+          setTab('settings');
+        }}
       />
       {backendErrors.length > 0 && (
         <div className="sys-banner-stack" role="status" aria-live="polite">
@@ -961,34 +983,9 @@ function AppShell() {
             <SettingsTab
               activeWorkspace={workspace}
               kbName={kbName}
+              initialSection={settingsSection}
               onSignOut={() => {
-                void (async () => {
-                  let logoutFailed = false;
-                  try {
-                    await api.logout();
-                  } catch (err) {
-                    logoutFailed = true;
-                    pushToast({
-                      kind: 'error',
-                      title: 'Sign-out endpoint failed',
-                      sub:
-                        err instanceof Error
-                          ? `${err.message} · local session will still be cleared`
-                          : 'Local session will still be cleared',
-                    });
-                    // Even if the endpoint hiccups, we want to clear
-                    // the local state and force the operator back to
-                    // the Basic Auth prompt — never block sign-out
-                    // on a server error.
-                  }
-                  // Drop all cached React Query state (tags, docs,
-                  // activity, …). The next request after reload will
-                  // either re-prompt Basic Auth (current model) or
-                  // hit the JWT/IdP login (future).
-                  queryClient.clear();
-                  clearTwinBrowserState();
-                  window.setTimeout(() => window.location.reload(), logoutFailed ? 1200 : 0);
-                })();
+                void auth.signout();
               }}
               onToast={pushToast}
               onRestartTutorial={() =>

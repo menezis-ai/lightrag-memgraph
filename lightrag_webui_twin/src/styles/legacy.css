@@ -92,6 +92,104 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-tertiary);
 }
 
+/* ----- Local auth login ----- */
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--color-background-tertiary);
+}
+
+.login-panel {
+  width: min(100%, 380px);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 28px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.login-brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.login-brand p {
+  margin: 2px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.login-form input {
+  height: 38px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.login-form input:focus {
+  outline: 2px solid var(--twin-accent-soft);
+  border-color: var(--twin-accent);
+}
+
+.login-submit {
+  height: 38px;
+  border: 0;
+  border-radius: var(--border-radius-sm);
+  background: var(--twin-accent);
+  color: white;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.login-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.login-error {
+  border: 1px solid var(--twin-red-soft, rgba(176,48,96,0.22));
+  color: var(--twin-red-vivid, #b03060);
+  background: rgba(176, 48, 96, 0.06);
+  border-radius: var(--border-radius-sm);
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.login-checking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
 /* ----- Top bar ----- */
 .topbar {
   height: 48px;

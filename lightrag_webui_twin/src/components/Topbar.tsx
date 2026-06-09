@@ -39,6 +39,7 @@ export interface TopbarProps {
   onMarkAllRead?: () => void;
   onClearNotifications?: () => void;
   onOpenActivity?: () => void;
+  onManageFolders?: () => void;
   tabs?: readonly Tab[];
 }
 
@@ -56,6 +57,7 @@ export function Topbar({
   onMarkAllRead,
   onClearNotifications,
   onOpenActivity,
+  onManageFolders,
   tabs,
 }: TopbarProps) {
   const TABS = tabs ?? DEFAULT_TABS;
@@ -138,7 +140,10 @@ export function Topbar({
                 setWsOpen(false);
                 onSwitchWorkspace(ws);
               }}
-              onClose={() => setWsOpen(false)}
+              onManageFolders={() => {
+                setWsOpen(false);
+                onManageFolders?.();
+              }}
             />
           )}
         </div>
@@ -187,14 +192,14 @@ interface SpaceMenuProps {
   current: string;
   workspaces: readonly Workspace[];
   onPick: (w: Workspace) => void;
-  onClose: () => void;
+  onManageFolders: () => void;
 }
 
 function SpaceMenu({
   current,
   workspaces,
   onPick,
-  onClose,
+  onManageFolders,
 }: SpaceMenuProps) {
   return (
     <div className="ws-menu" role="menu" aria-label="Switch folder">
@@ -260,7 +265,7 @@ function SpaceMenu({
         })}
       </ul>
       <div className="ws-menu-f">
-        <button type="button" className="link-btn" onClick={onClose}>
+        <button type="button" className="link-btn" onClick={onManageFolders}>
           Manage folders →
         </button>
       </div>

@@ -6,15 +6,21 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { __resetAuthConfigCacheForTests, useAuth } from './useAuth';
 import { resolveRuntimeConfig, DEV_CONFIG } from '../config/devConfig';
 
+const authStatusMock = vi.hoisted(() => vi.fn());
+const loginMock = vi.hoisted(() => vi.fn());
+const logoutLocalMock = vi.hoisted(() => vi.fn());
 const logoutMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api/resources', () => ({
   api: {
+    authStatus: authStatusMock,
+    login: loginMock,
+    logoutLocal: logoutLocalMock,
     logout: logoutMock,
   },
 }));
@@ -31,6 +37,20 @@ const originalE2eConfig = (window as Window & typeof globalThis).__twinE2eRuntim
 
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
+  window.sessionStorage.clear();
+  authStatusMock.mockResolvedValue({
+    auth_enabled: false,
+    authenticated: true,
+    user: null,
+    expires_at: null,
+    login_required: false,
+  });
+  loginMock.mockResolvedValue({
+    access_token: 'local-jwt-token',
+    token_type: 'bearer',
+    expires_in: 3600,
+  });
+  logoutLocalMock.mockResolvedValue({ ok: true });
   logoutMock.mockResolvedValue({ ok: true });
   (window as Window & typeof globalThis).__twinConfig = undefined;
   (window as Window & typeof globalThis).__twinE2eRuntimeConfig = undefined;
@@ -46,6 +66,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
   (window as Window & typeof globalThis).__twinConfig = originalConfig;
   (window as Window & typeof globalThis).__twinE2eRuntimeConfig = originalE2eConfig;
   Object.defineProperty(window, 'location', {
@@ -136,6 +157,7 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
+    expect(logoutLocalMock).toHaveBeenCalledOnce();
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['documents'])).toBeUndefined();
     expect(window.localStorage.getItem('twin-rag.threads.v2')).toBeNull();
@@ -155,8 +177,57 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
+    expect(logoutLocalMock).toHaveBeenCalledOnce();
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['notifications'])).toBeUndefined();
     expect(window.location.href).toMatch(/realms\/twin/);
+  });
+});
+
+describe('useAuth — local login', () => {
+  it('exposes a login screen state and authenticates through LightRAG login', async () => {
+    (window as Window & typeof globalThis).__twinConfig = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+      defaultFolderId: 'default',
+      folders: [{ id: 'default', label: 'Default folder', kind: 'primary' }],
+    };
+    __resetAuthConfigCacheForTests();
+    authStatusMock
+      .mockResolvedValueOnce({
+        auth_enabled: true,
+        authenticated: false,
+        user: null,
+        expires_at: null,
+        login_required: true,
+      })
+      .mockResolvedValueOnce({
+        auth_enabled: true,
+        authenticated: true,
+        user: 'twinadmin',
+        expires_at: '2099-12-31T23:59:00Z',
+        login_required: false,
+      });
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+    await waitFor(() => expect(result.current.needsLogin).toBe(true));
+
+    await act(async () => {
+      await result.current.login('twinadmin', 'secret');
+    });
+
+    expect(loginMock).toHaveBeenCalledWith({
+      username: 'twinadmin',
+      password: 'secret',
+    });
+    expect(authStatusMock).toHaveBeenLastCalledWith({ token: 'local-jwt-token' });
+    expect(window.sessionStorage.getItem('twin-rag.authToken')).toBe(
+      'local-jwt-token',
+    );
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.user?.name).toBe('twinadmin');
+    expect(result.current.user?.palier.label).toBe('Steward');
   });
 });

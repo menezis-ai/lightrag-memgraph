@@ -241,6 +241,7 @@ interface E2eScenario {
 }
 
 const e2eScenario: E2eScenario = {};
+let localAuthUser: string | null = null;
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
   tagApproveCalls: {} as Record<string, number>,
@@ -313,6 +314,7 @@ export function resetDocumentsState(): void {
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
   e2eStats.spaceRequests = [];
+  localAuthUser = null;
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
@@ -565,12 +567,12 @@ function authGateResponse(
   request: Request,
 ): ReturnType<typeof HttpResponse.json> | undefined {
   if (!e2eScenario.authGate) return undefined;
-  if (request.headers.get('Authorization')) return undefined;
+  if (request.headers.get('Authorization') || localAuthUser) return undefined;
   return HttpResponse.json(
-    { detail: 'Unauthorized: Basic Auth required' },
+    { detail: 'Unauthorized: login required' },
     {
       status: 401,
-      headers: { 'WWW-Authenticate': 'Basic realm="Twin RAG"' },
+      headers: { 'WWW-Authenticate': 'Bearer' },
     },
   );
 }
@@ -639,6 +641,49 @@ export const handlers = [
     activityState = [...cloneActivity(events), ...activityState];
     persistActivityState();
     return HttpResponse.json({ ok: true, ids: events.map((event) => event.id) });
+  }),
+
+  // Local LightRAG-compatible auth endpoints. In production these are native
+  // root routes, not Twin overlay routes.
+  http.get(`${ANY}/auth-status`, () => {
+    if (!e2eScenario.authGate) {
+      return HttpResponse.json({
+        auth_enabled: false,
+        authenticated: true,
+        user: null,
+        expires_at: null,
+        login_required: false,
+      });
+    }
+    return HttpResponse.json({
+      auth_enabled: true,
+      authenticated: localAuthUser !== null,
+      user: localAuthUser,
+      expires_at: localAuthUser ? '2099-12-31T23:59:00Z' : null,
+      login_required: localAuthUser === null,
+    });
+  }),
+  http.post(`${ANY}/login`, async ({ request }) => {
+    const body = (await request.json().catch(() => null)) as
+      | { username?: string; password?: string }
+      | null;
+    const username = body?.username?.trim();
+    if (!username || !body?.password) {
+      return HttpResponse.json(
+        { detail: 'Invalid username or password' },
+        { status: 401 },
+      );
+    }
+    localAuthUser = username;
+    return HttpResponse.json({
+      access_token: `mock-token-${username}`,
+      token_type: 'bearer',
+      expires_in: 3600,
+    });
+  }),
+  http.post(`${ANY}/logout`, () => {
+    localAuthUser = null;
+    return HttpResponse.json({ ok: true });
   }),
 
   // -------------------------------------------------------------------------

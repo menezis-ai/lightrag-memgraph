@@ -1,10 +1,12 @@
 """Tests for auth module (static key + JWT)."""
 
 import pytest
+from fastapi import Response
 
 from twindb_lightrag_memgraph.server.auth import (
     LoginRequest,
     LoginResponse,
+    _parse_auth_accounts,
     configure_auth,
     _create_jwt,
     _decode_jwt,
@@ -44,6 +46,29 @@ class TestConfigureAuth:
     def test_jwt_secret_rejects_default_password(self):
         with pytest.raises(ValueError, match="changeme"):
             configure_auth(jwt_secret="secret-123")
+
+    def test_jwt_secret_allows_default_password_with_auth_accounts(self):
+        configure_auth(
+            jwt_secret="secret-123",
+            auth_accounts="alice:pass",
+        )
+        from twindb_lightrag_memgraph.server import auth
+
+        assert auth._auth_enabled is True
+        assert auth._auth_accounts == {"alice": "pass"}
+
+
+class TestAuthAccounts:
+    def test_parse_comma_separated_accounts(self):
+        assert _parse_auth_accounts("admin:secret,user:pass") == {
+            "admin": "secret",
+            "user": "pass",
+        }
+
+    def test_password_may_contain_colon(self):
+        assert _parse_auth_accounts("admin:p:a:s:s") == {
+            "admin": "p:a:s:s",
+        }
 
 
 class TestJWT:
@@ -134,18 +159,39 @@ class TestRequireAuth:
 
 class TestLoginEndpoint:
     async def test_login_success(self):
+        from fastapi import Response
+
         configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
-        resp = await login(LoginRequest(username="admin", password="pass"))
+        resp = await login(LoginRequest(username="admin", password="pass"), Response())
         assert resp.access_token
         assert resp.token_type == "bearer"
         assert resp.expires_in == 4 * 3600
+
+    async def test_login_success_with_auth_accounts(self):
+        from fastapi import Response
+
+        configure_auth(jwt_secret="secret", auth_accounts="alice:pass,bob:word")
+        resp = await login(LoginRequest(username="bob", password="word"), Response())
+        payload = _decode_jwt(resp.access_token)
+        assert payload["sub"] == "bob"
+
+    async def test_login_sets_local_jwt_cookie(self):
+        from fastapi import Response
+
+        configure_auth(jwt_secret="secret", auth_accounts="alice:pass")
+        response = Response()
+        await login(LoginRequest(username="alice", password="pass"), response)
+        cookie = response.headers["set-cookie"]
+        assert "twin_local_token=" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=lax" in cookie
 
     async def test_login_bad_password(self):
         from fastapi import HTTPException
 
         configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
         with pytest.raises(HTTPException) as exc_info:
-            await login(LoginRequest(username="admin", password="wrong"))
+            await login(LoginRequest(username="admin", password="wrong"), Response())
         assert exc_info.value.status_code == 401
 
     async def test_login_jwt_not_configured(self):
@@ -153,8 +199,40 @@ class TestLoginEndpoint:
 
         configure_auth(api_key="key", jwt_secret=None)
         with pytest.raises(HTTPException) as exc_info:
-            await login(LoginRequest(username="admin", password="pass"))
+            await login(LoginRequest(username="admin", password="pass"), Response())
         assert exc_info.value.status_code == 501
+
+
+class TestLocalJwtRoutes:
+    async def test_login_cookie_auth_status_and_protected_route(self):
+        from fastapi import Depends, FastAPI
+        from httpx import ASGITransport, AsyncClient
+        from twindb_lightrag_memgraph.server.auth import auth_router
+
+        configure_auth(jwt_secret="secret", auth_accounts="alice:pass")
+        app = FastAPI()
+        app.include_router(auth_router)
+
+        @app.get("/protected")
+        async def protected(identity=Depends(require_auth)):
+            return {"identity": identity}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="https://test",
+        ) as client:
+            before = await client.get("/auth-status")
+            assert before.json()["authenticated"] is False
+            login_resp = await client.post(
+                "/login",
+                json={"username": "alice", "password": "pass"},
+            )
+            assert login_resp.status_code == 200
+            after = await client.get("/auth-status")
+            assert after.json()["authenticated"] is True
+            assert after.json()["user"] == "alice"
+            protected_resp = await client.get("/protected")
+            assert protected_resp.json() == {"identity": "alice"}
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +332,7 @@ class TestLoginEdgeCases:
             jwt_secret="secret", jwt_username="admin", jwt_password="pass"
         )
         with pytest.raises(HTTPException) as exc_info:
-            await login(LoginRequest(username="not-admin", password="pass"))
+            await login(LoginRequest(username="not-admin", password="pass"), Response())
         assert exc_info.value.status_code == 401
         assert "invalid" in exc_info.value.detail.lower()
 
