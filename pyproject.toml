@@ -33,6 +33,11 @@ test-intelligence = [
     "respx",
 ]
 server = [
+    # LightRAG's /documents/upload route imports these through the
+    # `api` extra: pypdf, python-docx, python-pptx, openpyxl,
+    # aiofiles, python-multipart, etc. Keep the extra here so a
+    # server install can actually process uploaded documents.
+    "lightrag-hku[api]>=1.4.9,<2.0.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic-settings>=2.0.0",

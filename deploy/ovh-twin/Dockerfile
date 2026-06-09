@@ -49,7 +49,7 @@ WORKDIR /app
 # `ModuleNotFoundError: No module named 'aiofiles'` surprise.
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
-    "lightrag-hku==1.4.9.11" \
+    "lightrag-hku[api]==1.4.9.11" \
     "neo4j>=5,<7" \
     "fastapi>=0.110" \
     "uvicorn[standard]>=0.27" \
@@ -57,6 +57,10 @@ RUN pip install --no-cache-dir --upgrade pip \
     "pydantic-settings>=2" \
     "PyJWT>=2.8" \
     "python-multipart>=0.0.9" \
+    "pypdf>=6.1.0" \
+    "python-docx>=0.8.11,<2.0.0" \
+    "python-pptx>=0.6.21,<2.0.0" \
+    "openpyxl>=3.0.0,<4.0.0" \
     "openai>=1.50" \
     "tiktoken>=0.6" \
     "aiofiles>=25" \
