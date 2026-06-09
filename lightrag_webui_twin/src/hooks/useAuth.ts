@@ -194,6 +194,12 @@ export function useAuth(): UseAuthResult {
     queryClient.clear();
     clearTwinBrowserState();
     if (typeof window !== 'undefined') {
+      if (
+        (window as Window & { __TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION?: boolean })
+          .__TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION
+      ) {
+        return;
+      }
       if (authState.authEnabled) {
         window.location.reload();
       } else {

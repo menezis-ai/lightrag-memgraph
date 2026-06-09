@@ -819,8 +819,8 @@ test.describe('Twin WebUI operator journeys', () => {
       };
     });
     expect(response.status).toBe(401);
-    expect(response.body.detail).toContain('Basic Auth required');
-    expect(response.challenge).toContain('Basic');
+    expect(response.body.detail).toContain('login required');
+    expect(response.challenge).toContain('Bearer');
   });
 
   test('@doctrine @documents reprocess on a non-failed document tells the truth', async ({ page }) => {
@@ -883,6 +883,11 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @auth sign out purges retrieval thread localStorage', async ({ page }) => {
+    await page.evaluate(() => {
+      (
+        window as Window & { __TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION?: boolean }
+      ).__TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION = true;
+    });
     await openTab(page, 'Retrieval');
     await page.evaluate(() => {
       localStorage.setItem('twin-rag.extra-cache.v1', 'stale');
@@ -897,13 +902,11 @@ test.describe('Twin WebUI operator journeys', () => {
     await openTab(page, 'Settings');
     await page.getByTestId('settings-signout').click();
     await expect
-      .poll(async () =>
-        page
-          .evaluate(() => ({
+      .poll(() =>
+        page.evaluate(() => ({
             threads: localStorage.getItem('twin-rag.threads.v2'),
             extra: localStorage.getItem('twin-rag.extra-cache.v1'),
-          }))
-          .catch(() => 'navigation-in-progress'),
+        })),
       )
       .toMatchObject({ threads: null, extra: null });
   });
