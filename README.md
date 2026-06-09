@@ -188,6 +188,9 @@ them. They are useful for integrators that want the upstream contract:
 For BNP-style restricted containers, a stdlib-only smoke runner is available in
 `tests/smoke`. It validates that `/webui`, local JWT authentication, native
 LightRAG routes, and Twin overlay routes are wired to the expected service.
+This is intended for developers, auditors, release engineers, and technical
+reviewers who need a reproducible runtime check without browser automation or
+external Python dependencies.
 
 ```bash
 export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
@@ -196,9 +199,15 @@ export ARTIFACTORY_PASSWORD="..."
 python tests/smoke/run_smoke.py tests/smoke/bnp-runtime-smoke.json
 ```
 
+The JSON manifest is the audit contract: it lists each expected route,
+authentication transition, status code, cookie property, and response shape.
+The runner only executes that contract against the deployed service.
+
 The runner writes `/tmp/twin-smoke-report.json` and `/tmp/twin-smoke-http.log`
 without logging credentials or bearer tokens. See `tests/smoke/README.md` for
-the manifest contract.
+the manifest contract, report format, and limitations. This smoke test proves
+runtime routing and authentication wiring; it is not a replacement for unit
+tests, Playwright WebUI flows, or end-to-end ingestion/query validation.
 
 Twin overlay routes:
 
