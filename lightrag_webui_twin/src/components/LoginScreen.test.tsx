@@ -18,6 +18,13 @@ describe('LoginScreen', () => {
     expect(onLogin).toHaveBeenCalledWith('twinadmin', 'secret');
   });
 
+  it('uses the TwinRAG product name in the login brand', () => {
+    render(<LoginScreen onLogin={vi.fn()} />);
+    expect(
+      screen.getByRole('heading', { name: 'TwinRAG' }),
+    ).toBeInTheDocument();
+  });
+
   it('renders the session checking state', () => {
     render(<LoginScreen checking onLogin={vi.fn()} />);
 

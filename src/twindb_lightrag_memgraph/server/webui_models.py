@@ -232,6 +232,7 @@ class GraphEntity(_Base):
     y: float
     mentions: int
     sources: int
+    source_docs: list[str] = Field(default_factory=list)
     summary: str
 
 

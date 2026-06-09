@@ -118,6 +118,17 @@ TWIN_FOLDERS_JSON='[
 ]'
 ```
 
+Folders are created by deployment configuration first. Runtime creation through
+`POST /twin/api/folders` is available for admin users, and persists only when
+`TWIN_FOLDERS_RUNTIME_FILE` points to a writable JSON file. In restricted BNP
+deployments, prefer `TWIN_FOLDERS_JSON` for audited, reproducible provisioning.
+
+Fresh runtime initialization is clean by default when the Twin overlay is
+mounted with Memgraph stores: documents, tags, activity, notifications, and
+graph projections start empty unless real LightRAG/Memgraph data or operator
+mutations exist. Demo fixtures are still available only through explicit
+`webui_stores="seed"` / in-memory settings for local demos and tests.
+
 The browser sends the active Folder on every API call using
 `X-Twin-Folder`. During the compatibility window it also sends `X-Twin-Space`
 and `X-Twin-Workspace`. Backend code reads `X-Twin-Folder` first, then falls

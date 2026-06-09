@@ -19,6 +19,7 @@ import {
   DOC_TO_GRAPH_ENTITIES,
   DOCUMENT_FIXTURES,
   GRAPH_ENTITY_FIXTURES,
+  GRAPH_ENTITY_DOCS,
   GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
   OPENAPI_GROUPS,
@@ -175,6 +176,7 @@ let activityState: ActivityEvent[] = loadState(
 let graphEntityState: GraphEntity[] = GRAPH_ENTITY_FIXTURES.map((e) => ({
   ...e,
   tags: e.tags ? [...e.tags] : [],
+  source_docs: [...(GRAPH_ENTITY_DOCS[e.id] ?? [])],
   properties: e.properties ? { ...e.properties } : {},
 }));
 let graphRelationState: GraphRelation[] = GRAPH_RELATION_FIXTURES.map((r) => ({
@@ -295,6 +297,7 @@ export function resetDocumentsState(): void {
   graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
     ...e,
     tags: e.tags ? [...e.tags] : [],
+    source_docs: [...(GRAPH_ENTITY_DOCS[e.id] ?? [])],
     properties: e.properties ? { ...e.properties } : {},
   }));
   graphRelationState = GRAPH_RELATION_FIXTURES.map((r) => ({

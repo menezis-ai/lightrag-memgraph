@@ -83,12 +83,20 @@ export function GraphTab({
     TYPE_KEYS,
   );
   const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
+  const [docFilter, setDocFilter] = useUrlArrayParam('gdoc', []);
   const [addOpen, setAddOpen] = useState(false);
   const createEntity = useCreateGraphEntity();
 
   const allTags = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => tagsOf(e).forEach((t) => s.add(t)));
+    return Array.from(s).sort();
+  }, [entities]);
+  const allSourceDocs = useMemo(() => {
+    const s = new Set<string>();
+    entities.forEach((e) => {
+      (e.source_docs ?? []).forEach((doc) => s.add(doc));
+    });
     return Array.from(s).sort();
   }, [entities]);
   const [selectedId, setSelectedId] = useUrlParam<string>(
@@ -115,13 +123,18 @@ export function GraphTab({
         !tagsOf(e).some((t) => tagFilter.includes(t))
       )
         return false;
+      if (
+        docFilter.length > 0 &&
+        !(e.source_docs ?? []).some((doc) => docFilter.includes(doc))
+      )
+        return false;
       if (!needle) return true;
       return (
         e.name.toLowerCase().includes(needle) ||
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, tagFilter]);
+  }, [entities, q, tagFilter, docFilter]);
 
   const typeCounts = useMemo(() => {
     const c: Partial<Record<GraphEntityType, number>> = {};
@@ -343,10 +356,13 @@ export function GraphTab({
             onChange={setTagFilter}
             placeholder="Search tags…"
           />
-          {/* Mock-kill F3 — source filter dropped (no `source_doc_ids`
-            on the GraphEntity contract yet; the previous picker keyed
-            off a fixture map that always returned `[]` on real
-            Memgraph entities). Restore once graph_reader exposes it. */}
+          <FilterPicker
+            label="Filter by document"
+            options={allSourceDocs}
+            selected={docFilter}
+            onChange={setDocFilter}
+            placeholder="Search documents…"
+          />
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>
             <ul>

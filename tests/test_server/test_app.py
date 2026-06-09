@@ -76,6 +76,9 @@ def _make_settings(*, api_key="test-key", jwt_secret=None, **overrides):
         doc_status_storage="MemgraphDocStatusStorage",
         workspace="test_ws",
         enable_langsmith_tracing=False,
+        webui_tag_backend="memory",
+        webui_activity_backend="memory",
+        webui_notifications_backend="memory",
         api_key=api_key,
         jwt_secret=jwt_secret,
     )

@@ -126,35 +126,38 @@ class LightRAGServerSettings(BaseSettings):
         default=True,
         description=(
             "Mount the WebUI phase-1 router (/documents, /workspaces, /tags, "
-            "/activity, /graph/*, etc.) backed by in-memory seed data. Set "
+            "/activity, /graph/*, etc.) backed by runtime stores. Set "
             "False to expose only the LightRAG core endpoints."
         ),
     )
     webui_tag_backend: str = Field(
-        default="memory",
+        default="memgraph",
         description=(
-            "Persistence backend for WebUI tag governance. 'memory' (default) "
-            "keeps tags + categories in the seed-loaded in-process store. "
-            "'memgraph' persists them as :WebuiTag_{workspace} / "
+            "Persistence backend for WebUI tag governance. 'memgraph' "
+            "(default) persists them as :WebuiTag_{workspace} / "
             ":WebuiTagCategory_{workspace} nodes. Production app wiring boots "
             "fresh spaces without demo tags; only governance categories are "
-            "bootstrapped unless an explicit seed/bootstrap path is used."
+            "bootstrapped unless an explicit seed/bootstrap path is used. "
+            "'memory' keeps tags + categories in the seed-loaded in-process "
+            "store and is demo/dev only."
         ),
     )
     webui_activity_backend: str = Field(
-        default="memory",
+        default="memgraph",
         description=(
             "Persistence backend for the WebUI /activity audit feed. "
-            "'memory' (default) seeds an in-memory list. 'memgraph' "
-            "persists events as :WebuiActivity_{workspace} nodes."
+            "'memgraph' (default) persists events as "
+            ":WebuiActivity_{workspace} nodes and starts empty. 'memory' "
+            "seeds an in-memory list and is demo/dev only."
         ),
     )
     webui_notifications_backend: str = Field(
-        default="memory",
+        default="memgraph",
         description=(
             "Persistence backend for the WebUI /notifications surface. "
-            "'memory' (default) seeds an in-memory list. 'memgraph' "
-            "persists notifications as :WebuiNotification_{workspace} nodes."
+            "'memgraph' (default) persists notifications as "
+            ":WebuiNotification_{workspace} nodes and starts empty. 'memory' "
+            "seeds an in-memory list and is demo/dev only."
         ),
     )
 

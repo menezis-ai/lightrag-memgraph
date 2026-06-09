@@ -31,6 +31,8 @@ export interface GraphEntity {
   mentions: number;
   /** Distinct source count. */
   sources: number;
+  /** Parent document ids or source labels that mention this entity. */
+  source_docs?: readonly string[];
   summary: string;
   /** Free-form attribute tags carried on the node itself.
    *  Decoupled from the governed WebuiTag taxonomy (doc-level relations) —

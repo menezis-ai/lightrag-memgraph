@@ -34,7 +34,7 @@ export function LoginScreen({
         <div className="login-brand">
           <div className="brand-mark">TR</div>
           <div>
-            <h1 id="login-title">Twin</h1>
+            <h1 id="login-title">TwinRAG</h1>
             <p>Knowledge console</p>
           </div>
         </div>

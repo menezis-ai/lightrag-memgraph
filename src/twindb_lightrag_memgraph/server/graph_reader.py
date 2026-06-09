@@ -209,9 +209,10 @@ def _node_record_to_entity(
         c.strip() for c in str(source_id).replace("<SEP>", ",").split(",") if c.strip()
     }
     mentions = len(chunks)
+    resolved_docs: set[str] = set()
     if chunk_to_doc:
-        resolved = {chunk_to_doc[c] for c in chunks if c in chunk_to_doc}
-        sources = len(resolved) if resolved else mentions
+        resolved_docs = {chunk_to_doc[c] for c in chunks if c in chunk_to_doc}
+        sources = len(resolved_docs) if resolved_docs else mentions
     else:
         sources = mentions
     x, y = layout_position(str(entity_id), mapped_type)
@@ -223,6 +224,7 @@ def _node_record_to_entity(
         "y": y,
         "mentions": mentions,
         "sources": sources,
+        "source_docs": sorted(resolved_docs),
         "summary": summary[:600],
     }
 

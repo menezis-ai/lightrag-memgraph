@@ -108,6 +108,11 @@ describe('Topbar — tabs', () => {
     expect(p.onTab).toHaveBeenCalledWith('documents');
   });
 
+  it('uses the TwinRAG product name in the brand', () => {
+    render(<Topbar {...baseProps()} />);
+    expect(document.querySelector('.brand-name')).toHaveTextContent('TwinRAG');
+  });
+
   it('honors custom tabs prop', () => {
     render(
       <Topbar

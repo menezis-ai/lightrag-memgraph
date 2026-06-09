@@ -108,7 +108,7 @@ export const DOC_TO_GRAPH_ENTITIES: Record<string, readonly string[]> = {
 };
 
 /**
- * Per-entity source-doc map for the Graph rail's "Filter by source" picker.
+ * Per-entity source-doc map for the Graph rail's "Filter by document" picker.
  * Values are file_path strings matching DOCUMENT_FIXTURES.
  */
 export const GRAPH_ENTITY_DOCS: Record<string, readonly string[]> = {

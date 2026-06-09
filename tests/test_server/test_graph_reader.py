@@ -147,6 +147,7 @@ class TestNodeRecordProjection:
         out = _node_record_to_entity(row, chunk_to_doc)
         assert out["mentions"] == 5
         assert out["sources"] == 2
+        assert out["source_docs"] == ["doc-A", "doc-B"]
 
     def test_sources_falls_back_to_mentions_for_orphan_chunks(self):
         # Chunks not present in the index (e.g. DocStatus row missing
@@ -159,6 +160,7 @@ class TestNodeRecordProjection:
         out = _node_record_to_entity(row, {"unrelated": "doc-Z"})
         assert out["mentions"] == 2
         assert out["sources"] == 2
+        assert out["source_docs"] == []
 
     def test_description_sep_marker_replaced(self):
         # LightRAG joins per-chunk descriptions with <SEP> — must not

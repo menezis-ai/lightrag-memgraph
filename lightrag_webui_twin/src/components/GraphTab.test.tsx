@@ -118,6 +118,31 @@ describe('GraphTab — filters', () => {
     expect(within(screen.getByTestId('kg-type-PRODUCT')).getByText('0')).toBeInTheDocument();
   });
 
+  it('document filter narrows visible nodes by source document', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            source_docs: ['doc-oracle'],
+          },
+          {
+            ...GRAPH_ENTITY_FIXTURES[8],
+            source_docs: ['doc-memgraph'],
+          },
+        ]}
+        relations={[]}
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText('Filter by document'));
+    await userEvent.click(screen.getByTestId('kg-pick-doc-memgraph'));
+
+    expect(screen.queryByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[0].id}`)).toBeNull();
+    expect(screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`)).toBeInTheDocument();
+  });
+
   it('no-match search shows empty state with Clear filter CTA', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.type(
@@ -174,10 +199,9 @@ describe('GraphTab — selection + detail', () => {
   });
 
   it('"View documents" CTA navigates with the entity name as the query', async () => {
-    // Mock-kill F3 — the legacy per-entity `source` filter was dropped
-    // because it was indexed by prototype entity ids (e_oracle, e_rman,
-    // ...) and always missed real Memgraph entities. Navigation now
-    // falls back to a text query on the entity name.
+    // Document filtering is available in the graph rail. This CTA stays a
+    // broader documents-tab query so it works for generated entities that
+    // only have a name and no projected source_docs.
     const p = defaultProps();
     renderWithClient(<GraphTab {...p} />);
     const detail = document.querySelector('.kg-detail') as HTMLElement;

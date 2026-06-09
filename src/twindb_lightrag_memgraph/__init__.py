@@ -51,7 +51,7 @@ def register(
     classification_ceiling: str | None = None,
     webui_dist: str | None = None,
     twin_api_prefix: str = "/twin/api",
-    webui_stores: str = "seed",
+    webui_stores: str = "memgraph",
     webui_categories_config: str | None = None,
 ) -> None:
     """Monkey-patch LightRAG's storage registries to add Memgraph backends.
@@ -79,16 +79,15 @@ def register(
         webui_stores: Which backend to use for the Twin overlay's
             tags / activity / notifications stores when ``mount_server=True``.
 
-              - ``"seed"`` (default): in-memory + fixtures from ``webui_seed``.
-                Useful for demo, dev, and the standalone OVH build. Mutations
-                are lost on restart.
-              - ``"memgraph"``: Memgraph-backed stores (workspace-scoped via
+              - ``"memgraph"`` (default): Memgraph-backed stores
+                (workspace-scoped via
                 env var ``WORKSPACE``). Fresh install boots empty; mutations
-                persist; the seed data for *documents*, *workspaces*,
-                *thesaurus*, *graph* still loads (those are reference data,
-                not user-generated). Requires ``MEMGRAPH_URI`` and runs the
+                persist. Requires ``MEMGRAPH_URI`` and runs the
                 async store factories inside a lifespan wrapper around the
                 LightRAG host's lifespan.
+              - ``"seed"``: in-memory fixtures from ``webui_seed``. Useful
+                only for demo/dev; user-generated surfaces are pre-populated
+                and mutations are lost on restart.
         webui_categories_config: Optional path to a JSON file that
             *mirrors* the tag-category taxonomy on every boot. Doctrine
             "Config as Code" — the BNP admin owns the taxonomy in Git
@@ -1048,7 +1047,7 @@ def _patch_lightrag_server_create_app(
     webui_dist: str | None = None,
     twin_api_prefix: str | None = None,
     shim_native_routes: bool = False,
-    webui_stores: str = "seed",
+    webui_stores: str = "memgraph",
     webui_categories_config: str | None = None,
 ) -> None:
     """Wrap ``lightrag.api.lightrag_server.create_app`` to optionally:
@@ -1182,7 +1181,7 @@ def _build_runtime_config() -> dict[str, object]:
     debug_user = {
         "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
-        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "Local Operator"),
+        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "Twin Franchise"),
         "palier": {
             "level": 3,
             "label": "Steward",
@@ -1361,7 +1360,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
 def _mount_twin_subapp(
     app,
     prefix: str,
-    webui_stores: str = "seed",
+    webui_stores: str = "memgraph",
     webui_categories_config: str | None = None,
     auth_args=None,
 ) -> None:
@@ -1381,18 +1380,17 @@ def _mount_twin_subapp(
 
     Storage backend selection (``webui_stores``):
 
-      - ``"seed"``: the WebUI store is built sync from
-        :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
-        notifications) are visible immediately. No lifespan wrapping.
       - ``"memgraph"``: the WebUI store is built **inside a chained
         lifespan** because the Memgraph store factories are async. On
         startup, after LightRAG's own lifespan has run
         ``rag.initialize_storages()``, we instantiate Memgraph-backed
         backends scoped to ``$WORKSPACE`` and swap them into a
-        :class:`WebuiStore` (which still carries the seed for the
-        non-user-generated bits: documents, workspaces, thesaurus,
-        graph entities/relations). Fresh installs boot empty for tags,
-        activity, notifications — mutations persist across restarts.
+        :class:`WebuiStore`. Fresh installs boot empty for documents,
+        tags, activity, notifications, and graph.
+      - ``"seed"``: the WebUI store is built sync from
+        :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
+        notifications) are visible immediately. No lifespan wrapping.
+        This mode is demo/dev only.
     """
     import os
 

@@ -93,6 +93,26 @@ class TestSeedStoresWarningUnderActiveIdp:
             "DEMO STORES IN PROD" in r.getMessage() for r in caplog.records
         )
 
+    def test_register_default_webui_stores_is_memgraph(self):
+        import inspect
+
+        import twindb_lightrag_memgraph as pkg
+
+        signature = inspect.signature(pkg.register)
+        assert signature.parameters["webui_stores"].default == "memgraph"
+
+
+class TestStandaloneDefaults:
+    def test_webui_backends_default_to_memgraph(self):
+        from twindb_lightrag_memgraph.server.settings import (
+            LightRAGServerSettings,
+        )
+
+        settings = LightRAGServerSettings()
+        assert settings.webui_tag_backend == "memgraph"
+        assert settings.webui_activity_backend == "memgraph"
+        assert settings.webui_notifications_backend == "memgraph"
+
 
 # ---------------------------------------------------------------------------
 # F6 — `for_space(default, mode="memgraph")` integration through
