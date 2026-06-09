@@ -183,6 +183,21 @@ class TestNodeRecordProjection:
         out = _node_record_to_entity(row)
         assert len(out["summary"]) == 600
 
+    def test_twin_overlay_fields_round_trip_from_node_properties(self):
+        row = {
+            "entity_id": "Oracle Database",
+            "display_name": "Oracle DB",
+            "entity_type": "Database",
+            "description": "Relational engine.",
+            "source_id": "chunk-1",
+            "twin_tags_json": '["critical", "db"]',
+            "twin_props_json": '{"owner": "dba", "tier": "gold"}',
+        }
+        out = _node_record_to_entity(row)
+        assert out["name"] == "Oracle DB"
+        assert out["tags"] == ["critical", "db"]
+        assert out["properties"] == {"owner": "dba", "tier": "gold"}
+
 
 class TestEdgeRecordProjection:
     def test_full_edge_projects(self):
@@ -191,6 +206,7 @@ class TestEdgeRecordProjection:
             "target_id": "RHEL 9",
             "keywords": "runs on",
             "weight": 0.88,
+            "twin_props_json": '{"since": "2024"}',
         }
         out = _edge_record_to_relation(row, 0)
         # id is endpoint-derived, stable, opaque
@@ -200,6 +216,7 @@ class TestEdgeRecordProjection:
         assert out["target"] == "kg_RHEL 9"
         assert out["label"] == "RUNS_ON"
         assert out["strength"] == 0.88
+        assert out["properties"] == {"since": "2024"}
 
     def test_edge_id_stable_across_calls(self):
         row = {

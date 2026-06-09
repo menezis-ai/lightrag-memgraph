@@ -161,6 +161,8 @@ class TestGraphPatchPersistence:
                 "mentions": 3,
                 "sources": 3,
                 "summary": "After edit",
+                "tags": ["critical", "db"],
+                "properties": {"owner": "dba"},
             }
 
         monkeypatch.setattr(gr, "update_graph_entity", fake_update)
@@ -173,6 +175,8 @@ class TestGraphPatchPersistence:
         body = r.json()
         assert body["name"] == "Renamed"
         assert body["summary"] == "After edit"
+        assert body["tags"] == ["critical", "db"]
+        assert body["properties"] == {"owner": "dba"}
 
         # Activity event should be appended
         activity = await client.get("/activity")
@@ -207,6 +211,7 @@ class TestGraphPatchPersistence:
                 "target": "kg_B",
                 "label": "USES",
                 "strength": 0.95,
+                "properties": {"since": "2024"},
             }
 
         monkeypatch.setattr(gr, "update_graph_relation", fake_update)
@@ -217,6 +222,7 @@ class TestGraphPatchPersistence:
         )
         assert r.status_code == 200
         assert r.json()["label"] == "USES"
+        assert r.json()["properties"] == {"since": "2024"}
 
         activity = await client.get("/activity")
         events = activity.json().get("items", [])

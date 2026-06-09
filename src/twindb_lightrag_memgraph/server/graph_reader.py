@@ -178,6 +178,34 @@ def _entity_id_to_node_id(entity_id: str) -> str:
     return f"kg_{entity_id}"
 
 
+def _json_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if item is not None and str(item)]
+
+
+def _json_str_dict(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        str(key): str(val)
+        for key, val in parsed.items()
+        if key is not None and val is not None
+    }
+
+
 def _node_record_to_entity(
     record: dict[str, Any],
     chunk_to_doc: dict[str, str] | None = None,
@@ -218,7 +246,7 @@ def _node_record_to_entity(
     x, y = layout_position(str(entity_id), mapped_type)
     return {
         "id": _entity_id_to_node_id(str(entity_id)),
-        "name": str(entity_id),
+        "name": str(record.get("display_name") or entity_id),
         "type": mapped_type,
         "x": x,
         "y": y,
@@ -226,6 +254,8 @@ def _node_record_to_entity(
         "sources": sources,
         "source_docs": sorted(resolved_docs),
         "summary": summary[:600],
+        "tags": _json_list(record.get("twin_tags_json")),
+        "properties": _json_str_dict(record.get("twin_props_json")),
     }
 
 
@@ -331,6 +361,7 @@ def _edge_record_to_relation(record: dict[str, Any], index: int) -> dict[str, An
         "target": _entity_id_to_node_id(str(tgt)),
         "label": label,
         "strength": round(strength, 3),
+        "properties": _json_str_dict(record.get("twin_props_json")),
     }
 
 
@@ -349,7 +380,9 @@ async def read_graph_entities(
     query = (
         f"MATCH (n:`{label}`) "
         "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
-        "n.description AS description, n.source_id AS source_id "
+        "n.description AS description, n.source_id AS source_id, "
+        "n.display_name AS display_name, n.twin_tags_json AS twin_tags_json, "
+        "n.twin_props_json AS twin_props_json "
         "LIMIT $max_nodes"
     )
     try:
@@ -363,6 +396,9 @@ async def read_graph_entities(
                         "entity_type": record["entity_type"],
                         "description": record["description"],
                         "source_id": record["source_id"],
+                        "display_name": record["display_name"],
+                        "twin_tags_json": record["twin_tags_json"],
+                        "twin_props_json": record["twin_props_json"],
                     }
                 )
             await result.consume()
@@ -397,7 +433,8 @@ async def read_graph_relations(
     query = (
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
-        "r.keywords AS keywords, r.weight AS weight "
+        "r.keywords AS keywords, r.weight AS weight, "
+        "r.twin_props_json AS twin_props_json "
         "LIMIT $max_edges"
     )
     try:
@@ -411,6 +448,7 @@ async def read_graph_relations(
                         "target_id": record["target_id"],
                         "keywords": record["keywords"],
                         "weight": record["weight"],
+                        "twin_props_json": record["twin_props_json"],
                     }
                 )
             await result.consume()
@@ -591,7 +629,9 @@ async def _read_one_entity(
     query = (
         f"MATCH (n:`{label}` {{entity_id: $eid}}) "
         "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
-        "n.description AS description, n.source_id AS source_id"
+        "n.description AS description, n.source_id AS source_id, "
+        "n.display_name AS display_name, n.twin_tags_json AS twin_tags_json, "
+        "n.twin_props_json AS twin_props_json"
     )
     try:
         async with get_read_session() as session:
@@ -603,6 +643,9 @@ async def _read_one_entity(
                     "entity_type": record["entity_type"],
                     "description": record["description"],
                     "source_id": record["source_id"],
+                    "display_name": record["display_name"],
+                    "twin_tags_json": record["twin_tags_json"],
+                    "twin_props_json": record["twin_props_json"],
                 }
                 break
             await result.consume()
@@ -625,7 +668,8 @@ async def _read_one_relation(
         f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
         f"(t:`{label}` {{entity_id: $tgt}}) "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
-        "r.keywords AS keywords, r.weight AS weight"
+        "r.keywords AS keywords, r.weight AS weight, "
+        "r.twin_props_json AS twin_props_json"
     )
     try:
         async with get_read_session() as session:
@@ -637,6 +681,7 @@ async def _read_one_relation(
                     "target_id": record["target_id"],
                     "keywords": record["keywords"],
                     "weight": record["weight"],
+                    "twin_props_json": record["twin_props_json"],
                 }
                 break
             await result.consume()

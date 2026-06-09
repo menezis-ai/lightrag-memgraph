@@ -234,6 +234,8 @@ class GraphEntity(_Base):
     sources: int
     source_docs: list[str] = Field(default_factory=list)
     summary: str
+    tags: list[str] = Field(default_factory=list)
+    properties: dict[str, str] = Field(default_factory=dict)
 
 
 class GraphRelation(_Base):
@@ -242,6 +244,7 @@ class GraphRelation(_Base):
     target: str
     label: str
     strength: float
+    properties: dict[str, str] = Field(default_factory=dict)
 
 
 class GraphEntityPatch(_Base):

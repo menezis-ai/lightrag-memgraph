@@ -11,6 +11,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GraphTab } from './GraphTab';
+import { useGraphRelations } from '../api/queries';
 import {
   GRAPH_ENTITY_FIXTURES,
   GRAPH_RELATION_FIXTURES,
@@ -31,6 +32,33 @@ function renderWithClient(ui: React.ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
+function renderGraphWithLiveRelations(
+  fetchImpl: typeof fetch,
+): ReturnType<typeof render> {
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  const Host = () => {
+    const relations = useGraphRelations({ enabled: true });
+    return (
+      <GraphTab
+        entities={GRAPH_ENTITY_FIXTURES}
+        relations={relations.data ?? GRAPH_RELATION_FIXTURES}
+        onNavigate={vi.fn()}
+      />
+    );
+  };
+  vi.stubGlobal('fetch', fetchImpl);
+  return render(
+    <QueryClientProvider client={qc}>
+      <Host />
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.localStorage.removeItem('twin.kg.pinned.v1');
@@ -38,6 +66,7 @@ beforeEach(() => {
 afterEach(() => {
   window.history.replaceState(null, '', '/');
   window.localStorage.removeItem('twin.kg.pinned.v1');
+  vi.unstubAllGlobals();
 });
 
 describe('GraphTab — rendering', () => {
@@ -357,6 +386,54 @@ describe('GraphTab — lifecycle: Delete relation', () => {
     await userEvent.click(btn);
     expect(btn.textContent).toMatch(/Click again to confirm/);
     expect(screen.getByTestId('kg-rel-delete-cancel')).toBeInTheDocument();
+  });
+
+  it('updates the header relation count after deleting a relation', async () => {
+    const deletedId = 'r_01';
+    const remainingRelations = GRAPH_RELATION_FIXTURES.filter(
+      (r) => r.id !== deletedId,
+    );
+    let relationDeleted = false;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes('/graph/relations') && init?.method === 'DELETE') {
+        relationDeleted = true;
+        return new Response(null, { status: 204 });
+      }
+      if (href.includes('/graph/relations')) {
+        return new Response(
+          JSON.stringify(
+            relationDeleted ? remainingRelations : GRAPH_RELATION_FIXTURES,
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    renderGraphWithLiveRelations(fetchMock);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          new RegExp(`${GRAPH_RELATION_FIXTURES.length} relations`),
+        ),
+      ).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId(`kg-rel-row-${deletedId}`));
+    const btn = screen.getByTestId('kg-rel-delete');
+    await userEvent.click(btn);
+    await userEvent.click(btn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(new RegExp(`${remainingRelations.length} relations`)),
+      ).toBeInTheDocument();
+    });
   });
 });
 
