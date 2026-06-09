@@ -18,7 +18,7 @@ import {
   GRAPH_RELATION_FIXTURES,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
-  WORKSPACE_FIXTURES,
+  FOLDER_FIXTURES,
 } from '../fixtures';
 
 const server = setupServer(...handlers);
@@ -94,9 +94,10 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
 });
 
 describe('MSW handlers — Twin overlay endpoints', () => {
-  it(`GET ${TWIN}/workspaces returns the fixture array`, async () => {
-    const data = await getJson<unknown[]>(`${TWIN}/workspaces`);
-    expect(data).toHaveLength(WORKSPACE_FIXTURES.length);
+  it(`GET ${TWIN}/folders returns the provisioned default folder`, async () => {
+    const data = await getJson<unknown[]>(`${TWIN}/folders`);
+    expect(data).toHaveLength(1);
+    expect(data[0]).toMatchObject({ id: FOLDER_FIXTURES[0].id, current: true });
   });
 
   it(`GET ${TWIN}/tags returns the fixture entries`, async () => {
@@ -150,11 +151,11 @@ describe('MSW handlers — Twin overlay endpoints', () => {
   });
 
   it(`GET ${TWIN}/documents/d1/metadata returns overlay fields`, async () => {
-    const data = await getJson<{ tags: string[]; workspace: string }>(
+    const data = await getJson<{ tags: string[]; folder: string }>(
       `${TWIN}/documents/d1/metadata`,
     );
     expect(Array.isArray(data.tags)).toBe(true);
-    expect(typeof data.workspace).toBe('string');
+    expect(typeof data.folder).toBe('string');
   });
 });
 

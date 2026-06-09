@@ -23,7 +23,7 @@ const TWENTY_FIVE_MIN_AGO = '2026-05-29T15:35:00Z';
 const THREE_DAYS_AGO = '2026-05-26T16:00:00Z';
 
 const D2_EXTRACTED = `=== Oracle PGA tuning — CIB runbook (Confluence) ===
-Space : CIB-RUNBOOKS · page id : 84213 · last edit : yann.dubois
+Folder : CIB-RUNBOOKS · page id : 84213 · last edit : yann.dubois
 
 [ Re-validation requested — 2 new sections added upstream ]
 
@@ -144,7 +144,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['rman', 'oracle'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
   },
   {
@@ -161,7 +161,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'claire.benoit', classification: 'internal' },
     type: 'confluence',
     tags: ['rman'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
     extracted_text: D2_EXTRACTED,
     review: {
@@ -194,7 +194,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { mime: 'application/zip', uploader: 'claire.benoit' },
     type: 'sharepoint',
     tags: [],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
   },
   {
@@ -227,7 +227,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['memgraph', 'mage'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
   },
   {
@@ -245,7 +245,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'manu.dev', classification: 'restricted' },
     type: 'confluence',
     tags: ['incident', 'oracle', 'production'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
   },
   {
@@ -279,7 +279,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     },
     type: 'file',
     tags: ['cft', 'network'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
     extracted_text: D6_EXTRACTED,
     review: {
@@ -306,7 +306,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: { source: 'confluence', uploader: 'yann.dubois' },
     type: 'confluence',
     tags: ['incident', 'production'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
     extracted_text: D7_EXTRACTED,
     review: {

@@ -80,7 +80,7 @@ def register(
             tags / activity / notifications stores when ``mount_server=True``.
 
               - ``"memgraph"`` (default): Memgraph-backed stores
-                (workspace-scoped via
+                (storage-scoped via
                 env var ``WORKSPACE``). Fresh install boots empty; mutations
                 persist. Requires ``MEMGRAPH_URI`` and runs the
                 async store factories inside a lifespan wrapper around the
@@ -102,7 +102,7 @@ def register(
                 ``webui_stores="seed"`` the in-memory fixtures win.
               - When ``None`` (default), the internal seed
                 ``webui_seed.TAG_CATEGORIES`` is bootstrapped on a
-                fresh workspace via
+                fresh folder-backed store via
                 :meth:`MemgraphTagStore.bootstrap_categories_if_empty`.
         security_baseline: If True (default), neutralize runtime supply-chain
             hazards before any LightRAG module gets a chance to mis-behave:
@@ -1165,7 +1165,7 @@ def _build_runtime_config() -> dict[str, object]:
     """
     import os
 
-    from ._spaces import build_runtime_space_config, load_space_catalog
+    from ._folders import build_runtime_folder_config, load_folder_catalog
     from .server.idp_jwt import IdpConfig as _IdpConfig
 
     _idp_active = _IdpConfig.from_env() is not None
@@ -1176,8 +1176,8 @@ def _build_runtime_config() -> dict[str, object]:
         "TWIN_IDP_LOGOUT_URL",
         "https://idp.twin.local/realms/twin/protocol/openid-connect/logout",
     )
-    space_catalog = load_space_catalog()
-    runtime_space_config = build_runtime_space_config()
+    folder_catalog = load_folder_catalog()
+    runtime_folder_config = build_runtime_folder_config()
     debug_user = {
         "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
@@ -1187,7 +1187,7 @@ def _build_runtime_config() -> dict[str, object]:
             "label": "Steward",
             "scopes": ["twin:read", "twin:write", "twin:approve"],
         },
-        "workspaces": [space.id for space in space_catalog.spaces],
+        "folders": [folder.id for folder in folder_catalog.folders],
         "idp": "local-debug",
         "idp_realm": "twin-local",
         "sub": "local-debug-sub",
@@ -1198,14 +1198,14 @@ def _build_runtime_config() -> dict[str, object]:
             "read:query",
             "read:activity",
             "admin:tags",
-            "admin:workspace",
+            "admin:folders",
         ],
     }
     config: dict[str, object] = {
         "apiBaseUrl": api_base,
         "lightragBaseUrl": lightrag_base,
         "idpLogoutUrl": idp_logout,
-        **runtime_space_config,
+        **runtime_folder_config,
     }
     # debugUser is the dev escape hatch. When the IdP middleware is
     # active (TWIN_IDP_JWKS_URL set) we strip it so the React port
@@ -1375,7 +1375,7 @@ def _mount_twin_subapp(
 
       - one LightRAG instance for the whole process (the host's),
       - the same ``/twin/api/*`` surface from ``webui_router`` serves
-        every endpoint the React port expects (workspaces, notifications,
+        every endpoint the React port expects (folders, notifications,
         tags + CRUD, thesaurus, activity, graph).
 
     Storage backend selection (``webui_stores``):
@@ -1531,21 +1531,21 @@ def _mount_twin_subapp(
             #
             # We **bypass** the ``make_memgraph_*_store()`` factories
             # because they call ``bootstrap_if_empty()``, which seeds
-            # the workspace with the demo fixtures on first init.
-            # That makes a "fresh" workspace look pre-populated (not
+            # the folder-backed store with the demo fixtures on first init.
+            # That makes a "fresh" folder look pre-populated (not
             # what an operator on a clean BNP install expects). We
             # instantiate the classes directly + ``initialize()`` only.
             try:
-                from .server.space import load_space_catalog
+                from .server.folder import load_folder_catalog
                 from .server.webui_activitystore import MemgraphActivityStore
                 from .server.webui_notificationstore import (
                     MemgraphNotificationStore,
                 )
                 from .server.webui_tagstore import MemgraphTagStore
 
-                catalog = load_space_catalog()
-                for space in catalog.spaces:
-                    tag_store = MemgraphTagStore(workspace=space.id)
+                catalog = load_folder_catalog()
+                for folder in catalog.folders:
+                    tag_store = MemgraphTagStore(workspace=folder.id)
                     await tag_store.initialize()
                     # Categories — governance taxonomy, NOT user-generated.
                     # Two modes:
@@ -1565,24 +1565,24 @@ def _mount_twin_subapp(
                             "twindb: categories sourced from %s (%d entries, space=%s)",
                             webui_categories_config,
                             n,
-                            space.id,
+                            folder.id,
                         )
                     else:
                         await tag_store.bootstrap_categories_if_empty()
-                    activity_store = MemgraphActivityStore(workspace=space.id)
+                    activity_store = MemgraphActivityStore(workspace=folder.id)
                     await activity_store.initialize()
-                    notif_store = MemgraphNotificationStore(workspace=space.id)
+                    notif_store = MemgraphNotificationStore(workspace=folder.id)
                     await notif_store.initialize()
 
-                    store = WebuiStore.for_space(space.id, mode="memgraph")
+                    store = WebuiStore.for_folder(folder.id, mode="memgraph")
                     store._tag_backend = tag_store
                     store._activity_backend = activity_store
                     store._notification_backend = notif_store
-                    set_store(store, space=space.id)
+                    set_store(store, folder=folder.id)
                 logger.info(
                     "twindb: Twin overlay stores switched to Memgraph "
-                    "(spaces=%s) — fresh spaces boot empty.",
-                    ",".join(space.id for space in catalog.spaces),
+                    "(folders=%s) — fresh folders boot empty.",
+                    ",".join(folder.id for folder in catalog.folders),
                 )
             except Exception:
                 logger.exception(

@@ -62,7 +62,7 @@ class _DocumentEnvelope(BaseModel):
     error_msg: str | None = None
     # Twin overlay fields (populated by the overlay store, none here yet):
     tags: list[str] = []
-    workspace: str | None = None
+    folder: str | None = None
     review: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
 
@@ -107,7 +107,7 @@ def _filter_docs(
     items: list[dict[str, Any]],
     q: str | None,
     tag: str | None,
-    space: str,
+    folder: str,
 ) -> list[dict[str, Any]]:
     """Apply WebUI-side filters that LightRAG's paginated endpoint doesn't.
 
@@ -116,13 +116,13 @@ def _filter_docs(
     is the authoritative source — but documents already carrying tags
     on their DocStatus.metadata get filtered here too).
     """
-    from .space import load_space_catalog
+    from .folder import load_folder_catalog
 
-    default_space = load_space_catalog().default_space_id
+    default_folder = load_folder_catalog().default_folder_id
     out = [
         d
         for d in items
-        if (d.get("metadata") or {}).get("space", default_space) == space
+        if (d.get("metadata") or {}).get("folder", default_folder) == folder
     ]
     if q:
         needle = q.lower()
@@ -136,7 +136,7 @@ def _filter_docs(
     return out
 
 
-async def _attach_tags_via_graph(docs: list[dict[str, Any]], space: str) -> None:
+async def _attach_tags_via_graph(docs: list[dict[str, Any]], folder: str) -> None:
     """Mutate ``docs`` in place to add a ``tags`` field via graph join.
 
     Single Cypher batch round-trip joining the doc nodes to their
@@ -152,7 +152,7 @@ async def _attach_tags_via_graph(docs: list[dict[str, Any]], space: str) -> None
 
     workspace = resolve_workspace()
     doc_label = f"DocStatus_{workspace}"
-    tag_label = f"WebuiTag_{space}"
+    tag_label = f"WebuiTag_{folder}"
     doc_ids = [d["doc_id"] for d in docs if d.get("doc_id")]
 
     async with _pool.get_read_session() as session:
@@ -181,7 +181,7 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
 
     LightRAG's DocStatusResponse uses ``id`` for the doc identifier whereas
     the WebUI uses ``doc_id``. Pulls structured Twin fields out of
-    ``metadata`` when present (workspace label + review state). The
+    ``metadata`` when present (folder id + review state). The
     ``tags`` field is left at the empty list here — it is populated
     in a separate graph-join pass by :func:`_attach_tags_via_graph`
     because tags now live as [:TAGGED_WITH] edges, not as a JSON array
@@ -203,21 +203,21 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
         # Tags are populated by _attach_tags_via_graph after this
         # projection (graph-join via [:TAGGED_WITH] edges).
         "tags": [],
-        "workspace": metadata.get("workspace"),
+        "folder": metadata.get("folder"),
         "review": metadata.get("review"),
         "metadata": metadata,
     }
 
 
-def _doc_matches_space(doc_status: Any, space: str) -> bool:
-    from .space import load_space_catalog
+def _doc_matches_folder(doc_status: Any, folder: str) -> bool:
+    from .folder import load_folder_catalog
 
     if isinstance(doc_status, dict):
         metadata = doc_status.get("metadata") or {}
     else:
         metadata = getattr(doc_status, "metadata", None) or {}
-    default_space = load_space_catalog().default_space_id
-    return metadata.get("space", default_space) == space
+    default_folder = load_folder_catalog().default_folder_id
+    return metadata.get("folder", default_folder) == folder
 
 
 # ---------------------------------------------------------------------------
@@ -258,10 +258,10 @@ def build_native_shims_router(get_rag) -> APIRouter:
         import dataclasses
 
         from lightrag.base import DocStatus
-        from .space import resolve_space_from_headers
+        from .folder import resolve_folder_from_headers
 
         rag = get_rag()
-        space = resolve_space_from_headers(request.headers)
+        folder = resolve_folder_from_headers(request.headers)
         page = int(cursor) if (cursor and cursor.isdigit()) else 1
         page_size = 50
 
@@ -291,9 +291,9 @@ def build_native_shims_router(get_rag) -> APIRouter:
             projected.append(_project_doc(payload))
 
         # Tags via graph join — single batch Cypher round-trip.
-        await _attach_tags_via_graph(projected, space=space)
+        await _attach_tags_via_graph(projected, folder=folder)
 
-        filtered = _filter_docs(projected, q=q, tag=tag, space=space)
+        filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
 
         return _ListEnvelope(
             items=[_DocumentEnvelope(**d) for d in filtered],
@@ -316,14 +316,14 @@ def build_native_shims_router(get_rag) -> APIRouter:
         non-standard ``get_all()`` and keeps the query O(chunks per doc)
         instead of O(total chunks in the workspace).
         """
-        from .space import resolve_space_from_headers
+        from .folder import resolve_folder_from_headers
 
         rag = get_rag()
-        space = resolve_space_from_headers(request.headers)
+        folder = resolve_folder_from_headers(request.headers)
         doc_status = await rag.doc_status.get_by_id(doc_id)
         if doc_status is None:
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-        if not _doc_matches_space(doc_status, space):
+        if not _doc_matches_folder(doc_status, folder):
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
         # DocStatus may come back as dict (Memgraph backend) or dataclass
@@ -379,12 +379,12 @@ def build_native_shims_router(get_rag) -> APIRouter:
         directly (the HTTP route ``DELETE /documents/delete_document``
         wraps it). We bypass the HTTP and call the method.
         """
-        from .space import resolve_space_from_headers
+        from .folder import resolve_folder_from_headers
 
         rag = get_rag()
-        space = resolve_space_from_headers(request.headers)
+        folder = resolve_folder_from_headers(request.headers)
         doc_status = await rag.doc_status.get_by_id(doc_id)
-        if doc_status is None or not _doc_matches_space(doc_status, space):
+        if doc_status is None or not _doc_matches_folder(doc_status, folder):
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
         try:
             await rag.adelete_by_doc_id(doc_id)
@@ -450,7 +450,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
                 {
                     "name": "Twin overlay",
                     "endpoints": [
-                        {"method": "GET", "path": "/twin/api/workspaces"},
+                        {"method": "GET", "path": "/twin/api/folders"},
                         {"method": "GET", "path": "/twin/api/tags"},
                         {"method": "GET", "path": "/twin/api/activity"},
                         {"method": "GET", "path": "/twin/api/notifications"},

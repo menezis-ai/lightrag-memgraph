@@ -52,22 +52,12 @@ export function useDocuments(
     q?: string;
     tag?: string;
     folder?: string;
-    workspace?: string;
   } = {},
   options: QueryGate = {},
 ) {
   return useQuery({
     queryKey: ['documents', query] as const,
     queryFn: ({ signal }) => api.listDocuments(query, { signal }),
-    ...DEFAULTS,
-    ...options,
-  });
-}
-
-export function useWorkspaces(options: QueryGate = {}) {
-  return useQuery({
-    queryKey: ['workspaces'] as const,
-    queryFn: ({ signal }) => api.listWorkspaces({ signal }),
     ...DEFAULTS,
     ...options,
   });
@@ -83,9 +73,6 @@ export function useFolders(options: QueryGate = {}) {
   });
 }
 
-/** @deprecated Use useFolders. */
-export const useSpaces = useFolders;
-
 export function useCreateFolder() {
   const qc = useQueryClient();
   return useMutation({
@@ -93,15 +80,10 @@ export function useCreateFolder() {
       api.createFolder(body),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['folders'] });
-      void qc.invalidateQueries({ queryKey: ['spaces'] });
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 }
-
-/** @deprecated Use useCreateFolder. */
-export const useCreateSpace = useCreateFolder;
 
 export function useUpdateFolder() {
   const qc = useQueryClient();
@@ -113,15 +95,10 @@ export function useUpdateFolder() {
       api.updateFolder(id, patch),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['folders'] });
-      void qc.invalidateQueries({ queryKey: ['spaces'] });
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 }
-
-/** @deprecated Use useUpdateFolder. */
-export const useUpdateSpace = useUpdateFolder;
 
 export function useDeleteFolder() {
   const qc = useQueryClient();
@@ -129,15 +106,10 @@ export function useDeleteFolder() {
     mutationFn: (id: string) => api.deleteFolder(id),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['folders'] });
-      void qc.invalidateQueries({ queryKey: ['spaces'] });
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });
     },
   });
 }
-
-/** @deprecated Use useDeleteFolder. */
-export const useDeleteSpace = useDeleteFolder;
 
 export function useNotifications(options: QueryGate = {}) {
   return useQuery({
@@ -672,7 +644,7 @@ export function useUploadDocumentsBatch() {
  * Persist a tag mutation on N documents (single doc = N=1).
  *
  * Doctrine: a tag is a Memgraph node attribute on
- * DocStatus_{workspace}. Optimistic UI is no longer acceptable —
+ * DocStatus_{workspace} storage label. Optimistic UI is no longer acceptable —
  * every retag MUST hit the backend so a refresh shows the new
  * state. On success: invalidate ['documents'] (cards refresh),
  * ['activity'] (audit feed picks up the doc-retagged events),

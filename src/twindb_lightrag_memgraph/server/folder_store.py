@@ -1,17 +1,15 @@
 """Runtime-mutable Twin folder store.
 
-Sits beside `_spaces.py` (env-only catalog) and persists operator
+Sits beside `_folders.py` (env-only catalog) and persists operator
 additions / edits / deletions. Two persistence modes:
 
 - **In-memory** (default): mutations live for the lifetime of the
   process. Acceptable for dev / OVH standalone where the env catalog
-  is the source of truth and runtime spaces are demo seeds.
+  is the source of truth and runtime folders are demo seeds.
 - **JSON file**: when ``TWIN_FOLDERS_RUNTIME_FILE`` is set, every
   mutation rewrites the file atomically. Reads load it lazily on first
   access and on every restart. The file format is a flat list of
-  ``TwinSpace.as_runtime_config()`` dicts.
-
-``TWIN_SPACES_RUNTIME_FILE`` remains accepted as a legacy alias.
+  ``TwinFolder.as_runtime_config()`` dicts.
 
 The store is FastAPI-free so unit tests can drive it without spinning
 the full app.
@@ -27,23 +25,20 @@ from threading import Lock
 from typing import Any
 
 from .._constants import validate_identifier
-from .._spaces import TwinSpace
+from .._folders import TwinFolder
 
 logger = logging.getLogger(__name__)
 
 _RUNTIME_FILE_ENV = "TWIN_FOLDERS_RUNTIME_FILE"
-_LEGACY_RUNTIME_FILE_ENV = "TWIN_SPACES_RUNTIME_FILE"
 
 # Module-level state. Tests reset it via `reset_runtime_store()`.
-_runtime_spaces: dict[str, TwinSpace] = {}
+_runtime_folders: dict[str, TwinFolder] = {}
 _loaded_from_disk = False
 _lock = Lock()
 
 
 def _runtime_file_path() -> str | None:
-    path = os.environ.get(_RUNTIME_FILE_ENV) or os.environ.get(
-        _LEGACY_RUNTIME_FILE_ENV
-    )
+    path = os.environ.get(_RUNTIME_FILE_ENV)
     return path.strip() if path and path.strip() else None
 
 
@@ -73,7 +68,7 @@ def _load_from_disk_if_configured() -> None:
             if not sid_raw:
                 continue
             try:
-                sid = validate_identifier(sid_raw, "space")
+                sid = validate_identifier(sid_raw, "folder")
             except ValueError:
                 logger.warning(
                     "Twin folder runtime file %s: skipping invalid id %r",
@@ -81,7 +76,7 @@ def _load_from_disk_if_configured() -> None:
                     sid_raw,
                 )
                 continue
-            _runtime_spaces[sid] = TwinSpace(
+            _runtime_folders[sid] = TwinFolder(
                 id=sid,
                 label=str(item.get("label") or sid),
                 kind=str(item.get("kind") or "custom"),
@@ -102,11 +97,11 @@ def _persist_to_disk_if_configured() -> None:
     try:
         os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
         payload = [
-            space.as_runtime_config() for space in _runtime_spaces.values()
+            folder.as_runtime_config() for folder in _runtime_folders.values()
         ]
         # Atomic write: temp file in the same directory, then rename.
         dir_ = os.path.dirname(os.path.abspath(path)) or "."
-        fd, tmp = tempfile.mkstemp(prefix=".twin-spaces-", dir=dir_)
+        fd, tmp = tempfile.mkstemp(prefix=".twin-folders-", dir=dir_)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
@@ -123,61 +118,61 @@ def _persist_to_disk_if_configured() -> None:
         )
 
 
-def list_runtime_spaces() -> list[TwinSpace]:
-    """Return the current runtime-managed spaces."""
+def list_runtime_folders() -> list[TwinFolder]:
+    """Return the current runtime-managed folders."""
     with _lock:
         _load_from_disk_if_configured()
-        return list(_runtime_spaces.values())
+        return list(_runtime_folders.values())
 
 
-def get_runtime_space(space_id: str) -> TwinSpace | None:
+def get_runtime_folder(folder_id: str) -> TwinFolder | None:
     with _lock:
         _load_from_disk_if_configured()
-        return _runtime_spaces.get(space_id)
+        return _runtime_folders.get(folder_id)
 
 
-def add_runtime_space(
+def add_runtime_folder(
     *,
-    space_id: str,
+    folder_id: str,
     label: str,
     kind: str = "custom",
     description: str = "",
-) -> TwinSpace:
-    """Add a new runtime space.
+) -> TwinFolder:
+    """Add a new runtime folder.
 
     Raises ``ValueError`` on invalid id; ``KeyError`` if already exists.
     """
-    sid = validate_identifier(space_id.strip(), "space")
+    sid = validate_identifier(folder_id.strip(), "folder")
     with _lock:
         _load_from_disk_if_configured()
-        if sid in _runtime_spaces:
+        if sid in _runtime_folders:
             raise KeyError(sid)
-        space = TwinSpace(
+        folder = TwinFolder(
             id=sid,
             label=label.strip() or sid,
             kind=kind.strip() or "custom",
             description=description.strip(),
             sources=0,
         )
-        _runtime_spaces[sid] = space
+        _runtime_folders[sid] = folder
         _persist_to_disk_if_configured()
-        return space
+        return folder
 
 
-def update_runtime_space(
-    space_id: str,
+def update_runtime_folder(
+    folder_id: str,
     *,
     label: str | None = None,
     description: str | None = None,
     kind: str | None = None,
-) -> TwinSpace | None:
-    """Update an existing runtime space. Returns ``None`` if not found."""
+) -> TwinFolder | None:
+    """Update an existing runtime folder. Returns ``None`` if not found."""
     with _lock:
         _load_from_disk_if_configured()
-        current = _runtime_spaces.get(space_id)
+        current = _runtime_folders.get(folder_id)
         if current is None:
             return None
-        updated = TwinSpace(
+        updated = TwinFolder(
             id=current.id,
             label=label.strip() if label is not None else current.label,
             kind=kind.strip() if kind is not None else current.kind,
@@ -186,19 +181,19 @@ def update_runtime_space(
             else current.description,
             sources=current.sources,
         )
-        _runtime_spaces[space_id] = updated
+        _runtime_folders[folder_id] = updated
         _persist_to_disk_if_configured()
         return updated
 
 
-def delete_runtime_space(space_id: str) -> bool:
-    """Remove a runtime space. Returns ``True`` on success, ``False`` if
-    no space with that id existed."""
+def delete_runtime_folder(folder_id: str) -> bool:
+    """Remove a runtime folder. Returns ``True`` on success, ``False`` if
+    no folder with that id existed."""
     with _lock:
         _load_from_disk_if_configured()
-        if space_id not in _runtime_spaces:
+        if folder_id not in _runtime_folders:
             return False
-        del _runtime_spaces[space_id]
+        del _runtime_folders[folder_id]
         _persist_to_disk_if_configured()
         return True
 
@@ -208,15 +203,15 @@ def reset_runtime_store() -> None:
     access. Does not delete the on-disk JSON file."""
     global _loaded_from_disk
     with _lock:
-        _runtime_spaces.clear()
+        _runtime_folders.clear()
         _loaded_from_disk = False
 
 
 __all__ = [
-    "add_runtime_space",
-    "delete_runtime_space",
-    "get_runtime_space",
-    "list_runtime_spaces",
+    "add_runtime_folder",
+    "delete_runtime_folder",
+    "get_runtime_folder",
+    "list_runtime_folders",
     "reset_runtime_store",
-    "update_runtime_space",
+    "update_runtime_folder",
 ]

@@ -3,10 +3,10 @@
  *
  * Ported from Desktop/UI/topbar.jsx. Key changes vs the proto:
  *   - Folders and notifications are *injected* via props instead of
- *     read from window.MOCK_WORKSPACES / window.MOCK_NOTIFICATIONS, so the
+ *     read from window.MOCK_FOLDERS / window.MOCK_NOTIFICATIONS, so the
  *     component is fully testable with fixtures and ready to wire to a
  *     real fetcher later.
- *   - SpaceMenu and NotificationsPopover stay internal to this file
+ *   - FolderMenu and NotificationsPopover stay internal to this file
  *     (private sub-components, not exported) — they're tightly coupled to
  *     the popover open/close state owned by Topbar.
  *   - Click-outside + Escape handling preserved 1-for-1.
@@ -20,7 +20,7 @@ import {
   type NotificationKind,
   type Tab,
   type Theme,
-  type Workspace,
+  type Folder,
 } from '../types/topbar';
 
 export interface TopbarProps {
@@ -29,11 +29,11 @@ export interface TopbarProps {
   onTab: (id: string) => void;
   theme: Theme;
   onTheme: () => void;
-  /** Current Twin folder id (kept as `workspace` prop for transition). */
-  workspace: string;
+  /** Current Twin folder id. */
+  folder: string;
   kbName: string;
-  onSwitchWorkspace: (w: Workspace) => void;
-  workspaces?: readonly Workspace[];
+  onSwitchFolder: (w: Folder) => void;
+  folders?: readonly Folder[];
   notifications?: readonly Notification[];
   unreadCount?: number;
   onMarkAllRead?: () => void;
@@ -48,10 +48,10 @@ export function Topbar({
   onTab,
   theme,
   onTheme,
-  workspace,
+  folder,
   kbName,
-  onSwitchWorkspace,
-  workspaces = [],
+  onSwitchFolder,
+  folders = [],
   notifications = [],
   unreadCount = 0,
   onMarkAllRead,
@@ -119,7 +119,7 @@ export function Topbar({
         <div ref={wsRef} style={{ position: 'relative' }}>
           <button
             type="button"
-            className={`workspace-pill${wsOpen ? ' is-open' : ''}`}
+            className={`folder-pill${wsOpen ? ' is-open' : ''}`}
             onClick={() => {
               setWsOpen((o) => !o);
               setNotifOpen(false);
@@ -129,16 +129,16 @@ export function Topbar({
             aria-haspopup="menu"
           >
             <Icon name="folder" size={12} />
-            <span style={{ fontFamily: 'var(--font-mono)' }}>{workspace}</span>
+            <span style={{ fontFamily: 'var(--font-mono)' }}>{folder}</span>
             <Icon name="chevron-down" size={11} />
           </button>
           {wsOpen && (
-            <SpaceMenu
-              current={workspace}
-              workspaces={workspaces}
+            <FolderMenu
+              current={folder}
+              folders={folders}
               onPick={(ws) => {
                 setWsOpen(false);
-                onSwitchWorkspace(ws);
+                onSwitchFolder(ws);
               }}
               onManageFolders={() => {
                 setWsOpen(false);
@@ -188,35 +188,35 @@ export function Topbar({
   );
 }
 
-interface SpaceMenuProps {
+interface FolderMenuProps {
   current: string;
-  workspaces: readonly Workspace[];
-  onPick: (w: Workspace) => void;
+  folders: readonly Folder[];
+  onPick: (w: Folder) => void;
   onManageFolders: () => void;
 }
 
-function SpaceMenu({
+function FolderMenu({
   current,
-  workspaces,
+  folders,
   onPick,
   onManageFolders,
-}: SpaceMenuProps) {
+}: FolderMenuProps) {
   return (
     <div className="ws-menu" role="menu" aria-label="Switch folder">
       <div className="ws-menu-h">Folders</div>
       <ul className="ws-menu-list">
-        {workspaces.length === 0 && (
+        {folders.length === 0 && (
           <li>
             <div
               className="muted"
               style={{ padding: 12 }}
-              data-testid="topbar-workspace-empty"
+              data-testid="topbar-folder-empty"
             >
               No folder available for this KB. Please contact Twincore Team
             </div>
           </li>
         )}
-        {workspaces.map((w) => {
+        {folders.map((w) => {
           const active = w.id === current;
           return (
             <li key={w.id}>

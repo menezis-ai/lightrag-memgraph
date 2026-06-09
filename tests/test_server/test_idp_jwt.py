@@ -77,7 +77,7 @@ def _make_token(rsa_keypair, **overrides) -> str:
         "email": "claire@example.com",
         "name": "Claire B.",
         "groups": ["twin-steward"],
-        "twin_spaces": ["default", "sandbox"],
+        "twin_folders": ["default", "sandbox"],
         "scope": "read:documents write:documents",
         "iat": now,
         "exp": now + 600,
@@ -216,7 +216,7 @@ class TestClaimsMapping:
                 "email": "claire@example.com",
                 "name": "Claire B.",
                 "groups": ["twin-steward"],
-                "twin_spaces": ["default", "sandbox"],
+                "twin_folders": ["default", "sandbox"],
                 "scope": "read:documents write:documents",
                 "exp": 4102444800,  # 2100-01-01
             },
@@ -230,13 +230,13 @@ class TestClaimsMapping:
             "label": "Steward",
             "scopes": ["twin:read", "twin:write", "twin:approve"],
         }
-        assert user["workspaces"] == ["default", "sandbox"]
-        # `twin-steward` is in the default admin_groups → `admin:spaces`
+        assert user["folders"] == ["default", "sandbox"]
+        # `twin-steward` is in the default admin_groups → `admin:folders`
         # is appended to gateway_scopes by claims_to_user.
         assert user["gateway_scopes"] == [
             "read:documents",
             "write:documents",
-            idp_jwt.ADMIN_SPACES_SCOPE,
+            idp_jwt.ADMIN_FOLDERS_SCOPE,
         ]
         assert user["session_expires"].startswith("2100-01-01T")
 
@@ -253,7 +253,7 @@ class TestClaimsMapping:
         )
         assert user["palier"]["level"] == 3
 
-    def test_string_scope_split_on_space(self):
+    def test_string_scope_split_on_folder(self):
         cfg = self._cfg()
         user = idp_jwt.claims_to_user(
             {"sub": "u", "scope": "a b c"}, cfg
@@ -284,7 +284,7 @@ class TestClaimsMapping:
             {"sub": "u", "groups": ["twin-admin"], "scope": "read write"},
             cfg,
         )
-        assert idp_jwt.ADMIN_SPACES_SCOPE in user["gateway_scopes"]
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE in user["gateway_scopes"]
 
     def test_admin_scope_not_injected_for_non_admin(self):
         cfg = idp_jwt.IdpConfig(
@@ -295,7 +295,7 @@ class TestClaimsMapping:
             {"sub": "u", "groups": ["twin-reader"], "scope": "read"},
             cfg,
         )
-        assert idp_jwt.ADMIN_SPACES_SCOPE not in user["gateway_scopes"]
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE not in user["gateway_scopes"]
 
     def test_admin_scope_not_duplicated_when_already_in_jwt(self):
         cfg = idp_jwt.IdpConfig(
@@ -306,11 +306,11 @@ class TestClaimsMapping:
             {
                 "sub": "u",
                 "groups": ["twin-admin"],
-                "scope": f"read {idp_jwt.ADMIN_SPACES_SCOPE}",
+                "scope": f"read {idp_jwt.ADMIN_FOLDERS_SCOPE}",
             },
             cfg,
         )
-        assert user["gateway_scopes"].count(idp_jwt.ADMIN_SPACES_SCOPE) == 1
+        assert user["gateway_scopes"].count(idp_jwt.ADMIN_FOLDERS_SCOPE) == 1
 
     def test_empty_admin_groups_never_injects_even_for_matching_name(self):
         cfg = idp_jwt.IdpConfig(
@@ -320,7 +320,7 @@ class TestClaimsMapping:
         user = idp_jwt.claims_to_user(
             {"sub": "u", "groups": ["twin-admin"]}, cfg
         )
-        assert idp_jwt.ADMIN_SPACES_SCOPE not in user["gateway_scopes"]
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE not in user["gateway_scopes"]
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +604,7 @@ class TestRequireAdminUser:
         ) as c:
             r = await c.get("/admin/ping")
         assert r.status_code == 403
-        assert idp_jwt.ADMIN_SPACES_SCOPE in r.json()["detail"]
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["detail"]
 
     async def test_admin_user_allowed(self, rsa_keypair, fake_jwks):
         cfg = _config_for(fake_jwks)
@@ -620,7 +620,7 @@ class TestRequireAdminUser:
             r = await c.get("/admin/ping")
         assert r.status_code == 200
         assert (
-            idp_jwt.ADMIN_SPACES_SCOPE
+            idp_jwt.ADMIN_FOLDERS_SCOPE
             in r.json()["user"]["gateway_scopes"]
         )
 

@@ -4,7 +4,7 @@
  * Behaviors under test:
  *   - tabs render and click invokes onTab
  *   - active tab gets the .active class
- *   - workspace pill opens/closes the menu; pick invokes onSwitchWorkspace
+ *   - folder pill opens/closes the menu; pick invokes onSwitchFolder
  *   - Escape closes both popovers
  *   - notifications bell opens the popover; unread count shows badge
  *   - empty notifications -> "all caught up"
@@ -15,9 +15,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Topbar } from './Topbar';
-import type { Notification, Workspace } from '../types/topbar';
+import type { Notification, Folder } from '../types/topbar';
 
-const sampleWorkspaces: Workspace[] = [
+const sampleFolders: Folder[] = [
   {
     id: 'cib',
     kb: 'CIB KB',
@@ -55,10 +55,10 @@ function baseProps() {
     onTab: vi.fn(),
     theme: 'light' as const,
     onTheme: vi.fn(),
-    workspace: 'cib',
+    folder: 'cib',
     kbName: 'CIB KB',
-    onSwitchWorkspace: vi.fn(),
-    workspaces: sampleWorkspaces,
+    onSwitchFolder: vi.fn(),
+    folders: sampleFolders,
     notifications: sampleNotifs,
     unreadCount: 1,
     onMarkAllRead: vi.fn(),
@@ -132,14 +132,14 @@ describe('Topbar — folder switcher', () => {
     expect(screen.getByRole('menu', { name: 'Switch folder' })).toBeInTheDocument();
   });
 
-  it('invokes onSwitchWorkspace when a non-active row is picked', async () => {
+  it('invokes onSwitchFolder when a non-active row is picked', async () => {
     const p = baseProps();
     render(<Topbar {...p} />);
     await userEvent.click(screen.getByTitle('Switch folder'));
     // The "payments" row should be enabled (not current).
     const payments = screen.getByRole('menuitemradio', { checked: false });
     await userEvent.click(payments);
-    expect(p.onSwitchWorkspace).toHaveBeenCalledWith(
+    expect(p.onSwitchFolder).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'payments' }),
     );
   });

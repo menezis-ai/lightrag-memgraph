@@ -72,7 +72,7 @@ export function ApiTab({ apiVersion, groups, baseUrl }: ApiTabProps) {
           <span>
             Twin RAG fork inherits this surface unchanged. The gateway transparently
             injects <code>tag_filter</code> and <code>visibility</code> scoping from
-            the current space.
+            the current folder.
           </span>
         </div>
         <div className="swagger-servers">

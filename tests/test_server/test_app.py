@@ -734,9 +734,9 @@ class TestLifespan:
                 self._items.insert(0, dict(notification))
                 return dict(notification)
 
-        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
-            "TWIN_SPACES_JSON",
+            "TWIN_FOLDERS_JSON",
             json.dumps(
                 [
                     {"id": "default", "label": "Default", "kind": "primary"},

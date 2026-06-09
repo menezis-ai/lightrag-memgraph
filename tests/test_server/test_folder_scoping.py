@@ -1,4 +1,4 @@
-"""Integration guard for Twin Space scoping on the document list surface."""
+"""Integration guard for Twin Folder scoping on the document list surface."""
 
 from __future__ import annotations
 
@@ -31,21 +31,21 @@ class FakeDocStatusStore:
                 file_path="default-a.pdf",
                 chunks_count=1,
                 chunks_list=["c-default-a"],
-                metadata={"space": "default"},
+                metadata={"folder": "default"},
             ),
             "doc-default-b": FakeDocStatus(
                 status="completed",
                 file_path="default-b.pdf",
                 chunks_count=1,
                 chunks_list=["c-default-b"],
-                metadata={"space": "default"},
+                metadata={"folder": "default"},
             ),
             "doc-sandbox": FakeDocStatus(
                 status="completed",
                 file_path="sandbox.pdf",
                 chunks_count=1,
                 chunks_list=["c-sandbox"],
-                metadata={"space": "sandbox"},
+                metadata={"folder": "sandbox"},
             ),
         }
 
@@ -59,13 +59,13 @@ class FakeRag:
 
 
 @pytest.fixture(autouse=True)
-def _space_env(monkeypatch):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+def _folder_env(monkeypatch):
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps(
             [
-                {"id": "default", "label": "Default space", "kind": "primary"},
+                {"id": "default", "label": "Default folder", "kind": "primary"},
                 {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
             ]
         ),
@@ -74,7 +74,7 @@ def _space_env(monkeypatch):
 
 @pytest.fixture()
 async def client(monkeypatch):
-    async def no_tags(_docs, *, space: str) -> None:
+    async def no_tags(_docs, *, folder: str) -> None:
         return None
 
     monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
@@ -95,30 +95,29 @@ async def _document_ids(client: AsyncClient, *, headers: dict[str, str] | None =
     return body["total"], [item["doc_id"] for item in body["items"]]
 
 
-class TestSpaceScoping:
-    async def test_default_space_header_returns_only_default_docs(self, client):
+class TestFolderScoping:
+    async def test_default_folder_header_returns_only_default_docs(self, client):
         total, doc_ids = await _document_ids(
             client,
-            headers={"X-Twin-Space": "default"},
+            headers={"X-Twin-Folder": "default"},
         )
 
         assert total == 2
         assert doc_ids == ["doc-default-a", "doc-default-b"]
 
-    async def test_sandbox_space_header_returns_only_sandbox_docs(self, client):
+    async def test_sandbox_folder_header_returns_only_sandbox_docs(self, client):
         total, doc_ids = await _document_ids(
             client,
-            headers={"X-Twin-Space": "sandbox"},
+            headers={"X-Twin-Folder": "sandbox"},
         )
 
         assert total == 1
         assert doc_ids == ["doc-sandbox"]
 
-    async def test_legacy_workspace_header_still_maps_to_space(self, client):
+    async def test_missing_folder_header_uses_default_folder(self, client):
         total, doc_ids = await _document_ids(
             client,
-            headers={"X-Twin-Workspace": "sandbox"},
         )
 
-        assert total == 1
-        assert doc_ids == ["doc-sandbox"]
+        assert total == 2
+        assert doc_ids == ["doc-default-a", "doc-default-b"]

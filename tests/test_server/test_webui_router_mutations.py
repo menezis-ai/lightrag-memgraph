@@ -125,13 +125,13 @@ class TestRequestTag:
         assert notifs[0]["suffix"] == "requested"
         assert notifs[0]["read"] is False
 
-    async def test_tag_mutation_is_isolated_by_space(self, monkeypatch, client):
-        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+    async def test_tag_mutation_is_isolated_by_folder(self, monkeypatch, client):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
-            "TWIN_SPACES_JSON",
+            "TWIN_FOLDERS_JSON",
             json.dumps(
                 [
-                    {"id": "default", "label": "Default space", "kind": "primary"},
+                    {"id": "default", "label": "Default folder", "kind": "primary"},
                     {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
                 ]
             ),
@@ -140,10 +140,10 @@ class TestRequestTag:
 
         r = await client.post(
             "/tags",
-            headers={"X-Twin-Space": "default"},
+            headers={"X-Twin-Folder": "default"},
             json={
-                "tag": "spaceonly",
-                "def": "Only in the default space",
+                "tag": "folderonly",
+                "def": "Only in the default folder",
                 "category": "infra",
             },
         )
@@ -151,14 +151,14 @@ class TestRequestTag:
 
         default_tags = (await client.get(
             "/tags",
-            headers={"X-Twin-Space": "default"},
+            headers={"X-Twin-Folder": "default"},
         )).json()
         sandbox_tags = (await client.get(
             "/tags",
-            headers={"X-Twin-Space": "sandbox"},
+            headers={"X-Twin-Folder": "sandbox"},
         )).json()
-        assert any(tag["tag"] == "spaceonly" for tag in default_tags)
-        assert all(tag["tag"] != "spaceonly" for tag in sandbox_tags)
+        assert any(tag["tag"] == "folderonly" for tag in default_tags)
+        assert all(tag["tag"] != "folderonly" for tag in sandbox_tags)
 
 
 # ---------------------------------------------------------------------------

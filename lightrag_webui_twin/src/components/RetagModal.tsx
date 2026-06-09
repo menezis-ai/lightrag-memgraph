@@ -221,7 +221,7 @@ function RetagModalBody({
                   <span className="sep">·</span>
                   <span className="vis-chip">
                     <Icon name="lock" size={11} />
-                    {targets[0].workspace} · {totalChunks.toLocaleString()}{' '}
+                    {targets[0].folder} · {totalChunks.toLocaleString()}{' '}
                     chunks total
                   </span>
                 </>
@@ -245,7 +245,7 @@ function RetagModalBody({
                       name={primary.visibility === 'private' ? 'lock' : 'world'}
                       size={11}
                     />
-                    {primary.workspace} · {primary.visibility}
+                    {primary.folder} · {primary.visibility}
                   </span>
                 </>
               )}

@@ -7,10 +7,10 @@ Covers the safeguards landed during the 2026-06-04 mock-kill hardening:
   ``webui_stores="seed"`` — a strong signal of a real deployment that
   would otherwise serve in-memory demo fixtures.
 
-- **F6**: the WebuiStore ``for_space`` factory's ``mode="memgraph"``
+- **F6**: the WebuiStore ``for_folder`` factory's ``mode="memgraph"``
   branch is wired into both the in-process Twin sub-app path
   (``register()`` mounting) and the standalone ``server/app.py`` lifespan,
-  so the default space never silently exposes the demo
+  so the default folder never silently exposes the demo
   ``DOCUMENTS`` / ``GRAPH_ENTITIES`` via ``/twin/api/documents`` and
   ``/twin/api/graph/*``.
 """
@@ -115,21 +115,21 @@ class TestStandaloneDefaults:
 
 
 # ---------------------------------------------------------------------------
-# F6 — `for_space(default, mode="memgraph")` integration through
+# F6 — `for_folder(default, mode="memgraph")` integration through
 # `_mount_twin_subapp(webui_stores="seed")` doesn't apply, so we exercise
 # the contract directly here.
 # ---------------------------------------------------------------------------
 
 
-class TestForSpaceMemgraphModeIntegration:
+class TestForFolderMemgraphModeIntegration:
     """Module-level integration alongside the per-class unit tests in
-    ``test_webui_router.TestForSpaceMode`` — confirms the seed leak is
+    ``test_webui_router.TestForFolderMode`` — confirms the seed leak is
     closed from both the in-process Twin sub-app and the
     ``server/app.py`` standalone lifespan call sites."""
 
     def test_register_path_uses_memgraph_mode(self):
         """`__init__.py:_mount_twin_subapp` memgraph branch calls
-        `for_space(..., mode="memgraph")`. We assert the wiring by
+        `for_folder(..., mode="memgraph")`. We assert the wiring by
         reading the source — this is a guard against a future refactor
         accidentally dropping the keyword arg.
         """
@@ -138,9 +138,9 @@ class TestForSpaceMemgraphModeIntegration:
         from twindb_lightrag_memgraph import _mount_twin_subapp as fn
 
         source = inspect.getsource(fn)
-        assert 'WebuiStore.for_space(space.id, mode="memgraph")' in source, (
+        assert 'WebuiStore.for_folder(folder.id, mode="memgraph")' in source, (
             "register() memgraph branch must pass mode='memgraph' to "
-            "for_space — see mock-kill F6."
+            "for_folder — see mock-kill F6."
         )
 
     def test_app_lifespan_uses_memgraph_mode(self):
@@ -153,8 +153,8 @@ class TestForSpaceMemgraphModeIntegration:
         source = inspect.getsource(create_app)
         # The call lives inside `_lifespan` which is defined inside
         # `create_app`. Search the enclosing source.
-        assert 'WebuiStore.for_space(space.id, mode="memgraph")' in source, (
+        assert 'WebuiStore.for_folder(folder.id, mode="memgraph")' in source, (
             "server/app.py lifespan must pass mode='memgraph' to "
-            "for_space when memgraph backends are configured — see "
+            "for_folder when memgraph backends are configured — see "
             "mock-kill F6."
         )

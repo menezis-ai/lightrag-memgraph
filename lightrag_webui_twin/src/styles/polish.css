@@ -199,7 +199,7 @@
 .settings-provider-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: folder-between;
   padding: 12px 14px;
   background: var(--color-background-primary);
   border: 0.5px solid var(--color-border-tertiary);
@@ -216,7 +216,7 @@
 .settings-danger-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: folder-between;
   padding: 14px 16px;
   background: var(--twin-red-50);
   border: 0.5px solid var(--twin-red-border);
@@ -232,7 +232,7 @@
   margin-top: 2px;
 }
 
-/* Workspace section inputs (typed confirmation) */
+/* Folder section inputs (typed confirmation) */
 [data-testid="settings-danger-confirm-input"] {
   width: 100%;
   padding: 8px 10px;
@@ -350,7 +350,7 @@
   height: 14px;
 }
 .onboarding-footer {
-  justify-content: space-between;
+  justify-content: folder-between;
 }
 .onboarding-footer .actions {
   display: flex;
@@ -384,7 +384,7 @@
   border-bottom: 0.5px solid var(--color-border-tertiary);
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: folder-between;
   gap: 12px;
 }
 .doc-detail-title {
@@ -397,7 +397,7 @@
 .doc-detail-title strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-folder: nowrap;
   max-width: 260px;
   font-weight: 500;
 }
@@ -478,7 +478,7 @@
 .doc-audit-line1 {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: folder-between;
   gap: 8px;
   margin-bottom: 4px;
   font-size: 12px;
@@ -628,7 +628,7 @@
 .ea-field-h {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: folder-between;
   gap: 12px;
 }
 .ea-field-label {
@@ -783,13 +783,13 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-folder: nowrap;
 }
 .cell-summary .summary-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-folder: nowrap;
 }
 .cell-actions {
   display: inline-flex;
@@ -835,7 +835,7 @@
   flex-wrap: wrap;
 }
 .toast .sub {
-  white-space: normal;
+  white-folder: normal;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;

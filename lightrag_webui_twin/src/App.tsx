@@ -68,12 +68,12 @@ import {
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   THESAURUS_FIXTURES,
-  WORKSPACE_FIXTURES,
+  FOLDER_FIXTURES,
   makeSampleThreads,
 } from './fixtures';
 import type { Document } from './types/document';
 import type { TagCurrentUser } from './types/tag';
-import type { Theme, Workspace } from './types/topbar';
+import type { Theme, Folder } from './types/topbar';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
 
 const CURRENT_USER: TagCurrentUser = {
@@ -197,13 +197,11 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   window.__TWIN_E2E_QUERY_CLIENT = queryClient;
 }
 
-function getInitialSpaceId(): string {
+function getInitialFolderId(): string {
   const cfg = getTwinRuntimeConfig();
   return (
     cfg.defaultFolderId ||
     cfg.folders?.[0]?.id ||
-    cfg.defaultSpaceId ||
-    cfg.spaces?.[0]?.id ||
     'default'
   );
 }
@@ -213,8 +211,8 @@ function AppShell() {
   const [theme, setTheme] = useState<Theme>('light');
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionKey>('profile');
-  const [workspace, setWorkspaceState] = useState(() => {
-    const initial = getInitialSpaceId();
+  const [folder, setFolderState] = useState(() => {
+    const initial = getInitialFolderId();
     setActiveFolder(initial);
     return initial;
   });
@@ -240,15 +238,15 @@ function AppShell() {
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
   const docs = useDocuments(
-    { folder: workspace, workspace },
+    { folder },
     { enabled: authReady && tab === 'documents' },
   );
-  const workspaces = useFolders({ enabled: authReady });
+  const folders = useFolders({ enabled: authReady });
   const notificationsQ = useNotifications({ enabled: authReady });
   const thesaurus = useThesaurus({ enabled: authReady && needsThesaurus });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
   // are lightweight, the catalog is used cross-tab (badge counts, filter
-  // pickers, retag modal), and the e2e contract on "switching space
+  // pickers, retag modal), and the e2e contract on "switching folder
   // rescopes /twin/api/tags immediately" depends on the query existing
   // in the cache for `refetchQueries` to trigger. Gating heavy reads
   // (documents, graph) preserves the bulk of the perf win.
@@ -256,7 +254,7 @@ function AppShell() {
   const tagCategories = useTagCategories({ enabled: authReady });
   // Activity stays always-enabled (vs. tab-gated): the feed drives the
   // topbar unread counters cross-tab, and the e2e contract requires
-  // `/twin/api/activity` to refire under the new space header at switch
+  // `/twin/api/activity` to refire under the new folder header at switch
   // time. Lightweight read (bounded via `limit`), so the perf cost is
   // negligible compared to documents / graph which remain gated.
   const activity = useActivity({}, { enabled: authReady });
@@ -294,21 +292,21 @@ function AppShell() {
         : notification,
     );
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const configuredFolders = runtimeConfig.folders ?? runtimeConfig.spaces;
-  const workspaceList = useMemo<readonly Workspace[]>(() => {
+  const configuredFolders = runtimeConfig.folders;
+  const folderList = useMemo<readonly Folder[]>(() => {
     if (configuredFolders) {
-      return configuredFolders.map((folder) => ({
-        id: folder.id,
-        kb: folder.label,
-        visibility: folder.kind === 'sandbox' ? 'private' : 'internal',
-        sources: folder.sources ?? 0,
+      return configuredFolders.map((item) => ({
+        id: item.id,
+        kb: item.label,
+        visibility: item.kind === 'sandbox' ? 'private' : 'internal',
+        sources: item.sources ?? 0,
         role: 'admin / steward',
-        current: folder.id === workspace,
+        current: item.id === folder,
       }));
     }
-    return resolveQueryData(workspaces, WORKSPACE_FIXTURES) ?? [];
-  }, [configuredFolders, workspace, workspaces]);
-  const kbName = workspaceList.find((w) => w.id === workspace)?.kb ?? '';
+    return resolveQueryData(folders, FOLDER_FIXTURES) ?? [];
+  }, [configuredFolders, folder, folders]);
+  const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
@@ -807,10 +805,10 @@ function AppShell() {
     setTab(nextTab);
   };
 
-  const onSwitchWorkspace = (nextWorkspace: string) => {
+  const onSwitchFolder = (nextFolder: string) => {
     window.history.replaceState(null, '', window.location.pathname);
-    setActiveFolder(nextWorkspace);
-    setWorkspaceState(nextWorkspace);
+    setActiveFolder(nextFolder);
+    setFolderState(nextFolder);
     setReadNotificationIds(new Set());
     setClearedNotificationIds(new Set());
     setDetailDoc(null);
@@ -818,11 +816,11 @@ function AppShell() {
     setRetagDoc(null);
     setRetagBulk(null);
     // Use `refetchQueries` with `type: 'all'` so disabled (tab-gated)
-    // queries also fetch immediately on space switch — otherwise the
-    // invariant "switching space rescopes every Twin overlay surface"
+    // queries also fetch immediately on folder switch — otherwise the
+    // invariant "switching folder rescopes every Twin overlay surface"
     // breaks for inactive tabs and the e2e contract on
     // `/twin/api/tags` (under sandbox header) fails. Preserves the
-    // perf gain at boot/tab switch; only the user-initiated space
+    // perf gain at boot/tab switch; only the user-initiated folder
     // switch pays the cost of refreshing all four resources.
     void Promise.all([
       queryClient.refetchQueries({ queryKey: ['documents'], type: 'all' }),
@@ -834,7 +832,7 @@ function AppShell() {
 
   const backendErrors = [
     resourceError('Documents', docs),
-    resourceError('Folders', workspaces),
+    resourceError('Folders', folders),
     resourceError('Notifications', notificationsQ),
     resourceError('Thesaurus', thesaurus),
     resourceError('Tags', tags),
@@ -850,7 +848,7 @@ function AppShell() {
   const docList =
     docs.data?.items ??
     (FIXTURE_FALLBACK_ENABLED
-      ? DOCUMENT_FIXTURES.filter((doc) => doc.workspace === workspace)
+      ? DOCUMENT_FIXTURES.filter((doc) => doc.folder === folder)
       : []);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
@@ -901,10 +899,10 @@ function AppShell() {
         }}
         theme={theme}
         onTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
-        workspace={workspace}
+        folder={folder}
         kbName={kbName}
-        onSwitchWorkspace={(w) => onSwitchWorkspace(w.id)}
-        workspaces={workspaceList}
+        onSwitchFolder={(w) => onSwitchFolder(w.id)}
+        folders={folderList}
         notifications={notifications}
         unreadCount={unreadCount}
         onMarkAllRead={() =>
@@ -919,7 +917,7 @@ function AppShell() {
         }
         onOpenActivity={() => setTab('activity')}
         onManageFolders={() => {
-          setSettingsSection('workspace');
+          setSettingsSection('folder');
           setTab('settings');
         }}
       />
@@ -955,7 +953,7 @@ function AppShell() {
           position: 'relative',
         }}
       >
-        <div className="tab-pane" key={`${tab}:${workspace}`}>
+        <div className="tab-pane" key={`${tab}:${folder}`}>
           <Suspense fallback={<div className="tab-loading" aria-live="polite" />}>
           {tab === 'documents' && (
             <DocumentsTab
@@ -981,7 +979,7 @@ function AppShell() {
           )}
           {tab === 'settings' && (
             <SettingsTab
-              activeWorkspace={workspace}
+              activeFolder={folder}
               kbName={kbName}
               initialSection={settingsSection}
               onSignOut={() => {

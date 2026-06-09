@@ -165,7 +165,7 @@ describe('TagsTab — filters', () => {
     expect(screen.getByTestId('tag-card-rman')).toBeInTheDocument();
   });
 
-  it('empty-zero state appears when the workspace has 0 active tags', () => {
+  it('empty-zero state appears when the folder has 0 active tags', () => {
     render(
       <TagsTab
         {...defaultProps()}
@@ -347,7 +347,7 @@ describe('TagsTab — modal dispatch', () => {
 });
 
 describe('exportThesaurusJson helper', () => {
-  it('produces a JSON blob with workspace + tags + categories', () => {
+  it('produces a JSON blob with folder + tags + categories', () => {
     const calls: { blob: Blob }[] = [];
     const origCreate = URL.createObjectURL;
     const origRevoke = URL.revokeObjectURL;

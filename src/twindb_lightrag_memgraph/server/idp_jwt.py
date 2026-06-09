@@ -48,10 +48,10 @@ The module is intentionally side-effect free at import time — the
 | ``TWIN_IDP_CLAIM_EMAIL`` | ``email`` | Maps to ``email``. |
 | ``TWIN_IDP_CLAIM_NAME`` | ``name`` | Maps to ``name``. |
 | ``TWIN_IDP_CLAIM_GROUPS`` | ``groups`` | Group/role list used for palier mapping. |
-| ``TWIN_IDP_CLAIM_WORKSPACES`` | ``twin_spaces`` | List of space ids the user can switch into. |
+| ``TWIN_IDP_CLAIM_FOLDERS`` | ``twin_folders`` | List of folder ids the user can switch into. |
 | ``TWIN_IDP_CLAIM_SCOPES`` | ``scope`` | Space-delimited string OR list. |
 | ``TWIN_IDP_GROUP_TO_PALIER_JSON`` | built-in | JSON mapping group → palier level. |
-| ``TWIN_IDP_ADMIN_GROUPS`` | ``twin-admin,twin-steward`` | CSV of MyAccess groups whose members get ``admin:spaces`` in ``gateway_scopes``. Set to an empty string to deny admin to everyone. |
+| ``TWIN_IDP_ADMIN_GROUPS`` | ``twin-admin,twin-steward`` | CSV of MyAccess groups whose members get ``admin:folders`` in ``gateway_scopes``. Set to an empty string to deny admin to everyone. |
 
 The built-in group→palier fallback maps:
 ``{"twin-steward": 3, "twin-contributor": 2, "twin-reader": 1}``.
@@ -105,10 +105,10 @@ _DEFAULT_PALIER_SCOPES: dict[int, list[str]] = {
 _DEFAULT_ADMIN_GROUPS: frozenset[str] = frozenset({"twin-admin", "twin-steward"})
 
 # Gateway scope token granted when a user is in any of the configured
-# admin groups. The Space CRUD routes gate on this; the React port
-# reads it via ``user.gateway_scopes`` (cf. ``canManageSpaces`` in
+# admin groups. The Folder CRUD routes gate on this; the React port
+# reads it via ``user.gateway_scopes`` (cf. ``canManageFolders`` in
 # ``lightrag_webui_twin/src/lib/permissions.ts``).
-ADMIN_SPACES_SCOPE = "admin:spaces"
+ADMIN_FOLDERS_SCOPE = "admin:folders"
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,7 @@ class IdpConfig:
     claim_email: str = "email"
     claim_name: str = "name"
     claim_groups: str = "groups"
-    claim_workspaces: str = "twin_spaces"
+    claim_folders: str = "twin_folders"
     claim_scopes: str = "scope"
     group_to_palier: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_GROUP_TO_PALIER)
@@ -200,7 +200,7 @@ class IdpConfig:
             claim_email=env.get("TWIN_IDP_CLAIM_EMAIL", "email"),
             claim_name=env.get("TWIN_IDP_CLAIM_NAME", "name"),
             claim_groups=env.get("TWIN_IDP_CLAIM_GROUPS", "groups"),
-            claim_workspaces=env.get("TWIN_IDP_CLAIM_WORKSPACES", "twin_spaces"),
+            claim_folders=env.get("TWIN_IDP_CLAIM_FOLDERS", "twin_folders"),
             claim_scopes=env.get("TWIN_IDP_CLAIM_SCOPES", "scope"),
             group_to_palier=group_to_palier,
             admin_groups=admin_groups,
@@ -396,7 +396,7 @@ def claims_to_user(
     email = str(claims.get(config.claim_email) or "")
     name = str(claims.get(config.claim_name) or email or sso or "Unknown")
     groups = _coerce_list(claims.get(config.claim_groups))
-    workspaces = _coerce_list(claims.get(config.claim_workspaces))
+    folders = _coerce_list(claims.get(config.claim_folders))
     scopes = _coerce_list(claims.get(config.claim_scopes))
 
     palier_level = _resolve_palier_level(groups, config.group_to_palier)
@@ -404,8 +404,8 @@ def claims_to_user(
     palier_scopes = _DEFAULT_PALIER_SCOPES[palier_level]
 
     if config.admin_groups and not set(groups).isdisjoint(config.admin_groups):
-        if ADMIN_SPACES_SCOPE not in scopes:
-            scopes = [*scopes, ADMIN_SPACES_SCOPE]
+        if ADMIN_FOLDERS_SCOPE not in scopes:
+            scopes = [*scopes, ADMIN_FOLDERS_SCOPE]
 
     exp = claims.get("exp")
     session_expires: str
@@ -425,7 +425,7 @@ def claims_to_user(
             "label": palier_label,
             "scopes": palier_scopes,
         },
-        "workspaces": workspaces,
+        "folders": folders,
         "idp": config.idp_name,
         "idp_realm": config.idp_realm,
         "sub": str(claims.get("sub") or sso),
@@ -494,7 +494,7 @@ def require_idp_user(request: Request) -> dict[str, Any] | None:
 
 def require_admin_user(request: Request) -> dict[str, Any] | None:
     """FastAPI dependency: only let through requests whose IdP token
-    carries the ``admin:spaces`` gateway scope.
+    carries the ``admin:folders`` gateway scope.
 
     Activation contract mirrors ``require_idp_user``:
 
@@ -502,7 +502,7 @@ def require_admin_user(request: Request) -> dict[str, Any] | None:
       without raising. Dev / OVH standalone / maquette stay usable.
     - **Active IdP** → resolves the user via ``require_idp_user`` (401
       on missing/invalid token), then raises 403 unless the user's
-      ``gateway_scopes`` contains :data:`ADMIN_SPACES_SCOPE`. The scope
+      ``gateway_scopes`` contains :data:`ADMIN_FOLDERS_SCOPE`. The scope
       is injected by :func:`claims_to_user` whenever the user's
       ``groups`` intersect ``IdpConfig.admin_groups``.
     """
@@ -517,16 +517,16 @@ def require_admin_user(request: Request) -> dict[str, Any] | None:
             error="missing_token",
             description="Missing IdP credentials",
         )
-    if ADMIN_SPACES_SCOPE not in (user.get("gateway_scopes") or []):
+    if ADMIN_FOLDERS_SCOPE not in (user.get("gateway_scopes") or []):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Admin scope '{ADMIN_SPACES_SCOPE}' required",
+            detail=f"Admin scope '{ADMIN_FOLDERS_SCOPE}' required",
         )
     return user
 
 
 __all__ = [
-    "ADMIN_SPACES_SCOPE",
+    "ADMIN_FOLDERS_SCOPE",
     "IdpAuthError",
     "IdpConfig",
     "JwksCache",

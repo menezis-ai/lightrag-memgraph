@@ -22,7 +22,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
     error_msg: null,
     metadata: {},
     tags: ['rman'],
-    workspace: 'default',
+    folder: 'default',
     visibility: 'private',
     extracted_text: 'Hello extracted world',
     ...overrides,

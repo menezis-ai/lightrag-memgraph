@@ -139,8 +139,8 @@ describe('apiFetch', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Folder']).toBe('default');
-    expect(headers['X-Twin-Space']).toBe('default');
-    expect(headers['X-Twin-Workspace']).toBe('default');
+    expect(headers['X-Twin-Folder']).toBe('default');
+    expect(headers['X-Twin-Folder']).toBe('default');
   });
 
   it('allows a per-call folder override', async () => {
@@ -150,30 +150,30 @@ describe('apiFetch', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Folder']).toBe('sandbox');
-    expect(headers['X-Twin-Space']).toBe('sandbox');
-    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
   });
 
-  it('keeps the legacy space override during the migration window', async () => {
+  it('keeps the legacy folder override during the migration window', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
     setActiveFolder('default');
-    await apiFetch('/twin/api/tags', { space: 'sandbox' });
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Folder']).toBe('sandbox');
-    expect(headers['X-Twin-Space']).toBe('sandbox');
-    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
   });
 
-  it('keeps the legacy workspace override during the migration window', async () => {
+  it('keeps the legacy folder override during the migration window', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
     setActiveFolder('default');
-    await apiFetch('/twin/api/tags', { workspace: 'sandbox' });
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Folder']).toBe('sandbox');
-    expect(headers['X-Twin-Space']).toBe('sandbox');
-    expect(headers['X-Twin-Workspace']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
   });
 
   it('allows disabling the folder header for a per-call request', async () => {
@@ -183,8 +183,8 @@ describe('apiFetch', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers['X-Twin-Folder']).toBeUndefined();
-    expect(headers['X-Twin-Space']).toBeUndefined();
-    expect(headers['X-Twin-Workspace']).toBeUndefined();
+    expect(headers['X-Twin-Folder']).toBeUndefined();
+    expect(headers['X-Twin-Folder']).toBeUndefined();
   });
 
   it('throws ApiError with parsed JSON body on 4xx', async () => {

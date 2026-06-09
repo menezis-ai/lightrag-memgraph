@@ -9,7 +9,7 @@
  *   - `twinApi` : Twin overlay endpoints, served by our FastAPI sub-app
  *     mounted via `register(mount_server=True)`. All paths share the
  *     `/twin/api/` prefix: /tags, /audit-events, /activity, /notifications,
- *     /folders, /workspaces, /graph/*, /auth/logout, /documents/{id}/metadata,
+ *     /folders, /graph/*, /auth/logout, /documents/{id}/metadata,
  *     /documents/{id}/approve, /documents/{id}/reject.
  *
  * The single `api` export aggregates both for convenience; queries.ts hooks
@@ -32,7 +32,7 @@ import type {
   GraphRelation,
   GraphRelationPatch,
 } from '../types/graph';
-import type { Notification, Workspace } from '../types/topbar';
+import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
 
@@ -48,7 +48,6 @@ export interface DocumentsQuery {
   q?: string;
   tag?: string;
   folder?: string;
-  workspace?: string;
   cursor?: string;
 }
 
@@ -205,7 +204,7 @@ export const lightragApi = {
       method: 'POST',
     }),
   /**
-   * Trigger re-processing of all FAILED docs in the workspace via
+   * Trigger re-processing of all FAILED docs in the folder via
    * LightRAG's native batch endpoint. There is no per-doc-by-id
    * reprocess in LightRAG 1.4.9.11; the DocDetailPanel "Re-process"
    * button surfaces this to operators as "retry failed batch" when
@@ -221,7 +220,7 @@ export const lightragApi = {
    * Upload one file to LightRAG native /documents/upload (multipart).
    *
    * apiFetch is JSON-only, so this bypass uses fetch directly. The
-   * URL, auth, cookie, and workspace header pattern matches apiFetch.
+   * URL, auth, cookie, and folder header pattern matches apiFetch.
    * Returns the InsertResponse shape:
    *   { status: 'success'|'duplicated', message: string, track_id: string }
    * On 4xx/5xx, throws an ApiError so the host can show a real toast.
@@ -283,16 +282,9 @@ export const lightragApi = {
 // ============================================================================
 
 export const twinApi = {
-  // Workspaces / notifications
-  listWorkspaces: (init?: ApiRequestInit) =>
-    apiFetch<readonly Workspace[]>(`${TWIN}/workspaces`, init),
-
   // Folders (runtime additions on top of the env seed)
   listFolders: (init?: ApiRequestInit) =>
-    apiFetch<readonly Workspace[]>(`${TWIN}/folders`, init),
-  /** @deprecated Use listFolders. */
-  listSpaces: (init?: ApiRequestInit) =>
-    apiFetch<readonly Workspace[]>(`${TWIN}/spaces`, init),
+    apiFetch<readonly Folder[]>(`${TWIN}/folders`, init),
 
   /**
    * Issue a retrieval query against the Twin overlay POST /query.
@@ -309,7 +301,7 @@ export const twinApi = {
     }),
   /**
    * Structured retrieval data endpoint. This mirrors LightRAG's native
-   * /query/data through the Twin prefix so space headers and tag_filter
+   * /query/data through the Twin prefix so folder headers and tag_filter
    * stay on the same governed surface as the chat endpoints.
    */
   queryData: (body: TwinQueryRequest, init?: ApiRequestInit) =>
@@ -390,32 +382,21 @@ export const twinApi = {
     body: { id: string; label: string; kind?: string; description?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Workspace>(`${TWIN}/folders`, {
+    apiFetch<Folder>(`${TWIN}/folders`, {
       ...init,
       method: 'POST',
       body,
     }),
-  /** @deprecated Use createFolder. */
-  createSpace: (
-    body: { id: string; label: string; kind?: string; description?: string },
-    init?: ApiRequestInit,
-  ) => twinApi.createFolder(body, init),
   updateFolder: (
     id: string,
     patch: { label?: string; kind?: string; description?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Workspace>(`${TWIN}/folders/${encodeURIComponent(id)}`, {
+    apiFetch<Folder>(`${TWIN}/folders/${encodeURIComponent(id)}`, {
       ...init,
       method: 'PATCH',
       body: patch,
     }),
-  /** @deprecated Use updateFolder. */
-  updateSpace: (
-    id: string,
-    patch: { label?: string; kind?: string; description?: string },
-    init?: ApiRequestInit,
-  ) => twinApi.updateFolder(id, patch, init),
   deleteFolder: (id: string, init?: ApiRequestInit) =>
     apiFetch<void>(`${TWIN}/folders/${encodeURIComponent(id)}`, {
       ...init,
@@ -463,7 +444,7 @@ export const twinApi = {
     ),
 
   /**
-   * Mirror a JSON taxonomy into the workspace's categories store.
+   * Mirror a JSON taxonomy into the folder categories store.
    * Server-side validation is strict (matches the template schema);
    * a 400 maps to ``ApiError`` with the validation message as ``body``.
    */
@@ -579,7 +560,7 @@ export const twinApi = {
   getDocumentMetadata: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{
       tags: readonly string[];
-      workspace: string;
+      folder: string;
       review?: Document['review'];
     }>(`${TWIN}/documents/${encodeURIComponent(docId)}/metadata`, init),
   approveDocument: (
@@ -612,7 +593,7 @@ export const twinApi = {
 
   /**
    * Persist a tag mutation (single or bulk) on a list of documents.
-   * Doctrine: a tag is a Memgraph node attribute on DocStatus_{workspace}.
+   * Doctrine: a tag is a Memgraph node linked to DocStatus in the active folder.
    * The server applies set semantics — adds first, removes second — and
    * emits one activity event per doc (kind="doc-retagged").
    * 404s for unknown doc_ids come back in the `failed` array, not as
@@ -638,7 +619,7 @@ export const twinApi = {
 
   // Knowledge graph teaser
   listGraphEntities: (
-    q: { workspace?: string; type?: string } = {},
+    q: { folder?: string; type?: string } = {},
     init?: ApiRequestInit,
   ) =>
     apiFetch<readonly GraphEntity[]>(`${TWIN}/graph/entities`, {
@@ -646,7 +627,7 @@ export const twinApi = {
       query: { ...q },
     }),
   listGraphRelations: (
-    q: { workspace?: string } = {},
+    q: { folder?: string } = {},
     init?: ApiRequestInit,
   ) =>
     apiFetch<readonly GraphRelation[]>(`${TWIN}/graph/relations`, {
@@ -741,7 +722,7 @@ export const api = {
   queryStream: twinApi.queryStream,
 
   // Twin overlay
-  listWorkspaces: twinApi.listWorkspaces,
+  listFolders: twinApi.listFolders,
   listNotifications: twinApi.listNotifications,
   markAllNotificationsRead: twinApi.markAllNotificationsRead,
   clearNotifications: twinApi.clearNotifications,
@@ -773,14 +754,9 @@ export const api = {
   deleteGraphEntity: twinApi.deleteGraphEntity,
   createGraphRelation: twinApi.createGraphRelation,
   deleteGraphRelation: twinApi.deleteGraphRelation,
-  listFolders: twinApi.listFolders,
   createFolder: twinApi.createFolder,
   updateFolder: twinApi.updateFolder,
   deleteFolder: twinApi.deleteFolder,
-  listSpaces: twinApi.listSpaces,
-  createSpace: twinApi.createSpace,
-  updateSpace: twinApi.updateSpace,
-  deleteSpace: twinApi.deleteSpace,
 };
 
 export type ApiClient = typeof api;

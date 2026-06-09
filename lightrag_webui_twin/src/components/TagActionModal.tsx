@@ -421,7 +421,7 @@ export function TagActionModal({
                 <Icon name="info-circle" size={13} color="var(--twin-accent)" />
                 <span>
                   Visibility is auto-set to <code>private</code> (inherited from
-                  space). Requests reach a palier-3 reviewer within 2 business days.
+                  folder). Requests reach a palier-3 reviewer within 2 business days.
                   An accepted tag enters as <b>active</b>.
                 </span>
               </div>

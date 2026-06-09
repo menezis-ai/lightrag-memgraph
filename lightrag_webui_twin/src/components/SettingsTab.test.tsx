@@ -2,12 +2,12 @@
  * Unit tests for SettingsTab (3-section redesign per 2026-05-30).
  *
  * Behaviors under test:
- *   - rail exposes exactly Profile / API / Space (Providers / Members /
+ *   - rail exposes exactly Profile / API / Folder (Providers / Members /
  *     Danger zone / Tokens / API generation all absent)
  *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
  *   - Profile Sign out button fires onSignOut
  *   - Profile Restart tutorial button fires onRestartTutorial
- *   - Space section shows the space id + retention table
+ *   - Folder section shows the folder id + retention table
  *   - API section shows the ApiTab (proxy)
  */
 
@@ -24,7 +24,7 @@ function renderWith(
 ) {
   return render(
     <QueryClientProvider client={qc}>
-      <SettingsTab activeWorkspace="default" kbName="Default space" {...props} />
+      <SettingsTab activeFolder="default" kbName="Default folder" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -39,11 +39,11 @@ afterEach(() => {
 });
 
 describe('SettingsTab — rail', () => {
-  it('exposes exactly 3 sections: profile, api, space', () => {
+  it('exposes exactly 3 sections: profile, api, folder', () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-rail-profile')).toBeInTheDocument();
     expect(screen.getByTestId('settings-rail-api')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-rail-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-rail-folder')).toBeInTheDocument();
     // Removed sections must NOT appear (30/05 cleanup)
     expect(screen.queryByTestId('settings-rail-providers')).toBeNull();
     expect(screen.queryByTestId('settings-rail-members')).toBeNull();
@@ -88,44 +88,44 @@ describe('SettingsTab — Profile', () => {
     renderWith(new QueryClient());
     // Steward dev fallback has 6 scopes
     expect(screen.getByText('read:documents')).toBeInTheDocument();
-    expect(screen.getByText('admin:workspace')).toBeInTheDocument();
+    expect(screen.getByText('admin:folders')).toBeInTheDocument();
   });
 });
 
-describe('SettingsTab — Space', () => {
+describe('SettingsTab — Folder', () => {
   it('can open directly on the folder section', () => {
-    renderWith(new QueryClient(), { initialSection: 'workspace' });
-    expect(screen.getByTestId('settings-workspace')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-rail-workspace')).toHaveAttribute(
+    renderWith(new QueryClient(), { initialSection: 'folder' });
+    expect(screen.getByTestId('settings-folder')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-rail-folder')).toHaveAttribute(
       'aria-current',
       'true',
     );
   });
 
-  it('renders the active space identity from props (not a fixture)', async () => {
+  it('renders the active folder identity from props (not a fixture)', async () => {
     renderWith(new QueryClient(), {
-      activeWorkspace: 'cib-prod',
+      activeFolder: 'cib-prod',
       kbName: 'CIB Production',
     });
-    await userEvent.click(screen.getByTestId('settings-rail-workspace'));
-    expect(screen.getByTestId('settings-active-ws').textContent).toBe(
+    await userEvent.click(screen.getByTestId('settings-rail-folder'));
+    expect(screen.getByTestId('settings-active-folder').textContent).toBe(
       'cib-prod',
     );
     expect(
-      screen.getByTestId('settings-space-display-name').textContent,
+      screen.getByTestId('settings-folder-display-name').textContent,
     ).toBe('CIB Production');
   });
 
   it('no longer renders the removed visibility / region / retention cards', async () => {
     // Mock-kill F1 — these were fixture-only invented values
-    // (eu-west-3, twin-default-space-retention-v1, hardcoded TTLs) and
+    // (eu-west-3, twin-default-folder-retention-v1, hardcoded TTLs) and
     // were dropped 2026-06-04.
     renderWith(new QueryClient());
-    await userEvent.click(screen.getByTestId('settings-rail-workspace'));
+    await userEvent.click(screen.getByTestId('settings-rail-folder'));
     expect(screen.queryByText('Source mgmt')).toBeNull();
     expect(screen.queryByText('Retention policy')).toBeNull();
     expect(screen.queryByText(/eu-west-3/i)).toBeNull();
-    expect(screen.queryByText(/twin-default-space-retention/i)).toBeNull();
+    expect(screen.queryByText(/twin-default-folder-retention/i)).toBeNull();
   });
 });
 

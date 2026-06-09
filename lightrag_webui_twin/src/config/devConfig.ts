@@ -34,22 +34,6 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
       description: 'Optional test folder isolated from agent-facing data.',
     },
   ],
-  defaultSpaceId: 'default',
-  maxSpaces: 5,
-  spaces: [
-    {
-      id: 'default',
-      label: 'Default folder',
-      kind: 'primary',
-      description: 'SRE-provisioned default folder for this KB.',
-    },
-    {
-      id: 'sandbox',
-      label: 'Sandbox',
-      kind: 'sandbox',
-      description: 'Optional test folder isolated from agent-facing data.',
-    },
-  ],
   debugUser: {
     sso_subject: 'claire.benoit@demo.local',
     email: 'claire.benoit@demo.local',
@@ -59,7 +43,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
       label: 'Steward',
       scopes: ['twin:read', 'twin:write', 'twin:approve'],
     },
-    workspaces: ['default', 'sandbox'],
+    folders: ['default', 'sandbox'],
     idp: 'keycloak',
     idp_realm: 'twin-cib',
     sub: 'clb-7f4e',
@@ -70,8 +54,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
       'read:query',
       'read:activity',
       'admin:tags',
-      'admin:workspace',
-      'admin:spaces',
+      'admin:folders',
     ],
   },
 };

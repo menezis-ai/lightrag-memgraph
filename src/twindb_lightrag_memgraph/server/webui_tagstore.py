@@ -3,7 +3,7 @@
 Defines a small protocol so the router can read tags + categories without
 caring whether they come from the in-memory seed or a Memgraph KV namespace.
 The low-level Memgraph factory can explicitly bootstrap demo data for dev/test;
-production app wiring instantiates the store directly so fresh spaces start
+production app wiring instantiates the store directly so fresh folders start
 without demo tags.
 
 Why this slice is read-only:

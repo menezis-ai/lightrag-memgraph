@@ -67,7 +67,7 @@ function localUser(username: string | null | undefined, config: TwinRuntimeConfi
         ? ['twin:read', 'twin:write', 'twin:approve']
         : ['twin:read', 'twin:write'],
     },
-    workspaces: (config.folders ?? config.spaces ?? []).map((folder) => folder.id),
+    folders: (config.folders ?? []).map((folder) => folder.id),
     idp: 'local-jwt',
     idp_realm: 'local',
     sub: name,
@@ -79,7 +79,7 @@ function localUser(username: string | null | undefined, config: TwinRuntimeConfi
           'read:query',
           'read:activity',
           'admin:tags',
-          'admin:spaces',
+          'admin:folders',
         ]
       : ['read:documents', 'write:documents', 'read:query', 'read:activity'],
   };

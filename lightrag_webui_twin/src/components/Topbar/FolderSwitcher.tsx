@@ -1,8 +1,5 @@
 /**
- * WorkspaceSwitcher — transitional wrapper for the Twin folder selector.
- *
- * The class/test ids keep their historical `workspace` name for now, but
- * visible copy and HTTP semantics now use Twin "folders".
+ * FolderSwitcher — Twin folder selector.
  *
  * The `X-Twin-Folder` HTTP header is set by the host App after
  * picking — this component just emits the id; it does not own the apiFetch
@@ -11,22 +8,22 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
-import type { Workspace } from '../../types/topbar';
+import type { Folder } from '../../types/topbar';
 
-export interface WorkspaceSwitcherProps {
+export interface FolderSwitcherProps {
   active: string;
-  workspaces: readonly Workspace[];
+  folders: readonly Folder[];
   onPick: (id: string) => void;
 }
 
-export function WorkspaceSwitcher({
+export function FolderSwitcher({
   active,
-  workspaces,
+  folders,
   onPick,
-}: WorkspaceSwitcherProps) {
-  // MyAccess gates the parent BNP/LGP workspace. Folders are scoped inside
+}: FolderSwitcherProps) {
+  // MyAccess gates the parent BNP/LGP KB. Folders are scoped inside
   // that KB, so dev/prod both show the configured folder list by default.
-  const visible = workspaces;
+  const visible = folders;
 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -43,11 +40,11 @@ export function WorkspaceSwitcher({
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         type="button"
-        className={`workspace-pill${open ? ' is-open' : ''}`}
+        className={`folder-pill${open ? ' is-open' : ''}`}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        data-testid="topbar-workspace-switcher"
+        data-testid="topbar-folder-switcher"
       >
         <Icon name="folder" size={12} />
         <span style={{ fontFamily: 'var(--font-mono)' }}>{active}</span>
@@ -58,7 +55,7 @@ export function WorkspaceSwitcher({
           className="ws-menu"
           role="menu"
           aria-label="Switch folder"
-          data-testid="topbar-workspace-menu"
+          data-testid="topbar-folder-menu"
         >
           <div className="ws-menu-h">Folders ({visible.length})</div>
           <ul className="ws-menu-list">
@@ -72,7 +69,7 @@ export function WorkspaceSwitcher({
                     aria-checked={isActive}
                     className={`ws-row${isActive ? ' is-active' : ''}`}
                     disabled={isActive}
-                    data-testid={`topbar-workspace-pick-${w.id}`}
+                    data-testid={`topbar-folder-pick-${w.id}`}
                     onClick={() => {
                       if (!isActive) {
                         onPick(w.id);
@@ -120,7 +117,7 @@ export function WorkspaceSwitcher({
                 <div
                   className="muted"
                   style={{ padding: 12 }}
-                  data-testid="topbar-workspace-empty"
+                  data-testid="topbar-folder-empty"
                 >
                   No folder available for this KB. Please contact Twincore Team
                 </div>

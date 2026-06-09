@@ -201,7 +201,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     kind: 'settings',
     sev: 'info',
     actor: { user: 'claire.benoit', role: 'KB Admin' },
-    target: { type: 'workspace', label: 'cib · thesaurus' },
+    target: { type: 'folder', label: 'cib · thesaurus' },
     summary: 'Added new tag iso20022 (palier 2) · category payment',
     meta: {
       tag: 'iso20022',

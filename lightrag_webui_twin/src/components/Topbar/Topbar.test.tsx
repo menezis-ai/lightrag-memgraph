@@ -4,7 +4,7 @@
  * Per the sprint brief revision 2026-05-29 + Louis 2026-05-28:
  *   - PalierSwitcher : removed (palier is JWT-only, no UI)
  *   - MyAccessPill   : removed (gimmick, not in prod)
- *   - WorkspaceSwitcher : reads useAuth().user.workspaces, click emits onPick(id)
+ *   - FolderSwitcher : reads useAuth().user.folders, click emits onPick(id)
  *   - TodoBell : polls /twin/api/notifications, badge counts actionable items
  *   - SystemStatusIndicator : worst-of(lightrag, twin) health, opens popover
  */
@@ -15,10 +15,10 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { FolderSwitcher } from './FolderSwitcher';
 import { TodoBell } from './TodoBell';
 import { SystemStatusIndicator } from './SystemStatusIndicator';
-import { WORKSPACE_FIXTURES, NOTIFICATION_FIXTURES } from '../../fixtures';
+import { FOLDER_FIXTURES, NOTIFICATION_FIXTURES } from '../../fixtures';
 import { __resetAuthConfigCacheForTests } from '../../hooks/useAuth';
 
 const server = setupServer(
@@ -35,8 +35,8 @@ const server = setupServer(
 
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
-  // Inject a debug user with the full fixture workspace set so the
-  // WorkspaceSwitcher rendering is not narrowed by MyAccess in tests.
+  // Inject a debug user with the full fixture folder set so the
+  // FolderSwitcher rendering is not narrowed by MyAccess in tests.
   (window as Window & typeof globalThis).__twinConfig = {
     apiBaseUrl: '/twin/api',
     lightragBaseUrl: '/api',
@@ -46,7 +46,7 @@ beforeEach(() => {
       email: 'test@twin.local',
       name: 'test.user',
       palier: { level: 3, label: 'Steward', scopes: ['twin:read', 'twin:write'] },
-      workspaces: WORKSPACE_FIXTURES.map((w) => w.id),
+      folders: FOLDER_FIXTURES.map((w) => w.id),
       idp: 'keycloak',
       idp_realm: 'twin-test',
       sub: 'test-001',
@@ -68,42 +68,42 @@ function wrap(qc: QueryClient) {
   };
 }
 
-describe('WorkspaceSwitcher', () => {
-  it('renders the active space and opens a menu on click', async () => {
+describe('FolderSwitcher', () => {
+  it('renders the active folder and opens a menu on click', async () => {
     const onPick = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
-        <WorkspaceSwitcher
+        <FolderSwitcher
           active="cib"
-          workspaces={WORKSPACE_FIXTURES}
+          folders={FOLDER_FIXTURES}
           onPick={onPick}
         />
       </Wrap>,
     );
-    expect(screen.getByTestId('topbar-workspace-switcher')).toBeInTheDocument();
-    await userEvent.click(screen.getByTestId('topbar-workspace-switcher'));
-    expect(screen.getByTestId('topbar-workspace-menu')).toBeInTheDocument();
+    expect(screen.getByTestId('topbar-folder-switcher')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('topbar-folder-switcher'));
+    expect(screen.getByTestId('topbar-folder-menu')).toBeInTheDocument();
   });
 
-  it('emits onPick(id) when a non-active space is clicked', async () => {
+  it('emits onPick(id) when a non-active folder is clicked', async () => {
     const onPick = vi.fn();
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
-        <WorkspaceSwitcher
+        <FolderSwitcher
           active="cib"
-          workspaces={WORKSPACE_FIXTURES}
+          folders={FOLDER_FIXTURES}
           onPick={onPick}
         />
       </Wrap>,
     );
-    await userEvent.click(screen.getByTestId('topbar-workspace-switcher'));
-    // Pick the first non-active workspace
-    const nonActive = WORKSPACE_FIXTURES.find((w) => w.id !== 'cib');
+    await userEvent.click(screen.getByTestId('topbar-folder-switcher'));
+    // Pick the first non-active folder
+    const nonActive = FOLDER_FIXTURES.find((w) => w.id !== 'cib');
     if (!nonActive) throw new Error('expected fixture diversity');
     await userEvent.click(
-      screen.getByTestId(`topbar-workspace-pick-${nonActive.id}`),
+      screen.getByTestId(`topbar-folder-pick-${nonActive.id}`),
     );
     expect(onPick).toHaveBeenCalledWith(nonActive.id);
   });

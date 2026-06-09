@@ -5,7 +5,7 @@ running the WebUI against ``VITE_API_BASE_URL=…`` gives the same demo
 experience as the MSW-stubbed dev path.
 
 Phase-1 scope: the seed lives in-process (rebuilt per server boot) so the
-endpoints work end-to-end without depending on a separate tag/workspace
+endpoints work end-to-end without depending on a separate tag/folder
 store. A later slice will swap this for real persistence (Memgraph for
 docs+graph, a dedicated KV for tag governance, an events table for
 activity, etc.).
@@ -30,7 +30,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 418,
         "updated": "2h ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
     {
         "id": "d2",
@@ -42,7 +42,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 54,
         "updated": "1d ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
     {
         "id": "d3",
@@ -54,7 +54,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 0,
         "updated": "30m ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
     {
         "id": "d4",
@@ -66,7 +66,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 42,
         "updated": "25m ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
     {
         "id": "d5",
@@ -78,7 +78,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 156,
         "updated": "3d ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
     {
         "id": "d6",
@@ -90,15 +90,15 @@ DOCUMENTS: list[dict[str, Any]] = [
         "chunks": 21,
         "updated": "5h ago",
         "visibility": "private",
-        "workspace": "cib",
+        "folder": "default",
     },
 ]
 
 # ---------------------------------------------------------------------------
-# Workspaces
+# Folders
 # ---------------------------------------------------------------------------
 
-WORKSPACES: list[dict[str, Any]] = [
+FOLDERS: list[dict[str, Any]] = [
     {"id": "cib", "kb": "CIB KB", "visibility": "private", "sources": 247, "role": "admin / steward", "current": True},
     {"id": "cib-edge", "kb": "CIB Edge KB", "visibility": "private", "sources": 82, "role": "admin", "current": False},
     {"id": "payments", "kb": "Payments KB", "visibility": "internal", "sources": 1318, "role": "reader", "current": False},
@@ -410,7 +410,7 @@ ACTIVITY: list[dict[str, Any]] = [
     _evt("evt_01HX8V2P", "2026-05-10T15:02:51Z", "18h ago", "Yesterday", "retrieval", "info", "philippe.marchand", "Architect", "query", "VMware vSphere 8 best practices for banking workloads",
          "Retrieval · global · top_k=80 · 12 sources cited · 2.1s",
          {"mode": "global", "top_k": 80, "tag_filter": ["vmware", "production"], "latency_ms": 2104, "tokens_in": 278, "tokens_out": 1024}),
-    _evt("evt_01HX8TWA", "2026-05-10T11:48:00Z", "22h ago", "Yesterday", "settings", "info", "claire.benoit", "KB Admin", "workspace", "cib · thesaurus",
+    _evt("evt_01HX8TWA", "2026-05-10T11:48:00Z", "22h ago", "Yesterday", "settings", "info", "claire.benoit", "KB Admin", "folder", "cib · thesaurus",
          "Added new tag iso20022 (palier 2) · category payment",
          {"tag": "iso20022", "category": "payment", "tier": 2, "requested_by": "marc.berthier"}),
     _evt("evt_01HX8T03", "2026-05-10T09:32:12Z", "1d ago", "Yesterday", "source-failed", "error", "system", "pipeline", "source", "cft-vendor-api-spec.pdf",

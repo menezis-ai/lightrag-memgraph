@@ -2,7 +2,7 @@
  * Document-related types.
  *
  * Aligned on LightRAG `DocStatus` (lightrag/base.py, lightrag/api/routers/document.py)
- * since the sprint Étape 0 (2026-05-29). Twin overlay adds `tags`, `workspace`,
+ * since the sprint Étape 0 (2026-05-29). Twin overlay adds `tags`, `folder`,
  * `review` on top of the native LightRAG shape, served by
  * `/twin/api/documents/{id}/metadata`.
  *
@@ -17,7 +17,7 @@
  *   PATCH  /twin/api/documents/{id}/tags                     -> overlay tags
  */
 
-import type { WorkspaceVisibility } from './topbar';
+import type { FolderVisibility } from './topbar';
 
 export type DocumentType = 'file' | 'confluence' | 'sharepoint' | 'url';
 
@@ -98,8 +98,8 @@ export interface Document {
   /** UI-only hint for source icon; derived from file_path/metadata. */
   type: DocumentType;
   tags: string[];
-  workspace: string;
-  visibility: WorkspaceVisibility;
+  folder: string;
+  visibility: FolderVisibility;
   review?: DocumentReview;
   /**
    * Post-extraction text used by LightRAG for retrieval (NOT the original

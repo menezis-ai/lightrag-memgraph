@@ -21,26 +21,26 @@
 import { useState } from 'react';
 import { ApiTab } from './ApiTab';
 import { ProfileSection } from './Settings/ProfileSection';
-import { SpacesAdminSection } from './Settings/SpacesAdminSection';
-import { WorkspaceSection } from './Settings/WorkspaceSection';
+import { FoldersAdminSection } from './Settings/FoldersAdminSection';
+import { FolderSection } from './Settings/FolderSection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
 import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
-export type SettingsSectionKey = 'profile' | 'api' | 'workspace';
+export type SettingsSectionKey = 'profile' | 'api' | 'folder';
 
 const SECTIONS: { key: SettingsSectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
-  { key: 'workspace', label: 'Folder', icon: 'folder' },
+  { key: 'folder', label: 'Folder', icon: 'folder' },
 ];
 
 export interface SettingsTabProps {
-  /** Active folder id — forwarded to WorkspaceSection's Identity card.
+  /** Active folder id — forwarded to FolderSection's Identity card.
    *  Comes from the AppShell state kept in sync with `setActiveFolder()`. */
-  activeWorkspace?: string;
-  /** Active folder display name — forwarded to WorkspaceSection's
+  activeFolder?: string;
+  /** Active folder display name — forwarded to FolderSection's
    *  Identity card. Resolved by AppShell from the runtime folder catalog. */
   kbName?: string;
   /** Bearer-token revoke + redirect to IdP. Pushed up so the host owns the toast queue. */
@@ -52,7 +52,7 @@ export interface SettingsTabProps {
 }
 
 export function SettingsTab({
-  activeWorkspace,
+  activeFolder,
   kbName,
   onSignOut,
   onRestartTutorial,
@@ -98,13 +98,13 @@ export function SettingsTab({
           />
         )}
         {section === 'api' && <ApiSection />}
-        {section === 'workspace' && (
+        {section === 'folder' && (
           <>
-            <WorkspaceSection
-              activeSpaceId={activeWorkspace ?? 'default'}
+            <FolderSection
+              activeFolderId={activeFolder ?? 'default'}
               displayName={kbName ?? ''}
             />
-            <SpacesAdminSection user={user} onToast={onToast} />
+            <FoldersAdminSection user={user} onToast={onToast} />
           </>
         )}
       </main>

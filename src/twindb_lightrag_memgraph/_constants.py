@@ -12,11 +12,10 @@ notion: the backtick-safe identifier that becomes the Memgraph node label
 contract is defined upstream by LightRAG and we don't get to rename it.
 
 The user-facing Twin sub-scope is called **folder** everywhere else in this
-codebase. The old name ``space`` remains as a legacy API/env alias. The two
-concepts overlap today because the deploy maps a single LightRAG workspace
-per Twin instance, but the wording in this module deliberately stays
-"workspace" so anyone touching the storage backends recognises it as the
-LightRAG-aligned label and not the Twin overlay surface.
+codebase. The two concepts overlap today because the deploy maps a single
+LightRAG workspace per Twin instance, but the wording in this module
+deliberately stays "workspace" so anyone touching the storage backends
+recognises it as the LightRAG-aligned label and not the Twin overlay surface.
 """
 
 import os
@@ -33,10 +32,7 @@ import re
 #   3. ``TWIN_DEFAULT_FOLDER`` — Twin overlay's source of truth; honoured
 #      as a fallback so a "folder-only" deploy boots without setting a
 #      legacy variable.
-#   4. ``TWIN_DEFAULT_SPACE`` — legacy Twin overlay name; still honoured
-#      as a fallback so a "space-only" deploy boots without setting a
-#      legacy variable.
-#   5. ``DEFAULT_WORKSPACE`` ("base") — the LightRAG-internal default.
+#   4. ``DEFAULT_WORKSPACE`` ("base") — the LightRAG-internal default.
 #
 # Aligning on the chain lets new deploys ship a single ``WORKSPACE``
 # or ``TWIN_DEFAULT_FOLDER`` without the old "set both" footgun
@@ -44,7 +40,6 @@ import re
 MEMGRAPH_WORKSPACE_ENV = "MEMGRAPH_WORKSPACE"
 WORKSPACE_ENV = "WORKSPACE"
 TWIN_DEFAULT_FOLDER_ENV = "TWIN_DEFAULT_FOLDER"
-TWIN_DEFAULT_SPACE_ENV = "TWIN_DEFAULT_SPACE"
 
 # Default values
 DEFAULT_WORKSPACE = "base"
@@ -96,8 +91,7 @@ def resolve_workspace() -> str:
       1. ``MEMGRAPH_WORKSPACE``
       2. ``WORKSPACE`` (LightRAG-core canonical)
       3. ``TWIN_DEFAULT_FOLDER`` (Twin overlay)
-      4. ``TWIN_DEFAULT_SPACE`` (legacy Twin overlay)
-      5. :data:`DEFAULT_WORKSPACE` (``"base"``)
+      4. :data:`DEFAULT_WORKSPACE` (``"base"``)
 
     Raises:
         ValueError: If the resolved workspace contains unsafe
@@ -107,7 +101,6 @@ def resolve_workspace() -> str:
         MEMGRAPH_WORKSPACE_ENV,
         WORKSPACE_ENV,
         TWIN_DEFAULT_FOLDER_ENV,
-        TWIN_DEFAULT_SPACE_ENV,
     ):
         candidate = os.environ.get(env_key, "").strip()
         if candidate:

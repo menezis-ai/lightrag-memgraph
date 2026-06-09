@@ -18,24 +18,24 @@
 
 import { Icon } from '../Icon';
 
-export interface WorkspaceSectionProps {
+export interface FolderSectionProps {
   /** Active Twin folder id — comes from AppShell state, kept in sync with
    *  `setActiveFolder()` in `api/client.ts`. */
-  activeSpaceId: string;
+  activeFolderId: string;
   /** Display name of the active folder — derived from the runtime config
    *  catalog at the AppShell level. */
   displayName: string;
 }
 
-export function WorkspaceSection({
-  activeSpaceId,
+export function FolderSection({
+  activeFolderId,
   displayName,
-}: WorkspaceSectionProps) {
+}: FolderSectionProps) {
   return (
-    <div className="settings-section" data-testid="settings-workspace">
+    <div className="settings-section" data-testid="settings-folder">
       <h3>Folder</h3>
       <p className="muted">
-        Configuration for folder {activeSpaceId}. Identity is set at
+        Configuration for folder {activeFolderId}. Identity is set at
         deployment time and cannot be changed from the UI.
       </p>
 
@@ -48,11 +48,11 @@ export function WorkspaceSection({
         </div>
         <dl className="set-dl">
           <dt>Folder ID</dt>
-          <dd className="mono" data-testid="settings-active-ws">
-            {activeSpaceId}
+          <dd className="mono" data-testid="settings-active-folder">
+            {activeFolderId}
           </dd>
           <dt>Display name</dt>
-          <dd data-testid="settings-space-display-name">
+          <dd data-testid="settings-folder-display-name">
             {displayName || <span className="muted">(unset)</span>}
           </dd>
         </dl>

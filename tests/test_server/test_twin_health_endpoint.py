@@ -13,10 +13,10 @@ from twindb_lightrag_memgraph.server import webui_router
 
 
 @pytest.fixture(autouse=True)
-def _space_env(monkeypatch):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+def _folder_env(monkeypatch):
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps([{"id": "default", "label": "Default", "kind": "primary"}]),
     )
     webui_router.reset_store()
@@ -41,7 +41,7 @@ class TestTwinHealthEndpoint:
         body = r.json()
         assert body["status"] == "ok"
         assert body["ragCaptured"] is True
-        assert body["space"] == "default"
+        assert body["folder"] == "default"
         assert body["stores"]["tags"] == "InMemoryTagStore"
 
     async def test_reports_degraded_when_rag_is_missing(self):

@@ -22,8 +22,8 @@ export interface AuthenticatedUser {
   email: string;
   name: string;
   palier: Palier;
-  /** Workspace ids the user can switch into, fed by MyAccess claim. */
-  workspaces: readonly string[];
+  /** Folder ids the user can switch into, fed by MyAccess claim. */
+  folders: readonly string[];
 
   // ── Identity-provider trace (rendered read-only in Settings → Profile) ──
   /** IdP identifier (e.g. "keycloak"). */
@@ -42,18 +42,15 @@ export interface AuthenticatedUser {
   gateway_scopes: readonly string[];
 }
 
-export type TwinSpaceKind = 'primary' | 'sandbox' | 'staging' | 'archive' | 'custom';
+export type TwinFolderKind = 'primary' | 'sandbox' | 'staging' | 'archive' | 'custom';
 
-export interface TwinSpaceConfig {
+export interface TwinFolderConfig {
   id: string;
   label: string;
-  kind?: TwinSpaceKind;
+  kind?: TwinFolderKind;
   description?: string;
   sources?: number;
 }
-
-export type TwinFolderKind = TwinSpaceKind;
-export type TwinFolderConfig = TwinSpaceConfig;
 
 /**
  * Runtime config injected by the Twin FastAPI sub-app via index.html string
@@ -68,10 +65,6 @@ export interface TwinRuntimeConfig {
   /** Admin-created logical folders inside the same Memgraph DB / KB. Max 5. */
   folders?: readonly TwinFolderConfig[];
   maxFolders?: number;
-  /** Legacy aliases kept for existing runtime config injections. */
-  defaultSpaceId?: string;
-  spaces?: readonly TwinSpaceConfig[];
-  maxSpaces?: number;
   /** Debug-only: bypass IdP and pretend to be this user. Stripped in prod. */
   debugUser?: AuthenticatedUser;
 }

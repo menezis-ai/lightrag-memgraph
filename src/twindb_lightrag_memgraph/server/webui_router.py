@@ -32,13 +32,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import webui_seed
 from .idp_jwt import require_admin_user
-from .space import (
-    bind_request_space,
-    current_space_id,
-    is_env_seeded_space,
-    load_space_catalog,
+from .folder import (
+    bind_request_folder,
+    current_folder_id,
+    is_env_seeded_folder,
+    load_folder_catalog,
 )
-from . import space_store
+from . import folder_store
 from .webui_activitystore import InMemoryActivityStore, MemgraphActivityStore
 from .webui_models import (
     AckResponse,
@@ -54,8 +54,8 @@ from .webui_models import (
     Notification,
     OpenApiEnvelope,
     OpenApiGroup,
-    SpaceCreate,
-    SpacePatch,
+    FolderCreate,
+    FolderPatch,
     TagApproveBody,
     TagCategory,
     TagDeleteBody,
@@ -66,7 +66,7 @@ from .webui_models import (
     TagRequestBody,
     TagSynonymsBody,
     ThesaurusEntry,
-    Workspace,
+    Folder,
 )
 from .webui_notificationstore import (
     InMemoryNotificationStore,
@@ -154,7 +154,7 @@ class WebuiStore:
     def __init__(
         self,
         documents: list[dict[str, Any]],
-        workspaces: list[dict[str, Any]],
+        folders: list[dict[str, Any]],
         thesaurus: list[dict[str, Any]],
         tag_categories_seed: list[dict[str, Any]],
         tags_seed: list[dict[str, Any]],
@@ -169,7 +169,7 @@ class WebuiStore:
         | None = None,
     ) -> None:
         self._documents = documents
-        self._workspaces = workspaces
+        self._folders = folders
         self._thesaurus = thesaurus
         self._openapi_groups = openapi_groups
         self._openapi_version = openapi_version
@@ -200,7 +200,7 @@ class WebuiStore:
     def from_seed(cls) -> WebuiStore:
         return cls(
             documents=copy.deepcopy(webui_seed.DOCUMENTS),
-            workspaces=copy.deepcopy(webui_seed.WORKSPACES),
+            folders=copy.deepcopy(webui_seed.FOLDERS),
             thesaurus=copy.deepcopy(webui_seed.THESAURUS),
             tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
             tags_seed=copy.deepcopy(webui_seed.TAGS),
@@ -211,19 +211,19 @@ class WebuiStore:
         )
 
     @classmethod
-    def for_space(cls, space: str, *, mode: str = "seed") -> WebuiStore:
-        """Build a per-space WebuiStore.
+    def for_folder(cls, folder: str, *, mode: str = "seed") -> WebuiStore:
+        """Build a per-folder WebuiStore.
 
         ``mode``:
 
-        - ``"seed"`` (default) — the default space gets the full demo
-          payload from :meth:`from_seed`; non-default spaces start empty
+        - ``"seed"`` (default) — the default folder gets the full demo
+          payload from :meth:`from_seed`; non-default folders start empty
           for user-generated stores (documents / tags / graph) while
-          keeping reference data (workspaces / thesaurus / openapi).
+          keeping reference data (folders / thesaurus / openapi).
           Useful for ``python -m twindb_lightrag_memgraph.server``
           standalone demo and CI.
 
-        - ``"memgraph"`` — every space, **including the default**, boots
+        - ``"memgraph"`` — every folder, **including the default**, boots
           empty for user-generated stores. Prevents `WebuiStore._documents`
           and `_graph_entities` from leaking demo content through
           ``/twin/api/documents`` and ``/twin/api/graph/*`` on a real BNP
@@ -232,7 +232,7 @@ class WebuiStore:
         if mode == "memgraph":
             return cls(
                 documents=[],
-                workspaces=copy.deepcopy(webui_seed.WORKSPACES),
+                folders=copy.deepcopy(webui_seed.FOLDERS),
                 thesaurus=copy.deepcopy(webui_seed.THESAURUS),
                 tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
                 tags_seed=[],
@@ -241,12 +241,12 @@ class WebuiStore:
                 graph_entities=[],
                 graph_relations=[],
             )
-        default_space = load_space_catalog().default_space_id
-        if space == default_space:
+        default_folder = load_folder_catalog().default_folder_id
+        if folder == default_folder:
             return cls.from_seed()
         return cls(
             documents=[],
-            workspaces=copy.deepcopy(webui_seed.WORKSPACES),
+            folders=copy.deepcopy(webui_seed.FOLDERS),
             thesaurus=copy.deepcopy(webui_seed.THESAURUS),
             tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
             tags_seed=[],
@@ -281,13 +281,13 @@ class WebuiStore:
         q: str | None = None,
         tag: str | None = None,
     ) -> list[dict[str, Any]]:
-        default_space = load_space_catalog().default_space_id
-        active_space = current_space_id()
+        default_folder = load_folder_catalog().default_folder_id
+        active_folder = current_folder_id()
         items = [
             d
             for d in self._documents
-            if (d.get("space") or d.get("metadata", {}).get("space") or default_space)
-            == active_space
+            if (d.get("folder") or d.get("metadata", {}).get("folder") or default_folder)
+            == active_folder
         ]
         if status and status != "all":
             items = [d for d in items if d["status"] == status]
@@ -298,10 +298,10 @@ class WebuiStore:
             items = [d for d in items if tag in d.get("tags", [])]
         return copy.deepcopy(items)
 
-    # -- Workspaces ----------------------------------------------------
+    # -- Folders -------------------------------------------------------
 
-    def list_workspaces(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self._workspaces)
+    def list_folders(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._folders)
 
     # -- Notifications -------------------------------------------------
 
@@ -376,23 +376,23 @@ class WebuiStore:
 _stores: dict[str, WebuiStore] = {}
 
 
-def get_store(space: str | None = None) -> WebuiStore:
-    space_id = space or current_space_id()
-    store = _stores.get(space_id)
+def get_store(folder: str | None = None) -> WebuiStore:
+    folder_id = folder or current_folder_id()
+    store = _stores.get(folder_id)
     if store is None:
-        store = WebuiStore.for_space(space_id)
-        _stores[space_id] = store
+        store = WebuiStore.for_folder(folder_id)
+        _stores[folder_id] = store
     return store
 
 
-def set_store(store: WebuiStore, space: str | None = None) -> None:
-    space_id = space or load_space_catalog().default_space_id
-    _stores[space_id] = store
+def set_store(store: WebuiStore, folder: str | None = None) -> None:
+    folder_id = folder or load_folder_catalog().default_folder_id
+    _stores[folder_id] = store
 
 
 def reset_store() -> None:
     _stores.clear()
-    space_store.reset_runtime_store()
+    folder_store.reset_runtime_store()
     set_store(WebuiStore.from_seed())
 
 
@@ -417,19 +417,19 @@ def _status_to_dict(doc: Any) -> dict[str, Any]:
     return payload
 
 
-def _doc_matches_active_space(doc: dict[str, Any]) -> bool:
+def _doc_matches_active_folder(doc: dict[str, Any]) -> bool:
     metadata = doc.get("metadata") or {}
-    default_space = load_space_catalog().default_space_id
-    return metadata.get("space", default_space) == current_space_id()
+    default_folder = load_folder_catalog().default_folder_id
+    return metadata.get("folder", default_folder) == current_folder_id()
 
 
-async def _get_doc_for_active_space(doc_id: str) -> dict[str, Any]:
+async def _get_doc_for_active_folder(doc_id: str) -> dict[str, Any]:
     rag = _get_rag()
     raw = await rag.doc_status.get_by_id(doc_id)
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     doc = _status_to_dict(raw)
-    if not _doc_matches_active_space(doc):
+    if not _doc_matches_active_folder(doc):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     return doc
 
@@ -441,9 +441,9 @@ async def _graph_tags_for_doc(doc_id: str) -> list[str]:
         from .._constants import resolve_workspace
 
         workspace = resolve_workspace()
-        space = current_space_id()
+        folder = current_folder_id()
         doc_label = f"DocStatus_{workspace}"
-        tag_label = f"WebuiTag_{space}"
+        tag_label = f"WebuiTag_{folder}"
         async with _pool.get_read_session() as session:
             result = await session.run(
                 f"""
@@ -468,8 +468,8 @@ def _cascade_seed_document_tags(
     to: str | None,
 ) -> int:
     """Apply tag delete/migrate semantics to the in-memory document seed."""
-    default_space = load_space_catalog().default_space_id
-    active_space = current_space_id()
+    default_folder = load_folder_catalog().default_folder_id
+    active_folder = current_folder_id()
     affected = 0
 
     def _rewrite(tags: Any) -> list[str] | None:
@@ -483,8 +483,8 @@ def _cascade_seed_document_tags(
     with store._lock:  # noqa: SLF001 - same-module store maintenance
         for doc in store._documents:  # noqa: SLF001 - same-module store maintenance
             metadata = doc.get("metadata") or {}
-            space = doc.get("space") or metadata.get("space") or default_space
-            if space != active_space:
+            folder = doc.get("folder") or metadata.get("folder") or default_folder
+            if folder != active_folder:
                 continue
             rewritten = _rewrite(doc.get("tags"))
             if rewritten is None:
@@ -506,7 +506,7 @@ async def _cascade_graph_tag_edges(
     actor: str,
     strict: bool,
 ) -> int | None:
-    """Retag or untag DocStatus->WebuiTag edges for the active space.
+    """Retag or untag DocStatus->WebuiTag edges for the active folder.
 
     Returns ``None`` when the graph pool is unavailable in non-strict seed/dev
     mode. In strict Memgraph-backed mode, failures surface as 500 so the API
@@ -520,9 +520,9 @@ async def _cascade_graph_tag_edges(
         if to:
             validate_identifier(to, "tag")
         workspace = resolve_workspace()
-        space = current_space_id()
+        folder = current_folder_id()
         doc_label = f"DocStatus_{workspace}"
-        tag_label = f"WebuiTag_{space}"
+        tag_label = f"WebuiTag_{folder}"
         now = _utcnow_iso()
 
         async with _pool.acquire_write_slot():
@@ -579,7 +579,7 @@ async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-router = APIRouter(tags=["webui"], dependencies=[Depends(bind_request_space)])
+router = APIRouter(tags=["webui"], dependencies=[Depends(bind_request_folder)])
 
 
 # -- Read endpoints ----------------------------------------------------------
@@ -597,15 +597,14 @@ async def list_documents(
 
 @router.get("/documents/{doc_id}/metadata")
 async def get_document_metadata(doc_id: str) -> dict[str, Any]:
-    doc = await _get_doc_for_active_space(doc_id)
+    doc = await _get_doc_for_active_folder(doc_id)
     metadata = doc.get("metadata") or {}
     graph_tags = await _graph_tags_for_doc(doc_id)
     tags = graph_tags or list(metadata.get("tags") or doc.get("tags") or [])
-    space = metadata.get("space") or current_space_id()
+    folder = metadata.get("folder") or current_folder_id()
     return {
         "tags": tags,
-        "workspace": metadata.get("workspace") or space,
-        "space": space,
+        "folder": folder,
         "review": metadata.get("review"),
         "classification": metadata.get("classification"),
         "metadata": metadata,
@@ -635,7 +634,7 @@ async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
             failed.append(str(doc_id))
             continue
         try:
-            doc = await _get_doc_for_active_space(doc_id)
+            doc = await _get_doc_for_active_folder(doc_id)
             await _delete_doc_from_rag(rag, doc_id)
         except HTTPException as exc:
             if exc.status_code == 404:
@@ -677,73 +676,54 @@ async def twin_health() -> dict[str, Any]:
     }
     return {
         "status": "ok" if rag_captured else "degraded",
-        "space": current_space_id(),
+        "folder": current_folder_id(),
         "ragCaptured": rag_captured,
         "stores": stores,
     }
 
 
-@router.get("/workspaces", response_model=list[Workspace])
-async def list_workspaces() -> list[dict[str, Any]]:
-    catalog = load_space_catalog()
-    if catalog.explicit:
-        active = current_space_id()
-        return [
-            space.as_workspace_compat(current=space.id == active)
-            for space in catalog.spaces
-        ]
-    return get_store().list_workspaces()
-
-
-@router.get("/folders", response_model=list[Workspace])
-@router.get("/spaces", response_model=list[Workspace])
+@router.get("/folders", response_model=list[Folder])
 async def list_folders() -> list[dict[str, Any]]:
-    active = current_space_id()
+    active = current_folder_id()
     return [
-        space.as_workspace_compat(current=space.id == active)
-        for space in load_space_catalog().spaces
+        folder.as_api(current=folder.id == active)
+        for folder in load_folder_catalog().folders
     ]
 
 
 @router.post(
     "/folders",
-    response_model=Workspace,
+    response_model=Folder,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
 )
-@router.post(
-    "/spaces",
-    response_model=Workspace,
-    status_code=201,
-    dependencies=[Depends(require_admin_user)],
-)
-async def create_folder(body: SpaceCreate) -> dict[str, Any]:
+async def create_folder(body: FolderCreate) -> dict[str, Any]:
     """Admin: provision a new Twin folder at runtime.
 
-    Returns 201 + the new folder in workspace-compat shape. Errors:
+    Returns 201 + the new folder. Errors:
     - 409 if an env-seeded folder already owns this id (operator cannot
       shadow an SRE-provisioned default).
     - 409 if a runtime folder with this id already exists.
     - 422 if the id fails the safe-identifier rule.
-    - 422 if adding this folder would exceed `max_spaces` from the env
+    - 422 if adding this folder would exceed `maxFolders` from the env
       configuration.
     """
-    catalog = load_space_catalog()
-    if len(catalog.spaces) >= catalog.max_spaces:
+    catalog = load_folder_catalog()
+    if len(catalog.folders) >= catalog.max_folders:
         raise HTTPException(
             422,
-            f"Cannot create folder: catalog already at max ({catalog.max_spaces}). "
+            f"Cannot create folder: catalog already at max ({catalog.max_folders}). "
             "Remove an existing folder first.",
         )
-    if is_env_seeded_space(body.id):
+    if is_env_seeded_folder(body.id):
         raise HTTPException(
             409,
             f"Folder id '{body.id}' is provisioned by the deploy env "
             "and cannot be re-created via the API.",
         )
     try:
-        space = space_store.add_runtime_space(
-            space_id=body.id,
+        folder = folder_store.add_runtime_folder(
+            folder_id=body.id,
             label=body.label,
             kind=body.kind,
             description=body.description,
@@ -759,72 +739,61 @@ async def create_folder(body: SpaceCreate) -> dict[str, Any]:
         kind="settings",
         sev="info",
         actor="operator",
-        target_label=space.label,
-        summary=f"Folder '{space.id}' created ({space.kind})",
-        meta={"folder_id": space.id, "space_id": space.id, "operation": "create"},
+        target_label=folder.label,
+        summary=f"Folder '{folder.id}' created ({folder.kind})",
+        meta={"folder_id": folder.id, "operation": "create"},
         target_type="folder",
     )
     await store.record_activity(event)
-    return space.as_workspace_compat(current=False)
+    return folder.as_api(current=False)
 
 
 @router.patch(
     "/folders/{folder_id}",
-    response_model=Workspace,
+    response_model=Folder,
     dependencies=[Depends(require_admin_user)],
 )
-@router.patch(
-    "/spaces/{folder_id}",
-    response_model=Workspace,
-    dependencies=[Depends(require_admin_user)],
-)
-async def update_folder(folder_id: str, body: SpacePatch) -> dict[str, Any]:
+async def update_folder(folder_id: str, body: FolderPatch) -> dict[str, Any]:
     """Admin: edit label / kind / description of a runtime folder.
 
     Env-seeded folders are 403 — those changes must go through the
     deploy env (`TWIN_FOLDERS_JSON`).
     """
-    if is_env_seeded_space(folder_id):
+    if is_env_seeded_folder(folder_id):
         raise HTTPException(
             403,
             f"Folder '{folder_id}' is env-seeded and cannot be edited via the API.",
-        )
+    )
     patch = body.model_dump(exclude_unset=True)
-    space = space_store.update_runtime_space(
+    folder = folder_store.update_runtime_folder(
         folder_id,
         label=patch.get("label"),
         kind=patch.get("kind"),
         description=patch.get("description"),
     )
-    if space is None:
+    if folder is None:
         raise HTTPException(404, f"Folder '{folder_id}' not found")
     store = get_store()
     event = _make_event(
         kind="settings",
         sev="info",
         actor="operator",
-        target_label=space.label,
-        summary=f"Folder '{space.id}' updated",
+        target_label=folder.label,
+        summary=f"Folder '{folder.id}' updated",
         meta={
-            "folder_id": space.id,
-            "space_id": space.id,
+            "folder_id": folder.id,
             "operation": "update",
             "patch_keys": list(patch.keys()),
         },
         target_type="folder",
     )
     await store.record_activity(event)
-    active = current_space_id()
-    return space.as_workspace_compat(current=space.id == active)
+    active = current_folder_id()
+    return folder.as_api(current=folder.id == active)
 
 
 @router.delete(
     "/folders/{folder_id}",
-    status_code=204,
-    dependencies=[Depends(require_admin_user)],
-)
-@router.delete(
-    "/spaces/{folder_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
 )
@@ -836,7 +805,7 @@ async def delete_folder(folder_id: str) -> None:
     - 409 if the folder still has WebUI data (tags, activity events,
       docs scoped to it). Refusing to delete avoids orphaning state.
     """
-    if is_env_seeded_space(folder_id):
+    if is_env_seeded_folder(folder_id):
         raise HTTPException(
             403,
             f"Folder '{folder_id}' is env-seeded and cannot be deleted via the API.",
@@ -857,7 +826,7 @@ async def delete_folder(folder_id: str) -> None:
                 f"Folder '{folder_id}' still has data (docs and/or tags). "
                 "Remove the contents before deleting the folder.",
             )
-    if not space_store.delete_runtime_space(folder_id):
+    if not folder_store.delete_runtime_folder(folder_id):
         raise HTTPException(404, f"Folder '{folder_id}' not found")
     # Evict the per-folder WebUI store so future GETs don't resurrect it.
     _stores.pop(folder_id, None)
@@ -868,7 +837,7 @@ async def delete_folder(folder_id: str) -> None:
         actor="operator",
         target_label=folder_id,
         summary=f"Folder '{folder_id}' deleted",
-        meta={"folder_id": folder_id, "space_id": folder_id, "operation": "delete"},
+        meta={"folder_id": folder_id, "operation": "delete"},
         target_type="folder",
     )
     await store.record_activity(event)
@@ -1043,9 +1012,9 @@ async def bulk_retag_documents(
         validate_identifier(tag, "tag")
 
     workspace = resolve_workspace()
-    space = current_space_id()
+    folder = current_folder_id()
     doc_label = f"DocStatus_{workspace}"
-    tag_label = f"WebuiTag_{space}"
+    tag_label = f"WebuiTag_{folder}"
     now = _utcnow_iso()
 
     placeholder = _json.dumps(
@@ -1336,7 +1305,7 @@ async def reject_document(
 
 @router.post("/tags/categories/_import", response_model=AckResponse)
 async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
-    """Mirror the uploaded JSON into the workspace's categories store.
+    """Mirror the uploaded JSON into the active folder's categories store.
 
     Same validator as ``webui_categories_config`` — only JSON matching
     the schema is accepted. On success, returns ``{ok: True}`` and the
@@ -1386,10 +1355,10 @@ async def get_openapi_groups() -> dict[str, Any]:
 def _graph_memgraph_label() -> str:
     """Resolve the Cypher label LightRAG uses for entity nodes.
 
-    Until per-space isolation lands at the LightRAG layer (one
-    workspace per Twin space), the KG view is globally scoped to the
+    Until per-folder isolation lands at the LightRAG layer (one
+    workspace per Twin folder), the KG view is globally scoped to the
     single LightRAG workspace configured by the deploy (env var
-    `MEMGRAPH_WORKSPACE` / `WORKSPACE`). The Twin space catalog still
+    `MEMGRAPH_WORKSPACE` / `WORKSPACE`). The Twin folder catalog still
     drives UX (default vs sandbox) but the underlying graph is shared.
     """
     from .._constants import resolve_workspace
@@ -1935,7 +1904,7 @@ async def delete_tag(
     #     in-memory list seeded from `webui_seed.DOCUMENTS` in dev / CI
     #     without `webui_tag_backend="memgraph"`).
     #   - `_cascade_graph_tag_edges` rewrites Memgraph
-    #     `DocStatus_{ws} -[:TAGGED_WITH]-> WebuiTag_{space}` edges in
+    #     `DocStatus_{ws} -[:TAGGED_WITH]-> WebuiTag_{folder}` edges in
     #     production. With mock-kill F6 in memgraph mode, `_documents` is
     #     empty so the seed count contributes 0 — no double-count risk.
     # The previous expression (`graph_affected if graph_affected is not None

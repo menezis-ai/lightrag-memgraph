@@ -58,16 +58,16 @@ class Document(_Base):
     updated: str
     """Human-readable relative timestamp (e.g. "2h ago")."""
     visibility: Literal["private", "internal", "public"]
-    workspace: str
-    """Workspace id this document belongs to."""
+    folder: str
+    """Twin folder id this document belongs to."""
 
 
 # ---------------------------------------------------------------------------
-# Topbar: workspaces + notifications
+# Topbar: folders + notifications
 # ---------------------------------------------------------------------------
 
 
-class Workspace(_Base):
+class Folder(_Base):
     id: str
     kb: str
     visibility: Literal["private", "internal", "public"]
@@ -298,7 +298,7 @@ class GraphRelationCreate(_Base):
     properties: dict[str, str] | None = None
 
 
-class SpaceCreate(_Base):
+class FolderCreate(_Base):
     """Create payload for a new Twin folder.
 
     ``id`` must validate against the safe-identifier rule (the same
@@ -312,16 +312,12 @@ class SpaceCreate(_Base):
     description: str = ""
 
 
-class SpacePatch(_Base):
+class FolderPatch(_Base):
     """Partial update payload for a Twin folder. Every field optional."""
 
     label: str | None = None
     kind: str | None = None
     description: str | None = None
-
-
-FolderCreate = SpaceCreate
-FolderPatch = SpacePatch
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@
  * so the operator can't waste a click on them.
  *
  * Backend contract:
- *   GET    /twin/api/folders          → readonly Workspace[]
+ *   GET    /twin/api/folders          → readonly Folder[]
  *   POST   /twin/api/folders          → 201 / 409 / 422
  *   PATCH  /twin/api/folders/{id}     → 200 / 403 / 404
  *   DELETE /twin/api/folders/{id}     → 204 / 403 / 404 / 409
@@ -26,49 +26,49 @@ import {
   useUpdateFolder,
 } from '../../api/queries';
 import { ApiError } from '../../api/client';
-import { canManageSpaces } from '../../lib/permissions';
+import { canManageFolders } from '../../lib/permissions';
 import type { AuthenticatedUser } from '../../types/auth';
 import type { Toast } from '../../types/toast';
-import type { Workspace } from '../../types/topbar';
+import type { Folder } from '../../types/topbar';
 
-const SPACE_ID_RE = /^[A-Za-z0-9_-]+$/;
-const MAX_SPACES = 5;
+const FOLDER_ID_RE = /^[A-Za-z0-9_-]+$/;
+const MAX_FOLDERS = 5;
 
-export interface SpacesAdminSectionProps {
+export interface FoldersAdminSectionProps {
   user?: AuthenticatedUser | null;
   onToast?: (toast: Omit<Toast, 'id'>) => void;
   /** When the operator deletes the currently-active folder, the host
    *  needs to swap to a fallback. Returning the new active id is
    *  optional — leave undefined to let the host pick. */
-  onActiveSpaceDeleted?: (deletedId: string) => void;
+  onActiveFolderDeleted?: (deletedId: string) => void;
 }
 
-export function SpacesAdminSection({
+export function FoldersAdminSection({
   user = null,
   onToast,
-  onActiveSpaceDeleted,
-}: SpacesAdminSectionProps = {}) {
-  const spaces = useFolders();
-  const createSpace = useCreateFolder();
-  const updateSpace = useUpdateFolder();
-  const deleteSpace = useDeleteFolder();
+  onActiveFolderDeleted,
+}: FoldersAdminSectionProps = {}) {
+  const folders = useFolders();
+  const createFolder = useCreateFolder();
+  const updateFolder = useUpdateFolder();
+  const deleteFolder = useDeleteFolder();
 
   const [addOpen, setAddOpen] = useState(false);
-  const list = spaces.data ?? [];
-  const atMax = list.length >= MAX_SPACES;
-  const canManage = canManageSpaces(user);
+  const list = folders.data ?? [];
+  const atMax = list.length >= MAX_FOLDERS;
+  const canManage = canManageFolders(user);
 
   const notifyAdminScope403 = (err: unknown) => {
     if (!(err instanceof ApiError) || err.status !== 403) return;
     onToast?.({
       kind: 'error',
       title: 'Admin scope required',
-      sub: "Admin scope 'admin:spaces' required",
+      sub: "Admin scope 'admin:folders' required",
     });
   };
 
   return (
-    <div className="settings-section" data-testid="settings-spaces-admin">
+    <div className="settings-section" data-testid="settings-folders-admin">
       <h3>Folders</h3>
       <p className="muted">
         Runtime Twin folders. The SRE-provisioned default is read-only and
@@ -76,20 +76,20 @@ export function SpacesAdminSection({
         the runtime catalog.
       </p>
       {!canManage && (
-        <span className="env-badge" data-testid="spaces-admin-readonly-badge">
+        <span className="env-badge" data-testid="folders-admin-readonly-badge">
           <Icon name="lock" size={10} /> Read-only — admin scope required
         </span>
       )}
 
       {canManage && (
         addOpen ? (
-          <AddSpaceForm
+          <AddFolderForm
             existingIds={list.map((s) => s.id)}
-            pending={createSpace.isPending}
-            error={errorToMessage(createSpace.error)}
+            pending={createFolder.isPending}
+            error={errorToMessage(createFolder.error)}
             onCancel={() => setAddOpen(false)}
             onSubmit={(payload) => {
-              createSpace.mutate(payload, {
+              createFolder.mutate(payload, {
                 onSuccess: () => setAddOpen(false),
                 onError: notifyAdminScope403,
               });
@@ -102,10 +102,10 @@ export function SpacesAdminSection({
               className="ghost-btn primary"
               onClick={() => setAddOpen(true)}
               disabled={atMax}
-              data-testid="settings-add-space-btn"
+              data-testid="settings-add-folder-btn"
               title={
                 atMax
-                  ? `Cannot add more folders — already at the cap of ${MAX_SPACES}.`
+                  ? `Cannot add more folders — already at the cap of ${MAX_FOLDERS}.`
                   : undefined
               }
             >
@@ -115,41 +115,41 @@ export function SpacesAdminSection({
               <span
                 className="muted"
                 style={{ marginLeft: 10, fontSize: 12 }}
-                data-testid="settings-spaces-at-max"
+                data-testid="settings-folders-at-max"
               >
-                At max — {MAX_SPACES} folder cap reached.
+                At max — {MAX_FOLDERS} folder cap reached.
               </span>
             )}
           </div>
         )
       )}
 
-      <ul className="settings-spaces-list" style={{ padding: 0, margin: 0 }}>
-        {list.map((space, idx) => {
+      <ul className="settings-folders-list" style={{ padding: 0, margin: 0 }}>
+        {list.map((folder, idx) => {
           // First fixture / first env-injected entry is the
           // SRE-provisioned default — the picker uses `current` for
           // selection but the catalog returns env first.
           const envSeeded = idx === 0;
           return (
             <SpaceRow
-              key={space.id}
-              space={space}
+              key={folder.id}
+              folder={folder}
               envSeeded={envSeeded}
-              pendingEdit={updateSpace.isPending}
-              pendingDelete={deleteSpace.isPending}
-              updateError={errorToMessage(updateSpace.error)}
-              deleteError={errorToMessage(deleteSpace.error)}
+              pendingEdit={updateFolder.isPending}
+              pendingDelete={deleteFolder.isPending}
+              updateError={errorToMessage(updateFolder.error)}
+              deleteError={errorToMessage(deleteFolder.error)}
               canManage={canManage}
               onSave={(patch) =>
-                updateSpace.mutate(
-                  { id: space.id, patch },
+                updateFolder.mutate(
+                  { id: folder.id, patch },
                   { onError: notifyAdminScope403 },
                 )
               }
               onDelete={() =>
-                deleteSpace.mutate(space.id, {
+                deleteFolder.mutate(folder.id, {
                   onSuccess: () => {
-                    if (space.current) onActiveSpaceDeleted?.(space.id);
+                    if (folder.current) onActiveFolderDeleted?.(folder.id);
                   },
                   onError: notifyAdminScope403,
                 })
@@ -163,7 +163,7 @@ export function SpacesAdminSection({
 }
 
 // ─── Add Folder form ──────────────────────────────────────────────────
-interface AddSpaceFormProps {
+interface AddFolderFormProps {
   existingIds: readonly string[];
   pending: boolean;
   error: string | null;
@@ -176,13 +176,13 @@ interface AddSpaceFormProps {
   }) => void;
 }
 
-function AddSpaceForm({
+function AddFolderForm({
   existingIds,
   pending,
   error,
   onCancel,
   onSubmit,
-}: AddSpaceFormProps) {
+}: AddFolderFormProps) {
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState('custom');
@@ -190,7 +190,7 @@ function AddSpaceForm({
 
   const trimmedId = id.trim();
   const trimmedLabel = label.trim();
-  const idValid = trimmedId.length > 0 && SPACE_ID_RE.test(trimmedId);
+  const idValid = trimmedId.length > 0 && FOLDER_ID_RE.test(trimmedId);
   const duplicate = idValid && existingIds.includes(trimmedId);
   const canSubmit =
     idValid && !duplicate && trimmedLabel.length > 0 && !pending;
@@ -209,7 +209,7 @@ function AddSpaceForm({
   return (
     <form
       className="set-card"
-      data-testid="settings-add-space-form"
+      data-testid="settings-add-folder-form"
       onSubmit={submit}
       style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
     >
@@ -230,7 +230,7 @@ function AddSpaceForm({
           placeholder="sandbox"
           autoFocus
           aria-label="New folder id"
-          data-testid="settings-add-space-id"
+          data-testid="settings-add-folder-id"
           className="mono"
         />
       </label>
@@ -244,7 +244,7 @@ function AddSpaceForm({
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Sandbox"
           aria-label="New folder label"
-          data-testid="settings-add-space-label"
+          data-testid="settings-add-folder-label"
         />
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -255,7 +255,7 @@ function AddSpaceForm({
           value={kind}
           onChange={(e) => setKind(e.target.value)}
           aria-label="New folder kind"
-          data-testid="settings-add-space-kind"
+          data-testid="settings-add-folder-kind"
         >
           <option value="custom">Custom</option>
           <option value="sandbox">Sandbox</option>
@@ -273,7 +273,7 @@ function AddSpaceForm({
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What is this folder for?"
           aria-label="New folder description"
-          data-testid="settings-add-space-description"
+          data-testid="settings-add-folder-description"
         />
       </label>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -284,7 +284,7 @@ function AddSpaceForm({
           type="submit"
           className="ghost-btn primary"
           disabled={!canSubmit}
-          data-testid="settings-add-space-submit"
+          data-testid="settings-add-folder-submit"
         >
           <Icon name="check" size={11} /> {pending ? 'Adding…' : 'Add'}
         </button>
@@ -293,7 +293,7 @@ function AddSpaceForm({
         <div
           role="alert"
           style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
-          data-testid="settings-add-space-id-invalid"
+          data-testid="settings-add-folder-id-invalid"
         >
           Invalid id — use only alphanumeric characters, underscore or dash.
         </div>
@@ -302,7 +302,7 @@ function AddSpaceForm({
         <div
           role="alert"
           style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
-          data-testid="settings-add-space-duplicate"
+          data-testid="settings-add-folder-duplicate"
         >
           A folder with id “{trimmedId}” already exists.
         </div>
@@ -311,7 +311,7 @@ function AddSpaceForm({
         <div
           role="alert"
           style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
-          data-testid="settings-add-space-error"
+          data-testid="settings-add-folder-error"
         >
           {error}
         </div>
@@ -322,7 +322,7 @@ function AddSpaceForm({
 
 // ─── Row: shows + edits + deletes one folder ──────────────────────────
 interface SpaceRowProps {
-  space: Workspace;
+  folder: Folder;
   envSeeded: boolean;
   pendingEdit: boolean;
   pendingDelete: boolean;
@@ -334,7 +334,7 @@ interface SpaceRowProps {
 }
 
 function SpaceRow({
-  space,
+  folder,
   envSeeded,
   pendingEdit,
   pendingDelete,
@@ -345,16 +345,16 @@ function SpaceRow({
   onDelete,
 }: SpaceRowProps) {
   const [editing, setEditing] = useState(false);
-  const [label, setLabel] = useState(space.kb);
+  const [label, setLabel] = useState(folder.kb);
   const [armedDelete, setArmedDelete] = useState(false);
 
   // Reset edit state when the cached folder object changes (after a
   // refetch following a successful save).
   /* eslint-disable react-hooks/set-state-in-effect -- intentional re-sync with the new server-side value. */
   useEffect(() => {
-    setLabel(space.kb);
+    setLabel(folder.kb);
     setEditing(false);
-  }, [space.id, space.kb]);
+  }, [folder.id, folder.kb]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -366,7 +366,7 @@ function SpaceRow({
   return (
     <li
       className="set-card"
-      data-testid={`settings-space-row-${space.id}`}
+      data-testid={`settings-folder-row-${folder.id}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -385,11 +385,11 @@ function SpaceRow({
         <code
           className="mono"
           style={{ fontSize: 12, fontWeight: 600 }}
-          data-testid={`settings-space-id-${space.id}`}
+          data-testid={`settings-folder-id-${folder.id}`}
         >
-          {space.id}
+          {folder.id}
         </code>
-        {space.current && (
+        {folder.current && (
           <span
             className="env-badge"
             style={{
@@ -417,15 +417,15 @@ function SpaceRow({
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            aria-label={`Edit label for folder ${space.id}`}
-            data-testid={`settings-space-edit-label-${space.id}`}
+            aria-label={`Edit label for folder ${folder.id}`}
+            data-testid={`settings-folder-edit-label-${folder.id}`}
             style={{ flex: 1 }}
           />
           <button
             type="button"
             className="ghost-btn"
             onClick={() => {
-              setLabel(space.kb);
+              setLabel(folder.kb);
               setEditing(false);
             }}
           >
@@ -436,21 +436,21 @@ function SpaceRow({
             className="ghost-btn primary"
             disabled={label.trim().length === 0 || pendingEdit}
             onClick={() => onSave({ label: label.trim() })}
-            data-testid={`settings-space-save-${space.id}`}
+            data-testid={`settings-folder-save-${folder.id}`}
           >
             <Icon name="check" size={11} /> {pendingEdit ? 'Saving…' : 'Save'}
           </button>
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ flex: 1, fontSize: 13 }}>{space.kb}</span>
+          <span style={{ flex: 1, fontSize: 13 }}>{folder.kb}</span>
           {!envSeeded && canManage && (
             <>
               <button
                 type="button"
                 className="ghost-btn small"
                 onClick={() => setEditing(true)}
-                data-testid={`settings-space-edit-${space.id}`}
+                data-testid={`settings-folder-edit-${folder.id}`}
               >
                 <Icon name="edit" size={11} /> Edit
               </button>
@@ -466,7 +466,7 @@ function SpaceRow({
                   setArmedDelete(false);
                 }}
                 disabled={pendingDelete}
-                data-testid={`settings-space-delete-${space.id}`}
+                data-testid={`settings-folder-delete-${folder.id}`}
                 style={
                   armedDelete
                     ? {
@@ -495,7 +495,7 @@ function SpaceRow({
         <div
           role="alert"
           style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
-          data-testid={`settings-space-error-${space.id}`}
+          data-testid={`settings-folder-error-${folder.id}`}
         >
           {updateError ?? deleteError}
         </div>

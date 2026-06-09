@@ -209,7 +209,7 @@ export function TagsTab({
           <div className="tags-sub">
             <span>
               Thesaurus governance · {totalActive} active tags · {requested.length}{' '}
-              pending requests · space <code>default</code>
+              pending requests · folder <code>default</code>
             </span>
             {/*
               palier-pill killed per the 30/05 cleanup. Role is JWT-only —
@@ -235,7 +235,7 @@ export function TagsTab({
                 className="ghost-btn"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={importCategories.isPending}
-                title="Mirror an uploaded JSON taxonomy into the active space (replace, not merge)"
+                title="Mirror an uploaded JSON taxonomy into the active folder (replace, not merge)"
                 data-testid="taxonomy-import"
               >
                 <Icon name="cloud-upload" size={12} />{' '}
@@ -595,7 +595,7 @@ function TagsEmptyZero({ canSuggest, onRequest }: TagsEmptyZeroProps) {
           />
         </svg>
       </div>
-      <div className="tags-empty-title">No tags in this space yet</div>
+      <div className="tags-empty-title">No tags in this folder yet</div>
       <p className="tags-empty-body">
         The thesaurus is empty. Start by requesting your first tag — a steward will
         review and promote it to a Tier 1 / 2 / 3 slot. Every tagged source then
@@ -615,7 +615,7 @@ function TagsEmptyZero({ canSuggest, onRequest }: TagsEmptyZeroProps) {
       <ul className="tags-empty-tips">
         <li>
           <Icon name="info-circle" size={11} /> Tier 1 (Trunk) — gov-validated, applies
-          cross-space
+          cross-folder
         </li>
         <li>
           <Icon name="info-circle" size={11} /> Tier 2 (Branch) — dept-scoped,
@@ -916,10 +916,10 @@ export function exportThesaurusJson(
   tags: readonly TagEntry[],
   categories: readonly TagCategory[],
   exportedBy: string,
-  workspace: string = 'cib',
+  folder: string = 'cib',
 ): void {
   const payload = {
-    workspace,
+    folder,
     exported_at: new Date().toISOString(),
     exported_by: exportedBy,
     categories,

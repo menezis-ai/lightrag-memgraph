@@ -2,22 +2,22 @@
  * Topbar-related types.
  *
  * These interfaces double as the contract that the backend phase-1 endpoints
- * will need to honor: `/workspaces`, `/notifications`, etc. (Q2 of the plan:
+ * will need to honor: `/folders`, `/notifications`, etc. (Q2 of the plan:
  * "interfaces TS deviennent la spec d'API que phase 1 doit respecter").
  */
 
 export type Theme = 'light' | 'dark';
 
-export type WorkspaceVisibility = 'private' | 'internal' | 'public';
+export type FolderVisibility = 'private' | 'internal' | 'public';
 
-export type WorkspaceRole = 'admin' | 'admin / steward' | 'steward' | 'reader' | 'owner';
+export type FolderRole = 'admin' | 'admin / steward' | 'steward' | 'reader' | 'owner';
 
-export interface Workspace {
+export interface Folder {
   id: string;
   kb: string;
-  visibility: WorkspaceVisibility;
+  visibility: FolderVisibility;
   sources: number;
-  role: WorkspaceRole;
+  role: FolderRole;
   current: boolean;
 }
 

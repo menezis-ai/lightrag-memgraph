@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canManageSpaces } from './permissions';
+import { canManageFolders } from './permissions';
 import type { AuthenticatedUser } from '../types/auth';
 
 const baseUser: AuthenticatedUser = {
@@ -11,7 +11,7 @@ const baseUser: AuthenticatedUser = {
     label: 'Reader',
     scopes: ['twin:read'],
   },
-  workspaces: ['cib'],
+  folders: ['cib'],
   idp: 'keycloak',
   idp_realm: 'twin-cib',
   sub: 'reader-1',
@@ -19,21 +19,21 @@ const baseUser: AuthenticatedUser = {
   gateway_scopes: ['read:documents'],
 };
 
-describe('canManageSpaces', () => {
+describe('canManageFolders', () => {
   it('allows null user for IdP-dormant mode', () => {
-    expect(canManageSpaces(null)).toBe(true);
+    expect(canManageFolders(null)).toBe(true);
   });
 
-  it('allows users carrying admin:spaces', () => {
+  it('allows users carrying admin:folders', () => {
     expect(
-      canManageSpaces({
+      canManageFolders({
         ...baseUser,
-        gateway_scopes: ['read:documents', 'admin:spaces'],
+        gateway_scopes: ['read:documents', 'admin:folders'],
       }),
     ).toBe(true);
   });
 
-  it('rejects users missing admin:spaces', () => {
-    expect(canManageSpaces(baseUser)).toBe(false);
+  it('rejects users missing admin:folders', () => {
+    expect(canManageFolders(baseUser)).toBe(false);
   });
 });

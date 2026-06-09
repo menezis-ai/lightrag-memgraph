@@ -1,11 +1,11 @@
 /**
- * Typed workspace fixtures, ported from Desktop/UI/data.js `window.MOCK_WORKSPACES`.
- * Contract template for the future `GET /workspaces` endpoint.
+ * Typed folder fixtures, ported from Desktop/UI/data.js `window.MOCK_FOLDERS`.
+ * Contract template for the `GET /folders` endpoint.
  */
 
-import type { Workspace } from '../types/topbar';
+import type { Folder } from '../types/topbar';
 
-export const WORKSPACE_FIXTURES: readonly Workspace[] = [
+export const FOLDER_FIXTURES: readonly Folder[] = [
   {
     id: 'cib',
     kb: 'CIB KB',

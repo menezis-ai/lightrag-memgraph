@@ -26,7 +26,7 @@ import {
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   THESAURUS_FIXTURES,
-  WORKSPACE_FIXTURES,
+  FOLDER_FIXTURES,
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
 import type { Document } from '../types/document';
@@ -217,16 +217,16 @@ function cascadeDocsFromGraph(deletedDocIds: Set<string>): void {
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 
-// Spaces — admin CRUD mirror of the backend. The first WORKSPACE
-// fixture is treated as the SRE-provisioned default (env-seeded) and
+// Folders — admin CRUD mirror of the backend. The first folder fixture
+// is treated as the SRE-provisioned default (env-seeded) and
 // rejects mutations with 403; the remaining ones are seeded as
-// runtime entries that an operator could realistically add. SPACE_MAX
+// runtime entries that an operator could realistically add. FOLDER_MAX
 // matches the backend's clamp so the "at max" path is reachable in
 // tests without re-seeding.
-const SPACE_MAX = 5;
-let spaceState = WORKSPACE_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
-const envSeededSpaceIds = new Set(
-  WORKSPACE_FIXTURES.slice(0, 1).map((w) => w.id),
+const FOLDER_MAX = 5;
+let folderState = FOLDER_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
+const envSeededFolderIds = new Set(
+  FOLDER_FIXTURES.slice(0, 1).map((w) => w.id),
 );
 
 interface E2eScenario {
@@ -247,21 +247,17 @@ let localAuthUser: string | null = null;
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
   tagApproveCalls: {} as Record<string, number>,
-  spaceRequests: [] as Array<{
+  folderRequests: [] as Array<{
     path: string;
     folder: string | null;
-    space: string | null;
-    workspace: string | null;
   }>,
 };
 
-function recordTwinSpaceRequest(request: Request): void {
+function recordTwinFolderRequest(request: Request): void {
   const url = new URL(request.url);
-  e2eStats.spaceRequests.push({
+  e2eStats.folderRequests.push({
     path: url.pathname,
     folder: request.headers.get('X-Twin-Folder'),
-    space: request.headers.get('X-Twin-Space'),
-    workspace: request.headers.get('X-Twin-Workspace'),
   });
 }
 
@@ -273,11 +269,11 @@ export function mockCurrentScopes(): readonly string[] | null {
   return config?.debugUser?.gateway_scopes ?? null;
 }
 
-function rejectSpaceAdminMutationIfNeeded() {
+function rejectFolderAdminMutationIfNeeded() {
   const scopes = mockCurrentScopes();
-  if (scopes === null || scopes.includes('admin:spaces')) return null;
+  if (scopes === null || scopes.includes('admin:folders')) return null;
   return HttpResponse.json(
-    { detail: "Admin scope 'admin:spaces' required" },
+    { detail: "Admin scope 'admin:folders' required" },
     { status: 403 },
   );
 }
@@ -306,7 +302,7 @@ export function resetDocumentsState(): void {
   }));
   uploadedTrackDocs.clear();
   uploadSeq = 0;
-  spaceState = WORKSPACE_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
+  folderState = FOLDER_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
   e2eScenario.bulkRetagStatus = undefined;
   e2eScenario.approveDelayMs = undefined;
   e2eScenario.tagApproveDelayMs = undefined;
@@ -316,7 +312,7 @@ export function resetDocumentsState(): void {
   e2eScenario.bulkDeleteDelayMs = undefined;
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
-  e2eStats.spaceRequests = [];
+  e2eStats.folderRequests = [];
   localAuthUser = null;
 }
 
@@ -329,7 +325,7 @@ function updateDoc(id: string, patch: Partial<Document>): Document | null {
 }
 
 async function handleCreateFolder(request: Request): Promise<Response> {
-  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  const forbidden = rejectFolderAdminMutationIfNeeded();
   if (forbidden) return forbidden;
   const body = (await request.json()) as {
     id: string;
@@ -343,19 +339,19 @@ async function handleCreateFolder(request: Request): Promise<Response> {
       { status: 422 },
     );
   }
-  if (spaceState.length >= SPACE_MAX) {
+  if (folderState.length >= FOLDER_MAX) {
     return HttpResponse.json(
-      { detail: `Cannot create folder: catalog already at max (${SPACE_MAX})` },
+      { detail: `Cannot create folder: catalog already at max (${FOLDER_MAX})` },
       { status: 422 },
     );
   }
-  if (envSeededSpaceIds.has(body.id)) {
+  if (envSeededFolderIds.has(body.id)) {
     return HttpResponse.json(
       { detail: `Folder '${body.id}' is provisioned by the deploy env` },
       { status: 409 },
     );
   }
-  if (spaceState.some((s) => s.id === body.id)) {
+  if (folderState.some((s) => s.id === body.id)) {
     return HttpResponse.json(
       { detail: `Folder '${body.id}' already exists` },
       { status: 409 },
@@ -369,7 +365,7 @@ async function handleCreateFolder(request: Request): Promise<Response> {
     role: 'admin / steward' as const,
     current: false,
   };
-  spaceState = [...spaceState, created];
+  folderState = [...folderState, created];
   activityState = [
     {
       id: `evt_folder_${body.id}_${Date.now()}`,
@@ -381,7 +377,7 @@ async function handleCreateFolder(request: Request): Promise<Response> {
       actor: { user: 'julien.dabert', role: 'KB Steward' },
       target: { type: 'folder', label: body.label, id: body.id },
       summary: `Folder '${body.id}' created`,
-      meta: { folder_id: body.id, space_id: body.id, operation: 'create' },
+      meta: { folder_id: body.id, operation: 'create' },
     },
     ...activityState,
   ];
@@ -393,15 +389,15 @@ async function handleUpdateFolder(
   id: string,
   request: Request,
 ): Promise<Response> {
-  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  const forbidden = rejectFolderAdminMutationIfNeeded();
   if (forbidden) return forbidden;
-  if (envSeededSpaceIds.has(id)) {
+  if (envSeededFolderIds.has(id)) {
     return HttpResponse.json(
       { detail: `Folder '${id}' is env-seeded and cannot be edited` },
       { status: 403 },
     );
   }
-  const idx = spaceState.findIndex((s) => s.id === id);
+  const idx = folderState.findIndex((s) => s.id === id);
   if (idx < 0) {
     return HttpResponse.json(
       { detail: `Folder '${id}' not found` },
@@ -410,13 +406,13 @@ async function handleUpdateFolder(
   }
   const patch = (await request.json()) as { label?: string };
   const next = {
-    ...spaceState[idx],
-    kb: patch.label ?? spaceState[idx].kb,
+    ...folderState[idx],
+    kb: patch.label ?? folderState[idx].kb,
   };
-  spaceState = [
-    ...spaceState.slice(0, idx),
+  folderState = [
+    ...folderState.slice(0, idx),
     next,
-    ...spaceState.slice(idx + 1),
+    ...folderState.slice(idx + 1),
   ];
   activityState = [
     {
@@ -429,7 +425,7 @@ async function handleUpdateFolder(
       actor: { user: 'julien.dabert', role: 'KB Steward' },
       target: { type: 'folder', label: next.kb, id },
       summary: `Folder '${id}' updated`,
-      meta: { folder_id: id, space_id: id, operation: 'update' },
+      meta: { folder_id: id, operation: 'update' },
     },
     ...activityState,
   ];
@@ -438,22 +434,22 @@ async function handleUpdateFolder(
 }
 
 function handleDeleteFolder(id: string): Response {
-  const forbidden = rejectSpaceAdminMutationIfNeeded();
+  const forbidden = rejectFolderAdminMutationIfNeeded();
   if (forbidden) return forbidden;
-  if (envSeededSpaceIds.has(id)) {
+  if (envSeededFolderIds.has(id)) {
     return HttpResponse.json(
       { detail: `Folder '${id}' is env-seeded and cannot be deleted` },
       { status: 403 },
     );
   }
-  const idx = spaceState.findIndex((s) => s.id === id);
+  const idx = folderState.findIndex((s) => s.id === id);
   if (idx < 0) {
     return HttpResponse.json(
       { detail: `Folder '${id}' not found` },
       { status: 404 },
     );
   }
-  spaceState = spaceState.filter((s) => s.id !== id);
+  folderState = folderState.filter((s) => s.id !== id);
   activityState = [
     {
       id: `evt_folder_${id}_${Date.now()}`,
@@ -465,7 +461,7 @@ function handleDeleteFolder(id: string): Response {
       actor: { user: 'julien.dabert', role: 'KB Steward' },
       target: { type: 'folder', label: id, id },
       summary: `Folder '${id}' deleted`,
-      meta: { folder_id: id, space_id: id, operation: 'delete' },
+      meta: { folder_id: id, operation: 'delete' },
     },
     ...activityState,
   ];
@@ -476,8 +472,8 @@ function handleDeleteFolder(id: string): Response {
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
-  const workspace = params.get('folder') ?? params.get('workspace');
-  if (workspace && d.workspace !== workspace) return false;
+  const folder = params.get('folder') ?? params.get('folder');
+  if (folder && d.folder !== folder) return false;
   const q = params.get('q');
   if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
   const tag = params.get('tag');
@@ -596,7 +592,7 @@ function makeE2eDocument(patch: Partial<Document>, index: number): Document {
     metadata: patch.metadata ?? { classification: 'internal' },
     type: patch.type ?? 'file',
     tags: patch.tags ?? [],
-    workspace: patch.workspace ?? 'default',
+    folder: patch.folder ?? 'default',
     visibility: patch.visibility ?? 'private',
     review: patch.review,
     extracted_text: patch.extracted_text,
@@ -621,7 +617,7 @@ export const handlers = [
     HttpResponse.json({
       approveCalls: e2eStats.approveCalls,
       tagApproveCalls: e2eStats.tagApproveCalls,
-      spaceRequests: e2eStats.spaceRequests,
+      folderRequests: e2eStats.folderRequests,
     }),
   ),
   http.post(`${ANY}/__e2e/documents`, async ({ request }) => {
@@ -754,7 +750,7 @@ export const handlers = [
         metadata: { mime: file instanceof File ? file.type : 'text/plain', uploader: 'e2e' },
         type: 'file',
         tags: [],
-        workspace: 'default',
+        folder: 'default',
         visibility: 'private',
       },
       ...documentsState,
@@ -996,43 +992,25 @@ export const handlers = [
   // -------------------------------------------------------------------------
   // Twin overlay endpoints
   // -------------------------------------------------------------------------
-  http.get(`${ANY}${TWIN}/workspaces`, ({ request }) => {
-    recordTwinSpaceRequest(request);
-    return HttpResponse.json(WORKSPACE_FIXTURES);
-  }),
-
   // Folders — admin CRUD on top of an env-seeded entry. The first
   // fixture is the env-seeded default and rejects mutations with the
   // same status codes as the backend (403). Any folder added through
-  // the API is "runtime" and mutable. `/spaces` remains a legacy alias.
+  // the API is "runtime" and mutable.
   http.get(`${ANY}${TWIN}/folders`, ({ request }) => {
-    recordTwinSpaceRequest(request);
-    return HttpResponse.json(spaceState);
-  }),
-  http.get(`${ANY}${TWIN}/spaces`, ({ request }) => {
-    recordTwinSpaceRequest(request);
-    return HttpResponse.json(spaceState);
+    recordTwinFolderRequest(request);
+    return HttpResponse.json(folderState);
   }),
   http.post(`${ANY}${TWIN}/folders`, async ({ request }) =>
-    handleCreateFolder(request),
-  ),
-  http.post(`${ANY}${TWIN}/spaces`, async ({ request }) =>
     handleCreateFolder(request),
   ),
   http.patch(`${ANY}${TWIN}/folders/:id`, async ({ params, request }) =>
     handleUpdateFolder(String(params.id), request),
   ),
-  http.patch(`${ANY}${TWIN}/spaces/:id`, async ({ params, request }) =>
-    handleUpdateFolder(String(params.id), request),
-  ),
   http.delete(`${ANY}${TWIN}/folders/:id`, ({ params }) =>
     handleDeleteFolder(String(params.id)),
   ),
-  http.delete(`${ANY}${TWIN}/spaces/:id`, ({ params }) =>
-    handleDeleteFolder(String(params.id)),
-  ),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     return HttpResponse.json(notificationState);
   }),
   http.post(`${ANY}${TWIN}/notifications/read-all`, () => {
@@ -1047,22 +1025,22 @@ export const handlers = [
   }),
 
   http.get(`${ANY}${TWIN}/health`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     return HttpResponse.json({ status: 'ok' });
   }),
 
   http.get(`${ANY}${TWIN}/thesaurus`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     return HttpResponse.json(THESAURUS_FIXTURES);
   }),
   http.get(`${ANY}${TWIN}/tags`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     const gate = authGateResponse(request);
     if (gate) return gate;
     return HttpResponse.json(tagState);
   }),
   http.get(`${ANY}${TWIN}/tags/categories`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     return HttpResponse.json(categoryState);
   }),
   http.get(`${ANY}${TWIN}/tags/categories/template`, () =>
@@ -1203,7 +1181,7 @@ export const handlers = [
   }),
 
   http.get(`${ANY}${TWIN}/activity`, ({ request }) => {
-    recordTwinSpaceRequest(request);
+    recordTwinFolderRequest(request);
     const url = new URL(request.url);
     const filtered = activityState.filter((e) =>
       matchActivityQuery(e, url.searchParams),
@@ -1223,7 +1201,7 @@ export const handlers = [
       const doc = documentsState.find((d) => d.doc_id === id);
       return HttpResponse.json({
         tags: doc?.tags ?? [],
-        workspace: doc?.workspace ?? 'cib',
+        folder: doc?.folder ?? 'cib',
         review: doc?.review,
       });
     },

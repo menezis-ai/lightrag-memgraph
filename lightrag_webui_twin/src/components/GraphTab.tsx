@@ -260,7 +260,7 @@ export function GraphTab({
           <h1>Knowledge Graph</h1>
           <div className="kg-sub">
             <span>
-              {entities.length} entities · {relations.length} relations · space{' '}
+              {entities.length} entities · {relations.length} relations · folder{' '}
               <code>cib</code>
             </span>
             <span className="dot-sep">·</span>

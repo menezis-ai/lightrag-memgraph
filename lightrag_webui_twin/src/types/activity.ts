@@ -34,12 +34,7 @@ export type ActivityTargetType =
   | 'source'
   | 'bulk'
   | 'session'
-  /** Canonical term per the 2026-06-01 Fabrice meeting ("space alors").
-   *  ``workspace`` stays in the union for backwards-compat with historical
-   *  audit records emitted before the rename, but new events use
-   *  ``space``. */
-  | 'space'
-  | 'workspace';
+  | 'folder';
 
 export interface ActivityActor {
   user: string;

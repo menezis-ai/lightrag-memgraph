@@ -113,8 +113,8 @@ describe('resolveRuntimeConfig', () => {
       apiBaseUrl: '/twin/api',
       lightragBaseUrl: '/api',
       idpLogoutUrl: 'https://idp.example.com/logout',
-      defaultSpaceId: 'sandbox',
-      spaces: [{ id: 'sandbox', label: 'Sandbox', kind: 'sandbox' as const }],
+      defaultFolderId: 'sandbox',
+      folders: [{ id: 'sandbox', label: 'Sandbox', kind: 'sandbox' as const }],
     };
     (window as Window & typeof globalThis).__twinE2eRuntimeConfig = cfg;
     expect(resolveRuntimeConfig('__TWIN_CONFIG_JSON__', true)).toBe(cfg);
@@ -129,7 +129,7 @@ describe('useAuth — dev fallback', () => {
     expect(result.current.user?.palier.level).toBe(3);
     expect(result.current.user?.palier.label).toBe('Steward');
     expect(result.current.user?.name).toBe('Claire Benoit');
-    expect(result.current.user?.workspaces).toContain('default');
+    expect(result.current.user?.folders).toContain('default');
   });
 
   it('returns the same config across re-renders (cached)', () => {

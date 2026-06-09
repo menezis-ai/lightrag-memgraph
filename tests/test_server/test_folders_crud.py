@@ -2,14 +2,14 @@
 
 Covers:
 - POST /folders: 201 success, 409 on env-seeded id collision, 409 on
-  runtime duplicate, 422 on invalid id, 422 on max-spaces overflow.
+  runtime duplicate, 422 on invalid id, 422 on max-folders overflow.
 - PATCH /folders/{id}: 200 success, 403 on env-seeded id, 404 missing.
 - DELETE /folders/{id}: 204 success, 403 on env-seeded, 404 missing,
   409 when the folder still holds data.
 - GET /folders: returns env + runtime merged, with the correct
   `current` marker for the active folder.
 
-Legacy /spaces aliases stay covered in a few compatibility assertions.
+Legacy /folders aliases stay covered in a few compatibility assertions.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph.server import space_store, webui_router
+from twindb_lightrag_memgraph.server import folder_store, webui_router
 from twindb_lightrag_memgraph.server.app import create_app
 
 
@@ -44,7 +44,7 @@ async def client(monkeypatch, tmp_path):
     # full read-modify-write path.
     runtime_file = tmp_path / "twin-folders.json"
     monkeypatch.setenv("TWIN_FOLDERS_RUNTIME_FILE", str(runtime_file))
-    space_store.reset_runtime_store()
+    folder_store.reset_runtime_store()
     webui_router.reset_store()
 
     app = create_app()
@@ -52,11 +52,11 @@ async def client(monkeypatch, tmp_path):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
         yield c
-    space_store.reset_runtime_store()
+    folder_store.reset_runtime_store()
     webui_router.reset_store()
 
 
-class TestCreateSpace:
+class TestCreateFolder:
     async def test_create_success_returns_201(self, client):
         r = await client.post(
             "/folders",
@@ -77,8 +77,8 @@ class TestCreateSpace:
         ids = [s["id"] for s in listing.json()]
         assert ids == ["default", "sandbox"]
 
-    async def test_legacy_spaces_alias_still_lists_folders(self, client):
-        listing = await client.get("/spaces")
+    async def test_legacy_folders_alias_still_lists_folders(self, client):
+        listing = await client.get("/folders")
         assert listing.status_code == 200
         assert [s["id"] for s in listing.json()] == ["default"]
 
@@ -89,14 +89,14 @@ class TestCreateSpace:
         )
         activity = await client.get("/activity")
         events = activity.json().get("items", [])
-        space_events = [
+        folder_events = [
             e
             for e in events
             if e["kind"] == "settings"
             and e["meta"].get("operation") == "create"
         ]
-        assert len(space_events) == 1
-        assert space_events[0]["meta"]["space_id"] == "sandbox"
+        assert len(folder_events) == 1
+        assert folder_events[0]["meta"]["folder_id"] == "sandbox"
 
     async def test_create_conflicts_with_env_seed(self, client):
         r = await client.post(
@@ -115,7 +115,7 @@ class TestCreateSpace:
     async def test_create_422_on_invalid_id(self, client):
         r = await client.post(
             "/folders",
-            json={"id": "bad space!", "label": "x"},
+            json={"id": "bad folder!", "label": "x"},
         )
         assert r.status_code == 422
 
@@ -128,7 +128,7 @@ class TestCreateSpace:
         assert "max" in r.json()["detail"].lower()
 
 
-class TestUpdateSpace:
+class TestUpdateFolder:
     async def test_update_label_and_description(self, client):
         await client.post(
             "/folders",
@@ -151,8 +151,8 @@ class TestUpdateSpace:
         assert "env-seeded" in r.json()["detail"]
 
 
-class TestDeleteSpace:
-    async def test_delete_runtime_space_204(self, client):
+class TestDeleteFolder:
+    async def test_delete_runtime_folder_204(self, client):
         await client.post(
             "/folders",
             json={"id": "sandbox", "label": "Sandbox"},
@@ -183,8 +183,8 @@ class TestDeleteSpace:
         r = await client.delete("/folders/ghost")
         assert r.status_code == 404
 
-    async def test_delete_409_when_space_has_tags(self, client):
-        # Provision then add a tag scoped to the sandbox space.
+    async def test_delete_409_when_folder_has_tags(self, client):
+        # Provision then add a tag scoped to the sandbox folder.
         await client.post("/folders", json={"id": "sandbox", "label": "S"})
         tag_post = await client.post(
             "/tags",
@@ -209,7 +209,7 @@ class TestPersistence:
         )
         # Force the loaded flag false so a subsequent list re-reads
         # from disk.
-        space_store.reset_runtime_store()
+        folder_store.reset_runtime_store()
         listing = await client.get("/folders")
         ids = [s["id"] for s in listing.json()]
         assert "sandbox" in ids

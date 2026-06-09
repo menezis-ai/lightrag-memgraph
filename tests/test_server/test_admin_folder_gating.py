@@ -1,17 +1,17 @@
-"""Admin-only Space CRUD — IdP-active integration tests.
+"""Admin-only Folder CRUD — IdP-active integration tests.
 
-Covers the gating that ``test_spaces_crud.py`` does NOT exercise:
-when the IdP middleware is active, ``POST/PATCH/DELETE /spaces`` must
+Covers the gating that ``test_folders_crud.py`` does NOT exercise:
+when the IdP middleware is active, ``POST/PATCH/DELETE /folders`` must
 return:
 
 - 401 if no bearer token is presented;
-- 403 if the token's user has no ``admin:spaces`` gateway scope;
+- 403 if the token's user has no ``admin:folders`` gateway scope;
 - 200/201/204 only when the user is in one of ``IdpConfig.admin_groups``.
 
-``GET /spaces`` stays open in both modes (no admin gate on read).
+``GET /folders`` stays open in both modes (no admin gate on read).
 
 The dormant-IdP regression (everything open) is owned by
-``test_spaces_crud.py``.
+``test_folders_crud.py``.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph.server import idp_jwt, space_store, webui_router
+from twindb_lightrag_memgraph.server import idp_jwt, folder_store, webui_router
 from twindb_lightrag_memgraph.server.app import create_app
 
 
@@ -102,20 +102,20 @@ def _activate_idp(fake_jwks, *, admin_groups: frozenset[str]) -> None:
 
 @pytest.fixture()
 async def client(monkeypatch, tmp_path, fake_jwks):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps(
             [
                 {"id": "default", "label": "Default", "kind": "primary"},
             ]
         ),
     )
-    monkeypatch.setenv("TWIN_MAX_SPACES", "3")
+    monkeypatch.setenv("TWIN_MAX_FOLDERS", "3")
     monkeypatch.setenv(
-        "TWIN_SPACES_RUNTIME_FILE", str(tmp_path / "twin-spaces.json")
+        "TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json")
     )
-    space_store.reset_runtime_store()
+    folder_store.reset_runtime_store()
     webui_router.reset_store()
 
     # Active IdP with default admin_groups (twin-admin + twin-steward).
@@ -127,20 +127,20 @@ async def client(monkeypatch, tmp_path, fake_jwks):
     ) as c:
         yield c
 
-    space_store.reset_runtime_store()
+    folder_store.reset_runtime_store()
     webui_router.reset_store()
     idp_jwt.configure_idp(None)
 
 
 # ---------------------------------------------------------------------------
-# POST /spaces
+# POST /folders
 # ---------------------------------------------------------------------------
 
 
-class TestCreateSpaceGating:
+class TestCreateFolderGating:
     async def test_no_token_returns_401(self, client):
         r = await client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "S", "kind": "sandbox"},
         )
         assert r.status_code == 401
@@ -149,17 +149,17 @@ class TestCreateSpaceGating:
     async def test_non_admin_token_returns_403(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-reader"])
         r = await client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "S"},
             cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
-        assert idp_jwt.ADMIN_SPACES_SCOPE in r.json()["detail"]
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["detail"]
 
     async def test_admin_token_returns_201(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
             cookies={"twin_idp_token": token},
         )
@@ -178,45 +178,45 @@ class TestCreateSpaceGating:
 
 
 # ---------------------------------------------------------------------------
-# PATCH /spaces/{id}
+# PATCH /folders/{id}
 # ---------------------------------------------------------------------------
 
 
-class TestUpdateSpaceGating:
-    async def _provision_runtime_space(self, client, rsa_keypair) -> None:
+class TestUpdateFolderGating:
+    async def _provision_runtime_folder(self, client, rsa_keypair) -> None:
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "Sandbox"},
             cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 201
 
     async def test_no_token_returns_401(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         # Re-issue without cookie:
         client.cookies.clear()
         r = await client.patch(
-            "/spaces/sandbox", json={"label": "x"}
+            "/folders/sandbox", json={"label": "x"}
         )
         assert r.status_code == 401
 
     async def test_non_admin_returns_403(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         client.cookies.clear()
         token = _make_token(rsa_keypair, groups=["twin-contributor"])
         r = await client.patch(
-            "/spaces/sandbox",
+            "/folders/sandbox",
             json={"label": "Renamed"},
             cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
 
     async def test_admin_updates_label(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await client.patch(
-            "/spaces/sandbox",
+            "/folders/sandbox",
             json={"label": "Sandbox v2"},
             cookies={"twin_idp_token": admin},
         )
@@ -225,59 +225,59 @@ class TestUpdateSpaceGating:
 
 
 # ---------------------------------------------------------------------------
-# DELETE /spaces/{id}
+# DELETE /folders/{id}
 # ---------------------------------------------------------------------------
 
 
-class TestDeleteSpaceGating:
-    async def _provision_runtime_space(self, client, rsa_keypair) -> None:
+class TestDeleteFolderGating:
+    async def _provision_runtime_folder(self, client, rsa_keypair) -> None:
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "Sandbox"},
             cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 201
 
     async def test_no_token_returns_401(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         client.cookies.clear()
-        r = await client.delete("/spaces/sandbox")
+        r = await client.delete("/folders/sandbox")
         assert r.status_code == 401
 
     async def test_non_admin_returns_403(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         client.cookies.clear()
         token = _make_token(rsa_keypair, groups=["twin-reader"])
         r = await client.delete(
-            "/spaces/sandbox",
+            "/folders/sandbox",
             cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
 
     async def test_admin_deletes_204(self, client, rsa_keypair):
-        await self._provision_runtime_space(client, rsa_keypair)
+        await self._provision_runtime_folder(client, rsa_keypair)
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await client.delete(
-            "/spaces/sandbox",
+            "/folders/sandbox",
             cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 204
 
 
 # ---------------------------------------------------------------------------
-# GET /spaces — read stays open under active IdP
+# GET /folders — read stays open under active IdP
 # ---------------------------------------------------------------------------
 
 
-class TestListSpacesNoGate:
+class TestListFoldersNoGate:
     async def test_get_works_without_admin_scope(self, client, rsa_keypair):
-        # A pure reader can still enumerate spaces (needed by the
-        # space-switcher dropdown). Auth is required (router-level
+        # A pure reader can still enumerate folders (needed by the
+        # folder-switcher dropdown). Auth is required (router-level
         # ``require_auth`` dep), but the admin gate isn't.
         token = _make_token(rsa_keypair, groups=["twin-reader"])
         r = await client.get(
-            "/spaces", cookies={"twin_idp_token": token}
+            "/folders", cookies={"twin_idp_token": token}
         )
         assert r.status_code == 200
         assert any(s["id"] == "default" for s in r.json())
@@ -291,32 +291,32 @@ class TestListSpacesNoGate:
 class TestCustomAdminGroupsEnv:
     @pytest.fixture()
     async def custom_client(self, monkeypatch, tmp_path, fake_jwks):
-        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
-            "TWIN_SPACES_JSON",
+            "TWIN_FOLDERS_JSON",
             json.dumps([{"id": "default", "label": "Default", "kind": "primary"}]),
         )
-        monkeypatch.setenv("TWIN_MAX_SPACES", "3")
+        monkeypatch.setenv("TWIN_MAX_FOLDERS", "3")
         monkeypatch.setenv(
-            "TWIN_SPACES_RUNTIME_FILE", str(tmp_path / "twin-spaces.json")
+            "TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json")
         )
-        space_store.reset_runtime_store()
+        folder_store.reset_runtime_store()
         webui_router.reset_store()
-        # Custom admin set: ONLY bnp.kb-admin grants admin:spaces.
+        # Custom admin set: ONLY bnp.kb-admin grants admin:folders.
         _activate_idp(fake_jwks, admin_groups=frozenset({"bnp.kb-admin"}))
         app = create_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
             yield c
-        space_store.reset_runtime_store()
+        folder_store.reset_runtime_store()
         webui_router.reset_store()
         idp_jwt.configure_idp(None)
 
     async def test_steward_no_longer_admin(self, custom_client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
         r = await custom_client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "S"},
             cookies={"twin_idp_token": token},
         )
@@ -327,7 +327,7 @@ class TestCustomAdminGroupsEnv:
     ):
         token = _make_token(rsa_keypair, groups=["bnp.kb-admin"])
         r = await custom_client.post(
-            "/spaces",
+            "/folders",
             json={"id": "sandbox", "label": "S"},
             cookies={"twin_idp_token": token},
         )

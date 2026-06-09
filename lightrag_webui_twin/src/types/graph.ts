@@ -5,8 +5,8 @@
  * remain Twin Graph tier features.
  *
  * Contract template for backend phase 1:
- *   GET /graph/entities?workspace=&type=  -> GraphEntity[]
- *   GET /graph/relations?workspace=       -> GraphRelation[]
+ *   GET /graph/entities?folder=&type=  -> GraphEntity[]
+ *   GET /graph/relations?folder=       -> GraphRelation[]
  * Positions (x, y) are precomputed server-side or fallback to a static layout
  * — no force simulation runs in the browser.
  */

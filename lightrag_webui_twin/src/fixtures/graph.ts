@@ -30,7 +30,7 @@ export const GRAPH_ENTITY_FIXTURES: readonly GraphEntity[] = [
   { id: 'e_cft', name: 'CFT', type: 'PRODUCT', x: 780, y: 330, mentions: 92, sources: 11, summary: 'Cross File Transfer middleware — Axway product.' },
   // People / process
   { id: 'e_marc', name: 'Marc Berthier', type: 'PERSON', x: 100, y: 420, mentions: 28, sources: 12, summary: 'DBA — primary author on Oracle restart procedures.' },
-  { id: 'e_claire', name: 'Claire Benoit', type: 'PERSON', x: 160, y: 580, mentions: 41, sources: 18, summary: 'KB Admin / Tier 3 steward for CIB workspace.' },
+  { id: 'e_claire', name: 'Claire Benoit', type: 'PERSON', x: 160, y: 580, mentions: 41, sources: 18, summary: 'KB Admin / Tier 3 steward for CIB folder.' },
   // Location
   { id: 'e_paris', name: 'DC Paris', type: 'LOCATION', x: 700, y: 440, mentions: 37, sources: 8, summary: 'Primary datacenter; active site of the dual-DC topology.' },
   { id: 'e_aubervil', name: 'DC Aubervilliers', type: 'LOCATION', x: 820, y: 520, mentions: 31, sources: 7, summary: 'Secondary datacenter; standby site.' },

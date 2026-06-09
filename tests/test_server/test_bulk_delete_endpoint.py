@@ -19,17 +19,17 @@ class FakeDocStatus:
             "doc-a": {
                 "id": "doc-a",
                 "file_path": "/kb/a.pdf",
-                "metadata": {"space": "default"},
+                "metadata": {"folder": "default"},
             },
             "doc-b": {
                 "id": "doc-b",
                 "file_path": "/kb/b.pdf",
-                "metadata": {"space": "default"},
+                "metadata": {"folder": "default"},
             },
             "doc-sandbox": {
                 "id": "doc-sandbox",
                 "file_path": "/kb/sandbox.pdf",
-                "metadata": {"space": "sandbox"},
+                "metadata": {"folder": "sandbox"},
             },
         }
 
@@ -53,9 +53,9 @@ class FakeRag:
 
 @pytest.fixture()
 async def client(monkeypatch):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps(
             [
                 {"id": "default", "label": "Default", "kind": "primary"},
@@ -95,7 +95,7 @@ class TestBulkDeleteEndpoint:
         assert len(deletes) == 2
         assert {e["meta"]["doc_id"] for e in deletes} == {"doc-a", "doc-b"}
 
-    async def test_reports_missing_or_cross_space_ids_as_failed(self, client):
+    async def test_reports_missing_or_cross_folder_ids_as_failed(self, client):
         r = await client.post(
             "/documents/bulk-delete",
             json={"doc_ids": ["doc-a", "doc-sandbox", "missing"]},

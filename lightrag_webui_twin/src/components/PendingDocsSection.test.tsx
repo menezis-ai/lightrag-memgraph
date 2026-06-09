@@ -34,7 +34,7 @@ function makePendingDoc(overrides: Partial<Document> = {}): Document {
     error_msg: null,
     metadata: { uploader: 'fatima.t' },
     visibility: 'private',
-    workspace: 'default',
+    folder: 'default',
     review: {
       state: 'pending-review',
       requested_by: 'fatima.t',

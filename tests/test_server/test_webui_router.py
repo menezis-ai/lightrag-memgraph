@@ -31,7 +31,6 @@ from twindb_lightrag_memgraph.server.webui_seed import (
     TAG_CATEGORIES,
     TAGS,
     THESAURUS,
-    WORKSPACES,
 )
 
 
@@ -83,7 +82,7 @@ class TestDocuments:
         assert len(body["items"]) == len(DOCUMENTS)
         # Shape spot-check on the first doc
         first = body["items"][0]
-        for key in ("id", "type", "source", "summary", "tags", "status", "chunks", "updated", "visibility", "workspace"):
+        for key in ("id", "type", "source", "summary", "tags", "status", "chunks", "updated", "visibility", "folder"):
             assert key in first
 
     async def test_status_filter_narrows(self, client):
@@ -117,61 +116,62 @@ class TestDocuments:
 
 
 # ---------------------------------------------------------------------------
-# Workspaces / notifications
+# Folders / notifications
 # ---------------------------------------------------------------------------
 
 
-class TestWorkspaces:
+class TestFoldersList:
     async def test_list(self, client):
-        r = await client.get("/workspaces")
+        r = await client.get("/folders")
         assert r.status_code == 200
         body = r.json()
         assert isinstance(body, list)
-        assert len(body) == len(WORKSPACES)
-        assert any(w["current"] is True for w in body)
+        assert len(body) == 1
+        assert body[0]["id"] == "default"
+        assert body[0]["current"] is True
 
 
-class TestSpaces:
-    def _configure_spaces(self, monkeypatch):
-        monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+class TestFolders:
+    def _configure_folders(self, monkeypatch):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
-            "TWIN_SPACES_JSON",
+            "TWIN_FOLDERS_JSON",
             json.dumps(
                 [
-                    {"id": "default", "label": "Default space", "kind": "primary"},
+                    {"id": "default", "label": "Default folder", "kind": "primary"},
                     {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
                 ]
             ),
         )
         webui_router.reset_store()
 
-    async def test_spaces_endpoint_lists_configured_spaces(self, monkeypatch, client):
-        self._configure_spaces(monkeypatch)
-        r = await client.get("/spaces", headers={"X-Twin-Space": "sandbox"})
+    async def test_folders_endpoint_lists_configured_folders(self, monkeypatch, client):
+        self._configure_folders(monkeypatch)
+        r = await client.get("/folders", headers={"X-Twin-Folder": "sandbox"})
         assert r.status_code == 200
         body = r.json()
-        assert [space["id"] for space in body] == ["default", "sandbox"]
-        assert next(space for space in body if space["id"] == "sandbox")["current"]
+        assert [folder["id"] for folder in body] == ["default", "sandbox"]
+        assert next(folder for folder in body if folder["id"] == "sandbox")["current"]
 
-    async def test_workspaces_endpoint_uses_spaces_when_configured(
+    async def test_folders_endpoint_uses_configured_folders(
         self, monkeypatch, client
     ):
-        self._configure_spaces(monkeypatch)
-        r = await client.get("/workspaces")
+        self._configure_folders(monkeypatch)
+        r = await client.get("/folders")
         assert r.status_code == 200
-        assert [space["id"] for space in r.json()] == ["default", "sandbox"]
+        assert [folder["id"] for folder in r.json()] == ["default", "sandbox"]
 
-    async def test_rejects_unknown_space_header(self, monkeypatch, client):
-        self._configure_spaces(monkeypatch)
-        r = await client.get("/tags", headers={"X-Twin-Space": "rogue"})
+    async def test_rejects_unknown_folder_header(self, monkeypatch, client):
+        self._configure_folders(monkeypatch)
+        r = await client.get("/tags", headers={"X-Twin-Folder": "rogue"})
         assert r.status_code == 403
         assert r.json()["detail"] == (
             "No folder available for this KB. Please contact Twincore Team"
         )
 
-    async def test_legacy_workspace_header_is_accepted(self, monkeypatch, client):
-        self._configure_spaces(monkeypatch)
-        r = await client.get("/documents", headers={"X-Twin-Workspace": "sandbox"})
+    async def test_folder_header_is_accepted(self, monkeypatch, client):
+        self._configure_folders(monkeypatch)
+        r = await client.get("/documents", headers={"X-Twin-Folder": "sandbox"})
         assert r.status_code == 200
         assert r.json() == {"items": [], "total": 0}
 
@@ -397,67 +397,67 @@ class TestAuthGate:
 
 
 # ---------------------------------------------------------------------------
-# WebuiStore.for_space(mode=...) — mock-kill F6
+# WebuiStore.for_folder(mode=...) — mock-kill F6
 # ---------------------------------------------------------------------------
 
 
-class TestForSpaceMode:
+class TestForFolderMode:
     """Regression for mock-kill audit 2026-06-04 finding F6.
 
-    In ``memgraph`` mode, ``for_space()`` must NOT seed the in-memory
+    In ``memgraph`` mode, ``for_folder()`` must NOT seed the in-memory
     `_documents` / `_graph_entities` / `_graph_relations` lists even for
-    the default space — otherwise ``/twin/api/documents`` and
+    the default folder — otherwise ``/twin/api/documents`` and
     ``/twin/api/graph/*`` silently expose the demo payload on a real
     BNP deploy.
     """
 
-    def _default_space(self) -> str:
-        from twindb_lightrag_memgraph.server.space import load_space_catalog
-        return load_space_catalog().default_space_id
+    def _default_folder(self) -> str:
+        from twindb_lightrag_memgraph.server.folder import load_folder_catalog
+        return load_folder_catalog().default_folder_id
 
-    def test_default_space_seed_mode_keeps_full_payload(self):
+    def test_default_folder_seed_mode_keeps_full_payload(self):
         # Sanity: the legacy `seed` mode (CI + standalone demo) still
-        # populates documents/graph for the default space.
-        store = webui_router.WebuiStore.for_space(self._default_space())
+        # populates documents/graph for the default folder.
+        store = webui_router.WebuiStore.for_folder(self._default_folder())
         # Probe internals — these are intentionally private but the
         # contract is what /twin/api/documents reads from.
         assert len(store._documents) > 0  # noqa: SLF001
         assert len(store._graph_entities) > 0  # noqa: SLF001
 
-    def test_default_space_memgraph_mode_starts_empty(self):
-        store = webui_router.WebuiStore.for_space(
-            self._default_space(), mode="memgraph"
+    def test_default_folder_memgraph_mode_starts_empty(self):
+        store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
         )
         assert store._documents == []  # noqa: SLF001
         assert store._graph_entities == []  # noqa: SLF001
         assert store._graph_relations == []  # noqa: SLF001
-        # Reference data still loads (workspaces / thesaurus / openapi
+        # Reference data still loads (folders / thesaurus / openapi
         # are NOT user-generated — they're catalog metadata).
-        assert len(store._workspaces) > 0  # noqa: SLF001
+        assert len(store._folders) > 0  # noqa: SLF001
         assert len(store._thesaurus) > 0  # noqa: SLF001
 
-    def test_non_default_space_memgraph_mode_starts_empty(self):
-        store = webui_router.WebuiStore.for_space(
+    def test_non_default_folder_memgraph_mode_starts_empty(self):
+        store = webui_router.WebuiStore.for_folder(
             "sandbox-that-does-not-exist", mode="memgraph"
         )
         assert store._documents == []  # noqa: SLF001
         assert store._graph_entities == []  # noqa: SLF001
 
-    def test_non_default_space_seed_mode_already_empty_for_user_data(self):
-        # Existing behaviour — non-default spaces don't get user data
+    def test_non_default_folder_seed_mode_already_empty_for_user_data(self):
+        # Existing behaviour — non-default folders don't get user data
         # in seed mode either. Lock it in.
-        store = webui_router.WebuiStore.for_space("sandbox-yes")
+        store = webui_router.WebuiStore.for_folder("sandbox-yes")
         assert store._documents == []  # noqa: SLF001
         assert store._graph_entities == []  # noqa: SLF001
 
-    async def test_default_space_memgraph_mode_documents_endpoint_returns_empty(
+    async def test_default_folder_memgraph_mode_documents_endpoint_returns_empty(
         self, client
     ):
         """End-to-end: /twin/api/documents reads the (now empty) `_documents`."""
         # Swap the active store to a memgraph-mode one for the default
-        # space and assert the endpoint reflects the empty state.
-        empty_store = webui_router.WebuiStore.for_space(
-            self._default_space(), mode="memgraph"
+        # folder and assert the endpoint reflects the empty state.
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
         )
         webui_router.set_store(empty_store)
         r = await client.get("/documents")

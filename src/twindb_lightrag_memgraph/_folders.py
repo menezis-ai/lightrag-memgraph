@@ -2,9 +2,6 @@
 
 This module is deliberately free of FastAPI/server imports: runtime WebUI
 config generation uses it even when only ``replace_ui=True`` is enabled.
-
-``space`` remains as a legacy wire name for existing deployments. Product and
-new API surfaces use ``folder``.
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class TwinSpace:
+class TwinFolder:
     id: str
     label: str
     kind: str = "custom"
@@ -36,7 +33,7 @@ class TwinSpace:
             "sources": self.sources,
         }
 
-    def as_workspace_compat(self, *, current: bool) -> dict[str, object]:
+    def as_api(self, *, current: bool) -> dict[str, object]:
         return {
             "id": self.id,
             "kb": self.label,
@@ -48,34 +45,30 @@ class TwinSpace:
 
 
 @dataclass(frozen=True)
-class TwinSpaceCatalog:
-    default_space_id: str
-    max_spaces: int
-    spaces: tuple[TwinSpace, ...]
+class TwinFolderCatalog:
+    default_folder_id: str
+    max_folders: int
+    folders: tuple[TwinFolder, ...]
     explicit: bool
 
     @property
     def ids(self) -> frozenset[str]:
-        return frozenset(space.id for space in self.spaces)
+        return frozenset(folder.id for folder in self.folders)
 
 
-def _parse_max_spaces() -> int:
-    raw = os.environ.get("TWIN_MAX_FOLDERS") or os.environ.get(
-        "TWIN_MAX_SPACES",
-        "5",
-    )
+def _parse_max_folders() -> int:
+    raw = os.environ.get("TWIN_MAX_FOLDERS", "5")
     try:
         value = int(raw)
     except ValueError:
-        logger.exception("Invalid TWIN_MAX_FOLDERS/TWIN_MAX_SPACES; falling back to 5")
+        logger.exception("Invalid TWIN_MAX_FOLDERS; falling back to 5")
         value = 5
     return max(1, min(5, value))
 
 
-def _parse_default_space() -> str:
+def _parse_default_folder() -> str:
     raw = (
         os.environ.get("TWIN_DEFAULT_FOLDER")
-        or os.environ.get("TWIN_DEFAULT_SPACE")
         or os.environ.get("WORKSPACE")
         or "default"
     ).strip()
@@ -86,26 +79,24 @@ def _parse_default_space() -> str:
         return "default"
 
 
-def load_space_catalog() -> TwinSpaceCatalog:
+def load_folder_catalog() -> TwinFolderCatalog:
     """Load the configured Twin folders from env vars.
 
-    Preferred env vars are ``TWIN_DEFAULT_FOLDER``, ``TWIN_FOLDERS_JSON`` and
-    ``TWIN_MAX_FOLDERS``. Legacy ``*_SPACE*`` names are still accepted.
+    Supported env vars are ``TWIN_DEFAULT_FOLDER``, ``TWIN_FOLDERS_JSON`` and
+    ``TWIN_MAX_FOLDERS``.
     """
-    default_space = _parse_default_space()
-    max_spaces = _parse_max_spaces()
-    spaces_raw = os.environ.get("TWIN_FOLDERS_JSON") or os.environ.get(
-        "TWIN_SPACES_JSON"
-    )
-    explicit = bool(spaces_raw)
-    spaces: list[TwinSpace] = []
+    default_folder = _parse_default_folder()
+    max_folders = _parse_max_folders()
+    folders_raw = os.environ.get("TWIN_FOLDERS_JSON")
+    explicit = bool(folders_raw)
+    folders: list[TwinFolder] = []
 
-    if spaces_raw:
+    if folders_raw:
         try:
-            parsed = json.loads(spaces_raw)
+            parsed = json.loads(folders_raw)
             if not isinstance(parsed, list):
                 raise ValueError("TWIN_FOLDERS_JSON must be a JSON array")
-            for item in parsed[:max_spaces]:
+            for item in parsed[:max_folders]:
                 if not isinstance(item, dict):
                     continue
                 sid_raw = str(item.get("id") or "").strip()
@@ -116,8 +107,8 @@ def load_space_catalog() -> TwinSpaceCatalog:
                 except ValueError:
                     logger.exception("Skipping invalid Twin folder id")
                     continue
-                spaces.append(
-                    TwinSpace(
+                folders.append(
+                    TwinFolder(
                         id=sid,
                         label=str(item.get("label") or sid),
                         kind=str(item.get("kind") or "custom"),
@@ -126,18 +117,15 @@ def load_space_catalog() -> TwinSpaceCatalog:
                     )
                 )
         except Exception:
-            logger.exception(
-                "Invalid TWIN_FOLDERS_JSON/TWIN_SPACES_JSON; falling back to default folder"
-            )
-            spaces = []
+            logger.exception("Invalid TWIN_FOLDERS_JSON; falling back to default folder")
+            folders = []
 
-    if not spaces:
-        spaces = [
-            TwinSpace(
-                id=default_space,
+    if not folders:
+        folders = [
+            TwinFolder(
+                id=default_folder,
                 label=(
                     os.environ.get("TWIN_DEFAULT_FOLDER_LABEL")
-                    or os.environ.get("TWIN_DEFAULT_SPACE_LABEL")
                     or "Default folder"
                 ),
                 kind="primary",
@@ -146,31 +134,22 @@ def load_space_catalog() -> TwinSpaceCatalog:
             )
         ]
 
-    if default_space not in {space.id for space in spaces}:
-        default_space = spaces[0].id
+    if default_folder not in {folder.id for folder in folders}:
+        default_folder = folders[0].id
 
-    return TwinSpaceCatalog(
-        default_space_id=default_space,
-        max_spaces=max_spaces,
-        spaces=tuple(spaces),
+    return TwinFolderCatalog(
+        default_folder_id=default_folder,
+        max_folders=max_folders,
+        folders=tuple(folders),
         explicit=explicit,
     )
 
 
-def build_runtime_space_config() -> dict[str, object]:
-    catalog = load_space_catalog()
-    folders = [space.as_runtime_config() for space in catalog.spaces]
+def build_runtime_folder_config() -> dict[str, object]:
+    catalog = load_folder_catalog()
+    folders = [folder.as_runtime_config() for folder in catalog.folders]
     return {
-        "defaultFolderId": catalog.default_space_id,
+        "defaultFolderId": catalog.default_folder_id,
         "folders": folders,
-        "maxFolders": catalog.max_spaces,
-        "defaultSpaceId": catalog.default_space_id,
-        "spaces": folders,
-        "maxSpaces": catalog.max_spaces,
+        "maxFolders": catalog.max_folders,
     }
-
-
-TwinFolder = TwinSpace
-TwinFolderCatalog = TwinSpaceCatalog
-load_folder_catalog = load_space_catalog
-build_runtime_folder_config = build_runtime_space_config

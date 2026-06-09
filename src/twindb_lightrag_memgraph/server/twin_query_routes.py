@@ -463,7 +463,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
     async def query_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
-        del request  # currently unused; kept for future X-Twin-Space scoping
+        del request  # currently unused; kept for future X-Twin-Folder scoping
         try:
             rag = get_rag()
         except RuntimeError as exc:
@@ -571,7 +571,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
-        del request  # currently unused; kept for future X-Twin-Space scoping
+        del request  # currently unused; kept for future X-Twin-Folder scoping
         try:
             rag = get_rag()
         except RuntimeError as exc:

@@ -160,7 +160,7 @@ export function ActivityTab({
           <h1>Activity</h1>
           <div className="activity-sub">
             <span>
-              Audit trail · space <code>default</code>
+              Audit trail · folder <code>default</code>
             </span>
             <span className="dot-sep">·</span>
             <span
@@ -282,7 +282,7 @@ export function ActivityTab({
                 Clear button removed — Activity is an IMMUTABLE LEDGER.
                 Audit events are append-only by doctrine (Louis HORVAT compliance
                 + EBA/DORA audit trail requirements). The retention-policy table
-                in Settings → Space governs natural expiry; no operator
+                in Settings → Folder governs natural expiry; no operator
                 affordance to wipe rows. Modal + clearOpen state still wired in
                 case it gets reintroduced behind a Steward-only ops escape.
               */}

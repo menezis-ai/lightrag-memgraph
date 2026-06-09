@@ -125,7 +125,7 @@ class LightRAGServerSettings(BaseSettings):
     enable_webui_routes: bool = Field(
         default=True,
         description=(
-            "Mount the WebUI phase-1 router (/documents, /workspaces, /tags, "
+            "Mount the WebUI phase-1 router (/documents, /folders, /tags, "
             "/activity, /graph/*, etc.) backed by runtime stores. Set "
             "False to expose only the LightRAG core endpoints."
         ),
@@ -136,7 +136,7 @@ class LightRAGServerSettings(BaseSettings):
             "Persistence backend for WebUI tag governance. 'memgraph' "
             "(default) persists them as :WebuiTag_{workspace} / "
             ":WebuiTagCategory_{workspace} nodes. Production app wiring boots "
-            "fresh spaces without demo tags; only governance categories are "
+            "fresh folders without demo tags; only governance categories are "
             "bootstrapped unless an explicit seed/bootstrap path is used. "
             "'memory' keeps tags + categories in the seed-loaded in-process "
             "store and is demo/dev only."

@@ -84,18 +84,12 @@ The product concept is **Folder**. The preferred public contract is now:
 `TWIN_DEFAULT_FOLDER`, `TWIN_FOLDERS_JSON`, `X-Twin-Folder`, runtime config
 fields `defaultFolderId` / `folders` / `maxFolders`, and `/twin/api/folders`.
 
-Legacy `space` names (`TWIN_DEFAULT_SPACE`, `TWIN_SPACES_JSON`,
-`TWIN_MAX_SPACES`, `TWIN_SPACES_RUNTIME_FILE`, `X-Twin-Space`,
-`/twin/api/spaces`) remain accepted for compatibility with existing BNP
-deployments and older clients. They are aliases only; new code, docs, UI copy
-and operator language should say Folder.
-
 There are two different isolation concepts:
 
 - **LightRAG workspace**: storage-level namespace used in Memgraph labels such
   as `KV_base_chunks`, `Vec_base_entities`, and `DocStatus_base`. It is resolved
   from `MEMGRAPH_WORKSPACE`, then `WORKSPACE`, then `TWIN_DEFAULT_FOLDER`, then
-  `TWIN_DEFAULT_SPACE`, then `base`.
+  `base`.
 - **Twin Folder**: operator-facing subdivision exposed in the WebUI switcher
   and Twin overlay API. It scopes WebUI data, document metadata, tags, activity,
   notifications, and runtime catalog entries.
@@ -129,10 +123,10 @@ graph projections start empty unless real LightRAG/Memgraph data or operator
 mutations exist. Demo fixtures are still available only through explicit
 `webui_stores="seed"` / in-memory settings for local demos and tests.
 
-The browser sends the active Folder on every API call using
-`X-Twin-Folder`. During the compatibility window it also sends `X-Twin-Space`
-and `X-Twin-Workspace`. Backend code reads `X-Twin-Folder` first, then falls
-back to the legacy headers.
+The browser sends the active Folder on every API call using `X-Twin-Folder`.
+The backend only reads `X-Twin-Folder` for the Twin overlay; LightRAG
+`workspace` remains a separate storage namespace, not an operator-facing
+Folder selector.
 
 Folder administration uses `/twin/api/folders`:
 
@@ -142,9 +136,6 @@ Folder administration uses `/twin/api/folders`:
 | `POST` | `/twin/api/folders` | Create a runtime Folder. Requires admin scope. |
 | `PATCH` | `/twin/api/folders/{folder_id}` | Update a runtime Folder label/kind/description. |
 | `DELETE` | `/twin/api/folders/{folder_id}` | Delete an empty runtime Folder. Env-seeded Folders cannot be deleted through the API. |
-
-`/twin/api/spaces` and `GET /twin/api/workspaces` are kept for older UI
-compatibility and return the same catalog in the WebUI's historical shape.
 
 ## Twin WebUI and API routes
 
@@ -618,7 +609,7 @@ The returned `classification` dict is intended to be persisted on `DocStatus.met
 | Unsupported extension | `None` | `"unsupported-extension: <ext>"` | reject (fail-closed) |
 | Missing optional dep | `None` | `"olefile-missing"` / `"pikepdf-missing"` | reject (fail-closed); install the dep to enable detection |
 
-Set `TWIN_MIP_MAX_CLASSIFICATION` to relax the ceiling per workspace. Per-workspace overrides (`install_classification_hook(ceiling="C3")`) take precedence over the env var.
+Set `TWIN_MIP_MAX_CLASSIFICATION` to relax the deployment ceiling. Explicit hook overrides (`install_classification_hook(ceiling="C3")`) take precedence over the env var.
 
 ## Known limitations
 

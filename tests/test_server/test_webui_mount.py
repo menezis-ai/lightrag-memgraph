@@ -88,8 +88,8 @@ async def test_webui_mount_substitutes_runtime_config(monkeypatch, tmp_path):
                     "sources": 0,
                 }
             ]
-            assert config["defaultSpaceId"] == "default"
-            assert config["spaces"] == [
+            assert config["defaultFolderId"] == "default"
+            assert config["folders"] == [
                 {
                     "id": "default",
                     "label": "Default folder",

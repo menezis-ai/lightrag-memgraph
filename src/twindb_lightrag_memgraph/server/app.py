@@ -158,7 +158,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             from .webui_activitystore import MemgraphActivityStore
             from .webui_notificationstore import MemgraphNotificationStore
             from .webui_tagstore import MemgraphTagStore
-            from .space import load_space_catalog
+            from .folder import load_folder_catalog
 
             backends_applied: list[str] = []
             if settings.webui_tag_backend == "memgraph":
@@ -168,34 +168,34 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             if settings.webui_notifications_backend == "memgraph":
                 backends_applied.append("notifications")
             if backends_applied:
-                for space in load_space_catalog().spaces:
-                    # `mode="memgraph"` so the default space doesn't
+                for folder in load_folder_catalog().folders:
+                    # `mode="memgraph"` so the default folder doesn't
                     # silently expose the demo documents/graph from
                     # `webui_seed` through /twin/api/documents and
                     # /twin/api/graph/* on a real deploy (mock-kill F6).
-                    store = WebuiStore.for_space(space.id, mode="memgraph")
+                    store = WebuiStore.for_folder(folder.id, mode="memgraph")
                     if settings.webui_tag_backend == "memgraph":
-                        tag_store = MemgraphTagStore(workspace=space.id)
+                        tag_store = MemgraphTagStore(workspace=folder.id)
                         await tag_store.initialize()
                         await tag_store.bootstrap_categories_if_empty()
                         store._tag_backend = tag_store  # noqa: SLF001
                     if settings.webui_activity_backend == "memgraph":
-                        activity_store = MemgraphActivityStore(workspace=space.id)
+                        activity_store = MemgraphActivityStore(workspace=folder.id)
                         await activity_store.initialize()
                         store._activity_backend = activity_store  # noqa: SLF001
                     if settings.webui_notifications_backend == "memgraph":
                         notification_store = MemgraphNotificationStore(
-                            workspace=space.id
+                            workspace=folder.id
                         )
                         await notification_store.initialize()
                         store._notification_backend = (  # noqa: SLF001
                             notification_store
                         )
-                    set_store(store, space=space.id)
+                    set_store(store, folder=folder.id)
                 logger.info(
-                    "L2 patch applied (WebUI Memgraph backends: %s, spaces=%s)",
+                    "L2 patch applied (WebUI Memgraph backends: %s, folders=%s)",
                     ", ".join(backends_applied),
-                    ",".join(space.id for space in load_space_catalog().spaces),
+                    ",".join(folder.id for folder in load_folder_catalog().folders),
                 )
 
         yield
@@ -317,7 +317,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # `/twin/api/...`. The standalone server therefore mounts the same
     # router twice:
     #   * un-prefixed → backwards compat for the existing pytest suite
-    #     and any pre-React-port caller still on `/documents`, /spaces,
+    #     and any pre-React-port caller still on `/documents`,
     #     etc.
     #   * `/twin/api`-prefixed → mirrors the plugin topology
     #     (`register(mount_server=True)`), so the React port works

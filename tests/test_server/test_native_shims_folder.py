@@ -1,4 +1,4 @@
-"""Space scoping tests for the Twin native-route shims."""
+"""Folder scoping tests for the Twin native-route shims."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class FakeDocStatusStore:
                 file_path="sandbox.pdf",
                 chunks_count=1,
                 chunks_list=["c-sandbox"],
-                metadata={"space": "sandbox"},
+                metadata={"folder": "sandbox"},
             ),
         }
 
@@ -73,13 +73,13 @@ class FakeRag:
 
 
 @pytest.fixture(autouse=True)
-def _space_env(monkeypatch):
-    monkeypatch.setenv("TWIN_DEFAULT_SPACE", "default")
+def _folder_env(monkeypatch):
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
-        "TWIN_SPACES_JSON",
+        "TWIN_FOLDERS_JSON",
         json.dumps(
             [
-                {"id": "default", "label": "Default space", "kind": "primary"},
+                {"id": "default", "label": "Default folder", "kind": "primary"},
                 {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
             ]
         ),
@@ -88,7 +88,7 @@ def _space_env(monkeypatch):
 
 @pytest.fixture()
 async def client(monkeypatch):
-    async def no_tags(_docs, *, space: str) -> None:
+    async def no_tags(_docs, *, folder: str) -> None:
         return None
 
     monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
@@ -102,29 +102,29 @@ async def client(monkeypatch):
         yield c
 
 
-class TestNativeShimSpaces:
-    async def test_documents_default_space_sees_legacy_docs_only(self, client):
+class TestNativeShimFolders:
+    async def test_documents_default_folder_sees_legacy_docs_only(self, client):
         r = await client.get("/documents")
         assert r.status_code == 200
         body = r.json()
         assert body["total"] == 1
         assert [item["doc_id"] for item in body["items"]] == ["doc-default"]
 
-    async def test_documents_sandbox_space_sees_sandbox_docs_only(self, client):
-        r = await client.get("/documents", headers={"X-Twin-Space": "sandbox"})
+    async def test_documents_sandbox_folder_sees_sandbox_docs_only(self, client):
+        r = await client.get("/documents", headers={"X-Twin-Folder": "sandbox"})
         assert r.status_code == 200
         body = r.json()
         assert body["total"] == 1
         assert [item["doc_id"] for item in body["items"]] == ["doc-sandbox"]
 
-    async def test_chunks_rejects_doc_from_another_space(self, client):
+    async def test_chunks_rejects_doc_from_another_folder(self, client):
         r = await client.get("/documents/doc-sandbox/chunks")
         assert r.status_code == 404
 
-    async def test_chunks_accepts_doc_in_requested_space(self, client):
+    async def test_chunks_accepts_doc_in_requested_folder(self, client):
         r = await client.get(
             "/documents/doc-sandbox/chunks",
-            headers={"X-Twin-Space": "sandbox"},
+            headers={"X-Twin-Folder": "sandbox"},
         )
         assert r.status_code == 200
         assert r.json()[0]["chunk_id"] == "c-sandbox"

@@ -1,5 +1,5 @@
 /**
- * Unit tests for SpacesAdminSection — Admin Space CRUD UI.
+ * Unit tests for FoldersAdminSection — Admin Folder CRUD UI.
  *
  * Hits the MSW handlers wired to mutable `spaceState` so each test
  * exercises the full mutation loop (TanStack Query invalidation, list
@@ -11,7 +11,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setupServer } from 'msw/node';
-import { SpacesAdminSection } from './SpacesAdminSection';
+import { FoldersAdminSection } from './FoldersAdminSection';
 import { handlers, resetDocumentsState } from '../../mocks/handlers';
 import type { AuthenticatedUser, TwinRuntimeConfig } from '../../types/auth';
 
@@ -26,12 +26,12 @@ const adminUser: AuthenticatedUser = {
     label: 'Steward',
     scopes: ['twin:read', 'twin:write', 'twin:approve'],
   },
-  workspaces: ['cib'],
+  folders: ['cib'],
   idp: 'keycloak',
   idp_realm: 'twin-cib',
   sub: 'steward-1',
   session_expires: '2026-06-04T23:59:00Z',
-  gateway_scopes: ['read:documents', 'admin:spaces'],
+  gateway_scopes: ['read:documents', 'admin:folders'],
 };
 
 const readonlyUser: AuthenticatedUser = {
@@ -44,7 +44,7 @@ afterAll(() => server.close());
 
 function renderSection(
   qc?: QueryClient,
-  props: Partial<Parameters<typeof SpacesAdminSection>[0]> = {},
+  props: Partial<Parameters<typeof FoldersAdminSection>[0]> = {},
 ) {
   const client =
     qc ??
@@ -56,7 +56,7 @@ function renderSection(
     });
   return render(
     <QueryClientProvider client={client}>
-      <SpacesAdminSection {...props} />
+      <FoldersAdminSection {...props} />
     </QueryClientProvider>,
   );
 }
@@ -74,118 +74,118 @@ afterEach(() => {
   window.__twinConfig = undefined;
 });
 
-describe('SpacesAdminSection — list rendering', () => {
-  it('shows the env-seeded space with a lock badge and no actions', async () => {
+describe('FoldersAdminSection — list rendering', () => {
+  it('shows the env-seeded folder with a lock badge and no actions', async () => {
     renderSection();
     await waitFor(() =>
-      expect(screen.getByTestId('settings-space-row-cib')).toBeInTheDocument(),
+      expect(screen.getByTestId('settings-folder-row-cib')).toBeInTheDocument(),
     );
-    const row = screen.getByTestId('settings-space-row-cib');
+    const row = screen.getByTestId('settings-folder-row-cib');
     expect(row.textContent).toMatch(/env-seeded/);
     expect(row.textContent).toMatch(/active/);
     // No Edit / Delete buttons on env-seeded entries
-    expect(screen.queryByTestId('settings-space-edit-cib')).toBeNull();
-    expect(screen.queryByTestId('settings-space-delete-cib')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-edit-cib')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-delete-cib')).toBeNull();
   });
 });
 
-describe('SpacesAdminSection — Add space', () => {
+describe('FoldersAdminSection — Add folder', () => {
   it('button opens the inline form', async () => {
     renderSection();
-    await screen.findByTestId('settings-add-space-btn');
-    expect(screen.queryByTestId('settings-add-space-form')).toBeNull();
-    await userEvent.click(screen.getByTestId('settings-add-space-btn'));
-    expect(screen.getByTestId('settings-add-space-form')).toBeInTheDocument();
+    await screen.findByTestId('settings-add-folder-btn');
+    expect(screen.queryByTestId('settings-add-folder-form')).toBeNull();
+    await userEvent.click(screen.getByTestId('settings-add-folder-btn'));
+    expect(screen.getByTestId('settings-add-folder-form')).toBeInTheDocument();
   });
 
   it('flags an invalid id with a special character', async () => {
     renderSection();
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-id'),
-      'bad space!',
+      screen.getByTestId('settings-add-folder-id'),
+      'bad folder!',
     );
     expect(
-      screen.getByTestId('settings-add-space-id-invalid'),
+      screen.getByTestId('settings-add-folder-id-invalid'),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('settings-add-space-submit')).toBeDisabled();
+    expect(screen.getByTestId('settings-add-folder-submit')).toBeDisabled();
   });
 
-  it('flags a duplicate id (matches an existing space)', async () => {
+  it('flags a duplicate id (matches an existing folder)', async () => {
     renderSection();
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
-    await userEvent.type(screen.getByTestId('settings-add-space-id'), 'cib');
+    await userEvent.type(screen.getByTestId('settings-add-folder-id'), 'cib');
     await userEvent.type(
-      screen.getByTestId('settings-add-space-label'),
+      screen.getByTestId('settings-add-folder-label'),
       'Conflicts',
     );
     expect(
-      screen.getByTestId('settings-add-space-duplicate'),
+      screen.getByTestId('settings-add-folder-duplicate'),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('settings-add-space-submit')).toBeDisabled();
+    expect(screen.getByTestId('settings-add-folder-submit')).toBeDisabled();
   });
 
-  it('successfully adds a new runtime space and lists it', async () => {
+  it('successfully adds a new runtime folder and lists it', async () => {
     renderSection();
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-id'),
+      screen.getByTestId('settings-add-folder-id'),
       'sandbox',
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-label'),
+      screen.getByTestId('settings-add-folder-label'),
       'Sandbox',
     );
-    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
+    await userEvent.click(screen.getByTestId('settings-add-folder-submit'));
 
     await waitFor(() =>
       expect(
-        screen.getByTestId('settings-space-row-sandbox'),
+        screen.getByTestId('settings-folder-row-sandbox'),
       ).toBeInTheDocument(),
     );
-    const row = screen.getByTestId('settings-space-row-sandbox');
+    const row = screen.getByTestId('settings-folder-row-sandbox');
     expect(row.textContent).toMatch(/runtime/);
-    expect(screen.getByTestId('settings-space-edit-sandbox')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-folder-edit-sandbox')).toBeInTheDocument();
     expect(
-      screen.getByTestId('settings-space-delete-sandbox'),
+      screen.getByTestId('settings-folder-delete-sandbox'),
     ).toBeInTheDocument();
   });
 });
 
-describe('SpacesAdminSection — admin gating', () => {
-  it('hides write controls and shows readonly badge when user lacks admin:spaces', async () => {
+describe('FoldersAdminSection — admin gating', () => {
+  it('hides write controls and shows readonly badge when user lacks admin:folders', async () => {
     const adminView = renderSection(undefined, { user: adminUser });
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-id'),
+      screen.getByTestId('settings-add-folder-id'),
       'sandbox',
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-label'),
+      screen.getByTestId('settings-add-folder-label'),
       'Sandbox',
     );
-    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
-    await screen.findByTestId('settings-space-row-sandbox');
+    await userEvent.click(screen.getByTestId('settings-add-folder-submit'));
+    await screen.findByTestId('settings-folder-row-sandbox');
     adminView.unmount();
 
     renderSection(undefined, { user: readonlyUser });
-    await screen.findByTestId('settings-space-row-sandbox');
+    await screen.findByTestId('settings-folder-row-sandbox');
 
-    expect(screen.getByTestId('spaces-admin-readonly-badge')).toHaveTextContent(
+    expect(screen.getByTestId('folders-admin-readonly-badge')).toHaveTextContent(
       /Read-only — admin scope required/,
     );
-    expect(screen.queryByTestId('settings-add-space-btn')).toBeNull();
-    expect(screen.queryByTestId('settings-add-space-form')).toBeNull();
-    expect(screen.queryByTestId('settings-space-edit-sandbox')).toBeNull();
-    expect(screen.queryByTestId('settings-space-delete-sandbox')).toBeNull();
+    expect(screen.queryByTestId('settings-add-folder-btn')).toBeNull();
+    expect(screen.queryByTestId('settings-add-folder-form')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-edit-sandbox')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-delete-sandbox')).toBeNull();
   });
 
   it('emits an Admin scope required toast when the backend unexpectedly returns 403', async () => {
@@ -199,17 +199,17 @@ describe('SpacesAdminSection — admin gating', () => {
 
     renderSection(undefined, { user: adminUser, onToast });
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-id'),
+      screen.getByTestId('settings-add-folder-id'),
       'sandbox',
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-label'),
+      screen.getByTestId('settings-add-folder-label'),
       'Sandbox',
     );
-    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
+    await userEvent.click(screen.getByTestId('settings-add-folder-submit'));
 
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith(
@@ -222,23 +222,23 @@ describe('SpacesAdminSection — admin gating', () => {
   });
 });
 
-describe('SpacesAdminSection — Edit / Delete runtime spaces', () => {
+describe('FoldersAdminSection — Edit / Delete runtime folders', () => {
   async function seedSandbox() {
     await userEvent.click(
-      await screen.findByTestId('settings-add-space-btn'),
+      await screen.findByTestId('settings-add-folder-btn'),
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-id'),
+      screen.getByTestId('settings-add-folder-id'),
       'sandbox',
     );
     await userEvent.type(
-      screen.getByTestId('settings-add-space-label'),
+      screen.getByTestId('settings-add-folder-label'),
       'Sandbox',
     );
-    await userEvent.click(screen.getByTestId('settings-add-space-submit'));
+    await userEvent.click(screen.getByTestId('settings-add-folder-submit'));
     await waitFor(() =>
       expect(
-        screen.getByTestId('settings-space-row-sandbox'),
+        screen.getByTestId('settings-folder-row-sandbox'),
       ).toBeInTheDocument(),
     );
   }
@@ -246,15 +246,15 @@ describe('SpacesAdminSection — Edit / Delete runtime spaces', () => {
   it('edit reveals the inline label input, save fires the PATCH and updates the row', async () => {
     renderSection();
     await seedSandbox();
-    await userEvent.click(screen.getByTestId('settings-space-edit-sandbox'));
-    const input = screen.getByTestId('settings-space-edit-label-sandbox');
+    await userEvent.click(screen.getByTestId('settings-folder-edit-sandbox'));
+    const input = screen.getByTestId('settings-folder-edit-label-sandbox');
     await userEvent.clear(input);
     await userEvent.type(input, 'Sandbox v2');
-    await userEvent.click(screen.getByTestId('settings-space-save-sandbox'));
+    await userEvent.click(screen.getByTestId('settings-folder-save-sandbox'));
     await waitFor(() =>
       expect(
         screen
-          .getByTestId('settings-space-row-sandbox')
+          .getByTestId('settings-folder-row-sandbox')
           .textContent?.includes('Sandbox v2'),
       ).toBe(true),
     );
@@ -263,7 +263,7 @@ describe('SpacesAdminSection — Edit / Delete runtime spaces', () => {
   it('delete is two-step (first click arms, second confirms)', async () => {
     renderSection();
     await seedSandbox();
-    const btn = screen.getByTestId('settings-space-delete-sandbox');
+    const btn = screen.getByTestId('settings-folder-delete-sandbox');
     expect(btn.textContent).toMatch(/Delete/);
 
     await userEvent.click(btn);
@@ -271,23 +271,23 @@ describe('SpacesAdminSection — Edit / Delete runtime spaces', () => {
 
     await userEvent.click(btn);
     await waitFor(() =>
-      expect(screen.queryByTestId('settings-space-row-sandbox')).toBeNull(),
+      expect(screen.queryByTestId('settings-folder-row-sandbox')).toBeNull(),
     );
   });
 });
 
-describe('SpacesAdminSection — error path', () => {
-  it('surfaces the 403 detail when trying to mutate an env-seeded space directly', async () => {
+describe('FoldersAdminSection — error path', () => {
+  it('surfaces the 403 detail when trying to mutate an env-seeded folder directly', async () => {
     // The UI hides edit/delete on env-seeded rows, so the only way
     // to reach the 403 is via a direct mutation. Spy on the hook.
     const updateSpy = vi.fn();
     renderSection();
     await waitFor(() =>
-      expect(screen.getByTestId('settings-space-row-cib')).toBeInTheDocument(),
+      expect(screen.getByTestId('settings-folder-row-cib')).toBeInTheDocument(),
     );
     // No edit button exposed for cib — the UI policy is the
     // first-line defence. Assert it is not in the DOM:
-    expect(screen.queryByTestId('settings-space-edit-cib')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-edit-cib')).toBeNull();
     expect(updateSpy).not.toHaveBeenCalled();
   });
 });

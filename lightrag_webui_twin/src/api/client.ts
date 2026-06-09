@@ -58,18 +58,6 @@ export function getSessionAuthToken(): string | null {
   return sessionAuthToken ?? (readStoredAuthToken() || null);
 }
 
-/** @deprecated Use setActiveFolder. Kept for transitional callers/tests. */
-export const setActiveSpace = setActiveFolder;
-
-/** @deprecated Use getActiveFolder. Kept for transitional callers/tests. */
-export const getActiveSpace = getActiveFolder;
-
-/** @deprecated Use setActiveFolder. Kept for transitional callers/tests. */
-export const setActiveWorkspace = setActiveFolder;
-
-/** @deprecated Use getActiveFolder. Kept for transitional callers/tests. */
-export const getActiveWorkspace = getActiveFolder;
-
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -92,10 +80,6 @@ export interface ApiRequestInit {
   token?: string;
   /** Optional override for X-Twin-Folder. Null disables the header. */
   folder?: string | null;
-  /** @deprecated Compatibility alias for folder. */
-  space?: string | null;
-  /** @deprecated Compatibility alias for folder. */
-  workspace?: string | null;
   signal?: AbortSignal;
 }
 
@@ -154,7 +138,7 @@ export function buildApiUrl(
 }
 
 export function buildApiHeaders(
-  init: Pick<ApiRequestInit, 'token' | 'folder' | 'space' | 'workspace'> = {},
+  init: Pick<ApiRequestInit, 'token' | 'folder'> = {},
   options: { json?: boolean } = {},
 ): Record<string, string> {
   const headers: Record<string, string> = {
@@ -167,19 +151,9 @@ export function buildApiHeaders(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const folder =
-    init.folder === undefined
-      ? init.space === undefined
-        ? init.workspace === undefined
-          ? activeFolder
-          : init.workspace
-        : init.space
-      : init.folder;
+  const folder = init.folder === undefined ? activeFolder : init.folder;
   if (folder) {
     headers['X-Twin-Folder'] = folder;
-    // Transitional compatibility until older backend deployments are gone.
-    headers['X-Twin-Space'] = folder;
-    headers['X-Twin-Workspace'] = folder;
   }
   return headers;
 }

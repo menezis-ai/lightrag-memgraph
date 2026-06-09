@@ -2,11 +2,11 @@
  * Centralized fixture exports.
  *
  * Single import point for tests and (later) MSW handlers:
- *   import { DOCUMENT_FIXTURES, WORKSPACE_FIXTURES, NOTIFICATION_FIXTURES } from '../fixtures';
+ *   import { DOCUMENT_FIXTURES, FOLDER_FIXTURES, NOTIFICATION_FIXTURES } from '../fixtures';
  */
 
 export { DOCUMENT_FIXTURES } from './documents';
-export { WORKSPACE_FIXTURES } from './workspaces';
+export { FOLDER_FIXTURES } from './folders';
 export { NOTIFICATION_FIXTURES } from './notifications';
 export { THESAURUS_FIXTURES } from './thesaurus';
 export { FORMAT_CATEGORY_FIXTURES } from './formatCategories';
