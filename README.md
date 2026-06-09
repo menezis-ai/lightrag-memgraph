@@ -183,6 +183,23 @@ them. They are useful for integrators that want the upstream contract:
 | `POST` | `/documents/scan` | Native global input-directory scan. |
 | `POST` | `/documents/reprocess_failed` | Requeue failed documents. |
 
+### Restricted runtime smoke test
+
+For BNP-style restricted containers, a stdlib-only smoke runner is available in
+`tests/smoke`. It validates that `/webui`, local JWT authentication, native
+LightRAG routes, and Twin overlay routes are wired to the expected service.
+
+```bash
+export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
+export ARTIFACTORY_USERNAME="..."
+export ARTIFACTORY_PASSWORD="..."
+python tests/smoke/run_smoke.py tests/smoke/bnp-runtime-smoke.json
+```
+
+The runner writes `/tmp/twin-smoke-report.json` and `/tmp/twin-smoke-http.log`
+without logging credentials or bearer tokens. See `tests/smoke/README.md` for
+the manifest contract.
+
 Twin overlay routes:
 
 | Method | Route | Purpose |
