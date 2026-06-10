@@ -1,0 +1,7 @@
+services:
+  memgraph:
+    image: memgraph/memgraph-mage:latest
+    ports:
+      - "7687:7687"
+      - "7444:7444"
+    command: ["--log-level=WARNING", "--also-log-to-stderr"]

@@ -1,0 +1,6 @@
+# sdist manifest — wheel uses [tool.setuptools.package-data] in pyproject.toml.
+# Both must list the WebUI dist so `pip install`-ing either form ships the UI.
+recursive-include src/twindb_lightrag_memgraph/webui_dist *
+
+# Strip dev-only artefacts that may sneak in via cp -R
+recursive-exclude src/twindb_lightrag_memgraph/webui_dist mockServiceWorker.js

@@ -1,0 +1,77 @@
+/* Twin RAG design tokens — ported verbatim from the design proto (Desktop/UI/styles.css).
+ * Kept as plain CSS variables (no compile step). Tailwind references them via tailwind.config.js.
+ * Light mode defaults; [data-theme="dark"] overrides below.
+ */
+
+:root {
+  /* Tier accent (default Twin RAG = blue) */
+  --twin-accent: #3871B4;
+  --twin-accent-hover: #2D5A8E;
+  --twin-accent-strong: #1B5BAE;
+  --twin-accent-soft-bg: #E6EFF8;
+  --twin-accent-soft-text: #2D5A8E;
+  --twin-accent-soft-border: #B5D4F4;
+  --twin-on-accent: #FFFFFF;
+
+  --twin-green-500: #569C6A;
+  --twin-green-700: #3D7A4E;
+  --twin-green-50: #EBF5ED;
+
+  --twin-amber-vivid: #D97706;
+  --twin-amber-700: #8A5C0E;
+  --twin-amber-50: #FEF3CD;
+
+  --twin-red-vivid: #DC2626;
+  --twin-red-50: #FCEBEB;
+  --twin-red-border: #F09595;
+
+  /* Neutrals — light mode */
+  --color-text-primary: #2C3E50;
+  --color-text-secondary: #5A6878;
+  --color-text-tertiary: #8A98A8;
+  --color-border-default: #C4CFD9;
+  --color-border-secondary: #B8C8D8;
+  --color-border-tertiary: #DEE2E6;
+  --color-background-primary: #FFFFFF;
+  --color-background-secondary: #FAFCFE;
+  --color-background-tertiary: #F4F8FC;
+
+  --color-status-completed: #3D7A4E;
+  --color-status-processing: #D97706;
+  --color-status-failed: #DC2626;
+
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+  --border-radius-sm: 4px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+}
+
+:root[data-theme="dark"] {
+  --twin-accent: #5A92D0;
+  --twin-accent-hover: #7AABDF;
+  --twin-accent-soft-bg: #1D2D44;
+  --twin-accent-soft-text: #B5D4F4;
+  --twin-accent-soft-border: #2D5A8E;
+
+  --twin-green-700: #7AB68C;
+  --twin-green-50: #1A2C20;
+
+  --twin-amber-vivid: #F0A12B;
+  --twin-amber-700: #D89B3A;
+  --twin-amber-50: #2B2310;
+
+  --twin-red-vivid: #F47171;
+  --twin-red-50: #2C1818;
+  --twin-red-border: #6B2C2C;
+
+  --color-text-primary: #E6ECF2;
+  --color-text-secondary: #A0AEC0;
+  --color-text-tertiary: #6B7B8C;
+  --color-border-secondary: #3A4756;
+  --color-border-tertiary: #2A3340;
+  --color-background-primary: #131A22;
+  --color-background-secondary: #0E141B;
+  --color-background-tertiary: #090E14;
+}

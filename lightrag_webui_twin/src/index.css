@@ -1,0 +1,21 @@
+/* Imports must come first per PostCSS. Order matters: tokens define vars
+ * legacy.css references; both load before Tailwind so utility classes can
+ * still win via specificity at use sites. */
+@import './styles/tokens.css';
+@import './styles/legacy.css';
+@import './styles/overrides.css';
+@import './styles/polish.css';
+@import './styles/prototype.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    font-family: var(--font-sans);
+    color: var(--color-text-primary);
+    background: var(--color-background-primary);
+    margin: 0;
+  }
+}
