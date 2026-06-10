@@ -205,7 +205,7 @@ LightRAG natively boots wide open when no auth backend is configured. Twin refus
 
 **Boot-time check (H1)** — `server/auth.py:ensure_auth_backend_configured` raises `RuntimeError` at startup unless one of `LIGHTRAG_API_KEY`, `LIGHTRAG_JWT_SECRET`/`TOKEN_SECRET`, or `TWIN_IDP_JWKS_URL` is set. Dev/CI escape: `TWIN_ALLOW_OPEN_ACCESS=1` (logs a loud warning, lets boot pass). Called from both `server/app.py:create_app` and `__init__.py:_mount_twin_subapp`.
 
-**`changeme` refusal (H2)** — `configure_auth` raises `ValueError` if `jwt_password == "changeme"` OR if any `AUTH_ACCOUNTS` value equals `"changeme"`. No escape hatch. The prior bypass via non-empty `AUTH_ACCOUNTS` is closed.
+**`changeme` refusal (H2)** — when local JWT login is enabled (`LIGHTRAG_JWT_SECRET` / `TOKEN_SECRET`), `configure_auth` raises `ValueError` if `jwt_password == "changeme"` OR if any `AUTH_ACCOUNTS` value equals `"changeme"`. The prior bypass via non-empty `AUTH_ACCOUNTS` is closed. When no JWT secret is configured, `/login` is disabled and the password value is ignored.
 
 **Shim router auth (C1)** — `native_shims.build_native_shims_router(get_rag, auth_dependency=require_auth)`. Public routes: `/auth-status`, `/login`, `/logout` (handshake). `/health` is also public (LB probes). Everything else (`/documents`, `/documents/{id}/chunks`, `/documents/{id}/scan`, `/documents/{id}`, `/pipeline_status`, `/openapi`) sits behind `Depends(require_auth)`.
 

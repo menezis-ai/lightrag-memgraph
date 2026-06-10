@@ -308,6 +308,31 @@ async def auth_status(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
 ) -> AuthStatusResponse:
+    from . import idp_jwt
+
+    idp_config = idp_jwt.get_active_config()
+    if idp_config is not None:
+        bearer = credentials.credentials if credentials is not None else None
+        has_idp_cookie = bool(request.cookies.get(idp_config.cookie_name))
+        has_idp_bearer = bool(bearer and bearer.count(".") == 2)
+        if has_idp_cookie or has_idp_bearer or not _auth_enabled:
+            try:
+                user = idp_jwt.require_idp_user(request)
+            except HTTPException:
+                return AuthStatusResponse(
+                    auth_enabled=True,
+                    authenticated=False,
+                    login_required=True,
+                )
+            return AuthStatusResponse(
+                auth_enabled=True,
+                authenticated=True,
+                user=str(user.get("sso_subject") or user.get("sub") or "idp_user")
+                if user
+                else "idp_user",
+                login_required=False,
+            )
+
     if not _auth_enabled:
         return AuthStatusResponse(
             auth_enabled=False,
