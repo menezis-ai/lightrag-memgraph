@@ -62,6 +62,38 @@ describe('DocumentsTab — rendering', () => {
       screen.getByRole('button', { name: /^Processing \(2\)/ }),
     ).toBeInTheDocument();
   });
+
+  it('renders optimistic upload rows as pending but not actionable', () => {
+    const optimisticDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'upload_tmp_1',
+      track_id: 'track_tmp_1',
+      file_path: 'new-runbook.pdf',
+      content_summary: 'Upload accepted, waiting for ingestion worker.',
+      status: 'PENDING' as const,
+      chunks_count: null,
+      _optimisticUpload: true,
+    };
+
+    render(
+      <DocumentsTab
+        {...defaultProps()}
+        docs={[optimisticDoc]}
+        onDeleteDoc={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('new-runbook.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^All \(1\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /^Pending \(1\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('new-runbook.pdf is waiting for ingestion'),
+    ).toBeDisabled();
+    expect(screen.queryByLabelText('Retag new-runbook.pdf')).toBeNull();
+    expect(screen.queryByLabelText('Delete new-runbook.pdf')).toBeNull();
+  });
 });
 
 describe('DocumentsTab — filters', () => {

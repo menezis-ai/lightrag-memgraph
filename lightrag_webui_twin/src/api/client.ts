@@ -147,7 +147,14 @@ export function buildApiHeaders(
   if (options.json) {
     headers['Content-Type'] = 'application/json';
   }
-  const token = init.token ?? getSessionAuthToken() ?? ENV_AUTH_TOKEN;
+  const cfg = getTwinRuntimeConfig();
+  const usesOuterBasicAuth = cfg.debugUser?.idp === 'local-debug';
+  if (usesOuterBasicAuth) {
+    setSessionAuthToken(null);
+  }
+  const token = usesOuterBasicAuth
+    ? ''
+    : init.token ?? getSessionAuthToken() ?? ENV_AUTH_TOKEN;
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }

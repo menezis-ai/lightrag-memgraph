@@ -853,13 +853,20 @@ class TestAuthStatusIntegration:
 
 
 class TestRuntimeConfigDebugUserStripped:
-    def test_debug_user_present_when_idp_dormant(self, monkeypatch):
+    def _clear_auth_env(self, monkeypatch):
         for key in (
             "TWIN_IDP_JWKS_URL",
             "TWIN_IDP_ISSUER",
             "TWIN_IDP_AUDIENCE",
+            "LIGHTRAG_JWT_SECRET",
+            "TOKEN_SECRET",
+            "AUTH_ACCOUNTS",
+            "LIGHTRAG_API_KEY",
         ):
             monkeypatch.delenv(key, raising=False)
+
+    def test_debug_user_present_when_auth_dormant(self, monkeypatch):
+        self._clear_auth_env(monkeypatch)
 
         from twindb_lightrag_memgraph import _build_runtime_config
 
@@ -869,6 +876,26 @@ class TestRuntimeConfigDebugUserStripped:
 
     def test_debug_user_stripped_when_idp_active(self, monkeypatch):
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp/jwks")
+        from twindb_lightrag_memgraph import _build_runtime_config
+
+        cfg = _build_runtime_config()
+        assert "debugUser" not in cfg
+
+    @pytest.mark.parametrize(
+        "env_name, env_value",
+        [
+            ("LIGHTRAG_JWT_SECRET", "secret"),
+            ("TOKEN_SECRET", "secret"),
+            ("AUTH_ACCOUNTS", "operator:secret"),
+            ("LIGHTRAG_API_KEY", "sk-test"),
+        ],
+    )
+    def test_debug_user_stripped_when_non_idp_auth_active(
+        self, monkeypatch, env_name, env_value
+    ):
+        self._clear_auth_env(monkeypatch)
+        monkeypatch.setenv(env_name, env_value)
+
         from twindb_lightrag_memgraph import _build_runtime_config
 
         cfg = _build_runtime_config()

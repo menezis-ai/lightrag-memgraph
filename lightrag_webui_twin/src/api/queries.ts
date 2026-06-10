@@ -14,6 +14,7 @@ import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
+const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
 const DEFAULT_UPLOAD_CONCURRENCY = 4;
 type QueryGate = { enabled?: boolean };
 
@@ -59,6 +60,11 @@ export function useDocuments(
     queryKey: ['documents', query] as const,
     queryFn: ({ signal }) => api.listDocuments(query, { signal }),
     ...DEFAULTS,
+    staleTime: 0,
+    refetchInterval: DOCUMENTS_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: true,
+    refetchOnReconnect: 'always',
+    refetchOnWindowFocus: 'always',
     ...options,
   });
 }

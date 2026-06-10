@@ -224,16 +224,14 @@ class WebuiStore:
           standalone demo and CI.
 
         - ``"memgraph"`` — every folder, **including the default**, boots
-          empty for user-generated stores. Prevents `WebuiStore._documents`
-          and `_graph_entities` from leaking demo content through
-          ``/twin/api/documents`` and ``/twin/api/graph/*`` on a real BNP
-          deploy where the operator expects a clean slate.
+          without demo user content or demo suggestion vocabulary. Reference
+          catalog metadata required by the UI is still loaded.
         """
         if mode == "memgraph":
             return cls(
                 documents=[],
                 folders=copy.deepcopy(webui_seed.FOLDERS),
-                thesaurus=copy.deepcopy(webui_seed.THESAURUS),
+                thesaurus=[],
                 tag_categories_seed=copy.deepcopy(webui_seed.TAG_CATEGORIES),
                 tags_seed=[],
                 openapi_groups=copy.deepcopy(webui_seed.OPENAPI_GROUPS),

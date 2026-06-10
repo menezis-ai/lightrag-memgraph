@@ -454,10 +454,8 @@ class TestForFolderMode:
         assert store._documents == []  # noqa: SLF001
         assert store._graph_entities == []  # noqa: SLF001
         assert store._graph_relations == []  # noqa: SLF001
-        # Reference data still loads (folders / thesaurus / openapi
-        # are NOT user-generated — they're catalog metadata).
+        assert store._thesaurus == []  # noqa: SLF001
         assert len(store._folders) > 0  # noqa: SLF001
-        assert len(store._thesaurus) > 0  # noqa: SLF001
 
     def test_non_default_folder_memgraph_mode_starts_empty(self):
         store = webui_router.WebuiStore.for_folder(

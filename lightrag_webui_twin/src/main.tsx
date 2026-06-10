@@ -3,6 +3,28 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 
+async function unregisterStaleMsw(): Promise<void> {
+  if (!('serviceWorker' in navigator)) return;
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  const staleRegistrations = registrations.filter((registration) =>
+    registration.active?.scriptURL.includes('mockServiceWorker.js'),
+  );
+  if (staleRegistrations.length === 0) {
+    sessionStorage.removeItem('twin-msw-unregistered');
+    return;
+  }
+  await Promise.all(
+    staleRegistrations.map((registration) => registration.unregister()),
+  );
+  if (
+    navigator.serviceWorker.controller &&
+    sessionStorage.getItem('twin-msw-unregistered') !== '1'
+  ) {
+    sessionStorage.setItem('twin-msw-unregistered', '1');
+    window.location.reload();
+  }
+}
+
 async function bootstrap(): Promise<void> {
   // MSW activation policy:
   //   - DEV         : on by default (set VITE_USE_MSW=false to disable)
@@ -16,6 +38,8 @@ async function bootstrap(): Promise<void> {
   if ((dev && !disabled) || forced) {
     const { startMsw } = await import('./mocks/browser');
     await startMsw();
+  } else {
+    await unregisterStaleMsw();
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

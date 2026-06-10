@@ -393,7 +393,49 @@ class MemgraphTagStore:
         return True
 
     async def list_tags(self) -> list[dict[str, Any]]:
-        return await self._read_many(self._tag_label)
+        """Return tags with live document/chunk usage counters.
+
+        Tag catalog entries are stored as JSON on ``WebuiTag_*`` nodes, while
+        document membership lives in graph edges
+        ``(:DocStatus_*)-[:TAGGED_WITH]->(:WebuiTag_*)``. Mutations can change
+        the edges without rewriting every tag JSON blob, so derive the usage
+        counters from the graph at read time.
+        """
+        doc_label = f"DocStatus_{self._workspace}"
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (t:`{self._tag_label}`)
+                OPTIONAL MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(t)
+                RETURN
+                  t.id AS id,
+                  t.data AS data,
+                  count(DISTINCT d) AS sources_count,
+                  sum(coalesce(d.chunks_count, 0)) AS chunks_count
+                ORDER BY t.`__created_at`, t.id
+                """
+            )
+            rows = await result.data()
+            await result.consume()
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            data_raw = row.get("data")
+            if not data_raw:
+                continue
+            try:
+                item = json.loads(data_raw)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "[WebuiTagStore] Skipping non-JSON node on :%s id=%s",
+                    self._tag_label,
+                    row.get("id"),
+                )
+                continue
+            item["sources_count"] = int(row.get("sources_count") or 0)
+            item["chunks_count"] = int(row.get("chunks_count") or 0)
+            out.append(item)
+        return out
 
     async def list_categories(self) -> list[dict[str, Any]]:
         return await self._read_many(self._cat_label)

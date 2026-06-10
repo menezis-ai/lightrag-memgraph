@@ -75,6 +75,7 @@ import type { Document } from './types/document';
 import type { TagCurrentUser } from './types/tag';
 import type { Theme, Folder } from './types/topbar';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
+import { dedupeDocumentsBySource } from './utils/documents';
 
 const CURRENT_USER: TagCurrentUser = {
   name: 'claire.benoit',
@@ -224,6 +225,9 @@ function AppShell() {
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
+  const [optimisticUploadDocs, setOptimisticUploadDocs] = useState<
+    readonly Document[]
+  >([]);
 
   // Auth + onboarding
   const auth = useAuth();
@@ -397,6 +401,50 @@ function AppShell() {
   const deleteDoc = useDeleteDocument();
   const bulkDeleteDocs = useBulkDeleteDocuments();
 
+  const makeOptimisticUploadDocs = (
+    files: readonly File[],
+    tags: readonly string[],
+  ): readonly Document[] => {
+    const now = new Date().toISOString();
+    const visibility =
+      folderList.find((item) => item.id === folder)?.visibility ?? 'internal';
+    return files.map((file, index) => ({
+      doc_id: `upload_${Date.now()}_${index}`,
+      track_id: null,
+      file_path: file.name,
+      content_summary: 'Upload queued, waiting for ingestion worker.',
+      content_length: file.size,
+      status: 'PENDING',
+      _optimisticUpload: true,
+      chunks_count: null,
+      created_at: now,
+      updated_at: now,
+      error_msg: null,
+      metadata: {
+        size_bytes: file.size,
+        upload_state: 'pending',
+      },
+      type: 'file',
+      tags: [...tags],
+      folder,
+      visibility,
+    }));
+  };
+
+  const refreshDocumentsUntilUploadsLand = async (
+    trackIds: readonly string[],
+  ): Promise<void> => {
+    if (trackIds.length === 0) return;
+    const pending = new Set(trackIds);
+    for (let i = 0; i < 30 && pending.size > 0; i += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const result = await docs.refetch();
+      for (const item of result.data?.items ?? []) {
+        if (item.track_id) pending.delete(item.track_id);
+      }
+    }
+  };
+
   const onDeleteSingle = async (doc: { doc_id: string; file_path: string }) => {
     try {
       await deleteDoc.mutateAsync(doc.doc_id);
@@ -457,6 +505,12 @@ function AppShell() {
       return;
     }
 
+    const optimisticDocs = makeOptimisticUploadDocs(
+      action.rawFiles,
+      action.tags,
+    );
+    setOptimisticUploadDocs((current) => [...optimisticDocs, ...current]);
+
     pushToast({
       kind: 'propagating',
       title: 'Uploading sources…',
@@ -464,6 +518,43 @@ function AppShell() {
     });
 
     const results = await uploadDocs.mutateAsync(action.rawFiles);
+    const failedOptimisticIds = new Set(
+      optimisticDocs
+        .filter((_, index) => results[index]?.status === 'rejected')
+        .map((doc) => doc.doc_id),
+    );
+    const acceptedByOptimisticId = new Map(
+      optimisticDocs.flatMap((doc, index) => {
+        const result = results[index];
+        return result?.status === 'fulfilled'
+          ? [[doc.doc_id, result.value] as const]
+          : [];
+      }),
+    );
+    const acceptedTrackIds = Array.from(acceptedByOptimisticId.values()).map(
+      (result) => result.track_id,
+    );
+    setOptimisticUploadDocs((current) =>
+      current
+        .map((doc) => {
+          const result = acceptedByOptimisticId.get(doc.doc_id);
+          if (!result) return doc;
+          return {
+            ...doc,
+            track_id: result.track_id,
+            content_summary:
+              result.status === 'duplicated'
+                ? 'Upload accepted as duplicate, waiting for source refresh.'
+                : 'Upload accepted, waiting for ingestion worker.',
+            updated_at: new Date().toISOString(),
+            metadata: {
+              ...doc.metadata,
+              upload_state: result.status,
+            },
+          };
+        })
+        .filter((doc) => !failedOptimisticIds.has(doc.doc_id)),
+    );
 
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     const ko = results.filter((r) => r.status === 'rejected').length;
@@ -523,6 +614,7 @@ function AppShell() {
         );
       }
     }
+    void refreshDocumentsUntilUploadsLand(acceptedTrackIds);
   };
 
   /**
@@ -900,11 +992,31 @@ function AppShell() {
   // Resolved props. In prod real-backend mode, do not silently fall back to
   // local fixtures: empty arrays + the backend error banner make the failure
   // visible instead of showing stale demo data.
-  const docList =
-    docs.data?.items ??
-    (FIXTURE_FALLBACK_ENABLED
-      ? DOCUMENT_FIXTURES.filter((doc) => doc.folder === folder)
-      : []);
+  const backendDocList = useMemo(
+    () =>
+      docs.data?.items ??
+      (FIXTURE_FALLBACK_ENABLED
+        ? DOCUMENT_FIXTURES.filter((doc) => doc.folder === folder)
+        : []),
+    [docs.data?.items, folder],
+  );
+  const docList = useMemo(() => {
+    const backendTrackIds = new Set(
+      backendDocList.map((doc) => doc.track_id).filter(Boolean),
+    );
+    const backendKeys = new Set(
+      backendDocList.map((doc) => `${doc.folder}:${doc.file_path}`),
+    );
+    const pendingUploads = optimisticUploadDocs.filter(
+      (doc) =>
+        doc.folder === folder &&
+        !(
+          (doc.track_id && backendTrackIds.has(doc.track_id)) ||
+          backendKeys.has(`${doc.folder}:${doc.file_path}`)
+        ),
+    );
+    return dedupeDocumentsBySource([...pendingUploads, ...backendDocList]);
+  }, [backendDocList, folder, optimisticUploadDocs]);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come
@@ -978,21 +1090,16 @@ function AppShell() {
       />
       {backendErrors.length > 0 && (
         <div className="sys-banner-stack" role="status" aria-live="polite">
-          <div className="sys-banner sys-error" data-testid="backend-data-error">
+          <div className="sys-banner sys-info" data-testid="backend-data-error">
             <span className="sys-banner-ico" aria-hidden="true">
-              !
+              i
             </span>
             <div className="sys-banner-body">
               <div className="sys-banner-line1">
-                <span className="sys-banner-title">Backend data unavailable</span>
+                <span className="sys-banner-title">Data temporarily unavailable</span>
                 <span className="sys-banner-sub">
-                  Production fixture fallback is disabled.
+                  Refresh the page or sign in again if the document list does not return.
                 </span>
-              </div>
-              <div className="sys-banner-meta">
-                {backendErrors
-                  .map((err) => `${err.label}: ${err.message}`)
-                  .join(' | ')}
               </div>
             </div>
           </div>

@@ -199,7 +199,7 @@
 .settings-provider-row {
   display: flex;
   align-items: center;
-  justify-content: folder-between;
+  justify-content: space-between;
   padding: 12px 14px;
   background: var(--color-background-primary);
   border: 0.5px solid var(--color-border-tertiary);
@@ -216,7 +216,7 @@
 .settings-danger-row {
   display: flex;
   align-items: center;
-  justify-content: folder-between;
+  justify-content: space-between;
   padding: 14px 16px;
   background: var(--twin-red-50);
   border: 0.5px solid var(--twin-red-border);
@@ -350,7 +350,7 @@
   height: 14px;
 }
 .onboarding-footer {
-  justify-content: folder-between;
+  justify-content: space-between;
 }
 .onboarding-footer .actions {
   display: flex;
@@ -384,7 +384,7 @@
   border-bottom: 0.5px solid var(--color-border-tertiary);
   display: flex;
   align-items: flex-start;
-  justify-content: folder-between;
+  justify-content: space-between;
   gap: 12px;
 }
 .doc-detail-title {
@@ -478,7 +478,7 @@
 .doc-audit-line1 {
   display: flex;
   align-items: center;
-  justify-content: folder-between;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 4px;
   font-size: 12px;
@@ -628,7 +628,7 @@
 .ea-field-h {
   display: flex;
   align-items: center;
-  justify-content: folder-between;
+  justify-content: space-between;
   gap: 12px;
 }
 .ea-field-label {

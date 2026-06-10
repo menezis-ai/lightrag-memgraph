@@ -1157,12 +1157,12 @@ def _build_runtime_config() -> dict[str, object]:
 
     Shape mirrors ``lightrag_webui_twin/src/types/auth.ts:TwinRuntimeConfig``.
 
-    When the IdP middleware is configured (``TWIN_IDP_JWKS_URL`` set), the
-    ``debugUser`` shim is omitted — the React port then requires a real
-    server-validated user instead of falling back to a wide-open dev
-    identity. Without the JWKS URL, ``debugUser`` is emitted so the
-    operator console stays usable against a local LightRAG without
-    standing up Keycloak.
+    ``debugUser`` is the dev escape hatch that auto-authenticates the
+    React port. It is omitted whenever a server-side auth backend is
+    configured: IdP (``TWIN_IDP_JWKS_URL``), local JWT
+    (``LIGHTRAG_JWT_SECRET`` / ``TOKEN_SECRET`` / ``AUTH_ACCOUNTS``), or
+    static API key (``LIGHTRAG_API_KEY``). Only a fully open dev/demo
+    instance gets ``debugUser``.
 
     Override per-deploy via env vars (read late so a single ``register()``
     call can re-render against a different identity without re-importing).
@@ -1172,7 +1172,13 @@ def _build_runtime_config() -> dict[str, object]:
     from ._folders import build_runtime_folder_config, load_folder_catalog
     from .server.idp_jwt import IdpConfig as _IdpConfig
 
-    _idp_active = _IdpConfig.from_env() is not None
+    _auth_backend_active = bool(
+        _IdpConfig.from_env() is not None
+        or os.environ.get("LIGHTRAG_JWT_SECRET")
+        or os.environ.get("TOKEN_SECRET")
+        or os.environ.get("AUTH_ACCOUNTS")
+        or os.environ.get("LIGHTRAG_API_KEY")
+    )
 
     api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
@@ -1211,10 +1217,9 @@ def _build_runtime_config() -> dict[str, object]:
         "idpLogoutUrl": idp_logout,
         **runtime_folder_config,
     }
-    # debugUser is the dev escape hatch. When the IdP middleware is
-    # active (TWIN_IDP_JWKS_URL set) we strip it so the React port
-    # cannot silently fall back to a wide-open identity in production.
-    if not _idp_active:
+    # debugUser bypasses the LoginScreen, so expose it only for fully
+    # open dev/demo instances.
+    if not _auth_backend_active:
         config["debugUser"] = debug_user
     return config
 
@@ -1296,7 +1301,17 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
                     "__TWIN_CONFIG_JSON__",
                     self._runtime_config_json,
                 )
-                return HTMLResponse(html)
+                return HTMLResponse(
+                    html,
+                    headers={
+                        # The Vite bundle filenames are content-hashed. If a
+                        # browser reuses an old index.html after a deploy, it
+                        # asks for deleted /assets/*.js files and the SPA boots
+                        # blank. Revalidate the HTML entrypoint every time;
+                        # immutable caching remains safe for hashed assets.
+                        "Cache-Control": "no-store, max-age=0",
+                    },
+                )
             return await super().get_response(path, scope)
 
     webui_route = None

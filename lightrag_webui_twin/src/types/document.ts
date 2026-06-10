@@ -87,6 +87,11 @@ export interface Document {
    * subsequent refetch removes it.
    */
   _deleting?: boolean;
+  /**
+   * UI-only row inserted after an upload request so operators see a
+   * stable pending source before LightRAG exposes the generated doc_id.
+   */
+  _optimisticUpload?: boolean;
   /** Final chunk count; null while still PROCESSING. */
   chunks_count: number | null;
   created_at: string;

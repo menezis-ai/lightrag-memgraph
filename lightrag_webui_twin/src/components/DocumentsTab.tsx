@@ -483,6 +483,7 @@ function DocRow({
 }: DocRowProps) {
   const isFail = doc.status === 'FAILED';
   const isDeleting = doc._deleting === true;
+  const isOptimisticUpload = doc._optimisticUpload === true;
   const visibleTags = doc.tags.slice(0, 2);
   const overflow = doc.tags.length - visibleTags.length;
   const filterStatus = STATUS_TO_FILTER[doc.status];
@@ -496,8 +497,13 @@ function DocRow({
           type="checkbox"
           className="row-check"
           checked={checked}
+          disabled={isOptimisticUpload}
           onChange={() => onToggle(doc.doc_id)}
-          aria-label={`Select ${doc.file_path}`}
+          aria-label={
+            isOptimisticUpload
+              ? `${doc.file_path} is waiting for ingestion`
+              : `Select ${doc.file_path}`
+          }
         />
       </div>
       <div className="cell-source">
@@ -556,25 +562,29 @@ function DocRow({
       <div className="cell-chunks">{doc.chunks_count ?? 0}</div>
       <div className="cell-updated">{relativeTime(doc.updated_at, nowMs)}</div>
       <div className="cell-actions">
-        <button
-          type="button"
-          className="row-action"
-          onClick={() => onOpenRetag(doc)}
-          aria-label={`Retag ${doc.file_path}`}
-        >
-          <Icon name="tags" size={13} />
-        </button>
-        {onDelete && (
-          <button
-            type="button"
-            className="row-action row-action-danger"
-            onClick={() => onDelete(doc)}
-            data-testid={`docs-row-delete-${doc.doc_id}`}
-            aria-label={`Delete ${doc.file_path}`}
-            title="Delete (cascade)"
-          >
-            <Icon name="x" size={13} />
-          </button>
+        {!isOptimisticUpload && (
+          <>
+            <button
+              type="button"
+              className="row-action"
+              onClick={() => onOpenRetag(doc)}
+              aria-label={`Retag ${doc.file_path}`}
+            >
+              <Icon name="tags" size={13} />
+            </button>
+            {onDelete && (
+              <button
+                type="button"
+                className="row-action row-action-danger"
+                onClick={() => onDelete(doc)}
+                data-testid={`docs-row-delete-${doc.doc_id}`}
+                aria-label={`Delete ${doc.file_path}`}
+                title="Delete (cascade)"
+              >
+                <Icon name="x" size={13} />
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
