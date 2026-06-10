@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
@@ -37,30 +36,12 @@ from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
-# LightRAG's default prompt appends a trailing "### References - [N] file"
-# block (English) or "### Références - ..." (French — LLM follows the
-# query language). The Twin overlay returns a structured `sources` list
-# alongside the response, so the markdown References block is duplicate
-# noise that would otherwise render as raw text in the React port (the
-# citation parser only knows about `[N]` / `{cite:N}` inline markers,
-# not the heading). Strip server-side so the HTTP contract is clean.
-_REFERENCES_BLOCK_RE = re.compile(
-    r"\n*#{2,6}\s*(?:References?|R[ée]f[ée]rences?)\b.*$",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def _normalize_answer(text: str) -> str:
-    """Strip the trailing markdown References block from a LightRAG answer."""
-    return _REFERENCES_BLOCK_RE.sub("", text).rstrip()
-
-
 class TwinQueryBody(BaseModel):
     query: str
     actor: str | None = Field(default=None, max_length=200)
     mode: str = Field(default="mix")
     response_type: str | None = Field(default=None, min_length=1)
-    top_k: int = Field(default=10, ge=1, le=200)
+    top_k: int = Field(default=20, ge=1, le=200)
     chunk_top_k: int | None = Field(default=None, ge=1, le=200)
     max_entity_tokens: int | None = Field(default=None, ge=1)
     max_relation_tokens: int | None = Field(default=None, ge=1)
@@ -530,7 +511,6 @@ def build_twin_query_router(get_rag) -> APIRouter:
 
         if not isinstance(answer, str):
             answer = str(answer)
-        answer = _normalize_answer(answer)
 
         # If the operator asked for context-only or prompt-only the
         # answer body already carries everything they wanted — skip

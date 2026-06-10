@@ -93,18 +93,6 @@ export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
 }
 
 /**
- * Strip the trailing `### References` / `### Références` block LightRAG's
- * default prompt appends to every answer (LLM follows the query language).
- * The structured `sources` panel renders the same info as clickable cards
- * — we don't want the raw markdown to compete with it.
- */
-export function stripReferencesBlock(text: string): string {
-  return text
-    .replace(/\n*#{2,6}\s*(?:References?|R[ée]f[ée]rences?)\b[^]*$/i, '')
-    .trimEnd();
-}
-
-/**
  * Cheap epoch-ms -> "Xm" / "Xh" / "Xd" relative-time string.
  * Returns "" for null/invalid input, "now" for <60s.
  */

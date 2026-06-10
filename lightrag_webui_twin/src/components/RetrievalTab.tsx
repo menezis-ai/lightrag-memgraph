@@ -30,7 +30,6 @@ import {
   parseAnswer,
   QUERY_MODES,
   relTime,
-  stripReferencesBlock,
   type AnswerPart,
   type AnswerToken,
   type ChatMessage,
@@ -137,9 +136,9 @@ export function RetrievalTab({
   const [queryMode, setQueryMode] = useUrlParam<QueryMode>('mode', 'mix', {
     validate: (v) => QUERY_MODES.includes(v as QueryMode),
   });
-  const [topK, setTopK] = useUrlNumberParam('topk', 10);
+  const [topK, setTopK] = useUrlNumberParam('topk', 20);
   const [chunkTopK, setChunkTopK] = useUrlNumberParam('chunktopk', 20);
-  const [maxTok, setMaxTok] = useUrlNumberParam('maxtok', 4000);
+  const [maxTok, setMaxTok] = useUrlNumberParam('maxtok', 30000);
   const [history, setHistory] = useUrlNumberParam('hist', 3);
   const [onlyCtx, setOnlyCtx] = useState(false);
   const [onlyPrompt, setOnlyPrompt] = useState(false);
@@ -292,10 +291,7 @@ export function RetrievalTab({
       })
         .then(({ sources }) => {
           setStreaming(false);
-          // Strip the ### References / Références tail once the full
-          // stream is in hand (per-chunk boundaries can land inside the
-          // heading, so we can't do this token-by-token).
-          const finalTokens = stripReferencesBlock(streamed.join(''))
+          const finalTokens = streamed.join('')
             .split(/(\s+)/)
             .filter((t) => t.length > 0);
           setConvo((c) => [
@@ -315,9 +311,7 @@ export function RetrievalTab({
 
     sendQuery(activeParams(q))
       .then(({ response, sources }) => {
-        // Strip the trailing `### References` block LightRAG appends —
-        // the structured `sources` panel renders it as clickable cards.
-        const tokens = stripReferencesBlock(response)
+        const tokens = response
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
         streamTokens(tokens, sources ?? []);

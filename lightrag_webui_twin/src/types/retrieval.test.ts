@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { parseAnswer, relTime, stripReferencesBlock } from './retrieval';
+import { parseAnswer, relTime } from './retrieval';
 
 describe('parseAnswer', () => {
   it('returns empty array for an empty token list', () => {
@@ -59,37 +59,6 @@ describe('parseAnswer', () => {
       { type: 'text', value: ' then ' },
       { type: 'cite', value: 3 },
     ]);
-  });
-});
-
-describe('stripReferencesBlock', () => {
-  it('removes ### References block at the end', () => {
-    const input = 'Some answer paragraph.\n\n### References - [1] runbook.pdf';
-    expect(stripReferencesBlock(input)).toBe('Some answer paragraph.');
-  });
-
-  it('removes ## References too', () => {
-    const input = 'Body.\n## References\n[1] foo';
-    expect(stripReferencesBlock(input)).toBe('Body.');
-  });
-
-  it('is case-insensitive on the heading', () => {
-    expect(stripReferencesBlock('x\n### references - [1] a')).toBe('x');
-  });
-
-  it('leaves answers without a References block untouched', () => {
-    expect(stripReferencesBlock('Just an answer.')).toBe('Just an answer.');
-  });
-
-  it('strips French "Références" (with accent)', () => {
-    const input = 'Réponse en français.\n\n### Références - Aucun document.';
-    expect(stripReferencesBlock(input)).toBe('Réponse en français.');
-  });
-
-  it('strips French "References" (LLM dropped the accent)', () => {
-    expect(stripReferencesBlock('Reponse.\n### References - [1] foo')).toBe(
-      'Reponse.',
-    );
   });
 });
 

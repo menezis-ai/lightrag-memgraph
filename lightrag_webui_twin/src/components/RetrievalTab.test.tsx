@@ -130,8 +130,11 @@ describe('RetrievalTab — send', () => {
   it('streams backend chunks into the assistant message', async () => {
     const onStreamQuery = vi.fn(async (_params, onChunk: (chunk: string) => void) => {
       onChunk('hello ');
-      onChunk('world');
-      return { response: 'hello world', sources: [] };
+      onChunk('world\n\n### References - [1] runbook.pdf');
+      return {
+        response: 'hello world\n\n### References - [1] runbook.pdf',
+        sources: [],
+      };
     });
     render(
       <RetrievalTab
@@ -149,6 +152,9 @@ describe('RetrievalTab — send', () => {
       expect(document.querySelector('.msg-assistant')?.textContent).toContain(
         'hello world',
       ),
+    );
+    expect(document.querySelector('.msg-assistant')?.textContent).toContain(
+      'References',
     );
   });
 });
@@ -186,6 +192,17 @@ describe('RetrievalTab — localStorage persistence', () => {
 });
 
 describe('RetrievalTab — params panel', () => {
+  it('uses production-safe retrieval defaults', () => {
+    render(<RetrievalTab {...defaultProps()} initialThreads={[]} />);
+    expect(screen.getByLabelText('Top K')).toHaveValue(20);
+    expect(screen.getByLabelText('Chunk top K')).toHaveValue(20);
+    expect(screen.getByLabelText('Max tokens')).toHaveValue(30000);
+    expect(screen.getByLabelText('Enable rerank')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
   it('Top K input updates', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     const topK = screen.getByLabelText('Top K') as HTMLInputElement;
