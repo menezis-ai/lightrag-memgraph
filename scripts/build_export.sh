@@ -56,7 +56,9 @@ fi
 
 echo ">>> packing ${OUT}"
 rm -f "${OUT}"
-(cd "${STAGING}" && zip -qr "${OUT}" twin)
+# -X drops extra Unix attributes that macOS Archive Utility chokes
+# on. -r recursive, -q quiet.
+(cd "${STAGING}" && zip -qrX "${OUT}" twin)
 
 SIZE="$(du -h "${OUT}" | cut -f1)"
 COUNT="$(unzip -l "${OUT}" | tail -1 | awk '{print $2}')"

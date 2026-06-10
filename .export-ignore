@@ -24,6 +24,11 @@ docs/
 # Node build artifacts — rebuilt at the consumer's end.
 **/node_modules/
 
+# Python bytecode caches — rebuilt at the consumer's end. Also
+# inflates the file count and confuses macOS Archive Utility.
+**/__pycache__/
+*.pyc
+
 # Local dev artifacts (also in .gitignore but belt-and-braces).
 .coverage
 coverage.xml
@@ -47,6 +52,10 @@ src/twindb_lightrag_memgraph/webui_dist/
 .git/
 .github/
 .forgejo/
+
+# Local tool config dirs.
+.claude/
+.menezis/
 
 # Export tooling shouldn't ship itself.
 .export-ignore
