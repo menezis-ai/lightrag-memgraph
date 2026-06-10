@@ -18,8 +18,9 @@ Three concerns are colocated here:
    scattered inside a per-type rectangle so the layout is stable across
    page loads without running a force simulation in the browser.
 
-The reader is intentionally read-only. PATCH persistence (M12 batch 2)
-lives in a follow-up.
+Write persistence (M12 batch 2) lives in the "Writes" section below:
+entity/relation patch, create, and delete helpers backing the
+PATCH/POST/DELETE `/twin/api/graph/*` routes in `webui_router.py`.
 """
 
 from __future__ import annotations
