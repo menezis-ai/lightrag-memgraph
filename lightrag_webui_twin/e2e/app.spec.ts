@@ -250,6 +250,9 @@ test.describe('Twin WebUI operator journeys', () => {
 
     await page.getByTestId('settings-restart-tutorial').click();
     await expect(page.getByRole('status')).toContainText('Tutorial restarted');
+    await expect(page.getByTestId('onboarding-step-welcome')).toBeVisible();
+    await page.getByTestId('onboarding-skip').click();
+    await expect(page.getByTestId('onboarding-backdrop')).toBeHidden();
 
     await page.getByTestId('settings-rail-folder').click();
     await expect(page.getByTestId('settings-folder')).toBeVisible();
