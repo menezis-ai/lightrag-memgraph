@@ -940,7 +940,7 @@ export function exportThesaurusJson(
   tags: readonly TagEntry[],
   categories: readonly TagCategory[],
   exportedBy: string,
-  folder: string = 'cib',
+  folder: string = 'main',
 ): void {
   const payload = {
     folder,

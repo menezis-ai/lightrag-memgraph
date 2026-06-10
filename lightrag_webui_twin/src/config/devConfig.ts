@@ -45,7 +45,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
     },
     folders: ['default', 'sandbox'],
     idp: 'keycloak',
-    idp_realm: 'twin-cib',
+    idp_realm: 'twin-main',
     sub: 'clb-7f4e',
     session_expires: '2026-05-19T23:59:00Z',
     gateway_scopes: [

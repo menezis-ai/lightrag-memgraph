@@ -1,0 +1,51 @@
+# Paths excluded from the BNP delivery tarball built by
+# `scripts/build_bnp_export.sh`. Format: one rsync-compatible pattern
+# per line, blank lines and `#` comments ignored.
+#
+# Doctrine: the repo carries internal artifacts (audits, planning docs,
+# Claude instructions) that have value in-tree but should NOT transit
+# to BNP. The export script is a one-way filter; the source repo is
+# untouched.
+
+# Claude Code instructions — internal contractual posture, not for BNP.
+CLAUDE.md
+
+# Live planning docs — internal cadence, status hedging, stakeholder
+# context. Replace with the README's public surface for BNP.
+WEBUI-WIRING-PLAN.md
+WEBUI-WIRING-WIRED.md
+WEBUI-WIRING-TO-WIRE.md
+
+# Historical audit reports — IP carrying internal names and infra
+# references. Keep tracked, strip from export.
+docs/audits/
+
+# Pitch decks — meeting-specific, named in filenames, internal politics.
+docs/presentations/
+
+# Local dev artifacts (also in .gitignore but belt-and-braces).
+.coverage
+coverage.xml
+.pytest_cache/
+.scannerwork/
+.venv/
+.vscode/
+.menezis/
+.DS_Store
+build/
+dist/
+proto/
+inputs/
+rag_storage/
+src/twindb_lightrag_memgraph.egg-info/
+src/twindb_lightrag_memgraph/webui_dist/
+
+# Git internals (always excluded from source archives anyway, but
+# explicit so the script doesn't surprise anyone).
+.git/
+.github/
+.forgejo/
+
+# BNP-export tooling shouldn't ship itself.
+.bnp-export-ignore
+scripts/build_bnp_export.sh

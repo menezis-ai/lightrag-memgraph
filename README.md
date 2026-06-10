@@ -24,7 +24,7 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 | **LightRAG 1.4.11** | OK | OK | OK |
 | **LightRAG 1.4.12** | OK | OK | OK |
 
-CI runs this full matrix on every push/PR. LightRAG `1.4.10` was dropped from the matrix due to a transient timing regression that produces non-deterministic test failures under integration load; fixed upstream in `1.4.11+`. Re-enablement tracked in [issue #6](http://192.168.1.61:3000/julien/twindb-lightrag-memgraph/issues/6).
+CI runs this full matrix on every push/PR. LightRAG `1.4.10` was dropped from the matrix due to a transient timing regression that produces non-deterministic test failures under integration load; fixed upstream in `1.4.11+`.
 
 ## Installation
 
@@ -97,17 +97,17 @@ There are two different isolation concepts:
 Minimal single-Folder deployment:
 
 ```bash
-TWIN_DEFAULT_FOLDER=cib
-TWIN_DEFAULT_FOLDER_LABEL="CIB Knowledge Folder"
+TWIN_DEFAULT_FOLDER=Main
+TWIN_DEFAULT_FOLDER_LABEL="Main Knowledge Folder"
 ```
 
 Explicit multi-Folder catalog:
 
 ```bash
-TWIN_DEFAULT_FOLDER=cib
+TWIN_DEFAULT_FOLDER=Main
 TWIN_MAX_FOLDERS=5
 TWIN_FOLDERS_JSON='[
-  {"id":"cib","label":"CIB Knowledge Folder","kind":"primary","description":"Production KB"},
+  {"id":"main","label":"Main Knowledge Folder","kind":"primary","description":"Production KB"},
   {"id":"sandbox","label":"Sandbox Folder","kind":"sandbox","description":"Operator test area"}
 ]'
 ```

@@ -28,7 +28,7 @@ export interface AuthenticatedUser {
   // ── Identity-provider trace (rendered read-only in Settings → Profile) ──
   /** IdP identifier (e.g. "keycloak"). */
   idp: string;
-  /** IdP realm name (e.g. "twin-cib"). */
+  /** IdP realm name (e.g. "twin-main"). */
   idp_realm: string;
   /** Short identifier the IdP carries in the `sub` JWT claim. */
   sub: string;

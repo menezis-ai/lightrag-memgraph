@@ -269,7 +269,7 @@ export function GraphTab({
           <div className="kg-sub">
             <span>
               {entities.length} entities · {relations.length} relations · folder{' '}
-              <code>cib</code>
+              <code>main</code>
             </span>
             <span className="dot-sep">·</span>
             <span
