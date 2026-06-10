@@ -113,7 +113,7 @@ class MemgraphTagStore:
     def __init__(self, workspace: str = "default") -> None:
         # Memgraph labels are workspace-scoped and Cypher-interpolated as
         # identifiers (backticked, but validation here is the canonical
-        # belt-and-suspenders against the Cassandre injection class).
+        # belt-and-suspenders against the Cypher-injection class).
         validate_identifier(workspace, "workspace")
         self._workspace = workspace
 

@@ -39,10 +39,10 @@ def _reset_idp_and_store():
 
 
 class TestSeedStoresWarningUnderActiveIdp:
-    """The combination "real IdP + demo stores" is the trap Fabrice
-    flagged 2026-06-01: visible fixtures look like real data until the
-    next restart erases them. Emit a loud WARN so the operator can fix
-    the runbook before going live.
+    """The combination "real IdP + demo stores" is a trap: visible
+    fixtures look like real data until the next restart erases them.
+    Emit a loud WARN so the operator can fix the runbook before going
+    live.
     """
 
     def test_warn_emitted_when_idp_active_and_seed_mode(

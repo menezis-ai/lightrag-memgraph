@@ -36,7 +36,7 @@ export type ReviewState = 'pending-review' | 'approved' | 'rejected' | 'modified
 /**
  * Payload describing an upstream-change event for a live source (Confluence /
  * SharePoint) that requires re-validation. Present when `review.state === 'modified'`.
- * Drives the "Modified source" pending card variant (spec Fabrice 2026-05-26).
+ * Drives the "Modified source" pending card variant.
  */
 export interface DocumentReviewUpdate {
   /** Author of the upstream edit. */

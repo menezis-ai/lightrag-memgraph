@@ -907,7 +907,7 @@ function AppShell() {
       : []);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
-  // (modified — Fabrice 2026-05-26 spec). Sort so pending-review cards come
+  // (modified — upstream re-validation spec). Sort so pending-review cards come
   // first, modified second, to keep the reviewer's eye on new arrivals.
   const isPendingReview = (d: Document) =>
     d.review?.state === 'pending-review' || d.review?.state === 'modified';

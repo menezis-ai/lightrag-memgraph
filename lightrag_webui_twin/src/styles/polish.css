@@ -494,7 +494,7 @@
   margin-left: 6px;
 }
 
-/* ── Classification pill (MSIP sensitivity label) — Louis HORVAT compliance ──
+/* ── Classification pill (MSIP sensitivity label) — compliance UI ──
    Renders the BNP class_id resolved by the pre-insert MSIP extractor next to
    the document name. Restraint by design: an operator sees these on every
    row, alarm-bell red on C2 (the routine internal class) would be fatigue

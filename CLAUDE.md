@@ -75,11 +75,11 @@ Test layout: storage tests live directly under `tests/` (`test_kv.py`, `test_vec
 
 ### Restricted runtime smoke test
 
-`tests/smoke/run_smoke.py` is a **stdlib-only** runner that executes a JSON manifest (default `tests/smoke/bnp-runtime-smoke.json`) against a deployed instance — designed for BNP-style containers where no pip install is possible. Validates `/webui` mount, local JWT login/logout, anonymous rejection on `/twin/api/*`, and that native LightRAG + Twin overlay routes are reachable post-auth. Outputs `/tmp/twin-smoke-report.json` + `/tmp/twin-smoke-http.log` without logging secrets.
+`tests/smoke/run_smoke.py` is a **stdlib-only** runner that executes a JSON manifest (default `tests/smoke/runtime-smoke.json`) against a deployed instance — designed for BNP-style containers where no pip install is possible. Validates `/webui` mount, local JWT login/logout, anonymous rejection on `/twin/api/*`, and that native LightRAG + Twin overlay routes are reachable post-auth. Outputs `/tmp/twin-smoke-report.json` + `/tmp/twin-smoke-http.log` without logging secrets.
 
 ```bash
 export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
-python tests/smoke/run_smoke.py tests/smoke/bnp-runtime-smoke.json
+python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 ```
 
 `tests/test_smoke_runner.py` is the unit test for the runner itself (collected by `pytest tests/`).

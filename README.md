@@ -198,7 +198,7 @@ external Python dependencies.
 export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
 export ARTIFACTORY_USERNAME="..."
 export ARTIFACTORY_PASSWORD="..."
-python tests/smoke/run_smoke.py tests/smoke/bnp-runtime-smoke.json
+python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 ```
 
 The JSON manifest is the audit contract: it lists each expected route,

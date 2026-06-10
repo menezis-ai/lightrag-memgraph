@@ -2,7 +2,7 @@
  * DocDetailPanel — right-side document inspector with 3 tabs: Chunks, Lineage,
  * Audit. Opened from a row click in DocumentsTab; closes via X or backdrop.
  *
- * Compliance gating (Louis HORVAT 2026-05-28):
+ * Compliance gating:
  *   - Chunks content is truncated when the doc classification > internal.
  *     The metadata.classification field carries that hint.
  *   - "View raw" surfaces a prompt reminder, never actually exposes content

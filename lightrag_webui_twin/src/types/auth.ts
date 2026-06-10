@@ -1,8 +1,8 @@
 /**
  * Authentication & MyAccess types.
  *
- * Aligned on the doctrine confirmed by Louis HORVAT 2026-05-28: no internal
- * RBAC, everything is driven by MyAccess claims forwarded as JWT cookie. The
+ * Aligned on the compliance doctrine: no internal RBAC, everything is driven
+ * by IdP / MyAccess claims forwarded as a JWT cookie. The
  * frontend reads the JWT-decoded payload from a server-injected runtime
  * config; it does NOT introspect or sign tokens itself.
  */

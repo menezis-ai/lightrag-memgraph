@@ -9,7 +9,7 @@
  * Historical note: this section used to render hardcoded
  * visibility / region / retention TTL cards from
  * `fixtures/settings.ts`. They were removed 2026-06-04 as part of the
- * mock-kill audit (Fabrice 2026-06-01 — "je ne veux plus de moquer")
+ * mock-kill audit ("no mock data displayed as if it were real")
  * because the backend doesn't expose those fields and the displayed
  * values were inventions (`eu-west-3 · dc-paris`,
  * `twin-default-folder-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).

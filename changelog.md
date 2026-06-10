@@ -14,7 +14,7 @@ Stable branch : LTS 0.3.2 + auto-create vector index on query.
 **Première release "all-in-one"** du package complet. Marque la consolidation Forgejo-only avec storage backends (KV/Vector/DocStatus) + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module + sub-projet WebUI fork (`lightrag_webui_twin/`). La WebUI affichera désormais `core_version: v1.4.x+memgraph-1.0.0` via `register()` qui patche `lightrag.__version__`.
 
 ### Distribution
-- **Forgejo-only** depuis 2026-05-11. GitHub remote (`origin = menezis-ai/lightrag-memgraph`) en cours d'archivage. Le repo complet (storage + intelligence + server + WebUI fork) vit désormais sur `bunker` (Forgejo à `192.168.1.61`). Le split dual L1/L2/L3 (GitHub public / ZIP BNP full) est retiré.
+- Distribution consolidée sur un remote unique depuis 2026-05-11. Le repo complet (storage + intelligence + server + WebUI fork) vit désormais sur cette branche unique. Le split dual L1/L2/L3 (public / ZIP full) est retiré.
 - `.gitignore` : retrait du bloc "Confidential — BNP only". `CLAUDE.md` et `sonar-project.properties` deviennent trackés.
 
 ### Intelligence + Server import

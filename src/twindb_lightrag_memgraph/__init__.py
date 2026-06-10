@@ -1456,9 +1456,8 @@ def _mount_twin_subapp(
     # the env. Idempotent: dormant when no URL is configured.
     configure_idp(_idp_cfg)
 
-    # Mock-kill safeguard (mandate Fabrice 2026-06-01 — "je ne veux
-    # plus de moquer"): if the operator activates an IdP (a strong
-    # signal that this is a real deployment, not OVH standalone),
+    # Mock-kill safeguard: if the operator activates an IdP (a strong
+    # signal that this is a real deployment, not a standalone demo),
     # warn loudly when ``webui_stores`` is still the demo "seed"
     # backend. The visible Twin overlay (tags / activity /
     # notifications / documents) would otherwise be in-memory fixtures

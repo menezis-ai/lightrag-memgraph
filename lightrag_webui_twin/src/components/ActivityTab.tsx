@@ -280,8 +280,8 @@ export function ActivityTab({
               </button>
               {/*
                 Clear button removed — Activity is an IMMUTABLE LEDGER.
-                Audit events are append-only by doctrine (Louis HORVAT compliance
-                + EBA/DORA audit trail requirements). The retention-policy table
+                Audit events are append-only by doctrine (EBA/DORA audit trail
+                requirements). The retention-policy table
                 in Settings → Folder governs natural expiry; no operator
                 affordance to wipe rows. Modal + clearOpen state still wired in
                 case it gets reintroduced behind a Steward-only ops escape.
