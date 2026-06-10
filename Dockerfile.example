@@ -1,0 +1,62 @@
+# Dockerfile.example — illustrative Twin runtime image.
+#
+# Not a turnkey production Dockerfile: it shows the minimum wiring
+# required to run LightRAG with the Twin overlay (Memgraph storage,
+# WebUI swap, /twin/api/* routes). Adjust to your base image, Python
+# version, secrets-injection mechanism, and CI conventions.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 1. System deps — extend as needed for your LightRAG llm/embedding
+#    bindings (e.g. tiktoken / sentence-transformers may pull extras).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# 2. Install LightRAG core. Pin to a version on the Twin compat
+#    matrix (see README — currently 1.4.9, 1.4.9.11, 1.4.11, 1.4.12).
+RUN pip install --no-cache-dir 'lightrag-hku==1.4.12'
+
+# 3. Install the Twin Memgraph patch.
+#    The package MUST contain src/twindb_lightrag_memgraph/webui_dist/
+#    at install time (declared in pyproject.toml [tool.setuptools.
+#    package-data]). If you build the source tree without webui_dist
+#    being present, the WebUI swap fails at runtime with
+#    FileNotFoundError.
+COPY src/twindb_lightrag_memgraph /tmp/pkg/src/twindb_lightrag_memgraph
+COPY pyproject.toml /tmp/pkg/
+COPY README.md /tmp/pkg/
+COPY MANIFEST.in /tmp/pkg/
+COPY LICENSE /tmp/pkg/
+RUN pip install --no-cache-dir /tmp/pkg \
+ && rm -rf /tmp/pkg
+
+# 4. Twin entrypoint — runs register() BEFORE the LightRAG server
+#    imports, then hands off to LightRAG's own main(). Avoids the
+#    circular import that comes with sed-prepending `register()` at
+#    the top of lightrag_server.py.
+COPY twin_main.py /app/twin_main.py
+
+# 5. Required env vars (set at deploy time, not here). Minimal set:
+#
+#   MEMGRAPH_URI                bolt://memgraph:7687
+#   MEMGRAPH_USERNAME           ""
+#   MEMGRAPH_PASSWORD           ""
+#   LIGHTRAG_API_KEY            <static key>     | OR
+#   LIGHTRAG_JWT_SECRET + LIGHTRAG_JWT_PASSWORD   | OR
+#   TWIN_IDP_JWKS_URL + claim mapping vars         (palier 2)
+#   OPENAI_API_KEY              <llm key>
+#   TWIN_DEFAULT_FOLDER         main
+#   TWIN_FOLDERS_JSON           '[...]'
+#
+# See README.md "Configuration" + CLAUDE.md "Auth posture" for the
+# full surface.
+
+EXPOSE 9621
+
+CMD ["python", "/app/twin_main.py"]

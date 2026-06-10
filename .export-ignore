@@ -45,7 +45,8 @@ proto/
 inputs/
 rag_storage/
 src/twindb_lightrag_memgraph.egg-info/
-src/twindb_lightrag_memgraph/webui_dist/
+# webui_dist/ IS included in the export — the package is meant to be
+# install-and-run on hosts without a bun/node toolchain.
 
 # Git internals (always excluded from source archives anyway, but
 # explicit so the script doesn't surprise anyone).
