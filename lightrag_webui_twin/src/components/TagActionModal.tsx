@@ -36,12 +36,16 @@ export interface TagActionCommit {
   name?: string;
   /** Definition text for request/edit flows. */
   def?: string;
+  /** Optional longer governance description for edit flows. */
+  longDescription?: string;
   /** Governance domain/category for request/edit flows. */
   category?: string;
   /** Reason for `reject`. */
   reason?: string;
   /** New synonym to add (only for `synonyms`). */
   newSynonym?: string;
+  /** Full synonym list when managing aliases. */
+  aliases?: readonly string[];
   /** Delete-only: migration strategy + replacement tag. */
   migrate?: { strategy: 'migrate' | 'untag'; to?: string };
 }
@@ -89,10 +93,14 @@ export function TagActionModal({
   const tag = action.tag ?? null;
   const [name, setName] = useState(tag?.tag ?? '');
   const [definition, setDefinition] = useState(tag?.def ?? '');
+  const [longDescription, setLongDescription] = useState(
+    tag?.long_description ?? '',
+  );
   const [category, setCategory] = useState(tag?.category ?? categories[0]?.id ?? '');
   const [migrateTo, setMigrateTo] = useState('');
   const [migrateStrategy, setMigrateStrategy] = useState<'migrate' | 'untag'>('migrate');
   const [newSyn, setNewSyn] = useState('');
+  const [aliases, setAliases] = useState<readonly string[]>(tag?.aliases ?? []);
   const [reason, setReason] = useState('');
 
   const eligible = useMemo(
@@ -113,10 +121,17 @@ export function TagActionModal({
     if (action.kind === 'request' || action.kind === 'edit' || action.kind === 'edit-approve') {
       payload.name = name;
       payload.def = definition;
+      payload.longDescription = longDescription;
       payload.category = category;
     }
-    if (action.kind === 'synonyms' && newSyn.trim()) {
-      payload.newSynonym = newSyn.trim();
+    if (action.kind === 'synonyms') {
+      const nextAliases = newSyn.trim()
+        ? [...aliases, newSyn.trim()]
+        : [...aliases];
+      payload.aliases = Array.from(new Set(nextAliases));
+      if (newSyn.trim()) {
+        payload.newSynonym = newSyn.trim();
+      }
     }
     if (action.kind === 'reject') {
       payload.reason = reason.trim();
@@ -197,6 +212,8 @@ export function TagActionModal({
                   id="tagaction-longdef"
                   className="text-input"
                   rows={3}
+                  value={longDescription}
+                  onChange={(e) => setLongDescription(e.target.value)}
                   placeholder="For complex tags — surfaced in autocomplete tooltip."
                 />
                 <div className="impact-box">
@@ -221,11 +238,17 @@ export function TagActionModal({
             <>
               <label className="field-label">Current synonyms</label>
               <div className="alias-chips">
-                {tag.aliases.length === 0 && <span className="muted">No synonyms.</span>}
-                {tag.aliases.map((a) => (
+                {aliases.length === 0 && <span className="muted">No synonyms.</span>}
+                {aliases.map((a) => (
                   <span key={a} className="alias-chip">
                     <code>{a}</code>
-                    <button aria-label={`Remove synonym ${a}`}>
+                    <button
+                      type="button"
+                      aria-label={`Remove synonym ${a}`}
+                      onClick={() =>
+                        setAliases((current) => current.filter((x) => x !== a))
+                      }
+                    >
                       <Icon name="x" size={10} />
                     </button>
                   </span>

@@ -127,6 +127,33 @@ class TestReadYourOwnWrites:
         assert result["entity_type"] == "Org"
         graph.get_node.assert_awaited_once_with("ACME")
 
+    async def test_get_node_retries_once_on_closed_transport(self):
+        """A stale Bolt connection during merge should not fail the upload."""
+        graph = _mock_graph()
+        graph.get_node.side_effect = [
+            RuntimeError(
+                "unable to perform operation on <TCPTransport closed=True>; "
+                "the handler is closed"
+            ),
+            {"entity_type": "Org", "entity_id": "ACME"},
+        ]
+        proxy = _BufferedGraphProxy(graph)
+
+        result = await proxy.get_node("ACME")
+
+        assert result["entity_id"] == "ACME"
+        assert graph.get_node.await_count == 2
+
+    async def test_get_node_does_not_retry_non_transport_errors(self):
+        graph = _mock_graph()
+        graph.get_node.side_effect = ValueError("bad cypher")
+        proxy = _BufferedGraphProxy(graph)
+
+        with pytest.raises(ValueError, match="bad cypher"):
+            await proxy.get_node("ACME")
+
+        graph.get_node.assert_awaited_once_with("ACME")
+
     async def test_has_node_checks_buffer_first(self):
         graph = _mock_graph()
         proxy = _BufferedGraphProxy(graph)

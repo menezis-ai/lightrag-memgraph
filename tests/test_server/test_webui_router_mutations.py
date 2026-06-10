@@ -249,11 +249,42 @@ class TestEditTag:
         assert body["def"] == "Updated definition"
         assert body["aliases"] == ["recovery-manager", "rmgr"]
 
+    async def test_renames_tag_and_persists_long_description(self, client):
+        r = await client.patch(
+            "/tags/rman",
+            json={
+                "tag": "rman-v2",
+                "long_description": "Long governance note for RMAN.",
+                "actor": "claire.benoit",
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tag"] == "rman-v2"
+        assert body["long_description"] == "Long governance note for RMAN."
+
+        assert await _get_tag(client, "rman") is None
+        persisted = await _get_tag(client, "rman-v2")
+        assert persisted is not None
+        assert persisted["long_description"] == "Long governance note for RMAN."
+
+        docs = (await client.get("/documents", params={"tag": "rman-v2"})).json()
+        assert docs["total"] > 0
+        stale_docs = (await client.get("/documents", params={"tag": "rman"})).json()
+        assert stale_docs["total"] == 0
+
     async def test_no_op_is_still_successful(self, client):
         r = await client.patch(
             "/tags/rman", json={"actor": "claire.benoit"}
         )
         assert r.status_code == 200
+
+    async def test_rename_conflict_returns_409(self, client):
+        r = await client.patch(
+            "/tags/rman",
+            json={"tag": "oracle", "actor": "claire.benoit"},
+        )
+        assert r.status_code == 409
 
 
 # ---------------------------------------------------------------------------

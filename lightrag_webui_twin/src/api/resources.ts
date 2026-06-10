@@ -61,6 +61,7 @@ export interface DocumentChunk {
 
 export interface TwinQueryRequest {
   query: string;
+  actor?: string;
   mode?: string;
   top_k?: number;
   chunk_top_k?: number;
@@ -485,7 +486,9 @@ export const twinApi = {
   editTag: (
     name: string,
     body: {
+      tag?: string;
       def?: string;
+      long_description?: string;
       category?: string;
       aliases?: readonly string[];
       deprecates?: readonly string[];
@@ -613,6 +616,20 @@ export const twinApi = {
   // Auth
   logout: (init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`${TWIN}/auth/logout`, { ...init, method: 'POST' }),
+  recordSourceUploaded: (
+    body: {
+      source: string;
+      track_id?: string;
+      status?: string;
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<{ ok: true }>(`${TWIN}/documents/uploads/activity`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
 
   // Knowledge graph teaser
   listGraphEntities: (
@@ -743,6 +760,7 @@ export const api = {
   bulkDeleteDocuments: twinApi.bulkDeleteDocuments,
   bulkRetagDocuments: twinApi.bulkRetagDocuments,
   logout: twinApi.logout,
+  recordSourceUploaded: twinApi.recordSourceUploaded,
   listGraphEntities: twinApi.listGraphEntities,
   listGraphRelations: twinApi.listGraphRelations,
   updateGraphEntity: twinApi.updateGraphEntity,

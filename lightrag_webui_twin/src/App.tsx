@@ -228,6 +228,7 @@ function AppShell() {
   // Auth + onboarding
   const auth = useAuth();
   const runtimeConfig = auth.config;
+  const currentActor = auth.user?.email ?? CURRENT_USER.name;
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
   const onboarding = useOnboarding();
   const onboardingOpen = !onboarding.state.dismissed;
@@ -458,6 +459,19 @@ function AppShell() {
       });
     }
 
+    const uploadAuditWrites = results.map((result, index) => {
+      if (result.status !== 'fulfilled') return null;
+      return api.recordSourceUploaded({
+        source: action.rawFiles[index]?.name ?? result.value.track_id,
+        track_id: result.value.track_id,
+        status: result.value.status,
+        actor: currentActor,
+      });
+    });
+    void Promise.allSettled(uploadAuditWrites.filter(Boolean)).then(() => {
+      void activity.refetch();
+    });
+
     // Auto-tag-on-upload: when the operator typed tags in the modal,
     // poll /documents/track_status/{track_id} until each upload's doc
     // lands as 'processed', then fire a bulk-retag with the saved
@@ -629,7 +643,7 @@ function AppShell() {
 
   const onTagCommit = (commit: TagActionCommit) => {
     const tagname = commit.tag?.tag ?? commit.name ?? '';
-    const actor = CURRENT_USER.name;
+    const actor = currentActor;
     const verbMap: Record<TagActionCommit['kind'], string> = {
       edit: 'updated',
       suggest: 'edit suggested',
@@ -659,7 +673,9 @@ function AppShell() {
             editTag.mutate(
               {
                 name: tagname,
+                tag: commit.name,
                 def: commit.def,
+                long_description: commit.longDescription,
                 category: commit.category,
                 actor,
               },
@@ -696,9 +712,7 @@ function AppShell() {
               updateSynonyms.mutate(
                 {
                   name: tagname,
-                  aliases: commit.newSynonym
-                    ? [...commit.tag!.aliases, commit.newSynonym]
-                    : commit.tag!.aliases,
+                  aliases: commit.aliases ?? commit.tag!.aliases,
                   actor,
                 },
                 cb,
@@ -749,10 +763,17 @@ function AppShell() {
       case 'edit-approve':
         void (async () => {
           try {
-            if (commit.def || commit.category) {
+            if (
+              commit.name ||
+              commit.def ||
+              commit.longDescription ||
+              commit.category
+            ) {
               await editTag.mutateAsync({
                 name: tagname,
+                tag: commit.name,
                 def: commit.def,
+                long_description: commit.longDescription,
                 category: commit.category,
                 actor,
               });
@@ -986,13 +1007,14 @@ function AppShell() {
                 void auth.signout();
               }}
               onToast={pushToast}
-              onRestartTutorial={() =>
+              onRestartTutorial={() => {
+                onboarding.reset();
                 pushToast({
                   kind: 'done',
                   title: 'Tutorial restarted',
                   sub: 'Welcome modal will appear · 0 of 6 steps complete',
-                })
-              }
+                });
+              }}
             />
           )}
           {tab === 'retrieval' && (
@@ -1004,6 +1026,7 @@ function AppShell() {
                   : undefined;
                 const res = await api.query({
                   query: params.query,
+                  actor: currentActor,
                   mode: params.mode,
                   top_k: params.topK,
                   chunk_top_k: params.chunkTopK,
@@ -1042,6 +1065,7 @@ function AppShell() {
                 const res = await api.queryStream(
                   {
                     query: params.query,
+                    actor: currentActor,
                     mode: params.mode,
                     top_k: params.topK,
                     chunk_top_k: params.chunkTopK,

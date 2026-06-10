@@ -7,7 +7,7 @@ response with a structured `sources` list pulled from `chunks_vdb`.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -176,6 +176,43 @@ class TestQueryEndpoint:
 
         # The endpoint forwarded the requested top_k to chunks_vdb
         assert rag.chunks_vdb.last_top_k == 5
+
+    async def test_records_retrieval_activity(self, make_client):
+        rag = FakeRag(
+            answer="Restart Oracle by …",
+            chunks=[
+                {
+                    "id": "chunk-aa",
+                    "file_path": "/cib/runbooks/oracle.pdf",
+                    "score": 0.92,
+                },
+            ],
+        )
+        store = type("Store", (), {"record_activity": AsyncMock()})()
+
+        client = await make_client(rag)
+        with patch(
+            "twindb_lightrag_memgraph.server.webui_router.get_store",
+            return_value=store,
+        ):
+            async with client:
+                r = await client.post(
+                    "/query",
+                    json={
+                        "query": "How do I restart Oracle?",
+                        "actor": "claire.benoit",
+                        "top_k": 1,
+                    },
+                )
+
+        assert r.status_code == 200
+        store.record_activity.assert_awaited_once()
+        event = store.record_activity.await_args.args[0]
+        assert event["kind"] == "retrieval"
+        assert event["actor"]["user"] == "claire.benoit"
+        assert event["target"]["type"] == "query"
+        assert event["meta"]["sources_count"] == 1
+        assert event["meta"]["query"] == "How do I restart Oracle?"
 
     async def test_strips_trailing_references_block_from_response(
         self, make_client

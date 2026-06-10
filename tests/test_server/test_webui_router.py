@@ -272,6 +272,29 @@ class TestActivity:
         body = r.json()
         assert body["total"] >= 1
 
+    async def test_record_source_uploaded_persists_activity(self, client):
+        r = await client.post(
+            "/documents/uploads/activity",
+            json={
+                "source": "runbook.pdf",
+                "track_id": "upload-track-1",
+                "status": "success",
+                "actor": "claire.benoit",
+            },
+        )
+        assert r.status_code == 200
+
+        feed = await client.get(
+            "/activity", params={"kind": "source-uploaded", "q": "runbook.pdf"}
+        )
+        body = feed.json()
+        assert body["total"] == 1
+        event = body["items"][0]
+        assert event["actor"]["user"] == "claire.benoit"
+        assert event["target"]["type"] == "source"
+        assert event["target"]["label"] == "runbook.pdf"
+        assert event["meta"]["track_id"] == "upload-track-1"
+
 
 # ---------------------------------------------------------------------------
 # OpenAPI curated surface

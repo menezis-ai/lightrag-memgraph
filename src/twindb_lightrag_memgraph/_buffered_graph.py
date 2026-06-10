@@ -8,11 +8,24 @@ from the buffer, falling back to the real graph for data not yet buffered.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from ._constants import validate_identifier
 from ._pool import acquire_write_slot, get_session
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
+_T = TypeVar("_T")
+
+
+def _is_closed_transport_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "tcptransport closed=true" in text
+        or "the handler is closed" in text
+        or "connection reset by peer" in text
+        or "failed to read from defunct connection" in text
+    )
 
 
 class _BufferedGraphProxy:
@@ -28,6 +41,31 @@ class _BufferedGraphProxy:
         self._node_buffer = {}  # entity_name -> node_data dict
         self._node_types = {}  # entity_name -> entity_type label
         self._edge_buffer = {}  # (src, tgt) -> edge_data dict
+
+    async def _read_with_retry(
+        self,
+        op_name: str,
+        fn: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Retry native graph reads once on stale Bolt transports.
+
+        LightRAG's Memgraph graph backend owns an independent Neo4j
+        driver. In long-lived UI runtimes that driver can hand out an
+        idle pooled connection whose underlying TCP transport has already
+        been closed by Memgraph. The failure is transient; a second call
+        gets a fresh connection from the driver's pool. Without this
+        guard a single stale read aborts the whole buffered merge.
+        """
+        try:
+            return await fn()
+        except Exception as exc:
+            if not _is_closed_transport_error(exc):
+                raise
+            logger.warning(
+                "Buffered graph read %s hit a closed Bolt transport; retrying once",
+                op_name,
+            )
+            return await fn()
 
     # ── Intercepted write methods (buffered) ──────────────────────────
 
@@ -56,22 +94,34 @@ class _BufferedGraphProxy:
         """Check buffer first, then delegate to real graph."""
         if entity_name in self._node_buffer:
             return self._node_buffer[entity_name]
-        return await self._real.get_node(entity_name)
+        return await self._read_with_retry(
+            "get_node",
+            lambda: self._real.get_node(entity_name),
+        )
 
     async def has_node(self, entity_name: str) -> bool:
         if entity_name in self._node_buffer:
             return True
-        return await self._real.has_node(entity_name)
+        return await self._read_with_retry(
+            "has_node",
+            lambda: self._real.has_node(entity_name),
+        )
 
     async def has_edge(self, src: str, tgt: str) -> bool:
         if (src, tgt) in self._edge_buffer:
             return True
-        return await self._real.has_edge(src, tgt)
+        return await self._read_with_retry(
+            "has_edge",
+            lambda: self._real.has_edge(src, tgt),
+        )
 
     async def get_edge(self, src: str, tgt: str):
         if (src, tgt) in self._edge_buffer:
             return self._edge_buffer[(src, tgt)]
-        return await self._real.get_edge(src, tgt)
+        return await self._read_with_retry(
+            "get_edge",
+            lambda: self._real.get_edge(src, tgt),
+        )
 
     # ── Delegate everything else ──────────────────────────────────────
 

@@ -249,6 +249,13 @@ export function GraphTab({
   }, []);
 
   const resetView = () => {
+    setQ('');
+    setActiveTypes(TYPE_KEYS);
+    setTagFilter([]);
+    setDocFilter([]);
+    setSelectedId('');
+    setSelectedRelId(null);
+    setHoverId(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
   };

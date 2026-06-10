@@ -514,11 +514,7 @@ async def _cascade_graph_tag_edges(
     """
     try:
         from .. import _pool
-        from .._constants import resolve_workspace, validate_identifier
-
-        validate_identifier(name, "tag")
-        if to:
-            validate_identifier(to, "tag")
+        from .._constants import resolve_workspace
         workspace = resolve_workspace()
         folder = current_folder_id()
         doc_label = f"DocStatus_{workspace}"
@@ -1193,6 +1189,39 @@ async def logout() -> dict[str, Any]:
     return response
 
 
+@router.post("/documents/uploads/activity", response_model=AckResponse)
+async def record_source_uploaded(
+    body: dict[str, Any],
+) -> dict[str, bool]:
+    """Record Activity for LightRAG-native upload accepts.
+
+    The actual upload endpoint is the native LightRAG
+    ``/documents/upload`` route, outside this Twin router. The WebUI
+    calls this route only after that native endpoint accepts a file so
+    the audit feed still has a durable ``source-uploaded`` event.
+    """
+    source = str(body.get("source") or "").strip()
+    if not source:
+        raise HTTPException(
+            status_code=400,
+            detail="record_source_uploaded requires a non-empty source.",
+        )
+    actor = str(body.get("actor") or "system").strip() or "system"
+    track_id = str(body.get("track_id") or "").strip()
+    status = str(body.get("status") or "accepted").strip() or "accepted"
+    event = _make_event(
+        kind="source-uploaded",
+        sev="info",
+        actor=actor,
+        target_label=source,
+        summary=f"uploaded by {actor}",
+        meta={"source": source, "track_id": track_id, "status": status},
+        target_type="source",
+    )
+    await get_store().record_activity(event)
+    return {"ok": True}
+
+
 @router.post("/documents/{doc_id}/approve")
 async def approve_document(
     doc_id: str,
@@ -1773,9 +1802,28 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
     actor = body.actor or "system"
     now = _utcnow_iso()[:10]
     changed: list[str] = []
+    renamed_from: str | None = None
+    if body.tag is not None:
+        new_name = body.tag.strip()
+        if not new_name:
+            raise HTTPException(400, "Tag name cannot be empty")
+        if new_name != entry.get("tag"):
+            existing = await store.tags.get_tag(new_name)
+            if existing is not None:
+                raise HTTPException(409, f"Tag '{new_name}' already exists")
+            old_name = entry["tag"]
+            entry["tag"] = new_name
+            renamed_from = old_name
+            changed.append("tag")
     if body.def_ is not None and body.def_ != entry.get("def"):
         entry["def"] = body.def_
         changed.append("def")
+    if (
+        body.long_description is not None
+        and body.long_description != entry.get("long_description", "")
+    ):
+        entry["long_description"] = body.long_description
+        changed.append("long_description")
     if body.category is not None and body.category != entry.get("category"):
         entry["category"] = body.category
         changed.append("category")
@@ -1787,17 +1835,44 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
         changed.append("deprecates")
     entry["last_edit"] = {"by": actor, "at": now, "action": "edited"}
     stored = await store.tags.upsert_tag(entry)
+    cascade_affected: int | None = None
+    if renamed_from is not None:
+        new_name = entry["tag"]
+        seed_affected = _cascade_seed_document_tags(
+            store,
+            name=renamed_from,
+            strategy="migrate",
+            to=new_name,
+        )
+        graph_affected = await _cascade_graph_tag_edges(
+            name=renamed_from,
+            strategy="migrate",
+            to=new_name,
+            actor=actor,
+            strict=isinstance(store.tags, MemgraphTagStore),
+        )
+        cascade_affected = (
+            graph_affected if graph_affected is not None else seed_affected
+        )
+        await store.tags.delete_tag(renamed_from)
     await _emit_tag_audit(
         store=store,
         actor=actor,
         kind="tag-mutation",
         sev="info",
-        target_label=name,
-        summary=f"Tag {name} edited ({', '.join(changed) or 'no-op'})",
-        meta={"fields": changed},
+        target_label=entry.get("tag") or name,
+        summary=(
+            f"Tag {entry.get('tag') or name} edited "
+            f"({', '.join(changed) or 'no-op'})"
+        ),
+        meta={
+            "fields": changed,
+            "renamed_from": renamed_from,
+            "cascade_affected": cascade_affected,
+        },
         notification=_make_notification(
             title="Tag",
-            tagname=name,
+            tagname=entry.get("tag") or name,
             suffix="updated",
             sub=", ".join(changed) or "no field change",
         ),

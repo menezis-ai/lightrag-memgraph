@@ -1287,6 +1287,33 @@ export const handlers = [
       failed,
     });
   }),
+  http.post(`${ANY}${TWIN}/documents/uploads/activity`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      source?: string;
+      track_id?: string;
+      status?: string;
+      actor?: string;
+    };
+    const actor = body.actor || 'system';
+    activityState = [{
+      id: `evt_upload_${Date.now()}`,
+      ts: new Date().toISOString(),
+      rel: 'now',
+      day: 'Today',
+      kind: 'source-uploaded',
+      sev: 'info',
+      actor: { user: actor, role: 'operator' },
+      target: { type: 'source', label: body.source || 'uploaded source' },
+      summary: `uploaded by ${actor}`,
+      meta: {
+        source: body.source,
+        track_id: body.track_id,
+        status: body.status || 'accepted',
+      },
+    }, ...activityState];
+    persistActivityState();
+    return HttpResponse.json({ ok: true });
+  }),
 
   // Auth
   http.post(`${ANY}${TWIN}/auth/logout`, () =>

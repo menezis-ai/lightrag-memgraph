@@ -57,6 +57,7 @@ def _normalize_answer(text: str) -> str:
 
 class TwinQueryBody(BaseModel):
     query: str
+    actor: str | None = Field(default=None, max_length=200)
     mode: str = Field(default="mix")
     response_type: str | None = Field(default=None, min_length=1)
     top_k: int = Field(default=10, ge=1, le=200)
@@ -449,6 +450,53 @@ async def _build_sources(
     return sources
 
 
+def _actor_from_request(body: TwinQueryBody, request: Request) -> str:
+    if body.actor and body.actor.strip():
+        return body.actor.strip()
+    for header in (
+        "x-auth-request-email",
+        "x-forwarded-user",
+        "x-auth-request-user",
+    ):
+        value = request.headers.get(header)
+        if value and value.strip():
+            return value.strip()
+    return "system"
+
+
+async def _record_retrieval_activity(
+    body: TwinQueryBody,
+    request: Request,
+    *,
+    sources_count: int,
+    stream: bool,
+) -> None:
+    """Best-effort Activity write for completed retrieval calls."""
+    try:
+        from .webui_router import _make_event, get_store
+
+        actor = _actor_from_request(body, request)
+        event = _make_event(
+            kind="retrieval",
+            sev="info",
+            actor=actor,
+            target_label=body.query[:120],
+            summary=f"retrieval completed ({body.mode})",
+            meta={
+                "query": body.query,
+                "mode": body.mode,
+                "top_k": body.top_k,
+                "sources_count": sources_count,
+                "stream": stream,
+                "tag_filter": body.tag_filter,
+            },
+            target_type="query",
+        )
+        await get_store().record_activity(event)
+    except Exception:
+        logger.exception("twin_query: failed to record retrieval activity")
+
+
 def build_twin_query_router(get_rag) -> APIRouter:
     """Mount the Twin overlay query endpoint.
 
@@ -463,7 +511,6 @@ def build_twin_query_router(get_rag) -> APIRouter:
     async def query_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
-        del request  # currently unused; kept for future X-Twin-Folder scoping
         try:
             rag = get_rag()
         except RuntimeError as exc:
@@ -489,9 +536,15 @@ def build_twin_query_router(get_rag) -> APIRouter:
         # answer body already carries everything they wanted — skip
         # the source enrichment to avoid a second retrieval round-trip.
         if body.only_need_context or body.only_need_prompt:
+            await _record_retrieval_activity(
+                body, request, sources_count=0, stream=False
+            )
             return {"response": answer, "sources": []}
 
         sources = await _build_sources(rag, body.query, body.top_k)
+        await _record_retrieval_activity(
+            body, request, sources_count=len(sources), stream=False
+        )
         return {"response": answer, "sources": sources}
 
     @router.post("/query/data", response_model=TwinQueryDataResponse)
@@ -571,7 +624,6 @@ def build_twin_query_router(get_rag) -> APIRouter:
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
-        del request  # currently unused; kept for future X-Twin-Folder scoping
         try:
             rag = get_rag()
         except RuntimeError as exc:
@@ -596,10 +648,16 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 return
 
             if body.only_need_context or body.only_need_prompt:
+                await _record_retrieval_activity(
+                    body, request, sources_count=0, stream=True
+                )
                 yield json.dumps({"type": "sources", "value": []}) + "\n"
                 return
 
             sources = await _build_sources(rag, body.query, body.top_k)
+            await _record_retrieval_activity(
+                body, request, sources_count=len(sources), stream=True
+            )
             yield json.dumps({"type": "sources", "value": sources}) + "\n"
 
         return StreamingResponse(

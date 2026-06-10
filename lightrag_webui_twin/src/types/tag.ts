@@ -42,6 +42,7 @@ export interface TagEntry {
   category: string;
   status: TagStatus;
   def: string;
+  long_description?: string;
   aliases: readonly string[];
   deprecates: readonly string[];
   sources_count: number;

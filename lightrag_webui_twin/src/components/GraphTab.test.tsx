@@ -286,6 +286,17 @@ describe('GraphTab — zoom + reset', () => {
     expect(screen.getByTestId('kg-zoom-value').textContent).toBe('100%');
   });
 
+  it('Reset view clears search and type filters', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.type(screen.getByLabelText('Search entities'), 'swift');
+    await userEvent.click(screen.getByTestId('kg-type-PRODUCT'));
+
+    await userEvent.click(screen.getByRole('button', { name: /Reset view/ }));
+
+    expect(screen.getByLabelText('Search entities')).toHaveValue('');
+    expect(screen.getByTestId('kg-type-PRODUCT')).toHaveClass('is-on');
+  });
+
   it('wheel over the canvas zooms the graph and prevents page scroll', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     const canvas = screen.getByTestId('kg-canvas');

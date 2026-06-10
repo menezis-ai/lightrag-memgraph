@@ -124,6 +124,7 @@ class TagEntry(_Base):
         "active", "pending-promotion", "pending-review", "deprecated", "rejected"
     ]
     def_: str = Field(alias="def")
+    long_description: str = ""
     aliases: list[str] = Field(default_factory=list)
     deprecates: list[str] = Field(default_factory=list)
     sources_count: int = 0
@@ -352,7 +353,9 @@ class TagRequestBody(_Base):
 class TagEditBody(_Base):
     """PATCH /tags/{name} — edit a tag in place (palier-3 only)."""
 
+    tag: str | None = None
     def_: str | None = Field(default=None, alias="def")
+    long_description: str | None = None
     category: str | None = None
     aliases: list[str] | None = None
     deprecates: list[str] | None = None
