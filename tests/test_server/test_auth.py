@@ -47,15 +47,16 @@ class TestConfigureAuth:
         with pytest.raises(ValueError, match="changeme"):
             configure_auth(jwt_secret="secret-123")
 
-    def test_jwt_secret_allows_default_password_with_auth_accounts(self):
-        configure_auth(
-            jwt_secret="secret-123",
-            auth_accounts="alice:pass",
-        )
-        from twindb_lightrag_memgraph.server import auth
-
-        assert auth._auth_enabled is True
-        assert auth._auth_accounts == {"alice": "pass"}
+    def test_jwt_secret_rejects_default_password_even_with_auth_accounts(self):
+        """Audit 2026-06-10 H2: prior behaviour skipped the 'changeme'
+        check when AUTH_ACCOUNTS was non-empty. The fix rejects the
+        default unconditionally so the /login endpoint can never be
+        backed by a publicly-known credential."""
+        with pytest.raises(ValueError, match="changeme"):
+            configure_auth(
+                jwt_secret="secret-123",
+                auth_accounts="alice:pass",
+            )
 
 
 class TestAuthAccounts:
@@ -112,10 +113,24 @@ class TestJWT:
 
 
 class TestRequireAuth:
-    async def test_disabled_returns_none(self):
-        configure_auth(api_key=None, jwt_secret=None)
+    async def test_disabled_without_open_access_raises_503(self):
+        """Audit 2026-06-10 H1: when no backend is configured AND the
+        operator did not opt into TWIN_ALLOW_OPEN_ACCESS, require_auth
+        must fail closed instead of silently allowing anonymous."""
+        from fastapi import HTTPException
+
+        configure_auth(api_key=None, jwt_secret=None, allow_open_access=False)
+        with pytest.raises(HTTPException) as exc_info:
+            await require_auth(credentials=None)
+        assert exc_info.value.status_code == 503
+
+    async def test_disabled_with_open_access_returns_marker(self):
+        """When TWIN_ALLOW_OPEN_ACCESS=1 was explicitly acknowledged at
+        boot, require_auth lets anonymous through under a stable
+        identity marker."""
+        configure_auth(api_key=None, jwt_secret=None, allow_open_access=True)
         result = await require_auth(credentials=None)
-        assert result is None
+        assert result == "anonymous-open-access"
 
     async def test_missing_credentials(self):
         from fastapi import HTTPException
@@ -170,7 +185,11 @@ class TestLoginEndpoint:
     async def test_login_success_with_auth_accounts(self):
         from fastapi import Response
 
-        configure_auth(jwt_secret="secret", auth_accounts="alice:pass,bob:word")
+        configure_auth(
+            jwt_secret="secret",
+            jwt_password="non-default-pwd",
+            auth_accounts="alice:pass,bob:word",
+        )
         resp = await login(LoginRequest(username="bob", password="word"), Response())
         payload = _decode_jwt(resp.access_token)
         assert payload["sub"] == "bob"
@@ -178,7 +197,11 @@ class TestLoginEndpoint:
     async def test_login_sets_local_jwt_cookie(self):
         from fastapi import Response
 
-        configure_auth(jwt_secret="secret", auth_accounts="alice:pass")
+        configure_auth(
+            jwt_secret="secret",
+            jwt_password="non-default-pwd",
+            auth_accounts="alice:pass",
+        )
         response = Response()
         await login(LoginRequest(username="alice", password="pass"), response)
         cookie = response.headers["set-cookie"]
@@ -209,7 +232,11 @@ class TestLocalJwtRoutes:
         from httpx import ASGITransport, AsyncClient
         from twindb_lightrag_memgraph.server.auth import auth_router
 
-        configure_auth(jwt_secret="secret", auth_accounts="alice:pass")
+        configure_auth(
+            jwt_secret="secret",
+            jwt_password="non-default-pwd",
+            auth_accounts="alice:pass",
+        )
         app = FastAPI()
         app.include_router(auth_router)
 

@@ -1120,6 +1120,7 @@ def _inject_native_shims(app) -> None:
     non-standard path), routes raise 500 with a clear error message —
     we never silently fall back to a different RAG.
     """
+    from .server.auth import require_auth
     from .server.native_shims import build_health_shim, build_native_shims_router
 
     def _get_rag():
@@ -1132,7 +1133,10 @@ def _inject_native_shims(app) -> None:
             )
         return rag
 
-    shim_router = build_native_shims_router(_get_rag)
+    # Shim routes other than /auth-status, /login, /logout, /health must
+    # require auth — they expose document listing, deletion, and pipeline
+    # state. Audit 2026-06-10 finding C1.
+    shim_router = build_native_shims_router(_get_rag, auth_dependency=require_auth)
     health_router = build_health_shim(_get_rag)
 
     # Prepend each shim route to app.router.routes so they beat LightRAG's
@@ -1396,7 +1400,11 @@ def _mount_twin_subapp(
 
     from fastapi import Depends
 
-    from .server.auth import configure_auth, require_auth
+    from .server.auth import (
+        configure_auth,
+        ensure_auth_backend_configured,
+        require_auth,
+    )
     from .server.idp_jwt import IdpConfig as _IdpConfig, configure_idp
 
     def _arg_value(*names: str):
@@ -1408,12 +1416,27 @@ def _mount_twin_subapp(
                 return value
         return None
 
-    configure_auth(
-        api_key=_arg_value("api_key", "lightrag_api_key")
-        or os.environ.get("LIGHTRAG_API_KEY"),
-        jwt_secret=_arg_value("jwt_secret", "lightrag_jwt_secret")
+    _resolved_api_key = _arg_value("api_key", "lightrag_api_key") or os.environ.get(
+        "LIGHTRAG_API_KEY"
+    )
+    _resolved_jwt_secret = (
+        _arg_value("jwt_secret", "lightrag_jwt_secret")
         or os.environ.get("LIGHTRAG_JWT_SECRET")
-        or os.environ.get("TOKEN_SECRET"),
+        or os.environ.get("TOKEN_SECRET")
+    )
+    _idp_cfg = _IdpConfig.from_env()
+    _allow_open = os.environ.get("TWIN_ALLOW_OPEN_ACCESS") == "1"
+
+    ensure_auth_backend_configured(
+        api_key=_resolved_api_key,
+        jwt_secret=_resolved_jwt_secret,
+        idp_configured=_idp_cfg is not None,
+        allow_open_access=_allow_open,
+    )
+
+    configure_auth(
+        api_key=_resolved_api_key,
+        jwt_secret=_resolved_jwt_secret,
         jwt_algorithm=_arg_value("jwt_algorithm", "lightrag_jwt_algorithm")
         or os.environ.get("LIGHTRAG_JWT_ALGORITHM", "HS256"),
         jwt_expiration_hours=int(
@@ -1426,11 +1449,11 @@ def _mount_twin_subapp(
         jwt_password=_arg_value("jwt_password", "lightrag_jwt_password")
         or os.environ.get("LIGHTRAG_JWT_PASSWORD", "changeme"),
         auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
+        allow_open_access=_allow_open,
     )
 
     # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in
     # the env. Idempotent: dormant when no URL is configured.
-    _idp_cfg = _IdpConfig.from_env()
     configure_idp(_idp_cfg)
 
     # Mock-kill safeguard (mandate Fabrice 2026-06-01 — "je ne veux
