@@ -1129,7 +1129,10 @@ function AppShell() {
                 }));
                 return { response: res.response, sources };
               }}
-              initialThreads={makeSampleThreads()}
+              initialThreads={
+                FIXTURE_FALLBACK_ENABLED ? makeSampleThreads() : []
+              }
+              suggestions={FIXTURE_FALLBACK_ENABLED ? undefined : []}
               onNavigate={onNavigate}
             />
           )}

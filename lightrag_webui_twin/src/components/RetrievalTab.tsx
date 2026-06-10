@@ -42,8 +42,9 @@ import type { ThesaurusEntry } from '../types/thesaurus';
 // Versioned key — bumped to invalidate stale demo seeds when the seeded
 // conversation shape changes (v2: full assistant answer + citations on the
 // first seed thread; v1 had a "To restart RMAN…" stub that made the tab look
-// broken on first paint).
-const THREADS_STORAGE_KEY = 'twin-rag.threads.v2';
+// broken on first paint; v3: invalidates fixture threads persisted by
+// pre-production demo visits on the same origin — prod must boot blank).
+const THREADS_STORAGE_KEY = 'twin-rag.threads.v3';
 const STREAM_TICK_MS = 70;
 
 export interface RetrievalTabProps {
@@ -615,9 +616,9 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">User prompt</label>
+          <label className="field-label">System prompt</label>
           <textarea
-            aria-label="User prompt"
+            aria-label="System prompt"
             value={userPrompt}
             onChange={(e) => setUserPrompt(e.target.value)}
             rows={3}

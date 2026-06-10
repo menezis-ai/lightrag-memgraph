@@ -160,10 +160,10 @@ describe('RetrievalTab — send', () => {
 });
 
 describe('RetrievalTab — localStorage persistence', () => {
-  it('writes to twin-rag.threads.v2 when threads change', async () => {
+  it('writes to twin-rag.threads.v3 when threads change', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     // localStorage should be populated by the initial effect
-    const raw = window.localStorage.getItem('twin-rag.threads.v2');
+    const raw = window.localStorage.getItem('twin-rag.threads.v3');
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw as string);
     expect(parsed).toHaveLength(2);
@@ -171,7 +171,7 @@ describe('RetrievalTab — localStorage persistence', () => {
 
   it('reads from localStorage on init when present', () => {
     window.localStorage.setItem(
-      'twin-rag.threads.v2',
+      'twin-rag.threads.v3',
       JSON.stringify([
         {
           id: 'th_stored',
@@ -249,7 +249,7 @@ describe('RetrievalTab — params panel', () => {
     await userEvent.clear(screen.getByLabelText('History turns'));
     await userEvent.type(screen.getByLabelText('History turns'), '2');
     await userEvent.type(
-      screen.getByLabelText('User prompt'),
+      screen.getByLabelText('System prompt'),
       'prefer operational runbooks',
     );
     await userEvent.type(
