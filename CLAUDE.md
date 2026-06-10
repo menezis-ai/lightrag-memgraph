@@ -241,3 +241,5 @@ If `bunker` is missing: `git remote add bunker http://192.168.1.61:3000/<user>/<
 Stable branches are named `stable/X.Y.x` and protected on the Forgejo remote.
 
 The global directive §7 ("push to all remotes") does **not** apply here — the dual-remote era ended with the GitHub archive. The `origin` remote is left configured for historical pull only.
+
+**Push doctrine (do not project onto the user)**: pushing to `bunker` from this Mac is normal. Do **not** say "tu pushes depuis le LAN" or any equivalent — that framing was a temporary travel-period assumption, obsolete from 2026-06-10. When closing a session with a commit, either push if it was asked / is the natural follow-up, or ask explicitly. Never assume Julien will do it himself. See memory `feedback_codex_brief_push.md` — that rule is scoped to Codex briefs only, not to Claude on this Mac.
