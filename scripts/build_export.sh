@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Build the delivery tarball.
+# Build the delivery zip.
 #
 # Reads .export-ignore at the repo root, runs rsync to a staging
-# directory excluding every listed pattern, then tars the result.
+# directory excluding every listed pattern, then zips the result.
 # The source tree is untouched.
 #
 # Usage:
-#   scripts/build_export.sh             # → ./dist/twin-export-<sha>.tar.gz
-#   OUT=/tmp/twin.tar.gz scripts/build_export.sh   # custom path
+#   scripts/build_export.sh             # → ./dist/twin-export-<sha>.zip
+#   OUT=/tmp/twin.zip scripts/build_export.sh   # custom path
 #
-# The script is intentionally stdlib-only (bash + rsync + tar). No
+# The script is intentionally stdlib-only (bash + rsync + zip). No
 # Python, no npm — restricted transit cannot assume anything.
 
 set -euo pipefail
@@ -24,7 +24,7 @@ if [[ ! -f "${IGNORE_FILE}" ]]; then
 fi
 
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")"
-OUT="${OUT:-${REPO_ROOT}/dist/twin-export-${SHA}.tar.gz}"
+OUT="${OUT:-${REPO_ROOT}/dist/twin-export-${SHA}.zip}"
 STAGING="$(mktemp -d -t twin-export.XXXXXX)"
 trap 'rm -rf "${STAGING}"' EXIT
 
@@ -55,10 +55,11 @@ if grep -rEI "${NAMES_RE}" "${STAGING}/twin/" >/tmp/twin-export-names.log 2>/dev
 fi
 
 echo ">>> packing ${OUT}"
-tar -czf "${OUT}" -C "${STAGING}" twin
+rm -f "${OUT}"
+(cd "${STAGING}" && zip -qr "${OUT}" twin)
 
 SIZE="$(du -h "${OUT}" | cut -f1)"
-COUNT="$(tar -tzf "${OUT}" | wc -l | tr -d ' ')"
+COUNT="$(unzip -l "${OUT}" | tail -1 | awk '{print $2}')"
 echo ""
 echo "OK  ${OUT}"
 echo "    sha=${SHA}  size=${SIZE}  files=${COUNT}"

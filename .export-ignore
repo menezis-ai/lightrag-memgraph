@@ -35,6 +35,7 @@ coverage.xml
 .DS_Store
 build/
 dist/
+exports/
 proto/
 inputs/
 rag_storage/
