@@ -155,6 +155,10 @@ export function TagsTab({
     () => tags.filter((t) => t.tier === 'requested'),
     [tags],
   );
+  const knownCategories = useMemo(
+    () => new Set(categories.map((cat) => cat.id)),
+    [categories],
+  );
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {
@@ -165,14 +169,21 @@ export function TagsTab({
         (t) => t.category === cat.id && t.tier !== 'requested',
       ).length;
     });
+    c.uncategorized = tags.filter(
+      (t) => t.tier !== 'requested' && !knownCategories.has(t.category),
+    ).length;
     return c;
-  }, [tags, categories]);
+  }, [tags, categories, knownCategories]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return tags.filter((t) => {
       if (t.tier === 'requested') return false;
-      if (selectedCat !== 'all' && t.category !== selectedCat) return false;
+      if (selectedCat === 'uncategorized') {
+        if (knownCategories.has(t.category)) return false;
+      } else if (selectedCat !== 'all' && t.category !== selectedCat) {
+        return false;
+      }
       if (selectedStatus !== 'all' && t.status !== selectedStatus) return false;
       if (needle) {
         const hay = (t.tag + ' ' + t.def + ' ' + t.aliases.join(' ')).toLowerCase();
@@ -180,7 +191,7 @@ export function TagsTab({
       }
       return true;
     });
-  }, [tags, q, selectedCat, selectedStatus]);
+  }, [tags, q, selectedCat, selectedStatus, knownCategories]);
 
   const detail = tags.find((t) => t.tag === selectedTag) ?? tags[0] ?? null;
   const canEdit = currentUser.palier >= 3;
@@ -453,6 +464,19 @@ export function TagsTab({
               <span className="rail-count">{counts[c.id] ?? 0}</span>
             </button>
           ))}
+          <button
+            className={'rail-item ' + (selectedCat === 'uncategorized' ? 'is-active' : '')}
+            onClick={() => setSelectedCat('uncategorized')}
+            aria-pressed={selectedCat === 'uncategorized'}
+            data-testid="rail-uncategorized"
+          >
+            <span
+              className="rail-dot"
+              style={{ background: 'var(--color-text-tertiary)' }}
+            />
+            <span className="rail-label">Uncategorized</span>
+            <span className="rail-count">{counts.uncategorized ?? 0}</span>
+          </button>
         </aside>
 
         <main className="tags-grid-wrap">

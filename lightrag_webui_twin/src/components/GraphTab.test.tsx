@@ -345,6 +345,27 @@ describe('GraphTab — lifecycle: Add entity', () => {
     await userEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
     expect(screen.queryByTestId('kg-add-entity-form')).toBeNull();
   });
+
+  it('surfaces create failures instead of leaving Add silent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: 'backend unavailable' }), {
+          status: 500,
+          statusText: 'Server Error',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(screen.getByTestId('kg-add-entity-name'), 'New Entity');
+    await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
+
+    expect(await screen.findByTestId('kg-add-entity-error')).toHaveTextContent(
+      'POST /twin/api/graph/entities',
+    );
+  });
 });
 
 describe('GraphTab — lifecycle: Delete entity', () => {

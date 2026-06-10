@@ -61,6 +61,7 @@ export interface DocumentsTabProps {
   onOpenRetag: (doc: Document) => void;
   onOpenBulkRetag: (docs: readonly Document[]) => void;
   onAddToast: (title: string, sub?: string) => void;
+  onScanRetry?: (failedCount: number) => void;
   /** Delete a single document (cascade), per #149. */
   onDeleteDoc?: (doc: Document) => void;
   /** Bulk delete the selected documents (cascade), per #149. */
@@ -84,6 +85,7 @@ export function DocumentsTab({
   onOpenRetag,
   onOpenBulkRetag,
   onAddToast,
+  onScanRetry,
   onDeleteDoc,
   onBulkDelete,
   nowMs,
@@ -215,7 +217,11 @@ export function DocumentsTab({
           <button
             type="button"
             className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
-            onClick={() =>
+            onClick={() => {
+              if (onScanRetry) {
+                onScanRetry(failedCount);
+                return;
+              }
               onAddToast(
                 failedCount > 0
                   ? `Scan started · retrying ${failedCount} failed source${failedCount > 1 ? 's' : ''}`
@@ -223,8 +229,8 @@ export function DocumentsTab({
                 failedCount > 0
                   ? 'POST /documents/scan?retry=failed · workers picking up now'
                   : 'POST /documents/scan · re-scanning sources for changes',
-              )
-            }
+              );
+            }}
           >
             <Icon name="refresh" size={14} />
             {failedCount > 0 ? 'Scan / Retry' : 'Scan'}

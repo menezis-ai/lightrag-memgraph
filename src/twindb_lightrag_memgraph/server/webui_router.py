@@ -980,7 +980,7 @@ async def bulk_retag_documents(
     import json as _json
 
     from .. import _pool
-    from .._constants import resolve_workspace, validate_identifier
+    from .._constants import resolve_workspace
 
     targets = body.get("targets") or []
     adds = list(body.get("adds") or [])
@@ -1003,9 +1003,11 @@ async def bulk_retag_documents(
             detail="bulk-retag accepts at most 50 tag mutations.",
         )
     for tag in (*adds, *removes):
-        if not isinstance(tag, str):
-            raise HTTPException(status_code=400, detail="tags must be strings.")
-        validate_identifier(tag, "tag")
+        if not isinstance(tag, str) or not tag.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="tags must be non-empty strings.",
+            )
 
     workspace = resolve_workspace()
     folder = current_folder_id()

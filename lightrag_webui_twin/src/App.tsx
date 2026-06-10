@@ -320,6 +320,40 @@ function AppShell() {
   const onAddToast = (title: string, sub?: string) =>
     pushToast({ kind: 'done', title, sub });
 
+  const onScanRetry = (failedCount: number) => {
+    pushToast({
+      kind: 'propagating',
+      title:
+        failedCount > 0
+          ? `Retrying ${failedCount} failed source${failedCount > 1 ? 's' : ''}`
+          : 'Pipeline scan started',
+      sub:
+        failedCount > 0
+          ? 'POST /documents/reprocess_failed'
+          : 'POST /documents/reprocess_failed · no failed source visible',
+    });
+    void (async () => {
+      try {
+        const r = await api.reprocessFailedDocuments();
+        pushToast({
+          kind: 'done',
+          title: failedCount > 0 ? 'Retry queued' : 'Scan completed',
+          sub: r.message ?? `failed_count=${r.failed_count ?? failedCount}`,
+        });
+      } catch (err) {
+        pushToast({
+          kind: 'error',
+          title: 'Scan / Retry failed',
+          sub: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        void queryClient.invalidateQueries({ queryKey: ['documents'] });
+        void queryClient.invalidateQueries({ queryKey: ['pipeline_status'] });
+        void queryClient.invalidateQueries({ queryKey: ['activity'] });
+      }
+    })();
+  };
+
   const bulkRetagDocs = useBulkRetagDocuments();
 
   const onRetagSubmit = async (action: RetagAction) => {
@@ -996,6 +1030,7 @@ function AppShell() {
               onAddToast={onAddToast}
               onDeleteDoc={(d) => setDetailDoc(d)}
               onBulkDelete={onDeleteBulk}
+              onScanRetry={onScanRetry}
             />
           )}
           {tab === 'settings' && (

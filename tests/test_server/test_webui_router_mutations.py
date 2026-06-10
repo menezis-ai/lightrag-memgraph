@@ -9,6 +9,7 @@ Each mutation must:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 
 import pytest
@@ -62,6 +63,95 @@ async def _get_activity(client: AsyncClient) -> list[dict]:
 async def _get_notifications(client: AsyncClient) -> list[dict]:
     r = await client.get("/notifications")
     return r.json()
+
+
+class _FakeResult:
+    def __init__(self, rows: list[dict]):
+        self._rows = iter(rows)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._rows)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def consume(self) -> None:
+        return None
+
+
+class _FakeReadSession:
+    def __init__(self):
+        self.calls = 0
+
+    async def run(self, _query: str, **_params):
+        self.calls += 1
+        if self.calls == 1:
+            return _FakeResult(
+                [{"id": "doc-hyphen", "file_path": "hyphen-source.pdf"}],
+            )
+        return _FakeResult(
+            [{"docId": "doc-hyphen", "tags": ["rmf-validated"]}],
+        )
+
+
+class _FakeTx:
+    async def run(self, _query: str, **_params):
+        return _FakeResult([])
+
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+
+class _FakeWriteSession:
+    async def begin_transaction(self):
+        return _FakeTx()
+
+
+# ---------------------------------------------------------------------------
+# POST /documents/_bulk-retag
+# ---------------------------------------------------------------------------
+
+
+class TestBulkRetag:
+    async def test_accepts_hyphenated_tag_ids(self, monkeypatch, client):
+        from twindb_lightrag_memgraph import _pool
+
+        read_session = _FakeReadSession()
+
+        @asynccontextmanager
+        async def fake_read_session():
+            yield read_session
+
+        @asynccontextmanager
+        async def fake_write_session():
+            yield _FakeWriteSession()
+
+        @asynccontextmanager
+        async def fake_write_slot():
+            yield None
+
+        monkeypatch.setattr(_pool, "get_read_session", fake_read_session)
+        monkeypatch.setattr(_pool, "get_session", fake_write_session)
+        monkeypatch.setattr(_pool, "acquire_write_slot", fake_write_slot)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-hyphen"],
+                "adds": ["rmf-validated"],
+                "removes": [],
+                "actor": "claire.benoit",
+            },
+        )
+
+        assert r.status_code == 200
+        assert r.json() == {"updated": 1, "failed": []}
 
 
 # ---------------------------------------------------------------------------

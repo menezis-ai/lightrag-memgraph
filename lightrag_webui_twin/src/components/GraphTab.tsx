@@ -85,6 +85,7 @@ export function GraphTab({
   const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
   const [docFilter, setDocFilter] = useUrlArrayParam('gdoc', []);
   const [addOpen, setAddOpen] = useState(false);
+  const [addEntityError, setAddEntityError] = useState<string | null>(null);
   const createEntity = useCreateGraphEntity();
 
   const allTags = useMemo(() => {
@@ -302,7 +303,10 @@ export function GraphTab({
           </div>
           <button
             className="ghost-btn primary"
-            onClick={() => setAddOpen(true)}
+            onClick={() => {
+              setAddEntityError(null);
+              setAddOpen(true);
+            }}
             type="button"
             data-testid="kg-add-entity-btn"
           >
@@ -319,12 +323,24 @@ export function GraphTab({
           colors={colors}
           existingNames={entities.map((e) => e.name)}
           pending={createEntity.isPending}
-          onCancel={() => setAddOpen(false)}
+          error={addEntityError}
+          onCancel={() => {
+            setAddEntityError(null);
+            setAddOpen(false);
+          }}
           onSubmit={(payload) => {
+            setAddEntityError(null);
             createEntity.mutate(payload, {
               onSuccess: (created) => {
                 setAddOpen(false);
                 setSelectedId(created.id);
+              },
+              onError: (error) => {
+                setAddEntityError(
+                  error instanceof Error
+                    ? error.message
+                    : 'Entity creation failed.',
+                );
               },
             });
           }}
@@ -1793,6 +1809,7 @@ interface AddEntityFormProps {
   colors: Record<GraphEntityType, string>;
   existingNames: readonly string[];
   pending: boolean;
+  error?: string | null;
   onCancel: () => void;
   onSubmit: (payload: {
     name: string;
@@ -1805,6 +1822,7 @@ function AddEntityForm({
   colors,
   existingNames,
   pending,
+  error,
   onCancel,
   onSubmit,
 }: AddEntityFormProps) {
@@ -1919,6 +1937,15 @@ function AddEntityForm({
           data-testid="kg-add-entity-duplicate"
         >
           An entity named “{trimmed}” already exists.
+        </div>
+      )}
+      {error && (
+        <div
+          role="alert"
+          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          data-testid="kg-add-entity-error"
+        >
+          {error}
         </div>
       )}
     </form>

@@ -122,6 +122,27 @@ describe('TagsTab — filters', () => {
     expect(screen.getByTestId('tag-card-swift')).toBeInTheDocument();
   });
 
+  it('uncategorized rail shows active tags outside known categories', async () => {
+    const props = defaultProps();
+    render(
+      <TagsTab
+        {...props}
+        tags={[
+          ...props.tags,
+          {
+            ...props.tags[0],
+            tag: 'orphan-tag',
+            category: 'legacy-domain',
+            def: 'Imported without a mapped domain',
+          },
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByTestId('rail-uncategorized'));
+    expect(screen.getByTestId('tag-card-orphan-tag')).toBeInTheDocument();
+    expect(screen.queryByTestId('tag-card-rman')).toBeNull();
+  });
+
   it('search filter narrows by tag name + def + aliases', async () => {
     render(<TagsTab {...defaultProps()} />);
     await userEvent.type(screen.getByLabelText('Search tags'), 'rman');

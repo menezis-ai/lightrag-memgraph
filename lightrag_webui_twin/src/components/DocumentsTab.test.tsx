@@ -179,6 +179,14 @@ describe('DocumentsTab — header actions', () => {
     expect(p.onOpenAdd).toHaveBeenCalled();
   });
 
+  it('Scan / Retry invokes the retry callback with failed count', async () => {
+    const p = { ...defaultProps(), onScanRetry: vi.fn() };
+    render(<DocumentsTab {...p} />);
+    await userEvent.click(screen.getByRole('button', { name: /Scan \/ Retry/ }));
+    expect(p.onScanRetry).toHaveBeenCalledWith(1);
+    expect(p.onAddToast).not.toHaveBeenCalled();
+  });
+
   it('row Retag button calls onOpenRetag with the doc', async () => {
     const p = defaultProps();
     render(<DocumentsTab {...p} />);
