@@ -4,17 +4,26 @@ Remaining work after the as-built state captured in [WEBUI-WIRING-WIRED.md](WEBU
 
 ## Priority 1 — Real MyAccess / IdP JWT enforcement
 
-PO-gated by Louis HORVAT (RBAC sign-off pending).
+**Status 2026-06-10**: code mechanic landed (palier 1 dormant + palier 2 active), JWKS wiring still pending Louis HORVAT (RBAC sign-off pending).
 
-- Implement real MyAccess / IdP JWT enforcement before production exposure.
-- Validate parent-KB access from IdP claims before returning spaces or data.
-- Keep member management out of the WebUI; consume claims, do not reinvent IAM.
-- Do not add steward-managed API-key distribution — BNP production target is OAuth2 / IdP-backed auth or mTLS, not user-issued API keys.
-- Tests to add:
-  - missing cookie/token → 401;
-  - expired token → 401;
-  - invalid signature → 401;
-  - valid user allowed on parent KB gets configured spaces.
+The two-tier posture flips on a single env var (`TWIN_IDP_JWKS_URL`):
+
+- **Palier 1 — dormant**: `require_auth` refuses anonymous at boot (`ensure_auth_backend_configured` raises unless `LIGHTRAG_API_KEY` / `LIGHTRAG_JWT_SECRET` / `TWIN_IDP_JWKS_URL` / `TWIN_ALLOW_OPEN_ACCESS=1` is set). `require_admin_user` returns a placeholder with `idp_validated=False`. `resolve_folder_for_request` reproduces pure header+catalog binding.
+- **Palier 2 — active (auto, when `TWIN_IDP_JWKS_URL` is set)**: scope `admin:folders` enforced on folder CRUD. Folder header bound to the user's `twin_folders` claim (fallback default folder when the claim is empty, for the MyAccess rollout window).
+
+What's done:
+
+- ✅ Missing cookie/token → 401 (`require_idp_user` + boot fail-closed)
+- ✅ Expired token → 401 (existing `test_idp_jwt.py`)
+- ✅ Invalid signature → 401 (existing `test_idp_jwt.py`)
+- ✅ Valid user allowed on parent KB gets configured folders (`tests/test_server/test_folder_idp_binding.py`)
+- ✅ Refusal of `changeme` (audit 2026-06-10 H2) — unconditional, even with `AUTH_ACCOUNTS` non-empty.
+- ✅ No steward-managed API-key distribution.
+
+What's left for BNP:
+
+- Wire `TWIN_IDP_JWKS_URL` to the real MyAccess JWKS endpoint (Louis HORVAT).
+- Integration test against a real Keycloak/MyAccess (vs PyJWK mock) — ops/deployment, not code.
 
 ## Priority 2 — Deployment smoke on OVH `twin-real`
 
@@ -22,7 +31,7 @@ PO-gated by Louis HORVAT (RBAC sign-off pending).
 - Smoke checklist post-deploy:
   - `/webui/` substitution worked (`__TWIN_CONFIG_JSON__` absent from served HTML).
   - `apiBaseUrl` resolves to `/twin/api`.
-  - `/twin/api/spaces` returns the env-injected catalog.
+  - `/twin/api/folders` returns the env-injected catalog.
   - `/twin/api/graph/entities` returns real Memgraph data.
 - Document the runbook commands in `docs/operations/install-runbook.md`.
 

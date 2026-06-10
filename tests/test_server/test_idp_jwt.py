@@ -566,17 +566,23 @@ def _build_admin_app() -> FastAPI:
 
 
 class TestRequireAdminUser:
-    async def test_dormant_returns_none_no_403(self):
+    async def test_dormant_returns_placeholder_user(self):
+        """Audit 2026-06-10 H4 palier 1: dormant IdP returns a
+        placeholder dict tagged ``idp_validated=False`` rather than
+        ``None``. The route-level ``require_auth`` dep is what gates
+        anonymous in this posture; ``require_admin_user`` just signals
+        "authenticated, no RBAC yet". Critical for dev / OVH
+        standalone / maquette compat until MyAccess is wired."""
         idp_jwt.configure_idp(None)
         app = _build_admin_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
             r = await c.get("/admin/ping")
-        # Dormant IdP → dep returns None, route lets it through.
-        # Critical for dev / OVH standalone / maquette compat.
         assert r.status_code == 200
-        assert r.json() == {"user": None}
+        body = r.json()
+        assert body["user"]["idp_validated"] is False
+        assert body["user"]["gateway_scopes"] == []
 
     async def test_active_idp_missing_token_401(self, fake_jwks):
         cfg = _config_for(fake_jwks)
@@ -788,6 +794,57 @@ class TestRequireAuthIntegration:
             r = await c.get("/who")
         assert r.status_code == 200
         assert r.json()["identity"] == "api_key"
+
+
+class TestAuthStatusIntegration:
+    async def test_idp_only_missing_token_reports_login_required(self, fake_jwks):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        from twindb_lightrag_memgraph.server.auth import (
+            auth_router,
+            configure_auth,
+        )
+
+        configure_auth()  # no api key, no jwt secret
+        app = FastAPI()
+        app.include_router(auth_router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            r = await c.get("/auth-status")
+        assert r.status_code == 200
+        assert r.json()["auth_enabled"] is True
+        assert r.json()["authenticated"] is False
+        assert r.json()["login_required"] is True
+
+    async def test_idp_only_valid_cookie_reports_authenticated(
+        self, rsa_keypair, fake_jwks
+    ):
+        cfg = _config_for(fake_jwks)
+        _activate(cfg, fake_jwks)
+        from twindb_lightrag_memgraph.server.auth import (
+            auth_router,
+            configure_auth,
+        )
+
+        configure_auth()  # no api key, no jwt secret
+        token = _make_token(rsa_keypair)
+        app = FastAPI()
+        app.include_router(auth_router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={"twin_idp_token": token},
+        ) as c:
+            r = await c.get("/auth-status")
+        assert r.status_code == 200
+        assert r.json()["auth_enabled"] is True
+        assert r.json()["authenticated"] is True
+        assert r.json()["login_required"] is False
+        assert r.json()["user"] == "user-42"
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ native routes in the FastAPI router list.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -237,14 +237,28 @@ def _doc_matches_folder(doc_status: Any, folder: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def build_native_shims_router(get_rag) -> APIRouter:
+def build_native_shims_router(
+    get_rag,
+    *,
+    auth_dependency: Callable | None = None,
+) -> APIRouter:
     """Build the shim APIRouter.
 
     Args:
         get_rag: zero-arg callable returning the host ``LightRAG`` instance.
             Late binding lets us register the router before the host's
             lifespan has finished instantiating the RAG.
+        auth_dependency: FastAPI dependency callable applied to every
+            shim route EXCEPT the public auth handshake
+            (``/auth-status``, ``/login``, ``/logout``) which must stay
+            reachable so unauthenticated callers can log in. Pass
+            ``server.auth.require_auth`` in production. ``None`` leaves
+            the routes public — only acceptable in test setups that
+            explicitly assert the unprotected shape.
     """
+    protected_deps: list = []
+    if auth_dependency is not None:
+        protected_deps = [Depends(auth_dependency)]
     router = APIRouter(tags=["twin-shim"])
 
     @router.get("/auth-status", response_model=_AuthStatusResponse)
@@ -285,7 +299,11 @@ def build_native_shims_router(get_rag) -> APIRouter:
 
         return await logout(response)
 
-    @router.get("/documents", response_model=_ListEnvelope)
+    @router.get(
+        "/documents",
+        response_model=_ListEnvelope,
+        dependencies=protected_deps,
+    )
     async def list_documents(
         request: Request,
         status: str | None = Query(default=None),
@@ -308,10 +326,10 @@ def build_native_shims_router(get_rag) -> APIRouter:
         import dataclasses
 
         from lightrag.base import DocStatus
-        from .folder import resolve_folder_from_headers
+        from .folder import resolve_folder_for_request
 
         rag = get_rag()
-        folder = resolve_folder_from_headers(request.headers)
+        folder = resolve_folder_for_request(request)
         page = int(cursor) if (cursor and cursor.isdigit()) else 1
         page_size = 50
 
@@ -353,6 +371,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
     @router.get(
         "/documents/{doc_id}/chunks",
         response_model=list[_DocumentChunk],
+        dependencies=protected_deps,
     )
     async def list_document_chunks(
         request: Request,
@@ -366,10 +385,10 @@ def build_native_shims_router(get_rag) -> APIRouter:
         non-standard ``get_all()`` and keeps the query O(chunks per doc)
         instead of O(total chunks in the workspace).
         """
-        from .folder import resolve_folder_from_headers
+        from .folder import resolve_folder_for_request
 
         rag = get_rag()
-        folder = resolve_folder_from_headers(request.headers)
+        folder = resolve_folder_for_request(request)
         doc_status = await rag.doc_status.get_by_id(doc_id)
         if doc_status is None:
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
@@ -406,6 +425,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
         "/documents/{doc_id}/scan",
         response_model=_OkResponse,
         status_code=202,
+        dependencies=protected_deps,
     )
     async def scan_document(doc_id: str) -> _OkResponse:
         """Per-doc re-scan stub.
@@ -418,7 +438,11 @@ def build_native_shims_router(get_rag) -> APIRouter:
         logger.info("twindb shim: per-doc scan ack for doc_id=%s (no-op)", doc_id)
         return _OkResponse()
 
-    @router.delete("/documents/{doc_id}", response_model=_OkResponse)
+    @router.delete(
+        "/documents/{doc_id}",
+        response_model=_OkResponse,
+        dependencies=protected_deps,
+    )
     async def delete_document(
         request: Request,
         doc_id: str,
@@ -429,10 +453,10 @@ def build_native_shims_router(get_rag) -> APIRouter:
         directly (the HTTP route ``DELETE /documents/delete_document``
         wraps it). We bypass the HTTP and call the method.
         """
-        from .folder import resolve_folder_from_headers
+        from .folder import resolve_folder_for_request
 
         rag = get_rag()
-        folder = resolve_folder_from_headers(request.headers)
+        folder = resolve_folder_for_request(request)
         doc_status = await rag.doc_status.get_by_id(doc_id)
         if doc_status is None or not _doc_matches_folder(doc_status, folder):
             raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
@@ -443,7 +467,11 @@ def build_native_shims_router(get_rag) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(exc))
         return _OkResponse()
 
-    @router.get("/pipeline_status", response_model=_SimplePipelineStatus)
+    @router.get(
+        "/pipeline_status",
+        response_model=_SimplePipelineStatus,
+        dependencies=protected_deps,
+    )
     async def pipeline_status() -> _SimplePipelineStatus:
         """Root-level alias of ``/documents/pipeline_status`` with projection.
 
@@ -469,7 +497,7 @@ def build_native_shims_router(get_rag) -> APIRouter:
             latest_message=data.get("latest_message") or None,
         )
 
-    @router.get("/openapi")
+    @router.get("/openapi", dependencies=protected_deps)
     async def webui_openapi() -> dict[str, Any]:
         """Twin-specific OpenAPI tour, not the full FastAPI spec.
 

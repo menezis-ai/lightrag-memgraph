@@ -118,10 +118,12 @@ async def client(monkeypatch, tmp_path, fake_jwks):
     folder_store.reset_runtime_store()
     webui_router.reset_store()
 
-    # Active IdP with default admin_groups (twin-admin + twin-steward).
-    _activate_idp(fake_jwks, admin_groups=frozenset({"twin-admin", "twin-steward"}))
-
+    # ``create_app`` now also wires the IdP from env (audit 2026-06-10 H1).
+    # Build the app first so ``configure_idp(None)`` doesn't clobber the
+    # JWKS cache we are about to install, then activate the test IdP with
+    # the mocked fetcher.
     app = create_app()
+    _activate_idp(fake_jwks, admin_groups=frozenset({"twin-admin", "twin-steward"}))
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
@@ -302,9 +304,10 @@ class TestCustomAdminGroupsEnv:
         )
         folder_store.reset_runtime_store()
         webui_router.reset_store()
-        # Custom admin set: ONLY bnp.kb-admin grants admin:folders.
-        _activate_idp(fake_jwks, admin_groups=frozenset({"bnp.kb-admin"}))
+        # ``create_app`` calls ``configure_idp(None)`` (audit 2026-06-10
+        # H1). Build the app first, then activate the custom IdP after.
         app = create_app()
+        _activate_idp(fake_jwks, admin_groups=frozenset({"bnp.kb-admin"}))
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:

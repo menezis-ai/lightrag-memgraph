@@ -31,7 +31,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from lightrag import LightRAG
 from pydantic import BaseModel
 
-from .auth import auth_router, configure_auth, require_auth
+from .auth import (
+    auth_router,
+    configure_auth,
+    ensure_auth_backend_configured,
+    require_auth,
+)
 from .chunk_routes import create_chunk_routes, router as chunk_router
 from .settings import LightRAGServerSettings, get_settings
 from .tracing import apply_lang_with_tracing, extract_trace_parent
@@ -235,9 +240,20 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     )
 
     # -- Auth --
+    from .idp_jwt import IdpConfig as _IdpConfig, configure_idp
+
+    _idp_cfg = _IdpConfig.from_env()
+    _allow_open = os.environ.get("TWIN_ALLOW_OPEN_ACCESS") == "1"
+    _resolved_jwt_secret = settings.jwt_secret or os.environ.get("TOKEN_SECRET")
+    ensure_auth_backend_configured(
+        api_key=settings.api_key,
+        jwt_secret=_resolved_jwt_secret,
+        idp_configured=_idp_cfg is not None,
+        allow_open_access=_allow_open,
+    )
     configure_auth(
         api_key=settings.api_key,
-        jwt_secret=settings.jwt_secret or os.environ.get("TOKEN_SECRET"),
+        jwt_secret=_resolved_jwt_secret,
         jwt_algorithm=settings.jwt_algorithm,
         jwt_expiration_hours=int(
             os.environ.get("TOKEN_EXPIRE_HOURS")
@@ -246,7 +262,9 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         jwt_username=settings.jwt_username,
         jwt_password=settings.jwt_password,
         auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
+        allow_open_access=_allow_open,
     )
+    configure_idp(_idp_cfg)
     app.include_router(auth_router)
 
     # -- Core routes (auth-protected) --
