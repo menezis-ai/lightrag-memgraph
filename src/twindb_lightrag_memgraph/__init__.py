@@ -1400,11 +1400,7 @@ def _mount_twin_subapp(
 
     from fastapi import Depends
 
-    from .server.auth import (
-        configure_auth,
-        ensure_auth_backend_configured,
-        require_auth,
-    )
+    from .server.auth import configure_auth, require_auth
     from .server.idp_jwt import IdpConfig as _IdpConfig, configure_idp
 
     def _arg_value(*names: str):
@@ -1425,14 +1421,6 @@ def _mount_twin_subapp(
         or os.environ.get("TOKEN_SECRET")
     )
     _idp_cfg = _IdpConfig.from_env()
-    _allow_open = os.environ.get("TWIN_ALLOW_OPEN_ACCESS") == "1"
-
-    ensure_auth_backend_configured(
-        api_key=_resolved_api_key,
-        jwt_secret=_resolved_jwt_secret,
-        idp_configured=_idp_cfg is not None,
-        allow_open_access=_allow_open,
-    )
 
     configure_auth(
         api_key=_resolved_api_key,
@@ -1449,7 +1437,6 @@ def _mount_twin_subapp(
         jwt_password=_arg_value("jwt_password", "lightrag_jwt_password")
         or os.environ.get("LIGHTRAG_JWT_PASSWORD", "changeme"),
         auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
-        allow_open_access=_allow_open,
     )
 
     # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in

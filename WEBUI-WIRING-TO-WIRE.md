@@ -17,7 +17,7 @@ What's done:
 - ✅ Expired token → 401 (existing `test_idp_jwt.py`)
 - ✅ Invalid signature → 401 (existing `test_idp_jwt.py`)
 - ✅ Valid user allowed on parent KB gets configured folders (`tests/test_server/test_folder_idp_binding.py`)
-- ✅ Refusal of `changeme` (audit 2026-06-10 H2) — unconditional, even with `AUTH_ACCOUNTS` non-empty.
+- ✅ `changeme` default → loud `SECURITY:` warning (relaxed from unconditional refusal same day — LightRAG-parity product decision after the BNP crash-loop; warning becomes irrelevant once the IdP is wired).
 - ✅ No steward-managed API-key distribution.
 
 What's left for BNP:

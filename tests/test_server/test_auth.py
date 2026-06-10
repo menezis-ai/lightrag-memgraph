@@ -43,20 +43,28 @@ class TestConfigureAuth:
 
         assert auth._auth_enabled is True
 
-    def test_jwt_secret_rejects_default_password(self):
-        with pytest.raises(ValueError, match="changeme"):
-            configure_auth(jwt_secret="secret-123")
+    def test_jwt_secret_accepts_default_password_with_warning(self, caplog):
+        """LightRAG parity (2026-06-10): 'changeme' is tolerated with a
+        SECURITY warning — a raise here crash-looped BNP deployments
+        whose env doesn't carry LIGHTRAG_JWT_PASSWORD."""
+        import logging
 
-    def test_jwt_secret_rejects_default_password_even_with_auth_accounts(self):
-        """Audit 2026-06-10 H2: prior behaviour skipped the 'changeme'
-        check when AUTH_ACCOUNTS was non-empty. The fix rejects the
-        default unconditionally so the /login endpoint can never be
-        backed by a publicly-known credential."""
-        with pytest.raises(ValueError, match="changeme"):
-            configure_auth(
-                jwt_secret="secret-123",
-                auth_accounts="alice:pass",
-            )
+        caplog.set_level(logging.WARNING)
+        configure_auth(jwt_secret="secret-123")
+        from twindb_lightrag_memgraph.server import auth
+
+        assert auth._auth_enabled is True
+        assert any("SECURITY" in r.getMessage() for r in caplog.records)
+
+    def test_jwt_secret_allows_default_password_with_auth_accounts(self):
+        configure_auth(
+            jwt_secret="secret-123",
+            auth_accounts="alice:pass",
+        )
+        from twindb_lightrag_memgraph.server import auth
+
+        assert auth._auth_enabled is True
+        assert auth._auth_accounts == {"alice": "pass"}
 
 
 class TestAuthAccounts:
@@ -113,24 +121,12 @@ class TestJWT:
 
 
 class TestRequireAuth:
-    async def test_disabled_without_open_access_raises_503(self):
-        """Audit 2026-06-10 H1: when no backend is configured AND the
-        operator did not opt into TWIN_ALLOW_OPEN_ACCESS, require_auth
-        must fail closed instead of silently allowing anonymous."""
-        from fastapi import HTTPException
-
-        configure_auth(api_key=None, jwt_secret=None, allow_open_access=False)
-        with pytest.raises(HTTPException) as exc_info:
-            await require_auth(credentials=None)
-        assert exc_info.value.status_code == 503
-
-    async def test_disabled_with_open_access_returns_marker(self):
-        """When TWIN_ALLOW_OPEN_ACCESS=1 was explicitly acknowledged at
-        boot, require_auth lets anonymous through under a stable
-        identity marker."""
-        configure_auth(api_key=None, jwt_secret=None, allow_open_access=True)
+    async def test_disabled_returns_none(self):
+        """LightRAG parity (2026-06-10): no backend configured → open
+        access, require_auth returns None (v1.0.x behaviour)."""
+        configure_auth(api_key=None, jwt_secret=None)
         result = await require_auth(credentials=None)
-        assert result == "anonymous-open-access"
+        assert result is None
 
     async def test_missing_credentials(self):
         from fastapi import HTTPException

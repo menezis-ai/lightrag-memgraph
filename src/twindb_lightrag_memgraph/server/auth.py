@@ -42,11 +42,6 @@ _jwt_password: str = DEFAULT_JWT_PASSWORD
 _auth_accounts: dict[str, str] = {}
 _auth_enabled: bool = False
 _local_jwt_cookie_name = "twin_local_token"
-# When True, require_auth lets anonymous requests through with the
-# identity ``anonymous-open-access``. Set by configure_auth(allow_open_access=)
-# which itself honours TWIN_ALLOW_OPEN_ACCESS=1. Boot-time check in
-# ensure_auth_backend_configured() raises RuntimeError otherwise.
-_open_access_allowed: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -103,12 +98,18 @@ def configure_auth(
     jwt_password: str = DEFAULT_JWT_PASSWORD,
     auth_accounts: str | dict[str, str] | None = None,
     local_jwt_cookie_name: str = "twin_local_token",
-    allow_open_access: bool = False,
 ) -> None:
-    """Configure auth parameters.  Called once at startup."""
+    """Configure auth parameters.  Called once at startup.
+
+    LightRAG-parity posture (product decision 2026-06-10): insecure
+    defaults are tolerated with a loud warning, never a boot failure.
+    LightRAG native boots open when nothing is configured; Twin does
+    the same so a drop-in deployment can't crash-loop on a missing
+    env var.
+    """
     global _static_api_key, _jwt_secret, _jwt_algorithm
     global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_accounts
-    global _auth_enabled, _local_jwt_cookie_name, _open_access_allowed
+    global _auth_enabled, _local_jwt_cookie_name
 
     accounts = (
         dict(auth_accounts)
@@ -117,18 +118,20 @@ def configure_auth(
     )
 
     if jwt_secret:
-        if jwt_password == DEFAULT_JWT_PASSWORD:
-            raise ValueError(
-                "LIGHTRAG_JWT_SECRET enables /login, but LIGHTRAG_JWT_PASSWORD "
-                "is still the insecure default 'changeme'"
+        if not accounts and jwt_password == DEFAULT_JWT_PASSWORD:
+            logger.warning(
+                "SECURITY: /login is enabled with the default password "
+                "'changeme' (set LIGHTRAG_JWT_PASSWORD or AUTH_ACCOUNTS "
+                "before exposing this server)"
             )
         offenders = sorted(
             user for user, pwd in accounts.items() if pwd == DEFAULT_JWT_PASSWORD
         )
         if offenders:
-            raise ValueError(
-                "AUTH_ACCOUNTS contains the insecure default password "
-                f"'changeme' for: {', '.join(offenders)}"
+            logger.warning(
+                "SECURITY: AUTH_ACCOUNTS uses the default password "
+                "'changeme' for: %s",
+                ", ".join(offenders),
             )
 
     _static_api_key = api_key
@@ -140,16 +143,12 @@ def configure_auth(
     _auth_accounts = accounts
     _local_jwt_cookie_name = local_jwt_cookie_name
     _auth_enabled = bool(api_key or jwt_secret)
-    _open_access_allowed = bool(allow_open_access)
 
     if not _auth_enabled:
-        if _open_access_allowed:
-            logger.warning(
-                "TWIN_ALLOW_OPEN_ACCESS=1 -- server accepting anonymous "
-                "requests (NEVER use in production)"
-            )
-        else:
-            logger.warning("No API_KEY or JWT_SECRET configured -- auth DISABLED")
+        logger.warning(
+            "No API_KEY or JWT_SECRET configured -- auth DISABLED "
+            "(open access, LightRAG-parity default)"
+        )
     else:
         modes = []
         if api_key:
@@ -259,18 +258,11 @@ async def require_auth(
             # require_idp_user raises on missing/invalid token. If it
             # returns, the request is authenticated against the IdP.
             return "idp_user"
-        if _open_access_allowed:
-            return "anonymous-open-access"
-        # No auth backend configured AND no explicit open-access opt-in:
-        # boot should have already raised, but if a test setup or hot
-        # reconfigure bypassed it, fail closed here too (defense in depth).
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Server has no auth backend configured. Set LIGHTRAG_API_KEY, "
-                "LIGHTRAG_JWT_SECRET, or TWIN_IDP_JWKS_URL."
-            ),
-        )
+        # No auth backend configured at all: open access, preserving
+        # the v1.0.x storage-only behaviour and LightRAG-native parity
+        # (product decision 2026-06-10). When the IdP is configured,
+        # the branch above fails closed instead.
+        return None
 
     if credentials is None and _jwt_secret and request is not None:
         cookie_token = request.cookies.get(_local_jwt_cookie_name)
@@ -426,40 +418,3 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
 async def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(_local_jwt_cookie_name, path="/")
     return {"ok": True}
-
-
-def ensure_auth_backend_configured(
-    *,
-    api_key: str | None,
-    jwt_secret: str | None,
-    idp_configured: bool,
-    allow_open_access: bool,
-) -> None:
-    """Raise RuntimeError when no auth backend is configured.
-
-    Called at boot from both the standalone app factory (``server/app.py``)
-    and the plugin entry point (``__init__.py:_mount_twin_subapp``).
-    LightRAG natively boots wide open when no backend is set; Twin
-    refuses that posture by default.
-
-    Args:
-        api_key: Static API key (LIGHTRAG_API_KEY).
-        jwt_secret: Local JWT secret (LIGHTRAG_JWT_SECRET / TOKEN_SECRET).
-        idp_configured: True when ``TWIN_IDP_JWKS_URL`` is set
-            (``IdpConfig.from_env() is not None``).
-        allow_open_access: When True (TWIN_ALLOW_OPEN_ACCESS=1), log a
-            loud warning and let the server boot. Use only in dev/CI.
-    """
-    if api_key or jwt_secret or idp_configured:
-        return
-    if allow_open_access:
-        logger.warning(
-            "Boot: no auth backend configured but TWIN_ALLOW_OPEN_ACCESS=1 "
-            "-- server starting WIDE OPEN (dev/CI only)"
-        )
-        return
-    raise RuntimeError(
-        "Refusing to start: no auth backend configured. Set one of "
-        "LIGHTRAG_API_KEY, LIGHTRAG_JWT_SECRET, or TWIN_IDP_JWKS_URL. "
-        "Dev escape (NEVER in prod): TWIN_ALLOW_OPEN_ACCESS=1."
-    )

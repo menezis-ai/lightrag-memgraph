@@ -199,15 +199,15 @@ Two non-negotiable rules — both reflect product-level constraints (graph centr
 - **[`docs/test-doctrine-graph.md`](docs/test-doctrine-graph.md)** — Graph = contract, not screen. Four sensitive axes (front cache, seed fallback, folder binding, `source_docs`). Every PR touching `graph_reader.py` / `GraphTab` / `chunks_vdb` / graph cache keys must add an end-to-end contract test (Cypher → API → cache → UI invalidation). Screenshots and Cypher-only unit tests do not count.
 - **[`docs/test-doctrine-lightrag-compat.md`](docs/test-doctrine-lightrag-compat.md)** — Every Twin extension must ship a test proving the LightRAG-native path behaves identically when the extension is absent or its feature flag is off. The CI matrix is the coarse net; per-extension regression tests are the fine net. New Twin extension without a compat test → reject before review.
 
-## Auth posture (audit 2026-06-10 P0 hardening)
+## Auth posture (audit 2026-06-10, relaxed to LightRAG parity same day)
 
-LightRAG natively boots wide open when no auth backend is configured. Twin refuses that posture. The hardening lives in three layers — all gated on a single env switch (`TWIN_IDP_JWKS_URL`) for the eventual MyAccess wiring.
+**History matters**: the morning P0 hardening (H1 boot refusal + H2 `changeme` `ValueError`) crash-looped the BNP deployment — their env carries `TOKEN_SECRET` but no `LIGHTRAG_JWT_PASSWORD`, so the default "changeme" raised at app creation → pod crash-loop → nginx 503. Product decision the same afternoon: **credential defaults align on LightRAG native** (warn loudly, never refuse to boot). The strict RBAC posture activates ONLY via the IdP env switch (`TWIN_IDP_JWKS_URL`).
 
-**Boot-time check (H1)** — `server/auth.py:ensure_auth_backend_configured` raises `RuntimeError` at startup unless one of `LIGHTRAG_API_KEY`, `LIGHTRAG_JWT_SECRET`/`TOKEN_SECRET`, or `TWIN_IDP_JWKS_URL` is set. Dev/CI escape: `TWIN_ALLOW_OPEN_ACCESS=1` (logs a loud warning, lets boot pass). Called from both `server/app.py:create_app` and `__init__.py:_mount_twin_subapp`.
+**Boot (H1, relaxed)** — no boot-time auth check. When neither `LIGHTRAG_API_KEY` nor `LIGHTRAG_JWT_SECRET`/`TOKEN_SECRET` is set, `require_auth` returns `None` (anonymous allowed, v1.0.x behaviour) and `configure_auth` logs `auth DISABLED`. Identical to LightRAG native. Do NOT reintroduce a boot raise on missing auth env — that's the exact regression that broke BNP on 2026-06-10.
 
-**`changeme` refusal (H2)** — when local JWT login is enabled (`LIGHTRAG_JWT_SECRET` / `TOKEN_SECRET`), `configure_auth` raises `ValueError` if `jwt_password == "changeme"` OR if any `AUTH_ACCOUNTS` value equals `"changeme"`. The prior bypass via non-empty `AUTH_ACCOUNTS` is closed. When no JWT secret is configured, `/login` is disabled and the password value is ignored.
+**`changeme` (H2, relaxed)** — `configure_auth` logs a `SECURITY:` warning when `jwt_password == "changeme"` (and no `AUTH_ACCOUNTS`) or when any `AUTH_ACCOUNTS` value is `"changeme"`. Never raises. When no JWT secret is configured, `/login` is disabled and the password value is ignored.
 
-**Shim router auth (C1)** — `native_shims.build_native_shims_router(get_rag, auth_dependency=require_auth)`. Public routes: `/auth-status`, `/login`, `/logout` (handshake). `/health` is also public (LB probes). Everything else (`/documents`, `/documents/{id}/chunks`, `/documents/{id}/scan`, `/documents/{id}`, `/pipeline_status`, `/openapi`) sits behind `Depends(require_auth)`.
+**Shim router auth (C1, unchanged)** — `native_shims.build_native_shims_router(get_rag, auth_dependency=require_auth)`. Public routes: `/auth-status`, `/login`, `/logout` (handshake). `/health` is also public (LB probes). Everything else (`/documents`, `/documents/{id}/chunks`, `/documents/{id}/scan`, `/documents/{id}`, `/pipeline_status`, `/openapi`) sits behind `Depends(require_auth)` — which gates anonymous only when an auth backend is actually configured (LightRAG parity otherwise).
 
 **Two-tier `require_admin_user` (H4)** — `server/idp_jwt.py`:
 - *Palier 1 — IdP dormant* (`TWIN_IDP_JWKS_URL` unset): returns a placeholder dict (`idp_validated=False, gateway_scopes=[]`). The route-level `require_auth` already filtered anonymous, so what reaches the handler is at least an authenticated identity. Boot emits a `WARNING` once; per-call `INFO` rate-limited to once per process.
@@ -219,7 +219,7 @@ LightRAG natively boots wide open when no auth backend is configured. Twin refus
 
 The `bind_request_folder` dependency (FastAPI dep used by `webui_router`) now calls `resolve_folder_for_request`. The 3 shim handlers that previously took `request.headers` were migrated.
 
-**Test posture** — `tests/conftest.py` autouse fixture pins `TWIN_ALLOW_OPEN_ACCESS=1` when no auth env is set, so the bulk of unit tests keep their "auth disabled mode" intent without breaking on H1. Opt out with `@pytest.mark.no_default_auth` to exercise the boot-fail path. Test files for the new posture: `tests/test_server/test_auth_fail_closed.py`, `test_require_admin_two_tier.py`, `test_native_shims_auth.py`, `test_folder_idp_binding.py`.
+**Test posture** — no special conftest fixture needed (open-access default means tests boot without auth env). Test files: `tests/test_server/test_auth_defaults.py` (LightRAG-parity contract: open access + changeme warnings), `test_require_admin_two_tier.py` (H4), `test_native_shims_auth.py` (C1), `test_folder_idp_binding.py` (C2).
 
 ## Storage idioms (read these before touching impls)
 
