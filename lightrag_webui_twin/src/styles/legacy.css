@@ -3093,14 +3093,6 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--color-text-primary);
 }
 .kg-sub .dot-sep { color: var(--color-text-tertiary); }
-.kg-tier-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--color-text-tertiary);
-  font-style: italic;
-  cursor: help;
-}
 .kg-header-actions {
   display: flex;
   align-items: center;

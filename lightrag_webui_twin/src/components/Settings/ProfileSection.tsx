@@ -8,7 +8,6 @@
  *   - Identity provider trace : IdP / realm / sub / session_expires (env-controlled)
  *   - Gateway scopes : chip list (one per OAuth2 scope on the bearer token)
  *   - Session card   : Sign out
- *   - Tutorial card  : Restart onboarding
  *
  * Wording: "Role" not "Palier" (palier = JWT-only term). The `role-badge` class
  * replaces the killed `palier-pill` from the maquette pre-30/05 cleanup.
@@ -19,7 +18,6 @@ import { Icon } from '../Icon';
 
 export interface ProfileSectionProps {
   onSignOut?: () => void;
-  onRestartTutorial?: () => void;
 }
 
 function initialsOf(name: string): string {
@@ -31,10 +29,7 @@ function initialsOf(name: string): string {
     .toUpperCase();
 }
 
-export function ProfileSection({
-  onSignOut,
-  onRestartTutorial,
-}: ProfileSectionProps) {
+export function ProfileSection({ onSignOut }: ProfileSectionProps) {
   const { user } = useAuth();
   if (!user) {
     return (
@@ -95,41 +90,35 @@ export function ProfileSection({
       <div className="set-card">
         <div className="set-card-h">Session</div>
         <div className="set-row">
-          <button
-            type="button"
-            className="btn"
-            data-testid="settings-signout"
-            onClick={() => onSignOut?.()}
-          >
-            <Icon name="arrow-right" size={13} /> Sign out
-          </button>
-          <span className="set-row-note">
-            Local cache (threads, tweaks) is preserved in this browser.
-          </span>
+          {user.idp === 'local-debug' ? (
+            // Open-access deployment (no auth backend): there is no session
+            // to terminate — a Sign out button here would purge local state
+            // and silently re-enter as the same debug identity, which reads
+            // like an auth bypass to an auditor.
+            <span className="set-row-note" data-testid="settings-open-access-note">
+              Open access — no authentication backend is configured on this
+              deployment, so there is no session to sign out of. Configure
+              LIGHTRAG_API_KEY, LIGHTRAG_JWT_SECRET or TWIN_IDP_JWKS_URL to
+              enable authentication.
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn"
+                data-testid="settings-signout"
+                onClick={() => onSignOut?.()}
+              >
+                <Icon name="arrow-right" size={13} /> Sign out
+              </button>
+              <span className="set-row-note">
+                Local cache (threads, tweaks) is preserved in this browser.
+              </span>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="set-card">
-        <div className="set-card-h">
-          Tutorial{' '}
-          <span className="set-card-hint">
-            Replay the welcome tour and the 6-step checklist.
-          </span>
-        </div>
-        <div className="set-row">
-          <button
-            type="button"
-            className="btn"
-            data-testid="settings-restart-tutorial"
-            onClick={() => onRestartTutorial?.()}
-          >
-            <Icon name="refresh" size={13} /> Restart tutorial
-          </button>
-          <span className="set-row-note">
-            Resets progress for this browser only — your data is untouched.
-          </span>
-        </div>
-      </div>
     </div>
   );
 }

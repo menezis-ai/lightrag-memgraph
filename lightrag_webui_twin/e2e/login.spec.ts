@@ -24,10 +24,6 @@ const GATED_RUNTIME_CONFIG = {
 
 async function bootToLogin(page: Page) {
   await page.addInitScript((cfg) => {
-    window.localStorage.setItem(
-      'twin.onboarding.v1',
-      JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
-    );
     window.localStorage.removeItem('twin-rag.threads.v3');
     window.__twinE2eRuntimeConfig = cfg;
   }, GATED_RUNTIME_CONFIG);

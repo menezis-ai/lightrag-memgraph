@@ -67,6 +67,17 @@ export interface GraphTabProps {
   relations: readonly GraphRelation[];
   /** Optional color override; defaults to the package palette. */
   colors?: Record<GraphEntityType, string>;
+  /** doc_id → file name, so the document filter shows human-readable labels. */
+  docLabels?: Readonly<Record<string, string>>;
+  /**
+   * doc_id → document tags. Graph entities inherit the tags of their
+   * source_docs for the tag filter — LightRAG-ingested entities carry no
+   * twin_tags_json of their own, so without this join the filter is empty
+   * in production (doc-level tag propagation, tagging roadmap phase 1).
+   */
+  docTags?: Readonly<Record<string, readonly string[]>>;
+  /** Active folder label for the header; the segment is hidden when unset. */
+  folderLabel?: string;
   /** Host-controlled tab navigation. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
@@ -75,6 +86,9 @@ export function GraphTab({
   entities,
   relations,
   colors = GRAPH_TYPE_COLORS,
+  docLabels,
+  docTags,
+  folderLabel,
   onNavigate,
 }: GraphTabProps) {
   const [q, setQ] = useUrlParam<string>('gq', '');
@@ -88,11 +102,23 @@ export function GraphTab({
   const [addEntityError, setAddEntityError] = useState<string | null>(null);
   const createEntity = useCreateGraphEntity();
 
+  // Effective tags = own twin tags ∪ tags inherited from source documents.
+  const entityTags = useMemo(() => {
+    const map = new Map<string, readonly string[]>();
+    entities.forEach((e) => {
+      const s = new Set<string>(tagsOf(e));
+      (e.source_docs ?? []).forEach((doc) => {
+        (docTags?.[doc] ?? []).forEach((t) => s.add(t));
+      });
+      map.set(e.id, Array.from(s));
+    });
+    return map;
+  }, [entities, docTags]);
   const allTags = useMemo(() => {
     const s = new Set<string>();
-    entities.forEach((e) => tagsOf(e).forEach((t) => s.add(t)));
+    entityTags.forEach((tags) => tags.forEach((t) => s.add(t)));
     return Array.from(s).sort();
-  }, [entities]);
+  }, [entityTags]);
   const allSourceDocs = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {
@@ -121,7 +147,7 @@ export function GraphTab({
     return entities.filter((e) => {
       if (
         tagFilter.length > 0 &&
-        !tagsOf(e).some((t) => tagFilter.includes(t))
+        !(entityTags.get(e.id) ?? []).some((t) => tagFilter.includes(t))
       )
         return false;
       if (
@@ -135,7 +161,7 @@ export function GraphTab({
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, tagFilter, docFilter]);
+  }, [entities, entityTags, q, tagFilter, docFilter]);
 
   const typeCounts = useMemo(() => {
     const c: Partial<Record<GraphEntityType, number>> = {};
@@ -268,16 +294,12 @@ export function GraphTab({
           <h1>Knowledge Graph</h1>
           <div className="kg-sub">
             <span>
-              {entities.length} entities · {relations.length} relations · folder{' '}
-              <code>main</code>
-            </span>
-            <span className="dot-sep">·</span>
-            <span
-              className="kg-tier-note"
-              title="Read-only view of LightRAG entity extraction. :MENTIONED_IN traversal + tag-filtered graph reasoning are Twin Graph tier features."
-            >
-              <Icon name="info-circle" size={11} /> read-only · Twin Graph tier for
-              traversal
+              {entities.length} entities · {relations.length} relations
+              {folderLabel && (
+                <>
+                  {' '}· folder <code>{folderLabel}</code>
+                </>
+              )}
             </span>
           </div>
         </div>
@@ -385,6 +407,7 @@ export function GraphTab({
             selected={docFilter}
             onChange={setDocFilter}
             placeholder="Search documents…"
+            format={(id) => docLabels?.[id] ?? id}
           />
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>

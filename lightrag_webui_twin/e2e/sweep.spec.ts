@@ -158,18 +158,6 @@ test.describe('UI sweep', () => {
     await page.keyboard.press('Escape');
     await expect(authorizeDialog).toBeHidden();
 
-    // Settings — restart tutorial → onboarding wizard
-    await page.getByTestId('settings-rail-profile').click();
-    await page.getByTestId('settings-restart-tutorial').click();
-    await expect(page.getByRole('dialog', { name: 'Onboarding' })).toBeVisible();
-    await page.getByTestId('onboarding-skip').click();
-    // The restart action legitimately pushes a confirmation toast — clear it
-    // so the final "no stray mutation" assertion only sees real leftovers.
-    await page
-      .locator('.toast-viewport .toast', { hasText: 'Tutorial restarted' })
-      .getByLabel('Dismiss')
-      .click();
-
     // Topbar — popovers
     await page.getByRole('button', { name: /Notifications/ }).click();
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeVisible();

@@ -105,6 +105,28 @@ describe('DocumentsTab — filters', () => {
     expect(screen.queryByTestId('docs-row-d1')).toBeNull();
   });
 
+  it('?source= filter shows a removable pill; removing it restores the table', async () => {
+    const target = DOCUMENT_FIXTURES[0].file_path;
+    window.history.replaceState(
+      null,
+      '',
+      `/?source=${encodeURIComponent(target)}`,
+    );
+    render(<DocumentsTab {...defaultProps()} />);
+
+    // Filter applied AND visible — it must never be an invisible filter.
+    expect(screen.getByTestId('source-filter-row')).toBeInTheDocument();
+    expect(screen.getByTestId(`source-filter-${target}`)).toBeInTheDocument();
+    expect(screen.getByTestId('docs-row-d1')).toBeInTheDocument();
+    expect(screen.queryByTestId('docs-row-d4')).toBeNull();
+
+    await userEvent.click(
+      screen.getByLabelText(`Remove source filter ${target}`),
+    );
+    expect(screen.queryByTestId('source-filter-row')).toBeNull();
+    expect(screen.getByTestId('docs-row-d4')).toBeInTheDocument();
+  });
+
   it('search filters by source name', async () => {
     render(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');

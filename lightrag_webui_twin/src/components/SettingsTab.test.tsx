@@ -6,7 +6,6 @@
  *     Danger zone / Tokens / API generation all absent)
  *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
  *   - Profile Sign out button fires onSignOut
- *   - Profile Restart tutorial button fires onRestartTutorial
  *   - Folder section shows the folder id + retention table
  *   - API section shows the ApiTab (proxy)
  */
@@ -77,11 +76,38 @@ describe('SettingsTab — Profile', () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
-  it('Restart tutorial button fires onRestartTutorial', async () => {
-    const onRestart = vi.fn();
-    renderWith(new QueryClient(), { onRestartTutorial: onRestart });
-    await userEvent.click(screen.getByTestId('settings-restart-tutorial'));
-    expect(onRestart).toHaveBeenCalledTimes(1);
+  it('open-access deployment (local-debug idp) hides Sign out and explains why', () => {
+    (window as Window & typeof globalThis).__twinConfig = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+      defaultFolderId: 'default',
+      maxFolders: 5,
+      folders: [
+        { id: 'default', label: 'Default folder', kind: 'primary', sources: 0 },
+      ],
+      debugUser: {
+        sso_subject: 'operator@twin.local',
+        email: 'operator@twin.local',
+        name: 'operator@twin.local',
+        palier: {
+          level: 3,
+          label: 'Steward',
+          scopes: ['twin:read', 'twin:write', 'twin:approve'],
+        },
+        folders: ['default'],
+        idp: 'local-debug',
+        idp_realm: 'twin-local',
+        sub: 'local-debug-sub',
+        session_expires: '2099-12-31T23:59:00Z',
+        gateway_scopes: ['read:documents'],
+      },
+    };
+    __resetAuthConfigCacheForTests();
+    renderWith(new QueryClient());
+
+    expect(screen.queryByTestId('settings-signout')).toBeNull();
+    expect(screen.getByTestId('settings-open-access-note')).toBeInTheDocument();
   });
 
   it('renders gateway scopes as chip list', () => {

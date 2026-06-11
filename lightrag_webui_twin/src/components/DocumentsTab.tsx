@@ -101,7 +101,10 @@ export function DocumentsTab({
   );
   const [search, setSearch] = useUrlParam<string>('q', '');
   const [tagFilters, setTagFilters] = useUrlArrayParam('tag', []);
-  const [sourceFilters] = useUrlArrayParam('source', []);
+  // Set by citation / drill-down navigation (?source=<file_path>). The
+  // param survives topbar tab switches, so it MUST stay visible and
+  // removable — an invisible filter silently shrank the table to one doc.
+  const [sourceFilters, setSourceFilters] = useUrlArrayParam('source', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
@@ -273,6 +276,28 @@ export function DocumentsTab({
           aria-label="Search source"
         />
       </div>
+
+      {sourceFilters.length > 0 && (
+        <div className="tag-filter-row" data-testid="source-filter-row">
+          <span className="lbl">Filtered to source</span>
+          <div className="tag-chips">
+            {sourceFilters.map((s) => (
+              <span key={s} className="tag-chip" data-testid={`source-filter-${s}`}>
+                {s}
+                <button
+                  type="button"
+                  aria-label={`Remove source filter ${s}`}
+                  onClick={() =>
+                    setSourceFilters(sourceFilters.filter((x) => x !== s))
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="tag-filter-row">
         <span className="lbl">

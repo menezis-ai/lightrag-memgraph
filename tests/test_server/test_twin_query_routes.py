@@ -358,6 +358,17 @@ class TestQueryEndpoint:
         assert r.status_code == 500
         assert "LLM down" in r.json()["detail"]
 
+    async def test_none_answer_is_empty_string_not_literal_none(self, make_client):
+        """LightRAG returns None on silent LLM failure — the WebUI must not
+        receive a literal "None" bubble (prod incident 2026-06-11)."""
+        rag = FakeRag(answer=None)  # type: ignore[arg-type]
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "quel est le rôle de LIP6 ?"})
+
+        assert r.status_code == 200
+        assert r.json()["response"] == ""
+
     async def test_stream_endpoint_emits_ndjson_tokens_then_sources(
         self, make_client
     ):

@@ -32,7 +32,6 @@ import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import type { SettingsSectionKey } from './components/SettingsTab';
 import { useAuth } from './hooks/useAuth';
-import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
@@ -77,8 +76,11 @@ import type { Theme, Folder } from './types/topbar';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
 import { dedupeDocumentsBySource } from './utils/documents';
 
+// Fallback identity when no auth backend resolves a user (open-access /
+// LightRAG-parity deployments). Matches the backend's anonymous actor
+// label — never a fictional demo persona.
 const CURRENT_USER: TagCurrentUser = {
-  name: 'claire.benoit',
+  name: 'operator@twin.local',
   palier: 3,
   role: 'admin / steward',
 };
@@ -97,11 +99,6 @@ const AddSourceModal = lazy(() =>
 );
 const GraphTab = lazy(() =>
   import('./components/GraphTab').then(({ GraphTab }) => ({ default: GraphTab })),
-);
-const OnboardingWizard = lazy(() =>
-  import('./components/OnboardingWizard').then(({ OnboardingWizard }) => ({
-    default: OnboardingWizard,
-  })),
 );
 const ReadSourceModal = lazy(() =>
   import('./components/ReadSourceModal').then(({ ReadSourceModal }) => ({
@@ -229,13 +226,11 @@ function AppShell() {
     readonly Document[]
   >([]);
 
-  // Auth + onboarding
+  // Auth
   const auth = useAuth();
   const runtimeConfig = auth.config;
   const currentActor = auth.user?.email ?? CURRENT_USER.name;
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
-  const onboarding = useOnboarding();
-  const onboardingOpen = !onboarding.state.dismissed;
   const retagOpen = retagDoc !== null || retagBulk !== null;
   const needsThesaurus =
     tab === 'documents' || tab === 'retrieval' || addOpen || retagOpen;
@@ -368,7 +363,7 @@ function AppShell() {
         targets: action.targets.map((d) => d.doc_id),
         adds: action.adds,
         removes: action.removes,
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       const failedCount = result.failed.length;
       pushToast({
@@ -477,7 +472,7 @@ function AppShell() {
     try {
       const result = await bulkDeleteDocs.mutateAsync({
         doc_ids: docs.map((d) => d.doc_id),
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',
@@ -694,7 +689,7 @@ function AppShell() {
         targets: Array.from(resolvedDocIds),
         adds: tags,
         removes: [],
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',
@@ -728,7 +723,7 @@ function AppShell() {
     try {
       await approveTag.mutateAsync({
         name: action.tag.tag,
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',
@@ -1021,6 +1016,20 @@ function AppShell() {
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come
   // first, modified second, to keep the reviewer's eye on new arrivals.
+  const graphDocLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    docList.forEach((d) => {
+      if (d.file_path) labels[d.doc_id] = d.file_path;
+    });
+    return labels;
+  }, [docList]);
+  const graphDocTags = useMemo(() => {
+    const tags: Record<string, readonly string[]> = {};
+    docList.forEach((d) => {
+      if (d.tags.length > 0) tags[d.doc_id] = d.tags;
+    });
+    return tags;
+  }, [docList]);
   const isPendingReview = (d: Document) =>
     d.review?.state === 'pending-review' || d.review?.state === 'modified';
   const pendingDocs = docList
@@ -1149,14 +1158,6 @@ function AppShell() {
                 void auth.signout();
               }}
               onToast={pushToast}
-              onRestartTutorial={() => {
-                onboarding.reset();
-                pushToast({
-                  kind: 'done',
-                  title: 'Tutorial restarted',
-                  sub: 'Welcome modal will appear · 0 of 6 steps complete',
-                });
-              }}
             />
           )}
           {tab === 'retrieval' && (
@@ -1258,6 +1259,9 @@ function AppShell() {
             <GraphTab
               entities={graphEntityList}
               relations={graphRelationList}
+              docLabels={graphDocLabels}
+              docTags={graphDocTags}
+              folderLabel={kbName || folder}
               onNavigate={onNavigate}
             />
           )}
@@ -1350,13 +1354,6 @@ function AppShell() {
           <ReadSourceModal
             doc={readSourceDoc}
             onClose={() => setReadSourceDoc(null)}
-          />
-        )}
-        {onboardingOpen && (
-          <OnboardingWizard
-            open={onboardingOpen}
-            onAddSource={() => setAddOpen(true)}
-            onGoToRetrieval={() => setTab('retrieval')}
           />
         )}
       </Suspense>

@@ -54,7 +54,7 @@ export function clearTwinBrowserState(): void {
 }
 
 function localUser(username: string | null | undefined, config: TwinRuntimeConfig): AuthenticatedUser {
-  const name = username || 'Twin Franchise';
+  const name = username || 'operator@twin.local';
   const isAdmin = /admin/i.test(name);
   return {
     sso_subject: name,
