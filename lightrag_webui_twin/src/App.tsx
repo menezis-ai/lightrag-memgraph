@@ -1028,6 +1028,13 @@ function AppShell() {
     });
     return labels;
   }, [docList]);
+  const graphDocTags = useMemo(() => {
+    const tags: Record<string, readonly string[]> = {};
+    docList.forEach((d) => {
+      if (d.tags.length > 0) tags[d.doc_id] = d.tags;
+    });
+    return tags;
+  }, [docList]);
   const isPendingReview = (d: Document) =>
     d.review?.state === 'pending-review' || d.review?.state === 'modified';
   const pendingDocs = docList
@@ -1266,6 +1273,7 @@ function AppShell() {
               entities={graphEntityList}
               relations={graphRelationList}
               docLabels={graphDocLabels}
+              docTags={graphDocTags}
               onNavigate={onNavigate}
             />
           )}

@@ -172,6 +172,41 @@ describe('GraphTab — filters', () => {
     expect(screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`)).toBeInTheDocument();
   });
 
+  it('tag filter offers and matches tags inherited from source documents', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            tags: undefined,
+            source_docs: ['doc-tagged'],
+          },
+          {
+            ...GRAPH_ENTITY_FIXTURES[8],
+            tags: undefined,
+            source_docs: ['doc-untagged'],
+          },
+        ]}
+        relations={[]}
+        docTags={{ 'doc-tagged': ['database'] }}
+      />,
+    );
+
+    // The doc-level tag is offered by the picker even though no entity
+    // carries twin tags of its own (production ingestion path).
+    await userEvent.click(screen.getByLabelText('Filter by tag'));
+    await userEvent.type(screen.getByLabelText('Filter by tag'), 'data');
+    await userEvent.click(screen.getByTestId('kg-pick-database'));
+
+    expect(
+      screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[0].id}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`),
+    ).toBeNull();
+  });
+
   it('document filter shows file names from docLabels, falling back to the raw id', async () => {
     renderWithClient(
       <GraphTab

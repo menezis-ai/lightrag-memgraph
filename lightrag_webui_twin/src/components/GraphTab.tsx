@@ -69,6 +69,13 @@ export interface GraphTabProps {
   colors?: Record<GraphEntityType, string>;
   /** doc_id → file name, so the document filter shows human-readable labels. */
   docLabels?: Readonly<Record<string, string>>;
+  /**
+   * doc_id → document tags. Graph entities inherit the tags of their
+   * source_docs for the tag filter — LightRAG-ingested entities carry no
+   * twin_tags_json of their own, so without this join the filter is empty
+   * in production (doc-level tag propagation, tagging roadmap phase 1).
+   */
+  docTags?: Readonly<Record<string, readonly string[]>>;
   /** Host-controlled tab navigation. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
@@ -78,6 +85,7 @@ export function GraphTab({
   relations,
   colors = GRAPH_TYPE_COLORS,
   docLabels,
+  docTags,
   onNavigate,
 }: GraphTabProps) {
   const [q, setQ] = useUrlParam<string>('gq', '');
@@ -91,11 +99,23 @@ export function GraphTab({
   const [addEntityError, setAddEntityError] = useState<string | null>(null);
   const createEntity = useCreateGraphEntity();
 
+  // Effective tags = own twin tags ∪ tags inherited from source documents.
+  const entityTags = useMemo(() => {
+    const map = new Map<string, readonly string[]>();
+    entities.forEach((e) => {
+      const s = new Set<string>(tagsOf(e));
+      (e.source_docs ?? []).forEach((doc) => {
+        (docTags?.[doc] ?? []).forEach((t) => s.add(t));
+      });
+      map.set(e.id, Array.from(s));
+    });
+    return map;
+  }, [entities, docTags]);
   const allTags = useMemo(() => {
     const s = new Set<string>();
-    entities.forEach((e) => tagsOf(e).forEach((t) => s.add(t)));
+    entityTags.forEach((tags) => tags.forEach((t) => s.add(t)));
     return Array.from(s).sort();
-  }, [entities]);
+  }, [entityTags]);
   const allSourceDocs = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {
@@ -124,7 +144,7 @@ export function GraphTab({
     return entities.filter((e) => {
       if (
         tagFilter.length > 0 &&
-        !tagsOf(e).some((t) => tagFilter.includes(t))
+        !(entityTags.get(e.id) ?? []).some((t) => tagFilter.includes(t))
       )
         return false;
       if (
@@ -138,7 +158,7 @@ export function GraphTab({
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, q, tagFilter, docFilter]);
+  }, [entities, entityTags, q, tagFilter, docFilter]);
 
   const typeCounts = useMemo(() => {
     const c: Partial<Record<GraphEntityType, number>> = {};
