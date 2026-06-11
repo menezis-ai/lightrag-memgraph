@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import json
 import secrets
 import threading
 from typing import Any
@@ -410,9 +411,20 @@ def _status_to_dict(doc: Any) -> dict[str, Any]:
     status = payload.get("status")
     if hasattr(status, "value"):
         payload["status"] = status.value
-    metadata = payload.get("metadata") or {}
-    payload["metadata"] = dict(metadata) if isinstance(metadata, dict) else {}
+    payload["metadata"] = _coerce_doc_metadata(payload.get("metadata"))
     return payload
+
+
+def _coerce_doc_metadata(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return dict(parsed) if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _doc_matches_active_folder(doc: dict[str, Any]) -> bool:
@@ -456,6 +468,181 @@ async def _graph_tags_for_doc(doc_id: str) -> list[str]:
         return sorted(tid for tid in ((record or {}).get("tags") or []) if tid)
     except Exception:
         return []
+
+
+async def _attach_graph_tags_for_documents(docs: list[dict[str, Any]]) -> None:
+    """Attach graph-backed tag ids to WebUI document list rows."""
+    if not docs:
+        return
+    try:
+        from .. import _pool
+        from .._constants import resolve_workspace
+
+        workspace = resolve_workspace()
+        folder = current_folder_id()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = f"WebuiTag_{folder}"
+        doc_ids = [doc["doc_id"] for doc in docs if doc.get("doc_id")]
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                UNWIND $ids AS docId
+                MATCH (d:`{doc_label}` {{id: docId}})
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+                RETURN docId, collect(t.id) AS tags
+                """,
+                ids=doc_ids,
+            )
+            tags_by_id: dict[str, list[str]] = {}
+            async for record in result:
+                tags_by_id[record["docId"]] = sorted(
+                    tag for tag in (record["tags"] or []) if tag
+                )
+            await result.consume()
+        for doc in docs:
+            doc["tags"] = tags_by_id.get(doc.get("doc_id") or "", [])
+    except Exception:
+        for doc in docs:
+            doc.setdefault("tags", [])
+
+
+def _webui_doc_status(raw: Any) -> str:
+    status = raw.value if hasattr(raw, "value") else str(raw or "")
+    return status.upper()
+
+
+def _status_filter_for_doc_status(status: str | None) -> str | None:
+    if not status or status.lower() == "all":
+        return None
+    normalized = status.lower()
+    if normalized in ("completed", "processed"):
+        return "processed"
+    if normalized in ("pending", "processing", "failed"):
+        return normalized
+    upper_map = {
+        "processed": "processed",
+        "pending": "pending",
+        "processing": "processing",
+        "failed": "failed",
+    }
+    return upper_map.get(status.upper().removeprefix("DOCSTATUS.").lower())
+
+
+def _infer_document_type(file_path: str, metadata: dict[str, Any]) -> str:
+    raw_type = str(metadata.get("type") or metadata.get("source_type") or "").lower()
+    if raw_type in {"file", "confluence", "sharepoint", "url"}:
+        return raw_type
+    lowered = file_path.lower()
+    if lowered.startswith(("http://", "https://")):
+        return "url"
+    if "confluence" in lowered:
+        return "confluence"
+    if "sharepoint" in lowered:
+        return "sharepoint"
+    return "file"
+
+
+def _project_doc_status_for_webui(doc: dict[str, Any]) -> dict[str, Any]:
+    metadata = _coerce_doc_metadata(doc.get("metadata"))
+    doc_id = str(doc.get("id") or doc.get("doc_id") or "")
+    file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
+    summary = str(doc.get("content_summary") or doc.get("summary") or "")
+    folder = str(metadata.get("folder") or current_folder_id())
+    updated_at = str(
+        doc.get("updated_at")
+        or doc.get("created_at")
+        or metadata.get("updated_at")
+        or metadata.get("processing_end_time")
+        or _utcnow_iso()
+    )
+    chunks_count = doc.get("chunks_count")
+    if chunks_count is None:
+        chunks = doc.get("chunks")
+        chunks_count = chunks if isinstance(chunks, int) else 0
+    content_length = doc.get("content_length")
+    if content_length is None:
+        content_length = len(summary)
+    return {
+        "id": doc_id,
+        "doc_id": doc_id,
+        "track_id": doc.get("track_id"),
+        "type": _infer_document_type(file_path, metadata),
+        "source": file_path,
+        "file_path": file_path,
+        "summary": summary,
+        "content_summary": summary,
+        "content_length": content_length,
+        "tags": list(doc.get("tags") or metadata.get("tags") or []),
+        "status": _webui_doc_status(doc.get("status")),
+        "chunks": chunks_count,
+        "chunks_count": chunks_count,
+        "updated": updated_at,
+        "updated_at": updated_at,
+        "created_at": str(doc.get("created_at") or updated_at),
+        "error_msg": doc.get("error_msg"),
+        "visibility": str(metadata.get("visibility") or "internal"),
+        "folder": folder,
+        "review": metadata.get("review"),
+        "metadata": metadata,
+    }
+
+
+def _filter_doc_status_rows(
+    items: list[dict[str, Any]],
+    *,
+    q: str | None,
+    tag: str | None,
+) -> list[dict[str, Any]]:
+    folder = current_folder_id()
+    default_folder = load_folder_catalog().default_folder_id
+    filtered = [
+        doc
+        for doc in items
+        if (doc.get("metadata") or {}).get("folder", default_folder) == folder
+    ]
+    if q:
+        needle = q.lower()
+        filtered = [
+            doc
+            for doc in filtered
+            if needle in str(doc.get("file_path") or doc.get("source") or "").lower()
+            or needle in str(doc.get("content_summary") or doc.get("summary") or "").lower()
+        ]
+    if tag:
+        filtered = [doc for doc in filtered if tag in (doc.get("tags") or [])]
+    return filtered
+
+
+async def _list_documents_from_doc_status(
+    *,
+    status: str | None,
+    q: str | None,
+    tag: str | None,
+) -> list[dict[str, Any]]:
+    rag = _get_rag()
+    status_value = _status_filter_for_doc_status(status)
+    status_filter = None
+    if status_value:
+        from lightrag.base import DocStatus
+
+        try:
+            status_filter = DocStatus(status_value)
+        except ValueError:
+            return []
+
+    docs_tuples, _total = await rag.doc_status.get_docs_paginated(
+        page=1,
+        page_size=500,
+        status_filter=status_filter,
+    )
+    docs: list[dict[str, Any]] = []
+    for doc_id, raw in docs_tuples:
+        payload = _status_to_dict(raw)
+        payload["id"] = doc_id
+        docs.append(_project_doc_status_for_webui(payload))
+
+    await _attach_graph_tags_for_documents(docs)
+    return _filter_doc_status_rows(docs, q=q, tag=tag)
 
 
 def _cascade_seed_document_tags(
@@ -585,7 +772,18 @@ async def list_documents(
     q: str | None = Query(default=None),
     tag: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    items = get_store().list_documents(status=status, q=q, tag=tag)
+    store = get_store()
+    with store._lock:  # noqa: SLF001 - same-module route/store coordination
+        has_seed_documents = bool(store._documents)  # noqa: SLF001
+    if has_seed_documents:
+        items = store.list_documents(status=status, q=q, tag=tag)
+        return {"items": items, "total": len(items)}
+    try:
+        items = await _list_documents_from_doc_status(status=status, q=q, tag=tag)
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        items = store.list_documents(status=status, q=q, tag=tag)
     return {"items": items, "total": len(items)}
 
 

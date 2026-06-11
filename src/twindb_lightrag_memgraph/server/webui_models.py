@@ -45,21 +45,33 @@ class ListEnvelope(_Base, Generic[T]):
 
 
 class Document(_Base):
-    id: str
+    # Legacy WebUI seed shape.
+    id: str | None = None
     type: Literal["file", "confluence", "sharepoint", "url"]
-    source: str
+    source: str | None = None
     """File name, URL, or path identifier of the source."""
-    summary: str
+    summary: str | None = None
     """Short human-readable summary of the content."""
     tags: list[str]
-    status: Literal["pending", "processing", "completed", "failed"]
-    chunks: int
+    status: str
+    chunks: int | None = None
     """Number of chunks the document was split into."""
-    updated: str
+    updated: str | None = None
     """Human-readable relative timestamp (e.g. "2h ago")."""
     visibility: Literal["private", "internal", "public"]
     folder: str
     """Twin folder id this document belongs to."""
+    # LightRAG-native shape consumed by the React port.
+    doc_id: str | None = None
+    track_id: str | None = None
+    file_path: str | None = None
+    content_summary: str | None = None
+    content_length: int | None = None
+    chunks_count: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    error_msg: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------

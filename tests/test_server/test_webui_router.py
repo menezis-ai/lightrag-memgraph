@@ -16,6 +16,7 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 from twindb_lightrag_memgraph.server import webui_router
@@ -474,7 +475,7 @@ class TestForFolderMode:
     async def test_default_folder_memgraph_mode_documents_endpoint_returns_empty(
         self, client
     ):
-        """End-to-end: /twin/api/documents reads the (now empty) `_documents`."""
+        """Without a host RAG, memgraph mode falls back to empty WebUI storage."""
         # Swap the active store to a memgraph-mode one for the default
         # folder and assert the endpoint reflects the empty state.
         empty_store = webui_router.WebuiStore.for_folder(
@@ -486,3 +487,89 @@ class TestForFolderMode:
         body = r.json()
         assert body["items"] == []
         assert body["total"] == 0
+
+    async def test_default_folder_memgraph_mode_reads_doc_status_when_rag_exists(
+        self, client, monkeypatch
+    ):
+        """Production path: /twin/api/documents reads Memgraph DocStatus rows."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-ds": {
+                        "status": "processed",
+                        "file_path": "data-science-handbook.pdf",
+                        "content_summary": "Data science and machine learning",
+                        "chunks_count": 142,
+                        "metadata": json.dumps(
+                            {
+                                "tags": ["data-science"],
+                                "processing_end_time": "2026-06-11T00:30:00Z",
+                            }
+                        ),
+                    },
+                    "doc-mlops": {
+                        "status": "processing",
+                        "file_path": "practical-mlops.pdf",
+                        "content_summary": "Production model operations",
+                        "chunks_count": 14,
+                        "metadata": {},
+                    },
+                    "doc-sandbox": {
+                        "status": "processed",
+                        "file_path": "sandbox.pdf",
+                        "content_summary": "Wrong folder",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "sandbox"},
+                    },
+                }
+
+            async def get_docs_paginated(self, **kwargs):
+                status_filter = kwargs.get("status_filter")
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if wanted is None or doc["status"] == wanted
+                ]
+                return rows, len(rows)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        _twindb_state["rag"] = FakeRag()
+        monkeypatch.setattr(
+            webui_router,
+            "_attach_graph_tags_for_documents",
+            no_graph_tags,
+        )
+        try:
+            r = await client.get("/documents")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["total"] == 2
+            assert [doc["doc_id"] for doc in body["items"]] == [
+                "doc-ds",
+                "doc-mlops",
+            ]
+            assert body["items"][0]["status"] == "PROCESSED"
+            assert body["items"][0]["tags"] == ["data-science"]
+            assert body["items"][0]["chunks_count"] == 142
+
+            filtered = await client.get("/documents", params={"status": "PROCESSED"})
+            assert filtered.status_code == 200
+            assert [doc["doc_id"] for doc in filtered.json()["items"]] == ["doc-ds"]
+
+            tagged = await client.get("/documents", params={"tag": "data-science"})
+            assert tagged.status_code == 200
+            assert [doc["doc_id"] for doc in tagged.json()["items"]] == ["doc-ds"]
+        finally:
+            _twindb_state.pop("rag", None)
