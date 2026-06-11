@@ -509,7 +509,12 @@ def build_twin_query_router(get_rag) -> APIRouter:
             logger.exception("twin_query: aquery failed")
             raise HTTPException(500, f"Query failed: {exc}") from exc
 
-        if not isinstance(answer, str):
+        if answer is None:
+            # LightRAG returns None on silent LLM failure; str(None) would
+            # surface a literal "None" bubble in the WebUI.
+            logger.warning("twin_query: aquery returned None for %r", body.query)
+            answer = ""
+        elif not isinstance(answer, str):
             answer = str(answer)
 
         # If the operator asked for context-only or prompt-only the

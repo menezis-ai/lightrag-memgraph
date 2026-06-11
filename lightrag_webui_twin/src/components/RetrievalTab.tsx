@@ -47,6 +47,8 @@ import type { ThesaurusEntry } from '../types/thesaurus';
 const THREADS_STORAGE_KEY = 'twin-rag.threads.v3';
 const STREAM_TICK_MS = 70;
 
+const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
+
 export interface RetrievalTabProps {
   thesaurus: readonly ThesaurusEntry[];
   /** Real-backend callback. The returned `response` string is split into
@@ -169,26 +171,48 @@ export function RetrievalTab({
     }
   }, [streamedTokens, convo]);
 
-  const setConvo = (
+  // Resolve the thread that will receive the exchange ONCE, at send time.
+  // The id then travels through the async response flow explicitly —
+  // reading `activeThreadId` from a callback closure created the
+  // "question in one thread, answer in a fresh New thread" split (the
+  // closure still saw the pre-send null/stale id).
+  const ensureActiveThread = (): string => {
+    if (activeThreadId && threads.find((t) => t.id === activeThreadId)) {
+      return activeThreadId;
+    }
+    const id = makeThreadId();
+    setThreads((ts) => [
+      {
+        id,
+        title: 'New thread',
+        created: Date.now(),
+        updated: Date.now(),
+        messages: [],
+      },
+      ...ts,
+    ]);
+    setActiveThreadId(id);
+    return id;
+  };
+
+  const appendToThread = (
+    id: string,
     updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
   ) => {
     setThreads((ts) => {
-      let id = activeThreadId;
-      let arr = ts;
-      if (!id || !arr.find((t) => t.id === id)) {
-        id = 'th_' + Math.random().toString(16).slice(2, 8);
-        arr = [
-          {
-            id,
-            title: 'New thread',
-            created: Date.now(),
-            updated: Date.now(),
-            messages: [],
-          },
-          ...arr,
-        ];
-        setActiveThreadId(id);
-      }
+      // Thread deleted mid-flight: recreate it so the exchange is kept.
+      const arr = ts.find((t) => t.id === id)
+        ? ts
+        : [
+            {
+              id,
+              title: 'New thread',
+              created: Date.now(),
+              updated: Date.now(),
+              messages: [] as readonly ChatMessage[],
+            },
+            ...ts,
+          ];
       return arr.map((t) => {
         if (t.id !== id) return t;
         const nextMsgs = updater(t.messages);
@@ -208,7 +232,7 @@ export function RetrievalTab({
   };
 
   const newThread = () => {
-    const id = 'th_' + Math.random().toString(16).slice(2, 8);
+    const id = makeThreadId();
     setThreads((ts) => [
       {
         id,
@@ -235,12 +259,13 @@ export function RetrievalTab({
   };
 
   const streamTokens = (
+    threadId: string,
     tokens: readonly AnswerToken[],
     sources: readonly RetrievalSource[],
   ) => {
     if (tokens.length === 0) {
       setStreaming(false);
-      setConvo((c) => [
+      appendToThread(threadId, (c) => [
         ...c,
         { role: 'assistant', tokens: [], sources },
       ]);
@@ -253,7 +278,7 @@ export function RetrievalTab({
       if (i >= tokens.length) {
         clearInterval(interval);
         setStreaming(false);
-        setConvo((c) => [
+        appendToThread(threadId, (c) => [
           ...c,
           { role: 'assistant', tokens, sources },
         ]);
@@ -280,7 +305,8 @@ export function RetrievalTab({
     const q = (text ?? query).trim();
     if (!q) return;
     setQuery('');
-    setConvo((c) => [...c, { role: 'user', text: q }]);
+    const threadId = ensureActiveThread();
+    appendToThread(threadId, (c) => [...c, { role: 'user', text: q }]);
     setStreamedTokens([]);
     setStreaming(true);
 
@@ -295,7 +321,7 @@ export function RetrievalTab({
           const finalTokens = streamed.join('')
             .split(/(\s+)/)
             .filter((t) => t.length > 0);
-          setConvo((c) => [
+          appendToThread(threadId, (c) => [
             ...c,
             { role: 'assistant', tokens: finalTokens, sources: sources ?? [] },
           ]);
@@ -303,7 +329,7 @@ export function RetrievalTab({
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Query failed';
-          streamTokens([`⚠ ${msg}`], []);
+          streamTokens(threadId, [`⚠ ${msg}`], []);
         });
       return;
     }
@@ -315,11 +341,19 @@ export function RetrievalTab({
         const tokens = response
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
-        streamTokens(tokens, sources ?? []);
+        if (tokens.length === 0) {
+          streamTokens(
+            threadId,
+            ['⚠ The backend returned an empty answer. Sources below.'],
+            sources ?? [],
+          );
+          return;
+        }
+        streamTokens(threadId, tokens, sources ?? []);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : 'Query failed';
-        streamTokens([`⚠ ${msg}`], []);
+        streamTokens(threadId, [`⚠ ${msg}`], []);
       });
   };
 

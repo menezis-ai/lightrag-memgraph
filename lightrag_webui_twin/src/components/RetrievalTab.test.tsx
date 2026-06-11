@@ -275,6 +275,67 @@ describe('RetrievalTab — params panel', () => {
       }),
     );
   });
+
+  it('question and answer land in the same thread when no thread is active', async () => {
+    const onSendQuery = vi.fn(async () => ({
+      response: 'LIP6 est un laboratoire.',
+      sources: [],
+    }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText('Query input'),
+      'quel est le rôle de LIP6 ?',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(
+      () =>
+        expect(
+          document.querySelector('.retrieval-conv')?.textContent,
+        ).toContain('LIP6 est un laboratoire.'),
+      { timeout: 3000 },
+    );
+
+    // Exactly ONE thread, titled from the question, holding both messages —
+    // not a "question thread" plus a second "New thread" with the answer.
+    const items = document.querySelectorAll('.history-item');
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toContain('quel est le rôle de LIP6 ?');
+    expect(items[0].textContent).toContain('1 q');
+    expect(items[0].textContent).toContain('1 a');
+    expect(
+      document.querySelector('.retrieval-conv')?.textContent,
+    ).toContain('quel est le rôle de LIP6 ?');
+  });
+
+  it('empty backend answer surfaces a visible warning instead of a mute bubble', async () => {
+    const onSendQuery = vi.fn(async () => ({ response: '', sources: [] }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'hello?');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(
+      () =>
+        expect(
+          document.querySelector('.retrieval-conv')?.textContent,
+        ).toContain('empty answer'),
+      { timeout: 3000 },
+    );
+  });
 });
 
 describe('RetrievalTab — source cards', () => {
