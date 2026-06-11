@@ -1191,7 +1191,9 @@ def _build_runtime_config() -> dict[str, object]:
     debug_user = {
         "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
-        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "Twin Franchise"),
+        # Neutral anonymous-operator label — must never look like a real
+        # colleague (activity events carry this name in open-access mode).
+        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "operator@twin.local"),
         "palier": {
             "level": 3,
             "label": "Steward",

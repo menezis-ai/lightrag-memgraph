@@ -872,7 +872,7 @@ class TestRuntimeConfigDebugUserStripped:
 
         cfg = _build_runtime_config()
         assert "debugUser" in cfg
-        assert cfg["debugUser"]["name"] == "Twin Franchise"
+        assert cfg["debugUser"]["name"] == "operator@twin.local"
 
     def test_debug_user_stripped_when_idp_active(self, monkeypatch):
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp/jwks")

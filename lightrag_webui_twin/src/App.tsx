@@ -77,8 +77,11 @@ import type { Theme, Folder } from './types/topbar';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
 import { dedupeDocumentsBySource } from './utils/documents';
 
+// Fallback identity when no auth backend resolves a user (open-access /
+// LightRAG-parity deployments). Matches the backend's anonymous actor
+// label — never a fictional demo persona.
 const CURRENT_USER: TagCurrentUser = {
-  name: 'claire.benoit',
+  name: 'operator@twin.local',
   palier: 3,
   role: 'admin / steward',
 };
@@ -368,7 +371,7 @@ function AppShell() {
         targets: action.targets.map((d) => d.doc_id),
         adds: action.adds,
         removes: action.removes,
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       const failedCount = result.failed.length;
       pushToast({
@@ -477,7 +480,7 @@ function AppShell() {
     try {
       const result = await bulkDeleteDocs.mutateAsync({
         doc_ids: docs.map((d) => d.doc_id),
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',
@@ -694,7 +697,7 @@ function AppShell() {
         targets: Array.from(resolvedDocIds),
         adds: tags,
         removes: [],
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',
@@ -728,7 +731,7 @@ function AppShell() {
     try {
       await approveTag.mutateAsync({
         name: action.tag.tag,
-        actor: CURRENT_USER.name,
+        actor: currentActor,
       });
       pushToast({
         kind: 'done',

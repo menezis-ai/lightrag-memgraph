@@ -75,18 +75,23 @@ export function ActivityTab({
   const [q, setQ] = useUrlParam<string>('q', '');
   const [actor, setActor] = useUrlParam<string>('actor', 'any');
   const [selectedId, setSelectedId] = useState<string>(events[0]?.id ?? '');
-  const [pendingCount, setPendingCount] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearConfirm, setClearConfirm] = useState('');
   const [initialNowMs] = useState(() => Date.now());
   const clearModalRef = useRef<HTMLDivElement>(null);
   useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
+  // Real polling: refetch from the backend on an interval. The previous
+  // implementation incremented a fake "N new events" counter every 9s
+  // with no network call — pure demo theater that is not credible in
+  // production (one operator alone saw "43 new events").
   useEffect(() => {
-    if (!live) return undefined;
-    const t = setInterval(() => setPendingCount((c) => c + 1), 9000);
+    if (!live || !onRefresh) return undefined;
+    const t = setInterval(() => {
+      void onRefresh();
+    }, 30_000);
     return () => clearInterval(t);
-  }, [live]);
+  }, [live, onRefresh]);
 
   const actors = useMemo(() => {
     const s = new Set<string>(events.map((e) => e.actor.user));
@@ -149,7 +154,6 @@ export function ActivityTab({
     setQ('');
   };
   const refreshEvents = () => {
-    setPendingCount(0);
     void onRefresh?.();
   };
 
@@ -289,16 +293,6 @@ export function ActivityTab({
             </div>
           </div>
         </div>
-
-        {pendingCount > 0 && (
-          <button
-            className="activity-pending"
-            onClick={refreshEvents}
-          >
-            <span className="pending-dot" />
-            {pendingCount} new event{pendingCount > 1 ? 's' : ''} since you opened this view — click to refresh
-          </button>
-        )}
 
         <div className="activity-stats">
           <span className="stat">
