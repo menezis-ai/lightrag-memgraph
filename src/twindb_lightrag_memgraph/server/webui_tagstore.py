@@ -406,17 +406,35 @@ class MemgraphTagStore:
             result = await session.run(
                 f"""
                 MATCH (t:`{self._tag_label}`)
-                OPTIONAL MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(t)
                 RETURN
                   t.id AS id,
-                  t.data AS data,
-                  count(DISTINCT d) AS sources_count,
-                  sum(coalesce(d.chunks_count, 0)) AS chunks_count
+                  t.data AS data
                 ORDER BY t.`__created_at`, t.id
                 """
             )
             rows = await result.data()
             await result.consume()
+
+            usage_result = await session.run(
+                f"""
+                MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(t:`{self._tag_label}`)
+                RETURN
+                  t.id AS id,
+                  count(DISTINCT d) AS sources_count,
+                  sum(coalesce(d.chunks_count, 0)) AS chunks_count
+                """
+            )
+            usage_rows = await usage_result.data()
+            await usage_result.consume()
+
+        usage_by_id = {
+            row.get("id"): {
+                "sources_count": int(row.get("sources_count") or 0),
+                "chunks_count": int(row.get("chunks_count") or 0),
+            }
+            for row in usage_rows
+            if row.get("id")
+        }
 
         out: list[dict[str, Any]] = []
         for row in rows:
@@ -432,8 +450,9 @@ class MemgraphTagStore:
                     row.get("id"),
                 )
                 continue
-            item["sources_count"] = int(row.get("sources_count") or 0)
-            item["chunks_count"] = int(row.get("chunks_count") or 0)
+            usage = usage_by_id.get(row.get("id"), {})
+            item["sources_count"] = usage.get("sources_count", 0)
+            item["chunks_count"] = usage.get("chunks_count", 0)
             out.append(item)
         return out
 
