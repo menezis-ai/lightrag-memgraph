@@ -13,7 +13,7 @@ async function bootFirstVisit(page: Page) {
   await page.evaluate(async () => {
     await fetch('/__e2e/reset', { method: 'POST' });
     window.localStorage.removeItem('twin.onboarding.v1');
-    window.localStorage.removeItem('twin-rag.threads.v2');
+    window.localStorage.removeItem('twin-rag.threads.v3');
   });
   await page.reload();
   await expect(page.getByRole('dialog', { name: 'Onboarding' })).toBeVisible();

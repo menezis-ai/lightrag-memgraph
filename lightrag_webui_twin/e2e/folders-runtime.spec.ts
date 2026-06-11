@@ -24,7 +24,7 @@ async function bootWithRuntimeConfig(page: Page, config: Record<string, unknown>
       'twin.onboarding.v1',
       JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
     );
-    window.localStorage.removeItem('twin-rag.threads.v2');
+    window.localStorage.removeItem('twin-rag.threads.v3');
     window.__twinE2eRuntimeConfig = runtimeConfig;
   }, config);
   await page.goto('/');
