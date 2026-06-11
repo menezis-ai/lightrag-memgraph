@@ -25,6 +25,7 @@ Deliberate trade-offs:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from collections.abc import AsyncIterator, Iterable
@@ -129,19 +130,39 @@ def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[st
     return param_kwargs
 
 
-def _make_query_param(query_param_cls: Any, param_kwargs: dict[str, Any]) -> Any:
+def _query_param_ctor_fields(query_param_cls: Any) -> set[str] | None:
+    """Constructor-accepted field names for the installed ``QueryParam``.
+
+    Returns ``None`` when the fields cannot be introspected (non-dataclass),
+    in which case callers fall back to passing every kwarg through.
+    """
     try:
-        return query_param_cls(**param_kwargs)
+        return {f.name for f in dataclasses.fields(query_param_cls)}
     except TypeError:
-        if "tag_filter" not in param_kwargs:
-            raise
-        # LightRAG versions before the tag-filter constructor field can still
-        # carry the runtime attribute for downstream code that understands it.
-        fallback_kwargs = dict(param_kwargs)
-        tag_filter = fallback_kwargs.pop("tag_filter")
-        param = query_param_cls(**fallback_kwargs)
-        setattr(param, "tag_filter", tag_filter)
-        return param
+        return None
+
+
+def _make_query_param(query_param_cls: Any, param_kwargs: dict[str, Any]) -> Any:
+    """Build a ``QueryParam`` that is resilient to upstream field churn.
+
+    LightRAG renames/removes ``QueryParam`` fields between minor releases
+    (e.g. ``history_turns`` was dropped in 1.5, and ``tag_filter`` is a Twin
+    extension never present upstream). Passing such a kwarg straight to the
+    constructor raises ``TypeError`` and 500s the whole query endpoint. We
+    instead route only constructor-known kwargs through ``__init__`` and apply
+    the rest as runtime attributes, so downstream code that understands them
+    still sees them and the request never crashes.
+    """
+    fields = _query_param_ctor_fields(query_param_cls)
+    if fields is None:
+        return query_param_cls(**param_kwargs)
+
+    ctor_kwargs = {k: v for k, v in param_kwargs.items() if k in fields}
+    extra_kwargs = {k: v for k, v in param_kwargs.items() if k not in fields}
+    param = query_param_cls(**ctor_kwargs)
+    for key, value in extra_kwargs.items():
+        setattr(param, key, value)
+    return param
 
 
 def _answer_chunk_to_text(chunk: Any) -> str:

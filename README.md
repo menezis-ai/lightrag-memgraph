@@ -529,6 +529,8 @@ scripts/
 tests/
   conftest.py                  Auto-skip integration tests when MEMGRAPH_URI is unset
   test_register.py             Offline: registration logic
+  test_upstream_compat.py      Offline: LightRAG interface guard (concrete storage classes, QueryParam field drift)
+  test_docstatus_dedup_lookups.py  Offline: DocStatus content-hash / file-basename dedup lookups (mocked driver)
   test_kv.py                   Integration: KV CRUD
   test_vector.py               Integration: vector CRUD + search
   test_docstatus.py            Integration: doc status CRUD + queries

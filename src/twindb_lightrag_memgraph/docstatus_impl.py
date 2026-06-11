@@ -433,6 +433,58 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 return dict(record["props"])
             return None
 
+    async def get_doc_by_content_hash(
+        self, content_hash: str
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Find an existing record whose content_hash field matches.
+
+        Used by LightRAG (>= 1.5) for content-hash deduplication of full
+        documents. Returns ``(doc_id, doc_data)`` or ``None``.
+        """
+        if not content_hash:
+            return None
+        label = self._label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}` {{content_hash: $content_hash}})
+                RETURN n.id AS id, properties(n) AS props
+                """,
+                content_hash=content_hash,
+            )
+            record = await result.single()
+            await result.consume()
+            if record:
+                return record["id"], self._deserialize_props(record["props"])
+            return None
+
+    async def get_doc_by_file_basename(
+        self, basename: str
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Find an existing record whose canonical basename matches.
+
+        Used by LightRAG (>= 1.5) for filename-based deduplication. The caller
+        passes an already-canonical basename; stored ``file_path`` values are
+        canonicalized by the business layer, so this is an exact match only.
+        Returns ``(doc_id, doc_data)`` or ``None``.
+        """
+        if not basename or basename == "unknown_source":
+            return None
+        label = self._label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}` {{file_path: $basename}})
+                RETURN n.id AS id, properties(n) AS props
+                """,
+                basename=basename,
+            )
+            record = await result.single()
+            await result.consume()
+            if record:
+                return record["id"], self._deserialize_props(record["props"])
+            return None
+
     async def drop(self) -> dict[str, str]:
         label = self._label()
         async with _pool.acquire_write_slot():
