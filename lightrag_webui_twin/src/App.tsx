@@ -1274,6 +1274,7 @@ function AppShell() {
               relations={graphRelationList}
               docLabels={graphDocLabels}
               docTags={graphDocTags}
+              folderLabel={kbName || folder}
               onNavigate={onNavigate}
             />
           )}

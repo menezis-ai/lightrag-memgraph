@@ -76,6 +76,8 @@ export interface GraphTabProps {
    * in production (doc-level tag propagation, tagging roadmap phase 1).
    */
   docTags?: Readonly<Record<string, readonly string[]>>;
+  /** Active folder label for the header; the segment is hidden when unset. */
+  folderLabel?: string;
   /** Host-controlled tab navigation. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
@@ -86,6 +88,7 @@ export function GraphTab({
   colors = GRAPH_TYPE_COLORS,
   docLabels,
   docTags,
+  folderLabel,
   onNavigate,
 }: GraphTabProps) {
   const [q, setQ] = useUrlParam<string>('gq', '');
@@ -291,8 +294,12 @@ export function GraphTab({
           <h1>Knowledge Graph</h1>
           <div className="kg-sub">
             <span>
-              {entities.length} entities · {relations.length} relations · folder{' '}
-              <code>main</code>
+              {entities.length} entities · {relations.length} relations
+              {folderLabel && (
+                <>
+                  {' '}· folder <code>{folderLabel}</code>
+                </>
+              )}
             </span>
           </div>
         </div>

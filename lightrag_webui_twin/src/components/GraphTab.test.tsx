@@ -172,6 +172,17 @@ describe('GraphTab — filters', () => {
     expect(screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`)).toBeInTheDocument();
   });
 
+  it('header shows the active folder label and hides the segment when unset', () => {
+    const { unmount } = renderWithClient(
+      <GraphTab {...defaultProps()} folderLabel="Run & Ops KB" />,
+    );
+    expect(screen.getByText('Run & Ops KB')).toBeInTheDocument();
+    unmount();
+
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    expect(document.querySelector('.kg-sub')?.textContent).not.toContain('folder');
+  });
+
   it('tag filter offers and matches tags inherited from source documents', async () => {
     renderWithClient(
       <GraphTab
