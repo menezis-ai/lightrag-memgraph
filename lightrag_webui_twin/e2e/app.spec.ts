@@ -899,7 +899,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Query input').fill('Persisted before signout');
     await page.getByRole('button', { name: 'Send' }).click();
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('twin-rag.threads.v2')))
+      .poll(() => page.evaluate(() => localStorage.getItem('twin-rag.threads.v3')))
       .not.toBeNull();
 
     await openTab(page, 'Settings');
@@ -907,7 +907,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect
       .poll(() =>
         page.evaluate(() => ({
-            threads: localStorage.getItem('twin-rag.threads.v2'),
+            threads: localStorage.getItem('twin-rag.threads.v3'),
             extra: localStorage.getItem('twin-rag.extra-cache.v1'),
         })),
       )

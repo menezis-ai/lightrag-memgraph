@@ -148,9 +148,9 @@ describe('useAuth — signout', () => {
   it('clears the query cache and redirects to the IdP logout endpoint', async () => {
     const qc = new QueryClient();
     qc.setQueryData(['documents'], { items: [], total: 0 });
-    window.localStorage.setItem('twin-rag.threads.v2', JSON.stringify([]));
+    window.localStorage.setItem('twin-rag.threads.v3', JSON.stringify([]));
     expect(qc.getQueryData(['documents'])).not.toBeUndefined();
-    expect(window.localStorage.getItem('twin-rag.threads.v2')).not.toBeNull();
+    expect(window.localStorage.getItem('twin-rag.threads.v3')).not.toBeNull();
 
     const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
 
@@ -161,7 +161,7 @@ describe('useAuth — signout', () => {
     expect(logoutLocalMock).toHaveBeenCalledOnce();
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['documents'])).toBeUndefined();
-    expect(window.localStorage.getItem('twin-rag.threads.v2')).toBeNull();
+    expect(window.localStorage.getItem('twin-rag.threads.v3')).toBeNull();
     expect(window.location.href).toMatch(/realms\/twin\/protocol/);
     expect(window.location.href).toMatch(/redirect_uri=http/);
   });

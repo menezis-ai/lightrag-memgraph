@@ -7,6 +7,7 @@ export async function boot(page: Page) {
       JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
     );
     window.localStorage.removeItem('twin-rag.threads.v2');
+    window.localStorage.removeItem('twin-rag.threads.v3');
   });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
