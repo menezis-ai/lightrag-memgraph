@@ -6,7 +6,6 @@
  *     Danger zone / Tokens / API generation all absent)
  *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
  *   - Profile Sign out button fires onSignOut
- *   - Profile Restart tutorial button fires onRestartTutorial
  *   - Folder section shows the folder id + retention table
  *   - API section shows the ApiTab (proxy)
  */
@@ -109,13 +108,6 @@ describe('SettingsTab — Profile', () => {
 
     expect(screen.queryByTestId('settings-signout')).toBeNull();
     expect(screen.getByTestId('settings-open-access-note')).toBeInTheDocument();
-  });
-
-  it('Restart tutorial button fires onRestartTutorial', async () => {
-    const onRestart = vi.fn();
-    renderWith(new QueryClient(), { onRestartTutorial: onRestart });
-    await userEvent.click(screen.getByTestId('settings-restart-tutorial'));
-    expect(onRestart).toHaveBeenCalledTimes(1);
   });
 
   it('renders gateway scopes as chip list', () => {

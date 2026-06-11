@@ -32,7 +32,6 @@ import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import type { SettingsSectionKey } from './components/SettingsTab';
 import { useAuth } from './hooks/useAuth';
-import { useOnboarding } from './hooks/useOnboarding';
 import {
   useActivity,
   useApproveTag,
@@ -100,11 +99,6 @@ const AddSourceModal = lazy(() =>
 );
 const GraphTab = lazy(() =>
   import('./components/GraphTab').then(({ GraphTab }) => ({ default: GraphTab })),
-);
-const OnboardingWizard = lazy(() =>
-  import('./components/OnboardingWizard').then(({ OnboardingWizard }) => ({
-    default: OnboardingWizard,
-  })),
 );
 const ReadSourceModal = lazy(() =>
   import('./components/ReadSourceModal').then(({ ReadSourceModal }) => ({
@@ -232,13 +226,11 @@ function AppShell() {
     readonly Document[]
   >([]);
 
-  // Auth + onboarding
+  // Auth
   const auth = useAuth();
   const runtimeConfig = auth.config;
   const currentActor = auth.user?.email ?? CURRENT_USER.name;
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
-  const onboarding = useOnboarding();
-  const onboardingOpen = !onboarding.state.dismissed;
   const retagOpen = retagDoc !== null || retagBulk !== null;
   const needsThesaurus =
     tab === 'documents' || tab === 'retrieval' || addOpen || retagOpen;
@@ -1166,14 +1158,6 @@ function AppShell() {
                 void auth.signout();
               }}
               onToast={pushToast}
-              onRestartTutorial={() => {
-                onboarding.reset();
-                pushToast({
-                  kind: 'done',
-                  title: 'Tutorial restarted',
-                  sub: 'Welcome modal will appear · 0 of 6 steps complete',
-                });
-              }}
             />
           )}
           {tab === 'retrieval' && (
@@ -1370,13 +1354,6 @@ function AppShell() {
           <ReadSourceModal
             doc={readSourceDoc}
             onClose={() => setReadSourceDoc(null)}
-          />
-        )}
-        {onboardingOpen && (
-          <OnboardingWizard
-            open={onboardingOpen}
-            onAddSource={() => setAddOpen(true)}
-            onGoToRetrieval={() => setTab('retrieval')}
           />
         )}
       </Suspense>

@@ -2,10 +2,6 @@ import { expect, type Page } from '@playwright/test';
 
 export async function boot(page: Page) {
   await page.addInitScript(() => {
-    window.localStorage.setItem(
-      'twin.onboarding.v1',
-      JSON.stringify({ step: 'completion', dismissed: true, tasks: [] }),
-    );
     window.localStorage.removeItem('twin-rag.threads.v2');
     window.localStorage.removeItem('twin-rag.threads.v3');
   });

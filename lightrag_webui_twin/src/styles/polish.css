@@ -310,54 +310,6 @@
 }
 
 /* ============================================================
- * Onboarding wizard
- * ============================================================ */
-
-.modal.onboarding {
-  /* slight grey wash to set apart from data modals */
-  background: linear-gradient(
-    180deg,
-    var(--color-background-primary) 0%,
-    var(--color-background-secondary) 100%
-  );
-}
-.onboarding-checklist {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.onboarding-checklist li label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--color-background-primary);
-  border: 0.5px solid var(--color-border-tertiary);
-  border-radius: var(--border-radius-md);
-  cursor: pointer;
-  font-size: 12.5px;
-}
-.onboarding-checklist li label:hover {
-  border-color: var(--twin-accent-soft-border);
-  background: var(--twin-accent-soft-bg);
-}
-.onboarding-checklist input[type="checkbox"] {
-  accent-color: var(--twin-accent);
-  width: 14px;
-  height: 14px;
-}
-.onboarding-footer {
-  justify-content: space-between;
-}
-.onboarding-footer .actions {
-  display: flex;
-  gap: 8px;
-}
-
-/* ============================================================
  * Document detail panel (right-side overlay)
  * ============================================================ */
 

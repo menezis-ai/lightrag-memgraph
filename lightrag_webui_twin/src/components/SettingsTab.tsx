@@ -45,8 +45,6 @@ export interface SettingsTabProps {
   kbName?: string;
   /** Bearer-token revoke + redirect to IdP. Pushed up so the host owns the toast queue. */
   onSignOut?: () => void;
-  /** Reopen the onboarding wizard at step 1. */
-  onRestartTutorial?: () => void;
   onToast?: (toast: Omit<Toast, 'id'>) => void;
   initialSection?: SettingsSectionKey;
 }
@@ -55,7 +53,6 @@ export function SettingsTab({
   activeFolder,
   kbName,
   onSignOut,
-  onRestartTutorial,
   onToast,
   initialSection = 'profile',
 }: SettingsTabProps) {
@@ -92,10 +89,7 @@ export function SettingsTab({
       </aside>
       <main className="settings-main">
         {section === 'profile' && (
-          <ProfileSection
-            onSignOut={onSignOut}
-            onRestartTutorial={onRestartTutorial}
-          />
+          <ProfileSection onSignOut={onSignOut} />
         )}
         {section === 'api' && <ApiSection />}
         {section === 'folder' && (
