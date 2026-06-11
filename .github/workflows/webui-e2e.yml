@@ -1,0 +1,53 @@
+name: webui-e2e
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lightrag_webui_twin/**'
+      - '.github/workflows/webui-e2e.yml'
+  pull_request:
+    paths:
+      - 'lightrag_webui_twin/**'
+      - '.github/workflows/webui-e2e.yml'
+
+defaults:
+  run:
+    working-directory: lightrag_webui_twin
+
+jobs:
+  quality:
+    name: lint · typecheck · unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: lightrag_webui_twin/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:run
+
+  e2e:
+    name: playwright e2e (MSW)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: lightrag_webui_twin/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: lightrag_webui_twin/playwright-report/
+          retention-days: 14
