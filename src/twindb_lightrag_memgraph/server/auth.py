@@ -16,6 +16,7 @@ authentication is disabled (open access).
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -61,6 +62,21 @@ class AuthStatusResponse(BaseModel):
     user: str | None = None
     expires_at: str | None = None
     login_required: bool
+
+
+def _secret_equal(provided: str, expected: str) -> bool:
+    """Constant-time secret comparison (Operation AEGIS).
+
+    A plain ``provided == expected`` short-circuits on the first
+    differing byte, so the response time scales with the length of the
+    matching prefix. Over enough samples that timing oracle lets an
+    attacker recover the static API key / password one byte at a time
+    without ever guessing the whole value. ``hmac.compare_digest`` runs
+    in time that depends only on the input lengths, not their contents,
+    which closes that side-channel. Inputs are UTF-8 encoded because
+    ``compare_digest`` rejects non-ASCII ``str`` operands.
+    """
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
 def _parse_auth_accounts(raw: str | None) -> dict[str, str]:
@@ -279,8 +295,8 @@ async def require_auth(
 
     token = credentials.credentials
 
-    # 2. Static API key
-    if _static_api_key and token == _static_api_key:
+    # 2. Static API key (constant-time compare -- see _secret_equal)
+    if _static_api_key and _secret_equal(token, _static_api_key):
         return "api_key"
 
     # 3. Legacy local JWT
@@ -345,7 +361,7 @@ async def auth_status(
             login_required=True,
         )
 
-    if _static_api_key and token == _static_api_key:
+    if _static_api_key and _secret_equal(token, _static_api_key):
         return AuthStatusResponse(
             auth_enabled=True,
             authenticated=True,
@@ -393,7 +409,9 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
         if body.username == _jwt_username
         else None
     )
-    if expected_password is None or body.password != expected_password:
+    if expected_password is None or not _secret_equal(
+        body.password, expected_password
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

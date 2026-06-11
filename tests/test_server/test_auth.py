@@ -360,6 +360,75 @@ class TestLoginEdgeCases:
         assert "invalid" in exc_info.value.detail.lower()
 
 
+class TestConstantTimeComparison:
+    """Regression guard for the timing-side-channel fix (Operation AEGIS).
+
+    The static API key and login password used to be compared with plain
+    ``==`` / ``!=``, which short-circuits on the first mismatching byte
+    and leaks the matching-prefix length through response timing. These
+    tests pin the constant-time behaviour so a future revert to ``==``
+    fails loudly.
+    """
+
+    def test_secret_equal_correctness(self):
+        from twindb_lightrag_memgraph.server.auth import _secret_equal
+
+        assert _secret_equal("hunter2", "hunter2") is True
+        assert _secret_equal("hunter2", "hunter3") is False
+        # Differing lengths must not raise (the old plain == never did).
+        assert _secret_equal("short", "a-much-longer-secret") is False
+        # Non-ASCII secrets must compare without raising (compare_digest
+        # rejects non-ASCII str, so the helper encodes to bytes first).
+        assert _secret_equal("clé-très-secrète", "clé-très-secrète") is True
+        assert _secret_equal("clé-très-secrète", "autre") is False
+
+    async def test_require_auth_static_key_uses_compare_digest(self, monkeypatch):
+        """A correct static key must route through hmac.compare_digest,
+        not a plain ``==``. The spy proves the constant-time path runs."""
+        from fastapi.security import HTTPAuthorizationCredentials
+        from twindb_lightrag_memgraph.server import auth
+
+        configure_auth(api_key="correct-horse", jwt_secret=None)
+
+        calls: list[tuple[bytes, bytes]] = []
+        real = auth.hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", spy)
+
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials="correct-horse"
+        )
+        result = await require_auth(credentials=creds)
+        assert result == "api_key"
+        assert calls, "static API key was not compared in constant time"
+
+    async def test_login_password_uses_compare_digest(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import auth
+
+        configure_auth(
+            jwt_secret="secret", jwt_username="admin", jwt_password="s3cr3t-pwd"
+        )
+
+        calls: list[tuple[bytes, bytes]] = []
+        real = auth.hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", spy)
+
+        resp = await login(
+            LoginRequest(username="admin", password="s3cr3t-pwd"), Response()
+        )
+        assert resp.access_token
+        assert calls, "login password was not compared in constant time"
+
+
 class TestJWTEdgeCases:
     """Edge cases for JWT creation, decoding, and algorithm handling."""
 
