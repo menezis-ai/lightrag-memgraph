@@ -110,6 +110,10 @@ _DEFAULT_ADMIN_GROUPS: frozenset[str] = frozenset({"twin-admin", "twin-steward"}
 # ``lightrag_webui_twin/src/lib/permissions.ts``).
 ADMIN_FOLDERS_SCOPE = "admin:folders"
 
+# Default JWKS cache lifetime (seconds); overridable via
+# ``TWIN_IDP_JWKS_CACHE_TTL``.
+DEFAULT_JWKS_CACHE_TTL = 300
+
 
 @dataclass(frozen=True)
 class IdpConfig:
@@ -126,7 +130,7 @@ class IdpConfig:
     idp_name: str = "keycloak"
     idp_realm: str = "twin"
     cookie_name: str = "twin_idp_token"
-    jwks_cache_ttl: int = 300
+    jwks_cache_ttl: int = DEFAULT_JWKS_CACHE_TTL
     claim_subject: str = "sub"
     claim_email: str = "email"
     claim_name: str = "name"
@@ -157,9 +161,11 @@ class IdpConfig:
             a.strip() for a in algorithms_raw.split(",") if a.strip()
         ) or ("RS256",)
         try:
-            ttl = int(env.get("TWIN_IDP_JWKS_CACHE_TTL", "300"))
+            ttl = int(
+                env.get("TWIN_IDP_JWKS_CACHE_TTL", str(DEFAULT_JWKS_CACHE_TTL))
+            )
         except ValueError:
-            ttl = 300
+            ttl = DEFAULT_JWKS_CACHE_TTL
         group_to_palier = dict(_DEFAULT_GROUP_TO_PALIER)
         raw_map = env.get("TWIN_IDP_GROUP_TO_PALIER_JSON")
         if raw_map:

@@ -11,9 +11,17 @@ import logging
 import os
 from dataclasses import dataclass
 
-from ._constants import validate_identifier
+from ._constants import (
+    TWIN_DEFAULT_FOLDER_ENV,
+    WORKSPACE_ENV,
+    validate_identifier,
+)
 
 logger = logging.getLogger(__name__)
+
+# Hard ceiling on configurable Twin folders; also the fallback when
+# TWIN_MAX_FOLDERS is unset or invalid.
+MAX_FOLDERS_CEILING = 5
 
 
 @dataclass(frozen=True)
@@ -57,19 +65,21 @@ class TwinFolderCatalog:
 
 
 def _parse_max_folders() -> int:
-    raw = os.environ.get("TWIN_MAX_FOLDERS", "5")
+    raw = os.environ.get("TWIN_MAX_FOLDERS", str(MAX_FOLDERS_CEILING))
     try:
         value = int(raw)
     except ValueError:
-        logger.exception("Invalid TWIN_MAX_FOLDERS; falling back to 5")
-        value = 5
-    return max(1, min(5, value))
+        logger.exception(
+            "Invalid TWIN_MAX_FOLDERS; falling back to %d", MAX_FOLDERS_CEILING
+        )
+        value = MAX_FOLDERS_CEILING
+    return max(1, min(MAX_FOLDERS_CEILING, value))
 
 
 def _parse_default_folder() -> str:
     raw = (
-        os.environ.get("TWIN_DEFAULT_FOLDER")
-        or os.environ.get("WORKSPACE")
+        os.environ.get(TWIN_DEFAULT_FOLDER_ENV)
+        or os.environ.get(WORKSPACE_ENV)
         or "default"
     ).strip()
     try:

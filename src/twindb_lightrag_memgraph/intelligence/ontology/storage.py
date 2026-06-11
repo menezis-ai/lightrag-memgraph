@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from ... import _pool
+from ..._constants import DEFAULT_WORKSPACE, MEMGRAPH_WORKSPACE_ENV
 from .schema import (
     SEED_ENVIRONMENTS,
     SEED_METHODOLOGIES,
@@ -50,7 +51,7 @@ class OntologyStorage:
 
     def __init__(self, workspace: str | None = None) -> None:
         self.workspace = workspace or os.environ.get(
-            "MEMGRAPH_WORKSPACE", "base"
+            MEMGRAPH_WORKSPACE_ENV, DEFAULT_WORKSPACE
         )
         self._driver = None
         self._database = None

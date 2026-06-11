@@ -18,7 +18,7 @@ from lightrag.base import DocProcessingStatus, DocStatus, DocStatusStorage
 from lightrag.utils import logger
 
 from . import _pool
-from ._constants import resolve_workspace, validate_identifier
+from ._constants import DEFAULT_PAGE_SIZE, resolve_workspace, validate_identifier
 
 
 @dataclass
@@ -358,7 +358,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         self,
         status_filter: DocStatus | None = None,
         page: int = 1,
-        page_size: int = 50,
+        page_size: int = DEFAULT_PAGE_SIZE,
         sort_field: str = "updated_at",
         sort_direction: str = "desc",
     ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:

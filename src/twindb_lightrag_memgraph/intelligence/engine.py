@@ -16,6 +16,7 @@ from typing import Optional
 
 from lightrag import LightRAG, QueryParam
 
+from .._constants import MEMGRAPH_WORKSPACE_ENV
 from .config import TwinRAGConfig
 from .features.cognitive_reranker import CognitiveReranker
 from .features.feedback import FeedbackStore
@@ -67,7 +68,7 @@ class TwinRAGEngine:
 
             register()
 
-            os.environ["MEMGRAPH_WORKSPACE"] = workspace
+            os.environ[MEMGRAPH_WORKSPACE_ENV] = workspace
 
             self._rag_instances[workspace] = LightRAG(
                 working_dir=f"/tmp/lightrag_{workspace}",

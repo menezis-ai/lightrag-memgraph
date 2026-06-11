@@ -16,6 +16,12 @@ from typing import Optional
 
 logger = logging.getLogger("twin_rag_intelligence.ontology.config")
 
+# Default token budget for the global extraction pass (~3 chars/token
+# for technical IT content with acronyms and codes).
+DEFAULT_GLOBAL_MAX_TOKENS = 20000
+# Minimum confidence for extracted entities/relations to be persisted.
+DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+
 
 @dataclass
 class WorkspaceOntologyConfig:
@@ -34,11 +40,11 @@ class OntologyConfig:
     """Top-level ontology configuration."""
 
     enabled: bool = False
-    confidence_threshold: float = 0.7
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     require_review: bool = True
     dsep_enabled: bool = True
     dual_pass: bool = False
-    global_max_tokens: int = 20000
+    global_max_tokens: int = DEFAULT_GLOBAL_MAX_TOKENS
     workspaces: dict[str, WorkspaceOntologyConfig] = field(default_factory=dict)
 
 
@@ -90,10 +96,14 @@ def load_ontology_config(path: Optional[Path] = None) -> Optional[OntologyConfig
 
     return OntologyConfig(
         enabled=raw.get("enabled", False),
-        confidence_threshold=raw.get("confidence_threshold", 0.7),
+        confidence_threshold=raw.get(
+            "confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD
+        ),
         require_review=raw.get("require_review", True),
         dsep_enabled=raw.get("dsep_enabled", True),
         dual_pass=raw.get("dual_pass", False),
-        global_max_tokens=raw.get("global_max_tokens", 20000),
+        global_max_tokens=raw.get(
+            "global_max_tokens", DEFAULT_GLOBAL_MAX_TOKENS
+        ),
         workspaces=workspaces,
     )

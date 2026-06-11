@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from ...config import TwinRAGConfig
 from ...json_utils import clamp_float, coerce_str, load_json_object
 from ...prompt_security import neutralize_reserved_tags
-from ..config import WorkspaceOntologyConfig
+from ..config import DEFAULT_GLOBAL_MAX_TOKENS, WorkspaceOntologyConfig
 from ..dsep import build_dsep_block, get_mode_defaults, get_pass_defaults
 from ..schema import NODE_TYPES, RELATION_TYPES
 
@@ -151,7 +151,7 @@ async def extract(
     ws_config: WorkspaceOntologyConfig,
     dsep_enabled: bool = True,
     pass_type: str | None = None,
-    global_max_tokens: int = 20000,
+    global_max_tokens: int = DEFAULT_GLOBAL_MAX_TOKENS,
 ) -> ExtractionResult:
     """Extract entities and relations from a document via LLM.
 
