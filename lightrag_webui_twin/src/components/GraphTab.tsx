@@ -294,14 +294,6 @@ export function GraphTab({
               {entities.length} entities · {relations.length} relations · folder{' '}
               <code>main</code>
             </span>
-            <span className="dot-sep">·</span>
-            <span
-              className="kg-tier-note"
-              title="Read-only view of LightRAG entity extraction. :MENTIONED_IN traversal + tag-filtered graph reasoning are Twin Graph tier features."
-            >
-              <Icon name="info-circle" size={11} /> read-only · Twin Graph tier for
-              traversal
-            </span>
           </div>
         </div>
         <div className="kg-header-actions">
