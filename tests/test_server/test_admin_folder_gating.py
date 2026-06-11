@@ -307,7 +307,7 @@ class TestCustomAdminGroupsEnv:
         # ``create_app`` calls ``configure_idp(None)`` (audit 2026-06-10
         # H1). Build the app first, then activate the custom IdP after.
         app = create_app()
-        _activate_idp(fake_jwks, admin_groups=frozenset({"bnp.kb-admin"}))
+        _activate_idp(fake_jwks, admin_groups=frozenset({"corp.kb-admin"}))
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
@@ -328,7 +328,7 @@ class TestCustomAdminGroupsEnv:
     async def test_custom_admin_group_allowed(
         self, custom_client, rsa_keypair
     ):
-        token = _make_token(rsa_keypair, groups=["bnp.kb-admin"])
+        token = _make_token(rsa_keypair, groups=["corp.kb-admin"])
         r = await custom_client.post(
             "/folders",
             json={"id": "sandbox", "label": "S"},

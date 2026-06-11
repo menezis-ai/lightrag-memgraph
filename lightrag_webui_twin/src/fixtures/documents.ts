@@ -10,7 +10,7 @@
  *   - d7  : `review.state: 'pending-review'` + `extracted_text` for Read source
  *
  * The string-based `metadata.classification` is the *baseline* shape preserved
- * from the maquette. Couche 2 (BNP classification) will replace it with the
+ * from the maquette. Couche 2 (tenant classification) will replace it with the
  * structured `ClassificationResult` payload (see `types/classification.ts`).
  */
 
@@ -56,7 +56,7 @@ Internal verification : pending reviewer sign-off (this review).
 
 2. Authentication
 ------------------
-- mTLS, client cert issued by BNP InfoSec PKI (trust-store: cib-root-2024).
+- mTLS, client cert issued by the corporate InfoSec PKI (trust-store: cib-root-2024).
 - Bearer token in Authorization header (rotated every 30 days).
 - Optional HMAC-SHA256 body signature in X-Acme-Signature for high-value
   transfers (> EUR 100K). Rejected without 401 if missing.
@@ -77,9 +77,9 @@ HTTP 200; outside window return 409 Conflict.
 
 5. Concerns flagged by Marc (submitter)
 ---------------------------------------
-- Section 4 retention window (24h) is shorter than BNP guidance (72h).
+- Section 4 retention window (24h) is shorter than group guidance (72h).
   Recommend negotiation with Acme account manager.
-- HMAC threshold at EUR 100K vs BNP CIB policy threshold at EUR 50K —
+- HMAC threshold at EUR 100K vs CIB policy threshold at EUR 50K —
   policy mismatch, requires either contract amendment OR an internal
   override gateway rule.
 - No explicit dispute-resolution endpoint; relies on R-message which
@@ -139,7 +139,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
         method: 'Standard',
         source_format: 'ooxml',
         reason: null,
-        meta: { Enabled: 'true', SiteId: '{99999999-bnp-tenant-id-here}' },
+        meta: { Enabled: 'true', SiteId: '{99999999-tenant-id-here}' },
       },
     },
     type: 'file',
@@ -241,7 +241,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: THREE_DAYS_AGO,
     updated_at: THREE_DAYS_AGO,
     error_msg: null,
-    // classification > internal → DocDetailPanel Chunks tab truncates (doctrine Eric)
+    // classification > internal → DocDetailPanel Chunks tab truncates (compliance doctrine)
     metadata: { source: 'confluence', uploader: 'manu.dev', classification: 'restricted' },
     type: 'confluence',
     tags: ['incident', 'oracle', 'production'],

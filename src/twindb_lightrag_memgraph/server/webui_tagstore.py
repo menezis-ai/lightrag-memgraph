@@ -202,7 +202,7 @@ class MemgraphTagStore:
 
         Doctrine: categories are referentiel — a curated taxonomy
         decided by Knowledge governance, not user-generated. To respect
-        that doctrine in production, the BNP admin defines the
+        that doctrine in production, the tenant admin defines the
         taxonomy in a JSON file (Kubernetes ConfigMap, NFS mount, …)
         and Twin enforces it on every boot.
 

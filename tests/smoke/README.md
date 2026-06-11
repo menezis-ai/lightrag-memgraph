@@ -1,6 +1,6 @@
 # Twin Runtime Smoke
 
-This folder contains a procedural smoke-test contract for restricted BNP-style
+This folder contains a procedural smoke-test contract for restricted-runtime
 containers. The JSON file is the checklist; `run_smoke.py` executes it and
 writes a machine-readable report that can be reviewed by CI or an AI assistant.
 

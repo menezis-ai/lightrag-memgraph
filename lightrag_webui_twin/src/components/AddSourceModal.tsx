@@ -455,7 +455,7 @@ export function AddSourceModal({
             </div>
             <div className="helper-note" style={{ marginTop: 4 }}>
               Confluence / SharePoint linking will use the RAG 1.5 connector
-              (Fayçal &amp; Eric, BNP). Endpoint is not yet available — drop
+              (upstream RAG team). Endpoint is not yet available — drop
               files in the box above in the meantime.
             </div>
           </div>

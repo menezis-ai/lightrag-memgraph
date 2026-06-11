@@ -36,7 +36,7 @@ import re
 #
 # Aligning on the chain lets new deploys ship a single ``WORKSPACE``
 # or ``TWIN_DEFAULT_FOLDER`` without the old "set both" footgun
-# documented in ``deploy/ovh-twin/stack.yml``.
+# of earlier deployment templates.
 MEMGRAPH_WORKSPACE_ENV = "MEMGRAPH_WORKSPACE"
 WORKSPACE_ENV = "WORKSPACE"
 TWIN_DEFAULT_FOLDER_ENV = "TWIN_DEFAULT_FOLDER"

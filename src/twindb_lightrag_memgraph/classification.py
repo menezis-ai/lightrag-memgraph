@@ -2,7 +2,7 @@
 Microsoft Information Protection (MIP / AIP) sensitivity-label extraction.
 
 Detects sensitivity labels embedded by Microsoft 365 in Office documents and
-maps them to a tenant-specific classification scheme (e.g. BNP's C1 / C2 /
+maps them to a tenant-specific classification scheme (e.g. a C1 / C2 /
 C3 / C4 ladder).
 
 Why this module exists
@@ -36,7 +36,7 @@ Supported formats
   degradation if pikepdf is unavailable.
 
 The label-to-classification mapping is *tenant-specific* — the same GUID
-means C2 in BNP's tenant but might mean something else in another tenant.
+means C2 in one tenant but might mean something else in another tenant.
 Mappings are loaded from a JSON file pointed to by `TWIN_MIP_LABEL_MAP`
 (see `load_label_map`).
 
@@ -161,7 +161,7 @@ class ClassificationResult:
 
 
 # ---------------------------------------------------------------------------
-# Label map (tenant-specific GUID → BNP-class)
+# Label map (tenant-specific GUID → tenant class)
 # ---------------------------------------------------------------------------
 
 

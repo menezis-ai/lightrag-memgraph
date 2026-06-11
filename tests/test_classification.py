@@ -30,7 +30,7 @@ from twindb_lightrag_memgraph.classification import (
     load_label_map,
 )
 
-# A synthetic GUID we'll reuse in tests. Not the real BNP one (which lives
+# A synthetic GUID we'll reuse in tests. Not a real tenant one (which lives
 # in the production label map file, not in test fixtures).
 DEMO_GUID = "11111111-2222-3333-4444-555555555555"
 
@@ -311,13 +311,13 @@ class TestLabelMap:
         _LABEL_NAMES.clear()
         map_path = tmp_path / "named.json"
         map_path.write_text(json.dumps({
-            DEMO_GUID: {"id": "C2", "name": "BNP C2 — Confidentiel groupe"},
+            DEMO_GUID: {"id": "C2", "name": "C2 — Confidentiel groupe"},
         }))
         load_label_map(map_path)
         doc = _build_docx_with_label(tmp_path, label_name="Anything")
         result = detect_classification(doc, label_map={DEMO_GUID: "C2"})
         assert result.class_id == "C2"
-        assert result.class_name == "BNP C2 — Confidentiel groupe"
+        assert result.class_name == "C2 — Confidentiel groupe"
 
 
 # ---------------------------------------------------------------------------

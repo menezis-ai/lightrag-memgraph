@@ -1,6 +1,6 @@
 """IdP JWT middleware — Couche 3 §3.3.
 
-Wraps an external Identity Provider (BNP MyAccess / Keycloak / generic
+Wraps an external Identity Provider (corporate IdP / Keycloak / generic
 OIDC) so the Twin FastAPI app can:
 
 1. **Extract** a bearer token from a cookie (HttpOnly, SameSite=Lax) or
@@ -14,7 +14,7 @@ OIDC) so the Twin FastAPI app can:
 4. **Project** the verified claim set into the
    ``AuthenticatedUser`` shape the React port expects
    (``lightrag_webui_twin/src/types/auth.ts``). Mapping is fully env-
-   configurable so BNP-specific claim names don't require a code
+   configurable so tenant-specific claim names don't require a code
    change.
 
 The module is intentionally side-effect free at import time — the
@@ -26,7 +26,7 @@ The module is intentionally side-effect free at import time — the
 - **No env**: the module is dormant and ``require_idp_user`` returns
   ``None`` (auth falls back to the static API key / legacy JWT
   branches in ``auth.py``). ``_build_runtime_config`` keeps the
-  ``debugUser`` shim alive so dev / OVH standalone stays usable.
+  ``debugUser`` shim alive so dev / standalone demos stay usable.
 - **`TWIN_IDP_JWKS_URL` set**: the middleware activates. Requests
   without a valid token get ``401`` instead of silently bypassing.
   ``debugUser`` is stripped from the runtime config so React stops
@@ -55,11 +55,11 @@ The module is intentionally side-effect free at import time — the
 
 The built-in group→palier fallback maps:
 ``{"twin-steward": 3, "twin-contributor": 2, "twin-reader": 1}``.
-Louis can drop in the BNP MyAccess group names without touching code.
+Operators can drop in the corporate IdP group names without touching code.
 
 Admin gating is orthogonal to palier: the default ``admin_groups`` set
 includes ``twin-steward`` to mirror the doctrine *Steward = admin by
-default*, but BNP can configure either dimension independently via env.
+default*, but each dimension is configurable independently via env.
 """
 
 from __future__ import annotations

@@ -138,3 +138,68 @@ class TestRegister:
                 assert allowed.status_code == 200
         finally:
             configure_auth(api_key=None, jwt_secret=None)
+
+
+class TestEnvDrivenFlags:
+    """register() overlay flags resolve from env when not passed explicitly.
+
+    Deployments whose boot path calls a bare register() (the patch
+    historically in production) must be able to activate the UI/server/
+    shims with environment variables only.
+    """
+
+    def test_env_flags_activate_overlay(self, monkeypatch):
+        _reset_registration()
+        monkeypatch.setenv("TWIN_REPLACE_UI", "true")
+        monkeypatch.setenv("TWIN_MOUNT_SERVER", "1")
+        monkeypatch.setenv("TWIN_SHIM_NATIVE_ROUTES", "yes")
+        calls = {}
+
+        def fake_patch(**kwargs):
+            calls.update(kwargs)
+
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph,
+            "_patch_lightrag_server_create_app",
+            fake_patch,
+        )
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph,
+            "_resolve_webui_dist",
+            lambda explicit: "/fake/dist",
+        )
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph, "_patch_capture_rag", lambda: None
+        )
+        twindb_lightrag_memgraph.register()
+
+        assert calls["webui_dist"] == "/fake/dist"
+        assert calls["twin_api_prefix"] == "/twin/api"
+        assert calls["shim_native_routes"] is True
+
+    def test_env_unset_keeps_storage_only_default(self, monkeypatch):
+        _reset_registration()
+        for var in ("TWIN_REPLACE_UI", "TWIN_MOUNT_SERVER", "TWIN_SHIM_NATIVE_ROUTES"):
+            monkeypatch.delenv(var, raising=False)
+        called = []
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph,
+            "_patch_lightrag_server_create_app",
+            lambda **kw: called.append(kw),
+        )
+        twindb_lightrag_memgraph.register()
+        assert called == []
+
+    def test_explicit_false_overrides_env(self, monkeypatch):
+        _reset_registration()
+        monkeypatch.setenv("TWIN_REPLACE_UI", "true")
+        called = []
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph,
+            "_patch_lightrag_server_create_app",
+            lambda **kw: called.append(kw),
+        )
+        twindb_lightrag_memgraph.register(
+            replace_ui=False, mount_server=False, shim_native_routes=False
+        )
+        assert called == []

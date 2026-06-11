@@ -45,7 +45,7 @@ class TestConfigureAuth:
 
     def test_jwt_secret_accepts_default_password_with_warning(self, caplog):
         """LightRAG parity (2026-06-10): 'changeme' is tolerated with a
-        SECURITY warning — a raise here crash-looped BNP deployments
+        SECURITY warning — a raise here crash-looped production deployments
         whose env doesn't carry LIGHTRAG_JWT_PASSWORD."""
         import logging
 

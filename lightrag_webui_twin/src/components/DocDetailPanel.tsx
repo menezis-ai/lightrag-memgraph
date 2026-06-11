@@ -52,7 +52,7 @@ function classificationOf(doc: Document): string {
 
 /**
  * "Is this above what an internal-cleared operator can read?" Drives the
- * chunks-tab truncation + the raw-bytes notice gate (doctrine Eric 28/05).
+ * chunks-tab truncation + the raw-bytes notice gate (compliance doctrine 28/05).
  * Handles both legacy `string` and structured `ClassificationResult` shapes
  * via `isAboveInternal()` in `types/classification.ts`.
  */

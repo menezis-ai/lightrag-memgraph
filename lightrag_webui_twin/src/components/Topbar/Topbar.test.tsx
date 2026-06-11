@@ -1,7 +1,7 @@
 /**
  * Unit tests for the Topbar enrichment components (#104).
  *
- * Per the sprint brief revision 2026-05-29 + Louis 2026-05-28:
+ * Per the sprint brief revision 2026-05-29 + compliance review 2026-05-28:
  *   - PalierSwitcher : removed (palier is JWT-only, no UI)
  *   - MyAccessPill   : removed (gimmick, not in prod)
  *   - FolderSwitcher : reads useAuth().user.folders, click emits onPick(id)

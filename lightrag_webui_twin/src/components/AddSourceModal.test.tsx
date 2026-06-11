@@ -37,7 +37,7 @@ const sampleError: FileUpload = {
   error: 'Exceeds 50 MB · unsupported type',
 };
 const sampleConfluence: LinkedSource = {
-  url: 'confluence.bnp/cib/runbooks',
+  url: 'confluence.corp/cib/runbooks',
   type: 'confluence',
 };
 
@@ -80,14 +80,14 @@ describe('AddSourceModal — basic rendering', () => {
     // initialUrls is preserved in state and submitted, but its UI chip
     // doesn't render while the linked-sources block is gated.
     expect(
-      screen.queryByText('confluence.bnp/cib/runbooks'),
+      screen.queryByText('confluence.corp/cib/runbooks'),
     ).toBeNull();
   });
 });
 
 describe('AddSourceModal — Linked sources (Coming soon)', () => {
   // The linked-sources block is gated until the RAG 1.5 connector
-  // (Fayçal + Eric, BNP) ships its API. Until then, the input is
+  // (upstream RAG team) ships its API. Until then, the input is
   // disabled and a "Coming soon" pill is rendered next to the label.
   it('renders the Coming soon pill and a disabled input', () => {
     render(<AddSourceModal {...defaultProps()} />);

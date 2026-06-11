@@ -6,7 +6,7 @@
  * server already attached at injection time. Components downstream (Topbar,
  * SettingsTab profile section, capability gating in DocumentsTab/TagsTab)
  * consume `palier` to decide what to enable. There is NO PalierSwitcher and
- * NO MyAccessPill — palier is JWT-only, never UI-mutable (Louis 2026-05-28
+ * NO MyAccessPill — palier is JWT-only, never UI-mutable (compliance review 2026-05-28
  * + PO 2026-05-29).
  *
  * `signout()` follows the spec from the sprint brief:

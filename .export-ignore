@@ -30,6 +30,8 @@ docs/
 *.pyc
 
 # Local dev artifacts (also in .gitignore but belt-and-braces).
+playwright-report/
+test-results/
 .coverage
 coverage.xml
 .pytest_cache/

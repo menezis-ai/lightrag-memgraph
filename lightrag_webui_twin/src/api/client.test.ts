@@ -3,7 +3,7 @@
  *
  * Covers: runtime-config URL resolution, GET path with query params, POST JSON
  * body, folder + bearer header injection, ApiError on 4xx/5xx including
- * non-JSON 502 (the nginx pattern that crashed the BNP front in v0.5.2).
+ * non-JSON 502 (the nginx pattern that crashed the production front in v0.5.2).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

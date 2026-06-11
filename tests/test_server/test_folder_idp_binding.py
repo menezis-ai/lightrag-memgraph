@@ -3,7 +3,7 @@
 Two-tier behaviour:
 
 * **Palier 1 — IdP dormant**: ``resolve_folder_for_request`` reproduces
-  the pure header/catalog logic (back-compat for OVH standalone, dev,
+  the pure header/catalog logic (back-compat for standalone demos, dev,
   smoke runner). No identity check.
 * **Palier 2 — IdP active**: the resolved folder must be in the
   caller's ``twin_folders`` claim. Empty claim → only default folder

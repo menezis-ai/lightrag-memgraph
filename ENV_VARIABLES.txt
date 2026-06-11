@@ -1,0 +1,194 @@
+================================================================================
+twindb-lightrag-memgraph 1.0.0 — Environment variables reference
+================================================================================
+
+Every variable read by the package, grouped by concern. "Required" means the
+runtime will not work without it; everything else has a safe default.
+
+The container entrypoint is twin_main.py (register() then LightRAG's own
+server). LightRAG-native variables (OPENAI_API_KEY, LLM_BINDING, EMBEDDING_*,
+SUMMARY_LANGUAGE, ...) keep working as documented upstream; only the variables
+introduced or consumed by this package are listed here.
+
+--------------------------------------------------------------------------------
+0. OVERLAY ACTIVATION (read by register() when flags are not passed in code)
+--------------------------------------------------------------------------------
+TWIN_REPLACE_UI              "true" → serve the embedded Twin WebUI at /webui
+                             instead of the native LightRAG UI.
+TWIN_MOUNT_SERVER            "true" → mount the /twin/api/* overlay (folders,
+                             tags, activity, graph, query).
+TWIN_SHIM_NATIVE_ROUTES      "true" → shadow native /documents, /health,
+                             /auth-status... with the Twin-shaped contract.
+
+A deployment whose boot already calls a bare register() activates the full
+interface by setting these three variables — no code change.
+
+Gunicorn / import-string launchers: workers import the app in fresh
+processes where a separate boot script never ran. Point the launcher at
+this package's factory instead of LightRAG's:
+    gunicorn 'twindb_lightrag_memgraph.asgi:get_application()'
+    uvicorn --factory twindb_lightrag_memgraph.asgi:get_application
+It runs register() (env-driven flags above) in every worker before
+LightRAG's server module loads. Symptom when this is missing: the native
+LightRAG UI loads and redirects to /webui/#/login.
+
+--------------------------------------------------------------------------------
+1. MEMGRAPH CONNECTION (required)
+--------------------------------------------------------------------------------
+MEMGRAPH_URI                 Bolt URI, e.g. bolt://memgraph:7687  [REQUIRED]
+MEMGRAPH_USERNAME            Username. Default: "" (no auth)
+MEMGRAPH_PASSWORD            Password. Default: ""
+MEMGRAPH_DATABASE            Logical database. Default: memgraph default.
+                             With bolt:// the package issues USE DATABASE
+                             (silently skipped on Memgraph Community);
+                             with neo4j:// it is passed natively.
+MEMGRAPH_ENCRYPTED           "true" to force TLS on plain bolt://. A WARNING
+                             is logged when credentials would transit in
+                             clear to a remote host.
+MEMGRAPH_TRUST               Trust policy for TLS certificates.
+MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 10.
+MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 10.
+                             Reads are never throttled.
+
+--------------------------------------------------------------------------------
+2. SERVER (FastAPI overlay) — prefix LIGHTRAG_
+--------------------------------------------------------------------------------
+LIGHTRAG_HOST                       Bind host. Default: 0.0.0.0
+LIGHTRAG_PORT                       Bind port. Default: 9621
+LIGHTRAG_WORKING_DIR                LightRAG working dir.
+LIGHTRAG_WORKSPACE / WORKSPACE      Storage workspace (label suffix on every
+                                    Memgraph node: KV_{ws}, Vec_{ws}, ...).
+LIGHTRAG_KV_STORAGE                 Default: MemgraphKVStorage
+LIGHTRAG_VECTOR_STORAGE             Default: MemgraphVectorDBStorage
+LIGHTRAG_GRAPH_STORAGE              Default: MemgraphStorage (LightRAG built-in)
+LIGHTRAG_DOC_STATUS_STORAGE         Default: MemgraphDocStatusStorage
+
+LLM / embeddings / rerank (used by the overlay; LightRAG-native equivalents
+also honored):
+LIGHTRAG_LLM_MODEL                  Default: deepseek-chat
+LIGHTRAG_LLM_BINDING_HOST           OpenAI-compatible base URL
+LIGHTRAG_LLM_BINDING_API_KEY        API key for the LLM binding
+LIGHTRAG_EMBEDDING_BINDING          Default: openai-compatible
+LIGHTRAG_EMBEDDING_MODEL            Default: bge-m3
+LIGHTRAG_EMBEDDING_BINDING_HOST     Embedding base URL
+LIGHTRAG_EMBEDDING_BINDING_API_KEY  Embedding API key
+LIGHTRAG_EMBEDDING_DIM              Default: 1024
+LIGHTRAG_MAX_EMBED_TOKENS           Max tokens per embed call
+LIGHTRAG_RERANKING_MODEL            Reranker model
+LIGHTRAG_RERANKING_BASE_URL         Reranker base URL
+LIGHTRAG_RERANKING_API_KEY          Reranker API key
+LIGHTRAG_TOKENIZER_PATH             Optional local tokenizer path
+
+Chunking:
+LIGHTRAG_CHUNK_TOKEN_SIZE           Chunk size (tokens)
+LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE   Chunk overlap (tokens)
+LIGHTRAG_MAX_GLEANING               Entity-extraction gleaning passes
+
+CORS:
+LIGHTRAG_CORS_ALLOWED_ORIGINS       Comma-separated origins
+LIGHTRAG_CORS_ALLOW_CREDENTIALS     true/false
+
+--------------------------------------------------------------------------------
+3. AUTHENTICATION (three modes, in order of precedence)
+--------------------------------------------------------------------------------
+When NONE of the variables below is set, the server boots in open access
+(LightRAG-parity): anonymous allowed, a loud "auth DISABLED" warning is
+logged and the WebUI shows an open-access notice instead of Sign out.
+
+Mode A — static API key:
+LIGHTRAG_API_KEY             Static key; clients send it as bearer.
+
+Mode B — local JWT login (POST /login → HttpOnly cookie):
+LIGHTRAG_JWT_SECRET          Signing secret. Enables /login.
+LIGHTRAG_JWT_PASSWORD        Login password. "changeme" logs a SECURITY
+                             warning (never refuses to boot).
+LIGHTRAG_JWT_USERNAME        Login username. Default: admin
+LIGHTRAG_JWT_ALGORITHM       Default: HS256
+LIGHTRAG_JWT_EXPIRATION_HOURS  Token TTL.
+TOKEN_SECRET                 Legacy alias for the JWT secret (LightRAG native).
+TOKEN_EXPIRE_HOURS           Legacy alias for the TTL.
+AUTH_ACCOUNTS                LightRAG-native "user:pass,user2:pass2" list.
+
+Mode C — corporate IdP (JWKS). Setting TWIN_IDP_JWKS_URL activates the strict
+RBAC posture; leaving it unset keeps the middleware dormant:
+TWIN_IDP_JWKS_URL            JWKS endpoint URL.                [activation switch]
+TWIN_IDP_ISSUER              Expected issuer claim.
+TWIN_IDP_AUDIENCE            Expected audience claim.
+TWIN_IDP_ALGORITHMS          Allowed algorithms. Default: RS256
+TWIN_IDP_COOKIE_NAME         Cookie carrying the JWT (fallback: Authorization).
+TWIN_IDP_JWKS_CACHE_TTL      JWKS cache TTL (seconds).
+TWIN_IDP_NAME                Display name of the IdP.
+TWIN_IDP_REALM               Display realm.
+TWIN_IDP_LOGOUT_URL          Front-channel logout URL for the WebUI.
+TWIN_IDP_CLAIM_SUBJECT       Claim name mapping → subject.
+TWIN_IDP_CLAIM_EMAIL         Claim name mapping → email.
+TWIN_IDP_CLAIM_NAME          Claim name mapping → display name.
+TWIN_IDP_CLAIM_GROUPS        Claim name mapping → groups list.
+TWIN_IDP_CLAIM_SCOPES        Claim name mapping → scopes.
+TWIN_IDP_CLAIM_FOLDERS       Claim name mapping → authorized Twin folders.
+TWIN_IDP_ADMIN_GROUPS        Groups granted the admin:folders scope.
+TWIN_IDP_GROUP_TO_PALIER_JSON  JSON map group → palier level.
+
+Open-access identity (only when no auth backend is configured):
+TWIN_DEBUG_USER_EMAIL        Default: operator@twin.local
+TWIN_DEBUG_USER_NAME         Default: operator@twin.local
+
+--------------------------------------------------------------------------------
+4. TWIN FOLDERS
+--------------------------------------------------------------------------------
+TWIN_DEFAULT_FOLDER          Default folder id (fallback: WORKSPACE, then
+                             "default").
+TWIN_DEFAULT_FOLDER_LABEL    Display label for the default folder.
+TWIN_FOLDERS_JSON            JSON array of {id, label, kind, description,
+                             sources} provisioned at boot. Env-seeded folders
+                             always win id collisions.
+TWIN_MAX_FOLDERS             Clamped 1..5.
+TWIN_FOLDERS_RUNTIME_FILE    JSON file persisting operator-created folders
+                             (default: in-memory only).
+The HTTP client scopes every Twin call with the X-Twin-Folder header.
+
+--------------------------------------------------------------------------------
+5. DOCUMENT CLASSIFICATION (Microsoft Information Protection labels, opt-in)
+--------------------------------------------------------------------------------
+TWIN_MIP_LABEL_MAP           Path to a JSON map GUID → class id (e.g. C1..C4).
+TWIN_MIP_MAX_CLASSIFICATION  Ceiling; documents above it are rejected at
+                             ingestion with an audit event. Default: C2.
+
+--------------------------------------------------------------------------------
+6. WEBUI OVERLAY / RUNTIME CONFIG
+--------------------------------------------------------------------------------
+TWIN_API_BASE_URL            Base path injected into the WebUI. Default: /twin/api
+TWIN_LIGHTRAG_BASE_URL       Optional separate origin for native LightRAG routes.
+LIGHTRAG_ENABLE_WEBUI_ROUTES true/false — mount the /twin/api overlay.
+LIGHTRAG_WEBUI_TAG_BACKEND            "memgraph" (persistent) or "memory".
+LIGHTRAG_WEBUI_ACTIVITY_BACKEND       idem.
+LIGHTRAG_WEBUI_NOTIFICATIONS_BACKEND  idem.
+
+--------------------------------------------------------------------------------
+7. TRACING (optional)
+--------------------------------------------------------------------------------
+LIGHTRAG_ENABLE_LANGSMITH_TRACING  true/false
+LANGSMITH_API_KEY            LangSmith key.
+LANGSMITH_PROJECT            LangSmith project name.
+
+--------------------------------------------------------------------------------
+8. INTELLIGENCE LAYER (optional [intelligence] extra) — prefix TWIN_RAG_
+--------------------------------------------------------------------------------
+Only read when TwinRAGEngine is used. Separate chat vs indexing credentials so
+interactive queries never compete with ingestion GPU.
+TWIN_RAG_LLM_API_KEY / TWIN_RAG_LLM_API_BASE / TWIN_RAG_LLM_MODEL
+TWIN_RAG_LLM_EFFORT_INTENT / _REASON / _RERANKER / _SYNTHESIS  (low|medium|high)
+TWIN_RAG_INDEXING_API_KEY / _API_BASE / _MODEL
+TWIN_RAG_INDEXING_EMBEDDING_MODEL / _EMBEDDING_DIM
+TWIN_RAG_ENABLE_OOS_DETECTION / _QUERY_EXPANSION / _COGNITIVE_RERANKING
+TWIN_RAG_ENABLE_FEEDBACK / _WORKSPACE_ROUTING
+TWIN_RAG_ROUTING_RULES_PATH / TWIN_RAG_DEFAULT_WORKSPACE
+TWIN_RAG_OOS_CONFIDENCE_THRESHOLD / _DOMAIN_CONFIDENCE_THRESHOLD
+TWIN_RAG_RERANKING_SCORE_THRESHOLD / TWIN_RAG_VECTOR_LIMIT
+
+--------------------------------------------------------------------------------
+Minimal production set (Dockerfile.example):
+  MEMGRAPH_URI, MEMGRAPH_USERNAME, MEMGRAPH_PASSWORD,
+  one auth mode (section 3), the LLM/embedding credentials (section 2),
+  TWIN_DEFAULT_FOLDER, TWIN_FOLDERS_JSON.
+================================================================================

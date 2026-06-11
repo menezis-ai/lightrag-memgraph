@@ -41,10 +41,16 @@ _registered = False
 _twindb_state: dict[str, object] = {}
 
 
+def _env_flag(name: str) -> bool:
+    import os
+
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def register(
-    replace_ui: bool = False,
-    mount_server: bool = False,
-    shim_native_routes: bool = False,
+    replace_ui: bool | None = None,
+    mount_server: bool | None = None,
+    shim_native_routes: bool | None = None,
     security_baseline: bool = True,
     classify: bool | None = None,
     classification_label_map_path: str | None = None,
@@ -90,7 +96,7 @@ def register(
                 and mutations are lost on restart.
         webui_categories_config: Optional path to a JSON file that
             *mirrors* the tag-category taxonomy on every boot. Doctrine
-            "Config as Code" — the BNP admin owns the taxonomy in Git
+            "Config as Code" — the tenant admin owns the taxonomy in Git
             (or a Kubernetes ConfigMap), and Twin enforces it.
 
               - Schema: ``[{"id": "...", "label": "...", "color": "#RRGGBB"}, …]``.
@@ -108,7 +114,7 @@ def register(
             hazards before any LightRAG module gets a chance to mis-behave:
             blocks ``pipmaster`` install entrypoints and the
             ``check_and_install_dependencies`` call in ``lightrag_server``.
-            Cf. audit Prisme G §1 — required for BNP production deployment.
+            Cf. audit Prisme G §1 — required for production deployment.
             Disable only in dev environments where you accept runtime pip calls.
         classify: Enable the pre-ingestion MIP classification hook. ``None``
             means auto-enable only when ``TWIN_MIP_LABEL_MAP`` is configured.
@@ -124,11 +130,23 @@ def register(
             (default ``/twin/api``).
 
     Storage-only behavior (default ``replace_ui=False, mount_server=False``) is
-    identical to v1.0.x — instances already in BNP production are unaffected.
+    identical to v1.0.x — instances already in production are unaffected.
     """
     global _registered
     if _registered:
         return
+
+    # Runtime-overlay flags are env-drivable so deployments whose boot
+    # path already calls a bare ``register()`` (the patch historically in
+    # production) can activate the UI/server/shims with environment
+    # variables only — no code change on the host side. Explicit booleans
+    # passed by the caller always win; ``None`` defers to the env.
+    if replace_ui is None:
+        replace_ui = _env_flag("TWIN_REPLACE_UI")
+    if mount_server is None:
+        mount_server = _env_flag("TWIN_MOUNT_SERVER")
+    if shim_native_routes is None:
+        shim_native_routes = _env_flag("TWIN_SHIM_NATIVE_ROUTES")
 
     # 0. Security baseline FIRST — must run before any lightrag.api.* or
     #    lightrag.llm.* import that would trigger pipmaster auto-install.
@@ -836,7 +854,7 @@ def _patch_insert_done():
 
 
 def _patch_security_baseline() -> None:
-    """Defense-in-depth security baseline patches for BNP production.
+    """Defense-in-depth security baseline patches for production.
 
     Implements the supply-chain controls identified in audit Prisme G §1 and
     required by DORA art. 9 (ICT supply-chain integrity). When this baseline
@@ -1241,7 +1259,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
     without any build-time injection or extra route.
 
     Side mount: the Twin React port is built with ``base: '/'`` (so the
-    same dist also serves the standalone OVH demo at root). When mounted
+    same dist also serves a standalone demo at root). When mounted
     under ``/webui/`` the inline references like ``/assets/index-XYZ.js``
     and ``/favicon.svg`` would 404. We mount a sibling ``/assets`` +
     favicon static handler so absolute-root references resolve. This is
@@ -1361,7 +1379,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
             app.get(f"/{fname}", include_in_schema=False)(_serve)
 
     # Bundle may also reference /mockServiceWorker.js (used by VITE_FORCE_MSW
-    # standalone build). Harmless to expose even in BNP mode — it only
+    # standalone build). Harmless to expose even in hardened mode — it only
     # activates if VITE_FORCE_MSW was true at build-time.
     msw_path = dist_path / "mockServiceWorker.js"
     if msw_path.is_file():
@@ -1559,7 +1577,7 @@ def _mount_twin_subapp(
             # because they call ``bootstrap_if_empty()``, which seeds
             # the folder-backed store with the demo fixtures on first init.
             # That makes a "fresh" folder look pre-populated (not
-            # what an operator on a clean BNP install expects). We
+            # what an operator on a clean install expects). We
             # instantiate the classes directly + ``initialize()`` only.
             try:
                 from .server.folder import load_folder_catalog

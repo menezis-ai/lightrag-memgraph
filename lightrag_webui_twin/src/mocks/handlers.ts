@@ -872,7 +872,7 @@ export const handlers = [
   // Standard FastAPI auto OpenAPI 3.1 spec — the React Settings → API
   // tab hits this directly so it stays ISO with LightRAG by
   // construction (mock-kill F2). Synthesise a minimal but valid OpenAPI
-  // 3.1 doc from the local OPENAPI_GROUPS fixture so the OVH standalone
+  // 3.1 doc from the local OPENAPI_GROUPS fixture so the standalone demo
   // demo still renders the API tab.
   http.get(`${ANY}/openapi.json`, () => {
     const paths: Record<string, Record<string, unknown>> = {};

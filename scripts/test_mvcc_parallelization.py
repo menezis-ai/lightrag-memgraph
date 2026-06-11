@@ -253,7 +253,7 @@ async def main():
     elif speedup_a > 1.5 and speedup_b > 1.5:
         print(
             "✅ Both scenarios parallelize — no MVCC contention here.\n"
-            "   The BNP slowness must come from elsewhere "
+            "   The production slowness must come from elsewhere "
             "(single-driver throttle, application bottleneck, network)."
         )
     elif speedup_a < 1.2 and speedup_b < 1.2:

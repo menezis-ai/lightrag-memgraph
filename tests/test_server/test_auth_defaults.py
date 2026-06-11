@@ -1,7 +1,7 @@
 """LightRAG-parity auth defaults (product decision 2026-06-10).
 
 Supersedes the audit-P0 fail-closed posture from the same morning:
-BNP deployments crash-looped on the boot refusal (H1) and the
+Production deployments crash-looped on the boot refusal (H1) and the
 unconditional ``changeme`` rejection (H2) because LightRAG-native env
 sets don't carry ``LIGHTRAG_JWT_PASSWORD`` / ``LIGHTRAG_API_KEY``.
 

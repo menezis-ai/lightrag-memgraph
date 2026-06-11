@@ -20,7 +20,7 @@
  */
 
 /**
- * Tenant-mapped class identifier (BNP ladder = C1 / C2 / C3 / C4).
+ * Tenant-mapped class identifier (e.g. C1 / C2 / C3 / C4 ladder).
  * `UNKNOWN` is returned when the MIP label has no mapping in the tenant
  * table — fail-closed, downstream treats it as above any ceiling.
  */
@@ -102,19 +102,19 @@ export function getClassName(cls: ClassificationValue): string {
   return cls.class_name ?? cls.raw_name ?? cls.class_id;
 }
 
-const BNP_LADDER: readonly string[] = ['C1', 'C2', 'C3', 'C4'];
+const CLASS_LADDER: readonly string[] = ['C1', 'C2', 'C3', 'C4'];
 
 /**
- * Returns true when `class_id` strictly outranks `threshold` on the BNP
+ * Returns true when `class_id` strictly outranks `threshold` on the tenant
  * ladder. Unknown / non-ladder ids are treated as ABOVE — fail-closed.
  * Mirrors the Python `is_above()` semantics in `classification.py`.
  */
 export function isAbove(classId: string, threshold: string): boolean {
-  const ci = BNP_LADDER.indexOf(classId);
-  const ti = BNP_LADDER.indexOf(threshold);
+  const ci = CLASS_LADDER.indexOf(classId);
+  const ti = CLASS_LADDER.indexOf(threshold);
   if (ci === -1) return true;
   if (ti === -1) {
-    throw new Error(`threshold "${threshold}" not in BNP_LADDER`);
+    throw new Error(`threshold "${threshold}" not in CLASS_LADDER`);
   }
   return ci > ti;
 }

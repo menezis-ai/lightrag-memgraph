@@ -1599,7 +1599,7 @@ async def list_graph_entities() -> list[dict[str, Any]]:
 
     Falls back to the in-memory seed when Memgraph is unreachable or
     contains no nodes yet (typical pre-ingestion). The fallback keeps
-    demo / dev / standalone OVH paths working without a backend.
+    demo / dev / standalone paths working without a backend.
     """
     from . import graph_reader
 

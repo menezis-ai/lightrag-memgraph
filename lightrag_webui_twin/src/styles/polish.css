@@ -447,7 +447,7 @@
 }
 
 /* ── Classification pill (MSIP sensitivity label) — compliance UI ──
-   Renders the BNP class_id resolved by the pre-insert MSIP extractor next to
+   Renders the tenant class_id resolved by the pre-insert MSIP extractor next to
    the document name. Restraint by design: an operator sees these on every
    row, alarm-bell red on C2 (the routine internal class) would be fatigue
    for no signal. C3/C4 escalate. UNKNOWN gets a striped pattern that says

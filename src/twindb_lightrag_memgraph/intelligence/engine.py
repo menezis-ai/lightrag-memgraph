@@ -202,7 +202,7 @@ class TwinRAGEngine:
         responses = {
             IntentType.GREETING: (
                 "Bonjour ! Je suis l'assistant Twin, specialise dans les operations IT "
-                "du Groupe BNP Paribas. Comment puis-je vous aider ?"
+                "de votre organisation. Comment puis-je vous aider ?"
             ),
             IntentType.OUT_OF_SCOPE: (
                 "Cette question semble en dehors de mon perimetre d'expertise "

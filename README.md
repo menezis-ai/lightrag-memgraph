@@ -4,6 +4,8 @@ Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.
 
 LightRAG already ships with a built-in `MemgraphStorage` for the **graph** layer. This package fills the remaining 3 slots (KV, Vector, DocStatus) so that an entire LightRAG instance can run on a single Memgraph database.
 
+**Version 1.0.0** ships the complete Twin runtime: the storage backends, a FastAPI server overlay (`/twin/api/*` — folders, tags governance, activity, knowledge-graph CRUD, structured query) and an embedded operator WebUI served at `/webui` (pre-built, no Node toolchain required on the host). Everything activates through a single `register()` call — see `twin_main.py` for the container entrypoint, `Dockerfile.example` for the minimal image wiring, and `ENV_VARIABLES.txt` for the full configuration reference.
+
 ## Why this exists
 
 LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to module paths. The registry is hardcoded at import time and does not support third-party packages out of the box. This package works around that by monkey-patching the three registry dicts at runtime via a single `register()` call, before LightRAG is instantiated.
@@ -17,14 +19,13 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 
 ### Tested compatibility matrix
 
-| | Memgraph MAGE 3.7.2 | Memgraph MAGE 3.8.0 | Memgraph MAGE latest |
-|---|:-:|:-:|:-:|
-| **LightRAG 1.4.9** | OK | OK | OK |
-| **LightRAG 1.4.9.11** | OK | OK | OK |
-| **LightRAG 1.4.11** | OK | OK | OK |
-| **LightRAG 1.4.12** | OK | OK | OK |
+| | Memgraph MAGE 3.10.1 |
+|---|:-:|
+| **LightRAG 1.4.9.11** | OK |
+| **LightRAG 1.4.11** | OK |
+| **LightRAG 1.4.12** | OK |
 
-CI runs this full matrix on every push/PR. LightRAG `1.4.10` was dropped from the matrix due to a transient timing regression that produces non-deterministic test failures under integration load; fixed upstream in `1.4.11+`.
+CI runs this matrix on every push/PR. Memgraph MAGE `3.10.1` is the current production target, pinned explicitly so a rolling `latest` tag cannot silently move the coverage point. LightRAG `1.4.10` is excluded due to a transient timing regression under integration load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once no deployment used them.
 
 ## Installation
 
@@ -75,7 +76,7 @@ All backends read their connection settings from environment variables (`os.envi
 | `TWIN_FOLDERS_RUNTIME_FILE` | No | (empty) | Optional JSON file used to persist runtime-created Folders across process restarts. |
 | `TWIN_API_BASE_URL` | No | `/twin/api` | Runtime API base injected into the React WebUI for Twin overlay routes. |
 | `TWIN_LIGHTRAG_BASE_URL` | No | `""` | Runtime API base injected into the React WebUI for native LightRAG routes (`/documents`, `/health`, `/pipeline_status`, etc.). |
-| `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. BNP `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
+| `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
 | `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files outranking this are refused at the pre-insert hook. Unknown classes are treated as above the ceiling (fail-closed). |
 
 ## Twin Folders
@@ -114,7 +115,7 @@ TWIN_FOLDERS_JSON='[
 
 Folders are created by deployment configuration first. Runtime creation through
 `POST /twin/api/folders` is available for admin users, and persists only when
-`TWIN_FOLDERS_RUNTIME_FILE` points to a writable JSON file. In restricted BNP
+`TWIN_FOLDERS_RUNTIME_FILE` points to a writable JSON file. In restricted
 deployments, prefer `TWIN_FOLDERS_JSON` for audited, reproducible provisioning.
 
 Fresh runtime initialization is clean by default when the Twin overlay is
@@ -187,7 +188,7 @@ them. They are useful for integrators that want the upstream contract:
 
 ### Restricted runtime smoke test
 
-For BNP-style restricted containers, a stdlib-only smoke runner is available in
+For restricted containers, a stdlib-only smoke runner is available in
 `tests/smoke`. It validates that `/webui`, local JWT authentication, native
 LightRAG routes, and Twin overlay routes are wired to the expected service.
 This is intended for developers, auditors, release engineers, and technical
@@ -540,7 +541,7 @@ tests/
 
 ## Classification (Microsoft Information Protection)
 
-Optional pre-insert hook that reads the sensitivity label Microsoft 365 embeds in Office documents and refuses ingestion of files above a configured ceiling. Designed for regulated tenants (BNP, healthcare, defense) where letting a `C3 Strictement Confidentiel` document slip into a public retrieval index is a compliance incident.
+Optional pre-insert hook that reads the sensitivity label Microsoft 365 embeds in Office documents and refuses ingestion of files above a configured ceiling. Designed for regulated tenants (banking, healthcare, defense) where letting a `C3 Strictement Confidentiel` document slip into a public retrieval index is a compliance incident.
 
 ### What it reads
 
@@ -552,7 +553,7 @@ Missing optional deps degrade gracefully — the affected formats return `Classi
 
 ### Tenant label map
 
-MIP label GUIDs are tenant-specific (the GUID for "C2 Confidentiel" in the BNP tenant is different from another organization's). The mapping lives in a JSON file pointed to by `TWIN_MIP_LABEL_MAP`:
+MIP label GUIDs are tenant-specific (the GUID for "C2 Confidentiel" in one tenant is different from another organization's). The mapping lives in a JSON file pointed to by `TWIN_MIP_LABEL_MAP`:
 
 ```json
 {

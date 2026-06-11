@@ -133,28 +133,28 @@ class TestIdpConfigFromEnv:
                 "TWIN_IDP_ALGORITHMS": "RS256, ES256",
                 "TWIN_IDP_COOKIE_NAME": "myaccess_session",
                 "TWIN_IDP_NAME": "myaccess",
-                "TWIN_IDP_REALM": "bnp-cib",
+                "TWIN_IDP_REALM": "corp-cib",
             }
         )
         assert cfg is not None
         assert cfg.algorithms == ("RS256", "ES256")
         assert cfg.cookie_name == "myaccess_session"
         assert cfg.idp_name == "myaccess"
-        assert cfg.idp_realm == "bnp-cib"
+        assert cfg.idp_realm == "corp-cib"
 
     def test_custom_group_palier_map(self):
         cfg = idp_jwt.IdpConfig.from_env(
             env={
                 "TWIN_IDP_JWKS_URL": "https://idp/jwks",
                 "TWIN_IDP_GROUP_TO_PALIER_JSON": json.dumps(
-                    {"bnp.cib.steward": 3, "bnp.cib.viewer": 1}
+                    {"corp.cib.steward": 3, "corp.cib.viewer": 1}
                 ),
             }
         )
         assert cfg is not None
         assert cfg.group_to_palier == {
-            "bnp.cib.steward": 3,
-            "bnp.cib.viewer": 1,
+            "corp.cib.steward": 3,
+            "corp.cib.viewer": 1,
         }
 
     def test_invalid_group_palier_json_falls_back_to_default(self):
@@ -180,12 +180,12 @@ class TestIdpConfigFromEnv:
         cfg = idp_jwt.IdpConfig.from_env(
             env={
                 "TWIN_IDP_JWKS_URL": "https://idp/jwks",
-                "TWIN_IDP_ADMIN_GROUPS": "bnp.cib.kb-admin , bnp.cib.platform-ops",
+                "TWIN_IDP_ADMIN_GROUPS": "corp.cib.kb-admin , corp.cib.platform-ops",
             }
         )
         assert cfg is not None
         assert cfg.admin_groups == frozenset(
-            {"bnp.cib.kb-admin", "bnp.cib.platform-ops"}
+            {"corp.cib.kb-admin", "corp.cib.platform-ops"}
         )
 
     def test_admin_groups_explicit_empty_string_means_nobody(self):
@@ -571,7 +571,7 @@ class TestRequireAdminUser:
         placeholder dict tagged ``idp_validated=False`` rather than
         ``None``. The route-level ``require_auth`` dep is what gates
         anonymous in this posture; ``require_admin_user`` just signals
-        "authenticated, no RBAC yet". Critical for dev / OVH
+        "authenticated, no RBAC yet". Critical for dev / standalone
         standalone / maquette compat until MyAccess is wired."""
         idp_jwt.configure_idp(None)
         app = _build_admin_app()
@@ -634,17 +634,17 @@ class TestRequireAdminUser:
         self, rsa_keypair, fake_jwks
     ):
         # Re-config with custom admin_groups: twin-steward no longer
-        # admin, only bnp.kb-admin is.
+        # admin, only corp.kb-admin is.
         cfg = idp_jwt.IdpConfig(
             jwks_url="https://idp.example/jwks",
             issuer="https://idp.example/realms/twin",
             audience="twin",
-            admin_groups=frozenset({"bnp.kb-admin"}),
+            admin_groups=frozenset({"corp.kb-admin"}),
         )
         _activate(cfg, fake_jwks)
         # A token with only the default twin-steward should now be denied.
         steward_token = _make_token(rsa_keypair, groups=["twin-steward"])
-        admin_token = _make_token(rsa_keypair, groups=["bnp.kb-admin"])
+        admin_token = _make_token(rsa_keypair, groups=["corp.kb-admin"])
         app = _build_admin_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

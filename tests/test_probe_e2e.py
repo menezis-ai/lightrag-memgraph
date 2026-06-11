@@ -1,7 +1,7 @@
 """
 End-to-end probe tests for DocStatus paginated listing.
 
-These tests reproduce the exact conditions that caused the BNP probe 502:
+These tests reproduce the exact conditions that caused the production probe 502:
 the LightRAG web frontend calls POST /documents/paginated, which hits
 ``MemgraphDocStatusStorage.get_docs_paginated()``. When the sort field
 (``updated_at``) had no index, the query did a full scan on large datasets,
@@ -147,7 +147,7 @@ class TestPaginatedCorrectness:
 
 @pytest.mark.integration
 class TestPaginatedScaleTimingBudget:
-    """Regression tests for the BNP probe 502 bug.
+    """Regression tests for the production probe 502 bug.
 
     If a future change removes the updated_at index, or serialises count
     and fetch, these budgets will be violated and CI goes red. The budgets

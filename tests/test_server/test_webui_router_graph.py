@@ -4,7 +4,7 @@ Verifies the seed fallback policy:
 - when ``graph_reader.read_graph_entities`` returns rows, the route
   serves them (no fallback)
 - when it returns ``[]`` (Memgraph empty or down), the route falls
-  back to the in-memory seed so dev / OVH standalone keeps working
+  back to the in-memory seed so dev / standalone demos keep working
 """
 
 from __future__ import annotations

@@ -57,7 +57,7 @@ describe('getClassId', () => {
 
 describe('getClassName', () => {
   it('returns class_name from a ClassificationResult', () => {
-    expect(getClassName(mkCls({ class_name: 'BNP C2' }))).toBe('BNP C2');
+    expect(getClassName(mkCls({ class_name: 'Class C2' }))).toBe('Class C2');
   });
   it('falls back to raw_name when class_name is missing', () => {
     expect(
@@ -75,7 +75,7 @@ describe('getClassName', () => {
   });
 });
 
-describe('isAbove (BNP ladder)', () => {
+describe('isAbove (C1-C4 ladder)', () => {
   it('C3 outranks C2', () => {
     expect(isAbove('C3', 'C2')).toBe(true);
   });

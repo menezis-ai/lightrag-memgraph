@@ -432,7 +432,7 @@ class TestForFolderMode:
     `_documents` / `_graph_entities` / `_graph_relations` lists even for
     the default folder — otherwise ``/twin/api/documents`` and
     ``/twin/api/graph/*`` silently expose the demo payload on a real
-    BNP deploy.
+    production deploy.
     """
 
     def _default_folder(self) -> str:

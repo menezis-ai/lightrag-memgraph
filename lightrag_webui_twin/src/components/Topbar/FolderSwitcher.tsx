@@ -21,7 +21,7 @@ export function FolderSwitcher({
   folders,
   onPick,
 }: FolderSwitcherProps) {
-  // MyAccess gates the parent BNP/LGP KB. Folders are scoped inside
+  // The corporate IdP gates the parent KB. Folders are scoped inside
   // that KB, so dev/prod both show the configured folder list by default.
   const visible = folders;
 

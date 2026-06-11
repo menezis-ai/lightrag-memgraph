@@ -55,7 +55,7 @@ export interface DocumentChunk {
   chunk_id: string;
   order: number;
   text: string;
-  /** Truncated preview when classification > internal (Louis compliance). */
+  /** Truncated preview when classification > internal (compliance rule). */
   redacted?: boolean;
 }
 

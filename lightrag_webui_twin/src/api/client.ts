@@ -10,7 +10,7 @@
  *
  * Errors throw `ApiError` with the HTTP status and parsed body (or the raw text
  * if the response was non-JSON, e.g. nginx 502 HTML — same failure mode that
- * burned the BNP front in v0.5.2's HTTP-e2e suite).
+ * burned the production front in v0.5.2's HTTP-e2e suite).
  */
 
 import { resolveRuntimeConfig } from '../config/devConfig';

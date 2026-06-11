@@ -2,7 +2,7 @@
 # Build the WebUI fork TS and embed dist/ inside the Python package.
 #
 # Required step before `python -m build` so that the resulting wheel ships
-# the UI assets and can be `pip install`-ed in BNP production without any
+# the UI assets and can be `pip install`-ed in production without any
 # Node/Bun toolchain on the target host (TwinRAG security baseline + DORA
 # art. 9 — hermetic artefacts only).
 #
@@ -11,7 +11,7 @@
 #
 # Strips dev-only artefacts:
 #   - mockServiceWorker.js (audit WebUI fork TS §11 — would expose
-#     mock-service-worker in prod, BNP audit red flag)
+#     mock-service-worker in prod, audit red flag)
 
 set -euo pipefail
 
@@ -47,7 +47,7 @@ cp -R "$WEBUI_SRC/dist/." "$PKG_DIST/"
 # Strip dev-only artefacts (cf. audit WebUI fork §11)
 if [ -f "$PKG_DIST/mockServiceWorker.js" ]; then
     rm -f "$PKG_DIST/mockServiceWorker.js"
-    echo "    stripped: mockServiceWorker.js (dev-only, BNP audit red flag)"
+    echo "    stripped: mockServiceWorker.js (dev-only, audit red flag)"
 fi
 
 # Sanity check: required files present

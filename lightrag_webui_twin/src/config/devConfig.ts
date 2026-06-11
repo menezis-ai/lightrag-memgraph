@@ -67,7 +67,7 @@ const PLACEHOLDER = '__TWIN_CONFIG_JSON__';
  *
  * In a PROD build, the absence of a substituted config is normally a hard
  * error — it means the FastAPI sub-app didn't run and the bearer / scopes
- * are not in the page. But for the standalone OVH demo deploy (Caddy + MSW
+ * are not in the page. But for the standalone demo deploy (Caddy + MSW
  * client-side, no FastAPI behind), `VITE_FORCE_MSW=true` is the explicit
  * opt-in for "we know there's no real backend, use the dev fallback".
  */

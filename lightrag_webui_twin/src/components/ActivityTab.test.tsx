@@ -173,7 +173,7 @@ describe('ActivityTab — selection + detail', () => {
 describe('ActivityTab — immutable ledger (no Clear)', () => {
   it('does NOT expose a Clear button — audit trail is append-only', () => {
     render(<ActivityTab {...defaultProps()} />);
-    // Activity is an immutable ledger per BNP doctrine (EBA / DORA audit
+    // Activity is an immutable ledger per audit doctrine (EBA / DORA audit
     // trail). The Clear button was removed 2026-05-31. Natural expiry is
     // governed by the retention-policy table in Settings → Folder.
     expect(screen.queryByRole('button', { name: /^Clear/ })).toBeNull();

@@ -37,7 +37,7 @@ rsync -a \
     "${STAGING}/twin/"
 
 # Sanity sweep: scream loudly if any obvious internal marker survived.
-FORBIDDEN_RE='192\.168\.1\.(49|61|212)|sigilum\.fr|maquette\.sig|twin-real|37\.59\.104\.111|julien\.dabert|jdabert@'
+FORBIDDEN_RE='192\.168\.1\.(49|61|212)|sigilum\.fr|maquette\.sig|twin-real|37\.59\.104\.111|julien\.dabert|jdabert@|\bOVH\b|ovh-twin|/Users/julien|\b[Bb][Nn][Pp]\b|[Bb][Nn][Pp][_.-]|[_.-][Bb][Nn][Pp]\b|[Pp]aribas'
 if grep -rEI "${FORBIDDEN_RE}" "${STAGING}/twin/" >/tmp/twin-export-leak.log 2>/dev/null; then
     echo "ERROR: forbidden marker detected in staging tree" >&2
     echo "see /tmp/twin-export-leak.log for the leak list" >&2
@@ -47,7 +47,7 @@ fi
 # Equivalent sweep for stakeholder names. Word-boundary anchored so
 # substrings inside English words don't trip. Names are intentionally
 # Twin-team-specific.
-NAMES_RE='\b(HORVAT|Salah|Fabrice|Vihn|Anas|Geoffrey|Cassandre|Alberto|Chaki|Yazid|Chafi)\b'
+NAMES_RE='\b(HORVAT|Salah|Fabrice|Vihn|Anas|Geoffrey|Cassandre|Alberto|Chaki|Yazid|Chafi|Louis|Eric|Fay[cç]al|Manu|Timoth[eé]e?)\b'
 if grep -rEI "${NAMES_RE}" "${STAGING}/twin/" >/tmp/twin-export-names.log 2>/dev/null; then
     echo "ERROR: stakeholder name detected in staging tree" >&2
     echo "see /tmp/twin-export-names.log for the name list" >&2

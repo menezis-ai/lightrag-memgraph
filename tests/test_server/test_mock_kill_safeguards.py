@@ -63,7 +63,7 @@ class TestSeedStoresWarningUnderActiveIdp:
         )
 
     def test_no_warn_when_idp_dormant(self, monkeypatch, caplog):
-        # Dev / OVH standalone / maquette path — no IdP, seed mode is
+        # Dev / standalone demo path — no IdP, seed mode is
         # the legitimate demo backend.
         monkeypatch.delenv("TWIN_IDP_JWKS_URL", raising=False)
         app = FastAPI()

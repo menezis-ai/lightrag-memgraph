@@ -28,7 +28,7 @@ async function unregisterStaleMsw(): Promise<void> {
 async function bootstrap(): Promise<void> {
   // MSW activation policy:
   //   - DEV         : on by default (set VITE_USE_MSW=false to disable)
-  //   - PROD demo   : opt-in via VITE_FORCE_MSW=true (OVH static deploy
+  //   - PROD demo   : opt-in via VITE_FORCE_MSW=true (static demo deploy
   //                   has no FastAPI backend; MSW serves all fixtures
   //                   client-side via public/mockServiceWorker.js)
   //   - PROD real   : off (default), the app expects a real backend

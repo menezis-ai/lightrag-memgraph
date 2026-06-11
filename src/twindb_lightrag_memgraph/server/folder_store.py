@@ -4,7 +4,7 @@ Sits beside `_folders.py` (env-only catalog) and persists operator
 additions / edits / deletions. Two persistence modes:
 
 - **In-memory** (default): mutations live for the lifetime of the
-  process. Acceptable for dev / OVH standalone where the env catalog
+  process. Acceptable for dev / standalone demos where the env catalog
   is the source of truth and runtime folders are demo seeds.
 - **JSON file**: when ``TWIN_FOLDERS_RUNTIME_FILE`` is set, every
   mutation rewrites the file atomically. Reads load it lazily on first

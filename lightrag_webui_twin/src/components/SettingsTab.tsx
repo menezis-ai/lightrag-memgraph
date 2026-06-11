@@ -14,7 +14,7 @@
  *
  * Rationale: Twin is a knowledge-management console, not an identity / billing
  * console. Every section that asked the operator to manage capability tokens
- * or destructive folder state was moved out of the UI surface — Louis 28/05
+ * or destructive folder state was moved out of the UI surface — compliance review 28/05
  * + cleanup 30/05.
  */
 

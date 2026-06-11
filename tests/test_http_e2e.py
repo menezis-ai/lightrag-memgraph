@@ -1,7 +1,7 @@
 """
 HTTP-level e2e tests — guarantees the backend never returns HTML on errors.
 
-Reproduces the **exact failure mode** that crashed the BNP frontend:
+Reproduces the **exact failure mode** that crashed the production frontend:
 
   1. Backend slow on POST /documents/paginated (> 60s) → nginx upstream timeout
   2. nginx returns its HTML 502 page to the frontend
@@ -77,12 +77,12 @@ def _build_app(rag: LightRAG, ready: bool = True) -> FastAPI:
     The exception handler is the **regression sentinel**: if any unhandled
     exception escapes a route, it must still serialise to JSON, never HTML.
     Without this handler, FastAPI would return a default text/html 500 page
-    on RuntimeError — exactly what crashed the BNP frontend.
+    on RuntimeError — exactly what crashed the production frontend.
 
     *ready* mirrors the readiness probe pattern: when False, /health and
     business endpoints return 503 + JSON instead of attempting to use the
     not-yet-initialised storages. This is the pattern recommended for
-    BNP-style deployments where k8s readiness probes must distinguish
+    Restricted deployments where k8s readiness probes must distinguish
     "starting" from "broken".
     """
     app = FastAPI()
@@ -292,7 +292,7 @@ class TestHealthHTTP:
 
 @pytest.mark.integration
 class TestPaginatedHTTP:
-    """The exact endpoint that broke at BNP."""
+    """The exact endpoint that broke in production."""
 
     async def test_returns_json_not_html(self, http_client):
         """Empty paginated must still return parseable JSON, not HTML."""
@@ -359,7 +359,7 @@ class TestErrorResponsesAreJson:
         assert resp.status_code == 500
         assert resp.headers["content-type"].startswith("application/json"), (
             "Without JSON exception handler, FastAPI returns text/html — "
-            "this is what crashed the BNP frontend"
+            "this is what crashed the production frontend"
         )
         body = resp.json()
         assert body["error"] == "simulated backend crash"
@@ -421,7 +421,7 @@ class TestStartupRace503:
 
     The expected pattern: 503 Service Unavailable + JSON body, NEVER HTML.
     This lets nginx/k8s probes hold off traffic instead of returning their
-    own HTML error page (which crashed the BNP frontend).
+    own HTML error page (which crashed the production frontend).
     """
 
     async def test_health_returns_503_json_when_not_ready(
@@ -471,7 +471,7 @@ class TestStartupRace503:
         """Memgraph driver fails (replica reconnect, network blip).
 
         Even when the storage layer raises a connection error, the response
-        must stay JSON. This is the BNP scenario where the SYNC replica was
+        must stay JSON. This is the production scenario where the SYNC replica was
         unreachable and Bolt timed out.
         """
         from neo4j.exceptions import ServiceUnavailable
