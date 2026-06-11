@@ -95,17 +95,32 @@ export function ProfileSection({
       <div className="set-card">
         <div className="set-card-h">Session</div>
         <div className="set-row">
-          <button
-            type="button"
-            className="btn"
-            data-testid="settings-signout"
-            onClick={() => onSignOut?.()}
-          >
-            <Icon name="arrow-right" size={13} /> Sign out
-          </button>
-          <span className="set-row-note">
-            Local cache (threads, tweaks) is preserved in this browser.
-          </span>
+          {user.idp === 'local-debug' ? (
+            // Open-access deployment (no auth backend): there is no session
+            // to terminate — a Sign out button here would purge local state
+            // and silently re-enter as the same debug identity, which reads
+            // like an auth bypass to an auditor.
+            <span className="set-row-note" data-testid="settings-open-access-note">
+              Open access — no authentication backend is configured on this
+              deployment, so there is no session to sign out of. Configure
+              LIGHTRAG_API_KEY, LIGHTRAG_JWT_SECRET or TWIN_IDP_JWKS_URL to
+              enable authentication.
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn"
+                data-testid="settings-signout"
+                onClick={() => onSignOut?.()}
+              >
+                <Icon name="arrow-right" size={13} /> Sign out
+              </button>
+              <span className="set-row-note">
+                Local cache (threads, tweaks) is preserved in this browser.
+              </span>
+            </>
+          )}
         </div>
       </div>
 
