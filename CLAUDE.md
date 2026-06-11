@@ -40,6 +40,18 @@ LIGHTRAG_PORT=8080 python -m twindb_lightrag_memgraph.server
 
 Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightRAGServerSettings`. See `WEBUI-WIRING-PLAN.md` (repo root) for the full Couche 2 / Couche 3 contract this server exposes to the WebUI fork.
 
+### Production-style entrypoint (`twin_main.py`)
+
+`twin_main.py` (repo root) is the container CMD for a deployed Twin runtime: it calls `register(replace_ui=True, mount_server=True, shim_native_routes=True)` at module top, **then** imports and runs LightRAG's own `lightrag.api.lightrag_server.main`. The ordering is doctrine: `register()` MUST run before the LightRAG server module is imported — calling it from inside `lightrag_server` (e.g. via a sed-prepended import) creates a circular import because `create_app` doesn't exist yet mid-import. `Dockerfile.example` shows the minimal image wiring (illustrative, not turnkey).
+
+### Build the embedded WebUI
+
+```bash
+scripts/build_webui.sh
+```
+
+Builds `lightrag_webui_twin/` with Bun and copies `dist/` into `src/twindb_lightrag_memgraph/webui_dist/` (declared as package-data in `pyproject.toml`), stripping `mockServiceWorker.js` (dev-only, BNP audit red flag). **Required before building a wheel** — `replace_ui=True` fails at runtime with `FileNotFoundError` if the installed package lacks `webui_dist/index.html`. The embedded dist lets BNP `pip install` the UI with no Node/Bun on the target host.
+
 ### Tests
 
 The local `.venv` is Python 3.14. Be aware of two known footguns recorded in project memory:
@@ -109,7 +121,7 @@ A push triggers 1–15 min of CI (global directive §6). Run unit + integration 
 
 ### Storage package (`src/twindb_lightrag_memgraph/`)
 
-- `__init__.py` — `register()` monkey-patches three dicts in `lightrag.kg`: `STORAGE_IMPLEMENTATIONS`, `STORAGE_ENV_REQUIREMENTS`, `STORAGES`. Module paths in `STORAGES` **must be absolute** (`twindb_lightrag_memgraph.kv_impl`, not relative) because `lazy_external_import` resolves with `package="lightrag"`. Idempotent via `_registered` flag. Also patches `lightrag.__version__` to append `+memgraph-{version}` so the WebUI shows `core_version` like `v1.4.9.11+memgraph-0.5.3`. Must be called **before** `LightRAG(...)`.
+- `__init__.py` — `register()` monkey-patches three dicts in `lightrag.kg`: `STORAGE_IMPLEMENTATIONS`, `STORAGE_ENV_REQUIREMENTS`, `STORAGES`. Module paths in `STORAGES` **must be absolute** (`twindb_lightrag_memgraph.kv_impl`, not relative) because `lazy_external_import` resolves with `package="lightrag"`. Idempotent via `_registered` flag. Also patches `lightrag.__version__` to append `+memgraph-{version}` so the WebUI shows `core_version` like `v1.4.9.11+memgraph-0.5.3`. Must be called **before** `LightRAG(...)`. Beyond storage, `register()` takes the runtime-overlay flags: `replace_ui=True` swaps the native `/webui` Mount for the embedded `webui_dist/` build; `mount_server=True` mounts the Twin sub-app under `twin_api_prefix` (default `/twin/api`) with chained lifespans; `shim_native_routes=True` prepends the `native_shims` router; `webui_stores` picks `"memgraph"` (default, persistent, needs `MEMGRAPH_URI`) vs `"seed"` (in-memory demo fixtures); `webui_categories_config` mirrors a JSON tag-category taxonomy on every boot (replace-not-merge, Config-as-Code); `classify`/`classification_*` args wire the MIP classification hook.
 - `_pool.py` — Two independent async Bolt drivers (write + read) as module-level singletons; both detect event-loop changes and rebuild on a thread-safe lock. `acquire_write_slot()` is an `asyncio.Semaphore` (default 10) wrapping every write. Read sessions (`get_read_session()`) are never throttled. URI scheme determines whether `database=` is passed natively (`neo4j://...`) or via `USE DATABASE` (`bolt://...`); on Memgraph Community, `USE DATABASE` fails on first attempt and is silently skipped thereafter. The graph backend (built into LightRAG) keeps **its own** driver — production has 3 pools by design.
 - `_buffered_graph.py` — `_BufferedGraphProxy` wraps the graph storage during `merge_nodes_and_edges`, accumulating `upsert_node`/`upsert_edge`, then flushes nodes-then-edges as 2 UNWIND queries. Supports read-your-own-writes via in-memory buffer checks before delegating. Reduces ~130 round-trips/doc to 2–3.
 - `_hooks.py` — Post-indexation hooks.
