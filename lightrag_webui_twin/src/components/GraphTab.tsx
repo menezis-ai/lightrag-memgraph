@@ -67,6 +67,8 @@ export interface GraphTabProps {
   relations: readonly GraphRelation[];
   /** Optional color override; defaults to the package palette. */
   colors?: Record<GraphEntityType, string>;
+  /** doc_id → file name, so the document filter shows human-readable labels. */
+  docLabels?: Readonly<Record<string, string>>;
   /** Host-controlled tab navigation. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
@@ -75,6 +77,7 @@ export function GraphTab({
   entities,
   relations,
   colors = GRAPH_TYPE_COLORS,
+  docLabels,
   onNavigate,
 }: GraphTabProps) {
   const [q, setQ] = useUrlParam<string>('gq', '');
@@ -385,6 +388,7 @@ export function GraphTab({
             selected={docFilter}
             onChange={setDocFilter}
             placeholder="Search documents…"
+            format={(id) => docLabels?.[id] ?? id}
           />
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>

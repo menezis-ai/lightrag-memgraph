@@ -1021,6 +1021,13 @@ function AppShell() {
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come
   // first, modified second, to keep the reviewer's eye on new arrivals.
+  const graphDocLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    docList.forEach((d) => {
+      if (d.file_path) labels[d.doc_id] = d.file_path;
+    });
+    return labels;
+  }, [docList]);
   const isPendingReview = (d: Document) =>
     d.review?.state === 'pending-review' || d.review?.state === 'modified';
   const pendingDocs = docList
@@ -1258,6 +1265,7 @@ function AppShell() {
             <GraphTab
               entities={graphEntityList}
               relations={graphRelationList}
+              docLabels={graphDocLabels}
               onNavigate={onNavigate}
             />
           )}

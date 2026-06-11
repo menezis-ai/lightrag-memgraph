@@ -172,6 +172,40 @@ describe('GraphTab — filters', () => {
     expect(screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`)).toBeInTheDocument();
   });
 
+  it('document filter shows file names from docLabels, falling back to the raw id', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            source_docs: ['doc-65b39d5035d5ba1aa5a4c681c87d1d80'],
+          },
+          {
+            ...GRAPH_ENTITY_FIXTURES[8],
+            source_docs: ['doc-unmapped'],
+          },
+        ]}
+        relations={[]}
+        docLabels={{
+          'doc-65b39d5035d5ba1aa5a4c681c87d1d80': 'oracle-restart-procedure.pdf',
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText('Filter by document'));
+    const mapped = screen.getByTestId('kg-pick-doc-65b39d5035d5ba1aa5a4c681c87d1d80');
+    expect(mapped).toHaveTextContent('oracle-restart-procedure.pdf');
+    expect(mapped).not.toHaveTextContent('doc-65b39d5035d5ba1aa5a4c681c87d1d80');
+    expect(screen.getByTestId('kg-pick-doc-unmapped')).toHaveTextContent('doc-unmapped');
+
+    // Selected pill also shows the file name, with the raw id kept on title.
+    await userEvent.click(mapped);
+    expect(
+      screen.getByTestId('kg-picked-doc-65b39d5035d5ba1aa5a4c681c87d1d80'),
+    ).toHaveTextContent('oracle-restart-procedure.pdf');
+  });
+
   it('no-match search shows empty state with Clear filter CTA', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.type(
