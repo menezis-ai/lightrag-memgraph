@@ -42,6 +42,8 @@ const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
 const E2E_TAGS_STORAGE_KEY = 'twin.e2e.tagsState.v1';
 const E2E_NOTIFICATIONS_STORAGE_KEY = 'twin.e2e.notificationsState.v1';
 const E2E_ACTIVITY_STORAGE_KEY = 'twin.e2e.activityState.v1';
+const E2E_SCENARIO_STORAGE_KEY = 'twin.e2e.scenario.v1';
+const E2E_AUTH_USER_STORAGE_KEY = 'twin.e2e.localAuthUser.v1';
 
 function cloneDocuments(docs: readonly Document[]): Document[] {
   return docs.map((doc) => ({
@@ -242,8 +244,41 @@ interface E2eScenario {
   bulkDeleteDelayMs?: number;
 }
 
-const e2eScenario: E2eScenario = {};
-let localAuthUser: string | null = null;
+// Scenario + local auth survive a page reload (sessionStorage) so e2e specs
+// can exercise full journeys that cross a navigation boundary (e.g. enable
+// the auth gate, reload, land on the login screen). `/__e2e/reset` clears
+// both along with the rest of the mock state.
+function loadScenario(): E2eScenario {
+  const raw = e2eStorage()?.getItem(E2E_SCENARIO_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') return parsed as E2eScenario;
+  } catch {
+    // Ignore corrupt e2e state and fall back to an empty scenario.
+  }
+  return {};
+}
+
+function persistScenario(): void {
+  persistState(E2E_SCENARIO_STORAGE_KEY, e2eScenario);
+}
+
+function persistLocalAuthUser(): void {
+  persistState(E2E_AUTH_USER_STORAGE_KEY, localAuthUser);
+}
+
+const e2eScenario: E2eScenario = loadScenario();
+let localAuthUser: string | null = (() => {
+  const raw = e2eStorage()?.getItem(E2E_AUTH_USER_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+})();
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
   tagApproveCalls: {} as Record<string, number>,
@@ -285,6 +320,8 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_TAGS_STORAGE_KEY);
   storage?.removeItem(E2E_NOTIFICATIONS_STORAGE_KEY);
   storage?.removeItem(E2E_ACTIVITY_STORAGE_KEY);
+  storage?.removeItem(E2E_SCENARIO_STORAGE_KEY);
+  storage?.removeItem(E2E_AUTH_USER_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
   categoryState = cloneTagCategories(TAG_CATEGORY_FIXTURES);
   tagState = cloneTags(TAG_FIXTURES);
@@ -611,6 +648,7 @@ export const handlers = [
   http.post(`${ANY}/__e2e/scenario`, async ({ request }) => {
     const patch = (await request.json()) as E2eScenario;
     Object.assign(e2eScenario, patch);
+    persistScenario();
     return HttpResponse.json({ ok: true, scenario: e2eScenario });
   }),
   http.get(`${ANY}/__e2e/stats`, () =>
@@ -667,13 +705,16 @@ export const handlers = [
       | { username?: string; password?: string }
       | null;
     const username = body?.username?.trim();
-    if (!username || !body?.password) {
+    // 'invalid-password' is the e2e knob for the failed-credentials path —
+    // the mock otherwise accepts any non-empty pair like LightRAG demo auth.
+    if (!username || !body?.password || body.password === 'invalid-password') {
       return HttpResponse.json(
         { detail: 'Invalid username or password' },
         { status: 401 },
       );
     }
     localAuthUser = username;
+    persistLocalAuthUser();
     return HttpResponse.json({
       access_token: `mock-token-${username}`,
       token_type: 'bearer',
@@ -682,6 +723,7 @@ export const handlers = [
   }),
   http.post(`${ANY}/logout`, () => {
     localAuthUser = null;
+    persistLocalAuthUser();
     return HttpResponse.json({ ok: true });
   }),
 

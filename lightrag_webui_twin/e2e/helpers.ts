@@ -19,7 +19,12 @@ export async function boot(page: Page) {
 }
 
 export async function openTab(page: Page, name: string) {
-  await page.getByRole('button', { name, exact: true }).click();
+  // Scope to the topbar nav — tab labels (e.g. "Settings", "Retrieval")
+  // also exist as filter pills / buttons inside some tab panes.
+  await page
+    .getByRole('navigation')
+    .getByRole('button', { name, exact: true })
+    .click();
 }
 
 export async function setMswScenario(page: Page, scenario: Record<string, unknown>) {
