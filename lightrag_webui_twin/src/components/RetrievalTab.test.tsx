@@ -360,6 +360,47 @@ describe('RetrievalTab — params panel', () => {
 });
 
 describe('RetrievalTab — source cards', () => {
+  it('shows only the first five sources until the user expands the list', async () => {
+    const sources = Array.from({ length: 7 }, (_, i) => ({
+      n: i + 1,
+      type: 'file' as const,
+      name: `source-${i + 1}.pdf`,
+      meta: `chunk ${i + 1}`,
+      score: 0.9 - i * 0.01,
+    }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_many_sources',
+            title: 'Many sources',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [{ role: 'assistant', tokens: ['answer'], sources }],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('source-1')).toBeInTheDocument();
+    expect(screen.getByTestId('source-5')).toBeInTheDocument();
+    expect(screen.queryByTestId('source-6')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Voir les 2 autres' }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Voir les 2 autres' }),
+    );
+
+    expect(screen.getByTestId('source-6')).toBeInTheDocument();
+    expect(screen.getByTestId('source-7')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Réduire aux 5 premières' }),
+    ).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('clicking a source card navigates to documents with a source filter for file paths', async () => {
     const onNavigate = vi.fn();
     render(<RetrievalTab {...defaultProps()} onNavigate={onNavigate} />);

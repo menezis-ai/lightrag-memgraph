@@ -46,6 +46,7 @@ import type { ThesaurusEntry } from '../types/thesaurus';
 // pre-production demo visits on the same origin — prod must boot blank).
 const THREADS_STORAGE_KEY = 'twin-rag.threads.v3';
 const STREAM_TICK_MS = 70;
+const INITIAL_VISIBLE_SOURCES = 5;
 
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
 
@@ -762,6 +763,15 @@ function Turn({
   }
 
   const parts: AnswerPart[] = parseAnswer(msg.tokens ?? []);
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
+  const sources = msg.sources ?? [];
+  const visibleSources = sourcesExpanded
+    ? sources
+    : sources.slice(0, INITIAL_VISIBLE_SOURCES);
+  const hiddenSourcesCount = Math.max(
+    0,
+    sources.length - INITIAL_VISIBLE_SOURCES,
+  );
 
   return (
     <div className="msg-assistant">
@@ -799,11 +809,11 @@ function Turn({
           />
         )}
       </div>
-      {!streaming && msg.sources && msg.sources.length > 0 && (
+      {!streaming && sources.length > 0 && (
         <>
           <div className="sources-header">Sources</div>
           <div className="sources-list">
-            {msg.sources.map((s) => {
+            {visibleSources.map((s) => {
               const clickable = Boolean(onSourceClick);
               const className = `source-card${highlightSrc === s.n ? ' hl' : ''}${
                 clickable ? ' clickable' : ''
@@ -841,6 +851,18 @@ function Turn({
                 </button>
               );
             })}
+            {hiddenSourcesCount > 0 && (
+              <button
+                type="button"
+                className="sources-toggle"
+                onClick={() => setSourcesExpanded((expanded) => !expanded)}
+                aria-expanded={sourcesExpanded}
+              >
+                {sourcesExpanded
+                  ? `Réduire aux ${INITIAL_VISIBLE_SOURCES} premières`
+                  : `Voir les ${hiddenSourcesCount} autres`}
+              </button>
+            )}
           </div>
         </>
       )}

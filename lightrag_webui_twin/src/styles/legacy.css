@@ -762,6 +762,21 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-top: 0.5px solid var(--color-border-tertiary);
 }
 .sources-list { display: flex; flex-direction: column; gap: 8px; }
+.sources-toggle {
+  align-self: flex-start;
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  padding: 6px 10px;
+  background: var(--color-background-secondary);
+  color: var(--twin-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sources-toggle:hover {
+  background: var(--twin-accent-soft-bg);
+  border-color: var(--twin-accent-soft-border);
+}
 .source-card {
   border: 0.5px solid var(--color-border-tertiary);
   border-radius: var(--border-radius-md);
