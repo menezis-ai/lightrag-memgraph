@@ -42,6 +42,10 @@ export async function getMswStats(
     path: string;
     folder: string | null;
   }>;
+  queryRequests: Array<{
+    path: string;
+    body: Record<string, unknown>;
+  }>;
 }> {
   return page.evaluate(async () => {
     const res = await fetch('/__e2e/stats');

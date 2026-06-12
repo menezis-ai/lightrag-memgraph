@@ -1021,7 +1021,10 @@ function AppShell() {
   const graphDocTags = useMemo(() => {
     const tags: Record<string, readonly string[]> = {};
     docList.forEach((d) => {
-      if (d.tags.length > 0) tags[d.doc_id] = d.tags;
+      if (d.tags.length > 0) {
+        tags[d.doc_id] = d.tags;
+        if (d.file_path) tags[d.file_path] = d.tags;
+      }
     });
     return tags;
   }, [docList]);

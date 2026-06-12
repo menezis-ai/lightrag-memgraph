@@ -118,7 +118,7 @@ test.describe('Retrieval threads and parameters', () => {
     );
   });
 
-  test('@retrieval @params tag filter chips add and remove from the thesaurus', async ({
+  test('@retrieval @params tag filter chips add and remove from the canonical tag catalog', async ({
     page,
   }) => {
     await page.getByLabel('Retrieval tag input').fill('oracle');

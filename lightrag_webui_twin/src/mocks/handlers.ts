@@ -285,6 +285,10 @@ const e2eStats = {
     path: string;
     folder: string | null;
   }>,
+  queryRequests: [] as Array<{
+    path: string;
+    body: unknown;
+  }>,
 };
 
 function recordTwinFolderRequest(request: Request): void {
@@ -349,7 +353,17 @@ export function resetDocumentsState(): void {
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
   e2eStats.folderRequests = [];
+  e2eStats.queryRequests = [];
   localAuthUser = null;
+}
+
+async function recordQueryRequest(request: Request): Promise<Record<string, unknown>> {
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  e2eStats.queryRequests.push({
+    path: new URL(request.url).pathname,
+    body,
+  });
+  return body;
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
@@ -655,6 +669,7 @@ export const handlers = [
       approveCalls: e2eStats.approveCalls,
       tagApproveCalls: e2eStats.tagApproveCalls,
       folderRequests: e2eStats.folderRequests,
+      queryRequests: e2eStats.queryRequests,
     }),
   ),
   http.post(`${ANY}/__e2e/documents`, async ({ request }) => {
@@ -932,7 +947,7 @@ export const handlers = [
   // Twin overlay query — mirrors the structured `{response, sources}`
   // contract from the backend so dev / standalone parity is honest.
   http.post(`${ANY}${TWIN}/query`, async ({ request }) => {
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await recordQueryRequest(request)) as {
       query?: string;
       top_k?: number;
       chunk_top_k?: number;
@@ -956,7 +971,7 @@ export const handlers = [
     return HttpResponse.json({ response: responseText, sources });
   }),
   http.post(`${ANY}${TWIN}/query/data`, async ({ request }) => {
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await recordQueryRequest(request)) as {
       query?: string;
       tag_filter?: { all?: string[]; any?: string[] };
     };
@@ -1001,7 +1016,7 @@ export const handlers = [
     // The client parses line-by-line and ignores anything else, so
     // returning plain text here used to silently produce an empty
     // assistant turn in MSW dev mode (no tokens, no sources).
-    const body = (await request.json().catch(() => ({}))) as {
+    const body = (await recordQueryRequest(request)) as {
       query?: string;
       top_k?: number;
     };
