@@ -692,6 +692,49 @@ input:focus, textarea:focus, select:focus { outline: none; }
   padding: 1px 5px;
   border-radius: 3px;
 }
+.thinking-turn {
+  min-height: 32px;
+}
+.thinking-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 9px 12px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+.thinking-bubble span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--twin-accent);
+  opacity: 0.35;
+  animation: thinking-pulse 1s infinite ease-in-out;
+}
+.thinking-bubble span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.thinking-bubble span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+@keyframes thinking-pulse {
+  0%, 80%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-bubble span {
+    animation: none;
+    opacity: 0.75;
+  }
+}
 .citation {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 16px; height: 16px;

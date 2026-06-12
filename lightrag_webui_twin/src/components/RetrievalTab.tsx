@@ -521,6 +521,7 @@ export function RetrievalTab({
               onSourceClick={onSourceClick}
             />
           )}
+          {streaming && streamedTokens.length === 0 && <ThinkingTurn />}
         </div>
         <div className="querybar">
           <textarea
@@ -715,6 +716,23 @@ export function RetrievalTab({
           <span className="dot" /> Connected
         </div>
       </aside>
+    </div>
+  );
+}
+
+function ThinkingTurn() {
+  return (
+    <div
+      className="msg-assistant thinking-turn"
+      role="status"
+      aria-live="polite"
+      data-testid="retrieval-thinking"
+    >
+      <div className="thinking-bubble" aria-label="Thinking">
+        <span />
+        <span />
+        <span />
+      </div>
     </div>
   );
 }

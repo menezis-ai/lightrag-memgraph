@@ -157,6 +157,27 @@ describe('RetrievalTab — send', () => {
       'References',
     );
   });
+
+  it('shows a thinking indicator while waiting for the first backend chunk', async () => {
+    const onStreamQuery = vi.fn(
+      () =>
+        new Promise<{ response: string; sources: [] }>(() => {
+          // Keep the request pending so the pre-token loading state is visible.
+        }),
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'Slow answer');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    expect(await screen.findByTestId('retrieval-thinking')).toBeInTheDocument();
+  });
 });
 
 describe('RetrievalTab — localStorage persistence', () => {
