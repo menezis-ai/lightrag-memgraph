@@ -62,6 +62,7 @@ export interface RetrievalTabProps {
     chunkTopK: number;
     maxTokens: number;
     historyTurns: number;
+    conversationHistory: readonly ConversationHistoryMessage[];
     onlyContext: boolean;
     onlyPrompt: boolean;
     userPrompt: string;
@@ -79,6 +80,7 @@ export interface RetrievalTabProps {
       chunkTopK: number;
       maxTokens: number;
       historyTurns: number;
+      conversationHistory: readonly ConversationHistoryMessage[];
       onlyContext: boolean;
       onlyPrompt: boolean;
       userPrompt: string;
@@ -109,6 +111,11 @@ const DEFAULT_SUGGESTIONS = [
   'Common RMAN backup errors',
   'CFT troubleshooting checklist',
 ];
+
+interface ConversationHistoryMessage {
+  role: ChatMessage['role'];
+  content: string;
+}
 
 export function RetrievalTab({
   thesaurus,
@@ -288,13 +295,38 @@ export function RetrievalTab({
     }, STREAM_TICK_MS);
   };
 
-  const activeParams = (q: string) => ({
+  const conversationHistoryFor = (
+    messages: readonly ChatMessage[],
+  ): readonly ConversationHistoryMessage[] => {
+    const maxMessages = Math.max(0, history) * 2;
+    if (maxMessages === 0) return [];
+    return messages
+      .map((message): ConversationHistoryMessage | null => {
+        const content =
+          message.role === 'user'
+            ? message.text
+            : message.tokens?.join('');
+        const trimmed = content?.trim();
+        if (!trimmed) return null;
+        return { role: message.role, content: trimmed };
+      })
+      .filter(
+        (message): message is ConversationHistoryMessage => message !== null,
+      )
+      .slice(-maxMessages);
+  };
+
+  const activeParams = (
+    q: string,
+    conversationHistory: readonly ConversationHistoryMessage[],
+  ) => ({
     query: q,
     mode: queryMode,
     topK,
     chunkTopK,
     maxTokens: maxTok,
     historyTurns: history,
+    conversationHistory,
     onlyContext: onlyCtx,
     onlyPrompt,
     userPrompt,
@@ -307,13 +339,16 @@ export function RetrievalTab({
     if (!q) return;
     setQuery('');
     const threadId = ensureActiveThread();
+    const currentMessages =
+      threads.find((t) => t.id === threadId)?.messages ?? [];
+    const conversationHistory = conversationHistoryFor(currentMessages);
     appendToThread(threadId, (c) => [...c, { role: 'user', text: q }]);
     setStreamedTokens([]);
     setStreaming(true);
 
     if (onStreamQuery) {
       const streamed: AnswerToken[] = [];
-      onStreamQuery(activeParams(q), (chunk) => {
+      onStreamQuery(activeParams(q, conversationHistory), (chunk) => {
         streamed.push(chunk);
         setStreamedTokens([...streamed]);
       })
@@ -337,7 +372,7 @@ export function RetrievalTab({
 
     const sendQuery = onSendQuery ?? missingRetrievalBackend;
 
-    sendQuery(activeParams(q))
+    sendQuery(activeParams(q, conversationHistory))
       .then(({ response, sources }) => {
         const tokens = response
           .split(/(\s+)/)
@@ -758,12 +793,13 @@ function Turn({
   onCiteClick,
   onSourceClick,
 }: TurnProps) {
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
+
   if (msg.role === 'user') {
     return <div className="msg-user">{msg.text}</div>;
   }
 
   const parts: AnswerPart[] = parseAnswer(msg.tokens ?? []);
-  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const sources = msg.sources ?? [];
   const visibleSources = sourcesExpanded
     ? sources

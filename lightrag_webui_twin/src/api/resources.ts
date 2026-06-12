@@ -69,6 +69,10 @@ export interface TwinQueryRequest {
   only_need_context?: boolean;
   only_need_prompt?: boolean;
   history_turns?: number;
+  conversation_history?: readonly {
+    role: 'user' | 'assistant';
+    content: string;
+  }[];
   user_prompt?: string;
   enable_rerank?: boolean;
   tag_filter?: {

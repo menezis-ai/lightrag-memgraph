@@ -297,6 +297,50 @@ describe('RetrievalTab — params panel', () => {
     );
   });
 
+  it('sends prior thread messages as conversation history', async () => {
+    const onSendQuery = vi.fn(async () => ({ response: 'ok', sources: [] }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_followup',
+            title: 'Follow-up',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              { role: 'user', text: 'What is RMAN?' },
+              {
+                role: 'assistant',
+                tokens: ['RMAN is Oracle Recovery Manager.'],
+                sources: [],
+              },
+            ],
+          },
+        ]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'And restore?');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: 'And restore?',
+        historyTurns: 3,
+        conversationHistory: [
+          { role: 'user', content: 'What is RMAN?' },
+          {
+            role: 'assistant',
+            content: 'RMAN is Oracle Recovery Manager.',
+          },
+        ],
+      }),
+    );
+  });
+
   it('question and answer land in the same thread when no thread is active', async () => {
     const onSendQuery = vi.fn(async () => ({
       response: 'LIP6 est un laboratoire.',
