@@ -437,7 +437,7 @@ export function DocumentsTab({
               />
             </div>
             <div>Source</div>
-            <div>Summary</div>
+            <div>Indexed preview</div>
             <div>
               Tags{' '}
               <span
@@ -551,7 +551,7 @@ function DocRow({
             size={13}
             color="var(--twin-red-vivid)"
             // Inline-flex via aria-hidden + style so the icon sits flush with
-            // the summary text baseline. No extra span — the .is-failed row
+            // the preview text baseline. No extra span — the .is-failed row
             // class already paints everything red.
           />
         )}
@@ -560,7 +560,7 @@ function DocRow({
           style={isFail ? { marginLeft: 6 } : undefined}
           title={doc.content_summary}
         >
-          {doc.content_summary}
+          {doc.content_summary || 'No indexed preview available.'}
         </span>
       </div>
       <div className="cell-tags">

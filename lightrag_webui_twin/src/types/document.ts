@@ -74,7 +74,7 @@ export interface Document {
   track_id: string | null;
   /** Original source identifier (file name, URL, Confluence path...). */
   file_path: string;
-  /** Short summary, populated by LightRAG ingestion. */
+  /** Indexed text preview populated by LightRAG ingestion; not an abstractive summary. */
   content_summary: string;
   /** Total content length in chars. */
   content_length: number;

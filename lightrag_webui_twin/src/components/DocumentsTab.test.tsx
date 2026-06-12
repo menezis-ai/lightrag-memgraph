@@ -43,6 +43,8 @@ describe('DocumentsTab — rendering', () => {
   it('renders all docs by default', () => {
     render(<DocumentsTab {...defaultProps()} />);
     expect(screen.getByText('Document management')).toBeInTheDocument();
+    expect(screen.getByText('Indexed preview')).toBeInTheDocument();
+    expect(screen.queryByText('Summary')).toBeNull();
     DOCUMENT_FIXTURES.forEach((d) => {
       expect(screen.getByText(d.file_path)).toBeInTheDocument();
     });
