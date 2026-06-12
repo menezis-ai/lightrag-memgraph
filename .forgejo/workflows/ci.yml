@@ -9,7 +9,6 @@ on:
 jobs:
   unit-tests:
     runs-on: [self-hosted, docker]
-    container: python:${{ matrix.python-version }}-bookworm
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
@@ -24,22 +23,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Run unit tests in Python ${{ matrix.python-version }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[intelligence,server,test]"
-          python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}"
-
-      - name: Run unit tests
-        # MEMGRAPH_URI intentionally NOT set: conftest.py auto-skips every
-        # @pytest.mark.integration test. Picks up tests/test_intelligence/
-        # and tests/test_server/ alongside the storage unit set, without
-        # needing to enumerate files.
-        run: pytest tests/ --ignore=tests/test_bench.py -v
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            python:${{ matrix.python-version }}-bookworm \
+            sh -lc '
+              python -m pip install --upgrade pip &&
+              python -m pip install -e ".[intelligence,server,test]" &&
+              python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
+              pytest tests/ --ignore=tests/test_bench.py -v
+            '
 
   integration-tests:
     runs-on: [self-hosted, high]
-    container: python:3.12-bookworm
     strategy:
       # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
       # the contention threshold that previously starved cold-starts.
@@ -78,6 +76,11 @@ jobs:
           --health-retries 120
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -173,7 +176,6 @@ jobs:
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
     runs-on: [self-hosted, high]
-    container: python:3.12-bookworm
     services:
       memgraph:
         image: memgraph/memgraph-mage:3.10.1
@@ -198,6 +200,11 @@ jobs:
       TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install backend dependencies
         run: |
