@@ -16,6 +16,7 @@ authentication is disabled (open access).
 
 from __future__ import annotations
 
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -31,6 +32,7 @@ _security = HTTPBearer(auto_error=False)
 
 DEFAULT_JWT_USERNAME = "admin"
 DEFAULT_JWT_PASSWORD = "changeme"
+_DUMMY_PASSWORD = "\0" * 32
 
 # Module-level config -- set by configure_auth()
 _static_api_key: str | None = None
@@ -86,6 +88,14 @@ def _parse_auth_accounts(raw: str | None) -> dict[str, str]:
             continue
         accounts[username] = password
     return accounts
+
+
+def _secret_equal(provided: str, expected: str) -> bool:
+    """Compare secrets without early-exit timing leaks."""
+    return hmac.compare_digest(
+        provided.encode("utf-8"),
+        expected.encode("utf-8"),
+    )
 
 
 def configure_auth(
@@ -280,7 +290,7 @@ async def require_auth(
     token = credentials.credentials
 
     # 2. Static API key
-    if _static_api_key and token == _static_api_key:
+    if _static_api_key and _secret_equal(token, _static_api_key):
         return "api_key"
 
     # 3. Legacy local JWT
@@ -345,7 +355,7 @@ async def auth_status(
             login_required=True,
         )
 
-    if _static_api_key and token == _static_api_key:
+    if _static_api_key and _secret_equal(token, _static_api_key):
         return AuthStatusResponse(
             auth_enabled=True,
             authenticated=True,
@@ -393,7 +403,11 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
         if body.username == _jwt_username
         else None
     )
-    if expected_password is None or body.password != expected_password:
+    password_to_check = (
+        expected_password if expected_password is not None else _DUMMY_PASSWORD
+    )
+    password_matches = _secret_equal(body.password, password_to_check)
+    if expected_password is None or not password_matches:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

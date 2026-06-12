@@ -74,6 +74,7 @@ async def test_webui_mount_substitutes_runtime_config(monkeypatch, tmp_path):
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/html")
             assert "__TWIN_CONFIG_JSON__" not in response.text
+            assert "window.location.hash==='#/login'" in response.text
 
             config = _extract_twin_config(response.text)
             assert config["apiBaseUrl"] == "/twin/api"

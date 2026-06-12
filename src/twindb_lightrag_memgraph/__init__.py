@@ -1274,6 +1274,16 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
     from starlette.responses import HTMLResponse
     from starlette.routing import Mount
 
+    legacy_hash_guard = (
+        "<script>"
+        "(function(){"
+        "if(window.location.hash==='#/login'){"
+        "window.history.replaceState(null,'',window.location.pathname+window.location.search);"
+        "}"
+        "}());"
+        "</script>"
+    )
+
     class _TemplatedStaticFiles(StaticFiles):
         """StaticFiles subclass that substitutes ``__TWIN_CONFIG_JSON__`` in index.html.
 
@@ -1321,6 +1331,8 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
                     "__TWIN_CONFIG_JSON__",
                     self._runtime_config_json,
                 )
+                if legacy_hash_guard not in html:
+                    html = html.replace("</head>", f"{legacy_hash_guard}</head>", 1)
                 return HTMLResponse(
                     html,
                     headers={

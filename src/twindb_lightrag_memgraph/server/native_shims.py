@@ -326,12 +326,13 @@ def build_native_shims_router(
         import dataclasses
 
         from lightrag.base import DocStatus
+        from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
         from .folder import resolve_folder_for_request
 
         rag = get_rag()
         folder = resolve_folder_for_request(request)
         page = int(cursor) if (cursor and cursor.isdigit()) else 1
-        page_size = 50
+        page_size = DEFAULT_PAGE_SIZE
 
         # Translate UI string status → DocStatus enum (the storage method
         # only accepts the enum; the WebUI sends uppercase strings).

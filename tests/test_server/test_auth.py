@@ -80,6 +80,78 @@ class TestAuthAccounts:
         }
 
 
+class TestConstantTimeComparison:
+    def test_secret_equal_uses_compare_digest(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import auth
+
+        calls = []
+
+        def fake_compare_digest(left, right):
+            calls.append((left, right))
+            return left == right
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
+
+        assert auth._secret_equal("sésame", "sésame") is True
+        assert auth._secret_equal("sésame", "wrong") is False
+        assert calls == [
+            ("sésame".encode("utf-8"), "sésame".encode("utf-8")),
+            ("sésame".encode("utf-8"), b"wrong"),
+        ]
+
+    async def test_require_auth_static_key_uses_compare_digest(self, monkeypatch):
+        from fastapi.security import HTTPAuthorizationCredentials
+        from twindb_lightrag_memgraph.server import auth
+
+        calls = []
+
+        def fake_compare_digest(left, right):
+            calls.append((left, right))
+            return left == right
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
+        configure_auth(api_key="my-key")
+
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="my-key")
+        assert await require_auth(credentials=creds) == "api_key"
+        assert calls == [(b"my-key", b"my-key")]
+
+    async def test_login_password_uses_compare_digest(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import auth
+
+        calls = []
+
+        def fake_compare_digest(left, right):
+            calls.append((left, right))
+            return left == right
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
+        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+
+        resp = await login(LoginRequest(username="admin", password="pass"), Response())
+        assert resp.access_token
+        assert calls == [(b"pass", b"pass")]
+
+    async def test_login_unknown_username_still_compares_password(self, monkeypatch):
+        from fastapi import HTTPException
+        from twindb_lightrag_memgraph.server import auth
+
+        calls = []
+
+        def fake_compare_digest(left, right):
+            calls.append((left, right))
+            return left == right
+
+        monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
+        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await login(LoginRequest(username="missing", password="pass"), Response())
+
+        assert exc_info.value.status_code == 401
+        assert calls == [(b"pass", auth._DUMMY_PASSWORD.encode("utf-8"))]
+
+
 class TestJWT:
     def setup_method(self):
         configure_auth(

@@ -11,7 +11,14 @@ import logging
 import os
 from dataclasses import dataclass
 
-from ._constants import validate_identifier
+from ._constants import (
+    DEFAULT_TWIN_MAX_FOLDERS,
+    TWIN_DEFAULT_FOLDER_ENV,
+    TWIN_DEFAULT_FOLDER_LABEL_ENV,
+    TWIN_MAX_FOLDERS_ENV,
+    WORKSPACE_ENV,
+    validate_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,19 +64,23 @@ class TwinFolderCatalog:
 
 
 def _parse_max_folders() -> int:
-    raw = os.environ.get("TWIN_MAX_FOLDERS", "5")
+    raw = os.environ.get(TWIN_MAX_FOLDERS_ENV, str(DEFAULT_TWIN_MAX_FOLDERS))
     try:
         value = int(raw)
     except ValueError:
-        logger.exception("Invalid TWIN_MAX_FOLDERS; falling back to 5")
-        value = 5
-    return max(1, min(5, value))
+        logger.exception(
+            "Invalid %s; falling back to %s",
+            TWIN_MAX_FOLDERS_ENV,
+            DEFAULT_TWIN_MAX_FOLDERS,
+        )
+        value = DEFAULT_TWIN_MAX_FOLDERS
+    return max(1, min(DEFAULT_TWIN_MAX_FOLDERS, value))
 
 
 def _parse_default_folder() -> str:
     raw = (
-        os.environ.get("TWIN_DEFAULT_FOLDER")
-        or os.environ.get("WORKSPACE")
+        os.environ.get(TWIN_DEFAULT_FOLDER_ENV)
+        or os.environ.get(WORKSPACE_ENV)
         or "default"
     ).strip()
     try:
@@ -125,7 +136,7 @@ def load_folder_catalog() -> TwinFolderCatalog:
             TwinFolder(
                 id=default_folder,
                 label=(
-                    os.environ.get("TWIN_DEFAULT_FOLDER_LABEL")
+                    os.environ.get(TWIN_DEFAULT_FOLDER_LABEL_ENV)
                     or "Default folder"
                 ),
                 kind="primary",
