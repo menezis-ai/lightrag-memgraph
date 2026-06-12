@@ -151,7 +151,7 @@ jobs:
     # Full Playwright operator journeys against the MSW-backed WebUI.
     # real-backend.spec.ts remains in the suite but skips unless
     # REAL_BACKEND_URL is provided by a deployment/staging workflow.
-    runs-on: [self-hosted, docker]
+    runs-on: [self-hosted, high]
     defaults:
       run:
         working-directory: lightrag_webui_twin
@@ -176,7 +176,7 @@ jobs:
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
-    runs-on: [self-hosted, docker]
+    runs-on: [self-hosted, high]
     services:
       memgraph:
         image: memgraph/memgraph-mage:3.10.1
