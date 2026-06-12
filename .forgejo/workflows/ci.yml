@@ -177,19 +177,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.6
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: bunx playwright install chromium
-
       - name: Run Playwright e2e
-        run: bun run test:e2e
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e npm_config_cache=/tmp/npm \
+            -e CI=true \
+            -v "$PWD:/work" \
+            -w /work \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            sh -lc 'npm ci && npm run test:e2e'
 
   webui-e2e-real:
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
@@ -210,19 +208,6 @@ jobs:
       TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.6
-
-      - name: Install WebUI dependencies
-        working-directory: lightrag_webui_twin
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        working-directory: lightrag_webui_twin
-        run: bunx playwright install chromium
 
       - name: Start real backend
         run: |
@@ -260,6 +245,8 @@ jobs:
             --name "$backend" \
             --network "$net" \
             -p 127.0.0.1:9621:9621 \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
             -v "$PWD:/work" \
             -w /work \
             -e MEMGRAPH_URI="$MEMGRAPH_URI" \
@@ -279,7 +266,7 @@ jobs:
             -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
-            sh -lc 'python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" && python -m pip install "lightrag-hku==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" && python -m pip install "lightrag-hku==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
 
       - name: Wait for real backend
         run: |
@@ -311,8 +298,20 @@ jobs:
             sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py seed'
 
       - name: Run real-backend Playwright e2e
-        working-directory: lightrag_webui_twin
-        run: bun run test:e2e:real
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --network host \
+            -e HOME=/tmp \
+            -e npm_config_cache=/tmp/npm \
+            -e CI=true \
+            -e REAL_BACKEND_URL="$REAL_BACKEND_URL" \
+            -e VITE_AUTH_TOKEN="$VITE_AUTH_TOKEN" \
+            -e REAL_E2E_EXPECT_AUTH="$REAL_E2E_EXPECT_AUTH" \
+            -v "$PWD/lightrag_webui_twin:/work" \
+            -w /work \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            sh -lc 'npm ci && npm run test:e2e:real'
 
       - name: Cleanup real-backend e2e fixtures
         if: always()
