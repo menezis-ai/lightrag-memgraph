@@ -83,6 +83,7 @@ def _parse_auth_accounts(raw: str | None) -> dict[str, str]:
             continue
         username, password = item.split(":", 1)
         username = username.strip()
+        password = password.strip()
         if not username:
             logger.warning("AUTH_ACCOUNTS entry with empty username ignored")
             continue

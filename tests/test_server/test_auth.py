@@ -74,6 +74,12 @@ class TestAuthAccounts:
             "user": "pass",
         }
 
+    def test_parse_trims_operator_spacing_around_credentials(self):
+        assert _parse_auth_accounts(" operator : expected-password , admin : secret ") == {
+            "operator": "expected-password",
+            "admin": "secret",
+        }
+
     def test_password_may_contain_colon(self):
         assert _parse_auth_accounts("admin:p:a:s:s") == {
             "admin": "p:a:s:s",
@@ -261,6 +267,18 @@ class TestLoginEndpoint:
         resp = await login(LoginRequest(username="bob", password="word"), Response())
         payload = _decode_jwt(resp.access_token)
         assert payload["sub"] == "bob"
+
+    async def test_login_success_with_spaced_auth_accounts_env(self):
+        from fastapi import Response
+
+        configure_auth(
+            jwt_secret="secret",
+            jwt_password="non-default-pwd",
+            auth_accounts=" operator : expected-password ",
+        )
+        resp = await login(LoginRequest(username="operator", password="expected-password"), Response())
+        payload = _decode_jwt(resp.access_token)
+        assert payload["sub"] == "operator"
 
     async def test_login_sets_local_jwt_cookie(self):
         from fastapi import Response
