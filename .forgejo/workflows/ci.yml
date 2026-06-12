@@ -186,7 +186,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install chromium
 
       - name: Run Playwright e2e
         run: bun run test:e2e
@@ -222,7 +222,7 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: lightrag_webui_twin
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install chromium
 
       - name: Start real backend
         run: |
