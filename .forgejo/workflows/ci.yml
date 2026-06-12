@@ -39,9 +39,9 @@ jobs:
   integration-tests:
     runs-on: [self-hosted, high]
     strategy:
-      # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
-      # the contention threshold that previously starved cold-starts.
-      max-parallel: 5
+      # Static host port mapping below means these jobs must not overlap on
+      # the same self-hosted runner.
+      max-parallel: 1
       matrix:
         # 1.4.10 dropped: intermittent test failures under integration load
         # (likely upstream timing regression, fixed in 1.4.11+). See issue #6.
@@ -74,24 +74,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 120
+        ports:
+          - 7687:7687
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[intelligence,server,test]"
-          python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}"
-
       - name: Run integration tests
-        env:
-          MEMGRAPH_URI: bolt://memgraph:7687
-        run: pytest tests/ --ignore=tests/test_bench.py -v
+        run: |
+          docker run --rm \
+            --network host \
+            -e MEMGRAPH_URI=bolt://127.0.0.1:7687 \
+            -v "$PWD:/work" \
+            -w /work \
+            python:3.12-bookworm \
+            sh -lc '
+              python -m pip install --upgrade pip &&
+              python -m pip install -e ".[intelligence,server,test]" &&
+              python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
+              pytest tests/ --ignore=tests/test_bench.py -v
+            '
 
   webui-lint:
     # ESLint gate (low-cost: no install of Playwright / heavyweight deps
@@ -186,8 +187,10 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 120
+        ports:
+          - 7688:7687
     env:
-      MEMGRAPH_URI: bolt://memgraph:7687
+      MEMGRAPH_URI: bolt://127.0.0.1:7688
       REAL_BACKEND_URL: http://127.0.0.1:9621
       REAL_BACKEND_FOLDER: default
       REAL_BACKEND_AUTH_TOKEN: real-e2e-token
@@ -200,17 +203,6 @@ jobs:
       TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[intelligence,server,test]"
-          python -m pip install "lightrag-hku==1.4.9.11"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -227,26 +219,30 @@ jobs:
 
       - name: Start real backend
         run: |
-          nohup env \
-            MEMGRAPH_URI="$MEMGRAPH_URI" \
-            HOST=127.0.0.1 \
-            PORT=9621 \
-            LIGHTRAG_API_KEY="$REAL_BACKEND_AUTH_TOKEN" \
-            LIGHTRAG_KV_STORAGE=MemgraphKVStorage \
-            LIGHTRAG_VECTOR_STORAGE=MemgraphVectorDBStorage \
-            LIGHTRAG_GRAPH_STORAGE=MemgraphStorage \
-            LIGHTRAG_DOC_STATUS_STORAGE=MemgraphDocStatusStorage \
-            LLM_BINDING=openai \
-            LLM_BINDING_API_KEY=ci-disabled \
-            EMBEDDING_BINDING=openai \
-            EMBEDDING_BINDING_API_KEY=ci-disabled \
-            EMBEDDING_MODEL=text-embedding-3-small \
-            EMBEDDING_DIM=1536 \
-            TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
-            TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
-            python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores='memgraph'); from lightrag.api.lightrag_server import main; main()" \
-            > real-backend.log 2>&1 &
-          echo $! > real-backend.pid
+          docker rm -f twin-real-backend || true
+          docker run -d \
+            --name twin-real-backend \
+            --network host \
+            -v "$PWD:/work" \
+            -w /work \
+            -e MEMGRAPH_URI="$MEMGRAPH_URI" \
+            -e HOST=127.0.0.1 \
+            -e PORT=9621 \
+            -e LIGHTRAG_API_KEY="$REAL_BACKEND_AUTH_TOKEN" \
+            -e LIGHTRAG_KV_STORAGE=MemgraphKVStorage \
+            -e LIGHTRAG_VECTOR_STORAGE=MemgraphVectorDBStorage \
+            -e LIGHTRAG_GRAPH_STORAGE=MemgraphStorage \
+            -e LIGHTRAG_DOC_STATUS_STORAGE=MemgraphDocStatusStorage \
+            -e LLM_BINDING=openai \
+            -e LLM_BINDING_API_KEY=ci-disabled \
+            -e EMBEDDING_BINDING=openai \
+            -e EMBEDDING_BINDING_API_KEY=ci-disabled \
+            -e EMBEDDING_MODEL=text-embedding-3-small \
+            -e EMBEDDING_DIM=1536 \
+            -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
+            -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
+            python:3.12-bookworm \
+            sh -lc 'python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" && python -m pip install "lightrag-hku==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
 
       - name: Wait for real backend
         run: |
@@ -258,11 +254,22 @@ jobs:
             fi
             sleep 2
           done
-          tail -n 200 real-backend.log
+          docker logs --tail 200 twin-real-backend || true
           exit 1
 
       - name: Seed real-backend e2e fixtures
-        run: python scripts/real_backend_e2e_fixtures.py seed
+        run: |
+          docker run --rm \
+            --network host \
+            -v "$PWD:/work" \
+            -w /work \
+            -e MEMGRAPH_URI="$MEMGRAPH_URI" \
+            -e REAL_BACKEND_FOLDER="$REAL_BACKEND_FOLDER" \
+            -e REAL_E2E_MUTATION_DOC_ID="$REAL_E2E_MUTATION_DOC_ID" \
+            -e REAL_E2E_BULK_DELETE_DOC_ID="$REAL_E2E_BULK_DELETE_DOC_ID" \
+            -e REAL_E2E_RETAG_TAG="$REAL_E2E_RETAG_TAG" \
+            python:3.12-bookworm \
+            sh -lc 'python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py seed'
 
       - name: Run real-backend Playwright e2e
         working-directory: lightrag_webui_twin
@@ -270,15 +277,23 @@ jobs:
 
       - name: Cleanup real-backend e2e fixtures
         if: always()
-        run: python scripts/real_backend_e2e_fixtures.py cleanup
+        run: |
+          docker run --rm \
+            --network host \
+            -v "$PWD:/work" \
+            -w /work \
+            -e MEMGRAPH_URI="$MEMGRAPH_URI" \
+            -e REAL_BACKEND_FOLDER="$REAL_BACKEND_FOLDER" \
+            -e REAL_E2E_MUTATION_DOC_ID="$REAL_E2E_MUTATION_DOC_ID" \
+            -e REAL_E2E_BULK_DELETE_DOC_ID="$REAL_E2E_BULK_DELETE_DOC_ID" \
+            -e REAL_E2E_RETAG_TAG="$REAL_E2E_RETAG_TAG" \
+            python:3.12-bookworm \
+            sh -lc 'python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py cleanup'
 
       - name: Stop real backend
         if: always()
-        run: |
-          if [ -f real-backend.pid ]; then
-            kill "$(cat real-backend.pid)" || true
-          fi
+        run: docker stop twin-real-backend || true
 
       - name: Print backend log on failure
         if: failure()
-        run: tail -n 300 real-backend.log || true
+        run: docker logs --tail 300 twin-real-backend || true
