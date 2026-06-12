@@ -250,7 +250,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             -e MEMGRAPH_URI="$MEMGRAPH_URI" \
-            -e HOST=127.0.0.1 \
+            -e HOST=0.0.0.0 \
             -e PORT=9621 \
             -e LIGHTRAG_API_KEY="$REAL_BACKEND_AUTH_TOKEN" \
             -e LIGHTRAG_KV_STORAGE=MemgraphKVStorage \
@@ -266,15 +266,18 @@ jobs:
             -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
-            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" && python -m pip install "lightrag-hku==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" "lightrag-hku[api]==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
 
       - name: Wait for real backend
         run: |
-          for i in $(seq 1 120); do
+          for i in $(seq 1 300); do
             if curl -fsS \
               -H "Authorization: Bearer $REAL_BACKEND_AUTH_TOKEN" \
               "$REAL_BACKEND_URL/twin/api/health"; then
               exit 0
+            fi
+            if [ $((i % 30)) = 0 ]; then
+              docker logs --tail 80 "$(cat .ci-real-backend)" || true
             fi
             sleep 2
           done
