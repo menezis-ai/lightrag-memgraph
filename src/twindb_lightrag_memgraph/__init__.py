@@ -221,9 +221,29 @@ def register(
         # when the host's create_app calls it, we capture the rag instance.
         _patch_capture_rag()
 
-    if replace_ui or mount_server or shim_native_routes:
+    # When replace_ui=True but the embedded dist is missing (e.g. the image
+    # was built without scripts/build_webui.sh / the Dockerfile WebUI stage),
+    # _resolve_webui_dist raises FileNotFoundError. Historically this killed
+    # the rest of step 8 silently (Python's site.execsitecustomize swallows
+    # the traceback), which also took mount_server and shim_native_routes
+    # down with it — so the BNP runtime ended up serving LightRAG's native
+    # UI AND none of the Twin overlays. Degrade gracefully: log loud, drop
+    # replace_ui only, keep the other overlays alive.
+    resolved_webui_dist: str | None = None
+    if replace_ui:
+        try:
+            resolved_webui_dist = _resolve_webui_dist(webui_dist)
+        except FileNotFoundError as exc:
+            logger.error(
+                "twindb: replace_ui=True but no WebUI dist found — "
+                "LightRAG native UI will be served. mount_server / "
+                "shim_native_routes WILL still apply. Details: %s",
+                exc,
+            )
+
+    if resolved_webui_dist or mount_server or shim_native_routes:
         _patch_lightrag_server_create_app(
-            webui_dist=_resolve_webui_dist(webui_dist) if replace_ui else None,
+            webui_dist=resolved_webui_dist,
             twin_api_prefix=twin_api_prefix if mount_server else None,
             shim_native_routes=shim_native_routes,
             webui_stores=webui_stores if mount_server else "seed",
@@ -1309,6 +1329,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
             self._runtime_config_json = runtime_config_json
             self._template_cache: str | None = None
             self._template_path = Path(self.directory) / "index.html"
+            self._first_serve_logged = False
 
         async def get_response(self, path: str, scope):
             # Starlette normalizes the mount-relative path via os.path.normpath,
@@ -1316,6 +1337,13 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
             # GET /webui/index.html arrives as path == "index.html". Both
             # resolve to the same file → both are substitution targets.
             if path in (".", "index.html"):
+                if not self._first_serve_logged:
+                    self._first_serve_logged = True
+                    logger.info(
+                        "Chargement de TwinRAG UI réussie ✨💅 "
+                        "(first index.html served from %s)",
+                        self._template_path,
+                    )
                 if self._template_cache is None:
                     try:
                         self._template_cache = self._template_path.read_text(
@@ -1406,6 +1434,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         "twindb: WebUI mount at /webui swapped → %s (with __TWIN_CONFIG_JSON__ substitution)",
         webui_dist,
     )
+    logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount /webui ready)")
 
 
 def _mount_twin_subapp(

@@ -203,3 +203,44 @@ class TestEnvDrivenFlags:
             replace_ui=False, mount_server=False, shim_native_routes=False
         )
         assert called == []
+
+    def test_missing_webui_dist_degrades_replace_ui_only(self, monkeypatch, caplog):
+        """When replace_ui=True but the embedded dist is absent, register()
+        must keep mount_server / shim_native_routes alive instead of raising
+        and losing everything (BNP 2026-06-12 silent-failure path).
+        """
+        _reset_registration()
+        for var in ("TWIN_REPLACE_UI", "TWIN_MOUNT_SERVER", "TWIN_SHIM_NATIVE_ROUTES"):
+            monkeypatch.delenv(var, raising=False)
+        calls = {}
+
+        def fake_patch(**kwargs):
+            calls.update(kwargs)
+
+        def raise_missing(explicit):
+            raise FileNotFoundError("no WebUI dist found.")
+
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph,
+            "_patch_lightrag_server_create_app",
+            fake_patch,
+        )
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph, "_resolve_webui_dist", raise_missing
+        )
+        monkeypatch.setattr(
+            twindb_lightrag_memgraph, "_patch_capture_rag", lambda: None
+        )
+
+        with caplog.at_level("ERROR", logger="twindb_lightrag_memgraph"):
+            twindb_lightrag_memgraph.register(
+                replace_ui=True, mount_server=True, shim_native_routes=True
+            )
+
+        assert calls, "expected _patch_lightrag_server_create_app to still run"
+        assert calls["webui_dist"] is None
+        assert calls["twin_api_prefix"] == "/twin/api"
+        assert calls["shim_native_routes"] is True
+        assert any(
+            "no WebUI dist found" in rec.message for rec in caplog.records
+        ), "expected a loud ERROR log about the missing dist"
