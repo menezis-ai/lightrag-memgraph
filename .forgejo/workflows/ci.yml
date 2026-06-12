@@ -9,6 +9,7 @@ on:
 jobs:
   unit-tests:
     runs-on: [self-hosted, docker]
+    container: python:${{ matrix.python-version }}-bookworm
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
@@ -23,15 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Install dependencies
         run: |
-          pip install -e ".[intelligence,server,test]"
-          pip install "lightrag-hku==${{ matrix.lightrag-version }}"
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[intelligence,server,test]"
+          python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}"
 
       - name: Run unit tests
         # MEMGRAPH_URI intentionally NOT set: conftest.py auto-skips every
@@ -42,6 +39,7 @@ jobs:
 
   integration-tests:
     runs-on: [self-hosted, high]
+    container: python:3.12-bookworm
     strategy:
       # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
       # the contention threshold that previously starved cold-starts.
@@ -81,15 +79,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install dependencies
         run: |
-          pip install -e ".[intelligence,server,test]"
-          pip install "lightrag-hku==${{ matrix.lightrag-version }}"
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[intelligence,server,test]"
+          python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}"
 
       - name: Run integration tests
         env:
@@ -179,6 +173,7 @@ jobs:
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
     runs-on: [self-hosted, high]
+    container: python:3.12-bookworm
     services:
       memgraph:
         image: memgraph/memgraph-mage:3.10.1
@@ -204,15 +199,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install backend dependencies
         run: |
-          pip install -e ".[intelligence,server,test]"
-          pip install "lightrag-hku==1.4.9.11"
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[intelligence,server,test]"
+          python -m pip install "lightrag-hku==1.4.9.11"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
