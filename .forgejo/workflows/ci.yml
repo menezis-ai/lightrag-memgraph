@@ -26,10 +26,14 @@ jobs:
       - name: Run unit tests in Python ${{ matrix.python-version }}
         run: |
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
             -v "$PWD:/work" \
             -w /work \
             python:${{ matrix.python-version }}-bookworm \
             sh -lc '
+              python -m venv /tmp/venv &&
+              . /tmp/venv/bin/activate &&
               python -m pip install --upgrade pip &&
               python -m pip install -e ".[intelligence,server,test]" &&
               python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
@@ -39,8 +43,8 @@ jobs:
   integration-tests:
     runs-on: [self-hosted, docker]
     strategy:
-      # Static host port mapping below means these jobs must not overlap on
-      # the same self-hosted runner.
+      # Own Docker network per matrix job; keep one Memgraph-heavy job per
+      # runner to avoid memory contention.
       max-parallel: 1
       matrix:
         # 1.4.10 dropped: intermittent test failures under integration load
@@ -55,39 +59,54 @@ jobs:
         # BNP prod target — pinned explicitly so the rolling `latest` tag
         # can't silently move the coverage point under us.
         memgraph-version: ["3.10.1"]
-    services:
-      memgraph:
-        image: memgraph/memgraph-mage:${{ matrix.memgraph-version }}
-        # --memory 3g: bumped from 2g after 2026-05-29 PR #143 showed
-        # 1.4.9 × 3.10.1 fail at ~7m53s under sustained query load. Local
-        # repro on Python 3.12 with the same combo runs in 25s with 615
-        # tests passing, so the runner was OOM-killing memgraph mid-suite.
-        # 3.10.1 mage image is heavier than 3.7.2 (the previous "always
-        # passes" baseline) — 3g cap accommodates Memgraph + MAGE + sustained
-        # vector_search load without leaving the runner thrashing.
-        # --health-retries 120 (10 min): mage:latest (3.9+) cold-start can
-        # exceed the previous 5 min window on a contended runner.
-        options: >-
-          --memory 3g
-          --memory-swap 3g
-          --health-cmd "echo 'RETURN 1;' | mgconsole"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 120
-        ports:
-          - 7687:7687
     steps:
       - uses: actions/checkout@v4
 
       - name: Run integration tests
         run: |
+          safe_version="$(printf '%s' '${{ matrix.lightrag-version }}' | tr -c 'A-Za-z0-9' '-')"
+          net="twin-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-integration-${safe_version}"
+          memgraph="twin-ci-memgraph-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${safe_version}"
+
+          docker rm -f "$memgraph" >/dev/null 2>&1 || true
+          docker network rm "$net" >/dev/null 2>&1 || true
+          docker network create "$net"
+          cleanup() {
+            docker rm -f "$memgraph" >/dev/null 2>&1 || true
+            docker network rm "$net" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run -d \
+            --name "$memgraph" \
+            --network "$net" \
+            --network-alias memgraph \
+            --memory 3g \
+            --memory-swap 3g \
+            memgraph/memgraph-mage:${{ matrix.memgraph-version }}
+
+          for i in $(seq 1 120); do
+            if docker exec "$memgraph" bash -lc "echo 'RETURN 1;' | mgconsole"; then
+              break
+            fi
+            if [ "$i" = "120" ]; then
+              docker logs "$memgraph" || true
+              exit 1
+            fi
+            sleep 5
+          done
+
           docker run --rm \
-            --network host \
-            -e MEMGRAPH_URI=bolt://127.0.0.1:7687 \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --network "$net" \
+            -e MEMGRAPH_URI=bolt://memgraph:7687 \
             -v "$PWD:/work" \
             -w /work \
             python:3.12-bookworm \
             sh -lc '
+              python -m venv /tmp/venv &&
+              . /tmp/venv/bin/activate &&
               python -m pip install --upgrade pip &&
               python -m pip install -e ".[intelligence,server,test]" &&
               python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
@@ -177,20 +196,8 @@ jobs:
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
     runs-on: [self-hosted, high]
-    services:
-      memgraph:
-        image: memgraph/memgraph-mage:3.10.1
-        options: >-
-          --memory 3g
-          --memory-swap 3g
-          --health-cmd "echo 'RETURN 1;' | mgconsole"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 120
-        ports:
-          - 7688:7687
     env:
-      MEMGRAPH_URI: bolt://127.0.0.1:7688
+      MEMGRAPH_URI: bolt://memgraph:7687
       REAL_BACKEND_URL: http://127.0.0.1:9621
       REAL_BACKEND_FOLDER: default
       REAL_BACKEND_AUTH_TOKEN: real-e2e-token
@@ -219,10 +226,40 @@ jobs:
 
       - name: Start real backend
         run: |
-          docker rm -f twin-real-backend || true
+          net="twin-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-webui-real"
+          memgraph="twin-ci-memgraph-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-webui-real"
+          backend="twin-ci-backend-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-webui-real"
+          printf '%s\n' "$net" > .ci-real-network
+          printf '%s\n' "$memgraph" > .ci-real-memgraph
+          printf '%s\n' "$backend" > .ci-real-backend
+
+          docker rm -f "$backend" "$memgraph" >/dev/null 2>&1 || true
+          docker network rm "$net" >/dev/null 2>&1 || true
+          docker network create "$net"
+
           docker run -d \
-            --name twin-real-backend \
-            --network host \
+            --name "$memgraph" \
+            --network "$net" \
+            --network-alias memgraph \
+            --memory 3g \
+            --memory-swap 3g \
+            memgraph/memgraph-mage:3.10.1
+
+          for i in $(seq 1 120); do
+            if docker exec "$memgraph" bash -lc "echo 'RETURN 1;' | mgconsole"; then
+              break
+            fi
+            if [ "$i" = "120" ]; then
+              docker logs "$memgraph" || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+          docker run -d \
+            --name "$backend" \
+            --network "$net" \
+            -p 127.0.0.1:9621:9621 \
             -v "$PWD:/work" \
             -w /work \
             -e MEMGRAPH_URI="$MEMGRAPH_URI" \
@@ -254,13 +291,15 @@ jobs:
             fi
             sleep 2
           done
-          docker logs --tail 200 twin-real-backend || true
+          docker logs --tail 200 "$(cat .ci-real-backend)" || true
           exit 1
 
       - name: Seed real-backend e2e fixtures
         run: |
           docker run --rm \
-            --network host \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --network "$(cat .ci-real-network)" \
             -v "$PWD:/work" \
             -w /work \
             -e MEMGRAPH_URI="$MEMGRAPH_URI" \
@@ -269,7 +308,7 @@ jobs:
             -e REAL_E2E_BULK_DELETE_DOC_ID="$REAL_E2E_BULK_DELETE_DOC_ID" \
             -e REAL_E2E_RETAG_TAG="$REAL_E2E_RETAG_TAG" \
             python:3.12-bookworm \
-            sh -lc 'python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py seed'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py seed'
 
       - name: Run real-backend Playwright e2e
         working-directory: lightrag_webui_twin
@@ -278,8 +317,13 @@ jobs:
       - name: Cleanup real-backend e2e fixtures
         if: always()
         run: |
+          if [ ! -f .ci-real-network ]; then
+            exit 0
+          fi
           docker run --rm \
-            --network host \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            --network "$(cat .ci-real-network)" \
             -v "$PWD:/work" \
             -w /work \
             -e MEMGRAPH_URI="$MEMGRAPH_URI" \
@@ -288,12 +332,28 @@ jobs:
             -e REAL_E2E_BULK_DELETE_DOC_ID="$REAL_E2E_BULK_DELETE_DOC_ID" \
             -e REAL_E2E_RETAG_TAG="$REAL_E2E_RETAG_TAG" \
             python:3.12-bookworm \
-            sh -lc 'python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py cleanup'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py cleanup'
 
       - name: Stop real backend
         if: always()
-        run: docker stop twin-real-backend || true
+        run: |
+          if [ -f .ci-real-backend ]; then
+            docker stop "$(cat .ci-real-backend)" || true
+          fi
 
       - name: Print backend log on failure
         if: failure()
-        run: docker logs --tail 300 twin-real-backend || true
+        run: |
+          if [ -f .ci-real-backend ]; then
+            docker logs --tail 300 "$(cat .ci-real-backend)" || true
+          fi
+
+      - name: Cleanup real backend containers
+        if: always()
+        run: |
+          if [ -f .ci-real-backend ] && [ -f .ci-real-memgraph ]; then
+            docker rm -f "$(cat .ci-real-backend)" "$(cat .ci-real-memgraph)" || true
+          fi
+          if [ -f .ci-real-network ]; then
+            docker network rm "$(cat .ci-real-network)" || true
+          fi
