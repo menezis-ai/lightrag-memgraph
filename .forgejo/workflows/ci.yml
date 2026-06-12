@@ -37,7 +37,7 @@ jobs:
             '
 
   integration-tests:
-    runs-on: [self-hosted, high]
+    runs-on: [self-hosted, docker]
     strategy:
       # Static host port mapping below means these jobs must not overlap on
       # the same self-hosted runner.
@@ -176,7 +176,7 @@ jobs:
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
-    runs-on: [self-hosted, high]
+    runs-on: [self-hosted, docker]
     services:
       memgraph:
         image: memgraph/memgraph-mage:3.10.1
