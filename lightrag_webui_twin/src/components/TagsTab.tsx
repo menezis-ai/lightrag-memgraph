@@ -1,5 +1,5 @@
 /**
- * TagsTab — thesaurus governance (header → pending requests → filters →
+ * TagsTab — tag catalog governance (header → pending requests → filters →
  * category rail + card grid + detail panel).
  *
  * Ported from Desktop/UI/tags.jsx. Sub-components extracted out:
@@ -219,7 +219,7 @@ export function TagsTab({
           <h1>Tags</h1>
           <div className="tags-sub">
             <span>
-              Thesaurus governance · {totalActive} active tags · {requested.length}{' '}
+              Tag catalog governance · {totalActive} active tags · {requested.length}{' '}
               pending requests · folder <code>default</code>
             </span>
             {/*
@@ -273,10 +273,10 @@ export function TagsTab({
           {canSuggest && (
             <button
               className="ghost-btn"
-              onClick={() => exportThesaurusJson(tags, categories, currentUser.name)}
-              title="Download full thesaurus as JSON"
+              onClick={() => exportTagCatalogJson(tags, categories, currentUser.name)}
+              title="Download full tag catalog as JSON"
             >
-              <Icon name="external-link" size={12} /> Export thesaurus
+              <Icon name="external-link" size={12} /> Export tag catalog
             </button>
           )}
           <button
@@ -621,7 +621,7 @@ function TagsEmptyZero({ canSuggest, onRequest }: TagsEmptyZeroProps) {
       </div>
       <div className="tags-empty-title">No tags in this folder yet</div>
       <p className="tags-empty-body">
-        The thesaurus is empty. Start by requesting your first tag — a steward will
+        The tag catalog is empty. Start by requesting your first tag — a steward will
         review and promote it to a Tier 1 / 2 / 3 slot. Every tagged source then
         becomes filterable in Retrieval.
       </p>
@@ -932,11 +932,11 @@ function TagDetailPanel({
 }
 
 /**
- * Build a thesaurus JSON snapshot and trigger a download.
+ * Build a tag catalog JSON snapshot and trigger a download.
  * Exported for unit testing without rendering the whole tab.
  */
 // eslint-disable-next-line react-refresh/only-export-components
-export function exportThesaurusJson(
+export function exportTagCatalogJson(
   tags: readonly TagEntry[],
   categories: readonly TagCategory[],
   exportedBy: string,
@@ -969,7 +969,7 @@ export function exportThesaurusJson(
   const a = document.createElement('a');
   const stamp = new Date().toISOString().slice(0, 10);
   a.href = url;
-  a.download = `twin-rag-thesaurus-${stamp}.json`;
+  a.download = `twin-rag-tag-catalog-${stamp}.json`;
   document.body.appendChild(a);
   a.click();
   setTimeout(() => {

@@ -24,13 +24,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RetrievalTab } from './RetrievalTab';
 import {
-  THESAURUS_FIXTURES,
+  TAG_FIXTURES,
   makeSampleThreads,
 } from '../fixtures';
 
 function defaultProps() {
   return {
-    thesaurus: THESAURUS_FIXTURES,
+    tagCatalog: TAG_FIXTURES,
     initialThreads: makeSampleThreads(),
   };
 }
@@ -239,7 +239,7 @@ describe('RetrievalTab — params panel', () => {
     expect(sel.value).toBe('hybrid');
   });
 
-  it('tag autocomplete adds tag from thesaurus on Enter', async () => {
+  it('tag autocomplete adds tag from the canonical tag catalog on Enter', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     const input = screen.getByLabelText('Retrieval tag input');
     await userEvent.type(input, 'oracle{Enter}');

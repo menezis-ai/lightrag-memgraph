@@ -9,7 +9,7 @@
  *     only-context, only-prompt)
  *
  * Behavior delta vs the proto:
- *   - thesaurus injected via prop (no window.MOCK_THESAURUS)
+ *   - tag catalog injected via prop (no window globals)
  *   - Real-backend callbacks drive assistant responses; tests inject
  *     callbacks when they need deterministic answer content.
  *   - The streaming timer (70ms/token in the proto) is preserved; tests use
@@ -37,7 +37,8 @@ import {
   type RetrievalSource,
   type RetrievalThread,
 } from '../types/retrieval';
-import type { ThesaurusEntry } from '../types/thesaurus';
+import type { TagEntry } from '../types/tag';
+import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 
 // Versioned key — bumped to invalidate stale demo seeds when the seeded
 // conversation shape changes (v2: full assistant answer + citations on the
@@ -51,7 +52,7 @@ const INITIAL_VISIBLE_SOURCES = 5;
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
 
 export interface RetrievalTabProps {
-  thesaurus: readonly ThesaurusEntry[];
+  tagCatalog: readonly TagEntry[];
   /** Real-backend callback. The returned `response` string is split into
    *  whitespace tokens and streamed via the existing animator. Sources are
    *  passed through as-is. */
@@ -118,7 +119,7 @@ interface ConversationHistoryMessage {
 }
 
 export function RetrievalTab({
-  thesaurus,
+  tagCatalog,
   onSendQuery,
   onStreamQuery,
   initialThreads = [],
@@ -427,9 +428,10 @@ export function RetrievalTab({
     setTagInput('');
   };
 
-  const tagSugg = thesaurus
+  const tagSugg = tagCatalog
     .filter((t) => !tagFilters.includes(t.tag))
-    .filter((t) => !tagInput || t.tag.includes(tagInput.toLowerCase()))
+    .filter((t) => tagMatchesQuery(t, tagInput))
+    .sort(tagSuggestionComparator(tagInput))
     .slice(0, 4);
 
   return (

@@ -143,6 +143,8 @@ export function useClearNotifications() {
 }
 
 export function useThesaurus(options: QueryGate = {}) {
+  // Legacy compatibility for /thesaurus. Runtime tag pickers should use
+  // useTags(), which is the canonical catalog surface.
   return useQuery({
     queryKey: ['thesaurus'] as const,
     queryFn: ({ signal }) => api.listThesaurus({ signal }),

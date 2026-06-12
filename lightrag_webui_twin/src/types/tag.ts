@@ -1,5 +1,5 @@
 /**
- * Tags / Thesaurus governance types.
+ * Tag catalog governance types.
  *
  * Contract template for backend phase 1:
  *   GET /tags?folder=  -> TagEntry[]
@@ -7,7 +7,7 @@
  *   POST /tags/{name}     -> CRUD
  *   POST /tags/request    -> queue Tier-3 proposal
  *
- * The thesaurus is a 3-tier taxonomy:
+ * The tag catalog is a 3-tier taxonomy:
  *   1 = Trunk   — gov-validated, cross-folder
  *   2 = Branch  — dept-scoped, steward-approved
  *   3 = Leaf    — user-proposed, lightweight review

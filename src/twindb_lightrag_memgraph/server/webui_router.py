@@ -320,8 +320,24 @@ class WebuiStore:
 
     # -- Thesaurus + tags ---------------------------------------------
 
-    def list_thesaurus(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self._thesaurus)
+    async def list_thesaurus(self) -> list[dict[str, Any]]:
+        """Legacy autocomplete endpoint, derived from the tag catalog.
+
+        `/tags` is the canonical governance surface. `/thesaurus` remains
+        only for older clients and must not carry a second, divergent
+        vocabulary.
+        """
+        tags = await self.list_tags()
+        return [
+            {
+                "tag": entry["tag"],
+                "category": entry.get("category", "uncategorized"),
+                "def": entry.get("def", ""),
+            }
+            for entry in tags
+            if entry.get("tier") != "requested"
+            and entry.get("status") not in {"deprecated", "rejected"}
+        ]
 
     async def list_tags(self) -> list[dict[str, Any]]:
         backend = self._tag_backend
@@ -1055,7 +1071,7 @@ async def clear_notifications() -> dict[str, bool]:
 
 @router.get("/thesaurus", response_model=list[ThesaurusEntry])
 async def list_thesaurus() -> list[dict[str, Any]]:
-    return get_store().list_thesaurus()
+    return await get_store().list_thesaurus()
 
 
 @router.get("/tags", response_model=list[TagEntry])
@@ -1955,7 +1971,7 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
             title="Tag",
             tagname=name,
             suffix="approved",
-            sub="Added to thesaurus · Tier 3",
+            sub="Added to tag catalog · Tier 3",
         ),
     )
     return stored

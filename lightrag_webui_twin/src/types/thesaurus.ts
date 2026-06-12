@@ -6,13 +6,7 @@
  * tooltip definition.
  */
 
-export type ThesaurusCategory =
-  | 'oracle'
-  | 'governance'
-  | 'lifecycle'
-  | 'infra'
-  | 'network'
-  | 'payment';
+export type ThesaurusCategory = string;
 
 export interface ThesaurusEntry {
   tag: string;

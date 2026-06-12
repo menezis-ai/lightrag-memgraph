@@ -18,13 +18,13 @@ import userEvent from '@testing-library/user-event';
 import { DocumentsTab } from './DocumentsTab';
 import {
   DOCUMENT_FIXTURES,
-  THESAURUS_FIXTURES,
+  TAG_FIXTURES,
 } from '../fixtures';
 
 function defaultProps() {
   return {
     docs: DOCUMENT_FIXTURES,
-    thesaurus: THESAURUS_FIXTURES,
+    tagCatalog: TAG_FIXTURES,
     onOpenAdd: vi.fn(),
     onOpenRetag: vi.fn(),
     onOpenBulkRetag: vi.fn(),

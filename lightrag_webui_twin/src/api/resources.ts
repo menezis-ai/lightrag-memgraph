@@ -424,7 +424,8 @@ export const twinApi = {
   health: (init?: ApiRequestInit) =>
     apiFetch<{ status: 'ok' | 'degraded' | 'down' }>(`${TWIN}/health`, init),
 
-  // Thesaurus + tag governance
+  // Tag governance. listThesaurus is legacy compatibility only; new UI
+  // surfaces must use listTags as the canonical runtime catalog.
   listThesaurus: (init?: ApiRequestInit) =>
     apiFetch<readonly ThesaurusEntry[]>(`${TWIN}/thesaurus`, init),
   listTags: (init?: ApiRequestInit) =>

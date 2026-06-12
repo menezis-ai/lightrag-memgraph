@@ -25,7 +25,6 @@ import {
   OPENAPI_GROUPS,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
-  THESAURUS_FIXTURES,
   FOLDER_FIXTURES,
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
@@ -574,7 +573,7 @@ function recordTagMutation(name: string, suffix: string): void {
       title: 'Tag',
       tagname: name,
       suffix,
-      sub: 'Thesaurus updated by e2e steward action',
+      sub: 'Tag catalog updated by e2e steward action',
       rel: 'now',
       read: false,
     },
@@ -1073,7 +1072,20 @@ export const handlers = [
 
   http.get(`${ANY}${TWIN}/thesaurus`, ({ request }) => {
     recordTwinFolderRequest(request);
-    return HttpResponse.json(THESAURUS_FIXTURES);
+    return HttpResponse.json(
+      tagState
+        .filter(
+          (tag) =>
+            tag.tier !== 'requested' &&
+            tag.status !== 'deprecated' &&
+            tag.status !== 'rejected',
+        )
+        .map((tag) => ({
+          tag: tag.tag,
+          category: tag.category,
+          def: tag.def,
+        })),
+    );
   }),
   http.get(`${ANY}${TWIN}/tags`, ({ request }) => {
     recordTwinFolderRequest(request);

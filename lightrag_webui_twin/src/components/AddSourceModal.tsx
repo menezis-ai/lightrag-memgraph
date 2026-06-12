@@ -2,7 +2,7 @@
  * AddSourceModal — drop files, paste URLs, optionally apply tags.
  *
  * Ported from Desktop/UI/modals.jsx. Behavior delta vs the proto:
- *   - thesaurus + formatCategories injected via props (no window.* reads)
+ *   - tag catalog + formatCategories injected via props (no window.* reads)
  *   - submit emits an AddSourceAction; the host owns the toast lifecycle
  *   - useModalA11y attached via the hook port from S1
  *
@@ -16,7 +16,8 @@ import { Icon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
 import type { FormatCategory } from '../types/format';
-import type { ThesaurusEntry } from '../types/thesaurus';
+import type { TagEntry } from '../types/tag';
+import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 
 const MAX_FILE_MB = 50;
 const SUPPORTED_EXTENSIONS = new Set([
@@ -117,7 +118,7 @@ export interface AddSourceAction {
 
 export interface AddSourceModalProps {
   open: boolean;
-  thesaurus: readonly ThesaurusEntry[];
+  tagCatalog: readonly TagEntry[];
   formatCategories: readonly FormatCategory[];
   /** Initial mock state — used in dev preview. Empty arrays in real use. */
   initialFiles?: readonly FileUpload[];
@@ -147,7 +148,7 @@ function validateFile(file: File): string | null {
 
 export function AddSourceModal({
   open,
-  thesaurus,
+  tagCatalog,
   formatCategories,
   initialFiles = [],
   initialUrls = [],
@@ -221,13 +222,12 @@ export function AddSourceModal({
   }, [open]);
 
   const tagSugg = useMemo(() => {
-    return thesaurus
+    return tagCatalog
       .filter((t) => !tags.includes(t.tag))
-      .filter(
-        (t) => !tagInput || t.tag.includes(tagInput.toLowerCase()),
-      )
+      .filter((t) => tagMatchesQuery(t, tagInput))
+      .sort(tagSuggestionComparator(tagInput))
       .slice(0, 4);
-  }, [thesaurus, tags, tagInput]);
+  }, [tagCatalog, tags, tagInput]);
 
   if (!open) return null;
 
@@ -486,7 +486,7 @@ export function AddSourceModal({
                     addTag(tagSugg[0].tag);
                   }
                 }}
-                placeholder={tags.length ? '' : 'Search tags from thesaurus…'}
+                placeholder={tags.length ? '' : 'Search tags…'}
                 aria-label="Tag input"
                 style={{ fontSize: 12 }}
               />

@@ -2,12 +2,12 @@
  * RetagModal — tag a single document or a bulk selection.
  *
  * Ported from Desktop/UI/modals.jsx. This is the **P0 feature of the
- * Twin WebUI fork (sprint 1)** — UI tag rétroactif with thesaurus
+ * Twin WebUI fork (sprint 1)** — UI tag rétroactif with tag catalog
  * autocomplete, preview impact, commit-deferred via Undo.
  *
  * Behavior delta vs the proto:
- *   - Thesaurus is injected via the `thesaurus` prop instead of read from
- *     window.MOCK_THESAURUS, so the modal is fully testable.
+ *   - Tag catalog is injected via props instead of read from globals, so
+ *     the modal is fully testable.
  *   - The "submit" payload (RetagAction) is decoupled from toast lifecycle:
  *     the host receives the structured RetagAction and is responsible for
  *     queuing the propagating/done toasts (and the undo). This keeps the
@@ -20,7 +20,8 @@ import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
 import type { Document } from '../types/document';
-import type { ThesaurusEntry } from '../types/thesaurus';
+import type { TagEntry } from '../types/tag';
+import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 
 export interface RetagAction {
   /** Primary target — first doc when in bulk mode. */
@@ -40,7 +41,7 @@ export interface RetagModalProps {
   doc?: Document | null;
   /** Bulk mode. If non-empty, takes precedence over `doc`. */
   docs?: readonly Document[];
-  thesaurus: readonly ThesaurusEntry[];
+  tagCatalog: readonly TagEntry[];
   onClose: () => void;
   onSubmit: (action: RetagAction) => void;
 }
@@ -49,7 +50,7 @@ export function RetagModal({
   open,
   doc,
   docs,
-  thesaurus,
+  tagCatalog,
   onClose,
   onSubmit,
 }: RetagModalProps) {
@@ -92,7 +93,7 @@ export function RetagModal({
       bulk={bulk}
       sharedTags={sharedTags}
       partialTags={partialTags}
-      thesaurus={thesaurus}
+      tagCatalog={tagCatalog}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -105,7 +106,7 @@ interface RetagModalBodyProps {
   bulk: boolean;
   sharedTags: readonly string[];
   partialTags: readonly string[];
-  thesaurus: readonly ThesaurusEntry[];
+  tagCatalog: readonly TagEntry[];
   onClose: () => void;
   onSubmit: (action: RetagAction) => void;
 }
@@ -116,7 +117,7 @@ function RetagModalBody({
   bulk,
   sharedTags,
   partialTags,
-  thesaurus,
+  tagCatalog,
   onClose,
   onSubmit,
 }: RetagModalBodyProps) {
@@ -127,17 +128,15 @@ function RetagModalBody({
   const [focusIdx, setFocusIdx] = useState(0);
 
   const sugg = useMemo(() => {
-    const all = thesaurus.filter(
+    const all = tagCatalog.filter(
       (t) => !current.includes(t.tag) && !pendingAdd.includes(t.tag),
     );
     if (!input) return all.slice(0, 4);
-    const v = input.toLowerCase();
     return all
-      .filter(
-        (t) => t.tag.includes(v) || t.def.toLowerCase().includes(v),
-      )
+      .filter((t) => tagMatchesQuery(t, input))
+      .sort(tagSuggestionComparator(input))
       .slice(0, 5);
-  }, [input, current, pendingAdd, thesaurus]);
+  }, [input, current, pendingAdd, tagCatalog]);
 
   const primary = targets[0];
 
@@ -365,7 +364,7 @@ function RetagModalBody({
                   addTag(sugg[focusIdx].tag);
                 }
               }}
-              placeholder="Start typing — autocomplete from thesaurus"
+              placeholder="Start typing — autocomplete from tags"
               aria-label="Tag input"
               style={{
                 width: '100%',
@@ -381,7 +380,7 @@ function RetagModalBody({
             <div className="autocomplete modal-autocomplete" role="listbox">
               <div className="autocomplete-header">
                 {sugg.length > 0
-                  ? `${sugg.length} match${sugg.length > 1 ? 'es' : ''} in thesaurus`
+                  ? `${sugg.length} match${sugg.length > 1 ? 'es' : ''} in tags`
                   : 'No matches'}
               </div>
               {sugg.map((s, i) => (

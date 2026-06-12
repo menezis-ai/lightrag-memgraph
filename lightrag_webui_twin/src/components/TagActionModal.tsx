@@ -3,7 +3,7 @@
  *
  * Ported from Desktop/UI/tags.jsx (the `TagActionModal` private component).
  *
- * The 8 kinds map to thesaurus governance workflows:
+ * The 8 kinds map to tag catalog governance workflows:
  *   edit         — palier-3 in-place edit of a tag's definition.
  *   suggest      — palier-2 proposes an edit, queued for palier-3 review.
  *   synonyms     — palier-3 manages the alias list at the gateway.
@@ -226,7 +226,7 @@ export function TagActionModal({
                     {action.kind === 'edit-approve' && (
                       <>
                         You can tweak the proposed definition before accepting. The tag will
-                        enter the thesaurus as <b>active</b>.
+                        enter the tag catalog as <b>active</b>.
                       </>
                     )}
                   </span>

@@ -4,7 +4,7 @@
  * Covers: header counts, pending section, category rail, search/status
  * filters, empty-zero + empty-filtered states, card selection, related
  * chip navigation, palier-gated detail actions, modal dispatch (8 kinds),
- * commit payloads, exportThesaurusJson helper.
+ * commit payloads, exportTagCatalogJson helper.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -17,7 +17,7 @@ import {
 import type { ReactElement, ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { TagsTab, exportThesaurusJson } from './TagsTab';
+import { TagsTab, exportTagCatalogJson } from './TagsTab';
 import { TAG_CATEGORY_FIXTURES, TAG_FIXTURES } from '../fixtures';
 import type { TagCurrentUser } from '../types/tag';
 
@@ -367,7 +367,7 @@ describe('TagsTab — modal dispatch', () => {
   });
 });
 
-describe('exportThesaurusJson helper', () => {
+describe('exportTagCatalogJson helper', () => {
   it('produces a JSON blob with folder + tags + categories', () => {
     const calls: { blob: Blob }[] = [];
     const origCreate = URL.createObjectURL;
@@ -378,7 +378,7 @@ describe('exportThesaurusJson helper', () => {
     }) as unknown as typeof URL.createObjectURL;
     URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL;
     try {
-      exportThesaurusJson(TAG_FIXTURES, TAG_CATEGORY_FIXTURES, 'tester');
+      exportTagCatalogJson(TAG_FIXTURES, TAG_CATEGORY_FIXTURES, 'tester');
       expect(calls).toHaveLength(1);
       expect(calls[0].blob.type).toMatch(/application\/json/);
     } finally {

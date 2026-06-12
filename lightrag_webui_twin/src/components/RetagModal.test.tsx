@@ -20,7 +20,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RetagModal, type RetagAction } from './RetagModal';
 import type { Document } from '../types/document';
-import { THESAURUS_FIXTURES } from '../fixtures';
+import { TAG_FIXTURES } from '../fixtures';
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {
@@ -49,7 +49,7 @@ describe('RetagModal — basic rendering', () => {
       <RetagModal
         open={false}
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -61,7 +61,7 @@ describe('RetagModal — basic rendering', () => {
     const { container } = render(
       <RetagModal
         open
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -74,7 +74,7 @@ describe('RetagModal — basic rendering', () => {
       <RetagModal
         open
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -92,7 +92,7 @@ describe('RetagModal — basic rendering', () => {
       <RetagModal
         open
         docs={docs}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -107,7 +107,7 @@ describe('RetagModal — tag list', () => {
       <RetagModal
         open
         doc={makeDoc({ tags: ['rman', 'oracle'] })}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -126,7 +126,7 @@ describe('RetagModal — tag list', () => {
       <RetagModal
         open
         docs={docs}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -146,7 +146,7 @@ describe('RetagModal — autocomplete & interactions', () => {
       <RetagModal
         open
         doc={makeDoc({ tags: [] })}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -160,7 +160,7 @@ describe('RetagModal — autocomplete & interactions', () => {
       <RetagModal
         open
         doc={makeDoc({ tags: [] })}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -174,12 +174,38 @@ describe('RetagModal — autocomplete & interactions', () => {
     expect(sugRows.some((r) => r.textContent?.includes('oracle'))).toBe(true);
   });
 
+  it('uses the canonical tag catalog, not a separate thesaurus source', async () => {
+    render(
+      <RetagModal
+        open
+        doc={makeDoc({ tags: [] })}
+        tagCatalog={[
+          ...TAG_FIXTURES,
+          {
+            ...TAG_FIXTURES[0],
+            tag: 'semantic',
+            category: 'retrieval',
+            def: 'Semantic search and embedding-based retrieval',
+            aliases: ['sem'],
+          },
+        ]}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Tag input'), 'sem');
+
+    expect(screen.getByTestId('sugg-semantic')).toBeInTheDocument();
+    expect(screen.getByTestId('sugg-semantic')).toHaveTextContent('semantic');
+  });
+
   it('clicking a suggestion adds it to pendingAdd', async () => {
     render(
       <RetagModal
         open
         doc={makeDoc({ tags: [] })}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -198,7 +224,7 @@ describe('RetagModal — autocomplete & interactions', () => {
       <RetagModal
         open
         doc={makeDoc({ tags: ['rman'] })}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -217,7 +243,7 @@ describe('RetagModal — submit & close', () => {
       <RetagModal
         open
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
@@ -233,7 +259,7 @@ describe('RetagModal — submit & close', () => {
       <RetagModal
         open
         doc={d}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={onClose}
         onSubmit={onSubmit}
       />,
@@ -255,7 +281,7 @@ describe('RetagModal — submit & close', () => {
       <RetagModal
         open
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={onClose}
         onSubmit={() => {}}
       />,
@@ -270,7 +296,7 @@ describe('RetagModal — submit & close', () => {
       <RetagModal
         open
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={onClose}
         onSubmit={() => {}}
       />,
@@ -288,7 +314,7 @@ describe('RetagModal — submit & close', () => {
       <RetagModal
         open
         doc={makeDoc()}
-        thesaurus={THESAURUS_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
         onClose={onClose}
         onSubmit={() => {}}
       />,

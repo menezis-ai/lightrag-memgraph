@@ -31,7 +31,6 @@ from twindb_lightrag_memgraph.server.webui_seed import (
     OPENAPI_VERSION,
     TAG_CATEGORIES,
     TAGS,
-    THESAURUS,
 )
 
 
@@ -204,13 +203,20 @@ class TestNotifications:
 
 
 class TestThesaurus:
-    async def test_list(self, client):
+    async def test_list_is_legacy_projection_of_tags(self, client):
         r = await client.get("/thesaurus")
         assert r.status_code == 200
         body = r.json()
-        assert len(body) == len(THESAURUS)
+        expected = [
+            t
+            for t in TAGS
+            if t["tier"] != "requested"
+            and t["status"] not in {"deprecated", "rejected"}
+        ]
+        assert len(body) == len(expected)
         for entry in body:
             assert set(entry.keys()) >= {"tag", "category", "def"}
+        assert {entry["tag"] for entry in body} == {entry["tag"] for entry in expected}
 
 
 class TestTags:

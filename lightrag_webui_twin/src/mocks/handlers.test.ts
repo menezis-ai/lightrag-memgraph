@@ -105,6 +105,20 @@ describe('MSW handlers — Twin overlay endpoints', () => {
     expect(data).toHaveLength(TAG_FIXTURES.length);
   });
 
+  it(`GET ${TWIN}/thesaurus returns the legacy projection of active tags`, async () => {
+    const data = await getJson<Array<{ tag: string }>>(`${TWIN}/thesaurus`);
+    const expected = TAG_FIXTURES.filter(
+      (tag) =>
+        tag.tier !== 'requested' &&
+        tag.status !== 'deprecated' &&
+        tag.status !== 'rejected',
+    );
+    expect(data).toHaveLength(expected.length);
+    expect(data.map((entry) => entry.tag).sort()).toEqual(
+      expected.map((entry) => entry.tag).sort(),
+    );
+  });
+
   it(`GET ${TWIN}/tags/categories returns the fixture array`, async () => {
     const data = await getJson<unknown[]>(`${TWIN}/tags/categories`);
     expect(data).toHaveLength(TAG_CATEGORY_FIXTURES.length);

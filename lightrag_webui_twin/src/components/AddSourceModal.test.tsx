@@ -23,7 +23,7 @@ import {
   type FileUpload,
   type LinkedSource,
 } from './AddSourceModal';
-import { THESAURUS_FIXTURES, FORMAT_CATEGORY_FIXTURES } from '../fixtures';
+import { TAG_FIXTURES, FORMAT_CATEGORY_FIXTURES } from '../fixtures';
 
 const sampleUploaded: FileUpload = {
   name: 'oracle-config-guide.pdf',
@@ -44,7 +44,7 @@ const sampleConfluence: LinkedSource = {
 function defaultProps() {
   return {
     open: true,
-    thesaurus: THESAURUS_FIXTURES,
+    tagCatalog: TAG_FIXTURES,
     formatCategories: FORMAT_CATEGORY_FIXTURES,
     onClose: vi.fn(),
     onSubmit: vi.fn<(a: AddSourceAction) => void>(),

@@ -76,6 +76,8 @@ export interface GraphTabProps {
    * in production (doc-level tag propagation, tagging roadmap phase 1).
    */
   docTags?: Readonly<Record<string, readonly string[]>>;
+  /** Canonical tag catalog from /tags, used by the graph tag picker. */
+  tagCatalog?: readonly string[];
   /** Active folder label for the header; the segment is hidden when unset. */
   folderLabel?: string;
   /** Host-controlled tab navigation. */
@@ -88,6 +90,7 @@ export function GraphTab({
   colors = GRAPH_TYPE_COLORS,
   docLabels,
   docTags,
+  tagCatalog = [],
   folderLabel,
   onNavigate,
 }: GraphTabProps) {
@@ -116,9 +119,10 @@ export function GraphTab({
   }, [entities, docTags]);
   const allTags = useMemo(() => {
     const s = new Set<string>();
+    tagCatalog.forEach((t) => s.add(t));
     entityTags.forEach((tags) => tags.forEach((t) => s.add(t)));
     return Array.from(s).sort();
-  }, [entityTags]);
+  }, [entityTags, tagCatalog]);
   const allSourceDocs = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {

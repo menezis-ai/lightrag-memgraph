@@ -50,7 +50,6 @@ import {
   useRequestTag,
   useTagCategories,
   useTags,
-  useThesaurus,
   useUpdateTagSynonyms,
   useFolders,
 } from './api/queries';
@@ -66,7 +65,6 @@ import {
   NOTIFICATION_FIXTURES,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
-  THESAURUS_FIXTURES,
   FOLDER_FIXTURES,
   makeSampleThreads,
 } from './fixtures';
@@ -75,6 +73,7 @@ import type { TagCurrentUser } from './types/tag';
 import type { Theme, Folder } from './types/topbar';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from './types/toast';
 import { dedupeDocumentsBySource } from './utils/documents';
+import { tagCatalogForSuggestions } from './utils/tags';
 
 // Fallback identity when no auth backend resolves a user (open-access /
 // LightRAG-parity deployments). Matches the backend's anonymous actor
@@ -232,8 +231,6 @@ function AppShell() {
   const currentActor = auth.user?.email ?? CURRENT_USER.name;
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
   const retagOpen = retagDoc !== null || retagBulk !== null;
-  const needsThesaurus =
-    tab === 'documents' || tab === 'retrieval' || addOpen || retagOpen;
 
   // Data — every tab is backed by a query, seeded with the corresponding
   // fixture so first paint is instant even if the worker is still booting.
@@ -243,7 +240,6 @@ function AppShell() {
   );
   const folders = useFolders({ enabled: authReady });
   const notificationsQ = useNotifications({ enabled: authReady });
-  const thesaurus = useThesaurus({ enabled: authReady && needsThesaurus });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
   // are lightweight, the catalog is used cross-tab (badge counts, filter
   // pickers, retag modal), and the e2e contract on "switching folder
@@ -730,7 +726,7 @@ function AppShell() {
         title: 'Tag',
         tagname: action.tag.tag,
         titleSuffix: 'approved',
-        sub: 'Added to thesaurus · Tier 3',
+        sub: 'Added to tag catalog · Tier 3',
       });
     } catch (err) {
       pushToast({
@@ -976,7 +972,6 @@ function AppShell() {
     resourceError('Documents', docs),
     resourceError('Folders', folders),
     resourceError('Notifications', notificationsQ),
-    resourceError('Thesaurus', thesaurus),
     resourceError('Tags', tags),
     resourceError('Tag categories', tagCategories),
     resourceError('Activity', activity),
@@ -1041,8 +1036,8 @@ function AppShell() {
         (b.review!.state === 'modified' ? 1 : 0),
     );
   const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
-  const thesaurusList = resolveQueryData(thesaurus, THESAURUS_FIXTURES) ?? [];
   const tagList = resolveQueryData(tags, TAG_FIXTURES) ?? [];
+  const tagCatalog = tagCatalogForSuggestions(tagList);
   const tagCategoryList = resolveQueryData(tagCategories, TAG_CATEGORY_FIXTURES) ?? [];
   const activityFallback = resolveQueryData(activity, {
     items: ACTIVITY_FIXTURES,
@@ -1129,7 +1124,7 @@ function AppShell() {
           {tab === 'documents' && (
             <DocumentsTab
               docs={nonPendingDocs}
-              thesaurus={thesaurusList}
+              tagCatalog={tagCatalog}
               pendingSlot={
                 <PendingDocsSection
                   docs={pendingDocs}
@@ -1162,7 +1157,7 @@ function AppShell() {
           )}
           {tab === 'retrieval' && (
             <RetrievalTab
-              thesaurus={thesaurusList}
+              tagCatalog={tagCatalog}
               onSendQuery={async (params) => {
                 const tagFilter = params.tagFilters.length
                   ? { all: [...params.tagFilters] }
@@ -1263,6 +1258,7 @@ function AppShell() {
               relations={graphRelationList}
               docLabels={graphDocLabels}
               docTags={graphDocTags}
+              tagCatalog={tagCatalog.map((tag) => tag.tag)}
               folderLabel={kbName || folder}
               onNavigate={onNavigate}
             />
@@ -1285,7 +1281,7 @@ function AppShell() {
         {addOpen && (
           <AddSourceModal
             open={addOpen}
-            thesaurus={thesaurusList}
+            tagCatalog={tagCatalog}
             formatCategories={FORMAT_CATEGORY_FIXTURES}
             onClose={() => setAddOpen(false)}
             onSubmit={onAddSourceSubmit}
@@ -1296,7 +1292,7 @@ function AppShell() {
             open={retagOpen}
             doc={retagDoc}
             docs={retagBulk ?? undefined}
-            thesaurus={thesaurusList}
+            tagCatalog={tagCatalog}
             onClose={() => {
               setRetagDoc(null);
               setRetagBulk(null);

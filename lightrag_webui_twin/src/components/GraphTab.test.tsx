@@ -218,6 +218,28 @@ describe('GraphTab — filters', () => {
     ).toBeNull();
   });
 
+  it('tag filter offers canonical catalog tags even before entity propagation', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            tags: undefined,
+            source_docs: [],
+          },
+        ]}
+        relations={[]}
+        tagCatalog={['semantic']}
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText('Filter by tag'));
+    await userEvent.type(screen.getByLabelText('Filter by tag'), 'sem');
+
+    expect(screen.getByTestId('kg-pick-semantic')).toBeInTheDocument();
+  });
+
   it('document filter shows file names from docLabels, falling back to the raw id', async () => {
     renderWithClient(
       <GraphTab

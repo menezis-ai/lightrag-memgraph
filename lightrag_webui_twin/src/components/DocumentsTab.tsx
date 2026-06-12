@@ -16,9 +16,10 @@ import { TagChip } from './TagChip';
 import { ClassPill } from './ClassPill';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
+import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 import type { Document, DocumentStatus } from '../types/document';
 import type { ClassificationValue } from '../types/classification';
-import type { ThesaurusEntry } from '../types/thesaurus';
+import type { TagEntry } from '../types/tag';
 
 type StatusFilterKey = 'all' | 'completed' | 'processing' | 'pending' | 'failed';
 
@@ -56,7 +57,7 @@ const STATUS_FILTERS = ['all', 'completed', 'processing', 'pending', 'failed'] a
 
 export interface DocumentsTabProps {
   docs: readonly Document[];
-  thesaurus: readonly ThesaurusEntry[];
+  tagCatalog: readonly TagEntry[];
   onOpenAdd: () => void;
   onOpenRetag: (doc: Document) => void;
   onOpenBulkRetag: (docs: readonly Document[]) => void;
@@ -80,7 +81,7 @@ export interface DocumentsTabProps {
 
 export function DocumentsTab({
   docs,
-  thesaurus,
+  tagCatalog,
   onOpenAdd,
   onOpenRetag,
   onOpenBulkRetag,
@@ -161,13 +162,14 @@ export function DocumentsTab({
     setTagAddOpen(false);
   };
 
-  const thesaurusSuggestions = useMemo(() => {
+  const tagSuggestions = useMemo(() => {
     const v = tagAddVal.toLowerCase();
-    return thesaurus
+    return tagCatalog
       .filter((t) => !tagFilters.includes(t.tag))
-      .filter((t) => !v || t.tag.includes(v))
+      .filter((t) => tagMatchesQuery(t, v))
+      .sort(tagSuggestionComparator(v))
       .slice(0, 5);
-  }, [tagAddVal, tagFilters, thesaurus]);
+  }, [tagAddVal, tagFilters, tagCatalog]);
 
   const clickTagOnRow = (e: React.MouseEvent, tag: string) => {
     e.stopPropagation();
@@ -315,8 +317,8 @@ export function DocumentsTab({
                 onChange={(e) => setTagAddVal(e.target.value)}
                 onBlur={() => setTimeout(() => setTagAddOpen(false), 150)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && thesaurusSuggestions[0])
-                    addTagFilter(thesaurusSuggestions[0].tag);
+                  if (e.key === 'Enter' && tagSuggestions[0])
+                    addTagFilter(tagSuggestions[0].tag);
                   if (e.key === 'Escape') setTagAddOpen(false);
                 }}
                 placeholder="tag…"
@@ -331,7 +333,7 @@ export function DocumentsTab({
                   background: 'var(--color-background-primary)',
                 }}
               />
-              {thesaurusSuggestions.length > 0 && (
+              {tagSuggestions.length > 0 && (
                 <div
                   className="autocomplete floating-autocomplete"
                   style={{
@@ -343,7 +345,7 @@ export function DocumentsTab({
                     zIndex: 30,
                   }}
                 >
-                  {thesaurusSuggestions.map((s, i) => (
+                  {tagSuggestions.map((s, i) => (
                     <div
                       key={s.tag}
                       className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
