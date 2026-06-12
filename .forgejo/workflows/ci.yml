@@ -8,7 +8,7 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest-docker
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
@@ -41,7 +41,7 @@ jobs:
         run: pytest tests/ --ignore=tests/test_bench.py -v
 
   integration-tests:
-    runs-on: [self-hosted, high]
+    runs-on: ubuntu-latest-high
     strategy:
       # Matrix is now 4 LightRAG × 1 Memgraph = 4 parallel jobs, well under
       # the contention threshold that previously starved cold-starts.
@@ -101,7 +101,7 @@ jobs:
     # beyond `bun install`). Runs in parallel with the heavier WebUI
     # jobs so a style/error regression fails fast without waiting for
     # vitest / build / e2e.
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest-docker
     defaults:
       run:
         working-directory: lightrag_webui_twin
@@ -122,7 +122,7 @@ jobs:
   webui-tests:
     # Typecheck, run Vitest, and build the Twin WebUI frontend.
     # Bun is pre-installed on the bunker runners (Forgejo Actions self-hosted).
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest-docker
     defaults:
       run:
         working-directory: lightrag_webui_twin
@@ -153,7 +153,7 @@ jobs:
     # Full Playwright operator journeys against the MSW-backed WebUI.
     # real-backend.spec.ts remains in the suite but skips unless
     # REAL_BACKEND_URL is provided by a deployment/staging workflow.
-    runs-on: [self-hosted, docker]
+    runs-on: ubuntu-latest-docker
     defaults:
       run:
         working-directory: lightrag_webui_twin
@@ -178,7 +178,7 @@ jobs:
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
-    runs-on: [self-hosted, high]
+    runs-on: ubuntu-latest-high
     services:
       memgraph:
         image: memgraph/memgraph-mage:3.10.1
