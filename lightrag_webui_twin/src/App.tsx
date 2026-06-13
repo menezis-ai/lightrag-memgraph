@@ -1264,6 +1264,7 @@ function AppShell() {
               tagCatalog={tagCatalog.map((tag) => tag.tag)}
               folderLabel={kbName || folder}
               onNavigate={onNavigate}
+              onToast={pushToast}
             />
           )}
           {tab === 'tags' && (

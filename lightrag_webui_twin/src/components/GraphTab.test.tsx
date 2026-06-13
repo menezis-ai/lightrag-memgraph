@@ -448,25 +448,105 @@ describe('GraphTab — lifecycle: Add entity', () => {
     expect(screen.queryByTestId('kg-add-entity-form')).toBeNull();
   });
 
-  it('surfaces create failures instead of leaving Add silent', async () => {
+  // TR-KG-01 follow-up: each backend error class lands on a distinct
+  // inline copy. The pre-PR behaviour was a single generic message
+  // ("POST /twin/api/graph/entities <status>") that gave the operator
+  // no actionable cue.
+
+  function stubCreateEntityResponse(status: number, body: unknown): void {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
-        new Response(JSON.stringify({ detail: 'backend unavailable' }), {
-          status: 500,
-          statusText: 'Server Error',
+        new Response(JSON.stringify(body), {
+          status,
+          statusText: 'Mocked',
           headers: { 'Content-Type': 'application/json' },
         }),
       ),
     );
+  }
+
+  it('surfaces a 409 duplicate with a named, actionable inline copy', async () => {
+    stubCreateEntityResponse(409, {
+      detail: "Graph entity 'New Entity' already exists",
+    });
     renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
-    await userEvent.type(screen.getByTestId('kg-add-entity-name'), 'New Entity');
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'New Entity',
+    );
     await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
 
-    expect(await screen.findByTestId('kg-add-entity-error')).toHaveTextContent(
-      'POST /twin/api/graph/entities',
+    const err = await screen.findByTestId('kg-add-entity-error');
+    expect(err.textContent).toMatch(/already exists/i);
+    expect(err).toHaveTextContent('New Entity');
+    // Form stays open so the operator can amend the name.
+    expect(screen.getByTestId('kg-add-entity-form')).toBeInTheDocument();
+  });
+
+  it('surfaces a 422 validation error with a payload-shape hint', async () => {
+    stubCreateEntityResponse(422, {
+      detail: [{ loc: ['body', 'name'], msg: 'empty' }],
+    });
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'New Entity',
     );
+    await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
+
+    const err = await screen.findByTestId('kg-add-entity-error');
+    expect(err.textContent).toMatch(/invalid/i);
+    expect(screen.getByTestId('kg-add-entity-form')).toBeInTheDocument();
+  });
+
+  it('surfaces a 503 backend failure without leaking driver detail', async () => {
+    stubCreateEntityResponse(503, {
+      detail: 'Memgraph backend rejected the write',
+    });
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'New Entity',
+    );
+    await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
+
+    const err = await screen.findByTestId('kg-add-entity-error');
+    expect(err.textContent).toMatch(/memgraph backend/i);
+    expect(err.textContent).toMatch(/retry/i);
+    expect(screen.getByTestId('kg-add-entity-form')).toBeInTheDocument();
+  });
+
+  it('treats a 500 projection failure as a half-success: close form + done toast', async () => {
+    stubCreateEntityResponse(500, {
+      detail:
+        "Graph entity 'New Entity' was created in workspace 'cib' but the projection failed.",
+    });
+    const onToast = vi.fn();
+    renderWithClient(
+      <GraphTab {...defaultProps()} onToast={onToast} />,
+    );
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'New Entity',
+    );
+    await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
+
+    // The form closes — the entity exists server-side, leaving the
+    // form open would push the operator into a retry-then-409 loop.
+    await waitFor(() =>
+      expect(screen.queryByTestId('kg-add-entity-form')).toBeNull(),
+    );
+    // A 'done' toast surfaces the half-success honestly.
+    expect(onToast).toHaveBeenCalledTimes(1);
+    const toast = onToast.mock.calls[0][0];
+    expect(toast.kind).toBe('done');
+    expect(toast.title).toMatch(/created/i);
+    expect(toast.sub).toMatch(/created server-side/i);
   });
 });
 

@@ -42,6 +42,9 @@ import {
   useUpdateGraphEntity,
   useUpdateGraphRelation,
 } from '../api/queries';
+import { mapCreateEntityError } from '../api/errors';
+import type { Toast } from '../types/toast';
+import { useQueryClient } from '@tanstack/react-query';
 
 const tagsOf = (e: GraphEntity): readonly string[] => e.tags ?? [];
 
@@ -82,6 +85,12 @@ export interface GraphTabProps {
   folderLabel?: string;
   /** Host-controlled tab navigation. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  /**
+   * Host-owned toast pusher (App.tsx → ``pushToast``). Used to surface
+   * the half-success case on entity creation (HTTP 500 = projection
+   * failed, write committed — see ``mapCreateEntityError``).
+   */
+  onToast?: (toast: Omit<Toast, 'id'>) => void;
 }
 
 export function GraphTab({
@@ -93,6 +102,7 @@ export function GraphTab({
   tagCatalog = [],
   folderLabel,
   onNavigate,
+  onToast,
 }: GraphTabProps) {
   const [q, setQ] = useUrlParam<string>('gq', '');
   const [activeTypes, setActiveTypes] = useUrlArrayParam(
@@ -104,6 +114,7 @@ export function GraphTab({
   const [addOpen, setAddOpen] = useState(false);
   const [addEntityError, setAddEntityError] = useState<string | null>(null);
   const createEntity = useCreateGraphEntity();
+  const qc = useQueryClient();
 
   // Effective tags = own twin tags ∪ tags inherited from source documents.
   const entityTags = useMemo(() => {
@@ -362,11 +373,26 @@ export function GraphTab({
                 setSelectedId(created.id);
               },
               onError: (error) => {
-                setAddEntityError(
-                  error instanceof Error
-                    ? error.message
-                    : 'Entity creation failed.',
-                );
+                const mapped = mapCreateEntityError(error, payload.name);
+                // TR-KG-01: a 500 from the server means the write
+                // committed but the projection failed. Treat it as a
+                // half-success — close the form, force the refetch
+                // (onSettled already invalidates, but a fetchQueries
+                // here makes the new row land before the toast fades),
+                // and surface a soft "done" toast instead of a hard
+                // error that would push the operator to retry and
+                // collide with the now-existing entity.
+                if (mapped.kind === 'projection') {
+                  setAddOpen(false);
+                  void qc.invalidateQueries({ queryKey: ['graph-entities'] });
+                  onToast?.({
+                    kind: 'done',
+                    title: 'Entity created',
+                    sub: mapped.message,
+                  });
+                  return;
+                }
+                setAddEntityError(mapped.message);
               },
             });
           }}
