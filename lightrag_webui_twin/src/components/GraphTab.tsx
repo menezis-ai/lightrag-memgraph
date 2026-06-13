@@ -376,12 +376,12 @@ export function GraphTab({
                 const mapped = mapCreateEntityError(error, payload.name);
                 // TR-KG-01: a 500 from the server means the write
                 // committed but the projection failed. Treat it as a
-                // half-success — close the form, force the refetch
-                // (onSettled already invalidates, but a fetchQueries
-                // here makes the new row land before the toast fades),
-                // and surface a soft "done" toast instead of a hard
-                // error that would push the operator to retry and
-                // collide with the now-existing entity.
+                // half-success — close the form, invalidate the
+                // entities query (onSettled would also fire this, the
+                // explicit call here pins the intent next to the
+                // toast), and surface a soft "done" toast instead of
+                // a hard error that would push the operator to retry
+                // and collide with the now-existing entity.
                 if (mapped.kind === 'projection') {
                   setAddOpen(false);
                   void qc.invalidateQueries({ queryKey: ['graph-entities'] });
