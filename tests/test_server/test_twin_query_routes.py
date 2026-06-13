@@ -652,8 +652,24 @@ class TestQueryEndpoint:
         assert param.tag_filter == {"all": ["rman"], "any": []}
 
     async def test_query_data_tag_filter_filters_chunks_and_references(
-        self, make_client
+        self, make_client, monkeypatch
     ):
+        # Audit C2 fix: tags come from the ``TAGGED_WITH`` graph
+        # relation, never from ``DocStatus.metadata.tags``. The test
+        # fakes the graph lookup so the fixture stays self-contained
+        # without a live Memgraph.
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        graph_tags = {
+            "doc-rman": {"rman", "oracle"},
+            "doc-vmware": {"vmware"},
+        }
+
+        async def fake_fetch(doc_id, folder):
+            return graph_tags.get(doc_id, set())
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
         rag = FakeRag(
             query_data={
                 "status": "success",
@@ -697,10 +713,6 @@ class TestQueryEndpoint:
                 "chunk-rman": "doc-rman",
                 "chunk-vmware": "doc-vmware",
             },
-            docs={
-                "doc-rman": {"metadata": {"tags": ["rman", "oracle"]}},
-                "doc-vmware": {"metadata": {"tags": ["vmware"]}},
-            },
         )
         client = await make_client(rag)
         async with client:
@@ -720,6 +732,213 @@ class TestQueryEndpoint:
             {"reference_id": "1", "file_path": "oracle.pdf"}
         ]
         assert body["metadata"]["tag_filter"] == {"all": ["rman"], "any": []}
+
+    async def test_query_data_tag_filter_uses_tagged_with_not_metadata_tags(
+        self, make_client, monkeypatch
+    ):
+        """Divergence test (audit C2): a doc whose ``metadata.tags`` is
+        empty but whose ``TAGGED_WITH`` edge carries the filter tag
+        MUST be kept. The previous implementation rejected it (read
+        the empty property), which silently disagreed with the
+        retag flow that only writes the edge.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, folder):
+            return {"rman"} if doc_id == "doc-with-edge" else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "chunks": [
+                        {
+                            "chunk_id": "c-edge",
+                            "full_doc_id": "doc-with-edge",
+                            "reference_id": "1",
+                        },
+                    ],
+                    "references": [
+                        {"reference_id": "1", "file_path": "edge.pdf"},
+                    ],
+                },
+                "metadata": {},
+            },
+            chunk_to_doc={"c-edge": "doc-with-edge"},
+            # Legacy property intentionally empty — the new path
+            # ignores it entirely.
+            docs={"doc-with-edge": {"metadata": {"tags": []}}},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "x",
+                    "tag_filter": {"all": ["rman"], "any": []},
+                },
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert [c["chunk_id"] for c in body["data"]["chunks"]] == ["c-edge"]
+
+    async def test_query_data_tag_filter_rejects_doc_without_tagged_with_edge(
+        self, make_client, monkeypatch
+    ):
+        """Divergence test (audit C2): a doc whose ``metadata.tags``
+        historically carries the filter tag but which has no
+        ``TAGGED_WITH`` edge MUST be rejected. The previous
+        implementation kept it (read the legacy property), letting
+        stale metadata leak through the filter.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, folder):
+            return set()  # no edge anywhere
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "chunks": [
+                        {
+                            "chunk_id": "c-stale",
+                            "full_doc_id": "doc-stale",
+                            "reference_id": "1",
+                        },
+                    ],
+                    "references": [
+                        {"reference_id": "1", "file_path": "stale.pdf"},
+                    ],
+                },
+                "metadata": {},
+            },
+            chunk_to_doc={"c-stale": "doc-stale"},
+            # The legacy property says "rman" but the graph disagrees.
+            docs={"doc-stale": {"metadata": {"tags": ["rman", "oracle"]}}},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "x",
+                    "tag_filter": {"all": ["rman"], "any": []},
+                },
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["chunks"] == []
+        assert body["data"]["references"] == []
+
+    async def test_query_data_tag_filter_caches_per_request(
+        self, make_client, monkeypatch
+    ):
+        """Audit C2 amendment: chunks / references / entities rows
+        often reference the same doc_id. The per-request cache must
+        coalesce them so ``_fetch_doc_graph_tags`` is called at most
+        once per unique doc — bounded round-trips even for large
+        result sets.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        calls: list[tuple[str, str]] = []
+
+        async def fake_fetch(doc_id, folder):
+            calls.append((doc_id, folder))
+            return {"rman"} if doc_id == "doc-A" else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    # Four rows pointing at the same doc — must
+                    # trigger ONE Cypher call, not four.
+                    "chunks": [
+                        {"chunk_id": f"c{i}", "full_doc_id": "doc-A", "reference_id": "1"}
+                        for i in range(4)
+                    ],
+                    "entities": [
+                        {"entity_name": "X", "source_id": "c0", "reference_id": "1"},
+                    ],
+                    "references": [
+                        {"reference_id": "1", "file_path": "a.pdf"},
+                    ],
+                },
+                "metadata": {},
+            },
+            chunk_to_doc={f"c{i}": "doc-A" for i in range(4)},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "x", "tag_filter": {"all": ["rman"], "any": []}},
+            )
+        assert r.status_code == 200
+        unique_doc_calls = {doc_id for doc_id, _folder in calls}
+        # Even with 5 rows referencing doc-A, the cache collapses to one fetch.
+        assert unique_doc_calls == {"doc-A"}
+        assert len(calls) == 1
+
+    async def test_query_data_tag_filter_passes_folder_from_request(
+        self, make_client, monkeypatch
+    ):
+        """Codex review amendment: the folder MUST be passed
+        explicitly from the route handler through the helper chain
+        rather than recovered from ``current_folder_id()`` inside the
+        helper. This test confirms the resolved folder (the catalog
+        default in this test env) reaches ``_fetch_doc_graph_tags``
+        verbatim, instead of e.g. a hard-coded fallback.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+        from twindb_lightrag_memgraph.server.folder import (
+            load_folder_catalog,
+        )
+
+        seen_folders: list[str] = []
+
+        async def fake_fetch(doc_id, folder):
+            seen_folders.append(folder)
+            return {"rman"}
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "chunks": [
+                        {"chunk_id": "c1", "full_doc_id": "doc-A", "reference_id": "1"},
+                    ],
+                    "references": [{"reference_id": "1", "file_path": "a.pdf"}],
+                },
+                "metadata": {},
+            },
+            chunk_to_doc={"c1": "doc-A"},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "x", "tag_filter": {"all": ["rman"], "any": []}},
+            )
+        assert r.status_code == 200
+        expected_folder = load_folder_catalog().default_folder_id
+        # The folder resolved at the route boundary surfaces all the
+        # way down to the helper — never the empty string, never a
+        # ``current_folder_id()`` fallback inside _fetch_doc_graph_tags.
+        assert set(seen_folders) == {expected_folder}
 
     async def test_query_data_empty_tag_filter_does_not_filter_unknown_rows(
         self, make_client
