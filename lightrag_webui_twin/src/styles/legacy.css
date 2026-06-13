@@ -5231,6 +5231,25 @@ input:focus, textarea:focus, select:focus { outline: none; }
 /* === Tier B — 1024 to 1099px: drop low-signal chrome ========= */
 @media (max-width: 1099px) {
 
+  /* TR-RESP-01 (recette Alberto 2026-06-12): below this tier,
+     ``.brand`` (flex: 1) and ``.topbar-right`` (flex: 1) each tried
+     to grow into half of the viewport while ``.tabs`` was
+     absolutely centered on top, producing a visible overlap with
+     the logo + KB name. Stop both flex-growing here and let ``.tabs``
+     take the remaining row space in normal flow, centering its tab
+     children. No layout-restructure — the visual centering is
+     preserved on the only sub-1100px range where the overlap
+     existed. */
+  .topbar .brand { flex: 0 0 auto; }
+  .topbar-right { flex: 0 0 auto; }
+  .tabs {
+    position: static;
+    left: auto;
+    transform: none;
+    flex: 1;
+    justify-content: center;
+  }
+
   /* Hide the brand separator so the kb name + folder pill fit cleanly */
   .topbar .brand-sep { display: none; }
   .brand-name { font-size: 13px; }
