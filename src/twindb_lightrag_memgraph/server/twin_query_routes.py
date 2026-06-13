@@ -305,16 +305,6 @@ def _split_source_ids(raw: Any) -> list[str]:
     ]
 
 
-def _doc_metadata(status: Any) -> dict[str, Any]:
-    if status is None:
-        return {}
-    if isinstance(status, dict):
-        metadata = status.get("metadata")
-    else:
-        metadata = getattr(status, "metadata", None)
-    return metadata if isinstance(metadata, dict) else {}
-
-
 def _tag_filter_terms(
     tag_filter: dict[str, list[str]] | None,
 ) -> tuple[set[str], set[str]]:
@@ -333,35 +323,73 @@ def _tag_filter_terms(
     return required, optional
 
 
-def _status_matches_tag_filter(
-    status: Any, tag_filter: dict[str, list[str]] | None
+def _doc_tags_match_filter(
+    doc_tags: set[str], tag_filter: dict[str, list[str]] | None
 ) -> bool:
+    """Audit C2: doc tags come from the ``TAGGED_WITH`` graph relation,
+    never from ``DocStatus.metadata.tags`` (which can lag the WebUI
+    retag flow and produces a misleading filter result).
+    """
     required, optional = _tag_filter_terms(tag_filter)
     if not required and not optional:
         return True
-    metadata = _doc_metadata(status)
-    tags = {
-        str(tag).strip().lower()
-        for tag in metadata.get("tags", [])
-        if str(tag).strip()
-    }
-    if required and not required.issubset(tags):
+    if required and not required.issubset(doc_tags):
         return False
-    if optional and tags.isdisjoint(optional):
+    if optional and doc_tags.isdisjoint(optional):
         return False
     return True
 
 
-async def _get_doc_status(rag: Any, doc_id: str) -> Any:
-    get_by_id = getattr(getattr(rag, "doc_status", None), "get_by_id", None)
-    if callable(get_by_id):
-        return await get_by_id(doc_id)
-    aget_docs = getattr(rag, "aget_docs_by_ids", None)
-    if callable(aget_docs):
-        docs = await aget_docs([doc_id])
-        if isinstance(docs, dict):
-            return docs.get(doc_id)
-    return None
+async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
+    """Read a document's tags via the canonical ``TAGGED_WITH`` edge.
+
+    Audit C2 / fix: ``DocStatus.metadata.tags`` is not the source of
+    truth — the WebUI retag flow MERGE-creates a
+    ``(:DocStatus_{workspace})-[:TAGGED_WITH]->(:WebuiTag_{folder})``
+    edge and does not touch the legacy property. Reading the property
+    would silently disagree with the rest of the Twin overlay.
+
+    ``folder`` is passed in explicitly by the route handler — no
+    implicit ``current_folder_id()`` dependency in this low-level
+    helper (Codex review on PR fix/query-data-tag-filter-graph).
+
+    On any Memgraph failure the function returns ``set()`` and logs:
+    with an active filter that conservatively rejects rather than
+    fabricating a match, which is the honest degradation here.
+    """
+    if not doc_id or not folder:
+        return set()
+    try:
+        from .. import _pool
+        from .._constants import resolve_workspace
+
+        workspace = resolve_workspace()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = f"WebuiTag_{folder}"
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (d:`{doc_label}` {{id: $doc_id}})
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+                RETURN collect(t.id) AS tags
+                """,
+                doc_id=doc_id,
+            )
+            record = await result.single()
+            await result.consume()
+        raw_tags = (record or {}).get("tags") or []
+    except Exception:
+        logger.exception(
+            "twin_query: TAGGED_WITH lookup failed for doc=%s folder=%s",
+            doc_id,
+            folder,
+        )
+        return set()
+    return {
+        str(tag).strip().lower()
+        for tag in raw_tags
+        if isinstance(tag, str) and tag.strip()
+    }
 
 
 async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
@@ -383,7 +411,11 @@ async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]
 
 
 async def _row_matches_tag_filter(
-    rag: Any, row: dict[str, Any], tag_filter: dict[str, list[str]] | None
+    rag: Any,
+    row: dict[str, Any],
+    tag_filter: dict[str, list[str]] | None,
+    folder: str,
+    tags_cache: dict[str, set[str]],
 ) -> bool:
     required, optional = _tag_filter_terms(tag_filter)
     if not required and not optional:
@@ -392,8 +424,11 @@ async def _row_matches_tag_filter(
     if not doc_ids:
         return False
     for doc_id in doc_ids:
-        status = await _get_doc_status(rag, doc_id)
-        if _status_matches_tag_filter(status, tag_filter):
+        # Per-request cache: chunks/references rows often repeat the
+        # same doc_id; one Cypher round-trip per unique doc suffices.
+        if doc_id not in tags_cache:
+            tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
+        if _doc_tags_match_filter(tags_cache[doc_id], tag_filter):
             return True
     return False
 
@@ -402,6 +437,7 @@ async def _filter_query_data_by_tags(
     rag: Any,
     response: dict[str, Any],
     tag_filter: dict[str, list[str]] | None,
+    folder: str,
 ) -> dict[str, Any]:
     required, optional = _tag_filter_terms(tag_filter)
     if not required and not optional:
@@ -410,6 +446,10 @@ async def _filter_query_data_by_tags(
     data = response.get("data")
     if not isinstance(data, dict):
         return response
+
+    # Cache shared across all rows in this single request — bounded by
+    # the number of unique doc_ids in the result set.
+    tags_cache: dict[str, set[str]] = {}
 
     filtered_data = dict(data)
     kept_reference_ids: set[str] = set()
@@ -421,7 +461,9 @@ async def _filter_query_data_by_tags(
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            if await _row_matches_tag_filter(rag, row, tag_filter):
+            if await _row_matches_tag_filter(
+                rag, row, tag_filter, folder, tags_cache
+            ):
                 kept_rows.append(row)
                 ref_id = row.get("reference_id")
                 if isinstance(ref_id, str) and ref_id:
@@ -674,13 +716,21 @@ def build_twin_query_router(get_rag) -> APIRouter:
         the Twin contract (`/twin/api/*`, folder header, tag_filter) on the
         same surface as `/query` and `/query/stream`.
         """
-        del request
         try:
             rag = get_rag()
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
 
         from lightrag.base import QueryParam
+
+        # Audit C2 / fix: resolve the active folder once at the route
+        # boundary and thread it explicitly through the tag-filter
+        # helpers. The low-level helpers refuse to import the folder
+        # ContextVar themselves — passing it down keeps the chain
+        # testable without monkeypatching globals.
+        from .folder import resolve_folder_for_request
+
+        folder = resolve_folder_for_request(request)
 
         param = _make_query_param(QueryParam, _query_param_kwargs(body))
         try:
@@ -697,7 +747,9 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 "metadata": {},
             }
 
-        result = await _filter_query_data_by_tags(rag, result, body.tag_filter)
+        result = await _filter_query_data_by_tags(
+            rag, result, body.tag_filter, folder
+        )
         return {
             "status": result.get("status", "success"),
             "message": result.get("message", "Query executed successfully"),
