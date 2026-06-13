@@ -161,4 +161,19 @@ describe('SettingsTab — API', () => {
     await userEvent.click(screen.getByTestId('settings-rail-api'));
     expect(screen.getByTestId('settings-api')).toBeInTheDocument();
   });
+
+  it('blurb reflects the audit-C8 honest copy', async () => {
+    renderWith(new QueryClient());
+    await userEvent.click(screen.getByTestId('settings-rail-api'));
+    const blurb = screen.getByTestId('settings-api-blurb');
+    // The new copy names the only path that honors tag_filter, the
+    // 422 contract on the retrieval paths, and the canonical graph
+    // relation used to apply it.
+    expect(blurb.textContent).toContain('/twin/api/query/data');
+    expect(blurb.textContent).toContain('TAGGED_WITH');
+    expect(blurb.textContent).toContain('422');
+    // No more "gateway transparently injects tag_filter / visibility".
+    expect(blurb.textContent).not.toMatch(/transparently injects/i);
+    expect(blurb.textContent).not.toMatch(/visibility/i);
+  });
 });

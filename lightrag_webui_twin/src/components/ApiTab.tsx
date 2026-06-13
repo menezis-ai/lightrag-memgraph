@@ -1,8 +1,13 @@
 /**
  * ApiTab — Swagger-style endpoint browser for the LightRAG OpenAPI surface.
  *
- * Ported from Desktop/UI/api.jsx. The Twin RAG fork inherits the upstream
- * shapes 1:1; the gateway injects `tag_filter` / `visibility` scoping.
+ * Ported from Desktop/UI/api.jsx. Twin overlay extends the LightRAG
+ * OpenAPI surface with `/twin/api/*` routes. `tag_filter` is honored
+ * server-side only on `/twin/api/query/data` via `TAGGED_WITH`.
+ * `/twin/api/query` and `/twin/api/query/stream` reject `tag_filter`
+ * with 422. Native LightRAG routes pass through unchanged. The
+ * previous claim about "transparent injection of `tag_filter` /
+ * `visibility` scoping" was incorrect and was retracted by audit C8.
  *
  * Behavior delta vs the proto:
  *   - `groups` are injected via props (no static window globals).
@@ -69,10 +74,11 @@ export function ApiTab({ apiVersion, groups, baseUrl }: ApiTabProps) {
         </div>
         <div className="swagger-banner">
           <Icon name="info-circle" size={14} color="var(--twin-accent)" />
-          <span>
-            Twin RAG fork inherits this surface unchanged. The gateway transparently
-            injects <code>tag_filter</code> and <code>visibility</code> scoping from
-            the current folder.
+          <span data-testid="apitab-banner">
+            Twin overlay adds <code>/twin/api/*</code> routes.{' '}
+            <code>tag_filter</code> is honored server-side only on{' '}
+            <code>/twin/api/query/data</code>. Native LightRAG routes pass
+            through unchanged.
           </span>
         </div>
         <div className="swagger-servers">
@@ -625,7 +631,12 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
         top_k: 60,
         ...(dataEndpoint ? { chunk_top_k: 20 } : {}),
         response_type: 'Multiple Paragraphs',
-        tag_filter: { all: ['rman'], any: [] },
+        // Audit C8: ``tag_filter`` is honored server-side only on
+        // ``/query/data``. ``/query`` and ``/query/stream`` (twin and
+        // native) reject it (twin: 422; native: silently ignored).
+        // Showing it in the sample for those paths would suggest a
+        // scoping capability the backend doesn't provide.
+        ...(dataEndpoint ? { tag_filter: { all: ['rman'], any: [] } } : {}),
       },
       null,
       2,
@@ -741,6 +752,11 @@ export function mockResponseFor(
       tookMs,
       body: JSON.stringify(
         {
+          // Audit C8: ``/query`` and ``/query/stream`` do not honor
+          // ``tag_filter`` server-side (twin returns 422 if sent,
+          // native LightRAG silently ignores it). The mock response
+          // therefore must not echo it — that would suggest a
+          // scoping capability the backend does not provide.
           response:
             'To restart Oracle RMAN after a failed backup, first verify the recovery catalog state … [truncated]',
           sources: [
@@ -758,7 +774,6 @@ export function mockResponseFor(
             },
           ],
           mode: 'hybrid',
-          tag_filter: { all: ['rman'] },
           took_ms: tookMs,
         },
         null,

@@ -48,6 +48,18 @@ describe('ApiTab — rendering', () => {
     render(<ApiTab {...defaultProps()} />);
     expect(screen.getByRole('button', { name: /Authorize$/ })).toBeInTheDocument();
   });
+
+  it('banner reflects the audit-C8 honest copy (no transparent-injection claim)', () => {
+    render(<ApiTab {...defaultProps()} />);
+    const banner = screen.getByTestId('apitab-banner');
+    expect(banner.textContent).toContain('/twin/api/*');
+    expect(banner.textContent).toContain('/twin/api/query/data');
+    // The previous lie must be gone — operator should not read
+    // "the gateway transparently injects tag_filter / visibility"
+    // anywhere in this surface.
+    expect(banner.textContent).not.toMatch(/transparently injects/i);
+    expect(banner.textContent).not.toMatch(/visibility/i);
+  });
 });
 
 describe('ApiTab — filter', () => {
@@ -213,10 +225,13 @@ describe('ApiTab — Authorize dialog', () => {
 });
 
 describe('Helpers — requestBodyFor', () => {
-  it('builds a /query payload with hybrid mode and tag_filter', () => {
+  it('builds a /query payload with hybrid mode and NO tag_filter (audit C8)', () => {
+    // ``/query`` and ``/query/stream`` reject tag_filter (twin: 422,
+    // native: silently ignored). The Try-it-out sample must not
+    // suggest a scoping capability the backend does not provide.
     const b = JSON.parse(requestBodyFor({ m: 'POST', p: '/query', s: '' }));
     expect(b.mode).toBe('hybrid');
-    expect(b.tag_filter.all).toEqual(['rman']);
+    expect(b).not.toHaveProperty('tag_filter');
   });
 
   it('builds an /entity/edit body with empty entity_name and updated_data', () => {
@@ -230,7 +245,7 @@ describe('Helpers — requestBodyFor', () => {
     expect(requestBodyFor({ m: 'POST', p: '/whatever', s: '' })).toBe('{}');
   });
 
-  it('also matches the Twin-prefixed /twin/api/query path', () => {
+  it('also matches the Twin-prefixed /twin/api/query path without tag_filter', () => {
     // OpenAPI under the plugin / standalone topology exposes
     // /twin/api/query — without this matcher the Try-it-out body
     // defaults to `{}` and round-trips a 422 instead of a real call.
@@ -238,22 +253,30 @@ describe('Helpers — requestBodyFor', () => {
       requestBodyFor({ m: 'POST', p: '/twin/api/query', s: '' }),
     );
     expect(b.mode).toBe('hybrid');
-    expect(b.tag_filter.all).toEqual(['rman']);
+    expect(b).not.toHaveProperty('tag_filter');
   });
 
-  it('also matches /twin/api/query/stream', () => {
+  it('also matches /twin/api/query/stream without tag_filter', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/stream', s: '' }),
     );
     expect(b.query).toMatch(/Oracle RMAN/);
+    expect(b).not.toHaveProperty('tag_filter');
   });
 
-  it('also matches /twin/api/query/data with chunk_top_k', () => {
+  it('keeps tag_filter on /twin/api/query/data (the one path that honors it)', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/data', s: '' }),
     );
     expect(b.query).toMatch(/Oracle RMAN/);
     expect(b.chunk_top_k).toBe(20);
+    expect(b.tag_filter.all).toEqual(['rman']);
+  });
+
+  it('keeps tag_filter on the native /query/data path too', () => {
+    const b = JSON.parse(
+      requestBodyFor({ m: 'POST', p: '/query/data', s: '' }),
+    );
     expect(b.tag_filter.all).toEqual(['rman']);
   });
 });
@@ -292,7 +315,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     expect(JSON.parse(r.body).detail).toMatch(/Bearer token/);
   });
 
-  it('mockResponseFor /query returns Oracle RMAN truncated response with sources', () => {
+  it('mockResponseFor /query returns sources but NO tag_filter (audit C8)', () => {
     const r = mockResponseFor(
       { m: 'POST', p: '/query', s: '' },
       '{}',
@@ -302,9 +325,22 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     const body = JSON.parse(r.body);
     expect(body.sources).toHaveLength(2);
     expect(body.mode).toBe('hybrid');
+    // /query never honors tag_filter — the mock response must not
+    // echo a value to suggest otherwise.
+    expect(body).not.toHaveProperty('tag_filter');
   });
 
-  it('mockResponseFor /query/data returns structured retrieval data', () => {
+  it('mockResponseFor /query/stream also omits tag_filter', () => {
+    const r = mockResponseFor(
+      { m: 'POST', p: '/twin/api/query/stream', s: '' },
+      '{}',
+      200,
+    );
+    const body = JSON.parse(r.body);
+    expect(body).not.toHaveProperty('tag_filter');
+  });
+
+  it('mockResponseFor /query/data returns structured retrieval data with metadata.tag_filter', () => {
     const r = mockResponseFor(
       { m: 'POST', p: '/twin/api/query/data', s: '' },
       '{}',
@@ -314,6 +350,8 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     const body = JSON.parse(r.body);
     expect(body.status).toBe('success');
     expect(body.data.chunks).toHaveLength(1);
+    // /query/data is the one endpoint that legitimately echoes
+    // tag_filter in metadata (audit C2 wired it via TAGGED_WITH).
     expect(body.metadata.tag_filter.all).toEqual(['rman']);
   });
 

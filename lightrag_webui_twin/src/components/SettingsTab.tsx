@@ -121,10 +121,13 @@ function ApiSection() {
   return (
     <div className="settings-section settings-api" data-testid="settings-api">
       <h3>API</h3>
-      <p className="muted">
-        LightRAG OpenAPI surface. Bearer (OIDC) auth only — the gateway
-        injects <code>tag_filter</code> and <code>visibility</code>{' '}
-        scoping from the active folder.
+      <p className="muted" data-testid="settings-api-blurb">
+        Twin overlay extends the LightRAG OpenAPI surface with{' '}
+        <code>/twin/api/*</code> routes. <code>tag_filter</code> is honored
+        server-side only on <code>/twin/api/query/data</code> via{' '}
+        <code>TAGGED_WITH</code>. <code>/twin/api/query</code> and{' '}
+        <code>/twin/api/query/stream</code> reject <code>tag_filter</code>{' '}
+        with 422. Native LightRAG routes pass through unchanged.
       </p>
       {isLoading && (
         <div className="muted" data-testid="settings-api-loading">
