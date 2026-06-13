@@ -147,6 +147,112 @@ class TestGraphRoutesMemgraphFirst:
         assert any(rel["id"] == "r_01" for rel in body)
 
 
+class TestGraphSeedFallbackGate:
+    """Audit C5: the in-memory demo graph must only be served as a
+    fallback when ``webui_stores='seed'`` AND no IdP is configured.
+
+    The two tests above (``test_entities_falls_back_to_seed_when_
+    memgraph_empty`` / ``test_relations_…``) pin the demo-mode path:
+    seed-mode store + IdP dormant → seed surfaces, regression guard
+    for back-compat with dev / standalone.
+
+    The three tests below pin the production-mode path: any of
+    {IdP active, memgraph store, unknown mode} → empty list,
+    never the demo seed.
+    """
+
+    def test_helper_blocks_seed_when_idp_is_active(self, monkeypatch):
+        """Unit-level: exercising the IdP branch through HTTP would
+        require an end-to-end auth setup (the middleware rejects the
+        request with 401 before the route runs). Test the helper
+        directly — that's the unit under contract."""
+        from twindb_lightrag_memgraph.server import idp_jwt
+
+        # Force a seed-mode store so only the IdP gate could block.
+        webui_router.set_store(webui_router.WebuiStore.from_seed())
+        monkeypatch.setattr(
+            idp_jwt,
+            "get_active_config",
+            lambda: idp_jwt.IdpConfig(jwks_url="https://test/jwks"),
+        )
+        assert webui_router._graph_seed_fallback_allowed() is False
+
+    def test_helper_allows_seed_when_idp_dormant_and_store_seed(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import idp_jwt
+
+        webui_router.set_store(webui_router.WebuiStore.from_seed())
+        # IdP dormant is the test default, but pin it explicitly so a
+        # future env change can't flip this assertion silently.
+        monkeypatch.setattr(idp_jwt, "get_active_config", lambda: None)
+        assert webui_router._graph_seed_fallback_allowed() is True
+
+    def test_helper_blocks_seed_when_store_mode_is_memgraph(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import idp_jwt
+
+        store = webui_router.WebuiStore.from_seed()
+        store._mode = "memgraph"  # type: ignore[attr-defined]
+        webui_router.set_store(store)
+        monkeypatch.setattr(idp_jwt, "get_active_config", lambda: None)
+        assert webui_router._graph_seed_fallback_allowed() is False
+
+    def test_helper_blocks_seed_when_store_mode_is_unknown(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import idp_jwt
+
+        store = webui_router.WebuiStore.from_seed()
+        store._mode = "something-weird"  # type: ignore[attr-defined]
+        webui_router.set_store(store)
+        monkeypatch.setattr(idp_jwt, "get_active_config", lambda: None)
+        assert webui_router._graph_seed_fallback_allowed() is False
+
+    async def test_route_entities_returns_empty_when_store_mode_is_memgraph(
+        self, monkeypatch, client
+    ):
+        """End-to-end: a memgraph-mode store reflects a production
+        deploy. Even without IdP, the seed MUST NEVER leak via
+        ``/graph/entities``. Seed fixtures are intentionally left
+        populated on the store to prove the mode gate alone (not the
+        data) blocks the leak — confirming the audit C5 doctrine
+        that data and config must not be conflated."""
+
+        async def fake_empty(workspace, *, max_nodes=200):
+            return []
+
+        monkeypatch.setattr(gr, "read_graph_entities", fake_empty)
+        seed_like_store = webui_router.WebuiStore.from_seed()
+        seed_like_store._mode = "memgraph"  # type: ignore[attr-defined]
+        webui_router.set_store(seed_like_store)
+
+        r = await client.get("/graph/entities")
+        assert r.status_code == 200
+        assert r.json() == []
+
+    async def test_route_relations_returns_empty_when_store_mode_is_memgraph(
+        self, monkeypatch, client
+    ):
+        async def fake_empty(workspace, *, max_nodes=200):
+            return []
+
+        monkeypatch.setattr(gr, "read_graph_entities", fake_empty)
+        seed_like_store = webui_router.WebuiStore.from_seed()
+        seed_like_store._mode = "memgraph"  # type: ignore[attr-defined]
+        webui_router.set_store(seed_like_store)
+
+        r = await client.get("/graph/relations")
+        assert r.status_code == 200
+        assert r.json() == []
+
+    async def test_for_folder_memgraph_mode_sets_mode_attribute(self):
+        """``WebuiStore.for_folder(..., mode='memgraph')`` must carry
+        the explicit mode forward so the route-level gate can read it.
+        Regression guard against a future refactor that loses the
+        propagation between constructor argument and instance state."""
+
+        store = webui_router.WebuiStore.for_folder(
+            "default", mode="memgraph"
+        )
+        assert store.mode == "memgraph"
+
+
 class TestGraphPatchPersistence:
     async def test_patch_entity_returns_updated_shape_and_emits_activity(
         self, monkeypatch, client

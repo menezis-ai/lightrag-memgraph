@@ -168,6 +168,7 @@ class WebuiStore:
         notification_backend: InMemoryNotificationStore
         | MemgraphNotificationStore
         | None = None,
+        mode: str = "seed",
     ) -> None:
         self._documents = documents
         self._folders = folders
@@ -176,6 +177,12 @@ class WebuiStore:
         self._openapi_version = openapi_version
         self._graph_entities = graph_entities
         self._graph_relations = graph_relations
+        # Audit C5: explicit mode used by route-level gates such as
+        # ``_graph_seed_fallback_allowed``. ``"seed"`` means the store
+        # carries demo fixtures and is safe to serve as a fallback in
+        # dev/standalone; ``"memgraph"`` means a production deploy and
+        # demo data must NEVER leak even if Memgraph is empty.
+        self._mode = mode
         self._tag_backend: InMemoryTagStore | MemgraphTagStore = (
             tag_backend
             if tag_backend is not None
@@ -209,6 +216,7 @@ class WebuiStore:
             openapi_version=webui_seed.OPENAPI_VERSION,
             graph_entities=copy.deepcopy(webui_seed.GRAPH_ENTITIES),
             graph_relations=copy.deepcopy(webui_seed.GRAPH_RELATIONS),
+            mode="seed",
         )
 
     @classmethod
@@ -239,6 +247,7 @@ class WebuiStore:
                 openapi_version=webui_seed.OPENAPI_VERSION,
                 graph_entities=[],
                 graph_relations=[],
+                mode="memgraph",
             )
         default_folder = load_folder_catalog().default_folder_id
         if folder == default_folder:
@@ -253,9 +262,20 @@ class WebuiStore:
             openapi_version=webui_seed.OPENAPI_VERSION,
             graph_entities=[],
             graph_relations=[],
+            mode="seed",
         )
 
     # -- Backend accessors --------------------------------------------
+
+    @property
+    def mode(self) -> str:
+        """Explicit ``webui_stores`` mode this store was built with.
+
+        ``"seed"`` for in-memory demo content; ``"memgraph"`` for a
+        production deploy backed by real storage. Audit C5 uses this
+        to gate the graph-seed fallback at the route level.
+        """
+        return self._mode
 
     @property
     def tags(self) -> InMemoryTagStore | MemgraphTagStore:
@@ -1664,13 +1684,42 @@ async def _validate_graph_entity_tags(
     )
 
 
+def _graph_seed_fallback_allowed() -> bool:
+    """Audit C5: serve the in-memory demo graph as a fallback ONLY when
+    we are explicitly in demo mode AND no IdP is configured.
+
+    Allowed iff:
+      * IdP is dormant (``get_active_config() is None``), AND
+      * the active ``WebuiStore`` was built with ``webui_stores="seed"``.
+
+    Rejected when:
+      * IdP is configured (production deploy, regardless of store mode),
+      * the store was built with ``webui_stores="memgraph"``,
+      * the store reports an unknown mode (defensive default — refuse
+        rather than guess).
+
+    The check is **explicit on configuration**, not inferred from
+    store contents. A seed store with no graph fixtures is still
+    "demo mode" by construction; conversely, a memgraph store that
+    happens to be empty is still production. Confusing data with
+    config is exactly the bug this gate closes.
+    """
+    from . import idp_jwt
+
+    if idp_jwt.get_active_config() is not None:
+        return False
+    return get_store().mode == "seed"
+
+
 @router.get("/graph/entities", response_model=list[GraphEntity])
 async def list_graph_entities() -> list[dict[str, Any]]:
     """Return the live Memgraph-backed entities for the deployed KB.
 
-    Falls back to the in-memory seed when Memgraph is unreachable or
-    contains no nodes yet (typical pre-ingestion). The fallback keeps
-    demo / dev / standalone paths working without a backend.
+    Falls back to the in-memory seed only when the explicit demo-mode
+    gate (:func:`_graph_seed_fallback_allowed`) is open — i.e. the
+    store was built with ``webui_stores="seed"`` AND IdP is dormant.
+    Production deploys (memgraph mode or IdP active) get an explicit
+    empty list, never a silent demo (audit C5).
     """
     from . import graph_reader
 
@@ -1678,6 +1727,8 @@ async def list_graph_entities() -> list[dict[str, Any]]:
     entities = await graph_reader.read_graph_entities(label)
     if entities:
         return entities
+    if not _graph_seed_fallback_allowed():
+        return []
     return get_store().list_graph_entities()
 
 
@@ -1685,9 +1736,11 @@ async def list_graph_entities() -> list[dict[str, Any]]:
 async def list_graph_relations() -> list[dict[str, Any]]:
     """Return the live Memgraph-backed relations for the deployed KB.
 
-    Same fallback policy as `/graph/entities`. Relations are filtered to
-    endpoints that survived the entity read so a truncated node set
-    doesn't show dangling edges.
+    Same audit-C5 gate as ``/graph/entities``: seed relations only
+    surface when demo mode is explicit AND IdP is dormant. Otherwise
+    return ``[]`` rather than leak the demo. Relations are filtered
+    to endpoints that survived the entity read so a truncated node
+    set doesn't show dangling edges.
     """
     from . import graph_reader
 
@@ -1698,6 +1751,8 @@ async def list_graph_relations() -> list[dict[str, Any]]:
         return await graph_reader.read_graph_relations(
             label, valid_node_ids=valid_ids
         )
+    if not _graph_seed_fallback_allowed():
+        return []
     return get_store().list_graph_relations()
 
 
