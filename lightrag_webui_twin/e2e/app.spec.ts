@@ -102,8 +102,10 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(
       latestAssistant.getByTestId('source-1'),
     ).toBeVisible({ timeout: 12_000 });
-    await page.getByLabel('Retrieval tag input').fill('oracle');
-    await page.getByTestId('rtag-sugg-oracle').click();
+    // TR-RET-02 step 3 / audit C1: the Retrieval tag-filter input was
+    // removed (LightRAG 1.4.x ignored it). The cross-navigation flow
+    // now jumps straight to the next setting under test — Only need
+    // context — without touching tag-filter chips.
     await page.getByLabel('Only need context').click();
     await expect(page.getByLabel('Only need context')).toHaveAttribute('aria-checked', 'true');
 

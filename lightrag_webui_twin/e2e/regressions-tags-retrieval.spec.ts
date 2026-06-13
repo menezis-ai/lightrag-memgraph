@@ -26,13 +26,15 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
     await boot(page);
   });
 
-  test('@regression @tags @filters approved tag is usable across retag, document filters, graph filters, and retrieval filters', async ({
+  test('@regression @tags @filters approved tag is usable across retag, document filters, and graph filters', async ({
     page,
   }) => {
-    await openTab(page, 'Retrieval');
-    await page.getByLabel('Retrieval tag input').fill('argo');
-    await expect(page.getByTestId('rtag-sugg-argocd')).toHaveCount(0);
-
+    // TR-RET-02 step 3 / audit C1: the retrieval-tab tag-filter
+    // input was removed from the UI. The catalog-discipline check
+    // moved to the document filter affordance (which still
+    // accepts/rejects tags by approval state). The retrieval
+    // bookends — was-not-suggested / is-now-suggested — used to
+    // open this test and close it; they are gone with the input.
     await approveArgocd(page);
 
     await openTab(page, 'Documents');
@@ -64,19 +66,20 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
     await expect(page.getByTestId('kg-picked-argocd')).toBeVisible();
     await expect(page.getByTestId('kg-node-e_oracle')).toBeVisible();
     await expect(page.getByTestId('kg-node-e_memgraph')).toBeHidden();
-
-    await openTab(page, 'Retrieval');
-    await page.getByLabel('Retrieval tag input').fill('argocd');
-    await expect(page.getByTestId('rtag-sugg-argocd')).toContainText('argocd');
   });
 
-  test('@regression @retrieval sends tag filter and real thread history to the backend', async ({
+  test('@regression @retrieval sends thread history (no tag_filter) to the backend', async ({
     page,
   }) => {
+    // TR-RET-02 step 3 / audit C1: ``tag_filter`` is no longer
+    // forwarded by the front (the input was removed, the App.tsx
+    // callback drops the field) and the backend 422s if it slips
+    // in. This test now asserts the body NEVER carries
+    // ``tag_filter`` while still pinning the conversation_history
+    // round-trip (the real thread-history part of the original
+    // regression).
     await openTab(page, 'Retrieval');
     await page.getByRole('button', { name: /New/ }).click();
-    await page.getByLabel('Retrieval tag input').fill('oracle');
-    await page.getByTestId('rtag-sugg-oracle').click();
     await page.getByLabel('Top K', { exact: true }).fill('1');
     await page.getByLabel('History turns').fill('3');
 
@@ -105,17 +108,18 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
       query: 'First retrieval history probe',
       top_k: 1,
       history_turns: 3,
-      tag_filter: { all: ['oracle'] },
       conversation_history: [],
     });
+    // C1 contract: ``tag_filter`` MUST NOT be in the wire body.
+    expect(firstBody).not.toHaveProperty('tag_filter');
 
     const secondBody = queryRequests[1].body;
     expect(secondBody).toMatchObject({
       query: 'Second retrieval history probe',
       top_k: 1,
       history_turns: 3,
-      tag_filter: { all: ['oracle'] },
     });
+    expect(secondBody).not.toHaveProperty('tag_filter');
     expect(secondBody.conversation_history).toEqual([
       { role: 'user', content: 'First retrieval history probe' },
       {

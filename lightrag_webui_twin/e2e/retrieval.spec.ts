@@ -118,14 +118,10 @@ test.describe('Retrieval threads and parameters', () => {
     );
   });
 
-  test('@retrieval @params tag filter chips add and remove from the canonical tag catalog', async ({
-    page,
-  }) => {
-    await page.getByLabel('Retrieval tag input').fill('oracle');
-    await page.getByTestId('rtag-sugg-oracle').click();
-    await expect(page.getByLabel('Remove oracle')).toBeVisible();
-
-    await page.getByLabel('Remove oracle').click();
-    await expect(page.getByLabel('Remove oracle')).toHaveCount(0);
-  });
+  // TR-RET-02 step 3 / audit C1: the "Tag filter chips" scenario was
+  // dropped here because the affordance itself was removed — LightRAG
+  // 1.4.x silently ignored the param and we now reject it 422 on
+  // /query and /query/stream. The unit-test "does not render a Tag
+  // filter affordance" in RetrievalTab.test.tsx is the replacement
+  // guard; restoring this e2e would mean restoring the lie.
 });
