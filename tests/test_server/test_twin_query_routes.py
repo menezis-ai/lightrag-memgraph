@@ -376,8 +376,13 @@ class TestQueryEndpoint:
         assert r.status_code == 422
         detail = r.json()["detail"]
         assert "tag_filter is not applied to retrieval" in detail
-        # No misleading pointer to /query/data while C2 stands.
+        assert "remove it from /query and /query/stream requests" in detail
+        # No alternative path suggested — /query/data is broken in a
+        # different way (audit C2) and pointing operators at any
+        # "data endpoint" while that is open would just replace one
+        # lie with another.
         assert "/query/data" not in detail
+        assert "data endpoint" not in detail
         # Backend never reached aquery_llm — the rejection is pre-RAG.
         assert rag.llm_calls == []
 
@@ -397,7 +402,9 @@ class TestQueryEndpoint:
         assert r.status_code == 422
         detail = r.json()["detail"]
         assert "tag_filter is not applied to retrieval" in detail
+        assert "remove it from /query and /query/stream requests" in detail
         assert "/query/data" not in detail
+        assert "data endpoint" not in detail
         assert rag.llm_calls == []
 
     async def test_tag_filter_is_absent_when_omitted(self, make_client):

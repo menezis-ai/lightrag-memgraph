@@ -571,7 +571,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
             raise HTTPException(
                 422,
                 "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
-                "remove it or use a dedicated data endpoint.",
+                "remove it from /query and /query/stream requests.",
             )
 
         try:
@@ -720,26 +720,40 @@ def build_twin_query_router(get_rag) -> APIRouter:
         Wire format (one JSON object per line):
           {"type":"token","value":"<chunk text>"}
           ... repeated for every LLM chunk ...
+          {"type":"status","value":"grounded"|"insufficient_information"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
 
+        The ``status`` event lands exactly once, before the final
+        ``sources`` event, so the client can branch its rendering
+        deterministically (TR-RET-02 step 1). ``sources`` are
+        projected from ``aquery_llm``'s ``data.references`` — the
+        chunks LightRAG actually used to ground the answer (step 2 /
+        audit C3); we never re-issue a second ``chunks_vdb`` retrieval
+        on this path.
+
         Client buffers tokens, calls onChunk for streaming UI, and uses
-        the final sources event to render the structured sources panel.
-        Strip of the `### References` / `### Références` block is the
-        client's responsibility on the joined token stream (the
+        the final ``sources`` event to render the structured panel.
+        Strip of the ``### References`` / ``### Références`` block is
+        the client's responsibility on the joined token stream (the
         per-chunk boundary can land inside the heading itself, so a
         server-side strip would require buffering and defeat streaming).
 
         Error contract (post-stream-open): once the response has
         started, an HTTP status flip is no longer possible — the
-        client has already committed to a 200 reader loop. Failures
-        from ``aquery`` are therefore surfaced as a final ``token``
-        event carrying ``"[query failed: <exc>]"`` followed by an
-        empty ``sources`` event. Callers MUST treat token events as
-        possibly-error-bearing and render the text verbatim; the
-        absence of a non-empty sources payload is the only signal
-        that the run did not complete cleanly. Pre-stream failures
-        (RAG bootstrap, body validation) still surface as real HTTP
-        4xx/5xx like the non-stream `/query` route.
+        client has already committed to a 200 reader loop.
+        ``aquery_llm`` exceptions and structured backend failures
+        (``status=failure`` for any reason other than ``no_results``)
+        are therefore surfaced as a final ``token`` event carrying
+        ``"[query failed: <reason>]"`` followed by ``status=grounded``
+        and an empty ``sources`` event. Callers MUST treat token
+        events as possibly-error-bearing and render the text verbatim;
+        the absence of a non-empty sources payload is the only signal
+        that the run did not complete cleanly. ``no_results`` is the
+        only failure_reason mapped to ``insufficient_information`` —
+        the rest must NOT be masked as such. Pre-stream failures
+        (RAG bootstrap, body validation including the audit-C1
+        ``tag_filter`` 422) still surface as real HTTP 4xx/5xx like
+        the non-stream `/query` route.
         """
         # TR-RET-02 step 3 / audit C1: same honest rejection as /query
         # — LightRAG 1.4.x does not apply tag_filter to retrieval.
@@ -747,7 +761,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
             raise HTTPException(
                 422,
                 "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
-                "remove it or use a dedicated data endpoint.",
+                "remove it from /query and /query/stream requests.",
             )
 
         try:
