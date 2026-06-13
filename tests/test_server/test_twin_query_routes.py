@@ -51,6 +51,18 @@ class FakeDocStatus:
 
 
 class FakeRag:
+    """Test double for ``LightRAG`` covering the three APIs the Twin
+    overlay consumes: ``aquery`` (legacy / only_need_context paths),
+    ``aquery_llm`` (nominal /query and /stream since TR-RET-02 step 2),
+    and ``aquery_data`` (structured-only endpoint).
+
+    The ``chunks`` fixture passed at construction time doubles as
+    ``aquery_llm``'s ``data.references``/``data.chunks`` source — one
+    reference per chunk with ``reference_id = str(i+1)`` and the chunk
+    fields mirrored. This keeps the tests focused on the route's
+    projection logic without duplicating chunk fixtures.
+    """
+
     def __init__(
         self,
         *,
@@ -60,6 +72,8 @@ class FakeRag:
         chunks: list[dict[str, Any]] | None = None,
         chunk_to_doc: dict[str, str] | None = None,
         docs: dict[str, dict[str, Any]] | None = None,
+        envelope_status: str = "success",
+        envelope_failure_reason: str | None = None,
     ):
         self.answer = answer
         self.query_data = query_data or {
@@ -70,9 +84,13 @@ class FakeRag:
         }
         self.stream_chunks = stream_chunks
         self.calls: list[tuple[str, Any]] = []
+        self.llm_calls: list[tuple[str, Any]] = []
         self.data_calls: list[tuple[str, Any]] = []
         self.chunks_vdb = FakeChunksVdb(chunks or [])
         self.doc_status = FakeDocStatus(chunk_to_doc or {}, docs)
+        self._chunks_fixture = chunks or []
+        self._envelope_status = envelope_status
+        self._envelope_failure_reason = envelope_failure_reason
 
     async def aquery(self, query: str, *, param):
         self.calls.append((query, param))
@@ -83,6 +101,64 @@ class FakeRag:
 
             return gen()
         return self.answer
+
+    def _build_envelope(self, *, is_streaming: bool) -> dict[str, Any]:
+        """Synthesize an aquery_llm envelope from the fixture chunks."""
+        references: list[dict[str, Any]] = []
+        envelope_chunks: list[dict[str, Any]] = []
+        for i, chunk in enumerate(self._chunks_fixture, start=1):
+            ref_id = str(i)
+            file_path = chunk.get("file_path") or ""
+            chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
+            references.append(
+                {"reference_id": ref_id, "file_path": file_path}
+            )
+            envelope_chunks.append(
+                {
+                    "reference_id": ref_id,
+                    "content": chunk.get("content", ""),
+                    "file_path": file_path,
+                    "chunk_id": chunk_id,
+                }
+            )
+        envelope: dict[str, Any] = {
+            "status": self._envelope_status,
+            "message": "Query processed",
+            "data": {
+                "entities": [],
+                "relationships": [],
+                "chunks": envelope_chunks,
+                "references": references,
+            },
+            "metadata": (
+                {"failure_reason": self._envelope_failure_reason}
+                if self._envelope_failure_reason
+                else {}
+            ),
+        }
+        if is_streaming and self.stream_chunks is not None:
+            async def gen():
+                for chunk in self.stream_chunks or []:
+                    yield chunk
+
+            envelope["llm_response"] = {
+                "content": None,
+                "response_iterator": gen(),
+                "is_streaming": True,
+            }
+        else:
+            envelope["llm_response"] = {
+                "content": self.answer,
+                "response_iterator": None,
+                "is_streaming": False,
+            }
+        return envelope
+
+    async def aquery_llm(self, query: str, *, param):
+        self.llm_calls.append((query, param))
+        return self._build_envelope(
+            is_streaming=bool(getattr(param, "stream", False))
+        )
 
     async def aquery_data(self, query: str, *, param):
         self.data_calls.append((query, param))
@@ -133,19 +209,28 @@ class TestQueryEndpoint:
         assert body["response"] == "Restart Oracle by …"
         assert len(body["sources"]) == 2
 
+        # TR-RET-02 step 2 / audit C3: ``n`` mirrors the LightRAG
+        # ``reference_id`` so the React port's ``[N]`` citation parser
+        # stays aligned with the sources list.
         first, second = body["sources"]
         assert first["n"] == 1
         assert first["name"] == "/cib/runbooks/oracle.pdf"
-        assert first["meta"] == "chunk 3"
-        assert first["score"] == pytest.approx(0.92)
+        assert first["meta"] == "1 chunk"
+        # ``score`` is no longer populated by the route (no second
+        # vector pass) — kept at zero for now; can be filled from the
+        # aquery_llm chunk metrics in a future iteration.
+        assert first["score"] == 0.0
         assert first["doc_id"] == "doc-oracle"
         assert first["chunk_id"] == "chunk-aa"
 
         assert second["n"] == 2
         assert second["doc_id"] == "doc-rhel"
 
-        # The endpoint forwarded the requested top_k to chunks_vdb
-        assert rag.chunks_vdb.last_top_k == 5
+        # STRUCTURAL GUARD (audit C3): chunks_vdb MUST NOT be touched
+        # on the nominal /query path. The whole point of the
+        # aquery_llm migration is that sources come from the LightRAG
+        # retrieval pipeline itself, not from a second vector pass.
+        assert rag.chunks_vdb.last_query is None
 
     async def test_records_retrieval_activity(self, make_client):
         rag = FakeRag(
@@ -214,9 +299,13 @@ class TestQueryEndpoint:
             r = await client.post("/query", json={"query": "default retrieval"})
 
         assert r.status_code == 200
-        _query, param = rag.calls[0]
+        # aquery_llm is the API the nominal path calls now — the
+        # legacy ``aquery()`` is only hit in only_need_context /
+        # only_need_prompt mode.
+        _query, param = rag.llm_calls[0]
         assert param.top_k == 20
-        assert rag.chunks_vdb.last_top_k == 20
+        # chunks_vdb is never touched — sources come from aquery_llm.
+        assert rag.chunks_vdb.last_query is None
 
     async def test_only_need_context_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="raw context blob")
@@ -236,7 +325,7 @@ class TestQueryEndpoint:
         # chunks_vdb should not have been touched in context-only mode
         assert rag.chunks_vdb.last_query is None
 
-    async def test_advanced_query_params_forward_to_aquery(self, make_client):
+    async def test_advanced_query_params_forward_to_aquery_llm(self, make_client):
         rag = FakeRag(answer="advanced")
         client = await make_client(rag)
         async with client:
@@ -255,8 +344,8 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
-        assert len(rag.calls) == 1
-        query, param = rag.calls[0]
+        assert len(rag.llm_calls) == 1
+        query, param = rag.llm_calls[0]
         assert query == "advanced retrieval"
         assert param.mode == "hybrid"
         assert param.top_k == 11
@@ -267,7 +356,7 @@ class TestQueryEndpoint:
         assert param.enable_rerank is False
         assert param.stream is False
 
-    async def test_tag_filter_forwards_to_aquery(self, make_client):
+    async def test_tag_filter_forwards_to_aquery_llm(self, make_client):
         rag = FakeRag(answer="tagged")
         client = await make_client(rag)
         async with client:
@@ -280,8 +369,8 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
-        assert len(rag.calls) == 1
-        _query, param = rag.calls[0]
+        assert len(rag.llm_calls) == 1
+        _query, param = rag.llm_calls[0]
         assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
 
     async def test_tag_filter_is_absent_when_omitted(self, make_client):
@@ -291,8 +380,8 @@ class TestQueryEndpoint:
             r = await client.post("/query", json={"query": "untagged retrieval"})
 
         assert r.status_code == 200
-        assert len(rag.calls) == 1
-        _query, param = rag.calls[0]
+        assert len(rag.llm_calls) == 1
+        _query, param = rag.llm_calls[0]
         assert getattr(param, "tag_filter", None) is None
 
     async def test_invalid_tag_filter_returns_422(self, make_client):
@@ -333,9 +422,15 @@ class TestQueryEndpoint:
             "answer_status": "grounded",
         }
 
-    async def test_chunks_vdb_failure_returns_empty_sources_not_500(
+    async def test_chunks_vdb_is_never_called_even_when_broken(
         self, make_client
     ):
+        """Audit C3 guard: the nominal /query path must never touch
+        chunks_vdb, even as a defensive fallback. The previous behaviour
+        called chunks_vdb.query and caught the failure to return empty
+        sources; the new contract is "sources only ever come from
+        aquery_llm references", so chunks_vdb is irrelevant.
+        """
         rag = FakeRag(answer="ok", chunks=[])
 
         async def boom(*_a, **_kw):
@@ -347,19 +442,22 @@ class TestQueryEndpoint:
             r = await client.post("/query", json={"query": "anything"})
 
         assert r.status_code == 200
-        assert r.json() == {
-            "response": "ok",
-            "sources": [],
-            "answer_status": "grounded",
-        }
+        body = r.json()
+        assert body["response"] == "ok"
+        assert body["sources"] == []
+        assert body["answer_status"] == "grounded"
+        # chunks_vdb.query is wired to raise — if the route called
+        # it, the test would surface a 500. The endpoint returning
+        # 200 proves chunks_vdb is unreachable from /query.
+        assert rag.chunks_vdb.last_query is None
 
-    async def test_aquery_failure_returns_500(self, make_client):
+    async def test_aquery_llm_failure_returns_500(self, make_client):
         rag = FakeRag(answer="never returned")
 
         async def boom(*_a, **_kw):
             raise RuntimeError("LLM down")
 
-        rag.aquery = boom  # type: ignore[assignment]
+        rag.aquery_llm = boom  # type: ignore[assignment]
         client = await make_client(rag)
         async with client:
             r = await client.post("/query", json={"query": "anything"})
@@ -369,7 +467,11 @@ class TestQueryEndpoint:
 
     async def test_none_answer_is_empty_string_not_literal_none(self, make_client):
         """LightRAG returns None on silent LLM failure — the WebUI must not
-        receive a literal "None" bubble (prod incident 2026-06-11)."""
+        receive a literal "None" bubble (prod incident 2026-06-11). The
+        aquery_llm envelope can carry ``content: None`` for the same
+        underlying reason; classify_aquery_llm_result coerces it to
+        ``""`` and the route surfaces an empty response, not "None".
+        """
         rag = FakeRag(answer=None)  # type: ignore[arg-type]
         client = await make_client(rag)
         async with client:
@@ -420,13 +522,16 @@ class TestQueryEndpoint:
         assert [s["name"] for s in sources] == ["/a/runbook.pdf", "/a/rhel.pdf"]
         assert [s["n"] for s in sources] == [1, 2]
 
-        # The original aquery stream-flag plumbing still works.
-        query, param = rag.calls[0]
+        # Stream plumbing: param.stream=True is forwarded to aquery_llm,
+        # not the legacy aquery.
+        query, param = rag.llm_calls[0]
         assert query == "How do I restart Oracle?"
         assert param.stream is True
         assert param.chunk_top_k == 4
         assert param.enable_rerank is True
         assert param.user_prompt == "short answer"
+        # Audit C3 guard on the stream path: chunks_vdb stays cold.
+        assert rag.chunks_vdb.last_query is None
 
     async def test_query_data_returns_structured_lightrag_payload(
         self, make_client
@@ -630,7 +735,14 @@ class TestQueryEndpoint:
         assert r.status_code == 500
         assert "KG unavailable" in r.json()["detail"]
 
-    async def test_score_falls_back_to_rank_when_absent(self, make_client):
+    async def test_score_is_zero_baseline_post_aquery_llm(self, make_client):
+        """The legacy ``_build_sources`` fabricated rank-based scores
+        when chunks_vdb didn't expose any. The aquery_llm migration
+        deletes that path — references don't carry a score, so the
+        contract baseline is ``0.0``. This test pins that baseline so
+        a future change wiring real scores from chunk metrics is
+        visible at review.
+        """
         rag = FakeRag(
             answer="x",
             chunks=[
@@ -645,8 +757,7 @@ class TestQueryEndpoint:
                 "/query", json={"query": "x", "top_k": 3}
             )
         scores = [s["score"] for s in r.json()["sources"]]
-        # Rank-derived scores: 0.95, 0.725, 0.50
-        assert scores == [pytest.approx(0.95), pytest.approx(0.725), pytest.approx(0.50)]
+        assert scores == [0.0, 0.0, 0.0]
 
     async def test_missing_file_path_falls_back_to_chunk_id(self, make_client):
         rag = FakeRag(
@@ -679,9 +790,9 @@ class TestAnswerStatusContract:
     honestly and suppress the retrieval round-trip so the React port
     can hide the Sources panel without phrase-parsing the LLM prose.
 
-    Detection relies on the LightRAG ``[no-context]`` marker isolated
-    in ``server._lightrag_compat`` — see the docstring there for the
-    upstream version compat note.
+    Two signals classify the answer (see ``_lightrag_compat``):
+    - ``metadata.failure_reason == "no_results"`` — structured.
+    - ``[no-context]`` marker in the LLM content — defense in depth.
     """
 
     LIGHTRAG_FAIL = (
@@ -689,19 +800,23 @@ class TestAnswerStatusContract:
         "[no-context]"
     )
 
-    async def test_non_stream_insufficient_strips_marker_skips_sources(
+    async def test_non_stream_insufficient_via_failure_reason(
         self, make_client
     ):
+        # Structured signal: aquery_llm envelope reports
+        # ``status=failure`` with ``failure_reason=no_results``. The
+        # route maps this to ``answer_status=insufficient_information``
+        # without falling back to a second vector pass.
         rag = FakeRag(
             answer=self.LIGHTRAG_FAIL,
+            envelope_status="failure",
+            envelope_failure_reason="no_results",
             # Sources fixtures intentionally populated to verify they
-            # are NOT returned — the route must short-circuit before
-            # _build_sources runs.
+            # are NOT returned even though they sit in the envelope.
             chunks=[
                 {
                     "id": "chunk-aa",
                     "file_path": "/x/should-not-appear.pdf",
-                    "score": 0.5,
                 },
             ],
         )
@@ -720,23 +835,60 @@ class TestAnswerStatusContract:
             body["response"]
             == "Sorry, I'm not able to provide an answer to that question."
         )
-        # No round-trip wasted on a question we have no answer for —
-        # this is the contract that prevents the operator from being
-        # shown sources that don't back the (fail) answer.
+        assert body["sources"] == []
+        # Audit C3 guard: never a second vector pass.
+        assert rag.chunks_vdb.last_query is None
+
+    async def test_non_stream_insufficient_via_marker_defense_in_depth(
+        self, make_client
+    ):
+        # Defense in depth: envelope says ``status=success`` (older
+        # LightRAG paths that don't set the structured failure_reason)
+        # but the marker is in the content. We still detect.
+        rag = FakeRag(
+            answer=self.LIGHTRAG_FAIL,
+            envelope_status="success",
+            chunks=[
+                {"id": "chunk-aa", "file_path": "/x/should-not-appear.pdf"},
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query", json={"query": "off topic"}
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "insufficient_information"
+        assert "[no-context]" not in body["response"]
         assert body["sources"] == []
         assert rag.chunks_vdb.last_query is None
 
-    async def test_non_stream_grounded_sets_status_and_keeps_sources(
+    async def test_non_stream_generic_backend_failure_surfaces_as_500(
+        self, make_client
+    ):
+        # If the envelope reports failure for a reason OTHER than
+        # no_results, the route MUST NOT mask it as
+        # insufficient_information — that would hide the backend
+        # problem behind the React port's "no sources" copy.
+        rag = FakeRag(
+            answer=None,
+            envelope_status="failure",
+            envelope_failure_reason="query_failed",
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "x"})
+        assert r.status_code == 500
+
+    async def test_non_stream_grounded_sets_status_keeps_sources_no_chunks_vdb(
         self, make_client
     ):
         rag = FakeRag(
             answer="A real answer.",
             chunks=[
-                {
-                    "id": "chunk-aa",
-                    "file_path": "/a/runbook.pdf",
-                    "score": 0.9,
-                },
+                {"id": "chunk-aa", "file_path": "/a/runbook.pdf"},
             ],
         )
         client = await make_client(rag)
@@ -750,27 +902,25 @@ class TestAnswerStatusContract:
         assert body["answer_status"] == "grounded"
         assert body["response"] == "A real answer."
         assert len(body["sources"]) == 1
-        # Sanity: the chunks_vdb WAS queried on the grounded path.
-        assert rag.chunks_vdb.last_query == "real question"
+        # Audit C3 guard: even on the grounded path, sources come from
+        # aquery_llm's references — never from a second chunks_vdb pass.
+        assert rag.chunks_vdb.last_query is None
 
-    async def test_stream_insufficient_emits_status_then_empty_sources(
+    async def test_stream_insufficient_via_marker_split_across_chunks(
         self, make_client
     ):
         import json as _json
 
-        # Stream the canonical fail string in two halves so the
-        # marker straddles the chunk boundary — the rolling buffer
-        # in AnswerMarkerStripper must catch it (Codex's worry).
+        # The chunk-boundary case Codex flagged: the marker straddles
+        # the stream chunks. The rolling buffer in AnswerMarkerStripper
+        # must catch it and the route must emit
+        # ``status=insufficient_information``.
         head = "Sorry, I'm not able to provide an answer to that question.[no-co"
         tail = "ntext]"
         rag = FakeRag(
             stream_chunks=[head, tail],
             chunks=[
-                {
-                    "id": "chunk-aa",
-                    "file_path": "/x/should-not-appear.pdf",
-                    "score": 0.5,
-                },
+                {"id": "chunk-aa", "file_path": "/x/should-not-appear.pdf"},
             ],
         )
         client = await make_client(rag)
@@ -788,27 +938,70 @@ class TestAnswerStatusContract:
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
 
-        # Marker stripped from the tokens the operator sees.
         joined = "".join(e["value"] for e in token_events)
         assert "[no-context]" not in joined
         assert (
             joined
             == "Sorry, I'm not able to provide an answer to that question."
         )
-        # Status event arrives EXACTLY ONCE and carries the
-        # insufficient flag.
         assert len(status_events) == 1
         assert status_events[0]["value"] == "insufficient_information"
-        # Sources event arrives AFTER the status event and is empty —
-        # no retrieval round-trip wasted on an answer we can't back.
         assert len(source_events) == 1
         assert source_events[0]["value"] == []
+        # Order is part of the wire contract: status before sources.
         status_pos = events.index(status_events[0])
         sources_pos = events.index(source_events[0])
         assert status_pos < sources_pos
         assert rag.chunks_vdb.last_query is None
 
-    async def test_stream_grounded_emits_status_grounded_then_sources(
+    async def test_stream_generic_failure_surfaces_in_stream_error_token(
+        self, make_client
+    ):
+        """Stream path symmetry of test_non_stream_generic_backend_failure
+        _surfaces_as_500: once the HTTP 200 is sent we can't flip the
+        status, but we MUST NOT silently emit a grounded/empty response
+        for a generic backend failure. Codex review: that would mirror
+        exactly the structural lie this PR is closing.
+        """
+        import json as _json
+
+        rag = FakeRag(
+            stream_chunks=["partial "],
+            envelope_status="failure",
+            envelope_failure_reason="query_failed",
+            chunks=[],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream", json={"query": "x"}
+            )
+
+        assert r.status_code == 200
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        token_events = [e for e in events if e["type"] == "token"]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+
+        # The operator MUST see an explicit failure token, not a
+        # silent grounded response with no body.
+        joined = "".join(e["value"] for e in token_events)
+        assert "[query failed:" in joined
+        assert "query_failed" in joined
+        # We emit grounded status (not insufficient_information) to
+        # avoid pretending an empty sources list is the canonical
+        # "no usable context" response.
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "grounded"
+        # No fabricated sources behind a failure.
+        assert source_events[0]["value"] == []
+        # Audit C3 guard still holds: no second vector pass even on
+        # the failure path.
+        assert rag.chunks_vdb.last_query is None
+
+    async def test_stream_grounded_emits_status_grounded_then_real_sources(
         self, make_client
     ):
         import json as _json
@@ -816,11 +1009,7 @@ class TestAnswerStatusContract:
         rag = FakeRag(
             stream_chunks=["A ", "real ", "answer."],
             chunks=[
-                {
-                    "id": "chunk-aa",
-                    "file_path": "/a/runbook.pdf",
-                    "score": 0.9,
-                },
+                {"id": "chunk-aa", "file_path": "/a/runbook.pdf"},
             ],
         )
         client = await make_client(rag)
@@ -844,3 +1033,5 @@ class TestAnswerStatusContract:
         assert len(source_events) == 1
         assert len(source_events[0]["value"]) == 1
         assert source_events[0]["value"][0]["name"] == "/a/runbook.pdf"
+        # Audit C3 guard on the stream path too.
+        assert rag.chunks_vdb.last_query is None

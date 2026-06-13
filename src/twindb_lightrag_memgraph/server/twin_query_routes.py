@@ -2,25 +2,39 @@
 
 LightRAG's native ``POST /query`` returns just ``{"response": str}``
 which gives the React port no way to render clickable citations or a
-sources panel. This wrapper:
+sources panel. This wrapper consumes ``LightRAG.aquery_llm`` (single
+call, answer + structured retrieval in one pass) and projects the
+envelope into the Twin contract.
 
-1. Runs the standard ``aquery()`` to get the synthesised answer (one
-   LLM call, same as before).
-2. Issues a cheap vector-only retrieval against ``chunks_vdb`` to
-   surface the top-k chunks the response was grounded on, then looks
-   them up against ``DocStatus`` to enrich each source with its
-   parent document's display path.
-3. Returns ``{response, sources}`` where each source carries the
-   minimal contract the React ``RetrievalSource`` type expects:
-   ``n, type, name, meta, score, doc_id?, chunk_id?``.
+Wire shape returned by ``/query`` and ``/query/stream``:
+``{response, sources, answer_status}`` where each source carries
+``n, type, name, meta, score, doc_id?, chunk_id?``.
 
-Deliberate trade-offs:
-- The vector retrieval reuses LightRAG's existing chunks_vdb, so the
-  cost is the embedding-search round-trip (no extra LLM call).
-- Sources reflect *retrieval*, not necessarily *citation*. LightRAG
-  does not currently emit ``{cite:N}`` markers in the response — the
-  React port surfaces sources in a sidebar; inline highlighting
-  remains a follow-up once the prompt is augmented to cite by index.
+Doctrine (TR-RET-02 step 2 / audit C3):
+- ``sources`` are projected from ``aquery_llm``'s ``data.references``
+  — the chunks LightRAG actually used to ground the answer. We never
+  re-issue a separate vector retrieval against ``chunks_vdb`` on the
+  nominal path; that was the structural lie this module used to ship.
+- ``n`` mirrors LightRAG's ``reference_id`` so the React port's
+  ``parseAnswer`` (``[N]`` citation parser in
+  ``lightrag_webui_twin/src/types/retrieval.ts``) stays aligned with
+  the sources list. The mapping is intentionally non-deduplicating.
+- ``answer_status`` is set from the envelope: ``failure_reason ==
+  "no_results"`` → ``insufficient_information``; defense-in-depth via
+  the ``[no-context]`` marker in the response content.
+- Generic backend failures (failure with another reason, or an
+  exception inside aquery_llm) surface as real HTTP 500 on
+  ``/query`` and an ``[query failed: …]`` token + grounded status on
+  ``/query/stream`` (the HTTP status cannot flip mid-stream). They
+  are NEVER masked as ``insufficient_information``.
+- The legacy ``aquery() + chunks_vdb`` path lives on as
+  :func:`_build_sources_legacy_fallback`, kept for compat tests in
+  isolation. It MUST NOT be invoked from the nominal route paths.
+
+The ``only_need_context`` / ``only_need_prompt`` modes still use the
+legacy ``aquery()`` because aquery_llm has no special-casing for
+those — the operator gets the requested body and an empty sources
+list (those modes never claimed grounded sources to begin with).
 """
 
 from __future__ import annotations
@@ -39,7 +53,12 @@ from ._lightrag_compat import (
     ANSWER_STATUS_INSUFFICIENT,
     AnswerMarkerStripper,
     AnswerStatus,
+    GraphAnswerEnvelopeError,
+    build_sources_from_raw_data,
     classify_answer,
+    classify_aquery_llm_result,
+    collect_chunk_ids,
+    is_streaming_envelope,
 )
 
 logger = logging.getLogger(__name__)
@@ -247,6 +266,35 @@ async def _resolve_doc_for_chunk(rag: Any, chunk_id: str) -> str | None:
     return None
 
 
+async def _resolve_chunk_to_doc_id(
+    rag: Any, chunk_ids: list[str]
+) -> dict[str, str]:
+    """Batch chunk_id -> doc_id resolution for the aquery_llm path.
+
+    LightRAG's ``get_docs_by_chunks`` signature returns
+    ``{doc_id: status}`` keyed by doc, so we resolve each chunk
+    individually and run the per-chunk lookups concurrently via
+    ``asyncio.gather`` — N chunks resolve in roughly one round-trip
+    instead of N. Failures degrade silently to "no doc_id"; the
+    source still renders, just without the drill-down doc id.
+    """
+    if not chunk_ids:
+        return {}
+    import asyncio
+
+    # De-dup so we don't ask the same chunk twice.
+    unique = list(dict.fromkeys(chunk_ids))
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in unique),
+        return_exceptions=False,
+    )
+    out: dict[str, str] = {}
+    for chunk_id, doc_id in zip(unique, resolved):
+        if doc_id:
+            out[chunk_id] = doc_id
+    return out
+
+
 def _split_source_ids(raw: Any) -> list[str]:
     if not isinstance(raw, str):
         return []
@@ -397,15 +445,21 @@ async def _filter_query_data_by_tags(
     return filtered
 
 
-async def _build_sources(
+async def _build_sources_legacy_fallback(
     rag: Any, query: str, top_k: int
 ) -> list[dict[str, Any]]:
-    """Query chunks_vdb + DocStatus to build the WebUI RetrievalSource list.
+    """LEGACY: separate vector pass to assemble a sources list.
 
-    Shared between the non-stream `/query` endpoint and the NDJSON
-    `/query/stream` endpoint so both routes return the same shape. On
-    any failure returns ``[]`` — the caller still has the answer text
-    and the sources panel just stays empty in the UI.
+    DEPRECATED on the nominal /query and /stream paths since TR-RET-02
+    step 2 / audit C3. Kept ONLY as a compat reference for tests in
+    isolation; it MUST NOT be invoked from a successful aquery_llm
+    response path because that reintroduces the structural lie this
+    PR is closing (the displayed sources used to be the result of a
+    second retrieval, not the chunks LightRAG actually grounded on).
+
+    The nominal source-of-truth now lives in
+    :func:`server._lightrag_compat.build_sources_from_raw_data` which
+    maps ``data.references`` from the aquery_llm envelope.
     """
     try:
         chunks_vdb = getattr(rag, "chunks_vdb", None)
@@ -517,44 +571,52 @@ def build_twin_query_router(get_rag) -> APIRouter:
         param_kwargs = _query_param_kwargs(body)
         param = _make_query_param(QueryParam, param_kwargs)
 
-        # --- 1) Synthesised response ----------------------------------
-        try:
-            answer = await rag.aquery(body.query, param=param)
-        except Exception as exc:
-            logger.exception("twin_query: aquery failed")
-            raise HTTPException(500, f"Query failed: {exc}") from exc
-
-        if answer is None:
-            # LightRAG returns None on silent LLM failure; str(None) would
-            # surface a literal "None" bubble in the WebUI.
-            logger.warning("twin_query: aquery returned None for %r", body.query)
-            answer = ""
-        elif not isinstance(answer, str):
-            answer = str(answer)
-
-        # TR-RET-02: classify before deciding on sources. The compat
-        # adapter strips the LightRAG ``[no-context]`` marker and tells
-        # us whether the retrieval pipeline found anything usable.
-        clean_answer, answer_status = classify_answer(answer)
-
-        # If the operator asked for context-only or prompt-only the
-        # answer body already carries everything they wanted — skip
-        # the source enrichment to avoid a second retrieval round-trip.
+        # only_need_context / only_need_prompt skip the LLM entirely,
+        # so aquery_llm is overkill. Keep the legacy aquery() path here
+        # — the operator gets the context/prompt body they asked for and
+        # the sources panel stays empty (this branch never claimed
+        # grounded sources to begin with).
         if body.only_need_context or body.only_need_prompt:
+            try:
+                answer_raw = await rag.aquery(body.query, param=param)
+            except Exception as exc:
+                logger.exception("twin_query: aquery failed")
+                raise HTTPException(500, f"Query failed: {exc}") from exc
+            answer_text = (
+                answer_raw if isinstance(answer_raw, str) else str(answer_raw or "")
+            )
+            cleaned, _ = classify_answer(answer_text)
             await _record_retrieval_activity(
                 body, request, sources_count=0, stream=False
             )
             return {
-                "response": clean_answer,
+                "response": cleaned,
                 "sources": [],
-                "answer_status": answer_status,
+                "answer_status": ANSWER_STATUS_GROUNDED,
             }
 
-        # If the answer is the canned "no usable context" fail
-        # response, the sources retrieval would surface chunks that
-        # are not grounding anything. Skip the round-trip and return
-        # an empty sources list — the React port suppresses the
-        # Sources panel based on ``answer_status``.
+        # --- Nominal path: aquery_llm gives us answer + grounding
+        #     context in a single call. The sources panel is built
+        #     from data.references — the chunks LightRAG actually
+        #     used. No second vector retrieval (TR-RET-02 step 2 /
+        #     audit C3). chunks_vdb is NEVER touched here.
+        try:
+            envelope = await rag.aquery_llm(body.query, param=param)
+        except Exception as exc:
+            logger.exception("twin_query: aquery_llm failed")
+            raise HTTPException(500, f"Query failed: {exc}") from exc
+
+        try:
+            clean_answer, answer_status = classify_aquery_llm_result(envelope)
+        except GraphAnswerEnvelopeError as exc:
+            # Hard backend failure (status=failure, reason != no_results).
+            # Surface as a real 500 — do NOT mask as insufficient
+            # information, that would hide the issue from the operator.
+            logger.error("twin_query: aquery_llm envelope failure: %s", exc)
+            raise HTTPException(
+                500, f"Query failed: {exc}"
+            ) from exc
+
         if answer_status == ANSWER_STATUS_INSUFFICIENT:
             await _record_retrieval_activity(
                 body, request, sources_count=0, stream=False
@@ -565,7 +627,21 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 "answer_status": answer_status,
             }
 
-        sources = await _build_sources(rag, body.query, body.top_k)
+        # Build sources from the envelope. Unexpected shape → log +
+        # empty sources. We DO NOT fall back to a second vector pass:
+        # that path was the structural lie this PR is closing.
+        chunk_ids = collect_chunk_ids(envelope)
+        chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
+        try:
+            sources = build_sources_from_raw_data(envelope, chunk_to_doc)
+        except GraphAnswerEnvelopeError as exc:
+            logger.warning(
+                "twin_query: aquery_llm references unprojectable, "
+                "surfacing empty sources rather than reconstructing them "
+                "from a second vector pass: %s",
+                exc,
+            )
+            sources = []
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=False
         )
@@ -660,17 +736,36 @@ def build_twin_query_router(get_rag) -> APIRouter:
         from lightrag.base import QueryParam
 
         async def generate() -> AsyncIterator[str]:
-            # TR-RET-02: stream the chunks through the marker stripper
-            # so the operator never sees ``[no-context]`` mid-bubble
-            # and we can emit ``answer_status`` honestly at the end.
-            # Rolling buffer handles the marker straddling chunks.
+            # TR-RET-02 step 2 / audit C3:
+            # - aquery_llm streams tokens via ``llm_response.response_iterator``
+            #   AND returns the structured ``data.references`` we need
+            #   for the sources event — single call, real grounding context.
+            # - chunks_vdb is NOT touched on this path. The sources panel
+            #   only ever shows the chunks LightRAG actually used.
+            # - The marker stripper runs on the streamed text so
+            #   ``[no-context]`` never leaks to the operator even when
+            #   it straddles a chunk boundary.
             stripper = AnswerMarkerStripper()
+            envelope: dict[str, Any] | None = None
             try:
                 param = _make_query_param(
                     QueryParam, _query_param_kwargs(body, stream=True)
                 )
-                answer = await rag.aquery(body.query, param=param)
-                async for text in _iter_answer_text(answer):
+                envelope = await rag.aquery_llm(body.query, param=param)
+                llm_response = (
+                    envelope.get("llm_response")
+                    if isinstance(envelope, dict)
+                    else None
+                ) or {}
+                token_source: Any
+                if is_streaming_envelope(envelope):
+                    token_source = llm_response.get("response_iterator")
+                else:
+                    # aquery_llm produced the answer synchronously
+                    # (failure path, bypass mode, or non-streaming
+                    # backend). Treat content as a single-shot token.
+                    token_source = llm_response.get("content") or ""
+                async for text in _iter_answer_text(token_source):
                     for safe in stripper.feed(text):
                         if safe:
                             yield json.dumps(
@@ -682,7 +777,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
                             {"type": "token", "value": safe}
                         ) + "\n"
             except Exception as exc:
-                logger.exception("twin_query: streaming aquery failed")
+                logger.exception("twin_query: streaming aquery_llm failed")
                 yield json.dumps(
                     {"type": "token", "value": f"\n[query failed: {exc}]"}
                 ) + "\n"
@@ -692,18 +787,65 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 yield json.dumps({"type": "sources", "value": []}) + "\n"
                 return
 
-            answer_status = stripper.status()
+            # Determine answer_status: prefer the envelope's structured
+            # failure_reason (set by LightRAG itself); fall back to the
+            # marker (which we already detected via the stripper) for
+            # defense in depth.
+            envelope_status: AnswerStatus = ANSWER_STATUS_GROUNDED
+            envelope_fatal_reason: str | None = None
+            if isinstance(envelope, dict):
+                metadata = envelope.get("metadata") or {}
+                failure_reason = (
+                    metadata.get("failure_reason")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if envelope.get("status") == "failure":
+                    if failure_reason == "no_results":
+                        envelope_status = ANSWER_STATUS_INSUFFICIENT
+                    else:
+                        # Generic backend failure mid-stream. We can't
+                        # flip the HTTP status now (200 already sent),
+                        # but we MUST NOT mask it: emit an explicit
+                        # ``[query failed: …]`` token so the operator
+                        # sees the error rather than an empty grounded
+                        # response (matches the ``except`` branch above).
+                        envelope_fatal_reason = (
+                            failure_reason
+                            or str(envelope.get("message") or "backend failure")
+                        )
+            if stripper.detected and envelope_fatal_reason is None:
+                envelope_status = ANSWER_STATUS_INSUFFICIENT
 
-            # ``status`` event always lands before ``sources`` so the
-            # React port can branch its rendering deterministically.
+            if envelope_fatal_reason is not None:
+                logger.error(
+                    "twin_query stream: aquery_llm envelope failure "
+                    "surfaced as in-stream error token: %s",
+                    envelope_fatal_reason,
+                )
+                yield json.dumps(
+                    {
+                        "type": "token",
+                        "value": f"\n[query failed: {envelope_fatal_reason}]",
+                    }
+                ) + "\n"
+                yield json.dumps(
+                    {"type": "status", "value": ANSWER_STATUS_GROUNDED}
+                ) + "\n"
+                await _record_retrieval_activity(
+                    body, request, sources_count=0, stream=True
+                )
+                yield json.dumps({"type": "sources", "value": []}) + "\n"
+                return
+
             yield json.dumps(
-                {"type": "status", "value": answer_status}
+                {"type": "status", "value": envelope_status}
             ) + "\n"
 
             if (
                 body.only_need_context
                 or body.only_need_prompt
-                or answer_status == ANSWER_STATUS_INSUFFICIENT
+                or envelope_status == ANSWER_STATUS_INSUFFICIENT
             ):
                 await _record_retrieval_activity(
                     body, request, sources_count=0, stream=True
@@ -711,7 +853,21 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 yield json.dumps({"type": "sources", "value": []}) + "\n"
                 return
 
-            sources = await _build_sources(rag, body.query, body.top_k)
+            chunk_ids = collect_chunk_ids(envelope or {})
+            chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
+            try:
+                sources = build_sources_from_raw_data(
+                    envelope or {}, chunk_to_doc
+                )
+            except GraphAnswerEnvelopeError as exc:
+                # Honest degradation: empty sources rather than a
+                # silent second-pass reconstruction.
+                logger.warning(
+                    "twin_query stream: aquery_llm references "
+                    "unprojectable, emitting empty sources: %s",
+                    exc,
+                )
+                sources = []
             await _record_retrieval_activity(
                 body, request, sources_count=len(sources), stream=True
             )

@@ -179,3 +179,270 @@ class TestAnswerMarkerStripper:
         out = list(stripper.feed(""))
         assert out == []
         assert stripper.detected is False
+
+
+# ----------------------------------------------------------------------
+# aquery_llm envelope helpers (TR-RET-02 step 2 / audit C3)
+# ----------------------------------------------------------------------
+
+
+import pytest
+
+from twindb_lightrag_memgraph.server._lightrag_compat import (
+    GraphAnswerEnvelopeError,
+    build_sources_from_raw_data,
+    classify_aquery_llm_result,
+    collect_chunk_ids,
+    is_streaming_envelope,
+)
+
+
+def _envelope(
+    *,
+    status: str = "success",
+    content: str | None = "An answer.",
+    failure_reason: str | None = None,
+    references: list[dict] | None = None,
+    chunks: list[dict] | None = None,
+    is_streaming: bool = False,
+    response_iterator: object | None = None,
+) -> dict:
+    return {
+        "status": status,
+        "message": "Query processed",
+        "data": {
+            "entities": [],
+            "relationships": [],
+            "chunks": chunks if chunks is not None else [],
+            "references": references if references is not None else [],
+        },
+        "metadata": (
+            {"failure_reason": failure_reason} if failure_reason else {}
+        ),
+        "llm_response": {
+            "content": content,
+            "response_iterator": response_iterator,
+            "is_streaming": is_streaming,
+        },
+    }
+
+
+class TestClassifyAqueryLlmResult:
+    def test_grounded_on_success_envelope(self):
+        result = _envelope(content="An answer.")
+        cleaned, status = classify_aquery_llm_result(result)
+        assert cleaned == "An answer."
+        assert status == ANSWER_STATUS_GROUNDED
+
+    def test_insufficient_on_failure_no_results(self):
+        result = _envelope(
+            status="failure",
+            content=(
+                "Sorry, I'm not able to provide an answer to that question."
+                + LIGHTRAG_NO_CONTEXT_MARKER
+            ),
+            failure_reason="no_results",
+        )
+        cleaned, status = classify_aquery_llm_result(result)
+        assert status == ANSWER_STATUS_INSUFFICIENT
+        # Marker stripped from the cleaned answer.
+        assert LIGHTRAG_NO_CONTEXT_MARKER not in cleaned
+
+    def test_raises_on_generic_backend_failure(self):
+        # ``failure_reason != "no_results"`` must NOT be masked as
+        # insufficient — the route turns this into a real 500.
+        result = _envelope(
+            status="failure",
+            failure_reason="query_failed",
+            content=None,
+        )
+        with pytest.raises(GraphAnswerEnvelopeError):
+            classify_aquery_llm_result(result)
+
+    def test_raises_on_failure_with_empty_reason(self):
+        # Defensive: a failure envelope without ``failure_reason`` is
+        # an honest backend error, not a "no usable context" signal.
+        result = _envelope(
+            status="failure",
+            failure_reason=None,
+            content=None,
+        )
+        with pytest.raises(GraphAnswerEnvelopeError):
+            classify_aquery_llm_result(result)
+
+    def test_defense_in_depth_marker_overrides_success_status(self):
+        # If LightRAG returns ``status=success`` but injects the
+        # marker (older code paths), we still mark insufficient.
+        result = _envelope(
+            content=(
+                "Sorry, I'm not able to provide an answer."
+                + LIGHTRAG_NO_CONTEXT_MARKER
+            ),
+        )
+        cleaned, status = classify_aquery_llm_result(result)
+        assert status == ANSWER_STATUS_INSUFFICIENT
+        assert LIGHTRAG_NO_CONTEXT_MARKER not in cleaned
+
+    def test_raises_on_non_dict_input(self):
+        with pytest.raises(GraphAnswerEnvelopeError):
+            classify_aquery_llm_result("not a dict")  # type: ignore[arg-type]
+
+
+class TestBuildSourcesFromRawData:
+    """The mapping is intentionally non-deduplicating: every LightRAG
+    reference_id becomes one Twin source so the ``[N]`` citations
+    LightRAG asks the LLM to emit stay aligned with ``sources[i].n``."""
+
+    def test_one_source_per_reference_id_in_order(self):
+        result = _envelope(
+            references=[
+                {"reference_id": "1", "file_path": "/cib/runbooks/oracle.pdf"},
+                {"reference_id": "2", "file_path": "/cib/runbooks/rhel.pdf"},
+            ],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-aa", "file_path": "/cib/runbooks/oracle.pdf"},
+                {"reference_id": "2", "chunk_id": "c-bb", "file_path": "/cib/runbooks/rhel.pdf"},
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert [s["n"] for s in sources] == [1, 2]
+        assert sources[0]["name"] == "/cib/runbooks/oracle.pdf"
+        assert sources[0]["chunk_id"] == "c-aa"
+        assert sources[1]["chunk_id"] == "c-bb"
+
+    def test_does_not_dedup_when_two_references_share_file_path(self):
+        # Audit guardrail: dropping a reference because its file_path
+        # is already present would misalign the LLM's ``[N]`` markers
+        # with the source list. Two references for the same PDF must
+        # produce two source entries with stable ``n`` ids.
+        result = _envelope(
+            references=[
+                {"reference_id": "1", "file_path": "/a.pdf"},
+                {"reference_id": "2", "file_path": "/a.pdf"},
+            ],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+                {"reference_id": "2", "chunk_id": "c-2", "file_path": "/a.pdf"},
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert len(sources) == 2
+        assert [s["n"] for s in sources] == [1, 2]
+        assert {s["chunk_id"] for s in sources} == {"c-1", "c-2"}
+
+    def test_meta_carries_chunks_count(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+                {"reference_id": "1", "chunk_id": "c-2", "file_path": "/a.pdf"},
+                {"reference_id": "1", "chunk_id": "c-3", "file_path": "/a.pdf"},
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert sources[0]["meta"] == "3 chunks"
+
+    def test_meta_one_chunk_uses_singular(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert sources[0]["meta"] == "1 chunk"
+
+    def test_chunk_id_to_doc_id_lookup(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+            ],
+        )
+        sources = build_sources_from_raw_data(result, {"c-1": "doc-A"})
+        assert sources[0]["doc_id"] == "doc-A"
+
+    def test_missing_data_block_returns_empty_list(self):
+        # Bypass mode produces an envelope without ``data.references``
+        # — legitimate, surface empty sources, do NOT raise.
+        sources = build_sources_from_raw_data(
+            {"status": "success", "metadata": {}, "llm_response": {}}
+        )
+        assert sources == []
+
+    def test_data_without_references_or_chunks_returns_empty(self):
+        result = {
+            "status": "success",
+            "data": {"entities": [], "relationships": []},
+            "metadata": {},
+            "llm_response": {},
+        }
+        assert build_sources_from_raw_data(result) == []
+
+    def test_raises_when_references_is_not_a_list(self):
+        # Defensive — the caller logs + degrades to empty rather than
+        # silently calling _build_sources_legacy_fallback.
+        result = _envelope(references=[], chunks=[])
+        result["data"]["references"] = "not a list"  # type: ignore[index]
+        with pytest.raises(GraphAnswerEnvelopeError):
+            build_sources_from_raw_data(result)
+
+    def test_raises_when_reference_id_is_missing(self):
+        result = _envelope(
+            references=[{"file_path": "/a.pdf"}],
+            chunks=[],
+        )
+        with pytest.raises(GraphAnswerEnvelopeError):
+            build_sources_from_raw_data(result)
+
+    def test_raises_when_reference_id_is_not_int_coercible(self):
+        result = _envelope(
+            references=[{"reference_id": "abc", "file_path": "/a.pdf"}],
+            chunks=[],
+        )
+        with pytest.raises(GraphAnswerEnvelopeError):
+            build_sources_from_raw_data(result)
+
+    def test_name_falls_back_to_chunk_id_when_file_path_empty(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": ""}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-aa", "file_path": ""},
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert sources[0]["name"] == "c-aa"
+
+
+class TestCollectChunkIds:
+    def test_collects_unique_chunk_ids(self):
+        result = _envelope(
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1"},
+                {"reference_id": "1", "chunk_id": "c-2"},
+                {"reference_id": "2", "chunk_id": "c-3"},
+            ],
+        )
+        assert collect_chunk_ids(result) == ["c-1", "c-2", "c-3"]
+
+    def test_returns_empty_on_unexpected_shape(self):
+        # Non-raising: enrichment is informational, the route still
+        # works without doc_id resolution.
+        assert collect_chunk_ids({"data": "not a dict"}) == []
+        assert collect_chunk_ids("not a dict") == []  # type: ignore[arg-type]
+
+
+class TestIsStreamingEnvelope:
+    def test_true_when_is_streaming_and_iterator_present(self):
+        result = _envelope(
+            is_streaming=True, response_iterator=iter(["chunk"])
+        )
+        assert is_streaming_envelope(result) is True
+
+    def test_false_when_is_streaming_false(self):
+        result = _envelope(is_streaming=False)
+        assert is_streaming_envelope(result) is False
+
+    def test_false_when_iterator_missing(self):
+        result = _envelope(is_streaming=True, response_iterator=None)
+        assert is_streaming_envelope(result) is False
