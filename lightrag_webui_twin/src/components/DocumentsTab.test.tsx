@@ -254,3 +254,49 @@ describe('DocumentsTab — header actions', () => {
   });
 
 });
+
+describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
+  it('renders the indexing failure reason inline on a FAILED row', () => {
+    // d3 = the FAILED fixture with error_msg='Unsupported MIME type: …'.
+    // Before this PR the row went red without ever exposing the reason —
+    // Alberto's exact complaint on the maquette.
+    render(<DocumentsTab {...defaultProps()} />);
+    const err = screen.getByTestId('docs-row-error-d3');
+    expect(err.textContent).toMatch(/indexing failed/i);
+    expect(err.textContent).toContain('Unsupported MIME type: application/zip');
+  });
+
+  it('omits the error line on a row that has no error_msg', () => {
+    // d1 = PROCESSED, no error_msg → the slot must not render at all.
+    render(<DocumentsTab {...defaultProps()} />);
+    expect(screen.queryByTestId('docs-row-error-d1')).toBeNull();
+  });
+
+  it('labels chunks "created before failure" when FAILED with chunks > 0', () => {
+    // Alberto's case: 327 chunks indexed before a downstream failure.
+    // The chunks count stays a number (no relabel in the table) but the
+    // cell carries a tooltip that names the partial state honestly.
+    const failedWithChunks = {
+      ...DOCUMENT_FIXTURES[2], // d3, the FAILED fixture
+      doc_id: 'd3-with-chunks',
+      chunks_count: 327,
+    };
+    const props = {
+      ...defaultProps(),
+      docs: [failedWithChunks],
+    };
+    render(<DocumentsTab {...props} />);
+    const cell = screen.getByTestId('docs-row-chunks-d3-with-chunks');
+    expect(cell.textContent).toBe('327');
+    expect(cell.getAttribute('title')).toBe(
+      '327 chunks created before failure',
+    );
+  });
+
+  it('omits the chunks tooltip on a FAILED row with zero chunks', () => {
+    // d3 has chunks_count = 0 — no "created before failure" claim to make.
+    render(<DocumentsTab {...defaultProps()} />);
+    const cell = screen.getByTestId('docs-row-chunks-d3');
+    expect(cell.getAttribute('title')).toBeNull();
+  });
+});

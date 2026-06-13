@@ -327,7 +327,25 @@ function LineageTab({ doc, nowMs }: LineageTabProps) {
         <dt>Status</dt>
         <dd>{doc.status}</dd>
         <dt>Chunks</dt>
-        <dd>{doc.chunks_count ?? 0}</dd>
+        <dd>
+          {doc.chunks_count ?? 0}
+          {doc.status === 'FAILED' && (doc.chunks_count ?? 0) > 0 && (
+            <span className="muted" style={{ marginLeft: 6 }}>
+              (created before failure)
+            </span>
+          )}
+        </dd>
+        {doc.status === 'FAILED' && doc.error_msg && (
+          <>
+            <dt>Error</dt>
+            <dd
+              data-testid="doc-detail-error-msg"
+              style={{ color: 'var(--twin-red-vivid)' }}
+            >
+              Indexing failed: {doc.error_msg}
+            </dd>
+          </>
+        )}
         <dt>Tags</dt>
         <dd>
           {doc.tags.length === 0 ? (

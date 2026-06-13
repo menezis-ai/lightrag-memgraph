@@ -564,6 +564,19 @@ function DocRow({
         >
           {doc.content_summary || 'No indexed preview available.'}
         </span>
+        {isFail && doc.error_msg && (
+          <div
+            className="summary-error"
+            data-testid={`docs-row-error-${doc.doc_id}`}
+            style={{
+              marginTop: 4,
+              fontSize: 11,
+              color: 'var(--twin-red-vivid)',
+            }}
+          >
+            Indexing failed: {doc.error_msg}
+          </div>
+        )}
       </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
@@ -586,7 +599,17 @@ function DocRow({
           <span className={`status-text ${filterStatus}`}>{filterStatus}</span>
         )}
       </div>
-      <div className="cell-chunks">{doc.chunks_count ?? 0}</div>
+      <div
+        className="cell-chunks"
+        title={
+          isFail && (doc.chunks_count ?? 0) > 0
+            ? `${doc.chunks_count} chunks created before failure`
+            : undefined
+        }
+        data-testid={`docs-row-chunks-${doc.doc_id}`}
+      >
+        {doc.chunks_count ?? 0}
+      </div>
       <div className="cell-updated">{relativeTime(doc.updated_at, nowMs)}</div>
       <div className="cell-actions">
         {!isOptimisticUpload && (

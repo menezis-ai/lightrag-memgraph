@@ -230,4 +230,94 @@ describe('DocDetailPanel — footer actions', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  describe('TR-ING-01 — failed doc error_msg surface', () => {
+    async function openLineage() {
+      // Tabs are: Chunks (default), Lineage, Audit. Click into Lineage
+      // where the Status/Chunks/Error fields live. The tab is keyed by
+      // data-testid (no ARIA role="tab"), see DocDetailPanel.tsx:132.
+      await userEvent.click(screen.getByTestId('doc-detail-tab-lineage'));
+    }
+
+    it('renders an Error section on the Lineage tab when FAILED + error_msg', async () => {
+      const Wrap = wrap(new QueryClient());
+      render(
+        <Wrap>
+          <DocDetailPanel
+            doc={makeDoc({
+              status: 'FAILED',
+              chunks_count: 327,
+              error_msg: 'LLM extractor: invalid JSON on chunk 14',
+            })}
+            onClose={() => {}}
+          />
+        </Wrap>,
+      );
+      await openLineage();
+      const errDd = screen.getByTestId('doc-detail-error-msg');
+      expect(errDd.textContent).toMatch(/indexing failed/i);
+      expect(errDd.textContent).toContain(
+        'LLM extractor: invalid JSON on chunk 14',
+      );
+    });
+
+    it('labels chunks "(created before failure)" when FAILED with chunks > 0', async () => {
+      const Wrap = wrap(new QueryClient());
+      render(
+        <Wrap>
+          <DocDetailPanel
+            doc={makeDoc({
+              status: 'FAILED',
+              chunks_count: 327,
+              error_msg: 'pipeline aborted',
+            })}
+            onClose={() => {}}
+          />
+        </Wrap>,
+      );
+      await openLineage();
+      // The Chunks <dd> shows the number AND the partial-state hint.
+      const lineage = screen.getByTestId('doc-detail-lineage');
+      expect(lineage.textContent).toContain('327');
+      expect(lineage.textContent).toContain('(created before failure)');
+    });
+
+    it('omits the Error section when status is FAILED but error_msg is null', async () => {
+      const Wrap = wrap(new QueryClient());
+      render(
+        <Wrap>
+          <DocDetailPanel
+            doc={makeDoc({
+              status: 'FAILED',
+              chunks_count: 0,
+              error_msg: null,
+            })}
+            onClose={() => {}}
+          />
+        </Wrap>,
+      );
+      await openLineage();
+      expect(screen.queryByTestId('doc-detail-error-msg')).toBeNull();
+    });
+
+    it('omits the Error section on a PROCESSED doc even if error_msg slipped in', async () => {
+      // Defensive: status takes priority — a processed doc must not
+      // surface a stale error_msg from a previous failed attempt.
+      const Wrap = wrap(new QueryClient());
+      render(
+        <Wrap>
+          <DocDetailPanel
+            doc={makeDoc({
+              status: 'PROCESSED',
+              chunks_count: 42,
+              error_msg: 'stale message from a previous retry',
+            })}
+            onClose={() => {}}
+          />
+        </Wrap>,
+      );
+      await openLineage();
+      expect(screen.queryByTestId('doc-detail-error-msg')).toBeNull();
+    });
+  });
 });
