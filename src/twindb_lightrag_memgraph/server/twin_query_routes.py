@@ -38,6 +38,7 @@ from ._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
     AnswerMarkerStripper,
+    AnswerStatus,
     classify_answer,
 )
 
@@ -96,7 +97,9 @@ class TwinQueryResponse(BaseModel):
     # no usable retrieval context (canonical ``[no-context]`` marker in
     # the fail response). The React port uses this to suppress the
     # Sources panel honestly rather than parsing the LLM prose.
-    answer_status: str = Field(default="grounded")
+    # Typed as ``AnswerStatus`` so the generated OpenAPI schema
+    # advertises the enum to clients/tooling instead of an open str.
+    answer_status: AnswerStatus = Field(default=ANSWER_STATUS_GROUNDED)
 
 
 class TwinQueryDataResponse(BaseModel):
