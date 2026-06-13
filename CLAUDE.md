@@ -106,14 +106,24 @@ Scanner config lives in `sonar-project.properties` at the repo root: `sonar.sour
 
 ### CI matrix
 
-CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions, all jobs on the self-hosted `ubuntu-latest-docker` runner:
-- **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9 / 1.4.9.11 / 1.4.11 / 1.4.12 (no Memgraph). Runs `pytest tests/ --ignore=tests/test_bench.py` — the `@pytest.mark.integration` auto-skip in `conftest.py` keeps storage/e2e tests out when `MEMGRAPH_URI` is unset.
-- **integration-tests**: LightRAG matrix × Memgraph 3.7.2 / 3.8.0 / latest, with a `memgraph` service container. `max-parallel: 5` to keep cold-start within the 60-retry health window. URI: `bolt://memgraph:7687`.
-- **webui-tests**: `bun install --frozen-lockfile && bun run typecheck && bun run test:run && bun run build` on the `lightrag_webui_twin/` Vite project (see "WebUI fork" below). Bun is pinned to `1.3.6` in the workflow — never use `latest` (api.github.com rate limit).
+CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions. Two runner pools:
+- `[self-hosted, docker]` — Python + WebUI lint/unit jobs (docker squad 310-314 post-2026-06-11 OOM incident, bumped to 4096M).
+- `[self-hosted, high]` — Playwright e2e jobs (`webui-e2e`, `webui-e2e-real`). The `high:host` pool can NOT run `setup-python` actions — see `reference_ci_runner_pools.md`. Python jobs use `docker run python:X-bookworm` against a mounted workdir instead of `setup-python`, which is why `unit-tests` / `integration-tests` look containerized inside the workflow.
 
-LightRAG `1.4.10` is **dropped** from the matrix (issue #6) — intermittent test failures under integration load, fixed upstream in 1.4.11+.
+Jobs:
+- **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9.11 / 1.4.11 / 1.4.12 (no Memgraph). Runs `pytest tests/ --ignore=tests/test_bench.py` inside a `python:${ver}-bookworm` container — `conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset.
+- **integration-tests**: LightRAG matrix × Memgraph **3.10.1** only (BNP prod target; pinned so `latest` can't drift the coverage point). `max-parallel: 1` — each matrix job spins its own isolated docker network + Memgraph container to avoid cross-job contention. URI inside the network: `bolt://memgraph:7687`.
+- **webui-lint**: cheap ESLint gate on `lightrag_webui_twin/` (parallel to the heavier WebUI jobs).
+- **webui-tests**: `bun install --frozen-lockfile && bun run typecheck && bun run test:run && bun run build`. Bun pinned to `1.3.6` (never `latest` — `setup-bun` would hit api.github.com's 60/h anonymous rate limit and the bunker runner pool shares its outbound IP).
+- **webui-e2e**: Playwright operator journeys against the MSW-backed WebUI (`high` pool).
+- **webui-e2e-real**: Playwright against a real Twin backend (Memgraph + LightRAG container spawned by the job, `LIGHTRAG_API_KEY` set to `real-e2e-token`). LLM retrieval cases skipped (no model creds in CI). Also runs on the `high` pool.
 
-Branch protection on `main`, `stable/0.5.x`, `stable/0.3.2-lts` requires patterns `CI / unit-tests*`, `CI / integration-tests*`, `CI / webui-tests*` to be green before merge.
+Matrix exclusions (don't re-add without checking):
+- LightRAG `1.4.9` vanilla dropped 2026-05-29 — BNP runs `1.4.9.11`, vanilla `1.4.9` flaked on the bunker runner.
+- LightRAG `1.4.10` dropped (issue #6) — intermittent failures under integration load, fixed upstream in 1.4.11+.
+- Memgraph `3.7.2` / `3.8.0` / `latest` dropped — never deployed at BNP, `3.10.1` is the prod target.
+
+Branch protection on `main`, `stable/0.5.x`, `stable/0.3.2-lts` requires the `CI / unit-tests*`, `CI / integration-tests*`, `CI / webui-lint`, `CI / webui-tests`, `CI / webui-e2e*` checks to be green before merge.
 
 A push triggers 1–15 min of CI (global directive §6). Run unit + integration locally first; do not push speculatively.
 

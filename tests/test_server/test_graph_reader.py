@@ -380,3 +380,179 @@ class TestRelationEndpointCache:
         _remember_relation("cib", "kr_test123", "A", "B")
         got = lookup_relation_endpoints("kr_test123")
         assert got == ("cib", "A", "B")
+
+
+# ----------------------------------------------------------------------
+# Contract guards for create_graph_entity (TR-KG-01)
+#
+# These exist to prevent a future ``except Exception: return None`` from
+# reintroducing the faux-409 contract. The function-level API is
+# "returns dict on success, raises typed exception on failure" — never
+# ``None``.
+# ----------------------------------------------------------------------
+
+
+class _FakeResult:
+    """Minimal async-iterable result with ``consume()``."""
+
+    def __init__(self, rows: list[Any]):
+        self._rows = rows
+
+    def __aiter__(self):
+        async def _gen():
+            for row in self._rows:
+                yield row
+
+        return _gen()
+
+    async def consume(self) -> None:  # pragma: no cover - trivial
+        return None
+
+
+class _FakeSession:
+    def __init__(self, rows: list[Any] | None = None, *, raise_on_run: bool = False):
+        self._rows = rows or []
+        self._raise = raise_on_run
+
+    async def run(self, *_args, **_kwargs):
+        if self._raise:
+            raise RuntimeError("memgraph unavailable")
+        return _FakeResult(self._rows)
+
+
+def _fake_session_cm(session: _FakeSession):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _cm():
+        yield session
+
+    return _cm
+
+
+def _fake_write_slot():
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _cm():
+        yield
+
+    return _cm
+
+
+class TestCreateGraphEntityContract:
+    """The function-level API contract for ``create_graph_entity``.
+
+    Route-level coverage lives in
+    ``tests/test_server/test_webui_router_graph.py``. These tests
+    pin the function shape so a future regression to the
+    ``return None`` sentinel is caught even if the route mapping is
+    rewritten.
+    """
+
+    async def test_raises_entity_exists_error_on_duplicate(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import graph_reader as gr
+
+        async def fake_exists(workspace, entity_id):
+            return True
+
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+
+        with pytest.raises(gr.EntityExistsError):
+            await gr.create_graph_entity(
+                "cib", {"name": "Existing", "type": "PRODUCT"}
+            )
+
+    async def test_raises_backend_error_on_empty_name(self):
+        from twindb_lightrag_memgraph.server import graph_reader as gr
+
+        # Direct callers that bypass Pydantic must still see a typed
+        # failure rather than a silent ``None``.
+        with pytest.raises(gr.EntityCreateBackendError):
+            await gr.create_graph_entity("cib", {"name": "   ", "type": "PRODUCT"})
+
+    async def test_raises_backend_error_when_session_run_fails(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import graph_reader as gr
+
+        async def fake_exists(workspace, entity_id):
+            return False
+
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+        monkeypatch.setattr(
+            gr, "acquire_write_slot", _fake_write_slot()
+        )
+        monkeypatch.setattr(
+            gr,
+            "get_session",
+            _fake_session_cm(_FakeSession(raise_on_run=True)),
+        )
+
+        with pytest.raises(gr.EntityCreateBackendError):
+            await gr.create_graph_entity(
+                "cib", {"name": "FreshOne", "type": "PRODUCT"}
+            )
+
+    async def test_raises_projection_error_when_reread_fails(self, monkeypatch):
+        from twindb_lightrag_memgraph.server import graph_reader as gr
+
+        async def fake_exists(workspace, entity_id):
+            return False
+
+        async def fake_reread_fails(workspace, entity_id):
+            raise RuntimeError("read session timeout")
+
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+        monkeypatch.setattr(
+            gr, "acquire_write_slot", _fake_write_slot()
+        )
+        monkeypatch.setattr(
+            gr,
+            "get_session",
+            _fake_session_cm(_FakeSession(rows=[{"entity_id": "FreshOne"}])),
+        )
+        monkeypatch.setattr(gr, "_read_one_entity", fake_reread_fails)
+
+        with pytest.raises(gr.EntityProjectionError):
+            await gr.create_graph_entity(
+                "cib", {"name": "FreshOne", "type": "PRODUCT"}
+            )
+
+    async def test_returns_dict_on_success_never_none(self, monkeypatch):
+        """The success path must return the projected dict — not ``None``.
+        This is the explicit guard Codex asked for against a future
+        ``except Exception: return None`` regression that would resurrect
+        the faux-409 contract."""
+        from twindb_lightrag_memgraph.server import graph_reader as gr
+
+        async def fake_exists(workspace, entity_id):
+            return False
+
+        async def fake_reread_ok(workspace, entity_id):
+            return {
+                "id": "kg_FreshOne",
+                "name": "FreshOne",
+                "type": "PRODUCT",
+                "x": 100,
+                "y": 100,
+                "mentions": 0,
+                "sources": 0,
+                "summary": "",
+            }
+
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+        monkeypatch.setattr(
+            gr, "acquire_write_slot", _fake_write_slot()
+        )
+        monkeypatch.setattr(
+            gr,
+            "get_session",
+            _fake_session_cm(_FakeSession(rows=[{"entity_id": "FreshOne"}])),
+        )
+        monkeypatch.setattr(gr, "_read_one_entity", fake_reread_ok)
+
+        out = await gr.create_graph_entity(
+            "cib", {"name": "FreshOne", "type": "PRODUCT"}
+        )
+        assert out is not None
+        assert isinstance(out, dict)
+        assert out["id"] == "kg_FreshOne"

@@ -36,6 +36,43 @@ from .._pool import acquire_write_slot, get_read_session, get_session
 
 logger = logging.getLogger(__name__)
 
+
+# ----------------------------------------------------------------------
+# Exceptions raised by the write helpers (M12 batch 3 contract)
+# ----------------------------------------------------------------------
+
+
+class GraphEntityCreateError(Exception):
+    """Base type for failures in :func:`create_graph_entity`.
+
+    The route handler in ``webui_router.py`` discriminates these to map
+    each cause to a distinct HTTP status (409 / 500 / 503). Returning
+    ``None`` is no longer a valid failure signal — see TR-KG-01.
+    """
+
+
+class EntityExistsError(GraphEntityCreateError):
+    """An entity with this canonical name already exists in the workspace."""
+
+
+class EntityCreateBackendError(GraphEntityCreateError):
+    """The ``CREATE`` statement failed (driver, syntax, lock, …).
+
+    The original exception is chained via ``raise … from exc`` so the
+    full traceback is preserved in logs without leaking driver details
+    to the HTTP client.
+    """
+
+
+class EntityProjectionError(GraphEntityCreateError):
+    """The entity was written, but the post-CREATE projection failed.
+
+    Operationally: the node exists in Memgraph (a subsequent
+    ``GET /graph/entities`` will surface it), but we cannot return the
+    projected payload to the operator in this response.
+    """
+
+
 # ----------------------------------------------------------------------
 # Type mapping (LightRAG free-form → WebUI closed enum)
 # ----------------------------------------------------------------------
@@ -725,20 +762,33 @@ async def entity_exists(workspace: str, entity_id: str) -> bool:
 
 async def create_graph_entity(
     workspace: str, payload: dict[str, Any], *, actor: str = "operator"
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Manually add an entity to the KB.
 
-    Returns the projected entity on success, ``None`` if the entity
-    already exists (the route maps this to 409).
+    Returns the projected entity on success. On failure, raises one of
+    the typed exceptions defined at the top of this module so the
+    route handler can map each cause to a distinct HTTP status:
+
+    - ``EntityExistsError`` — same canonical name already in the workspace.
+    - ``EntityCreateBackendError`` — the ``CREATE`` statement failed.
+    - ``EntityProjectionError`` — write succeeded, re-read for the
+      response payload failed.
+
+    The previous ``None``-as-failure contract conflated all four causes
+    into a single 409, which lied to the operator when the real cause
+    was a backend outage. See TR-KG-01.
     """
     name = (payload.get("name") or "").strip()
     if not name:
-        return None
+        # Pydantic's field_validator on ``GraphEntityCreate.name`` is
+        # the primary gate (returns 422 before the handler runs). This
+        # fallback covers direct callers that bypass the route.
+        raise EntityCreateBackendError("entity name is empty")
     entity_id = name  # LightRAG uses the canonical name as the PK
     label = _sanitize_workspace(workspace)
 
     if await entity_exists(workspace, entity_id):
-        return None
+        raise EntityExistsError(entity_id)
 
     # Build the property map. We seed ``source_id`` with a
     # ``manual:<actor>`` marker so the audit feed can distinguish
@@ -768,15 +818,27 @@ async def create_graph_entity(
                 result = await session.run(query, props=props)
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "graph_reader.create_graph_entity: insert failed for %s",
                     entity_id,
                 )
-                return None
+                raise EntityCreateBackendError(str(exc)) from exc
             if not rows:
-                return None
-    return await _read_one_entity(workspace, entity_id)
+                raise EntityCreateBackendError(
+                    f"CREATE returned no rows for {entity_id!r}"
+                )
+    try:
+        projected = await _read_one_entity(workspace, entity_id)
+    except Exception as exc:
+        logger.exception(
+            "graph_reader.create_graph_entity: projection failed for %s",
+            entity_id,
+        )
+        raise EntityProjectionError(entity_id) from exc
+    if projected is None:
+        raise EntityProjectionError(entity_id)
+    return projected
 
 
 async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
@@ -919,6 +981,10 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
 
 
 __all__ = [
+    "EntityCreateBackendError",
+    "EntityExistsError",
+    "EntityProjectionError",
+    "GraphEntityCreateError",
     "create_graph_entity",
     "create_graph_relation",
     "delete_graph_entity",

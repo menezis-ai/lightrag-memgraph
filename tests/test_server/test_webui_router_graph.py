@@ -283,8 +283,13 @@ class TestGraphLifecycle:
         assert len(creates) == 1
 
     async def test_post_entity_409_on_duplicate(self, monkeypatch, client):
+        """Honest 409: the function raises EntityExistsError, the
+        route surfaces a truthful message naming the entity. Guards
+        against a regression to the ``return None`` sentinel that used
+        to conflate "duplicate" with "backend failed" (TR-KG-01)."""
+
         async def fake_create_dup(workspace, payload, *, actor="operator"):
-            return None  # signals existing
+            raise gr.EntityExistsError(payload["name"])
 
         monkeypatch.setattr(gr, "create_graph_entity", fake_create_dup)
 
@@ -293,7 +298,88 @@ class TestGraphLifecycle:
             json={"name": "Existing", "type": "PRODUCT"},
         )
         assert r.status_code == 409
-        assert "already exists" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert "already exists" in detail
+        assert "Existing" in detail
+
+    async def test_post_entity_422_on_empty_name(self, monkeypatch, client):
+        """Pydantic validator gate: empty name is rejected before the
+        function runs, so we never reach Memgraph (TR-KG-01)."""
+
+        async def fake_create_never_called(workspace, payload, *, actor="operator"):
+            raise AssertionError("handler should not invoke create on 422")
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_never_called)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "", "type": "PRODUCT"},
+        )
+        assert r.status_code == 422
+
+    async def test_post_entity_422_on_whitespace_name(self, monkeypatch, client):
+        """Whitespace-only name is stripped to empty by the
+        field_validator and rejected at 422. Order matters: if
+        ``min_length`` ran before strip, this would slip through to the
+        backend (TR-KG-01)."""
+
+        async def fake_create_never_called(workspace, payload, *, actor="operator"):
+            raise AssertionError("handler should not invoke create on 422")
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_never_called)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "   ", "type": "PRODUCT"},
+        )
+        assert r.status_code == 422
+
+    async def test_post_entity_503_on_backend_create_failure(
+        self, monkeypatch, client
+    ):
+        """Memgraph CREATE fails → honest 503, not a misleading 409
+        (TR-KG-01). The detail tells the operator to check server
+        logs; the underlying driver message is not leaked."""
+
+        async def fake_create_backend_fail(workspace, payload, *, actor="operator"):
+            raise gr.EntityCreateBackendError(
+                "Bolt driver: session closed"
+            )
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_backend_fail)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "FreshEntity", "type": "PRODUCT"},
+        )
+        assert r.status_code == 503
+        detail = r.json()["detail"]
+        assert "could not be created" in detail
+        assert "Bolt driver" not in detail  # raw driver detail stays in logs
+
+    async def test_post_entity_500_on_projection_failure(
+        self, monkeypatch, client
+    ):
+        """Half-success: write committed, post-CREATE projection
+        failed. We tell the operator to refresh
+        ``/twin/api/graph/entities`` rather than pretending the create
+        failed (TR-KG-01)."""
+
+        async def fake_create_projection_fail(
+            workspace, payload, *, actor="operator"
+        ):
+            raise gr.EntityProjectionError(payload["name"])
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_projection_fail)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "WroteButCantProject", "type": "PRODUCT"},
+        )
+        assert r.status_code == 500
+        detail = r.json()["detail"]
+        assert "was created" in detail
+        assert "Refresh" in detail
 
     async def test_delete_entity_204_and_audit(self, monkeypatch, client):
         async def fake_delete(workspace, webui_id):

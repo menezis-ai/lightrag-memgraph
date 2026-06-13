@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -287,16 +287,27 @@ class GraphEntityCreate(_Base):
     ``name`` is also used as the LightRAG ``entity_id`` (the PK). A
     409 is returned if a node with this id already exists in the
     workspace — manual creation deliberately doesn't silently overwrite
-    an LLM-extracted entity.
+    an LLM-extracted entity. An empty/whitespace ``name`` is rejected at
+    422 by the validator below, before the handler runs (TR-KG-01).
     """
 
-    name: str
+    name: str = Field(..., max_length=255)
     type: Literal[
         "PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"
     ]
     summary: str | None = None
     tags: list[str] | None = None
     properties: dict[str, str] | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_and_require_name(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("name must be a string")
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be empty or whitespace")
+        return stripped
 
 
 class GraphRelationCreate(_Base):

@@ -1693,19 +1693,52 @@ async def create_graph_entity_endpoint(
 ) -> dict[str, Any]:
     """Manually add a new entity to the KB.
 
-    Returns 201 + the projected entity. 409 if an entity with the
-    same name already exists in the workspace (manual creation never
-    silently overwrites LLM-extracted entries).
+    Status contract (TR-KG-01):
+
+    - 201 + projected entity on success.
+    - 422 if the payload is malformed (Pydantic — empty/whitespace
+      name, missing/invalid type, name longer than 255 chars).
+    - 409 if an entity with the same canonical name already exists
+      in the workspace. Manual creation never silently overwrites an
+      LLM-extracted entry.
+    - 503 if the Memgraph ``CREATE`` itself fails (driver down,
+      session unavailable, lock contention). Body carries no driver
+      detail; the full trace lands in server logs.
+    - 500 if the write succeeded but the post-CREATE projection
+      failed. The entity exists server-side — a fresh
+      ``GET /twin/api/graph/entities`` will surface it.
     """
     from . import graph_reader
 
     label = _graph_memgraph_label()
     payload = body.model_dump(exclude_unset=True)
-    entity = await graph_reader.create_graph_entity(label, payload)
-    if entity is None:
+    try:
+        entity = await graph_reader.create_graph_entity(label, payload)
+    except graph_reader.EntityExistsError:
         raise HTTPException(
             409,
             f"Graph entity '{body.name}' already exists in workspace '{label}'",
+        )
+    except graph_reader.EntityProjectionError:
+        # The node was written but we can't read it back to project
+        # it. Surface the half-success honestly instead of pretending
+        # the write failed.
+        raise HTTPException(
+            500,
+            (
+                f"Graph entity '{body.name}' was created in workspace "
+                f"'{label}' but the projection failed. Refresh "
+                "/twin/api/graph/entities to surface it."
+            ),
+        )
+    except graph_reader.EntityCreateBackendError:
+        raise HTTPException(
+            503,
+            (
+                f"Graph entity '{body.name}' could not be created: the "
+                "Memgraph backend rejected the write. Check server logs "
+                "for the underlying error."
+            ),
         )
     store = get_store()
     event = _make_event(
