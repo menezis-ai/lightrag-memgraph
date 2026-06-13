@@ -34,6 +34,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from ._lightrag_compat import (
+    ANSWER_STATUS_GROUNDED,
+    ANSWER_STATUS_INSUFFICIENT,
+    AnswerMarkerStripper,
+    classify_answer,
+)
+
 logger = logging.getLogger(__name__)
 
 class TwinQueryBody(BaseModel):
@@ -85,6 +92,11 @@ class TwinRetrievalSource(BaseModel):
 class TwinQueryResponse(BaseModel):
     response: str
     sources: list[TwinRetrievalSource] = Field(default_factory=list)
+    # TR-RET-02: ``"insufficient_information"`` when LightRAG signalled
+    # no usable retrieval context (canonical ``[no-context]`` marker in
+    # the fail response). The React port uses this to suppress the
+    # Sources panel honestly rather than parsing the LLM prose.
+    answer_status: str = Field(default="grounded")
 
 
 class TwinQueryDataResponse(BaseModel):
@@ -517,6 +529,11 @@ def build_twin_query_router(get_rag) -> APIRouter:
         elif not isinstance(answer, str):
             answer = str(answer)
 
+        # TR-RET-02: classify before deciding on sources. The compat
+        # adapter strips the LightRAG ``[no-context]`` marker and tells
+        # us whether the retrieval pipeline found anything usable.
+        clean_answer, answer_status = classify_answer(answer)
+
         # If the operator asked for context-only or prompt-only the
         # answer body already carries everything they wanted — skip
         # the source enrichment to avoid a second retrieval round-trip.
@@ -524,13 +541,36 @@ def build_twin_query_router(get_rag) -> APIRouter:
             await _record_retrieval_activity(
                 body, request, sources_count=0, stream=False
             )
-            return {"response": answer, "sources": []}
+            return {
+                "response": clean_answer,
+                "sources": [],
+                "answer_status": answer_status,
+            }
+
+        # If the answer is the canned "no usable context" fail
+        # response, the sources retrieval would surface chunks that
+        # are not grounding anything. Skip the round-trip and return
+        # an empty sources list — the React port suppresses the
+        # Sources panel based on ``answer_status``.
+        if answer_status == ANSWER_STATUS_INSUFFICIENT:
+            await _record_retrieval_activity(
+                body, request, sources_count=0, stream=False
+            )
+            return {
+                "response": clean_answer,
+                "sources": [],
+                "answer_status": answer_status,
+            }
 
         sources = await _build_sources(rag, body.query, body.top_k)
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=False
         )
-        return {"response": answer, "sources": sources}
+        return {
+            "response": clean_answer,
+            "sources": sources,
+            "answer_status": answer_status,
+        }
 
     @router.post("/query/data", response_model=TwinQueryDataResponse)
     async def query_data_endpoint(
@@ -617,22 +657,51 @@ def build_twin_query_router(get_rag) -> APIRouter:
         from lightrag.base import QueryParam
 
         async def generate() -> AsyncIterator[str]:
+            # TR-RET-02: stream the chunks through the marker stripper
+            # so the operator never sees ``[no-context]`` mid-bubble
+            # and we can emit ``answer_status`` honestly at the end.
+            # Rolling buffer handles the marker straddling chunks.
+            stripper = AnswerMarkerStripper()
             try:
                 param = _make_query_param(
                     QueryParam, _query_param_kwargs(body, stream=True)
                 )
                 answer = await rag.aquery(body.query, param=param)
                 async for text in _iter_answer_text(answer):
-                    yield json.dumps({"type": "token", "value": text}) + "\n"
+                    for safe in stripper.feed(text):
+                        if safe:
+                            yield json.dumps(
+                                {"type": "token", "value": safe}
+                            ) + "\n"
+                for safe in stripper.flush():
+                    if safe:
+                        yield json.dumps(
+                            {"type": "token", "value": safe}
+                        ) + "\n"
             except Exception as exc:
                 logger.exception("twin_query: streaming aquery failed")
                 yield json.dumps(
                     {"type": "token", "value": f"\n[query failed: {exc}]"}
                 ) + "\n"
+                yield json.dumps(
+                    {"type": "status", "value": ANSWER_STATUS_GROUNDED}
+                ) + "\n"
                 yield json.dumps({"type": "sources", "value": []}) + "\n"
                 return
 
-            if body.only_need_context or body.only_need_prompt:
+            answer_status = stripper.status()
+
+            # ``status`` event always lands before ``sources`` so the
+            # React port can branch its rendering deterministically.
+            yield json.dumps(
+                {"type": "status", "value": answer_status}
+            ) + "\n"
+
+            if (
+                body.only_need_context
+                or body.only_need_prompt
+                or answer_status == ANSWER_STATUS_INSUFFICIENT
+            ):
                 await _record_retrieval_activity(
                     body, request, sources_count=0, stream=True
                 )

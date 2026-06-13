@@ -228,7 +228,11 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
-        assert r.json() == {"response": "raw context blob", "sources": []}
+        assert r.json() == {
+            "response": "raw context blob",
+            "sources": [],
+            "answer_status": "grounded",
+        }
         # chunks_vdb should not have been touched in context-only mode
         assert rag.chunks_vdb.last_query is None
 
@@ -326,6 +330,7 @@ class TestQueryEndpoint:
         assert r.json() == {
             "response": "prompt that would be sent",
             "sources": [],
+            "answer_status": "grounded",
         }
 
     async def test_chunks_vdb_failure_returns_empty_sources_not_500(
@@ -342,7 +347,11 @@ class TestQueryEndpoint:
             r = await client.post("/query", json={"query": "anything"})
 
         assert r.status_code == 200
-        assert r.json() == {"response": "ok", "sources": []}
+        assert r.json() == {
+            "response": "ok",
+            "sources": [],
+            "answer_status": "grounded",
+        }
 
     async def test_aquery_failure_returns_500(self, make_client):
         rag = FakeRag(answer="never returned")
@@ -663,3 +672,175 @@ class TestQueryEndpoint:
             r = await c.post("/query", json={"query": "x"})
         assert r.status_code == 500
         assert "rag not captured" in r.json()["detail"]
+
+
+class TestAnswerStatusContract:
+    """TR-RET-02: ``/twin/api/query`` must mark insufficient answers
+    honestly and suppress the retrieval round-trip so the React port
+    can hide the Sources panel without phrase-parsing the LLM prose.
+
+    Detection relies on the LightRAG ``[no-context]`` marker isolated
+    in ``server._lightrag_compat`` — see the docstring there for the
+    upstream version compat note.
+    """
+
+    LIGHTRAG_FAIL = (
+        "Sorry, I'm not able to provide an answer to that question."
+        "[no-context]"
+    )
+
+    async def test_non_stream_insufficient_strips_marker_skips_sources(
+        self, make_client
+    ):
+        rag = FakeRag(
+            answer=self.LIGHTRAG_FAIL,
+            # Sources fixtures intentionally populated to verify they
+            # are NOT returned — the route must short-circuit before
+            # _build_sources runs.
+            chunks=[
+                {
+                    "id": "chunk-aa",
+                    "file_path": "/x/should-not-appear.pdf",
+                    "score": 0.5,
+                },
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query", json={"query": "completely off topic"}
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "insufficient_information"
+        # Marker stripped before reaching the operator.
+        assert "[no-context]" not in body["response"]
+        assert (
+            body["response"]
+            == "Sorry, I'm not able to provide an answer to that question."
+        )
+        # No round-trip wasted on a question we have no answer for —
+        # this is the contract that prevents the operator from being
+        # shown sources that don't back the (fail) answer.
+        assert body["sources"] == []
+        assert rag.chunks_vdb.last_query is None
+
+    async def test_non_stream_grounded_sets_status_and_keeps_sources(
+        self, make_client
+    ):
+        rag = FakeRag(
+            answer="A real answer.",
+            chunks=[
+                {
+                    "id": "chunk-aa",
+                    "file_path": "/a/runbook.pdf",
+                    "score": 0.9,
+                },
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query", json={"query": "real question"}
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert body["response"] == "A real answer."
+        assert len(body["sources"]) == 1
+        # Sanity: the chunks_vdb WAS queried on the grounded path.
+        assert rag.chunks_vdb.last_query == "real question"
+
+    async def test_stream_insufficient_emits_status_then_empty_sources(
+        self, make_client
+    ):
+        import json as _json
+
+        # Stream the canonical fail string in two halves so the
+        # marker straddles the chunk boundary — the rolling buffer
+        # in AnswerMarkerStripper must catch it (Codex's worry).
+        head = "Sorry, I'm not able to provide an answer to that question.[no-co"
+        tail = "ntext]"
+        rag = FakeRag(
+            stream_chunks=[head, tail],
+            chunks=[
+                {
+                    "id": "chunk-aa",
+                    "file_path": "/x/should-not-appear.pdf",
+                    "score": 0.5,
+                },
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={"query": "off topic", "mode": "mix"},
+            )
+
+        assert r.status_code == 200
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        token_events = [e for e in events if e["type"] == "token"]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+
+        # Marker stripped from the tokens the operator sees.
+        joined = "".join(e["value"] for e in token_events)
+        assert "[no-context]" not in joined
+        assert (
+            joined
+            == "Sorry, I'm not able to provide an answer to that question."
+        )
+        # Status event arrives EXACTLY ONCE and carries the
+        # insufficient flag.
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "insufficient_information"
+        # Sources event arrives AFTER the status event and is empty —
+        # no retrieval round-trip wasted on an answer we can't back.
+        assert len(source_events) == 1
+        assert source_events[0]["value"] == []
+        status_pos = events.index(status_events[0])
+        sources_pos = events.index(source_events[0])
+        assert status_pos < sources_pos
+        assert rag.chunks_vdb.last_query is None
+
+    async def test_stream_grounded_emits_status_grounded_then_sources(
+        self, make_client
+    ):
+        import json as _json
+
+        rag = FakeRag(
+            stream_chunks=["A ", "real ", "answer."],
+            chunks=[
+                {
+                    "id": "chunk-aa",
+                    "file_path": "/a/runbook.pdf",
+                    "score": 0.9,
+                },
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={"query": "real question"},
+            )
+
+        assert r.status_code == 200
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+        token_events = [e for e in events if e["type"] == "token"]
+
+        assert "".join(e["value"] for e in token_events) == "A real answer."
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "grounded"
+        assert len(source_events) == 1
+        assert len(source_events[0]["value"]) == 1
+        assert source_events[0]["value"][0]["name"] == "/a/runbook.pdf"

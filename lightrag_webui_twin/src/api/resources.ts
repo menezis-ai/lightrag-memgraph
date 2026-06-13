@@ -91,9 +91,22 @@ export interface TwinQuerySource {
   chunk_id?: string | null;
 }
 
+/**
+ * TR-RET-02: ``answer_status`` mirrors LightRAG's no-context detection
+ * (the ``[no-context]`` marker the backend strips before sending the
+ * response). ``insufficient_information`` means the retrieval pipeline
+ * had nothing useful — the React port hides the Sources panel and
+ * shows a discrete cue instead of pretending the listed chunks back
+ * the (fail) answer.
+ */
+export type TwinAnswerStatus = 'grounded' | 'insufficient_information';
+
 export interface TwinQueryResponse {
   response: string;
   sources: readonly TwinQuerySource[];
+  /** Backend default is ``"grounded"``. Optional in the TS contract
+   *  so a legacy backend without the field still parses cleanly. */
+  answer_status?: TwinAnswerStatus;
 }
 
 export interface TwinQueryDataResponse {
@@ -343,13 +356,17 @@ export const twinApi = {
 
     // Wire format: NDJSON. One JSON object per line:
     //   {"type":"token","value":"<chunk text>"}
+    //   {"type":"status","value":"grounded"|"insufficient_information"}
     //   {"type":"sources","value":[<RetrievalSource>, ...]}
     // Token events stream the LLM answer (call onChunk for live UI);
-    // a single sources event arrives last with the structured panel data.
+    // the status event arrives exactly once before the final sources
+    // event so the host can decide whether to render the panel; a
+    // single sources event arrives last with the structured panel data.
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let response = '';
     let sources: TwinQuerySource[] = [];
+    let answerStatus: TwinAnswerStatus = 'grounded';
     let buffer = '';
 
     const consumeLine = (line: string) => {
@@ -366,6 +383,12 @@ export const twinApi = {
         onChunk(event.value);
       } else if (event.type === 'sources' && Array.isArray(event.value)) {
         sources = event.value as TwinQuerySource[];
+      } else if (
+        event.type === 'status' &&
+        (event.value === 'grounded' ||
+          event.value === 'insufficient_information')
+      ) {
+        answerStatus = event.value;
       }
     };
 
@@ -381,7 +404,7 @@ export const twinApi = {
     }
     buffer += decoder.decode();
     if (buffer) consumeLine(buffer);
-    return { response, sources };
+    return { response, sources, answer_status: answerStatus };
   },
   createFolder: (
     body: { id: string; label: string; kind?: string; description?: string },

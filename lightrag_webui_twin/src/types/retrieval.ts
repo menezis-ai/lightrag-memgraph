@@ -33,6 +33,15 @@ export interface RetrievalSource {
 
 export type ChatRole = 'user' | 'assistant';
 
+/**
+ * Mirrors the backend ``answer_status`` field on ``/twin/api/query``
+ * (TR-RET-02). ``insufficient_information`` is the canonical
+ * machine-readable signal that LightRAG had no usable context — the
+ * React port uses it to suppress the Sources panel cleanly instead of
+ * parsing the LLM prose. Default = ``grounded``.
+ */
+export type AnswerStatus = 'grounded' | 'insufficient_information';
+
 export interface ChatMessage {
   role: ChatRole;
   /** User messages carry a plain `text`. */
@@ -40,6 +49,8 @@ export interface ChatMessage {
   /** Assistant messages carry parsed-up tokens + sources. */
   tokens?: readonly AnswerToken[];
   sources?: readonly RetrievalSource[];
+  /** Assistant-only: propagated from the backend answer_status flag. */
+  answerStatus?: AnswerStatus;
 }
 
 export interface RetrievalThread {

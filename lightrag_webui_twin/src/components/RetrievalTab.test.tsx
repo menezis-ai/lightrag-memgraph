@@ -472,3 +472,145 @@ describe('RetrievalTab — source cards', () => {
     });
   });
 });
+
+describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
+  it('hides the Sources panel and shows the cue when status=insufficient_information', async () => {
+    // Backend returns the canonical fail path: insufficient_information
+    // + empty sources. The cue must replace the Sources block.
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk("Sorry, I'm not able to provide an answer to that question.");
+        return {
+          response:
+            "Sorry, I'm not able to provide an answer to that question.",
+          sources: [],
+          answer_status: 'insufficient_information' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText('Query input'),
+      'unanswerable',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-insufficient'),
+      ).toBeInTheDocument(),
+    );
+    // The Sources header / list must NOT be rendered.
+    expect(document.querySelector('.sources-header')).toBeNull();
+    expect(document.querySelectorAll('[data-testid^="source-"]').length).toBe(
+      0,
+    );
+  });
+
+  it('hides Sources even if the backend leaks sources behind an insufficient status', async () => {
+    // Regression guard: a future backend bug returning insufficient
+    // status WITH non-empty sources must still hide the panel — we
+    // never want sources presented as backing an unfounded answer.
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('Sorry, no answer.');
+        return {
+          response: 'Sorry, no answer.',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'leaked.pdf', score: 0.21 },
+          ],
+          answer_status: 'insufficient_information' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText('Query input'),
+      'unanswerable',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-insufficient'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('source-1')).toBeNull();
+    expect(document.querySelector('.sources-header')).toBeNull();
+  });
+
+  it('renders the Sources panel as before when status=grounded', async () => {
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('A real answer.');
+        return {
+          response: 'A real answer.',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'runbook.pdf', score: 0.9 },
+          ],
+          answer_status: 'grounded' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'real question');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/^Sources$/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
+    expect(screen.getByTestId('source-1')).toBeInTheDocument();
+  });
+
+  it('treats a missing answer_status as grounded (back-compat)', async () => {
+    // Legacy backends that haven't deployed the field must keep working.
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('Legacy answer.');
+        return {
+          response: 'Legacy answer.',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'legacy.pdf', score: 0.8 },
+          ],
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'q');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/^Sources$/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
+  });
+});

@@ -31,6 +31,7 @@ import {
   QUERY_MODES,
   relTime,
   type AnswerPart,
+  type AnswerStatus,
   type AnswerToken,
   type ChatMessage,
   type QueryMode,
@@ -72,6 +73,10 @@ export interface RetrievalTabProps {
   }) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
+    /** TR-RET-02: propagated from the backend ``answer_status`` field
+     *  so the host can suppress the Sources panel on
+     *  ``insufficient_information`` answers. */
+    answer_status?: AnswerStatus;
   }>;
   onStreamQuery?: (
     params: {
@@ -92,6 +97,7 @@ export interface RetrievalTabProps {
   ) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
+    answer_status?: AnswerStatus;
   }>;
   /** Seed threads when localStorage is empty. */
   initialThreads?: readonly RetrievalThread[];
@@ -271,12 +277,13 @@ export function RetrievalTab({
     threadId: string,
     tokens: readonly AnswerToken[],
     sources: readonly RetrievalSource[],
+    answerStatus: AnswerStatus = 'grounded',
   ) => {
     if (tokens.length === 0) {
       setStreaming(false);
       appendToThread(threadId, (c) => [
         ...c,
-        { role: 'assistant', tokens: [], sources },
+        { role: 'assistant', tokens: [], sources, answerStatus },
       ]);
       return;
     }
@@ -289,7 +296,7 @@ export function RetrievalTab({
         setStreaming(false);
         appendToThread(threadId, (c) => [
           ...c,
-          { role: 'assistant', tokens, sources },
+          { role: 'assistant', tokens, sources, answerStatus },
         ]);
         setStreamedTokens([]);
       }
@@ -353,14 +360,26 @@ export function RetrievalTab({
         streamed.push(chunk);
         setStreamedTokens([...streamed]);
       })
-        .then(({ sources }) => {
+        .then(({ sources, answer_status }) => {
           setStreaming(false);
           const finalTokens = streamed.join('')
             .split(/(\s+)/)
             .filter((t) => t.length > 0);
+          const status: AnswerStatus = answer_status ?? 'grounded';
+          // TR-RET-02: when the backend signalled insufficient context,
+          // drop any sources that slipped through (defensive — the
+          // backend already returns []). Prevents a future backend
+          // regression from showing sources behind an unfounded answer.
+          const effectiveSources =
+            status === 'insufficient_information' ? [] : (sources ?? []);
           appendToThread(threadId, (c) => [
             ...c,
-            { role: 'assistant', tokens: finalTokens, sources: sources ?? [] },
+            {
+              role: 'assistant',
+              tokens: finalTokens,
+              sources: effectiveSources,
+              answerStatus: status,
+            },
           ]);
           setStreamedTokens([]);
         })
@@ -374,19 +393,23 @@ export function RetrievalTab({
     const sendQuery = onSendQuery ?? missingRetrievalBackend;
 
     sendQuery(activeParams(q, conversationHistory))
-      .then(({ response, sources }) => {
+      .then(({ response, sources, answer_status }) => {
         const tokens = response
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
+        const status: AnswerStatus = answer_status ?? 'grounded';
+        const effectiveSources =
+          status === 'insufficient_information' ? [] : (sources ?? []);
         if (tokens.length === 0) {
           streamTokens(
             threadId,
             ['⚠ The backend returned an empty answer. Sources below.'],
-            sources ?? [],
+            effectiveSources,
+            status,
           );
           return;
         }
-        streamTokens(threadId, tokens, sources ?? []);
+        streamTokens(threadId, tokens, effectiveSources, status);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : 'Query failed';
@@ -847,7 +870,24 @@ function Turn({
           />
         )}
       </div>
-      {!streaming && sources.length > 0 && (
+      {/* TR-RET-02: when the backend marked the answer
+          ``insufficient_information`` (LightRAG fail_response with the
+          ``[no-context]`` marker), do NOT render the Sources panel even
+          if sources slipped through. Show a discrete cue instead so the
+          operator understands the absence, rather than reading an
+          empty area as a layout glitch. */}
+      {!streaming && msg.answerStatus === 'insufficient_information' && (
+        <div
+          className="sources-empty muted"
+          data-testid="sources-empty-insufficient"
+          style={{ marginTop: 8, fontSize: 12 }}
+        >
+          No relevant sources found for this question.
+        </div>
+      )}
+      {!streaming &&
+        msg.answerStatus !== 'insufficient_information' &&
+        sources.length > 0 && (
         <>
           <div className="sources-header">Sources</div>
           <div className="sources-list">
