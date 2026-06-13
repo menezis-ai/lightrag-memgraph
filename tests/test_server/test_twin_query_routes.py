@@ -356,7 +356,12 @@ class TestQueryEndpoint:
         assert param.enable_rerank is False
         assert param.stream is False
 
-    async def test_tag_filter_forwards_to_aquery_llm(self, make_client):
+    async def test_tag_filter_rejected_with_422_on_query(self, make_client):
+        """Audit C1 / TR-RET-02 step 3: ``tag_filter`` is not applied
+        to retrieval by LightRAG 1.4.x. Accepting it would lie to the
+        operator about scoping — reject loudly. The message MUST NOT
+        point at /query/data, which has its own audit-C2 issue
+        (metadata.tags vs TAGGED_WITH) being fixed separately."""
         rag = FakeRag(answer="tagged")
         client = await make_client(rag)
         async with client:
@@ -368,10 +373,32 @@ class TestQueryEndpoint:
                 },
             )
 
-        assert r.status_code == 200
-        assert len(rag.llm_calls) == 1
-        _query, param = rag.llm_calls[0]
-        assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "tag_filter is not applied to retrieval" in detail
+        # No misleading pointer to /query/data while C2 stands.
+        assert "/query/data" not in detail
+        # Backend never reached aquery_llm — the rejection is pre-RAG.
+        assert rag.llm_calls == []
+
+    async def test_tag_filter_rejected_with_422_on_query_stream(
+        self, make_client
+    ):
+        rag = FakeRag(stream_chunks=["irrelevant"])
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={
+                    "query": "tagged retrieval",
+                    "tag_filter": {"all": ["oracle"]},
+                },
+            )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "tag_filter is not applied to retrieval" in detail
+        assert "/query/data" not in detail
+        assert rag.llm_calls == []
 
     async def test_tag_filter_is_absent_when_omitted(self, make_client):
         rag = FakeRag(answer="untagged")

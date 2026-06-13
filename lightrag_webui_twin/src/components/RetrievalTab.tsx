@@ -20,9 +20,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
-import { TagChip } from './TagChip';
 import {
-  useUrlArrayParam,
   useUrlNumberParam,
   useUrlParam,
 } from '../hooks/useUrlParam';
@@ -38,8 +36,6 @@ import {
   type RetrievalSource,
   type RetrievalThread,
 } from '../types/retrieval';
-import type { TagEntry } from '../types/tag';
-import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 
 // Versioned key — bumped to invalidate stale demo seeds when the seeded
 // conversation shape changes (v2: full assistant answer + citations on the
@@ -53,7 +49,6 @@ const INITIAL_VISIBLE_SOURCES = 5;
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
 
 export interface RetrievalTabProps {
-  tagCatalog: readonly TagEntry[];
   /** Real-backend callback. The returned `response` string is split into
    *  whitespace tokens and streamed via the existing animator. Sources are
    *  passed through as-is. */
@@ -69,7 +64,6 @@ export interface RetrievalTabProps {
     onlyPrompt: boolean;
     userPrompt: string;
     enableRerank: boolean;
-    tagFilters: readonly string[];
   }) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
@@ -91,7 +85,6 @@ export interface RetrievalTabProps {
       onlyPrompt: boolean;
       userPrompt: string;
       enableRerank: boolean;
-      tagFilters: readonly string[];
     },
     onChunk: (chunk: string) => void,
   ) => Promise<{
@@ -125,7 +118,6 @@ interface ConversationHistoryMessage {
 }
 
 export function RetrievalTab({
-  tagCatalog,
   onSendQuery,
   onStreamQuery,
   initialThreads = [],
@@ -149,8 +141,6 @@ export function RetrievalTab({
   const [streamedTokens, setStreamedTokens] = useState<readonly AnswerToken[]>([]);
   const [highlightSrc, setHighlightSrc] = useState<number | null>(null);
 
-  const [tagFilters, setTagFilters] = useUrlArrayParam('rtag', []);
-  const [tagInput, setTagInput] = useState('');
   const [queryMode, setQueryMode] = useUrlParam<QueryMode>('mode', 'mix', {
     validate: (v) => QUERY_MODES.includes(v as QueryMode),
   });
@@ -339,7 +329,6 @@ export function RetrievalTab({
     onlyPrompt,
     userPrompt,
     enableRerank,
-    tagFilters,
   });
 
   const send = (text?: string) => {
@@ -443,19 +432,6 @@ export function RetrievalTab({
         onNavigate('documents', params);
       }
     : undefined;
-
-  const removeTag = (t: string) =>
-    setTagFilters(tagFilters.filter((x) => x !== t));
-  const addTag = (t: string) => {
-    if (t && !tagFilters.includes(t)) setTagFilters([...tagFilters, t]);
-    setTagInput('');
-  };
-
-  const tagSugg = tagCatalog
-    .filter((t) => !tagFilters.includes(t.tag))
-    .filter((t) => tagMatchesQuery(t, tagInput))
-    .sort(tagSuggestionComparator(tagInput))
-    .slice(0, 4);
 
   return (
     <div className="retrieval has-history">
@@ -629,51 +605,16 @@ export function RetrievalTab({
           </select>
         </div>
 
-        <div className="field">
-          <label className="field-label">
-            Tag filter{' '}
-            <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>
-              — Twin
-            </span>
-          </label>
-          <div className="chip-input">
-            {tagFilters.map((t) => (
-              <TagChip key={t} tag={t} removable onRemove={removeTag} />
-            ))}
-            <input
-              value={tagInput}
-              aria-label="Retrieval tag input"
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && tagSugg[0]) addTag(tagSugg[0].tag);
-              }}
-              placeholder={tagFilters.length ? '' : 'add tag…'}
-            />
-          </div>
-          {tagInput && tagSugg.length > 0 && (
-            <div
-              className="autocomplete panel-autocomplete"
-              role="listbox"
-              style={{ marginTop: 4 }}
-            >
-              {tagSugg.map((s, i) => (
-                <div
-                  key={s.tag}
-                  className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
-                  onMouseDown={() => addTag(s.tag)}
-                  role="option"
-                  aria-selected={i === 0}
-                  data-testid={`rtag-sugg-${s.tag}`}
-                >
-                  <div className="row1">
-                    <span style={{ fontSize: 12 }}>{s.tag}</span>
-                    <span className="badge">{s.category}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* TR-RET-02 step 3 / audit C1: the "Tag filter — Twin"
+            input used to live here and forwarded ``tagFilters`` to
+            the backend, where LightRAG 1.4.x silently ignored it
+            (its ``QueryParam`` has no ``tag_filter`` field). The
+            affordance has been removed entirely rather than
+            relabelled, because there is no honest backend path to
+            redirect to while audit C2 (the /query/data post-filter
+            still on metadata.tags instead of TAGGED_WITH) is open.
+            Restoring this control is gated on a real server-side
+            pre-filter — see ``docs/audits/lightrag-interactions/``. */}
 
         <div className="field">
           <label className="field-label">Top K results</label>

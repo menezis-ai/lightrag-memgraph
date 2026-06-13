@@ -1160,11 +1160,10 @@ function AppShell() {
           )}
           {tab === 'retrieval' && (
             <RetrievalTab
-              tagCatalog={tagCatalog}
               onSendQuery={async (params) => {
-                const tagFilter = params.tagFilters.length
-                  ? { all: [...params.tagFilters] }
-                  : undefined;
+                // TR-RET-02 step 3 / audit C1: tag_filter is NOT sent
+                // to /query because LightRAG 1.4.x does not apply it
+                // to retrieval. The backend now 422s if it slips in.
                 const res = await api.query({
                   query: params.query,
                   actor: currentActor,
@@ -1178,7 +1177,6 @@ function AppShell() {
                   only_need_prompt: params.onlyPrompt,
                   user_prompt: params.userPrompt,
                   enable_rerank: params.enableRerank,
-                  tag_filter: tagFilter,
                 });
                 // Map the backend SourceRow shape to the RetrievalSource
                 // contract the chat panel consumes. `type` is the WebUI
@@ -1201,9 +1199,8 @@ function AppShell() {
                 return { response: res.response, sources };
               }}
               onStreamQuery={async (params, onChunk) => {
-                const tagFilter = params.tagFilters.length
-                  ? { all: [...params.tagFilters] }
-                  : undefined;
+                // Same C1 honesty as the non-stream branch above:
+                // no tag_filter forwarded to /query/stream.
                 const res = await api.queryStream(
                   {
                     query: params.query,
@@ -1218,7 +1215,6 @@ function AppShell() {
                     only_need_prompt: params.onlyPrompt,
                     user_prompt: params.userPrompt,
                     enable_rerank: params.enableRerank,
-                    tag_filter: tagFilter,
                   },
                   onChunk,
                 );

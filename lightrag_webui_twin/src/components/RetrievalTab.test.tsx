@@ -23,14 +23,10 @@ import {
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RetrievalTab } from './RetrievalTab';
-import {
-  TAG_FIXTURES,
-  makeSampleThreads,
-} from '../fixtures';
+import { makeSampleThreads } from '../fixtures';
 
 function defaultProps() {
   return {
-    tagCatalog: TAG_FIXTURES,
     initialThreads: makeSampleThreads(),
   };
 }
@@ -239,15 +235,16 @@ describe('RetrievalTab — params panel', () => {
     expect(sel.value).toBe('hybrid');
   });
 
-  it('tag autocomplete adds tag from the canonical tag catalog on Enter', async () => {
+  it('does not render a Tag filter affordance (TR-RET-02 step 3 / audit C1)', () => {
+    // The "Tag filter — Twin" control used to live in this panel and
+    // forwarded a tagFilters array that LightRAG 1.4.x silently
+    // ignored at retrieval time. The whole affordance has been
+    // removed rather than relabelled (no honest backend path to
+    // redirect to while audit C2 is open). This test pins that the
+    // control cannot sneak back without being noticed.
     render(<RetrievalTab {...defaultProps()} />);
-    const input = screen.getByLabelText('Retrieval tag input');
-    await userEvent.type(input, 'oracle{Enter}');
-    // Look inside the tag-filter chip-input for "oracle"
-    const chips = document.querySelectorAll('.tag-chip');
-    expect(Array.from(chips).some((c) => c.textContent?.includes('oracle'))).toBe(
-      true,
-    );
+    expect(screen.queryByLabelText('Retrieval tag input')).toBeNull();
+    expect(screen.queryByText(/Tag filter/i)).toBeNull();
   });
 
   it('passes advanced retrieval params to onSendQuery', async () => {
@@ -273,10 +270,6 @@ describe('RetrievalTab — params panel', () => {
       screen.getByLabelText('System prompt'),
       'prefer operational runbooks',
     );
-    await userEvent.type(
-      screen.getByLabelText('Retrieval tag input'),
-      'oracle{Enter}',
-    );
     await userEvent.click(screen.getByLabelText('Enable rerank'));
     await userEvent.type(screen.getByLabelText('Query input'), 'Advanced query');
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
@@ -292,8 +285,13 @@ describe('RetrievalTab — params panel', () => {
         historyTurns: 2,
         userPrompt: 'prefer operational runbooks',
         enableRerank: false,
-        tagFilters: ['oracle'],
       }),
+    );
+    // TR-RET-02 step 3 / audit C1: ``tagFilters`` must NOT be in the
+    // forwarded params anymore — the field has been removed from the
+    // contract so the backend 422 on /query / /stream never triggers.
+    expect(onSendQuery).toHaveBeenCalledWith(
+      expect.not.objectContaining({ tagFilters: expect.anything() }),
     );
   });
 

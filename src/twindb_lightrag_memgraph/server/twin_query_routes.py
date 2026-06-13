@@ -561,6 +561,19 @@ def build_twin_query_router(get_rag) -> APIRouter:
     async def query_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
+        # TR-RET-02 step 3 / audit C1: ``tag_filter`` is NOT applied
+        # to retrieval by LightRAG 1.4.x — its ``QueryParam`` has no
+        # such field and the previous setattr-on-param fallback was
+        # silently ignored downstream. Accepting the parameter here
+        # used to lie to the operator about scoping the retrieval by
+        # tags; reject it loudly instead.
+        if body.tag_filter is not None:
+            raise HTTPException(
+                422,
+                "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
+                "remove it or use a dedicated data endpoint.",
+            )
+
         try:
             rag = get_rag()
         except RuntimeError as exc:
@@ -728,6 +741,15 @@ def build_twin_query_router(get_rag) -> APIRouter:
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
+        # TR-RET-02 step 3 / audit C1: same honest rejection as /query
+        # — LightRAG 1.4.x does not apply tag_filter to retrieval.
+        if body.tag_filter is not None:
+            raise HTTPException(
+                422,
+                "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
+                "remove it or use a dedicated data endpoint.",
+            )
+
         try:
             rag = get_rag()
         except RuntimeError as exc:
