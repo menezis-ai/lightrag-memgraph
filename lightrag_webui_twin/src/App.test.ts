@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  mapTwinQueryResponseForRetrievalTab,
-  shouldUseFixtureFallback,
-} from './App';
+import { shouldUseFixtureFallback } from './App';
+import { mapTwinQueryResponseForRetrievalTab } from './api/twinQueryResponse';
 import { TAG_FIXTURES } from './fixtures';
 import { tagCatalogForSuggestions } from './utils/tags';
 

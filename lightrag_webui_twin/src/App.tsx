@@ -54,13 +54,8 @@ import {
   useFolders,
 } from './api/queries';
 import { ApiError, getTwinRuntimeConfig, setActiveFolder } from './api/client';
-import {
-  api,
-  type TwinAnswerStatus,
-  type TwinQueryResponse,
-} from './api/resources';
-import type { RetrievalSource } from './types/retrieval';
-import type { SourceType } from './components/Icon';
+import { api } from './api/resources';
+import { mapTwinQueryResponseForRetrievalTab } from './api/twinQueryResponse';
 import {
   ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
@@ -143,46 +138,6 @@ export function shouldUseFixtureFallback(env: {
 }): boolean {
   if (env.forceMsw === 'true') return true;
   return env.dev && env.useMsw !== 'false';
-}
-
-/**
- * Project a Twin overlay ``/twin/api/query`` (or ``/stream``) response
- * into the shape ``RetrievalTab`` expects from ``onSendQuery`` /
- * ``onStreamQuery``.
- *
- * The non-trivial part is propagating ``answer_status`` end-to-end —
- * the field exists on ``TwinQueryResponse`` (TR-RET-02 step 1) and on
- * ``ChatMessage`` (via ``RetrievalTab``), and the absence of forwarding
- * here used to silently flatten every answer back to ``"grounded"``,
- * defeating the Sources-panel-suppression behaviour the React port
- * already supports. Codex review on PR fix/tag-filter-honesty caught
- * this latent bug; this helper makes the wiring explicit and tested.
- */
-export function mapTwinQueryResponseForRetrievalTab(
-  res: TwinQueryResponse,
-): {
-  response: string;
-  sources: RetrievalSource[];
-  answer_status?: TwinAnswerStatus;
-} {
-  const sources: RetrievalSource[] = (res.sources ?? []).map((s) => ({
-    n: s.n,
-    type:
-      s.type === 'file' ||
-      s.type === 'url' ||
-      s.type === 'confluence' ||
-      s.type === 'sharepoint'
-        ? (s.type as SourceType)
-        : ('file' as const),
-    name: s.name,
-    meta: s.meta ?? undefined,
-    score: s.score,
-  }));
-  return {
-    response: res.response,
-    sources,
-    answer_status: res.answer_status,
-  };
 }
 
 type QueryLike<T> = {
