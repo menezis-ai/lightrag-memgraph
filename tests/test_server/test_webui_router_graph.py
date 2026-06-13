@@ -480,3 +480,148 @@ class TestGraphLifecycle:
         r = await client.delete("/graph/relations/kr_phantom")
         assert r.status_code == 404
         assert "refresh" in r.json()["detail"].lower()
+
+
+class TestGraphEntityTagThesaurusBinding:
+    """TR-KG-03 / audit Alberto 2026-06-12: node tags must come from
+    the active tag catalog. Both PATCH and POST entry points enforce
+    this; an unknown tag is a 422 with an explicit message naming
+    the rejected values, not a silent acceptance into
+    ``twin_tags_json``.
+
+    The default test seed exposes the active tags ``rman`` and
+    ``oracle`` (see ``server/webui_seed.TAGS``); we use those as
+    "known" values and a deliberately fake string as the "unknown".
+    """
+
+    async def test_patch_entity_with_known_tag_passes(
+        self, monkeypatch, client
+    ):
+        captured: dict[str, object] = {}
+
+        async def fake_update(workspace, entity_id, patch):
+            captured["patch"] = patch
+            return {
+                "id": entity_id,
+                "name": "Oracle",
+                "type": "PRODUCT",
+                "x": 100,
+                "y": 100,
+                "mentions": 0,
+                "sources": 0,
+                "summary": "",
+                "tags": list(patch.get("tags") or []),
+                "properties": {},
+            }
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update)
+
+        r = await client.patch(
+            "/graph/entities/kg_oracle",
+            json={"tags": ["rman", "oracle"]},
+        )
+        assert r.status_code == 200
+        assert captured["patch"]["tags"] == ["rman", "oracle"]
+
+    async def test_patch_entity_with_unknown_tag_returns_422(
+        self, monkeypatch, client
+    ):
+        async def fake_update_never_called(workspace, entity_id, patch):
+            raise AssertionError(
+                "graph_reader.update_graph_entity must not be reached"
+            )
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update_never_called)
+
+        r = await client.patch(
+            "/graph/entities/kg_oracle",
+            json={"tags": ["rman", "random-bullshit-bingo"]},
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        # The rejected value appears verbatim so the operator can
+        # correct it; the known one does NOT (it's not the problem).
+        assert "random-bullshit-bingo" in detail
+        assert "rman" not in detail.split("Allowed")[0]
+        # The "Allowed" hint lists a bounded sample of the active
+        # catalog so the caller knows what to type instead.
+        assert "Allowed (active catalog):" in detail
+
+    async def test_post_entity_with_known_tag_passes(
+        self, monkeypatch, client
+    ):
+        captured: dict[str, object] = {}
+
+        async def fake_create(workspace, payload, *, actor="operator"):
+            captured["payload"] = payload
+            return {
+                "id": "kg_NewEntity",
+                "name": payload["name"],
+                "type": payload["type"],
+                "x": 100,
+                "y": 100,
+                "mentions": 0,
+                "sources": 0,
+                "summary": payload.get("summary") or "",
+                "tags": list(payload.get("tags") or []),
+            }
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create)
+
+        r = await client.post(
+            "/graph/entities",
+            json={"name": "NewEntity", "type": "PRODUCT", "tags": ["oracle"]},
+        )
+        assert r.status_code == 201
+        assert captured["payload"]["tags"] == ["oracle"]
+
+    async def test_post_entity_with_unknown_tag_returns_422(
+        self, monkeypatch, client
+    ):
+        async def fake_create_never_called(workspace, payload, *, actor="operator"):
+            raise AssertionError(
+                "graph_reader.create_graph_entity must not be reached"
+            )
+
+        monkeypatch.setattr(gr, "create_graph_entity", fake_create_never_called)
+
+        r = await client.post(
+            "/graph/entities",
+            json={
+                "name": "NewEntity",
+                "type": "PRODUCT",
+                "tags": ["does-not-exist-in-catalog"],
+            },
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "does-not-exist-in-catalog" in detail
+        assert "Allowed (active catalog):" in detail
+
+    async def test_patch_entity_with_empty_tags_list_skips_validation(
+        self, monkeypatch, client
+    ):
+        """``tags: []`` means "clear all node tags"; that's a
+        legitimate intent and must not be treated as an unknown tag."""
+        async def fake_update(workspace, entity_id, patch):
+            return {
+                "id": entity_id,
+                "name": "Oracle",
+                "type": "PRODUCT",
+                "x": 0,
+                "y": 0,
+                "mentions": 0,
+                "sources": 0,
+                "summary": "",
+                "tags": [],
+                "properties": {},
+            }
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update)
+
+        r = await client.patch(
+            "/graph/entities/kg_oracle",
+            json={"tags": []},
+        )
+        assert r.status_code == 200
+        assert r.json()["tags"] == []

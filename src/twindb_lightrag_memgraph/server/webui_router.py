@@ -1609,6 +1609,61 @@ def _graph_memgraph_label() -> str:
     return resolve_workspace()
 
 
+async def _validate_graph_entity_tags(
+    tags: list[str] | None,
+) -> None:
+    """Enforce that node tags belong to the active tag catalog
+    (TR-KG-03 / Alberto recette 2026-06-12).
+
+    Both ``PATCH /twin/api/graph/entities/{id}`` and
+    ``POST /twin/api/graph/entities`` accept a ``tags`` field on the
+    request body. Before this gate, the helpers in
+    ``graph_reader.py`` serialised whatever list was sent into
+    ``twin_tags_json`` with no check — a curl/API caller could write
+    arbitrary strings onto a node, contradicting the canonical tag
+    catalog the WebUI surfaces.
+
+    Allowed = ``{entry["tag"] for entry in await store.list_tags()
+                  if entry.get("status") == "active"}``. Other statuses
+    (``pending-promotion``, ``pending-review``, ``deprecated``,
+    ``rejected``) are intentionally rejected: a non-active tag is not
+    part of the operational vocabulary, and writing it on a graph
+    node would silently re-promote / re-introduce it.
+
+    On unknown tags, raises ``HTTPException(422)`` with a detail that
+    lists the rejected values plus a bounded sample of allowed ones
+    so the caller has actionable feedback without leaking the entire
+    catalog when it is large.
+    """
+    if not tags:
+        return
+    store = get_store()
+    catalog_entries = await store.list_tags()
+    allowed = {
+        entry["tag"]
+        for entry in catalog_entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("tag"), str)
+        and entry.get("status") == "active"
+    }
+    unknown = sorted(
+        {t for t in tags if isinstance(t, str)} - allowed
+    )
+    if not unknown:
+        return
+    # Bounded sample of allowed tags so the error stays readable on
+    # large catalogs but still gives the caller a starting point.
+    sample = sorted(allowed)[:10]
+    suffix = "" if len(allowed) <= 10 else f" (+{len(allowed) - 10} more)"
+    raise HTTPException(
+        422,
+        (
+            f"Unknown node tag(s): {', '.join(unknown)}. "
+            f"Allowed (active catalog): {', '.join(sample)}{suffix}."
+        ),
+    )
+
+
 @router.get("/graph/entities", response_model=list[GraphEntity])
 async def list_graph_entities() -> list[dict[str, Any]]:
     """Return the live Memgraph-backed entities for the deployed KB.
@@ -1661,6 +1716,9 @@ async def update_graph_entity_endpoint(
 
     label = _graph_memgraph_label()
     patch_dict = body.model_dump(exclude_unset=True)
+    # TR-KG-03: reject node tags outside the active catalog before
+    # we let graph_reader serialize them onto ``twin_tags_json``.
+    await _validate_graph_entity_tags(patch_dict.get("tags"))
     updated = await graph_reader.update_graph_entity(
         label, entity_id, patch_dict
     )
@@ -1712,6 +1770,8 @@ async def create_graph_entity_endpoint(
 
     label = _graph_memgraph_label()
     payload = body.model_dump(exclude_unset=True)
+    # TR-KG-03: same catalog-binding gate as the PATCH endpoint.
+    await _validate_graph_entity_tags(payload.get("tags"))
     try:
         entity = await graph_reader.create_graph_entity(label, payload)
     except graph_reader.EntityExistsError:

@@ -632,6 +632,7 @@ export function GraphTab({
           entities={entities}
           relations={relations}
           typeLabels={GRAPH_TYPE_LABEL}
+          tagCatalog={tagCatalog}
           onSelect={(id) => {
             setSelectedRelId(null);
             setSelectedId(id);
@@ -655,6 +656,10 @@ interface GraphDetailPanelProps {
   entities: readonly GraphEntity[];
   relations: readonly GraphRelation[];
   typeLabels: Record<GraphEntityType, string>;
+  /** TR-KG-03: active tag catalog. Empty list disables the node
+   *  tag editor's autocomplete + lets any free text through (used
+   *  by the legacy seed tests that don't render a catalog). */
+  tagCatalog: readonly string[];
   onSelect: (id: string) => void;
   onSelectRelation: (id: string) => void;
   onClearRelation: () => void;
@@ -671,6 +676,7 @@ function GraphDetailPanel({
   entities,
   relations,
   typeLabels,
+  tagCatalog,
   onSelect,
   onSelectRelation,
   onClearRelation,
@@ -718,6 +724,7 @@ function GraphDetailPanel({
         relations={relations}
         colors={colors}
         typeLabels={typeLabels}
+        tagCatalog={tagCatalog}
         onSelectRelation={onSelectRelation}
         isPinned={pinnedIds.includes(entity.id)}
         onTogglePinned={() => onTogglePinned(entity.id)}
@@ -739,6 +746,10 @@ interface EntityEditorProps {
   relations: readonly GraphRelation[];
   colors: Record<GraphEntityType, string>;
   typeLabels: Record<GraphEntityType, string>;
+  /** TR-KG-03: active tag catalog passed down to the in-editor
+   *  TagAttrEditor so unknown tags can't reach the backend.
+   *  Empty list disables the binding (mirrors GraphTab's default). */
+  tagCatalog: readonly string[];
   onSelectRelation: (id: string) => void;
   isPinned: boolean;
   onTogglePinned: () => void;
@@ -760,6 +771,7 @@ function EntityEditor({
   relations,
   colors,
   typeLabels,
+  tagCatalog,
   onSelectRelation,
   isPinned,
   onTogglePinned,
@@ -939,6 +951,7 @@ function EntityEditor({
         {editing && draft ? (
           <TagAttrEditor
             tags={draft.tags}
+            tagCatalog={tagCatalog}
             onChange={(tags) =>
               setDraft((d) => (d ? { ...d, tags } : d))
             }
@@ -1524,17 +1537,50 @@ function RelationEditor({
 }
 
 // ─── Tag chip editor (node attribute strings) ──────────────────────────
-function TagAttrEditor({
+//
+// TR-KG-03 (recette Alberto 2026-06-12): node tags must come from the
+// active tag catalog. The previous free-text input accepted any value
+// and bypassed the canonical vocabulary; the backend now 422s on
+// unknown tags (see ``server/webui_router._validate_graph_entity_tags``)
+// and this editor mirrors the same rule client-side: autocomplete
+// proposes catalog matches on the typed prefix and the Add affordance
+// stays disabled while the typed value isn't an exact catalog match.
+export function TagAttrEditor({
   tags,
+  tagCatalog,
   onChange,
 }: {
   tags: readonly string[];
+  /** Active tag catalog, e.g. derived from ``/tags`` via
+   *  ``tagCatalogForSuggestions`` upstream. An empty list disables
+   *  the binding (legacy fixtures + isolated tests). */
+  tagCatalog: readonly string[];
   onChange: (next: string[]) => void;
 }) {
   const [v, setV] = useState('');
-  const add = () => {
-    const t = v.trim().toLowerCase().replace(/\s+/g, '-');
+  const normalized = v.trim().toLowerCase().replace(/\s+/g, '-');
+  const catalogSet = useMemo(
+    () => new Set(tagCatalog.map((t) => t.toLowerCase())),
+    [tagCatalog],
+  );
+  const bindingActive = tagCatalog.length > 0;
+  const suggestions = useMemo(() => {
+    if (!bindingActive || !normalized) return [];
+    return tagCatalog
+      .filter(
+        (t) =>
+          !tags.includes(t) && t.toLowerCase().startsWith(normalized),
+      )
+      .slice(0, 4);
+  }, [tagCatalog, tags, normalized, bindingActive]);
+  const isKnown = !bindingActive || catalogSet.has(normalized);
+  const canAdd =
+    Boolean(normalized) && !tags.includes(normalized) && isKnown;
+
+  const add = (value?: string) => {
+    const t = (value ?? normalized).trim().toLowerCase().replace(/\s+/g, '-');
     if (!t || tags.includes(t)) return;
+    if (bindingActive && !catalogSet.has(t)) return;
     onChange([...tags, t]);
     setV('');
   };
@@ -1566,17 +1612,50 @@ function TagAttrEditor({
             }
           }}
           placeholder="Add tag…"
-          aria-label="Add tag"
+          aria-label="Add node tag"
         />
         <button
           className="ghost-btn small"
-          onClick={add}
-          disabled={!v.trim()}
+          onClick={() => add()}
+          disabled={!canAdd}
           type="button"
         >
           Add
         </button>
       </div>
+      {bindingActive && normalized && !isKnown && (
+        <div
+          className="muted-sm"
+          role="alert"
+          data-testid="kg-tag-not-in-catalog"
+          style={{ marginTop: 4, fontSize: 11 }}
+        >
+          “{normalized}” is not in the tag catalog. Pick an existing tag
+          or approve it first in the Tags tab.
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div
+          className="autocomplete panel-autocomplete"
+          role="listbox"
+          data-testid="kg-tag-suggestions"
+          style={{ marginTop: 4 }}
+        >
+          {suggestions.map((s) => (
+            <div
+              key={s}
+              role="option"
+              aria-selected={false}
+              className="autocomplete-row"
+              data-testid={`kg-tag-sugg-${s}`}
+              onMouseDown={() => add(s)}
+              style={{ cursor: 'pointer' }}
+            >
+              <span style={{ fontSize: 12 }}>{s}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
