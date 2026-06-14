@@ -180,7 +180,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).toBeHidden();
   });
 
-  test('@documents @reviewer read extracted text, edit-approve and reject pending sources', async ({
+  test('@documents @reviewer read indexed chunks, edit-approve and reject pending sources', async ({
     page,
   }) => {
     await expect(page.getByTestId('pending-doc-d6')).toContainText(
@@ -188,12 +188,16 @@ test.describe('Twin WebUI operator journeys', () => {
     );
 
     await page.getByTestId('pending-doc-read-d6').click();
-    await expect(page.getByRole('dialog', { name: 'Extracted text' })).toBeVisible();
-    await expect(page.getByText('CFT Vendor API specification')).toBeVisible();
+    // Audit C6: the modal renders indexed chunks (not the legacy
+    // ``extracted_text`` placeholder). aria-label and dialog body
+    // both reflect the new contract.
+    await expect(page.getByRole('dialog', { name: 'Indexed chunks' })).toBeVisible();
+    await expect(page.getByTestId('rs-chunks-list')).toBeVisible();
+    await expect(page.getByTestId('rs-chunk-d6_c0')).toBeVisible();
     await expect(page.getByTestId('rs-pill-pending')).toContainText(
       'awaiting reviewer sign-off',
     );
-    await page.getByRole('dialog', { name: 'Extracted text' }).getByLabel('Close').click();
+    await page.getByRole('dialog', { name: 'Indexed chunks' }).getByLabel('Close').click();
 
     await page.getByTestId('pending-doc-edit-approve-d6').click();
     await expect(

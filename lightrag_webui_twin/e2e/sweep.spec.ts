@@ -100,9 +100,11 @@ test.describe('UI sweep', () => {
     await page.getByRole('button', { name: 'Clear selection' }).click();
 
     // Documents — pending review trio
+    // Audit C6: dialog aria-label is "Indexed chunks" since the
+    // modal renders the real /documents/{id}/chunks projection.
     await page.getByTestId('pending-doc-read-d6').click();
-    await expect(page.getByRole('dialog', { name: 'Extracted text' })).toBeVisible();
-    await page.getByRole('dialog', { name: 'Extracted text' }).getByLabel('Close').click();
+    await expect(page.getByRole('dialog', { name: 'Indexed chunks' })).toBeVisible();
+    await page.getByRole('dialog', { name: 'Indexed chunks' }).getByLabel('Close').click();
     await page.getByTestId('pending-doc-edit-approve-d6').click();
     await expect(
       page.getByRole('dialog', { name: 'Edit & approve document' }),
