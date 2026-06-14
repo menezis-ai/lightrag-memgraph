@@ -11,7 +11,11 @@
  * Footer actions (#105 + #149 spec révisée):
  *   - Retag: opens RetagModal via callback
  *   - View raw: gated by classification, surfaces a notice if above palier
- *   - Re-process: POST /documents/{id}/scan
+ *   - Re-process: POST /documents/reprocess_failed (audit C7 —
+ *     the per-doc ``/documents/{id}/scan`` endpoint exists for API
+ *     compat but is a no-op; the host handler in App.tsx routes
+ *     FAILED docs through the failed-batch endpoint instead, and
+ *     toasts an explanatory cue on any other status).
  *   - Delete (cascade): DELETE /documents/{id}, both individual & multi
  */
 

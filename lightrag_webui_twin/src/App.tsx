@@ -317,29 +317,31 @@ function AppShell() {
     pushToast({ kind: 'done', title, sub });
 
   const onScanRetry = (failedCount: number) => {
+    // Audit C7: the button is disabled when ``failedCount === 0`` in
+    // ``DocumentsTab``, so we only land here on the failed-batch
+    // path. No "queued" wording — the backend doesn't expose an
+    // observable queue; we honour the request, the operator hears
+    // back with the failed_count summary. No more "Pipeline scan"
+    // / "Scan completed" copy anywhere in the operator surface.
     pushToast({
       kind: 'propagating',
-      title:
-        failedCount > 0
-          ? `Retrying ${failedCount} failed source${failedCount > 1 ? 's' : ''}`
-          : 'Pipeline scan started',
-      sub:
-        failedCount > 0
-          ? 'POST /documents/reprocess_failed'
-          : 'POST /documents/reprocess_failed · no failed source visible',
+      title: 'Re-processing failed sources',
+      sub: `POST /documents/reprocess_failed · ${failedCount} failed source${
+        failedCount > 1 ? 's' : ''
+      }`,
     });
     void (async () => {
       try {
         const r = await api.reprocessFailedDocuments();
         pushToast({
           kind: 'done',
-          title: failedCount > 0 ? 'Retry queued' : 'Scan completed',
+          title: 'Reprocess request sent',
           sub: r.message ?? `failed_count=${r.failed_count ?? failedCount}`,
         });
       } catch (err) {
         pushToast({
           kind: 'error',
-          title: 'Scan / Retry failed',
+          title: 'Re-process failed',
           sub: err instanceof Error ? err.message : String(err),
         });
       } finally {
@@ -1300,7 +1302,7 @@ function AppShell() {
               const r = await api.reprocessFailedDocuments();
               pushToast({
                 kind: 'done',
-                title: 'Re-process queued (failed batch)',
+                title: 'Failed-source reprocess requested',
                 sub: `${r.message ?? 'LightRAG is retrying all FAILED docs'} · ${d.file_path} included`,
               });
             } catch (err) {

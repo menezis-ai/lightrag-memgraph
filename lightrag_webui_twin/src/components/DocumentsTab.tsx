@@ -219,26 +219,39 @@ export function DocumentsTab({
       <div className="docs-header">
         <h1>Document management</h1>
         <div className="docs-header-actions">
+          {/* Audit C7: this button used to be labelled "Scan / Retry"
+              and surfaced toasts about "Pipeline scan started" /
+              "Scan completed". The only backend the handler actually
+              calls is ``POST /documents/reprocess_failed`` (LightRAG
+              has no per-doc scan that produces an observable side
+              effect). The honest UX is: enabled iff there is at
+              least one failed source, and labelled for what it
+              actually does — never "Scan". */}
           <button
             type="button"
             className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
+            disabled={failedCount === 0}
+            title={
+              failedCount === 0
+                ? 'No failed sources to re-process'
+                : `Re-process ${failedCount} failed source${
+                    failedCount > 1 ? 's' : ''
+                  } (POST /documents/reprocess_failed)`
+            }
             onClick={() => {
+              if (failedCount === 0) return;
               if (onScanRetry) {
                 onScanRetry(failedCount);
                 return;
               }
               onAddToast(
-                failedCount > 0
-                  ? `Scan started · retrying ${failedCount} failed source${failedCount > 1 ? 's' : ''}`
-                  : 'Pipeline scan started',
-                failedCount > 0
-                  ? 'POST /documents/scan?retry=failed · workers picking up now'
-                  : 'POST /documents/scan · re-scanning sources for changes',
+                'Re-processing failed sources',
+                'POST /documents/reprocess_failed',
               );
             }}
           >
             <Icon name="refresh" size={14} />
-            {failedCount > 0 ? 'Scan / Retry' : 'Scan'}
+            Re-process failed sources
             {failedCount > 0 && (
               <span
                 className="pipeline-badge"

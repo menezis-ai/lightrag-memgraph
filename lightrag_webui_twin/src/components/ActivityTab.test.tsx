@@ -141,7 +141,11 @@ describe('ActivityTab — selection + detail', () => {
     expect(p.onPushToast).toHaveBeenCalledTimes(1);
     const toast = p.onPushToast.mock.calls[0][0];
     expect(toast.kind).toBe('propagating');
-    expect(toast.title).toBe('Replay queued');
+    // Audit C7: no "queued" wording — backend has no observable
+    // queue. The action surfaces what it actually does: re-process
+    // failed sources via the batch endpoint.
+    expect(toast.title).toBe('Re-processing failed sources');
+    expect(toast.sub).toMatch(/POST \/documents\/reprocess_failed/);
   });
 
   it('query target Re-run navigates with q + mode params', async () => {

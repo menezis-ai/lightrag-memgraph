@@ -196,7 +196,8 @@
 .pbtn.danger:hover:not(:disabled) { background: var(--twin-red-50); }
 
 /* ─── Red harmonization (review 2026-05-30) ────────────────────────────────
- * The "Failed N" filter pill and the "Scan / Retry N" button both surface a
+ * The "Failed N" filter pill and the "Re-process failed sources" button (with
+ * its N badge) both surface a
  * failure count, so their count badges should read as the SAME red. Legacy
  * renders the pill badge as a 14% tint and the retry badge as solid → mismatch.
  * Make the Failed pill badge solid red + white text to match the retry badge.

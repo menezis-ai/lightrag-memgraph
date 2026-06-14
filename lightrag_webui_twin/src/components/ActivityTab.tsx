@@ -566,8 +566,11 @@ function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
             onClick={() =>
               onPushToast?.({
                 kind: 'propagating',
-                title: 'Replay queued',
-                sub: `${e.target.label} · POST /documents/scan?retry=${e.target.id ?? 'source'} · worker picking up`,
+                title: 'Re-processing failed sources',
+                // Audit C7: the per-doc ``/documents/{id}/scan`` is a
+                // no-op. The honest action that includes this row is
+                // the failed-batch endpoint.
+                sub: `${e.target.label} · POST /documents/reprocess_failed`,
               })
             }
           >

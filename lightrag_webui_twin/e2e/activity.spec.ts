@@ -131,7 +131,11 @@ test.describe('Activity filters and event detail', () => {
     await expect(detail).toContainText('Severity');
 
     await detail.getByRole('button', { name: 'Replay ingestion' }).click();
-    await expect(page.locator('.toast-viewport')).toContainText('Replay queued');
+    // Audit C7: ActivityTab's "Replay ingestion" routes through the
+    // failed-batch endpoint; the toast wording reflects the real
+    // action (POST /documents/reprocess_failed) instead of the
+    // misleading "Replay queued".
+    await expect(page.locator('.toast-viewport')).toContainText('Re-processing failed sources');
   });
 
   test('@activity @detail "Open source" drills down to the Documents tab', async ({

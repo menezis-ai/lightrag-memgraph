@@ -130,7 +130,9 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Search events').fill('huge-archive');
     await expect(page.getByRole('heading', { name: 'huge-archive.zip' })).toBeVisible();
     await page.getByRole('button', { name: /Replay ingestion/ }).click();
-    await expect(page.getByRole('status')).toContainText('Replay queued');
+    // Audit C7: the action calls POST /documents/reprocess_failed,
+    // not a per-doc scan; the toast wording reflects that honestly.
+    await expect(page.getByRole('status')).toContainText('Re-processing failed sources');
   });
 
   test('@doctrine @a11y keyboard activates graph nodes, retrieval history and switches', async ({
@@ -246,7 +248,9 @@ test.describe('Twin WebUI operator journeys', () => {
       .click();
 
     await page.getByTestId('doc-detail-reprocess').click();
-    await expect(page.getByRole('status')).toContainText('Re-process queued');
+    // Audit C7: no "queued" wording — backend has no observable
+    // queue. The done toast says what was actually done.
+    await expect(page.getByRole('status')).toContainText('Failed-source reprocess requested');
   });
 
   test('@settings @auth settings profile, folder and API explorer remain usable', async ({ page }) => {
@@ -831,7 +835,10 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('dialog', { name: /Detail: oracle-restart-procedure.pdf/ })).toBeVisible();
     await page.getByTestId('doc-detail-reprocess').click();
     await expect(page.locator('.toast-viewport')).toContainText('Re-process not applicable');
-    await expect(page.locator('.toast-viewport')).not.toContainText('Re-process queued');
+    // Audit C7: the new wording for the success path is "Failed-
+    // source reprocess requested" — this test pins that the
+    // non-failed path does NOT trigger that toast.
+    await expect(page.locator('.toast-viewport')).not.toContainText('Failed-source reprocess requested');
   });
 
   test('@doctrine @resilience long document paths ellipsize with a native tooltip', async ({

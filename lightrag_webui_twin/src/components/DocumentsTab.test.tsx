@@ -235,12 +235,63 @@ describe('DocumentsTab — header actions', () => {
     expect(p.onOpenAdd).toHaveBeenCalled();
   });
 
-  it('Scan / Retry invokes the retry callback with failed count', async () => {
+  it('"Re-process failed sources" invokes the retry callback with the failed count', async () => {
     const p = { ...defaultProps(), onScanRetry: vi.fn() };
     render(<DocumentsTab {...p} />);
-    await userEvent.click(screen.getByRole('button', { name: /Scan \/ Retry/ }));
+    // DOCUMENT_FIXTURES carries 1 FAILED doc (huge-archive.zip).
+    const btn = screen.getByRole('button', {
+      name: /Re-process failed sources/,
+    });
+    expect(btn).toBeEnabled();
+    await userEvent.click(btn);
     expect(p.onScanRetry).toHaveBeenCalledWith(1);
     expect(p.onAddToast).not.toHaveBeenCalled();
+  });
+
+  it('disables the re-process button + shows tooltip when no source is failed (audit C7)', () => {
+    const p = {
+      ...defaultProps(),
+      docs: defaultProps().docs.filter(
+        (d) => String(d.status).toUpperCase() !== 'FAILED',
+      ),
+      onScanRetry: vi.fn(),
+    };
+    render(<DocumentsTab {...p} />);
+    const btn = screen.getByRole('button', {
+      name: /Re-process failed sources/,
+    });
+    expect(btn).toBeDisabled();
+    expect(btn.getAttribute('title')).toMatch(
+      /No failed sources to re-process/i,
+    );
+    // The badge counter is gone when there is nothing to re-process.
+    expect(btn.textContent).not.toMatch(/\d+/);
+  });
+
+  it('shows the failed count and POST /documents/reprocess_failed in the button tooltip (audit C7)', () => {
+    render(<DocumentsTab {...defaultProps()} />);
+    const btn = screen.getByRole('button', {
+      name: /Re-process failed sources/,
+    });
+    const title = btn.getAttribute('title') ?? '';
+    expect(title).toContain('1 failed source');
+    expect(title).toContain('POST /documents/reprocess_failed');
+  });
+
+  it('does not render any of the legacy "Scan" wording (audit C7)', () => {
+    render(<DocumentsTab {...defaultProps()} />);
+    // The button label, the body, and any toast wording around it
+    // used to leak "Scan / Retry", "Pipeline scan", "Scan completed"
+    // which implied a per-doc scanning capability the backend never
+    // provided. Pin the rename so it can't sneak back.
+    expect(screen.queryByText(/Scan \/ Retry/)).toBeNull();
+    expect(screen.queryByText(/Pipeline scan/)).toBeNull();
+    expect(screen.queryByText(/Scan completed/)).toBeNull();
+    // The bare "Scan" word should also not appear on its own as a
+    // button label — `getAllByRole` is enough to make this explicit.
+    const buttons = screen.getAllByRole('button');
+    const justScan = buttons.find((b) => b.textContent?.trim() === 'Scan');
+    expect(justScan).toBeUndefined();
   });
 
   it('row Retag button calls onOpenRetag with the doc', async () => {
