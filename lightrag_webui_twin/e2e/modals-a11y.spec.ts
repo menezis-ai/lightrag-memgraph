@@ -131,9 +131,12 @@ test.describe('Modal dialogs a11y contract', () => {
     await expect(dialog).toBeHidden();
   });
 
-  test('@a11y @modals Extracted text closes on Escape', async ({ page }) => {
+  test('@a11y @modals Indexed chunks closes on Escape', async ({ page }) => {
+    // Audit C6: the dialog aria-label is now "Indexed chunks" to
+    // match the real ``/documents/{id}/chunks`` projection rendered
+    // by ReadSourceModal.
     await page.getByTestId('pending-doc-read-d6').click();
-    const dialog = page.getByRole('dialog', { name: 'Extracted text' });
+    const dialog = page.getByRole('dialog', { name: 'Indexed chunks' });
     await expect(dialog).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
