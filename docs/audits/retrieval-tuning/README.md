@@ -72,6 +72,18 @@ Each JSONL output row contains:
   - `chunk_count`
   - `unique_chunk_count`
 
+Generate a Markdown summary from any probe output:
+
+```bash
+python3 scripts/retrieval_tuning_summarize.py \
+  docs/audits/retrieval-tuning/results-local.jsonl \
+  --out docs/audits/retrieval-tuning/summary-local.md
+```
+
+The summary flags HTTP errors, insufficient answers on non-control questions,
+grounded answers on the negative control, duplicate source concentration, and
+grounded answers without sources.
+
 Interpretation by recipe axis:
 
 - TR-RETQ-01, redundancy: compare `source_count` vs `unique_source_count`, then inspect whether repeated chunks from the same document add evidence or just duplicate prose.
