@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastViewport } from './ToastViewport';
+import { TOAST_AUTO_DISMISS_MS } from '../types/toast';
 import type { Toast } from '../types/toast';
 
 const propagating: Toast = {
@@ -86,6 +87,15 @@ describe('ToastViewport — interactions', () => {
     render(<ToastViewport toasts={[done]} onUndo={onUndo} onDismiss={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(onUndo).toHaveBeenCalledWith(done);
+  });
+
+  it('uses the real toast auto-dismiss duration for the undo progress bar', () => {
+    render(<ToastViewport toasts={[done]} onUndo={() => {}} onDismiss={() => {}} />);
+    const progress = document.querySelector('.undo-progress') as HTMLElement;
+    expect(progress).toBeInTheDocument();
+    expect(progress.style.getPropertyValue('--toast-undo-progress-ms')).toBe(
+      `${TOAST_AUTO_DISMISS_MS}ms`,
+    );
   });
 
   it('error toast renders Dismiss and propagates onDismiss', async () => {

@@ -29,6 +29,7 @@ import {
   QUERY_MODES,
   relTime,
   type AnswerPart,
+  type InlineAnswerPart,
   type AnswerStatus,
   type AnswerToken,
   type ChatMessage,
@@ -138,6 +139,7 @@ export function RetrievalTab({
     () => initialThreads[0]?.id ?? null,
   );
   const [streaming, setStreaming] = useState(false);
+  const [streamingThreadId, setStreamingThreadId] = useState<string | null>(null);
   const [streamedTokens, setStreamedTokens] = useState<readonly AnswerToken[]>([]);
   const [highlightSrc, setHighlightSrc] = useState<number | null>(null);
 
@@ -250,6 +252,7 @@ export function RetrievalTab({
     ]);
     setActiveThreadId(id);
     setStreamedTokens([]);
+    setStreamingThreadId(null);
     setStreaming(false);
   };
 
@@ -268,12 +271,14 @@ export function RetrievalTab({
     tokens: readonly AnswerToken[],
     sources: readonly RetrievalSource[],
     answerStatus: AnswerStatus = 'grounded',
+    requestedTopK?: number,
   ) => {
     if (tokens.length === 0) {
       setStreaming(false);
+      setStreamingThreadId(null);
       appendToThread(threadId, (c) => [
         ...c,
-        { role: 'assistant', tokens: [], sources, answerStatus },
+        { role: 'assistant', tokens: [], sources, answerStatus, requestedTopK },
       ]);
       return;
     }
@@ -284,9 +289,10 @@ export function RetrievalTab({
       if (i >= tokens.length) {
         clearInterval(interval);
         setStreaming(false);
+        setStreamingThreadId(null);
         appendToThread(threadId, (c) => [
           ...c,
-          { role: 'assistant', tokens, sources, answerStatus },
+          { role: 'assistant', tokens, sources, answerStatus, requestedTopK },
         ]);
         setStreamedTokens([]);
       }
@@ -339,8 +345,10 @@ export function RetrievalTab({
     const currentMessages =
       threads.find((t) => t.id === threadId)?.messages ?? [];
     const conversationHistory = conversationHistoryFor(currentMessages);
+    const requestedTopK = topK;
     appendToThread(threadId, (c) => [...c, { role: 'user', text: q }]);
     setStreamedTokens([]);
+    setStreamingThreadId(threadId);
     setStreaming(true);
 
     if (onStreamQuery) {
@@ -368,13 +376,15 @@ export function RetrievalTab({
               tokens: finalTokens,
               sources: effectiveSources,
               answerStatus: status,
+              requestedTopK,
             },
           ]);
           setStreamedTokens([]);
+          setStreamingThreadId(null);
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Query failed';
-          streamTokens(threadId, [`⚠ ${msg}`], []);
+          streamTokens(threadId, [`⚠ ${msg}`], [], 'grounded', requestedTopK);
         });
       return;
     }
@@ -395,14 +405,15 @@ export function RetrievalTab({
             ['⚠ The backend returned an empty answer. Sources below.'],
             effectiveSources,
             status,
+            requestedTopK,
           );
           return;
         }
-        streamTokens(threadId, tokens, effectiveSources, status);
+        streamTokens(threadId, tokens, effectiveSources, status, requestedTopK);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : 'Query failed';
-        streamTokens(threadId, [`⚠ ${msg}`], []);
+        streamTokens(threadId, [`⚠ ${msg}`], [], 'grounded', requestedTopK);
       });
   };
 
@@ -543,7 +554,9 @@ export function RetrievalTab({
               onSourceClick={onSourceClick}
             />
           ))}
-          {streaming && streamedTokens.length > 0 && (
+          {streaming &&
+            activeThreadId === streamingThreadId &&
+            streamedTokens.length > 0 && (
             <Turn
               streaming
               msg={{
@@ -558,7 +571,9 @@ export function RetrievalTab({
               onSourceClick={onSourceClick}
             />
           )}
-          {streaming && streamedTokens.length === 0 && <ThinkingTurn />}
+          {streaming &&
+            activeThreadId === streamingThreadId &&
+            streamedTokens.length === 0 && <ThinkingTurn />}
         </div>
         <div className="querybar">
           <textarea
@@ -767,34 +782,63 @@ function Turn({
 
   const parts: AnswerPart[] = parseAnswer(msg.tokens ?? []);
   const sources = msg.sources ?? [];
+  const requestedTopK = msg.requestedTopK ?? sources.length;
   const visibleSources = sourcesExpanded
     ? sources
     : sources.slice(0, INITIAL_VISIBLE_SOURCES);
-  const hiddenSourcesCount = Math.max(
-    0,
-    sources.length - INITIAL_VISIBLE_SOURCES,
-  );
+  const hiddenSourcesCount = Math.max(0, requestedTopK - INITIAL_VISIBLE_SOURCES);
+  const realHiddenSourcesCount = Math.max(0, sources.length - INITIAL_VISIBLE_SOURCES);
+  const noAdditionalReturned =
+    sourcesExpanded && hiddenSourcesCount > 0 && realHiddenSourcesCount === 0;
+
+  const renderInlineParts = (inlineParts: readonly InlineAnswerPart[]) =>
+    inlineParts.map((p, i) => {
+      if (p.type === 'text') return <span key={i}>{p.value}</span>;
+      if (p.type === 'bold') return <strong key={i}>{p.value}</strong>;
+      if (p.type === 'code') return <code key={i}>{p.value}</code>;
+      return (
+        <button
+          key={i}
+          type="button"
+          className="citation"
+          onMouseEnter={() => onCiteHover(p.value)}
+          onMouseLeave={onCiteLeave}
+          onClick={() => onCiteClick(p.value, msg.sources)}
+          aria-label={`Source ${p.value}`}
+          data-testid={`citation-${p.value}`}
+        >
+          {p.value}
+        </button>
+      );
+    });
 
   return (
     <div className="msg-assistant">
       <div className="msg-text">
         {parts.map((p, i) => {
-          if (p.type === 'text') return <span key={i}>{p.value}</span>;
-          if (p.type === 'code') return <code key={i}>{p.value}</code>;
-          return (
-            <button
-              key={i}
-              type="button"
-              className="citation"
-              onMouseEnter={() => onCiteHover(p.value)}
-              onMouseLeave={onCiteLeave}
-              onClick={() => onCiteClick(p.value, msg.sources)}
-              aria-label={`Source ${p.value}`}
-              data-testid={`citation-${p.value}`}
-            >
-              {p.value}
-            </button>
-          );
+          if (p.type === 'lineBreak') return <br key={i} />;
+          if (p.type === 'heading') {
+            const Tag = `h${p.level}` as 'h1' | 'h2' | 'h3';
+            return (
+              <Tag key={i} className={`answer-heading answer-heading-${p.level}`}>
+                {renderInlineParts(p.children)}
+              </Tag>
+            );
+          }
+          if (p.type === 'listItem') {
+            return (
+              <div
+                key={i}
+                className={`answer-list-item${p.ordered ? ' ordered' : ''}`}
+              >
+                <span className="answer-list-marker">
+                  {p.ordered ? '1.' : '•'}
+                </span>
+                <span>{renderInlineParts(p.children)}</span>
+              </div>
+            );
+          }
+          return renderInlineParts([p]);
         })}
         {streaming && (
           <span
@@ -830,7 +874,14 @@ function Turn({
         msg.answerStatus !== 'insufficient_information' &&
         sources.length > 0 && (
         <>
-          <div className="sources-header">Sources</div>
+          <div className="sources-header">
+            Sources
+            {msg.requestedTopK !== undefined && (
+              <span className="sources-count" data-testid="sources-count">
+                {sources.length} returned / {msg.requestedTopK} requested
+              </span>
+            )}
+          </div>
           <div className="sources-list">
             {visibleSources.map((s) => {
               const clickable = Boolean(onSourceClick);
@@ -881,6 +932,14 @@ function Turn({
                   ? `Réduire aux ${INITIAL_VISIBLE_SOURCES} premières`
                   : `Voir les ${hiddenSourcesCount} autres`}
               </button>
+            )}
+            {noAdditionalReturned && (
+              <div
+                className="sources-empty muted"
+                data-testid="sources-no-additional"
+              >
+                No additional structured sources were returned by the backend.
+              </div>
             )}
           </div>
         </>

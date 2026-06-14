@@ -16,10 +16,17 @@ import type { SourceType } from '../components/Icon';
 
 export type AnswerToken = string;
 
-export type AnswerPart =
+export type InlineAnswerPart =
   | { type: 'text'; value: string }
+  | { type: 'bold'; value: string }
   | { type: 'code'; value: string }
   | { type: 'cite'; value: number };
+
+export type AnswerPart =
+  | InlineAnswerPart
+  | { type: 'heading'; level: 1 | 2 | 3; children: readonly InlineAnswerPart[] }
+  | { type: 'listItem'; ordered: boolean; children: readonly InlineAnswerPart[] }
+  | { type: 'lineBreak' };
 
 export interface RetrievalSource {
   /** Citation number, 1-indexed. Matches `{cite:n}` in the tokens. */
@@ -51,6 +58,8 @@ export interface ChatMessage {
   sources?: readonly RetrievalSource[];
   /** Assistant-only: propagated from the backend answer_status flag. */
   answerStatus?: AnswerStatus;
+  /** Assistant-only: Top K selected when this answer was requested. */
+  requestedTopK?: number;
 }
 
 export interface RetrievalThread {
@@ -81,23 +90,61 @@ export const QUERY_MODES: readonly QueryMode[] = [
  */
 export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
   const out: AnswerPart[] = [];
-  tokens.forEach((tk) => {
-    const re = /\{cite:(\d+)\}|\[(\d+)\]|`([^`]+)`/g;
+  const parseInline = (text: string): InlineAnswerPart[] => {
+    const parts: InlineAnswerPart[] = [];
+    const re = /\*\*([^*]+)\*\*|\{cite:(\d+)\}|\[\^?(\d+)\]|`([^`]+)`/g;
     let last = 0;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(tk)) !== null) {
+    while ((m = re.exec(text)) !== null) {
       if (m.index > last) {
-        out.push({ type: 'text', value: tk.slice(last, m.index) });
+        parts.push({ type: 'text', value: text.slice(last, m.index) });
       }
-      if (m[1] || m[2]) {
-        out.push({ type: 'cite', value: parseInt(m[1] || m[2], 10) });
-      } else if (m[3]) {
-        out.push({ type: 'code', value: m[3] });
+      if (m[1]) {
+        parts.push({ type: 'bold', value: m[1] });
+      } else if (m[2] || m[3]) {
+        parts.push({ type: 'cite', value: parseInt(m[2] || m[3], 10) });
+      } else if (m[4]) {
+        parts.push({ type: 'code', value: m[4] });
       }
       last = re.lastIndex;
     }
-    if (last < tk.length) {
-      out.push({ type: 'text', value: tk.slice(last) });
+    if (last < text.length) {
+      parts.push({ type: 'text', value: text.slice(last) });
+    }
+    return parts;
+  };
+
+  const text = tokens.join('');
+  const lines = text.split('\n');
+  const hasMarkdownBlocks = lines.length > 1 || lines.some((line) =>
+    /^(#{1,3})\s+|\s*[-*]\s+|\s*\d+\.\s+/.test(line),
+  );
+
+  if (!hasMarkdownBlocks) {
+    return parseInline(text);
+  }
+
+  lines.forEach((line, index) => {
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+    const ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+    if (heading) {
+      out.push({
+        type: 'heading',
+        level: heading[1].length as 1 | 2 | 3,
+        children: parseInline(heading[2]),
+      });
+    } else if (bullet || ordered) {
+      out.push({
+        type: 'listItem',
+        ordered: Boolean(ordered),
+        children: parseInline((bullet ?? ordered)?.[1] ?? ''),
+      });
+    } else if (line) {
+      out.push(...parseInline(line));
+    }
+    if (index < lines.length - 1) {
+      out.push({ type: 'lineBreak' });
     }
   });
   return out;

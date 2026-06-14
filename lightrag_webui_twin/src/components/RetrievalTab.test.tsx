@@ -20,7 +20,7 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RetrievalTab } from './RetrievalTab';
 import { makeSampleThreads } from '../fixtures';
@@ -173,6 +173,58 @@ describe('RetrievalTab — send', () => {
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
 
     expect(await screen.findByTestId('retrieval-thinking')).toBeInTheDocument();
+  });
+
+  it('does not show transient stream chunks in a different active thread', async () => {
+    let pushChunk: ((chunk: string) => void) | undefined;
+    let finish!: (value: { response: string; sources: [] }) => void;
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        pushChunk = onChunk;
+        return new Promise<{ response: string; sources: [] }>((resolve) => {
+          finish = resolve;
+        });
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_owner',
+            title: 'Owner',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [],
+          },
+          {
+            id: 'th_other',
+            title: 'Other',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [],
+          },
+        ]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'stream owner');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+    await waitFor(() => expect(onStreamQuery).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByTestId('thread-th_other'));
+    act(() => {
+      pushChunk?.('owner-only-token');
+    });
+
+    expect(
+      document.querySelector('.retrieval-conv')?.textContent,
+    ).not.toContain('owner-only-token');
+
+    act(() => {
+      finish({ response: 'owner-only-token', sources: [] });
+    });
   });
 });
 
@@ -419,7 +471,14 @@ describe('RetrievalTab — source cards', () => {
             title: 'Many sources',
             created: Date.now(),
             updated: Date.now(),
-            messages: [{ role: 'assistant', tokens: ['answer'], sources }],
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer'],
+                sources,
+                requestedTopK: 7,
+              },
+            ],
           },
         ]}
       />,
@@ -441,6 +500,92 @@ describe('RetrievalTab — source cards', () => {
     expect(
       screen.getByRole('button', { name: 'Réduire aux 5 premières' }),
     ).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('uses requested Top K for the expand count without inventing source cards', async () => {
+    const sources = Array.from({ length: 5 }, (_, i) => ({
+      n: i + 1,
+      type: 'file' as const,
+      name: `returned-${i + 1}.pdf`,
+      meta: `chunk ${i + 1}`,
+      score: 0.9 - i * 0.01,
+    }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_requested_more',
+            title: 'Requested more',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer'],
+                sources,
+                requestedTopK: 20,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('sources-count')).toHaveTextContent(
+      '5 returned / 20 requested',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Voir les 15 autres' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('source-6')).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Voir les 15 autres' }),
+    );
+
+    expect(screen.queryByTestId('source-6')).toBeNull();
+    expect(screen.getByTestId('sources-no-additional')).toHaveTextContent(
+      'No additional structured sources were returned by the backend.',
+    );
+  });
+
+  it('renders minimal Markdown while preserving clickable citations', () => {
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_markdown',
+            title: 'Markdown',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: [
+                  '### Runbook\nUse **RMAN** with `restore database` [1]\n- validate backup\n1. open incident',
+                ],
+                sources: [
+                  { n: 1, type: 'file' as const, name: 'runbook.pdf', score: 0.9 },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Runbook' }),
+    ).toBeInTheDocument();
+    expect(document.querySelector('.msg-text strong')?.textContent).toBe('RMAN');
+    expect(document.querySelector('.msg-text code')?.textContent).toBe(
+      'restore database',
+    );
+    expect(screen.getByText('validate backup')).toBeInTheDocument();
+    expect(screen.getByText('open incident')).toBeInTheDocument();
+    expect(screen.getByTestId('citation-1')).toBeInTheDocument();
   });
 
   it('clicking a source card navigates to documents with a source filter for file paths', async () => {

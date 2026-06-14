@@ -16,9 +16,13 @@
  * truth about what each toast means.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Icon } from './Icon';
-import { TOAST_MAX_VISIBLE, type Toast } from '../types/toast';
+import {
+  TOAST_AUTO_DISMISS_MS,
+  TOAST_MAX_VISIBLE,
+  type Toast,
+} from '../types/toast';
 
 export interface ToastViewportProps {
   toasts: readonly Toast[];
@@ -136,7 +140,14 @@ function ToastCard({ toast, onUndo, onDismiss }: ToastCardProps) {
         <Icon name="x" size={14} />
       </button>
       {kind === 'done' && toast.undo !== undefined && (
-        <span className="undo-progress" />
+        <span
+          className="undo-progress"
+          style={
+            {
+              '--toast-undo-progress-ms': `${TOAST_AUTO_DISMISS_MS}ms`,
+            } as CSSProperties
+          }
+        />
       )}
     </div>
   );

@@ -60,6 +60,37 @@ describe('parseAnswer', () => {
       { type: 'cite', value: 3 },
     ]);
   });
+
+  it('extracts bold text and footnote-style citations', () => {
+    expect(parseAnswer(['Use **RMAN** with [^4]'])).toEqual([
+      { type: 'text', value: 'Use ' },
+      { type: 'bold', value: 'RMAN' },
+      { type: 'text', value: ' with ' },
+      { type: 'cite', value: 4 },
+    ]);
+  });
+
+  it('renders minimal Markdown blocks for headings and lists', () => {
+    expect(parseAnswer(['### Runbook\n- check backup\n1. open incident'])).toEqual([
+      {
+        type: 'heading',
+        level: 3,
+        children: [{ type: 'text', value: 'Runbook' }],
+      },
+      { type: 'lineBreak' },
+      {
+        type: 'listItem',
+        ordered: false,
+        children: [{ type: 'text', value: 'check backup' }],
+      },
+      { type: 'lineBreak' },
+      {
+        type: 'listItem',
+        ordered: true,
+        children: [{ type: 'text', value: 'open incident' }],
+      },
+    ]);
+  });
 });
 
 describe('relTime', () => {
