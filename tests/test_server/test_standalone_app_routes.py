@@ -11,6 +11,8 @@ guard was added.
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 
@@ -26,37 +28,50 @@ def _settings() -> LightRAGServerSettings:
     )
 
 
-def _paths(app, methods: set[str]) -> set[tuple[str, str]]:
-    out: set[tuple[str, str]] = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        method_set = getattr(route, "methods", None)
-        if not path or not method_set:
-            continue
-        for m in methods & method_set:
-            out.add((m, path))
-    return out
+def _client() -> TestClient:
+    return TestClient(create_app(_settings()), raise_server_exceptions=False)
 
 
 class TestStandaloneTwinSurface:
     def test_twin_query_endpoints_are_exposed_under_prefix(self):
-        app = create_app(_settings())
-        routes = _paths(app, {"POST"})
-        assert ("POST", "/twin/api/query") in routes
-        assert ("POST", "/twin/api/query/stream") in routes
+        client = _client()
+        headers = {"Authorization": "Bearer t"}
+
+        query = client.post(
+            "/twin/api/query",
+            json={"query": "route probe"},
+            headers=headers,
+        )
+        stream = client.post(
+            "/twin/api/query/stream",
+            json={"query": "route probe"},
+            headers=headers,
+        )
+
+        # The test app does not run lifespan, so the handler returns 500
+        # when it reaches _get_rag(). A 404/405 would mean the route is absent.
+        assert query.status_code == 500
+        assert query.json()["detail"] == "LightRAG not initialized"
+        assert stream.status_code == 500
+        assert stream.json()["detail"] == "LightRAG not initialized"
 
     def test_native_legacy_query_route_still_present(self):
         # The simple `/query` route remains for legacy callers that
         # were using the standalone before the Twin overlay landed.
-        app = create_app(_settings())
-        routes = _paths(app, {"POST"})
-        assert ("POST", "/query") in routes
+        response = _client().post(
+            "/query",
+            json={"query": "route probe"},
+            headers={"Authorization": "Bearer t"},
+        )
+
+        assert response.status_code == 500
 
     def test_webui_router_mounted_both_unprefixed_and_under_twin_api(self):
         # Backwards-compat: existing pytest suite hits `/documents`,
         # `/spaces`, etc. directly. The React port hits `/twin/api/...`.
         # Both must work against the same server.
-        app = create_app(_settings())
-        routes = _paths(app, {"GET"})
-        assert ("GET", "/documents") in routes
-        assert ("GET", "/twin/api/documents") in routes
+        client = _client()
+        headers = {"Authorization": "Bearer t"}
+
+        assert client.get("/documents", headers=headers).status_code == 200
+        assert client.get("/twin/api/documents", headers=headers).status_code == 200
