@@ -10,7 +10,11 @@
  *   GET    /documents                                        -> { items: Document[], total }
  *   POST   /documents                                        -> upload (LightRAG native)
  *   GET    /documents/{id}/chunks                            -> chunks[]
- *   POST   /documents/{id}/scan                              -> reprocess
+ *   POST   /documents/{id}/scan                              -> ack-only compat no-op (audit C7;
+ *                                                                no UI consumer — the WebUI
+ *                                                                routes all per-doc re-process
+ *                                                                intent through
+ *                                                                /documents/reprocess_failed)
  *   GET    /twin/api/documents/{id}/metadata                 -> overlay fields
  *   POST   /twin/api/documents/{id}/approve                  -> review approve
  *   POST   /twin/api/documents/{id}/reject                   -> review reject
