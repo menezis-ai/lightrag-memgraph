@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from ... import _pool
+from ..._constants import (
+    DEFAULT_WORKSPACE,
+    MEMGRAPH_WORKSPACE_ENV,
+    validate_identifier,
+)
 from .schema import (
     SEED_ENVIRONMENTS,
     SEED_METHODOLOGIES,
@@ -49,9 +54,10 @@ class OntologyStorage:
     """Memgraph persistence for the ontology graph."""
 
     def __init__(self, workspace: str | None = None) -> None:
-        self.workspace = workspace or os.environ.get(
-            "MEMGRAPH_WORKSPACE", "base"
+        raw_workspace = workspace or os.environ.get(
+            MEMGRAPH_WORKSPACE_ENV, DEFAULT_WORKSPACE
         )
+        self.workspace = validate_identifier(raw_workspace, "workspace")
         self._driver = None
         self._database = None
 
@@ -208,12 +214,25 @@ class OntologyStorage:
 
         async with self._driver.session(database=self._database) as session:
             for rel_type, entries in groups.items():
+                try:
+                    safe_rel_type = validate_identifier(
+                        str(rel_type), "relation_type"
+                    )
+                except ValueError:
+                    logger.warning(
+                        "[Ontology:%s] Dropping %d edge(s) with unsafe "
+                        "relation_type %r (failed identifier validation)",
+                        self.workspace,
+                        len(entries),
+                        rel_type,
+                    )
+                    continue
                 result = await session.run(
                     f"""
                     UNWIND $entries AS e
                     MATCH (src:`{label}` {{name: e.src_name, node_type: e.src_type}})
                     MATCH (tgt:`{label}` {{name: e.tgt_name, node_type: e.tgt_type}})
-                    MERGE (src)-[r:`{rel_type}`]->(tgt)
+                    MERGE (src)-[r:`{safe_rel_type}`]->(tgt)
                     SET r.confidence = e.confidence,
                         r.source_doc = e.source_doc,
                         r.created_at = e.ts

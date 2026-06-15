@@ -206,3 +206,87 @@ class TestOntologyStorage:
     async def test_upsert_empty_edges(self, storage, mock_session):
         await storage.upsert_edges([])
         mock_session.run.assert_not_called()
+
+
+class TestOntologyStorageCypherInjection:
+    """Defense-in-depth: storage must reject Cypher-injection payloads
+    that slip past the parser allow-lists upstream.
+
+    Symmetric to the fix in ``_buffered_graph.py`` (commit 1fa47dd) which
+    closed the same vector on entity_type for the chunk graph.
+    """
+
+    def test_workspace_with_backtick_is_rejected(self):
+        with pytest.raises(ValueError):
+            OntologyStorage("base`) DETACH DELETE n //")
+
+    def test_workspace_with_space_is_rejected(self):
+        with pytest.raises(ValueError):
+            OntologyStorage("ws with space")
+
+    async def test_malicious_relation_type_is_dropped(
+        self, storage, mock_session
+    ):
+        edges = [
+            OntologyEdge(
+                source_name="alpha",
+                source_type="Term",
+                target_name="beta",
+                target_type="Term",
+                relation_type="REL`]->(x) WITH x MATCH (n) DETACH DELETE n //",
+                confidence=0.9,
+            ),
+        ]
+
+        await storage.upsert_edges(edges)
+
+        mock_session.run.assert_not_called()
+
+    async def test_safe_relation_type_still_runs(
+        self, storage, mock_session
+    ):
+        edges = [
+            OntologyEdge(
+                source_name="alpha",
+                source_type="Term",
+                target_name="beta",
+                target_type="Term",
+                relation_type="RELATED_TO",
+                confidence=0.9,
+            ),
+        ]
+
+        await storage.upsert_edges(edges)
+
+        assert mock_session.run.call_count == 1
+        query = mock_session.run.call_args[0][0]
+        assert "`RELATED_TO`" in query
+        assert "DETACH DELETE" not in query
+
+    async def test_mixed_edges_only_safe_one_runs(
+        self, storage, mock_session
+    ):
+        edges = [
+            OntologyEdge(
+                source_name="alpha",
+                source_type="Term",
+                target_name="beta",
+                target_type="Term",
+                relation_type="RELATED_TO",
+                confidence=0.9,
+            ),
+            OntologyEdge(
+                source_name="alpha",
+                source_type="Term",
+                target_name="beta",
+                target_type="Term",
+                relation_type="REL`]->(x) WITH x MATCH (n) DETACH DELETE n //",
+                confidence=0.9,
+            ),
+        ]
+
+        await storage.upsert_edges(edges)
+
+        assert mock_session.run.call_count == 1
+        query = mock_session.run.call_args[0][0]
+        assert "`RELATED_TO`" in query

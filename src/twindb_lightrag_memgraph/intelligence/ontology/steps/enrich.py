@@ -15,6 +15,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from ...config import TwinRAGConfig
+from ..schema import NODE_TYPES, RELATION_TYPES
 from ..steps.cluster import ClusterResult
 from ..steps.extract import ExtractedRelation
 
@@ -137,17 +138,7 @@ async def enrich(
         content = response.choices[0].message.content
         data = json.loads(content) if content else {}
 
-        new_relations = [
-            ExtractedRelation(
-                source=r["source"],
-                source_type=r.get("source_type", "Term"),
-                target=r["target"],
-                target_type=r.get("target_type", "Term"),
-                relation_type=r.get("relation_type", "RELATED_TO"),
-                confidence=r.get("confidence", 0.8),
-            )
-            for r in data.get("new_relations", [])
-        ]
+        new_relations = _parse_new_relations(data.get("new_relations", []))
 
         return EnrichmentResult(
             clusters=cluster_result,
@@ -157,3 +148,52 @@ async def enrich(
     except Exception as e:
         logger.error("Enrichment error: %s", e)
         return EnrichmentResult(clusters=cluster_result)
+
+
+def _normalise_node_type(value: object) -> str:
+    node_type = str(value or "Term")
+    return node_type if node_type in NODE_TYPES else "Term"
+
+
+def _parse_new_relations(raw_relations: object) -> list[ExtractedRelation]:
+    """Coerce LLM-suggested relations into safe ExtractedRelation objects.
+
+    The enrich LLM call is fed entities/relations derived from untrusted
+    documents, so its JSON output is untrusted too. relation_type is
+    interpolated into a Cypher MERGE downstream (no $param for rel types),
+    so an un-validated value here is a direct Cypher-injection vector.
+    Mirror extract._parse_relations: allow-list rel types against
+    RELATION_TYPES and node types against NODE_TYPES, dropping any
+    relation that is malformed instead of trusting the model.
+    """
+    if not isinstance(raw_relations, list):
+        logger.warning("Ontology enrichment returned non-list new_relations")
+        return []
+
+    relations: list[ExtractedRelation] = []
+    for item in raw_relations:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "")
+        target = str(item.get("target") or "")
+        if not source or not target:
+            continue
+        relation_type = str(item.get("relation_type") or "RELATED_TO")
+        if relation_type not in RELATION_TYPES:
+            relation_type = "RELATED_TO"
+        confidence = item.get("confidence", 0.8)
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.8
+        relations.append(
+            ExtractedRelation(
+                source=source,
+                source_type=_normalise_node_type(item.get("source_type")),
+                target=target,
+                target_type=_normalise_node_type(item.get("target_type")),
+                relation_type=relation_type,
+                confidence=confidence,
+            )
+        )
+    return relations
