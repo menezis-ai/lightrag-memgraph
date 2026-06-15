@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.scannerwork/
+.vscode/
+.coverage
+coverage.xml
+
+# Secrets & local configuration
+.env
+.env.*
+config.ini
+*.pem
+*.key
+*.crt
+
+# macOS noise
+.DS_Store

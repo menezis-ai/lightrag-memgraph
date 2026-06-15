@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include src/twindb_lightrag_memgraph *.py
+recursive-exclude tests *
+global-exclude __pycache__
+global-exclude *.py[co]
