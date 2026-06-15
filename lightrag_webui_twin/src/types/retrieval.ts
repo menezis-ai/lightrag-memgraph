@@ -83,6 +83,16 @@ export const QUERY_MODES: readonly QueryMode[] = [
   'bypass',
 ];
 
+function stripTrailingReferencesSection(text: string): string {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) =>
+    /^\s*#{1,6}\s*(?:references|références)\b/i.test(line) ||
+    /^\s*(?:references|références)\s*:?\s*$/i.test(line),
+  );
+  if (start === -1) return text;
+  return lines.slice(0, start).join('\n').trimEnd();
+}
+
 /**
  * Parse a token stream into typed AnswerParts. Tokens contain inline
  * `{cite:N}` (proto/fixture format) or `[N]` (LightRAG prompt output)
@@ -114,7 +124,7 @@ export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
     return parts;
   };
 
-  const text = tokens.join('');
+  const text = stripTrailingReferencesSection(tokens.join(''));
   const lines = text.split('\n');
   const hasMarkdownBlocks = lines.length > 1 || lines.some((line) =>
     /^(#{1,3})\s+|\s*[-*]\s+|\s*\d+\.\s+/.test(line),

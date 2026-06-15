@@ -880,13 +880,27 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .params-header p { margin: 2px 0 0; font-size: 11px; color: var(--color-text-secondary); }
 .field-label { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 4px; }
 .field { display: flex; flex-direction: column; }
-.field select, .field input[type=number] {
+.field select, .field input[type=number], .field textarea {
   width: 100%;
   padding: 6px 8px;
   font-size: 12px;
   border: 0.5px solid var(--color-border-tertiary);
   border-radius: var(--border-radius-md);
   background: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+.field textarea {
+  min-height: 58px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.field select option {
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--color-text-tertiary);
 }
 .chip-input {
   min-height: 30px;
@@ -5205,8 +5219,8 @@ input:focus, textarea:focus, select:focus { outline: none; }
   .kg-search { flex: 1; min-width: 180px; }
   .kg-rail {
     top: 8px; left: 8px;
-    width: calc(100% - 16px);
-    max-height: 50%;
+    width: min(260px, calc(100% - 16px));
+    max-height: calc(100% - 16px);
   }
 }
 
@@ -6151,6 +6165,109 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--twin-accent); color: #fff; border-color: var(--twin-accent-hover);
 }
 .kg-edit-actions .ghost-btn.primary:hover { background: var(--twin-accent-hover); }
+
+.kg-add-entity,
+.kg-add-relation {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 10px 14px;
+  margin: 8px 0;
+  background: var(--color-background-secondary);
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+}
+.kg-add-relation { padding: 10px 12px; }
+.kg-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.kg-form-field > span {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.kg-form-name {
+  flex: 0 1 220px;
+  min-width: 180px;
+}
+.kg-form-type {
+  flex: 0 0 130px;
+}
+.kg-form-summary {
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+.kg-form-endpoint,
+.kg-form-target {
+  flex: 1 1 150px;
+}
+.kg-form-relation-label {
+  flex: 1 1 180px;
+}
+.kg-form-strength {
+  flex: 0 0 160px;
+}
+.kg-add-entity input,
+.kg-add-entity select,
+.kg-add-relation input[type="text"],
+.kg-add-relation select {
+  width: 100%;
+  min-height: 30px;
+  border: 0.5px solid var(--color-border-tertiary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  padding: 5px 8px;
+  border-radius: var(--border-radius-sm);
+  font: inherit;
+  font-size: 12px;
+}
+.kg-add-entity input::placeholder,
+.kg-add-relation input::placeholder {
+  color: var(--color-text-tertiary);
+}
+.kg-add-entity input:focus,
+.kg-add-entity select:focus,
+.kg-add-relation input[type="text"]:focus,
+.kg-add-relation select:focus {
+  border-color: var(--twin-accent);
+  background: var(--color-background-primary);
+}
+.kg-add-entity select option,
+.kg-add-relation select option,
+.kg-edit-select option {
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+.kg-form-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+.kg-form-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.kg-form-error {
+  flex: 1 0 100%;
+  font-size: 11px;
+  color: var(--twin-red-vivid);
+}
+.kg-add-relation input[type="range"] {
+  width: 100%;
+  accent-color: var(--twin-accent);
+}
 
 .kg-prop-count {
   margin-left: auto;

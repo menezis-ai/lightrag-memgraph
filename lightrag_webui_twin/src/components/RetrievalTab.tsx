@@ -754,6 +754,37 @@ function ThinkingTurn() {
   );
 }
 
+function collectCitedSourceNumbers(parts: readonly AnswerPart[]): Set<number> {
+  const out = new Set<number>();
+  parts.forEach((part) => {
+    if (part.type === 'cite') {
+      out.add(part.value);
+    } else if (part.type === 'heading' || part.type === 'listItem') {
+      part.children.forEach((child) => {
+        if (child.type === 'cite') out.add(child.value);
+      });
+    }
+  });
+  return out;
+}
+
+function collapsedSources(
+  sources: readonly RetrievalSource[],
+  citedSourceNumbers: ReadonlySet<number>,
+): readonly RetrievalSource[] {
+  const visibleNumbers = new Set<number>();
+  const visible: RetrievalSource[] = [];
+  const pushOnce = (source: RetrievalSource) => {
+    if (visibleNumbers.has(source.n)) return;
+    visibleNumbers.add(source.n);
+    visible.push(source);
+  };
+
+  sources.slice(0, INITIAL_VISIBLE_SOURCES).forEach(pushOnce);
+  sources.filter((source) => citedSourceNumbers.has(source.n)).forEach(pushOnce);
+  return visible;
+}
+
 interface TurnProps {
   msg: ChatMessage;
   streaming?: boolean;
@@ -782,14 +813,17 @@ function Turn({
 
   const parts: AnswerPart[] = parseAnswer(msg.tokens ?? []);
   const sources = msg.sources ?? [];
-  const requestedTopK = msg.requestedTopK ?? sources.length;
+  const citedSourceNumbers = collectCitedSourceNumbers(parts);
+  const collapsedVisibleSources = collapsedSources(sources, citedSourceNumbers);
   const visibleSources = sourcesExpanded
     ? sources
-    : sources.slice(0, INITIAL_VISIBLE_SOURCES);
-  const hiddenSourcesCount = Math.max(0, requestedTopK - INITIAL_VISIBLE_SOURCES);
-  const realHiddenSourcesCount = Math.max(0, sources.length - INITIAL_VISIBLE_SOURCES);
-  const noAdditionalReturned =
-    sourcesExpanded && hiddenSourcesCount > 0 && realHiddenSourcesCount === 0;
+    : collapsedVisibleSources;
+  const collapsedVisibleSourceNumbers = new Set(
+    collapsedVisibleSources.map((source) => source.n),
+  );
+  const hiddenSourcesCount = sources.filter(
+    (source) => !collapsedVisibleSourceNumbers.has(source.n),
+  ).length;
 
   const renderInlineParts = (inlineParts: readonly InlineAnswerPart[]) =>
     inlineParts.map((p, i) => {
@@ -929,17 +963,9 @@ function Turn({
                 aria-expanded={sourcesExpanded}
               >
                 {sourcesExpanded
-                  ? `Réduire aux ${INITIAL_VISIBLE_SOURCES} premières`
+                  ? 'Réduire aux sources principales'
                   : `Voir les ${hiddenSourcesCount} autres`}
               </button>
-            )}
-            {noAdditionalReturned && (
-              <div
-                className="sources-empty muted"
-                data-testid="sources-no-additional"
-              >
-                No additional structured sources were returned by the backend.
-              </div>
             )}
           </div>
         </>

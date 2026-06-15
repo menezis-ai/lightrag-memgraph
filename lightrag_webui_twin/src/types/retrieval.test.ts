@@ -91,6 +91,19 @@ describe('parseAnswer', () => {
       },
     ]);
   });
+
+  it('strips a trailing References section from generated answers', () => {
+    expect(
+      parseAnswer([
+        'Conclusion\n\nAnswer text.\n\n### References\n- [1] runbook.pdf\n- [2] guide.pdf',
+      ]),
+    ).toEqual([
+      { type: 'text', value: 'Conclusion' },
+      { type: 'lineBreak' },
+      { type: 'lineBreak' },
+      { type: 'text', value: 'Answer text.' },
+    ]);
+  });
 });
 
 describe('relTime', () => {

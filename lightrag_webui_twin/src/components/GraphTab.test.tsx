@@ -348,6 +348,39 @@ describe('GraphTab — selection + detail', () => {
     expect(typeof paramsArg.q).toBe('string');
   });
 
+  it('saves Entity type changes through the graph entity PATCH payload', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes('/graph/entities/e_oracle') && init?.method === 'PATCH') {
+        return new Response(
+          JSON.stringify({ ...GRAPH_ENTITY_FIXTURES[0], type: 'PERSON' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithClient(<GraphTab {...defaultProps()} />);
+
+    await userEvent.click(screen.getByTestId('kg-entity-edit'));
+    await userEvent.selectOptions(screen.getByLabelText('Entity type'), 'PERSON');
+    await userEvent.click(screen.getByTestId('kg-entity-save'));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/graph/entities/e_oracle'),
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining('"type":"PERSON"'),
+        }),
+      );
+    });
+  });
+
   it('pinning an entity persists in localStorage and is restored on remount', async () => {
     const { unmount } = renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));

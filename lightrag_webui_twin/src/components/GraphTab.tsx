@@ -1980,22 +1980,9 @@ function AddEntityForm({
       className="kg-add-entity"
       data-testid="kg-add-entity-form"
       onSubmit={submit}
-      style={{
-        display: 'flex',
-        gap: 10,
-        flexWrap: 'wrap',
-        alignItems: 'flex-end',
-        padding: '10px 14px',
-        margin: '8px 0',
-        background: 'var(--color-surface-alt, #f5f7fa)',
-        border: '1px solid var(--color-border, #e2e6ec)',
-        borderRadius: 6,
-      }}
     >
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Name
-        </span>
+      <label className="kg-form-field kg-form-name">
+        <span>Name</span>
         <input
           type="text"
           value={name}
@@ -2004,13 +1991,10 @@ function AddEntityForm({
           aria-label="New entity name"
           autoFocus
           data-testid="kg-add-entity-name"
-          style={{ minWidth: 200 }}
         />
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Type
-        </span>
+      <label className="kg-form-field kg-form-type">
+        <span>Type</span>
         <select
           value={type}
           onChange={(e) => setType(e.target.value as GraphEntityType)}
@@ -2024,15 +2008,8 @@ function AddEntityForm({
           ))}
         </select>
       </label>
-      <label
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 4,
-          flex: '1 1 240px',
-        }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+      <label className="kg-form-field kg-form-summary">
+        <span>
           Summary <em style={{ opacity: 0.6 }}>(optional)</em>
         </span>
         <input
@@ -2044,7 +2021,7 @@ function AddEntityForm({
           data-testid="kg-add-entity-summary"
         />
       </label>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <div className="kg-form-actions">
         <span
           className="kg-type-swatch"
           style={{ background: colors[type], width: 14, height: 14 }}
@@ -2065,7 +2042,7 @@ function AddEntityForm({
       {duplicate && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="kg-form-error"
           data-testid="kg-add-entity-duplicate"
         >
           An entity named “{trimmed}” already exists.
@@ -2074,7 +2051,7 @@ function AddEntityForm({
       {error && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="kg-form-error"
           data-testid="kg-add-entity-error"
         >
           {error}
@@ -2149,34 +2126,10 @@ function AddRelationForm({
       className="kg-add-relation"
       data-testid="kg-add-rel-form"
       onSubmit={submit}
-      style={{
-        display: 'flex',
-        gap: 10,
-        flexWrap: 'wrap',
-        alignItems: 'flex-end',
-        padding: '10px 12px',
-        margin: '8px 0',
-        background: 'var(--color-surface-alt, #f5f7fa)',
-        border: '1px solid var(--color-border, #e2e6ec)',
-        borderRadius: 6,
-      }}
     >
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          From
-        </span>
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '4px 8px',
-            border: '1px solid var(--color-border, #e2e6ec)',
-            borderRadius: 4,
-            fontSize: 12,
-            background: 'var(--color-surface, #fff)',
-          }}
-        >
+      <label className="kg-form-field kg-form-endpoint">
+        <span>From</span>
+        <span className="kg-form-readonly">
           <span
             className="kg-type-swatch"
             style={{ background: colors[source.type] }}
@@ -2185,10 +2138,8 @@ function AddRelationForm({
           {source.name}
         </span>
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          To
-        </span>
+      <label className="kg-form-field kg-form-target">
+        <span>To</span>
         <select
           value={targetId}
           onChange={(e) => setTargetId(e.target.value)}
@@ -2206,17 +2157,8 @@ function AddRelationForm({
           )}
         </select>
       </label>
-      <label
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 4,
-          flex: '1 1 180px',
-        }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Label
-        </span>
+      <label className="kg-form-field kg-form-relation-label">
+        <span>Label</span>
         <input
           type="text"
           value={label}
@@ -2230,12 +2172,8 @@ function AddRelationForm({
           }}
         />
       </label>
-      <label
-        style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 160 }}
-      >
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Strength — {strength.toFixed(2)}
-        </span>
+      <label className="kg-form-field kg-form-strength">
+        <span>Strength — {strength.toFixed(2)}</span>
         <input
           type="range"
           min="0"
@@ -2247,7 +2185,7 @@ function AddRelationForm({
           data-testid="kg-add-rel-strength"
         />
       </label>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <div className="kg-form-actions">
         {target && (
           <span
             className="kg-type-swatch"
@@ -2270,7 +2208,7 @@ function AddRelationForm({
       {duplicate && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="kg-form-error"
           data-testid="kg-add-rel-duplicate"
         >
           A relation from “{source.name}” to this target already exists.

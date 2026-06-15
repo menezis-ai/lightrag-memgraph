@@ -42,9 +42,6 @@ COPY --from=webui-builder /webui/dist \
 
 WORKDIR /app
 
-# Patch lightrag application
-RUN mkdir -p /app/sitecustom \
- && echo 'from twindb_lightrag_memgraph import register; register(replace_ui=True, mount_server=True, shim_native_routes=True)' > /app/sitecustom/sitecustomize.py
-ENV PYTHONPATH=/app/sitecustom:${PYTHONPATH}
+ENV PYTHONPATH=/app:${PYTHONPATH}
 
-ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
+ENTRYPOINT ["python", "-m", "twindb_lightrag_memgraph.lightrag_server"]

@@ -149,7 +149,7 @@ describe('RetrievalTab — send', () => {
         'hello world',
       ),
     );
-    expect(document.querySelector('.msg-assistant')?.textContent).toContain(
+    expect(document.querySelector('.msg-assistant')?.textContent).not.toContain(
       'References',
     );
   });
@@ -498,11 +498,11 @@ describe('RetrievalTab — source cards', () => {
     expect(screen.getByTestId('source-6')).toBeInTheDocument();
     expect(screen.getByTestId('source-7')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Réduire aux 5 premières' }),
+      screen.getByRole('button', { name: 'Réduire aux sources principales' }),
     ).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('uses requested Top K for the expand count without inventing source cards', async () => {
+  it('does not show an expand button when requested Top K exceeds real returned sources', () => {
     const sources = Array.from({ length: 5 }, (_, i) => ({
       n: i + 1,
       type: 'file' as const,
@@ -536,18 +536,55 @@ describe('RetrievalTab — source cards', () => {
       '5 returned / 20 requested',
     );
     expect(
-      screen.getByRole('button', { name: 'Voir les 15 autres' }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: /Voir les .* autres/ }),
+    ).toBeNull();
     expect(screen.queryByTestId('source-6')).toBeNull();
+    expect(screen.queryByTestId('sources-no-additional')).toBeNull();
+  });
+
+  it('keeps cited sources visible even when they are outside the first five', async () => {
+    const sources = Array.from({ length: 7 }, (_, i) => ({
+      n: i + 1,
+      type: 'file' as const,
+      name: `source-${i + 1}.pdf`,
+      meta: `chunk ${i + 1}`,
+      score: 0.9 - i * 0.01,
+    }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_cited_outside_top_five',
+            title: 'Cited outside top five',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer [7]'],
+                sources,
+                requestedTopK: 20,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('source-1')).toBeInTheDocument();
+    expect(screen.getByTestId('source-5')).toBeInTheDocument();
+    expect(screen.getByTestId('source-7')).toBeInTheDocument();
+    expect(screen.queryByTestId('source-6')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Voir les 1 autres' }),
+    ).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole('button', { name: 'Voir les 15 autres' }),
+      screen.getByRole('button', { name: 'Voir les 1 autres' }),
     );
 
-    expect(screen.queryByTestId('source-6')).toBeNull();
-    expect(screen.getByTestId('sources-no-additional')).toHaveTextContent(
-      'No additional structured sources were returned by the backend.',
-    );
+    expect(screen.getByTestId('source-6')).toBeInTheDocument();
   });
 
   it('renders minimal Markdown while preserving clickable citations', () => {
