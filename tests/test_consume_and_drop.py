@@ -57,6 +57,32 @@ def _failing_session_factory(error_cls=RuntimeError, msg="Bolt connection lost")
     return failing_session
 
 
+def _fail_on_query_session_factory(needle, error_cls=RuntimeError, msg="boom"):
+    """Session factory whose run() succeeds until a query contains *needle*.
+
+    Lets us simulate a drop where the DETACH DELETE succeeds but the
+    follow-up DROP VECTOR INDEX fails — the path a blanket
+    ``except Exception: pass`` used to bury under a false success.
+    """
+
+    @asynccontextmanager
+    async def session_cm():
+        session = AsyncMock()
+
+        async def run(query, **params):
+            if needle in query:
+                raise error_cls(msg)
+            result = AsyncMock()
+            result.consume = AsyncMock()
+            result.single = AsyncMock(return_value=None)
+            return result
+
+        session.run = run
+        yield session
+
+    return session_cm
+
+
 @asynccontextmanager
 async def _noop_write_slot():
     yield
@@ -169,6 +195,49 @@ class TestVectorConsumeOnWrite:
         assert result["status"] == "success"
         # 1 DETACH DELETE + 1 DROP VECTOR INDEX = 2 consume() calls
         assert tracker.count == 2
+
+    async def test_drop_propagates_drop_index_failure(self, vec_store):
+        """A non-trivial DROP VECTOR INDEX failure must NOT be reported as success.
+
+        Regression for the silent ``except Exception: pass`` that swallowed
+        every error from DROP VECTOR INDEX. The DETACH DELETE succeeds; only the
+        index drop fails (e.g. connection reset). The old code returned
+        ``{"status": "success"}`` anyway — burying a half-completed drop. The
+        error must now propagate.
+        """
+        with (
+            patch.object(pool, "acquire_write_slot", _noop_write_slot),
+            patch.object(
+                pool,
+                "get_session",
+                _fail_on_query_session_factory(
+                    "DROP VECTOR INDEX", msg="Connection reset by peer"
+                ),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Connection reset by peer"):
+                await vec_store.drop()
+
+    async def test_drop_swallows_missing_index(self, vec_store):
+        """Idempotency preserved: a 'does not exist' index is not an error.
+
+        The DETACH DELETE succeeds; DROP VECTOR INDEX reports the index is
+        already gone. drop() must still return success — the legitimate
+        idempotent case the narrowed handler is allowed to swallow.
+        """
+        with (
+            patch.object(pool, "acquire_write_slot", _noop_write_slot),
+            patch.object(
+                pool,
+                "get_session",
+                _fail_on_query_session_factory(
+                    "DROP VECTOR INDEX",
+                    msg="Index vec_test_entities does not exist",
+                ),
+            ),
+        ):
+            result = await vec_store.drop()
+        assert result["status"] == "success"
 
 
 # ── DocStatus Storage ─────────────────────────────────────────────────
