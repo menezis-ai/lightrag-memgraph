@@ -94,12 +94,18 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('How do I restart Oracle?');
     await page.getByRole('button', { name: 'Send' }).click();
-    // `exact: true` avoids a strict-mode collision with the MSW
-    // streaming response, which echoes the query inside the
-    // assistant message ("Mock retrieval response for: How do I
-    // restart Oracle?").
+    // Without seed threads the new thread inherits its title from the
+    // query itself, so the literal "How do I restart Oracle?" appears
+    // BOTH inside `.history-item-title` (sidebar) AND `.msg-user`
+    // (conversation pane). Scope to the conversation pane to keep the
+    // intent ("the user message is rendered after Send") and dodge
+    // the strict-mode collision with the sidebar entry. `exact: true`
+    // still wards off the MSW streamed reply, which echoes the query
+    // inside "Mock retrieval response for: How do I restart Oracle?".
     await expect(
-      page.getByText('How do I restart Oracle?', { exact: true }),
+      page
+        .locator('.retrieval-conv')
+        .getByText('How do I restart Oracle?', { exact: true }),
     ).toBeVisible();
     // Without seed threads, the new assistant reply is the only one
     // carrying `source-1` — `.last()` still resolves unambiguously
