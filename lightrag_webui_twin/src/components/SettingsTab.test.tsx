@@ -65,7 +65,7 @@ describe('SettingsTab — Profile', () => {
     expect(screen.getByTestId('settings-profile')).toBeInTheDocument();
     expect(
       screen.getByTestId('settings-profile-name').textContent,
-    ).toBe('Claire Benoit');
+    ).toBe('Local Operator');
     expect(screen.getByText('Steward')).toBeInTheDocument();
   });
 

@@ -36,4 +36,19 @@ def __getattr__(name: str):
             "LightRAGServerSettings": LightRAGServerSettings,
             "get_settings": get_settings,
         }[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    # Lazy fallback for arbitrary submodules (e.g. ``tracing``, ``auth``,
+    # ``webui_router``). ``mock.patch("…server.<sub>.<attr>")`` and
+    # ``from twindb_lightrag_memgraph.server import <sub>`` both go through
+    # this ``__getattr__`` when the submodule has not been imported yet, so
+    # we must resolve it here instead of raising. The narrower
+    # ``create_app`` / ``settings`` branches above keep their dedicated
+    # paths so ``pydantic-settings`` stays optional for callers that never
+    # touch ``settings``.
+    import importlib
+
+    try:
+        return importlib.import_module(f".{name}", __name__)
+    except ImportError as exc:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}"
+        ) from exc
