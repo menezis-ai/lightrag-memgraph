@@ -19,7 +19,17 @@ The old `maquette-deploy/` prototype was removed as an obsolete artifact in PR #
 
 ## Distribution
 
-**Forgejo only** since 2026-05-11. GitHub (`origin` = `menezis-ai/lightrag-memgraph`) is being archived; do not push there. The active remote is `bunker` (Forgejo at `192.168.1.61`). The repo contains the **full** package — storage backends (KV / Vector / DocStatus), intelligence layer (TwinRAGEngine, ReAct, DSEP ontology), and server module. The previous public/private split (L1 GitHub + L2/L3 ZIP for BNP) is retired; no more `.gitignore` exclusions for `intelligence/` or `server/`.
+**Forgejo-first** since 2026-05-11. Day-to-day development pushes only to `bunker` (Forgejo at `192.168.1.61`); the `origin` GitHub remote (`menezis-ai/lightrag-memgraph`) is otherwise archived. The single sanctioned exception is the **`export-1.0.0` branch on GitHub**, which is the BNP delivery target rebuilt from `stable/0.6.x` via the procedure in `EXPORT_PROCEDURE.md` (prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/`, no Bun/Node in the BNP runtime path). Do not push `export-1.0.0` to `bunker`, and do not push anything else to `origin`.
+
+The repo contains the **full** package — storage backends (KV / Vector / DocStatus), intelligence layer (TwinRAGEngine, ReAct, DSEP ontology), and server module. The previous public/private split (L1 GitHub + L2/L3 ZIP for BNP) is retired; no more `.gitignore` exclusions for `intelligence/` or `server/`.
+
+## Doctrine layer
+
+`DOCTRINE.md` (repo root) is the strategic-intent layer that sits **above** this file. It explains why the architecture takes the shape it does — the non-fork doctrine, the additivity/idempotence/graceful-degradation contract, the duality narrative (Salah's "façade unifiée" vs Louis/Eric's "extension du patch déjà en prod"), and the catalogue raisonné of inscribed intentions. Reading order when inheriting an unfamiliar zone of code: code + header comment → introducing commit → `CLAUDE.md` (operational posture) → `DOCTRINE.md` (strategic frame) → project memories. Do not "simplify" an inscription whose intent you have not first decoded through that sequence — the canonical example is forking LightRAG, which would erase four distinct intentions (political, operational, cognitive, economic) at once.
+
+## Audits
+
+`docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. The current open one is `docs/audits/lightrag-interactions/audit-2026-06-13.md`, which flags two priorities to be aware of when touching `/twin/api/query` or retrieval: (1) Twin sources are still reconstructed by a second vector search after `aquery()` returns, so they are not guaranteed to be the context LightRAG actually grounded on — migrating the nominal path to LightRAG's `aquery_llm()` + native references is the structural fix; (2) the WebUI `tag_filter` is accepted by both UI and backend but `QueryParam` in LightRAG 1.4.9.11 does not know the field, so the filter is a no-op at retrieval time. Read the relevant audit before claiming a fix in those areas.
 
 ## Commands
 
@@ -40,9 +50,25 @@ LIGHTRAG_PORT=8080 python -m twindb_lightrag_memgraph.server
 
 Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightRAGServerSettings`. See `WEBUI-WIRING-PLAN.md` (repo root) for the full Couche 2 / Couche 3 contract this server exposes to the WebUI fork.
 
-### Production-style entrypoint (`twin_main.py`)
+### Environment variables
 
-`twin_main.py` (repo root) is the container CMD for a deployed Twin runtime: it calls `register(replace_ui=True, mount_server=True, shim_native_routes=True)` at module top, **then** imports and runs LightRAG's own `lightrag.api.lightrag_server.main`. The ordering is doctrine: `register()` MUST run before the LightRAG server module is imported — calling it from inside `lightrag_server` (e.g. via a sed-prepended import) creates a circular import because `create_app` doesn't exist yet mid-import. `Dockerfile.example` shows the minimal image wiring (illustrative, not turnkey).
+`ENV_VARIABLES.txt` (repo root) is the **canonical reference** for every variable read by this package — grouped by concern (overlay activation, IdP, folders, classification, …). Read it before hunting through code for env var names or defaults. Two load-bearing groups worth knowing without opening the file:
+
+- **Overlay activation (§0)** — `TWIN_REPLACE_UI` / `TWIN_MOUNT_SERVER` / `TWIN_SHIM_NATIVE_ROUTES`. A deployment whose boot already calls a bare `register()` activates the full overlay surface by setting these three vars — **no code change**. This is the mechanism that lets BNP flip overlays on/off without a redeploy.
+- **LightRAG-native vars are unchanged** — `OPENAI_API_KEY`, `LLM_BINDING`, `EMBEDDING_*`, `SUMMARY_LANGUAGE`, `TOKEN_SECRET`, etc. keep working as documented upstream. `ENV_VARIABLES.txt` lists only the variables this package introduces or consumes.
+
+### Production-style entrypoints
+
+Two entrypoints, same doctrine (`register()` before LightRAG server import), different launch surfaces:
+
+- `twin_main.py` (repo root) — readable reference entrypoint. Calls `register(replace_ui=True, mount_server=True, shim_native_routes=True)` at module top, then imports `lightrag.api.lightrag_server.main` and runs it. Use it when launching the runtime directly (e.g. `python twin_main.py`) or when the orchestrator can set `CMD ["python", "twin_main.py"]`.
+- `src/twindb_lightrag_memgraph/lightrag_server.py` — the **BNP container entrypoint**, `python -m twindb_lightrag_memgraph.lightrag_server`. Same three flags, but importable as a module so the production Dockerfile's `ENTRYPOINT` is `-m`-launchable. Its module docstring spells out the why: *"Do not rely on sitecustomize for production activation. Some launchers and python -m execution paths can import/execute the LightRAG server in a way that bypasses a module patched by name."* If you change either entrypoint's flags, change both — they're parallel.
+
+The ordering is doctrine: `register()` MUST run before the LightRAG server module is imported. Calling it from inside `lightrag_server` (e.g. via a sed-prepended import) creates a circular import because `create_app` doesn't exist yet mid-import.
+
+Two Docker assets, do not confuse them:
+- `Dockerfile` (repo root) — the **BNP production image**. Two-stage build: stage 1 = `oven/bun:1.3.6` builds `lightrag_webui_twin/` and strips `mockServiceWorker.js`; stage 2 = `fr2.icr.io/a100575-hprd/hkuds/lightrag:v1.4.9.11` base, editable `pip install -e`, dist embedded at both candidate paths that `_resolve_webui_dist()` looks at (`<package>/webui_dist/index.html` and the legacy flat `/app/twindb_lightrag_memgraph/webui_dist/`). `ENTRYPOINT` is `python -m twindb_lightrag_memgraph.lightrag_server`.
+- `Dockerfile.example` — illustrative minimal wiring, not the production build.
 
 ### Build the embedded WebUI
 
@@ -131,7 +157,7 @@ A push triggers 1–15 min of CI (global directive §6). Run unit + integration 
 
 ### Storage package (`src/twindb_lightrag_memgraph/`)
 
-- `__init__.py` — `register()` monkey-patches three dicts in `lightrag.kg`: `STORAGE_IMPLEMENTATIONS`, `STORAGE_ENV_REQUIREMENTS`, `STORAGES`. Module paths in `STORAGES` **must be absolute** (`twindb_lightrag_memgraph.kv_impl`, not relative) because `lazy_external_import` resolves with `package="lightrag"`. Idempotent via `_registered` flag. Also patches `lightrag.__version__` to append `+memgraph-{version}` so the WebUI shows `core_version` like `v1.4.9.11+memgraph-0.5.3`. Must be called **before** `LightRAG(...)`. Beyond storage, `register()` takes the runtime-overlay flags: `replace_ui=True` swaps the native `/webui` Mount for the embedded `webui_dist/` build; `mount_server=True` mounts the Twin sub-app under `twin_api_prefix` (default `/twin/api`) with chained lifespans; `shim_native_routes=True` prepends the `native_shims` router; `webui_stores` picks `"memgraph"` (default, persistent, needs `MEMGRAPH_URI`) vs `"seed"` (in-memory demo fixtures); `webui_categories_config` mirrors a JSON tag-category taxonomy on every boot (replace-not-merge, Config-as-Code); `classify`/`classification_*` args wire the MIP classification hook.
+- `__init__.py` — `register()` monkey-patches three dicts in `lightrag.kg`: `STORAGE_IMPLEMENTATIONS`, `STORAGE_ENV_REQUIREMENTS`, `STORAGES`. Module paths in `STORAGES` **must be absolute** (`twindb_lightrag_memgraph.kv_impl`, not relative) because `lazy_external_import` resolves with `package="lightrag"`. Idempotent via `_registered` flag. Also patches `lightrag.__version__` to append `+memgraph-{version}` so the WebUI shows `core_version` like `v1.4.9.11+memgraph-0.5.3`. Must be called **before** `LightRAG(...)` — the `lightrag_server.py` module-level entrypoint hardens that ordering against `python -m` import-bypass paths, see §Production-style entrypoints. Beyond storage, `register()` takes the runtime-overlay flags: `replace_ui=True` swaps the native `/webui` Mount for the embedded `webui_dist/` build; `mount_server=True` mounts the Twin sub-app under `twin_api_prefix` (default `/twin/api`) with chained lifespans; `shim_native_routes=True` prepends the `native_shims` router; `webui_stores` picks `"memgraph"` (default, persistent, needs `MEMGRAPH_URI`) vs `"seed"` (in-memory demo fixtures); `webui_categories_config` mirrors a JSON tag-category taxonomy on every boot (replace-not-merge, Config-as-Code); `classify`/`classification_*` args wire the MIP classification hook.
 - `_pool.py` — Two independent async Bolt drivers (write + read) as module-level singletons; both detect event-loop changes and rebuild on a thread-safe lock. `acquire_write_slot()` is an `asyncio.Semaphore` (default 10) wrapping every write. Read sessions (`get_read_session()`) are never throttled. URI scheme determines whether `database=` is passed natively (`neo4j://...`) or via `USE DATABASE` (`bolt://...`); on Memgraph Community, `USE DATABASE` fails on first attempt and is silently skipped thereafter. The graph backend (built into LightRAG) keeps **its own** driver — production has 3 pools by design.
 - `_buffered_graph.py` — `_BufferedGraphProxy` wraps the graph storage during `merge_nodes_and_edges`, accumulating `upsert_node`/`upsert_edge`, then flushes nodes-then-edges as 2 UNWIND queries. Supports read-your-own-writes via in-memory buffer checks before delegating. Reduces ~130 round-trips/doc to 2–3.
 - `_hooks.py` — Post-indexation hooks.
@@ -252,7 +278,7 @@ The `bind_request_folder` dependency (FastAPI dep used by `webui_router`) now ca
 
 ## Git workflow specific to this repo
 
-Forgejo-only since 2026-05-11. Push to `bunker` (Forgejo at `192.168.1.61`), **not** to `origin` (GitHub is being archived):
+Forgejo-first since 2026-05-11. Day-to-day development pushes to `bunker` (Forgejo at `192.168.1.61`); the `origin` GitHub remote is otherwise dormant:
 
 ```
 git push bunker <branch>
@@ -262,6 +288,6 @@ If `bunker` is missing: `git remote add bunker http://192.168.1.61:3000/<user>/<
 
 Stable branches are named `stable/X.Y.x` and protected on the Forgejo remote.
 
-The global directive §7 ("push to all remotes") does **not** apply here — the dual-remote era ended with the GitHub archive. The `origin` remote is left configured for historical pull only.
+The global directive §7 ("push to all remotes") does **not** apply here — the dual-remote era ended with the GitHub archive. The `origin` remote stays configured for two purposes only: historical pull, and the **`export-1.0.0`** BNP delivery branch (see `EXPORT_PROCEDURE.md`). That export branch is rebuilt from `stable/0.6.x` with prebuilt WebUI assets and explicitly pushed to `origin` — never to `bunker`.
 
 **Push doctrine (do not project onto the user)**: pushing to `bunker` from this Mac is normal. Do **not** say "tu pushes depuis le LAN" or any equivalent — that framing was a temporary travel-period assumption, obsolete from 2026-06-10. When closing a session with a commit, either push if it was asked / is the natural follow-up, or ask explicitly. Never assume Julien will do it himself. See memory `feedback_codex_brief_push.md` — that rule is scoped to Codex briefs only, not to Claude on this Mac.
