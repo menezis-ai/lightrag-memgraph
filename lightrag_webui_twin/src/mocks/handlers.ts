@@ -876,7 +876,13 @@ export const handlers = [
     return HttpResponse.json({ status: 'ok', version: API_VERSION });
   }),
   http.get(`${ANY}/pipeline_status`, () =>
-    HttpResponse.json({ busy: false, job_count: 0, latest_message: null }),
+    HttpResponse.json({
+      busy: false,
+      job_count: 0,
+      job_name: null,
+      latest_message: null,
+      history_messages: [],
+    }),
   ),
   http.get(`${ANY}/openapi`, ({ request }) => {
     const url = new URL(request.url);

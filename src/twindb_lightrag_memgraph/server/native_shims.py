@@ -38,7 +38,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import LoginRequest, LoginResponse
 
@@ -95,7 +95,9 @@ class _SimpleHealth(BaseModel):
 class _SimplePipelineStatus(BaseModel):
     busy: bool
     job_count: int
+    job_name: str | None = None
     latest_message: str | None = None
+    history_messages: list[str] = Field(default_factory=list)
 
 
 class _OkResponse(BaseModel):
@@ -481,8 +483,9 @@ def build_native_shims_router(
     async def pipeline_status() -> _SimplePipelineStatus:
         """Root-level alias of ``/documents/pipeline_status`` with projection.
 
-        LightRAG's payload is ~10 fields; the WebUI consumes only 3. We
-        keep the shim contract narrow to surface accidental over-coupling.
+        The Twin UI's Pipeline popover renders only these values. They come
+        straight from LightRAG's shared ``pipeline_status`` namespace; no
+        extra runtime details are fabricated in the frontend.
         """
         rag = get_rag()
         try:
@@ -495,12 +498,17 @@ def build_native_shims_router(
         except Exception as exc:
             logger.warning("twindb shim: pipeline_status fallback (%s)", exc)
             data = {}
+        history = data.get("history_messages") or []
+        if not isinstance(history, list):
+            history = []
 
         return _SimplePipelineStatus(
             busy=bool(data.get("busy", False)),
             # job_count = total docs being processed; LightRAG calls it ``docs``
             job_count=int(data.get("docs", 0)),
+            job_name=data.get("job_name") or None,
             latest_message=data.get("latest_message") or None,
+            history_messages=[str(message) for message in history],
         )
 
     @router.get("/openapi", dependencies=protected_deps)

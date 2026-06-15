@@ -45,7 +45,6 @@ describe('Icon', () => {
     expect(svg.classList.contains('topbar-bell')).toBe(true);
   });
 });
-
 describe('SourceIcon', () => {
   it.each([
     ['file', 'file-text'],
@@ -74,4 +73,3 @@ describe('SourceIcon', () => {
     expect(svg.getAttribute('width')).toBe('20');
   });
 });
-

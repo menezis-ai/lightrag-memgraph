@@ -235,6 +235,50 @@ describe('RetagModal — autocomplete & interactions', () => {
     // The styling is applied on the outer span wrapping the chip.
     expect(rmanSpan?.style.textDecoration).toBe('line-through');
   });
+
+  it('shows preview impact from the selected single document only', async () => {
+    render(
+      <RetagModal
+        open
+        doc={makeDoc({ tags: [], chunks_count: 7 })}
+        tagCatalog={TAG_FIXTURES}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('sugg-rman'));
+
+    const impact = screen.getByTestId('preview-impact');
+    expect(impact).toHaveTextContent('7');
+    expect(impact).toHaveTextContent('1 selected doc');
+    expect(impact).not.toHaveTextContent('418');
+    expect(impact).not.toHaveTextContent('3');
+    expect(impact).not.toHaveTextContent('untagged');
+  });
+
+  it('shows preview impact from selected bulk documents only', async () => {
+    render(
+      <RetagModal
+        open
+        docs={[
+          makeDoc({ doc_id: 'a', tags: [], chunks_count: 5 }),
+          makeDoc({ doc_id: 'b', tags: [], chunks_count: 9 }),
+        ]}
+        tagCatalog={TAG_FIXTURES}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('sugg-rman'));
+
+    const impact = screen.getByTestId('preview-impact');
+    expect(impact).toHaveTextContent('14');
+    expect(impact).toHaveTextContent('2 selected docs');
+    expect(impact).not.toHaveTextContent('418');
+    expect(impact).not.toHaveTextContent('100');
+  });
 });
 
 describe('RetagModal — submit & close', () => {

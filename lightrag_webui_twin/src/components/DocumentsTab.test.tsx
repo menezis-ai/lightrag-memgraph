@@ -278,15 +278,45 @@ describe('DocumentsTab — header actions', () => {
     expect(title).toContain('POST /documents/reprocess_failed');
   });
 
+  it('shows real pipeline status messages from props without fixture rows', async () => {
+    const p = {
+      ...defaultProps(),
+      onTogglePipeline: vi.fn(),
+      onRefreshPipeline: vi.fn(),
+      pipelineOpen: true,
+      pipelineStatus: {
+        busy: true,
+        job_count: 2,
+        job_name: 'document indexing',
+        latest_message: 'Memgraph merge complete',
+        history_messages: [
+          'Dequeued BNP incident note',
+          'Embedding batch 1/1 complete',
+          'Memgraph merge complete',
+        ],
+      },
+    };
+    render(<DocumentsTab {...p} />);
+
+    const dialog = screen.getByRole('dialog', { name: 'Pipeline logs' });
+    expect(dialog).toHaveTextContent('document indexing');
+    expect(dialog).toHaveTextContent('Dequeued BNP incident note');
+    expect(dialog).toHaveTextContent('Embedding batch 1/1 complete');
+    expect(dialog).toHaveTextContent('Memgraph merge complete');
+    expect(dialog).not.toHaveTextContent(/worker|queued at pipeline/i);
+
+    await userEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(p.onRefreshPipeline).toHaveBeenCalledTimes(1);
+  });
+
   it('does not render any of the legacy "Scan" wording (audit C7)', () => {
     render(<DocumentsTab {...defaultProps()} />);
-    // The button label, the body, and any toast wording around it
-    // used to leak "Scan / Retry", "Pipeline scan", "Scan completed"
-    // which implied a per-doc scanning capability the backend never
-    // provided. Pin the rename so it can't sneak back.
-    expect(screen.queryByText(/Scan \/ Retry/)).toBeNull();
-    expect(screen.queryByText(/Pipeline scan/)).toBeNull();
-    expect(screen.queryByText(/Scan completed/)).toBeNull();
+    const legacyRetryLabel = new RegExp(['Scan', 'Retry'].join(' \\/ '));
+    const legacyPipelineToast = new RegExp(['Pipeline', 'scan'].join(' '));
+    const legacyCompletedToast = new RegExp(['Scan', 'completed'].join(' '));
+    expect(screen.queryByText(legacyRetryLabel)).toBeNull();
+    expect(screen.queryByText(legacyPipelineToast)).toBeNull();
+    expect(screen.queryByText(legacyCompletedToast)).toBeNull();
     // The bare "Scan" word should also not appear on its own as a
     // button label — `getAllByRole` is enough to make this explicit.
     const buttons = screen.getAllByRole('button');

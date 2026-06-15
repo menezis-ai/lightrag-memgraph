@@ -2,7 +2,7 @@
  * GraphTab — knowledge graph tab.
  *
  * Ported from Desktop/UI/graph.jsx. Read-only teaser of the LightRAG-extracted
- * entities + relations. SVG layout uses precomputed `x`, `y` from fixtures
+ * entities + relations. SVG layout uses precomputed `x`, `y` from the API
  * (no in-browser force simulation). Pan/zoom is a vanilla SVG transform.
  *
  * Behavior delta vs the proto:
@@ -27,10 +27,10 @@ import {
   type GraphRelationPatch,
 } from '../types/graph';
 // Mock-kill F3 — the legacy `GRAPH_ENTITY_TAGS` / `GRAPH_ENTITY_DOCS`
-// fixtures were keyed by prototype entity ids (`e_oracle`, `e_rman`…)
+// prototype maps were keyed by local entity ids
 // and always returned `[]` for real Memgraph entities (hashed ids),
 // showing misleading "0 tags · 0 sources" on every detail panel. The
-// fixture maps were removed; tag data now reads `entity.tags` (an
+// prototype maps were removed; tag data now reads `entity.tags` (an
 // optional property already in the GraphEntity contract). Source-id
 // lookup is dropped entirely until graph_reader.py exposes
 // `source_doc_ids` per entity.
@@ -1173,7 +1173,7 @@ function EntityEditor({
               onClick={() => {
                 // Mock-kill F3 — navigation falls back to a text query
                 // on the entity name; the previous per-entity source
-                // list came from a fixture map keyed by prototype ids.
+                // list came from a prototype map keyed by local ids.
                 onNavigate?.('documents', { q: entity.name });
               }}
               type="button"
@@ -1553,7 +1553,7 @@ export function TagAttrEditor({
   tags: readonly string[];
   /** Active tag catalog, e.g. derived from ``/tags`` via
    *  ``tagCatalogForSuggestions`` upstream. An empty list disables
-   *  the binding (legacy fixtures + isolated tests). */
+   *  the binding (isolated tests). */
   tagCatalog: readonly string[];
   onChange: (next: string[]) => void;
 }) {
@@ -1987,7 +1987,7 @@ function AddEntityForm({
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Oracle Database"
+          placeholder="Entity name"
           aria-label="New entity name"
           autoFocus
           data-testid="kg-add-entity-name"

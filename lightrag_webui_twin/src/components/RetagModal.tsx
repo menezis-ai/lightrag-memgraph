@@ -157,15 +157,8 @@ function RetagModalBody({
     (s, d) => s + (d.chunks_count ?? 0),
     0,
   );
-  const previewChunks = bulk
-    ? Math.round(totalChunks * (pendingAdd.length > 0 ? 1 : 0.4)) ||
-      targets.length * 100
-    : pendingAdd.length > 0
-      ? 418
-      : pendingRemove.length > 0
-        ? 132
-        : 0;
-  const previewDocs = bulk ? targets.length : pendingAdd.length > 0 ? 3 : 2;
+  const previewChunks = totalChunks;
+  const previewDocs = targets.length;
 
   const totalChanges = pendingAdd.length + pendingRemove.length;
   const applyLabel =
@@ -422,7 +415,7 @@ function RetagModalBody({
                 </div>
                 <div className="stat">
                   <div className="num">{previewDocs}</div>
-                  <div className="lbl">docs share these</div>
+                  <div className="lbl">selected docs</div>
                 </div>
               </div>
               <div className="foot">
@@ -430,13 +423,14 @@ function RetagModalBody({
                 {isRemoving ? (
                   <>
                     Removing <span className="mini-chip">{pendingRemove[0]}</span>{' '}
-                    will untag {previewChunks} chunks · 87 of which will no
-                    longer be covered by any tag
+                    will update {previewChunks.toLocaleString()} chunks across{' '}
+                    {previewDocs} selected doc{previewDocs > 1 ? 's' : ''}
                   </>
                 ) : (
                   <>
                     Adding <span className="mini-chip">{pendingAdd[0]}</span> ·
-                    1 of the {previewDocs} docs is untagged
+                    will update {previewChunks.toLocaleString()} chunks across{' '}
+                    {previewDocs} selected doc{previewDocs > 1 ? 's' : ''}
                   </>
                 )}
               </div>

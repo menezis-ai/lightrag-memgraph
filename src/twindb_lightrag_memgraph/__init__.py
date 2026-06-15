@@ -1121,8 +1121,6 @@ def _patch_lightrag_server_create_app(
         app = orig_create_app(args)
         if shim_native_routes:
             _inject_native_shims(app)
-        if webui_dist is not None:
-            _replace_webui_mount(app, webui_dist)
         if twin_api_prefix is not None:
             _mount_twin_subapp(
                 app,
@@ -1131,6 +1129,8 @@ def _patch_lightrag_server_create_app(
                 webui_categories_config=webui_categories_config,
                 auth_args=args,
             )
+        if webui_dist is not None:
+            _mount_twin_ui(app, webui_dist, "/twin")
         return app
 
     wrapped_create_app.__wrapped__ = orig_create_app
@@ -1286,93 +1286,11 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
     invisible to LightRAG natives because ``/assets`` is not part of
     LightRAG's surface — the Twin sub-paths are additive.
     """
-    import json
     from pathlib import Path
 
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
-    from starlette.responses import HTMLResponse
     from starlette.routing import Mount
-
-    legacy_hash_guard = (
-        "<script>"
-        "(function(){"
-        "if(window.location.hash==='#/login'){"
-        "window.history.replaceState(null,'',window.location.pathname+window.location.search);"
-        "}"
-        "}());"
-        "</script>"
-    )
-
-    class _TemplatedStaticFiles(StaticFiles):
-        """StaticFiles subclass that substitutes ``__TWIN_CONFIG_JSON__`` in index.html.
-
-        Intercepts the lookup of ``index.html`` (both via the empty-path
-        directory-default and explicit ``GET /webui/index.html``) and
-        returns an :class:`HTMLResponse` with the placeholder replaced by
-        the runtime config JSON. All other paths fall through to
-        :meth:`StaticFiles.get_response` unchanged.
-
-        The template is read once and cached on the instance; the config
-        is also computed once at instance creation time. To pick up a new
-        config value, call ``register()`` again (the wrapper rebinds and
-        re-runs ``_replace_webui_mount``).
-        """
-
-        def __init__(
-            self,
-            *args,
-            runtime_config_json: str,
-            **kwargs,
-        ):
-            super().__init__(*args, **kwargs)
-            self._runtime_config_json = runtime_config_json
-            self._template_cache: str | None = None
-            self._template_path = Path(self.directory) / "index.html"
-            self._first_serve_logged = False
-
-        async def get_response(self, path: str, scope):
-            # Starlette normalizes the mount-relative path via os.path.normpath,
-            # so GET /webui/ arrives as path == "." (NOT "" or "/"). Explicit
-            # GET /webui/index.html arrives as path == "index.html". Both
-            # resolve to the same file → both are substitution targets.
-            if path in (".", "index.html"):
-                if not self._first_serve_logged:
-                    self._first_serve_logged = True
-                    logger.info(
-                        "Chargement de TwinRAG UI réussie ✨💅 "
-                        "(first index.html served from %s)",
-                        self._template_path,
-                    )
-                if self._template_cache is None:
-                    try:
-                        self._template_cache = self._template_path.read_text(
-                            encoding="utf-8"
-                        )
-                    except FileNotFoundError:
-                        logger.error(
-                            "twindb webui template not found at %s",
-                            self._template_path,
-                        )
-                        return await super().get_response(path, scope)
-                html = self._template_cache.replace(
-                    "__TWIN_CONFIG_JSON__",
-                    self._runtime_config_json,
-                )
-                if legacy_hash_guard not in html:
-                    html = html.replace("</head>", f"{legacy_hash_guard}</head>", 1)
-                return HTMLResponse(
-                    html,
-                    headers={
-                        # The Vite bundle filenames are content-hashed. If a
-                        # browser reuses an old index.html after a deploy, it
-                        # asks for deleted /assets/*.js files and the SPA boots
-                        # blank. Revalidate the HTML entrypoint every time;
-                        # immutable caching remains safe for hashed assets.
-                        "Cache-Control": "no-store, max-age=0",
-                    },
-                )
-            return await super().get_response(path, scope)
 
     webui_route = None
     for route in app.router.routes:
@@ -1388,14 +1306,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         )
         return
 
-    runtime_config_json = json.dumps(_build_runtime_config())
-
-    webui_route.app = _TemplatedStaticFiles(
-        directory=webui_dist,
-        html=True,
-        check_dir=True,
-        runtime_config_json=runtime_config_json,
-    )
+    webui_route.app = _build_twin_static_files(webui_dist)
 
     # Side-mount /assets at root so the dist's absolute references resolve.
     dist_path = Path(webui_dist)
@@ -1435,6 +1346,142 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         webui_dist,
     )
     logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount /webui ready)")
+
+
+def _build_twin_static_files(webui_dist: str):
+    """Return a StaticFiles app that injects the Twin runtime config."""
+    import json
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import HTMLResponse
+
+    legacy_hash_guard = (
+        "<script>"
+        "(function(){"
+        "if(window.location.hash==='#/login'){"
+        "window.history.replaceState(null,'',window.location.pathname+window.location.search);"
+        "}"
+        "}());"
+        "</script>"
+    )
+    runtime_config_json = json.dumps(_build_runtime_config())
+
+    class _TemplatedStaticFiles(StaticFiles):
+        """StaticFiles subclass that substitutes ``__TWIN_CONFIG_JSON__`` in index.html.
+
+        Intercepts the lookup of ``index.html`` (both via the empty-path
+        directory-default and explicit ``GET /twin/index.html`` /
+        ``GET /webui/index.html``) and returns an :class:`HTMLResponse`
+        with the placeholder replaced by the runtime config JSON. All
+        other paths fall through to :meth:`StaticFiles.get_response`
+        unchanged.
+        """
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._template_cache: str | None = None
+            self._template_path = Path(self.directory) / "index.html"
+            self._first_serve_logged = False
+
+        async def get_response(self, path: str, scope):
+            # Starlette normalizes the mount-relative path via os.path.normpath,
+            # so GET /twin/ arrives as path == "." (NOT "" or "/"). Explicit
+            # GET /twin/index.html arrives as path == "index.html". Both
+            # resolve to the same file, so both are substitution targets.
+            if path in (".", "index.html"):
+                if not self._first_serve_logged:
+                    self._first_serve_logged = True
+                    logger.info(
+                        "Chargement de TwinRAG UI réussie ✨💅 "
+                        "(first index.html served from %s)",
+                        self._template_path,
+                    )
+                if self._template_cache is None:
+                    try:
+                        self._template_cache = self._template_path.read_text(
+                            encoding="utf-8"
+                        )
+                    except FileNotFoundError:
+                        logger.error(
+                            "twindb webui template not found at %s",
+                            self._template_path,
+                        )
+                        return await super().get_response(path, scope)
+                html = self._template_cache.replace(
+                    "__TWIN_CONFIG_JSON__",
+                    runtime_config_json,
+                )
+                if legacy_hash_guard not in html:
+                    html = html.replace("</head>", f"{legacy_hash_guard}</head>", 1)
+                return HTMLResponse(
+                    html,
+                    headers={
+                        # The Vite bundle filenames are content-hashed. If a
+                        # browser reuses an old index.html after a deploy, it
+                        # asks for deleted /assets/*.js files and the SPA boots
+                        # blank. Revalidate the HTML entrypoint every time;
+                        # immutable caching remains safe for hashed assets.
+                        "Cache-Control": "no-store, max-age=0",
+                    },
+                )
+            return await super().get_response(path, scope)
+
+    return _TemplatedStaticFiles(
+        directory=webui_dist,
+        html=True,
+        check_dir=True,
+    )
+
+
+def _mount_twin_ui(app, webui_dist: str, prefix: str = "/twin") -> None:
+    """Mount the Twin UI at a stable additive path.
+
+    ``/webui`` is owned by upstream LightRAG and has changed across versions.
+    ``/twin`` is ours. Mount this after ``/twin/api`` so API routes keep
+    precedence over the static UI mount.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount(prefix, _build_twin_static_files(webui_dist), name="twin-ui")
+
+    dist_path = Path(webui_dist)
+    assets_dir = dist_path / "assets"
+    if assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="twin-assets-root",
+        )
+
+    for fname in ("favicon.svg", "favicon.ico", "favicon.png", "icons.svg"):
+        fpath = dist_path / fname
+        if fpath.is_file():
+            captured = str(fpath)
+
+            async def _serve(path=captured):
+                return FileResponse(path)
+
+            app.get(f"/{fname}", include_in_schema=False)(_serve)
+
+    msw_path = dist_path / "mockServiceWorker.js"
+    if msw_path.is_file():
+        captured_msw = str(msw_path)
+
+        async def _serve_msw():
+            return FileResponse(captured_msw, media_type="application/javascript")
+
+        app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
+
+    logger.info(
+        "twindb: Twin UI mounted at %s → %s (with __TWIN_CONFIG_JSON__ substitution)",
+        prefix,
+        webui_dist,
+    )
+    logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount %s ready)", prefix)
 
 
 def _mount_twin_subapp(
@@ -1668,6 +1715,10 @@ def _mount_twin_subapp(
                     "twindb: Twin overlay stores switched to Memgraph "
                     "(folders=%s) — fresh folders boot empty.",
                     ",".join(folder.id for folder in catalog.folders),
+                )
+                logger.info(
+                    "Chargement de TwinRAG backend Memgraph réussi "
+                    "(UI disponible sur /twin/, API disponible sur /twin/api)"
                 )
             except Exception:
                 logger.exception(

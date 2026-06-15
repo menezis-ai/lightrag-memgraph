@@ -260,7 +260,7 @@ describe('Helpers — requestBodyFor', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/stream', s: '' }),
     );
-    expect(b.query).toMatch(/Oracle RMAN/);
+    expect(b.query).toMatch(/indexed knowledge base/);
     expect(b).not.toHaveProperty('tag_filter');
   });
 
@@ -268,16 +268,16 @@ describe('Helpers — requestBodyFor', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/data', s: '' }),
     );
-    expect(b.query).toMatch(/Oracle RMAN/);
+    expect(b.query).toMatch(/indexed knowledge base/);
     expect(b.chunk_top_k).toBe(20);
-    expect(b.tag_filter.all).toEqual(['rman']);
+    expect(b.tag_filter.all).toEqual(['tag-name']);
   });
 
   it('keeps tag_filter on the native /query/data path too', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/query/data', s: '' }),
     );
-    expect(b.tag_filter.all).toEqual(['rman']);
+    expect(b.tag_filter.all).toEqual(['tag-name']);
   });
 });
 
@@ -352,7 +352,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     expect(body.data.chunks).toHaveLength(1);
     // /query/data is the one endpoint that legitimately echoes
     // tag_filter in metadata (audit C2 wired it via TAGGED_WITH).
-    expect(body.metadata.tag_filter.all).toEqual(['rman']);
+    expect(body.metadata.tag_filter.all).toEqual(['tag-name']);
   });
 
   it('mockResponseFor /documents (GET) returns paginated items + total', () => {
@@ -362,7 +362,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
       200,
     );
     const body = JSON.parse(r.body);
-    expect(body.total).toBe(247);
-    expect(body.items[0].source).toBe('oracle-restart.pdf');
+    expect(body.total).toBe(1);
+    expect(body.items[0].source).toBe('source-document.pdf');
   });
 });

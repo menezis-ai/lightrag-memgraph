@@ -38,11 +38,7 @@ import {
   type RetrievalThread,
 } from '../types/retrieval';
 
-// Versioned key — bumped to invalidate stale demo seeds when the seeded
-// conversation shape changes (v2: full assistant answer + citations on the
-// first seed thread; v1 had a "To restart RMAN…" stub that made the tab look
-// broken on first paint; v3: invalidates fixture threads persisted by
-// pre-production demo visits on the same origin — prod must boot blank).
+// Versioned key — bumped to invalidate stale pre-production local threads.
 const THREADS_STORAGE_KEY = 'twin-rag.threads.v3';
 const STREAM_TICK_MS = 70;
 const INITIAL_VISIBLE_SOURCES = 5;
@@ -108,9 +104,9 @@ const missingRetrievalBackend: NonNullable<RetrievalTabProps['onSendQuery']> =
   });
 
 const DEFAULT_SUGGESTIONS = [
-  'How do I restart Oracle on RHEL 9?',
-  'Common RMAN backup errors',
-  'CFT troubleshooting checklist',
+  'Ask about a source in this folder',
+  'Summarize recent indexed documents',
+  'Find operational procedures by tag',
 ];
 
 interface ConversationHistoryMessage {

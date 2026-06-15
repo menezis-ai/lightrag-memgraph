@@ -94,6 +94,50 @@ def test_protected_routes_accept_valid_bearer():
     assert response.status_code == 200
 
 
+def test_pipeline_status_projects_real_lightrag_history(monkeypatch):
+    async def fake_get_namespace_data(name, *, workspace):
+        assert name == "pipeline_status"
+        assert workspace == "ws-test"
+        return {
+            "busy": True,
+            "docs": 2,
+            "job_name": "document indexing",
+            "latest_message": "Memgraph merge complete",
+            "history_messages": [
+                "Dequeued BNP incident note",
+                "Embedding batch 1/1 complete",
+                "Memgraph merge complete",
+            ],
+            "ignored": "not part of the Twin contract",
+        }
+
+    monkeypatch.setattr(
+        "lightrag.kg.shared_storage.get_namespace_data",
+        fake_get_namespace_data,
+    )
+
+    app = FastAPI()
+
+    class _FakeRag:
+        workspace = "ws-test"
+
+    app.include_router(build_native_shims_router(lambda: _FakeRag()))
+    response = TestClient(app).get("/pipeline_status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "busy": True,
+        "job_count": 2,
+        "job_name": "document indexing",
+        "latest_message": "Memgraph merge complete",
+        "history_messages": [
+            "Dequeued BNP incident note",
+            "Embedding batch 1/1 complete",
+            "Memgraph merge complete",
+        ],
+    }
+
+
 def test_flag_off_keeps_routes_anonymous():
     """LightRAG compat axis: with auth_dependency=None the routes stay
     public — opt-out is honoured."""

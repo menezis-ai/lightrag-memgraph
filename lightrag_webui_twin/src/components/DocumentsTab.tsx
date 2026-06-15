@@ -17,6 +17,7 @@ import { ClassPill } from './ClassPill';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
+import type { PipelineStatusResponse } from '../api/resources';
 import type { Document, DocumentStatus } from '../types/document';
 import type { ClassificationValue } from '../types/classification';
 import type { TagEntry } from '../types/tag';
@@ -63,6 +64,12 @@ export interface DocumentsTabProps {
   onOpenBulkRetag: (docs: readonly Document[]) => void;
   onAddToast: (title: string, sub?: string) => void;
   onScanRetry?: (failedCount: number) => void;
+  pipelineStatus?: PipelineStatusResponse | null;
+  pipelineOpen?: boolean;
+  pipelineLoading?: boolean;
+  pipelineError?: string | null;
+  onTogglePipeline?: () => void;
+  onRefreshPipeline?: () => void;
   /** Delete a single document (cascade), per #149. */
   onDeleteDoc?: (doc: Document) => void;
   /** Bulk delete the selected documents (cascade), per #149. */
@@ -87,6 +94,12 @@ export function DocumentsTab({
   onOpenBulkRetag,
   onAddToast,
   onScanRetry,
+  pipelineStatus,
+  pipelineOpen = false,
+  pipelineLoading = false,
+  pipelineError = null,
+  onTogglePipeline,
+  onRefreshPipeline,
   onDeleteDoc,
   onBulkDelete,
   nowMs,
@@ -200,6 +213,14 @@ export function DocumentsTab({
   };
   const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
   const openBulk = () => onOpenBulkRetag(selectedDocs);
+  const pipelineMessages = useMemo(() => {
+    const messages = [...(pipelineStatus?.history_messages ?? [])];
+    const latest = pipelineStatus?.latest_message;
+    if (latest && messages[messages.length - 1] !== latest) {
+      messages.push(latest);
+    }
+    return messages.slice(-80);
+  }, [pipelineStatus]);
   const triggerBulkDelete = () => {
     if (!onBulkDelete || selectedDocs.length === 0) return;
     if (!bulkDeleteArmed) {
@@ -219,14 +240,126 @@ export function DocumentsTab({
       <div className="docs-header">
         <h1>Document management</h1>
         <div className="docs-header-actions">
-          {/* Audit C7: this button used to be labelled "Scan / Retry"
-              and surfaced toasts about "Pipeline scan started" /
-              "Scan completed". The only backend the handler actually
-              calls is ``POST /documents/reprocess_failed`` (LightRAG
-              has no per-doc scan that produces an observable side
-              effect). The honest UX is: enabled iff there is at
-              least one failed source, and labelled for what it
-              actually does — never "Scan". */}
+          <div className="pipeline-control">
+            <button
+              type="button"
+              className={`btn${pipelineOpen ? ' active' : ''}`}
+              title="Pipeline logs"
+              aria-expanded={pipelineOpen}
+              aria-haspopup="dialog"
+              onClick={() => onTogglePipeline?.()}
+            >
+              <Icon name="activity" size={14} />
+              Pipeline
+              {pipelineStatus?.busy && (
+                <span className="pipeline-badge live" aria-label="Pipeline busy">
+                  live
+                </span>
+              )}
+            </button>
+            {pipelineOpen && (
+              <div
+                className="pipeline-popover"
+                role="dialog"
+                aria-label="Pipeline logs"
+              >
+                <div className="pp-header">
+                  <div className="pp-title">
+                    <Icon name="activity" size={14} />
+                    Pipeline
+                    <span
+                      className={`pp-state-badge ${
+                        pipelineStatus?.busy ? 'busy' : 'paused'
+                      }`}
+                    >
+                      <span className="pp-state-dot" />
+                      {pipelineStatus?.busy ? 'Busy' : 'Idle'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn small"
+                    aria-label="Close pipeline logs"
+                    onClick={() => onTogglePipeline?.()}
+                  >
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
+
+                <div className="pp-section">
+                  <div className="pp-stats">
+                    <div>
+                      <span className="pp-stat-num">
+                        {pipelineStatus?.job_count ?? 0}
+                      </span>
+                      <span className="pp-stat-lbl">Jobs</span>
+                    </div>
+                    <div>
+                      <span className="pp-stat-num">
+                        {pipelineMessages.length}
+                      </span>
+                      <span className="pp-stat-lbl">Messages</span>
+                    </div>
+                    <div className="pp-job-name">
+                      <span className="pp-stat-num">
+                        {pipelineStatus?.job_name ?? '—'}
+                      </span>
+                      <span className="pp-stat-lbl">Current job</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pp-section">
+                  <h3>Latest</h3>
+                  {pipelineError ? (
+                    <p className="pp-error">{pipelineError}</p>
+                  ) : pipelineLoading && !pipelineStatus ? (
+                    <p className="pp-empty">Loading pipeline status…</p>
+                  ) : pipelineStatus?.latest_message ? (
+                    <p className="pp-latest">{pipelineStatus.latest_message}</p>
+                  ) : (
+                    <p className="pp-empty">No pipeline message reported yet.</p>
+                  )}
+                </div>
+
+                <div className="pp-section">
+                  <h3>History</h3>
+                  {pipelineMessages.length > 0 ? (
+                    <ol className="pp-log-list">
+                      {pipelineMessages.map((message, index) => (
+                        <li key={`${index}-${message}`}>
+                          <span className="pp-log-index">
+                            {String(index + 1).padStart(2, '0')}
+                          </span>
+                          <span className="pp-log-message">{message}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="pp-empty">No history from backend.</p>
+                  )}
+                </div>
+
+                <div className="pp-footer">
+                  <span className="pp-footnote">
+                    {pipelineLoading ? 'Refreshing…' : 'Live status'}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => onRefreshPipeline?.()}
+                  >
+                    <Icon name="refresh" size={13} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Audit C7: the only backend this action calls is
+              ``POST /documents/reprocess_failed``. It stays enabled
+              only when at least one source is failed and is labelled
+              for that exact batch retry. */}
           <button
             type="button"
             className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
@@ -399,18 +532,6 @@ export function DocumentsTab({
             onClick={openBulk}
           >
             <Icon name="tags" size={13} /> Retag {selected.size} sources
-          </button>
-          <button
-            type="button"
-            className="bulk-action"
-            onClick={() =>
-              onAddToast(
-                `Re-processing ${selected.size} sources`,
-                'Queued at pipeline · workers picking up now',
-              )
-            }
-          >
-            <Icon name="refresh" size={13} /> Re-process
           </button>
           {onBulkDelete && (
             <button

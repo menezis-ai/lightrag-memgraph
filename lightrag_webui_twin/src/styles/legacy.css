@@ -1296,48 +1296,74 @@ input:focus, textarea:focus, select:focus { outline: none; }
 }
 .pp-section-head { margin-bottom: 8px; }
 
-.pp-workers { list-style: none; margin: 0; padding: 0; }
-.pp-workers li {
-  display: grid; grid-template-columns: 8px 1fr auto auto;
-  gap: 10px; align-items: center;
-  padding: 5px 0;
+.pipeline-control { position: relative; }
+.pipeline-badge.live {
+  min-width: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pp-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--font-mono);
+}
+.pp-log-list li {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 0.5px solid color-mix(in oklab, var(--color-border-default) 70%, transparent);
+}
+.pp-log-list li:first-child { border-top: 0; }
+.pp-log-index {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.pp-log-message,
+.pp-latest {
+  color: var(--color-text-primary);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.pp-latest,
+.pp-empty,
+.pp-error {
+  margin: 0;
+}
+.pp-empty {
+  color: var(--color-text-tertiary);
   font-size: 11.5px;
 }
-.pp-dot { width: 7px; height: 7px; border-radius: 50%; }
-.pp-dot.ok { background: var(--color-status-completed, #00875A); }
-.pp-dot.warn { background: var(--color-status-processing, #C18900); }
-.pp-dot.error { background: var(--color-status-failed, #B42318); }
-.pp-w-thr { color: var(--color-text-secondary); font-size: 10.5px; }
-.pp-w-note { color: var(--color-text-tertiary); font-size: 10.5px; font-style: italic; }
-
-.pp-queue { list-style: none; margin: 0; padding: 0; }
-.pp-q-row {
-  display: grid; grid-template-columns: 1fr 110px 56px;
-  gap: 10px; align-items: center;
-  padding: 5px 0;
+.pp-error {
+  color: var(--color-status-failed, #B42318);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
 }
-.pp-q-name {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-size: 11px;
-}
-.pp-q-bar {
-  display: block; height: 4px; width: 100%;
-  background: var(--color-background-secondary);
-  border-radius: 2px; overflow: hidden;
-}
-.pp-q-bar > span {
-  display: block; height: 100%;
-  background: var(--twin-accent);
-  transition: width 200ms;
-}
-.pp-q-state { font-size: 10.5px; color: var(--color-text-tertiary); }
-.pp-q-eta { font-size: 10.5px; color: var(--color-text-secondary); text-align: right; }
-.pp-q-row.queued .pp-q-name { color: var(--color-text-tertiary); }
 
 .pp-stats { display: flex; gap: 24px; }
 .pp-stats > div { display: flex; flex-direction: column; }
 .pp-stat-num { font-family: var(--font-mono); font-size: 18px; color: var(--color-text-primary); font-weight: 500; }
 .pp-stat-lbl { font-size: 10px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.pp-job-name {
+  min-width: 0;
+  flex: 1;
+}
+.pp-job-name .pp-stat-num {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-footnote {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
 
 .pp-state-badge {
   display: inline-flex; align-items: center; gap: 5px;

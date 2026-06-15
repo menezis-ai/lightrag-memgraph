@@ -4,10 +4,7 @@
  * Data flow (S4a):
  *   - Each resource has a typed query hook (`useDocuments`, `useTags`, ...)
  *     that hits `/documents`, `/tags`, etc. via `apiFetch`.
- *   - In dev/MSW demo mode, unresolved queries may display fixtures so first
- *     paint stays useful while the worker boots.
- *   - In production real-backend mode, local fixture fallbacks are disabled:
- *     backend failures render an explicit error instead of stale CIB data.
+ *   - Backend failures render an explicit error instead of local sample data.
  *   - Components keep their prop-driven signature so unit tests pass arrays
  *     directly without a QueryClient wrapper.
  *
@@ -46,6 +43,7 @@ import {
   useGraphEntities,
   useGraphRelations,
   useNotifications,
+  usePipelineStatus,
   useRejectTag,
   useRequestTag,
   useTagCategories,
@@ -56,19 +54,7 @@ import {
 import { ApiError, getTwinRuntimeConfig, setActiveFolder } from './api/client';
 import { api } from './api/resources';
 import { mapTwinQueryResponseForRetrievalTab } from './api/twinQueryResponse';
-import {
-  ACTIVITY_FIXTURES,
-  ACTIVITY_NOW_MS,
-  DOCUMENT_FIXTURES,
-  FORMAT_CATEGORY_FIXTURES,
-  GRAPH_ENTITY_FIXTURES,
-  GRAPH_RELATION_FIXTURES,
-  NOTIFICATION_FIXTURES,
-  TAG_CATEGORY_FIXTURES,
-  TAG_FIXTURES,
-  FOLDER_FIXTURES,
-  makeSampleThreads,
-} from './fixtures';
+import { FORMAT_CATEGORIES } from './constants/formatCategories';
 import type { Document } from './types/document';
 import type { TagCurrentUser } from './types/tag';
 import type { Theme, Folder } from './types/topbar';
@@ -124,12 +110,6 @@ const TagsTab = lazy(() =>
   import('./components/TagsTab').then(({ TagsTab }) => ({ default: TagsTab })),
 );
 
-const FIXTURE_FALLBACK_ENABLED = shouldUseFixtureFallback({
-  dev: Boolean(import.meta.env.DEV),
-  forceMsw: import.meta.env.VITE_FORCE_MSW,
-  useMsw: import.meta.env.VITE_USE_MSW,
-});
-
 // eslint-disable-next-line react-refresh/only-export-components -- pure helper used by App; moving it costs more than the HMR full-reload it triggers.
 export function shouldUseFixtureFallback(env: {
   dev: boolean;
@@ -152,15 +132,11 @@ interface BackendResourceError {
   message: string;
 }
 
-function resolveQueryData<T>(query: QueryLike<T>, fixture: T): T | undefined {
-  return query.data ?? (FIXTURE_FALLBACK_ENABLED ? fixture : undefined);
-}
-
 function resourceError<T>(
   label: string,
   query: QueryLike<T>,
 ): BackendResourceError | null {
-  if (FIXTURE_FALLBACK_ENABLED || query.data || query.isLoading || !query.isError) {
+  if (query.data || query.isLoading || !query.isError) {
     return null;
   }
   return { label, message: formatBackendError(query.error) };
@@ -222,6 +198,7 @@ function AppShell() {
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
+  const [pipelineOpen, setPipelineOpen] = useState(false);
   const [optimisticUploadDocs, setOptimisticUploadDocs] = useState<
     readonly Document[]
   >([]);
@@ -233,8 +210,8 @@ function AppShell() {
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
   const retagOpen = retagDoc !== null || retagBulk !== null;
 
-  // Data — every tab is backed by a query, seeded with the corresponding
-  // fixture so first paint is instant even if the worker is still booting.
+  // Data — every visible resource comes from the API query layer. No local
+  // sample fallback is allowed on the operator surface.
   const docs = useDocuments(
     { folder },
     { enabled: authReady && tab === 'documents' },
@@ -257,19 +234,15 @@ function AppShell() {
   const activity = useActivity({}, { enabled: authReady });
   const graphEntities = useGraphEntities({ enabled: authReady && tab === 'graph' });
   const graphRelations = useGraphRelations({ enabled: authReady && tab === 'graph' });
+  const pipelineStatus = usePipelineStatus({
+    enabled: authReady && tab === 'documents' && pipelineOpen,
+  });
 
   // Notifications carry mutable client state (read/cleared) on top of the
   // query data. Keep only local overrides in React state so refetches can
   // merge without an effect-driven mirror.
   const [readNotificationIds, setReadNotificationIds] = useState<ReadonlySet<string>>(
-    () =>
-      new Set(
-        FIXTURE_FALLBACK_ENABLED
-          ? NOTIFICATION_FIXTURES.filter((notification) => notification.read).map(
-              (notification) => notification.id,
-            )
-          : [],
-      ),
+    () => new Set(),
   );
   const [clearedNotificationIds, setClearedNotificationIds] = useState<
     ReadonlySet<string>
@@ -279,8 +252,7 @@ function AppShell() {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  const notificationSource =
-    resolveQueryData(notificationsQ, NOTIFICATION_FIXTURES) ?? [];
+  const notificationSource = notificationsQ.data ?? [];
   const notifications = notificationSource
     .filter((notification) => !clearedNotificationIds.has(notification.id))
     .map((notification) =>
@@ -301,7 +273,7 @@ function AppShell() {
         current: item.id === folder,
       }));
     }
-    return resolveQueryData(folders, FOLDER_FIXTURES) ?? [];
+    return folders.data ?? [];
   }, [configuredFolders, folder, folders]);
   const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
 
@@ -321,8 +293,7 @@ function AppShell() {
     // ``DocumentsTab``, so we only land here on the failed-batch
     // path. No "queued" wording — the backend doesn't expose an
     // observable queue; we honour the request, the operator hears
-    // back with the failed_count summary. No more "Pipeline scan"
-    // / "Scan completed" copy anywhere in the operator surface.
+    // back with the failed_count summary.
     pushToast({
       kind: 'propagating',
       title: 'Re-processing failed sources',
@@ -982,16 +953,12 @@ function AppShell() {
     resourceError('Graph relations', graphRelations),
   ].filter((err): err is BackendResourceError => err !== null);
 
-  // Resolved props. In prod real-backend mode, do not silently fall back to
-  // local fixtures: empty arrays + the backend error banner make the failure
-  // visible instead of showing stale demo data.
+  // Resolved props. Do not silently fall back to local samples: empty arrays
+  // + the backend error banner make failures visible instead of showing stale
+  // sample data.
   const backendDocList = useMemo(
-    () =>
-      docs.data?.items ??
-      (FIXTURE_FALLBACK_ENABLED
-        ? DOCUMENT_FIXTURES.filter((doc) => doc.folder === folder)
-        : []),
-    [docs.data?.items, folder],
+    () => docs.data?.items ?? [],
+    [docs.data?.items],
   );
   const docList = useMemo(() => {
     const backendTrackIds = new Set(
@@ -1042,19 +1009,13 @@ function AppShell() {
         (b.review!.state === 'modified' ? 1 : 0),
     );
   const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
-  const tagList = resolveQueryData(tags, TAG_FIXTURES) ?? [];
+  const tagList = tags.data ?? [];
   const tagCatalog = tagCatalogForSuggestions(tagList);
-  const tagCategoryList = resolveQueryData(tagCategories, TAG_CATEGORY_FIXTURES) ?? [];
-  const activityFallback = resolveQueryData(activity, {
-    items: ACTIVITY_FIXTURES,
-    total: ACTIVITY_FIXTURES.length,
-    nowMs: ACTIVITY_NOW_MS,
-  });
-  const activityEvents = activity.data?.items ?? activityFallback?.items ?? [];
-  const activityNow = activity.data?.nowMs ?? activityFallback?.nowMs;
-  const graphEntityList = resolveQueryData(graphEntities, GRAPH_ENTITY_FIXTURES) ?? [];
-  const graphRelationList =
-    resolveQueryData(graphRelations, GRAPH_RELATION_FIXTURES) ?? [];
+  const tagCategoryList = tagCategories.data ?? [];
+  const activityEvents = activity.data?.items ?? [];
+  const activityNow = activity.data?.nowMs;
+  const graphEntityList = graphEntities.data ?? [];
+  const graphRelationList = graphRelations.data ?? [];
 
   if (auth.isCheckingAuth || auth.needsLogin) {
     return (
@@ -1148,6 +1109,18 @@ function AppShell() {
               onDeleteDoc={(d) => setDetailDoc(d)}
               onBulkDelete={onDeleteBulk}
               onScanRetry={onScanRetry}
+              pipelineStatus={pipelineStatus.data ?? null}
+              pipelineOpen={pipelineOpen}
+              pipelineLoading={pipelineStatus.isFetching}
+              pipelineError={
+                pipelineStatus.isError
+                  ? formatBackendError(pipelineStatus.error)
+                  : null
+              }
+              onTogglePipeline={() => setPipelineOpen((open) => !open)}
+              onRefreshPipeline={() => {
+                void pipelineStatus.refetch();
+              }}
             />
           )}
           {tab === 'settings' && (
@@ -1205,10 +1178,8 @@ function AppShell() {
                 );
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
-              initialThreads={
-                FIXTURE_FALLBACK_ENABLED ? makeSampleThreads() : []
-              }
-              suggestions={FIXTURE_FALLBACK_ENABLED ? undefined : []}
+              initialThreads={[]}
+              suggestions={[]}
               onNavigate={onNavigate}
             />
           )}
@@ -1254,7 +1225,7 @@ function AppShell() {
           <AddSourceModal
             open={addOpen}
             tagCatalog={tagCatalog}
-            formatCategories={FORMAT_CATEGORY_FIXTURES}
+            formatCategories={FORMAT_CATEGORIES}
             onClose={() => setAddOpen(false)}
             onSubmit={onAddSourceSubmit}
           />

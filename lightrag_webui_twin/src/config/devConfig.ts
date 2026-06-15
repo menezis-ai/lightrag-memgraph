@@ -35,9 +35,9 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
     },
   ],
   debugUser: {
-    sso_subject: 'claire.benoit@demo.local',
-    email: 'claire.benoit@demo.local',
-    name: 'Claire Benoit',
+    sso_subject: 'operator@twin.local',
+    email: 'operator@twin.local',
+    name: 'Local Operator',
     palier: {
       level: 3,
       label: 'Steward',

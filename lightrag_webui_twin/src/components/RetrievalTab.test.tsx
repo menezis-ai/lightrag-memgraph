@@ -48,7 +48,7 @@ describe('RetrievalTab — empty state', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', {
-        name: /How do I restart Oracle on RHEL 9/,
+        name: /Ask about a source in this folder/,
       }),
     ).toBeInTheDocument();
   });
@@ -107,11 +107,11 @@ describe('RetrievalTab — send', () => {
   it('clicking a suggestion enqueues a user message in the active thread', async () => {
     render(<RetrievalTab {...defaultProps()} initialThreads={[]} />);
     await userEvent.click(
-      screen.getByRole('button', { name: /Common RMAN backup errors/ }),
+      screen.getByRole('button', { name: /Summarize recent indexed documents/ }),
     );
     // Look in the conversation pane (not the sidebar title)
     const userMsg = document.querySelector('.msg-user');
-    expect(userMsg?.textContent).toBe('Common RMAN backup errors');
+    expect(userMsg?.textContent).toBe('Summarize recent indexed documents');
   });
 
   it('Send button click triggers send when textarea has content', async () => {

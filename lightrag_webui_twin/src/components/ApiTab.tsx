@@ -626,7 +626,7 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
     const dataEndpoint = ep.p.endsWith('/query/data');
     return JSON.stringify(
       {
-        query: 'How do I restart Oracle RMAN after a failed backup?',
+        query: 'Ask a question about the indexed knowledge base',
         mode: 'hybrid',
         top_k: 60,
         ...(dataEndpoint ? { chunk_top_k: 20 } : {}),
@@ -636,7 +636,7 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
         // native) reject it (twin: 422; native: silently ignored).
         // Showing it in the sample for those paths would suggest a
         // scoping capability the backend doesn't provide.
-        ...(dataEndpoint ? { tag_filter: { all: ['rman'], any: [] } } : {}),
+        ...(dataEndpoint ? { tag_filter: { all: ['tag-name'], any: [] } } : {}),
       },
       null,
       2,
@@ -728,17 +728,17 @@ export function mockResponseFor(
               chunks: [
                 {
                   chunk_id: 'chunk_4a12',
-                  file_path: 'oracle-restart-procedure.pdf',
+                  file_path: 'source-document.pdf',
                   reference_id: '1',
                 },
               ],
               references: [
-                { reference_id: '1', file_path: 'oracle-restart-procedure.pdf' },
+                { reference_id: '1', file_path: 'source-document.pdf' },
               ],
             },
             metadata: {
               query_mode: 'hybrid',
-              tag_filter: { all: ['rman'] },
+              tag_filter: { all: ['tag-name'] },
             },
           },
           null,
@@ -758,19 +758,19 @@ export function mockResponseFor(
           // therefore must not echo it — that would suggest a
           // scoping capability the backend does not provide.
           response:
-            'To restart Oracle RMAN after a failed backup, first verify the recovery catalog state … [truncated]',
+            'Answer generated from the indexed knowledge base … [truncated]',
           sources: [
             {
               id: 'chunk_4a12',
-              source: 'oracle-restart-procedure.pdf',
+              source: 'source-document.pdf',
               score: 0.91,
-              tags: ['rman', 'oracle'],
+              tags: ['tag-name'],
             },
             {
               id: 'chunk_88e0',
-              source: 'DBA Runbook · Backup recovery',
+              source: 'related-source.pdf',
               score: 0.84,
-              tags: ['rman'],
+              tags: ['tag-name'],
             },
           ],
           mode: 'hybrid',
@@ -789,9 +789,9 @@ export function mockResponseFor(
       body: JSON.stringify(
         {
           items: [
-            { id: 'doc_001', source: 'oracle-restart.pdf', status: 'completed' },
+            { id: 'doc_001', source: 'source-document.pdf', status: 'completed' },
           ],
-          total: 247,
+          total: 1,
         },
         null,
         2,

@@ -130,6 +130,14 @@ export interface AuthStatusResponse {
   login_required: boolean;
 }
 
+export interface PipelineStatusResponse {
+  busy: boolean;
+  job_count: number;
+  job_name?: string | null;
+  latest_message: string | null;
+  history_messages: readonly string[];
+}
+
 export interface LoginResponse {
   access_token: string;
   token_type: string;
@@ -290,11 +298,7 @@ export const lightragApi = {
       init,
     ),
   pipelineStatus: (init?: ApiRequestInit) =>
-    apiFetch<{
-      busy: boolean;
-      job_count: number;
-      latest_message: string | null;
-    }>('/pipeline_status', init),
+    apiFetch<PipelineStatusResponse>('/pipeline_status', init),
   getOpenApi: (init?: ApiRequestInit) =>
     apiFetch<{ groups: readonly OpenApiGroup[]; version: string }>(
       '/openapi',
