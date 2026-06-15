@@ -85,6 +85,13 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Tag argocd approved');
 
     await openTab(page, 'Retrieval');
+    // The thread sidebar starts empty (App.tsx passes
+    // `initialThreads={[]}` since commit 1d1b0a0), so we must open
+    // a new thread explicitly before the Query input is bound to a
+    // real conversation. Without this, the previous version of the
+    // test only worked because `makeSampleThreads()` left a
+    // pre-selected seed thread active on first paint.
+    await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('How do I restart Oracle?');
     await page.getByRole('button', { name: 'Send' }).click();
     // `exact: true` avoids a strict-mode collision with the MSW
@@ -94,10 +101,9 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(
       page.getByText('How do I restart Oracle?', { exact: true }),
     ).toBeVisible();
-    // The seed thread already paints `source-1` from its sample
-    // turn, and the new assistant reply now also carries its own
-    // `source-1` once the NDJSON stream completes — scope to the
-    // latest assistant turn so the assertion is unambiguous.
+    // Without seed threads, the new assistant reply is the only one
+    // carrying `source-1` — `.last()` still resolves unambiguously
+    // and survives a later seed-thread reintroduction if any.
     const latestAssistant = page.locator('.msg-assistant').last();
     await expect(
       latestAssistant.getByTestId('source-1'),
@@ -144,9 +150,33 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('heading', { name: 'RMAN' })).toBeVisible();
 
     await openTab(page, 'Retrieval');
-    await page.getByTestId('thread-th_seed_2').focus();
+    // The thread sidebar starts empty (App.tsx passes
+    // `initialThreads={[]}` since commit 1d1b0a0). Seed two threads
+    // via the UI itself so the keyboard-activates-history assertion
+    // has something to focus and switch between, without depending
+    // on the removed `makeSampleThreads()` fallback.
+    await page.getByRole('button', { name: /New/ }).click();
+    await page.getByLabel('Query input').fill('Keyboard probe one');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('.retrieval-conv')).toContainText(
+      'Keyboard probe one',
+      { timeout: 20_000 },
+    );
+    await page.getByRole('button', { name: /New/ }).click();
+    await page.getByLabel('Query input').fill('Keyboard probe two');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('.retrieval-conv')).toContainText(
+      'Keyboard probe two',
+      { timeout: 20_000 },
+    );
+
+    // Focus the older (second-from-top) thread positionally — the
+    // history-item testid is dynamic (`thread-th_<random>`), so we
+    // do not hardcode an id.
+    const olderThread = page.locator('.history-item').nth(1);
+    await olderThread.focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('thread-th_seed_2')).toHaveAttribute('aria-current', 'true');
+    await expect(olderThread).toHaveAttribute('aria-current', 'true');
     const onlyContext = page.getByRole('switch', { name: 'Only need context' });
     await onlyContext.focus();
     await page.keyboard.press('Space');
