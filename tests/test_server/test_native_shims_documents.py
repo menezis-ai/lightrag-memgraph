@@ -196,3 +196,35 @@ class TestDocumentsFailedProjection:
         assert doc["status"] == "processed"
         assert doc["chunks_count"] == 42
         assert doc["error_msg"] is None
+
+    async def test_lightrag_doc_id_projects_real_content_hash(self, monkeypatch):
+        digest = "abcdef0123456789abcdef0123456789"
+        docs = {
+            f"doc-{digest}": FakeDocStatus(
+                status="processed",
+                file_path="hashed.pdf",
+                chunks_count=4,
+                metadata={},
+            ),
+        }
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents")
+        assert r.status_code == 200
+        doc = r.json()["items"][0]
+        assert doc["metadata"]["content_hash"] == digest
+        assert doc["metadata"]["content_hash_source"] == "lightrag_doc_id"
+
+    async def test_existing_hash_metadata_is_not_overwritten(self, monkeypatch):
+        docs = {
+            "doc-abcdef0123456789abcdef0123456789": FakeDocStatus(
+                status="processed",
+                file_path="already-hashed.pdf",
+                chunks_count=4,
+                metadata={"sha256": "real-sha256"},
+            ),
+        }
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents")
+        assert r.status_code == 200
+        doc = r.json()["items"][0]
+        assert doc["metadata"] == {"sha256": "real-sha256"}

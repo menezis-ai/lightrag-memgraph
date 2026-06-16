@@ -41,6 +41,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from .auth import LoginRequest, LoginResponse
+from .document_hash import enrich_metadata_with_document_hash
 
 logger = logging.getLogger(__name__)
 _security = HTTPBearer(auto_error=False)
@@ -202,14 +203,15 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
     in ``metadata.tags`` (doctrine: a graph engine deserves graph
     queries, not string-array-in-property heresy).
     """
-    metadata = doc.get("metadata") or {}
+    doc_id = str(doc.get("id") or doc.get("doc_id") or "")
+    metadata = enrich_metadata_with_document_hash(doc.get("metadata") or {}, doc_id)
     # TR-ING-01: ``chunks_count`` must use an explicit ``is not None``
     # check rather than ``or 0`` — the latter collapses ``None`` (never
     # started chunking) and ``0`` (started, indexed zero) into the same
     # rendered value. The operator-facing contract distinguishes them.
     raw_chunks_count = doc.get("chunks_count")
     return {
-        "doc_id": doc.get("id") or doc.get("doc_id") or "",
+        "doc_id": doc_id,
         "file_path": doc.get("file_path") or "",
         "status": doc.get("status") or "",
         "chunks_count": raw_chunks_count if raw_chunks_count is not None else 0,

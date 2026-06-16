@@ -502,7 +502,7 @@ class TestForFolderMode:
         class FakeDocStatus:
             def __init__(self) -> None:
                 self.docs = {
-                    "doc-ds": {
+                    "doc-abcdef0123456789abcdef0123456789": {
                         "status": "processed",
                         "file_path": "data-science-handbook.pdf",
                         "content_summary": "Data science and machine learning",
@@ -563,19 +563,31 @@ class TestForFolderMode:
             body = r.json()
             assert body["total"] == 2
             assert [doc["doc_id"] for doc in body["items"]] == [
-                "doc-ds",
+                "doc-abcdef0123456789abcdef0123456789",
                 "doc-mlops",
             ]
             assert body["items"][0]["status"] == "PROCESSED"
             assert body["items"][0]["tags"] == ["data-science"]
             assert body["items"][0]["chunks_count"] == 142
+            assert (
+                body["items"][0]["metadata"]["content_hash"]
+                == "abcdef0123456789abcdef0123456789"
+            )
+            assert (
+                body["items"][0]["metadata"]["content_hash_source"]
+                == "lightrag_doc_id"
+            )
 
             filtered = await client.get("/documents", params={"status": "PROCESSED"})
             assert filtered.status_code == 200
-            assert [doc["doc_id"] for doc in filtered.json()["items"]] == ["doc-ds"]
+            assert [doc["doc_id"] for doc in filtered.json()["items"]] == [
+                "doc-abcdef0123456789abcdef0123456789"
+            ]
 
             tagged = await client.get("/documents", params={"tag": "data-science"})
             assert tagged.status_code == 200
-            assert [doc["doc_id"] for doc in tagged.json()["items"]] == ["doc-ds"]
+            assert [doc["doc_id"] for doc in tagged.json()["items"]] == [
+                "doc-abcdef0123456789abcdef0123456789"
+            ]
         finally:
             _twindb_state.pop("rag", None)

@@ -74,6 +74,7 @@ from .webui_notificationstore import (
     MemgraphNotificationStore,
 )
 from .webui_tagstore import InMemoryTagStore, MemgraphTagStore
+from .document_hash import enrich_metadata_with_document_hash
 
 
 # ---------------------------------------------------------------------------
@@ -579,8 +580,11 @@ def _infer_document_type(file_path: str, metadata: dict[str, Any]) -> str:
 
 
 def _project_doc_status_for_webui(doc: dict[str, Any]) -> dict[str, Any]:
-    metadata = _coerce_doc_metadata(doc.get("metadata"))
     doc_id = str(doc.get("id") or doc.get("doc_id") or "")
+    metadata = enrich_metadata_with_document_hash(
+        _coerce_doc_metadata(doc.get("metadata")),
+        doc_id,
+    )
     file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
     summary = str(doc.get("content_summary") or doc.get("summary") or "")
     folder = str(metadata.get("folder") or current_folder_id())

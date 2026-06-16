@@ -127,6 +127,12 @@ type QueryLike<T> = {
   error: unknown;
 };
 
+interface RetagUndoPayload {
+  targets: readonly string[];
+  adds: readonly string[];
+  removes: readonly string[];
+}
+
 interface BackendResourceError {
   label: string;
   message: string;
@@ -146,6 +152,27 @@ function formatBackendError(error: unknown): string {
   if (error instanceof ApiError) return `${error.status} ${error.message}`;
   if (error instanceof Error) return error.message;
   return 'Backend request failed';
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function asRetagUndoPayload(value: unknown): RetagUndoPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  const payload = value as Record<string, unknown>;
+  if (
+    !isStringArray(payload.targets) ||
+    !isStringArray(payload.adds) ||
+    !isStringArray(payload.removes)
+  ) {
+    return null;
+  }
+  return {
+    targets: payload.targets,
+    adds: payload.adds,
+    removes: payload.removes,
+  };
 }
 
 declare global {
@@ -366,7 +393,11 @@ function AppShell() {
             }`
           : verb,
         sub: action.primary.file_path,
-        undo: { adds: action.adds, removes: action.removes },
+        undo: {
+          targets: action.targets.map((target) => target.doc_id),
+          adds: action.adds,
+          removes: action.removes,
+        },
       });
     } catch (err) {
       pushToast({
@@ -378,6 +409,38 @@ function AppShell() {
             : `Could not persist tags on ${action.targets.length} document${
                 action.targets.length === 1 ? '' : 's'
               }`,
+      });
+    }
+  };
+
+  const onToastUndo = async (toast: Toast) => {
+    setToasts((ts) => ts.filter((x) => x.id !== toast.id));
+    const undo = asRetagUndoPayload(toast.undo);
+    if (!undo) return;
+
+    try {
+      const result = await bulkRetagDocs.mutateAsync({
+        targets: undo.targets,
+        adds: undo.removes,
+        removes: undo.adds,
+        actor: currentActor,
+      });
+      pushToast({
+        kind: 'done',
+        title: 'Undo applied',
+        tagname: toast.tagname,
+        titleSuffix:
+          result.failed.length > 0
+            ? `${result.updated} source${result.updated === 1 ? '' : 's'} · ${result.failed.length} skipped`
+            : `${result.updated} source${result.updated === 1 ? '' : 's'}`,
+        sub: toast.sub,
+      });
+    } catch (err) {
+      pushToast({
+        kind: 'error',
+        title: 'Undo failed',
+        tagname: toast.tagname,
+        sub: err instanceof Error ? err.message : 'Mutation rejected',
       });
     }
   };
@@ -1374,9 +1437,9 @@ function AppShell() {
       </Suspense>
       <ToastViewport
         toasts={toasts}
-        onUndo={(t) =>
-          setToasts((ts) => ts.filter((x) => x.id !== t.id))
-        }
+        onUndo={(t) => {
+          void onToastUndo(t);
+        }}
         onDismiss={(t) =>
           setToasts((ts) => ts.filter((x) => x.id !== t.id))
         }
