@@ -6,6 +6,7 @@
 @import './styles/overrides.css';
 @import './styles/polish.css';
 @import './styles/prototype.css';
+@import './styles/maquette.css';
 
 @tailwind base;
 @tailwind components;

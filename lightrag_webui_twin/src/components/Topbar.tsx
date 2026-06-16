@@ -97,7 +97,10 @@ export function Topbar({
         title="Open Documents"
       >
         <div className="brand-mark">TR</div>
-        <span className="brand-name">TwinRAG</span>
+        <span className="brand-name">
+          <span>Twin</span>
+          <span className="brand-accent">RAG</span>
+        </span>
         <span className="brand-sep">|</span>
         <span className="brand-kb" title="TWIN_KB_DISPLAY_NAME (env)">
           {kbName}
