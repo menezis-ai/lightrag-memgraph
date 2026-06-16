@@ -1,52 +1,52 @@
 {
-  "default_workspace": "commons",
+  "default_folder": "commons",
   "rules": [
     {
       "keywords": ["Oracle", "ORA-", "TNS", "RMAN", "PL/SQL", "RAC", "ASM", "DBCA", "SGA", "PGA", "sqlplus", "tnsnames", "listener", "11g", "12c", "19c", "21c"],
-      "target_workspace": "commons_oracle",
-      "workspace_type": "public",
+      "target_folder": "commons_oracle",
+      "folder_type": "public",
       "confidence": 1.0
     },
     {
       "keywords": ["RedHat", "RHEL", "CentOS", "Linux", "Bash", "systemd", "yum", "dnf", "rpm", "SELinux", "firewalld", "sshd", "cron"],
-      "target_workspace": "commons_linux",
-      "workspace_type": "public",
+      "target_folder": "commons_linux",
+      "folder_type": "public",
       "confidence": 0.9
     },
     {
       "keywords": ["Windows Server", "Active Directory", "PowerShell", "IIS", "NTFS", "GPO", "WSUS", "SCCM"],
-      "target_workspace": "commons_windows",
-      "workspace_type": "public",
+      "target_folder": "commons_windows",
+      "folder_type": "public",
       "confidence": 0.9
     },
     {
       "keywords": ["Cisco", "Switch", "Router", "F5", "Illumio", "VLAN", "BGP", "OSPF", "ACL", "firewall", "load balancer", "DNS", "DHCP"],
-      "target_workspace": "commons_network",
-      "workspace_type": "public",
+      "target_folder": "commons_network",
+      "folder_type": "public",
       "confidence": 1.0
     },
     {
       "keywords": ["WebSphere", "Tomcat", "JBoss", "WildFly", "Nginx", "Apache HTTP", "HAProxy", "middleware"],
-      "target_workspace": "commons_middleware",
-      "workspace_type": "public",
+      "target_folder": "commons_middleware",
+      "folder_type": "public",
       "confidence": 0.9
     },
     {
       "keywords": ["Kubernetes", "K8s", "Docker", "OpenShift", "Helm", "kubectl", "pod", "deployment", "ingress", "container"],
-      "target_workspace": "commons_containers",
-      "workspace_type": "public",
+      "target_folder": "commons_containers",
+      "folder_type": "public",
       "confidence": 0.9
     },
     {
       "keywords": ["ServiceNow", "ITSM", "ITIL", "incident", "changement", "RFC", "CAB", "MEV", "P1", "P2", "SLA", "escalade"],
-      "target_workspace": "commons_itsm",
-      "workspace_type": "public",
+      "target_folder": "commons_itsm",
+      "folder_type": "public",
       "confidence": 0.8
     },
     {
       "keywords": ["Dynatrace", "monitoring", "APM", "Splunk", "Grafana", "Prometheus", "alerting", "observabilite"],
-      "target_workspace": "commons_monitoring",
-      "workspace_type": "public",
+      "target_folder": "commons_monitoring",
+      "folder_type": "public",
       "confidence": 0.8
     }
   ]

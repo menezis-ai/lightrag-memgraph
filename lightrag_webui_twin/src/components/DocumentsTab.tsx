@@ -255,11 +255,14 @@ export function DocumentsTab({
             >
               <Icon name="activity" size={14} />
               Pipeline
-              {pipelineStatus?.busy && (
-                <span className="pipeline-badge live" aria-label="Pipeline busy">
-                  live
-                </span>
-              )}
+              <span
+                className={`pipeline-state-badge ${
+                  pipelineStatus?.busy ? 'pipeline-state-busy' : 'pipeline-state-idle'
+                }`}
+                aria-label={`Pipeline ${pipelineStatus?.busy ? 'busy' : 'idle'}`}
+              >
+                {pipelineStatus?.busy ? 'BUSY' : 'IDLE'}
+              </span>
             </button>
             {pipelineOpen && (
               <div
@@ -346,7 +349,19 @@ export function DocumentsTab({
 
                 <div className="pp-footer">
                   <span className="pp-footnote">
-                    {pipelineLoading ? 'Refreshing…' : 'Live status'}
+                    <span
+                      className={`pp-live-pill ${
+                        pipelineLoading
+                          ? 'pp-live-pill--loading'
+                          : 'pp-live-pill--idle'
+                      }`}
+                      aria-label={`Pipeline live ${
+                        pipelineLoading ? 'refreshing' : 'idle'
+                      }`}
+                    >
+                      <span className="pp-live-dot" />
+                      LIVE
+                    </span>
                   </span>
                   <button
                     type="button"

@@ -1,6 +1,6 @@
-"""F06 -- Workspace Router (Nexus Router embarque).
+"""F06 -- Folder Router (Nexus Router embarque).
 
-Resolves which Memgraph workspaces to query for a given question.
+Resolves which Twin folders / Memgraph workspaces to query for a given question.
 Cascade: L4 override > TopologyContext > Ontology > Keyword > Default.
 
 No external dependencies. Pure function (input -> output).
@@ -35,27 +35,57 @@ class TopologyContext:
     topology_context: str | None = None
 
 
-@dataclass
-class RoutingResult:
+@dataclass(init=False)
+class FolderRoutingResult:
     """F06 routing result."""
 
-    workspaces: list[str]
-    workspaces_publics: list[str]
+    folders: list[str]
+    public_folders: list[str]
     strategy: str  # "l4_override" | "topology" | "ontology" | "keyword" | "default"
     confidence: float = 1.0
     matched_keywords: list[str] = field(default_factory=list)
+
+    def __init__(
+        self,
+        folders: list[str] | None = None,
+        public_folders: list[str] | None = None,
+        strategy: str = "default",
+        confidence: float = 1.0,
+        matched_keywords: list[str] | None = None,
+        workspaces: list[str] | None = None,
+        workspaces_publics: list[str] | None = None,
+    ) -> None:
+        self.folders = folders if folders is not None else workspaces or []
+        self.public_folders = (
+            public_folders
+            if public_folders is not None
+            else workspaces_publics or []
+        )
+        self.strategy = strategy
+        self.confidence = confidence
+        self.matched_keywords = matched_keywords or []
+
+    @property
+    def workspaces(self) -> list[str]:
+        """Deprecated compatibility alias for internal LightRAG naming."""
+        return self.folders
+
+    @property
+    def workspaces_publics(self) -> list[str]:
+        """Deprecated compatibility alias for internal LightRAG naming."""
+        return self.public_folders
 
 
 # --- Routing rules ---
 
 
 @dataclass
-class RoutingRule:
-    """A keyword -> workspace routing rule."""
+class FolderRoutingRule:
+    """A keyword -> folder routing rule."""
 
     keywords: list[str]
-    target_workspace: str
-    workspace_type: str = "public"  # "public" or "private"
+    target_folder: str
+    folder_type: str = "public"  # "public" or "private"
     confidence: float = 0.9
 
     def match(self, query_lower: str) -> list[str]:
@@ -66,30 +96,31 @@ class RoutingRule:
 # --- Main router ---
 
 
-class WorkspaceRouter:
+class FolderRouter:
     """F06 -- Nexus Router embedded in the ReAct pipeline.
 
     Usage MVP:
-        router = WorkspaceRouter.from_json("routing_rules.json")
+        router = FolderRouter.from_json("routing_rules.json")
         result = await router.route(query="Probleme RMAN Oracle")
 
     Usage with L4 override:
         result = await router.route(
             query="...",
-            provided_workspaces=["cib"],
-            provided_workspaces_publics=["commons"],
+            provided_folders=["cib"],
+            provided_public_folders=["commons"],
         )
     """
 
     def __init__(
         self,
-        rules: list[RoutingRule],
-        default_workspace: str = "commons",
+        rules: list[FolderRoutingRule],
+        default_folder: str = "commons",
     ) -> None:
         self._rules = rules
-        self._default_workspace = default_workspace
+        self._default_folder = default_folder
+        self._default_workspace = default_folder
         # Pre-compile regex patterns for hot-path performance
-        self._compiled: list[tuple[RoutingRule, re.Pattern]] = []
+        self._compiled: list[tuple[FolderRoutingRule, re.Pattern]] = []
         for rule in rules:
             pattern = "|".join(re.escape(kw) for kw in rule.keywords)
             self._compiled.append((rule, re.compile(pattern, re.IGNORECASE)))
@@ -98,53 +129,64 @@ class WorkspaceRouter:
     def from_json(
         cls,
         path: str | Path,
-        default_workspace: str = "commons",
-    ) -> WorkspaceRouter:
+        default_folder: str = "commons",
+        default_workspace: str | None = None,
+    ) -> FolderRouter:
         """Load routing rules from a JSON file."""
         path = Path(path)
         with path.open() as f:
             data = json.load(f)
         rules = [
-            RoutingRule(
+            FolderRoutingRule(
                 keywords=r["keywords"],
-                target_workspace=r["target_workspace"],
-                workspace_type=r.get("workspace_type", "public"),
+                target_folder=r.get("target_folder") or r["target_workspace"],
+                folder_type=r.get("folder_type") or r.get("workspace_type", "public"),
                 confidence=r.get("confidence", 0.9),
             )
             for r in data.get("rules", [])
         ]
+        fallback_folder = default_workspace or default_folder
         return cls(
             rules=rules,
-            default_workspace=data.get("default_workspace", default_workspace),
+            default_folder=data.get("default_folder")
+            or data.get("default_workspace", fallback_folder),
         )
 
     async def route(
         self,
         query: str,
         *,
+        provided_folders: list[str] | None = None,
+        provided_public_folders: list[str] | None = None,
         provided_workspaces: list[str] | None = None,
         provided_workspaces_publics: list[str] | None = None,
         topology_context: TopologyContext | None = None,
-    ) -> RoutingResult:
-        """Resolve workspaces via waterfall cascade.
+    ) -> FolderRoutingResult:
+        """Resolve folders via waterfall cascade.
 
         Priority:
-            1. L4 override (provided_workspaces)
+            1. L4 override (provided_folders)
             2. TopologyContext (Shadow Nodes resolved by TigerGraph)
             3. Keyword match (routing_rules.json)
             4. Default fallback (commons)
         """
         # Priority 1: L4 Override
-        if provided_workspaces is not None:
+        folders_override = provided_folders
+        public_folders_override = provided_public_folders
+        if folders_override is None and provided_workspaces is not None:
+            folders_override = provided_workspaces
+        if public_folders_override is None and provided_workspaces_publics is not None:
+            public_folders_override = provided_workspaces_publics
+
+        if folders_override is not None:
             logger.debug(
                 "F06: L4 override -> %s + %s",
-                provided_workspaces,
-                provided_workspaces_publics,
+                folders_override,
+                public_folders_override,
             )
-            return RoutingResult(
-                workspaces=provided_workspaces,
-                workspaces_publics=provided_workspaces_publics
-                or [self._default_workspace],
+            return FolderRoutingResult(
+                folders=folders_override,
+                public_folders=public_folders_override or [self._default_folder],
                 strategy="l4_override",
                 confidence=1.0,
             )
@@ -156,10 +198,10 @@ class WorkspaceRouter:
                 topology_context.workspaces,
                 topology_context.workspaces_publics,
             )
-            return RoutingResult(
-                workspaces=topology_context.workspaces,
-                workspaces_publics=topology_context.workspaces_publics
-                or [self._default_workspace],
+            return FolderRoutingResult(
+                folders=topology_context.workspaces,
+                public_folders=topology_context.workspaces_publics
+                or [self._default_folder],
                 strategy="topology",
                 confidence=1.0,
             )
@@ -172,21 +214,21 @@ class WorkspaceRouter:
         if result is not None:
             logger.debug(
                 "F06: keyword -> %s (matched: %s)",
-                result.workspaces_publics,
+                result.public_folders,
                 result.matched_keywords,
             )
             return result
 
         # Fallback: Default
-        logger.debug("F06: default fallback -> %s", self._default_workspace)
-        return RoutingResult(
-            workspaces=[],
-            workspaces_publics=[self._default_workspace],
+        logger.debug("F06: default fallback -> %s", self._default_folder)
+        return FolderRoutingResult(
+            folders=[],
+            public_folders=[self._default_folder],
             strategy="default",
             confidence=0.5,
         )
 
-    def _keyword_match(self, query: str) -> RoutingResult | None:
+    def _keyword_match(self, query: str) -> FolderRoutingResult | None:
         """Strategy 4: regex match against routing_rules.json."""
         matched_private: list[str] = []
         matched_public: list[str] = []
@@ -196,24 +238,30 @@ class WorkspaceRouter:
         for rule, pattern in self._compiled:
             matches = pattern.findall(query)
             if matches:
-                if rule.workspace_type == "private":
-                    matched_private.append(rule.target_workspace)
+                if rule.folder_type == "private":
+                    matched_private.append(rule.target_folder)
                 else:
-                    matched_public.append(rule.target_workspace)
+                    matched_public.append(rule.target_folder)
                 all_matched_keywords.extend(matches)
                 max_confidence = max(max_confidence, rule.confidence)
 
         if not matched_private and not matched_public:
             return None
 
-        # Always include default workspace in publics
-        if self._default_workspace not in matched_public:
-            matched_public.append(self._default_workspace)
+        # Always include default folder in publics.
+        if self._default_folder not in matched_public:
+            matched_public.append(self._default_folder)
 
-        return RoutingResult(
-            workspaces=list(dict.fromkeys(matched_private)),
-            workspaces_publics=list(dict.fromkeys(matched_public)),
+        return FolderRoutingResult(
+            folders=list(dict.fromkeys(matched_private)),
+            public_folders=list(dict.fromkeys(matched_public)),
             strategy="keyword",
             confidence=max_confidence,
             matched_keywords=all_matched_keywords,
         )
+
+
+# Backwards-compatible names for imports that still use internal LightRAG wording.
+RoutingResult = FolderRoutingResult
+RoutingRule = FolderRoutingRule
+WorkspaceRouter = FolderRouter

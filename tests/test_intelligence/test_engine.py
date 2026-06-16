@@ -165,3 +165,55 @@ class TestTwinRAGEngine:
         assert result.trace.question == "Weather today?"
         assert result.trace.workspace == "bp2i"
         assert result.trace.latency_ms >= 0
+
+    def test_feedback_store_can_be_disabled(self):
+        """Disabling feedback should skip feedback store creation."""
+        config = TwinRAGConfig(
+            llm_api_key="test",
+            llm_api_base="http://mock:8080",
+            enable_feedback=False,
+        )
+        engine = TwinRAGEngine(config)
+        assert engine.feedback is None
+
+    async def test_folder_routing_can_be_disabled(self):
+        """When routing is disabled, direct folder+publics resolution should be used."""
+        config = TwinRAGConfig(
+            llm_api_key="test",
+            llm_api_base="http://mock:8080",
+            enable_folder_routing=False,
+        )
+        engine = TwinRAGEngine(config)
+
+        resolved = await engine._resolve_search_folders(
+            query="Question Oracle",
+            active_folder="cib",
+            public_folders=["commons"],
+            explicit_folder_override=True,
+        )
+
+        assert resolved == ["cib", "commons"]
+
+    async def test_enable_ontology_false_blocks_v2_expansion(self, engine):
+        """enable_ontology=False should prevent expand_v2, even if ontology_config is enabled."""
+        config = TwinRAGConfig(
+            llm_api_key="test",
+            llm_api_base="http://mock:8080",
+            enable_ontology=False,
+        )
+        engine = TwinRAGEngine(config)
+        engine.ontology_config = MagicMock(enabled=True)
+
+        with (
+            patch.object(engine.expander, "expand") as expand_v1,
+            patch.object(engine.expander, "expand_v2", new=AsyncMock()) as expand_v2,
+        ):
+            expand_v1.return_value = MagicMock(
+                original_query="q1", expanded_query="q1", added_terms=[]
+            )
+
+            result = await engine._expand_query("q1", workspace="cib", domain_hint=None)
+
+            assert result.expanded_query == "q1"
+            assert not expand_v2.called
+            expand_v1.assert_called_once_with("q1", domain_hint=None)

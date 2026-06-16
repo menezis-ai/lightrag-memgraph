@@ -1438,6 +1438,39 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-radius: 999px;
   font-family: var(--font-mono);
 }
+.pipeline-state-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: auto; height: 16px; padding: 0 6px;
+  margin-left: 4px;
+  font-size: 10px; font-weight: 600;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pipeline-state-busy {
+  background: color-mix(in oklab, var(--twin-amber-vivid, #C18900) 24%, transparent);
+  color: var(--twin-amber-vivid, #C18900);
+}
+.pipeline-state-idle {
+  background: color-mix(in oklab, var(--color-text-tertiary) 16%, transparent);
+  color: var(--color-text-secondary);
+}
+.pp-live-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+.pp-live-pill--idle {
+  color: var(--color-text-tertiary);
+}
+.pp-live-pill--loading .pp-live-dot { animation: pp-pulse 1.4s ease-in-out infinite; }
+.pp-live-pill--loading {
+  color: var(--twin-green-700);
+}
+.pp-live-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
 .btn.active { background: var(--color-background-secondary); border-color: var(--twin-accent); }
 .btn-retry { border-color: color-mix(in oklab, var(--color-status-failed, #B42318) 35%, var(--color-border-default)); color: var(--color-status-failed, #B42318); }
 .btn-retry:hover { background: color-mix(in oklab, var(--color-status-failed, #B42318) 8%, transparent); }

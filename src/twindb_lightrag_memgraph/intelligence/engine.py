@@ -12,6 +12,7 @@ and call aquery(). Everything else is encapsulated.
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from lightrag import LightRAG, QueryParam
@@ -19,6 +20,7 @@ from lightrag import LightRAG, QueryParam
 from .config import TwinRAGConfig
 from .features.cognitive_reranker import CognitiveReranker
 from .features.feedback import FeedbackStore
+from .features.workspace_router import FolderRouter
 from .features.intent_classifier import IntentClassifier
 from .features.query_expander import QueryExpander
 from .models.schemas import IntentType, QueryResult, QueryTrace
@@ -52,7 +54,8 @@ class TwinRAGEngine:
         self.synthesis = SynthesisEngine(self.config)
         self.reranker = CognitiveReranker(self.config)
         self.expander = QueryExpander(self.config)
-        self.feedback = FeedbackStore(self.config)
+        self.feedback = FeedbackStore(self.config) if self.config.enable_feedback else None
+        self.folder_router = self._build_folder_router()
 
         # Ontology config (opt-in via ontology.json)
         self.ontology_config: Optional[OntologyConfig] = load_ontology_config()
@@ -78,13 +81,31 @@ class TwinRAGEngine:
             )
         return self._rag_instances[workspace]
 
+    def _build_folder_router(self) -> FolderRouter | None:
+        """Build the folder router when the feature flag is enabled."""
+        if not self.config.effective_enable_folder_routing:
+            return None
+
+        rules_path = self.config.effective_folder_routing_rules_path
+        if rules_path:
+            path = Path(rules_path)
+        else:
+            path = Path(__file__).parent / "routing" / "routing_rules.json"
+
+        return FolderRouter.from_json(
+            path,
+            default_folder=self.config.effective_default_folder,
+        )
+
     async def aquery(
         self,
         question: str,
         conversation_history: Optional[list[dict[str, str]]] = None,
-        workspace: str = "commons",
+        workspace: Optional[str] = None,
         workspaces_publics: Optional[list[str]] = None,
         user_id: Optional[str] = None,
+        folder: Optional[str] = None,
+        folders_publics: Optional[list[str]] = None,
     ) -> QueryResult:
         """
         Main entry point -- Full ReAct + AFFINE pipeline.
@@ -92,17 +113,32 @@ class TwinRAGEngine:
         Args:
             question: User question in natural language.
             conversation_history: List of messages [{role, content}], max N recent.
-            workspace: Agent's private workspace (e.g., "cib", "bp2i").
-            workspaces_publics: List of public workspaces to query (e.g., ["commons"]).
+            folder: Agent's private folder (e.g., "cib", "bp2i").
+            folders_publics: List of public folders to query (e.g., ["commons"]).
+            workspace: Deprecated alias for folder.
+            workspaces_publics: Deprecated alias for folders_publics.
             user_id: User identifier for feedback.
 
         Returns:
             QueryResult containing answer, citations, trace, intent.
         """
-        trace = QueryTrace(question=question, workspace=workspace, user_id=user_id)
+        active_folder = folder or workspace or self.config.effective_default_folder
+        public_folders = (
+            folders_publics
+            if folders_publics is not None
+            else workspaces_publics
+        )
+        public_folders = public_folders or [self.config.effective_default_folder]
+        explicit_folder_override = (
+            folder is not None
+            or workspace is not None
+            or folders_publics is not None
+            or workspaces_publics is not None
+        )
+
+        trace = QueryTrace(question=question, workspace=active_folder, user_id=user_id)
         trace.start()
         history = (conversation_history or [])[-self.config.conversation_memory_depth :]
-        workspaces_publics = workspaces_publics or ["commons"]
 
         # ---- STEP 0: INTENT CLASSIFICATION (F05) ----
         if self.config.enable_oos_detection:
@@ -155,14 +191,19 @@ class TwinRAGEngine:
         # F03: Query Expansion with IT/Ops thesaurus (v2: graph-based if ontology enabled)
         if self.config.enable_query_expansion:
             expanded = await self._expand_query(
-                search_query, workspace, reasoning_result.domain_hint
+                search_query, active_folder, reasoning_result.domain_hint
             )
             trace.expansion_terms = expanded.added_terms
             search_query = expanded.expanded_query
             logger.info("Query expansion: +%d terms -> %s", len(expanded.added_terms), search_query)
 
         # ---- STEP 2: ACT (Hybrid Search multi-workspace + Reranking F04) ----
-        all_workspaces = [workspace] + workspaces_publics
+        all_workspaces = await self._resolve_search_folders(
+            query=search_query,
+            active_folder=active_folder,
+            public_folders=public_folders,
+            explicit_folder_override=explicit_folder_override,
+        )
         search_tasks = []
         for ws in all_workspaces:
             rag = self._get_rag(ws)
@@ -197,6 +238,32 @@ class TwinRAGEngine:
             intent=trace.intent,
         )
 
+    async def _resolve_search_folders(
+        self,
+        *,
+        query: str,
+        active_folder: str,
+        public_folders: list[str],
+        explicit_folder_override: bool,
+    ) -> list[str]:
+        """Resolve the folder list, then return LightRAG workspace names."""
+        if not self.folder_router:
+            return list(dict.fromkeys([active_folder] + public_folders))
+
+        if explicit_folder_override:
+            routing = await self.folder_router.route(
+                query,
+                provided_folders=[active_folder],
+                provided_public_folders=public_folders,
+            )
+        else:
+            routing = await self.folder_router.route(query)
+
+        folders = routing.folders + routing.public_folders
+        if not folders:
+            folders = [active_folder] + public_folders
+        return list(dict.fromkeys(folders))
+
     def _scripted_response(self, intent: IntentType) -> str:
         """Scripted responses for non-VALID intents."""
         responses = {
@@ -227,7 +294,11 @@ class TwinRAGEngine:
         domain_hint: Optional[str],
     ):
         """Run query expansion (v2 graph-based or v1 thesaurus)."""
-        if self.ontology_config and self.ontology_config.enabled:
+        if (
+            self.config.enable_ontology
+            and self.ontology_config
+            and self.ontology_config.enabled
+        ):
             return await self.expander.expand_v2(
                 query, workspace=workspace, domain_hint=domain_hint
             )

@@ -255,7 +255,7 @@ function AppShell() {
   const graphEntities = useGraphEntities({ enabled: authReady && tab === 'graph' });
   const graphRelations = useGraphRelations({ enabled: authReady && tab === 'graph' });
   const pipelineStatus = usePipelineStatus({
-    enabled: authReady && tab === 'documents' && pipelineOpen,
+    enabled: authReady && tab === 'documents',
   });
 
   // Notifications carry mutable client state (read/cleared) on top of the

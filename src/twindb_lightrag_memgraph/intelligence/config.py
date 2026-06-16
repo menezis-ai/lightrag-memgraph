@@ -47,13 +47,16 @@ class TwinRAGConfig(BaseSettings):
     enable_query_expansion: bool = True
     enable_cognitive_reranking: bool = True
     enable_feedback: bool = True
-    enable_workspace_routing: bool = True
+    enable_folder_routing: bool = True
+    enable_workspace_routing: Optional[bool] = None  # Deprecated: use enable_folder_routing.
 
-    # --- F06 Workspace Router ---
-    routing_rules_path: str = (
+    # --- F06 Folder Router ---
+    folder_routing_rules_path: str = (
         ""  # Path to routing_rules.json. Empty = use embedded default.
     )
-    default_workspace: str = "commons"
+    default_folder: str = "commons"
+    routing_rules_path: str = ""  # Deprecated: use folder_routing_rules_path.
+    default_workspace: Optional[str] = None  # Deprecated: use default_folder.
 
     # --- Feature Thresholds ---
     oos_confidence_threshold: float = 0.85
@@ -81,3 +84,20 @@ class TwinRAGConfig(BaseSettings):
     # --- Observability ---
     enable_tracing: bool = True
     log_level: str = "INFO"
+
+    @property
+    def effective_enable_folder_routing(self) -> bool:
+        """Return the canonical folder-routing flag with legacy env compatibility."""
+        if self.enable_workspace_routing is not None:
+            return self.enable_workspace_routing
+        return self.enable_folder_routing
+
+    @property
+    def effective_folder_routing_rules_path(self) -> str:
+        """Return the configured folder routing rules path."""
+        return self.folder_routing_rules_path or self.routing_rules_path
+
+    @property
+    def effective_default_folder(self) -> str:
+        """Return the default folder, accepting the legacy workspace alias."""
+        return self.default_workspace or self.default_folder
