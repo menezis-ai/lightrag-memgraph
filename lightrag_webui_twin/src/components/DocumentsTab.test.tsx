@@ -8,6 +8,7 @@
  *   - tag filter chip: click a row tag adds it as a filter
  *   - multi-select toggles + bulk Retag invokes onOpenBulkRetag
  *   - Add source button calls onOpenAdd
+ *   - source filename opens the document detail panel callback
  *   - row Retag button calls onOpenRetag(doc)
  *   - empty state appears when filters match no doc
  */
@@ -332,6 +333,14 @@ describe('DocumentsTab — header actions', () => {
     );
     expect(p.onOpenRetag).toHaveBeenCalled();
     expect(p.onOpenRetag.mock.calls[0][0].doc_id).toBe('d1');
+  });
+
+  it('source filename opens the document detail callback', async () => {
+    const p = { ...defaultProps(), onOpenDetail: vi.fn() };
+    render(<DocumentsTab {...p} />);
+    await userEvent.click(screen.getByTestId('docs-row-filename-d1'));
+    expect(p.onOpenDetail).toHaveBeenCalledTimes(1);
+    expect(p.onOpenDetail.mock.calls[0][0].doc_id).toBe('d1');
   });
 
 });

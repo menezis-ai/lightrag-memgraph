@@ -84,10 +84,11 @@ class TwinQueryBody(BaseModel):
     enable_rerank: bool | None = Field(default=None)
     min_score: float = Field(default=0.0, ge=0.0, le=1.0)
     tag_filter: dict[str, list[str]] | None = Field(default=None)
+    doc_filter: dict[str, list[str]] | None = Field(default=None)
 
-    @field_validator("tag_filter")
+    @field_validator("tag_filter", "doc_filter")
     @classmethod
-    def _validate_tag_filter(
+    def _validate_advanced_filter(
         cls, value: dict[str, list[str]] | None
     ) -> dict[str, list[str]] | None:
         if value is None:
@@ -96,7 +97,7 @@ class TwinQueryBody(BaseModel):
         unknown_keys = set(value) - allowed_keys
         if unknown_keys:
             raise ValueError(
-                "tag_filter keys must be a subset of {'all', 'any'}"
+                "advanced filter keys must be a subset of {'all', 'any'}"
             )
         return value
 
@@ -176,6 +177,8 @@ def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[st
         param_kwargs["enable_rerank"] = body.enable_rerank
     if body.tag_filter is not None:
         param_kwargs["tag_filter"] = body.tag_filter
+    if body.doc_filter is not None:
+        param_kwargs["doc_filter"] = body.doc_filter
     return param_kwargs
 
 
@@ -359,6 +362,24 @@ def _tag_filter_terms(
     return required, optional
 
 
+def _doc_filter_terms(
+    doc_filter: dict[str, list[str]] | None,
+) -> tuple[set[str], set[str]]:
+    if not doc_filter:
+        return set(), set()
+    required = {
+        doc.strip()
+        for doc in doc_filter.get("all", [])
+        if isinstance(doc, str) and doc.strip()
+    }
+    optional = {
+        doc.strip()
+        for doc in doc_filter.get("any", [])
+        if isinstance(doc, str) and doc.strip()
+    }
+    return required, optional
+
+
 def _doc_tags_match_filter(
     doc_tags: set[str], tag_filter: dict[str, list[str]] | None
 ) -> bool:
@@ -374,6 +395,75 @@ def _doc_tags_match_filter(
     if optional and doc_tags.isdisjoint(optional):
         return False
     return True
+
+
+def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
+    out = {
+        str(source[key]).strip()
+        for key in ("doc_id", "name")
+        if isinstance(source.get(key), str) and source.get(key).strip()
+    }
+    return out
+
+
+def _source_matches_doc_filter(
+    source: dict[str, Any], doc_filter: dict[str, list[str]] | None
+) -> bool:
+    required, optional = _doc_filter_terms(doc_filter)
+    if not required and not optional:
+        return True
+    candidates = _source_doc_candidates(source)
+    if not candidates:
+        return False
+    requested = required | optional
+    return not candidates.isdisjoint(requested)
+
+
+async def _source_matches_tag_filter(
+    source: dict[str, Any],
+    tag_filter: dict[str, list[str]] | None,
+    folder: str,
+    tags_cache: dict[str, set[str]],
+) -> bool:
+    required, optional = _tag_filter_terms(tag_filter)
+    if not required and not optional:
+        return True
+    doc_id = source.get("doc_id")
+    if not isinstance(doc_id, str) or not doc_id:
+        return False
+    if doc_id not in tags_cache:
+        tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
+    return _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
+
+
+async def _filter_sources_by_advanced_filters(
+    sources: list[dict[str, Any]],
+    *,
+    tag_filter: dict[str, list[str]] | None,
+    doc_filter: dict[str, list[str]] | None,
+    folder: str,
+) -> list[dict[str, Any]]:
+    tag_required, tag_optional = _tag_filter_terms(tag_filter)
+    doc_required, doc_optional = _doc_filter_terms(doc_filter)
+    if (
+        not tag_required
+        and not tag_optional
+        and not doc_required
+        and not doc_optional
+    ):
+        return sources
+
+    tags_cache: dict[str, set[str]] = {}
+    kept: list[dict[str, Any]] = []
+    for source in sources:
+        if not _source_matches_doc_filter(source, doc_filter):
+            continue
+        if not await _source_matches_tag_filter(
+            source, tag_filter, folder, tags_cache
+        ):
+            continue
+        kept.append(source)
+    return kept
 
 
 async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
@@ -617,6 +707,7 @@ async def _record_retrieval_activity(
                 "sources_count": sources_count,
                 "stream": stream,
                 "tag_filter": body.tag_filter,
+                "doc_filter": body.doc_filter,
             },
             target_type="query",
         )
@@ -639,26 +730,15 @@ def build_twin_query_router(get_rag) -> APIRouter:
     async def query_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
-        # TR-RET-02 step 3 / audit C1: ``tag_filter`` is NOT applied
-        # to retrieval by LightRAG 1.4.x — its ``QueryParam`` has no
-        # such field and the previous setattr-on-param fallback was
-        # silently ignored downstream. Accepting the parameter here
-        # used to lie to the operator about scoping the retrieval by
-        # tags; reject it loudly instead.
-        if body.tag_filter is not None:
-            raise HTTPException(
-                422,
-                "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
-                "remove it from /query and /query/stream requests.",
-            )
-
         try:
             rag = get_rag()
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
 
         from lightrag.base import QueryParam
+        from .folder import resolve_folder_for_request
 
+        folder = resolve_folder_for_request(request)
         param_kwargs = _query_param_kwargs(body)
         param = _make_query_param(QueryParam, param_kwargs)
 
@@ -734,6 +814,12 @@ def build_twin_query_router(get_rag) -> APIRouter:
             )
             sources = []
         sources = _filter_sources_by_min_score(sources, body.min_score)
+        sources = await _filter_sources_by_advanced_filters(
+            sources,
+            tag_filter=body.tag_filter,
+            doc_filter=body.doc_filter,
+            folder=folder,
+        )
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=False
         )
@@ -840,25 +926,18 @@ def build_twin_query_router(get_rag) -> APIRouter:
         that the run did not complete cleanly. ``no_results`` is the
         only failure_reason mapped to ``insufficient_information`` —
         the rest must NOT be masked as such. Pre-stream failures
-        (RAG bootstrap, body validation including the audit-C1
-        ``tag_filter`` 422) still surface as real HTTP 4xx/5xx like
-        the non-stream `/query` route.
+        (RAG bootstrap, body validation) still surface as real HTTP
+        4xx/5xx like the non-stream `/query` route.
         """
-        # TR-RET-02 step 3 / audit C1: same honest rejection as /query
-        # — LightRAG 1.4.x does not apply tag_filter to retrieval.
-        if body.tag_filter is not None:
-            raise HTTPException(
-                422,
-                "tag_filter is not applied to retrieval by LightRAG 1.4.x; "
-                "remove it from /query and /query/stream requests.",
-            )
-
         try:
             rag = get_rag()
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from exc
 
         from lightrag.base import QueryParam
+        from .folder import resolve_folder_for_request
+
+        folder = resolve_folder_for_request(request)
 
         async def generate() -> AsyncIterator[str]:
             # TR-RET-02 step 2 / audit C3:
@@ -994,6 +1073,12 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 )
                 sources = []
             sources = _filter_sources_by_min_score(sources, body.min_score)
+            sources = await _filter_sources_by_advanced_filters(
+                sources,
+                tag_filter=body.tag_filter,
+                doc_filter=body.doc_filter,
+                folder=folder,
+            )
             await _record_retrieval_activity(
                 body, request, sources_count=len(sources), stream=True
             )

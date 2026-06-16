@@ -217,6 +217,7 @@ function cascadeDocsFromGraph(deletedDocIds: Set<string>): void {
 
 let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
+const uploadedDocText = new Map<string, string>();
 
 // Folders — admin CRUD mirror of the backend. The first folder fixture
 // is treated as the SRE-provisioned default (env-seeded) and
@@ -341,6 +342,7 @@ export function resetDocumentsState(): void {
     properties: r.properties ? { ...r.properties } : {},
   }));
   uploadedTrackDocs.clear();
+  uploadedDocText.clear();
   uploadSeq = 0;
   folderState = FOLDER_FIXTURES.slice(0, 1).map((w) => ({ ...w }));
   e2eScenario.bulkRetagStatus = undefined;
@@ -759,12 +761,26 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const id = String(params.id);
     const doc = documentsState.find((d) => d.doc_id === id);
-    const count = doc?.chunks_count ?? 0;
-    const chunks = Array.from({ length: Math.min(count, 6) }, (_, i) => ({
-      chunk_id: `${id}_c${i}`,
-      order: i,
-      text: `Chunk ${i + 1} of ${doc?.file_path ?? id} — placeholder content.`,
-    }));
+    const storedText = uploadedDocText.get(id);
+    if (storedText) {
+      return HttpResponse.json([
+        {
+          chunk_id: `${id}_c0`,
+          order: 0,
+          text: storedText,
+        },
+      ]);
+    }
+    const chunks =
+      doc && (doc.chunks_count ?? 0) > 0
+        ? [
+            {
+              chunk_id: `${id}_c0`,
+              order: 0,
+              text: `Mock backend has no extracted text for ${doc.file_path}. Use the real backend to inspect LightRAG PDF/binary chunks.`,
+            },
+          ]
+        : [];
     return HttpResponse.json(chunks);
   }),
   http.post(`${ANY}/documents/:id/scan`, ({ request }) => {
@@ -777,6 +793,8 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const form = await request.formData();
     const file = form.get('file');
+    const classification = String(form.get('classification') || 'internal');
+    const ragEngine = String(form.get('rag_engine') || 'lightrag');
     const name =
       file instanceof File && file.name
         ? file.name
@@ -791,6 +809,11 @@ export const handlers = [
     const trackId = `track_${name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
     const docId = `uploaded_${uploadSeq}`;
     uploadedTrackDocs.set(trackId, docId);
+    const text =
+      file instanceof File && file.type.startsWith('text/')
+        ? await file.text()
+        : '';
+    if (text.trim()) uploadedDocText.set(docId, text);
     documentsState = [
       {
         doc_id: docId,
@@ -803,7 +826,12 @@ export const handlers = [
         created_at: '2026-06-02T00:00:00Z',
         updated_at: '2026-06-02T00:00:00Z',
         error_msg: null,
-        metadata: { mime: file instanceof File ? file.type : 'text/plain', uploader: 'e2e' },
+        metadata: {
+          mime: file instanceof File ? file.type : 'text/plain',
+          uploader: 'e2e',
+          classification,
+          rag_engine: ragEngine,
+        },
         type: 'file',
         tags: [],
         folder: 'default',

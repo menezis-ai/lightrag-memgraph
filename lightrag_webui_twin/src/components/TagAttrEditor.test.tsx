@@ -45,7 +45,7 @@ describe('TagAttrEditor — thesaurus binding (TR-KG-03)', () => {
     expect((input as HTMLInputElement).value).toBe('');
   });
 
-  it('disables the Add button + shows an alert when the typed tag is unknown', async () => {
+  it('shows an alert without an Add button when the typed tag is unknown', async () => {
     const onChange = vi.fn();
     render(
       <TagAttrEditor tags={[]} tagCatalog={CATALOG} onChange={onChange} />,
@@ -56,8 +56,7 @@ describe('TagAttrEditor — thesaurus binding (TR-KG-03)', () => {
       'random-bullshit-bingo',
     );
 
-    const addButton = screen.getByRole('button', { name: /^Add$/ });
-    expect(addButton).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Add$/ })).toBeNull();
     const alert = screen.getByTestId('kg-tag-not-in-catalog');
     expect(alert.textContent).toContain('random-bullshit-bingo');
     expect(alert.textContent).toMatch(/not in the tag catalog/i);

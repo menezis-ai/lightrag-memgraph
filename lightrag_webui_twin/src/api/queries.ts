@@ -12,12 +12,18 @@ import { api } from './resources';
 import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
+import type { UploadDocumentInput } from './resources';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
 const PIPELINE_REFETCH_INTERVAL_MS = 2_000;
 const DEFAULT_UPLOAD_CONCURRENCY = 4;
 type QueryGate = { enabled?: boolean };
+type UploadBatchItem = UploadDocumentInput | File;
+
+function normalizeUploadInput(item: UploadBatchItem): UploadDocumentInput {
+  return item instanceof File ? { file: item } : item;
+}
 
 async function mapSettledWithConcurrency<T, R>(
   items: readonly T[],
@@ -648,11 +654,17 @@ export function useUploadDocument() {
 export function useUploadDocumentsBatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (files: readonly File[]) =>
+    mutationFn: (uploads: readonly UploadBatchItem[]) =>
       mapSettledWithConcurrency(
-        files,
+        uploads,
         DEFAULT_UPLOAD_CONCURRENCY,
-        (file) => api.uploadDocument(file),
+        (item) => {
+          const upload = normalizeUploadInput(item);
+          return api.uploadDocument(upload.file, {
+            classification: upload.classification,
+            ragEngine: upload.ragEngine,
+          });
+        },
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });

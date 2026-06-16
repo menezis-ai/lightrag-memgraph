@@ -52,7 +52,7 @@ import {
   useFolders,
 } from './api/queries';
 import { ApiError, getTwinRuntimeConfig, setActiveFolder } from './api/client';
-import { api } from './api/resources';
+import { api, type UploadDocumentInput } from './api/resources';
 import { mapTwinQueryResponseForRetrievalTab } from './api/twinQueryResponse';
 import { FORMAT_CATEGORIES } from './constants/formatCategories';
 import type { Document } from './types/document';
@@ -197,6 +197,22 @@ function AppShell() {
   const [retagDoc, setRetagDoc] = useState<Document | null>(null);
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
+  const [detailChunkId, setDetailChunkId] = useState<string | null>(null);
+  const [detailRequest, setDetailRequest] = useState<{
+    doc?: string;
+    source?: string;
+    chunk?: string;
+  } | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const doc = params.get('doc') ?? undefined;
+    const source = params.get('source') ?? undefined;
+    if (!doc && !source) return null;
+    return {
+      doc,
+      source,
+      chunk: params.get('chunk') ?? undefined,
+    };
+  });
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
   const [pipelineOpen, setPipelineOpen] = useState(false);
   const [optimisticUploadDocs, setOptimisticUploadDocs] = useState<
@@ -214,7 +230,11 @@ function AppShell() {
   // sample fallback is allowed on the operator surface.
   const docs = useDocuments(
     { folder },
-    { enabled: authReady && tab === 'documents' },
+    {
+      enabled:
+        authReady &&
+        (tab === 'documents' || tab === 'retrieval' || tab === 'graph'),
+    },
   );
   const folders = useFolders({ enabled: authReady });
   const notificationsQ = useNotifications({ enabled: authReady });
@@ -367,18 +387,18 @@ function AppShell() {
   const bulkDeleteDocs = useBulkDeleteDocuments();
 
   const makeOptimisticUploadDocs = (
-    files: readonly File[],
+    uploads: readonly UploadDocumentInput[],
     tags: readonly string[],
   ): readonly Document[] => {
     const now = new Date().toISOString();
     const visibility =
       folderList.find((item) => item.id === folder)?.visibility ?? 'internal';
-    return files.map((file, index) => ({
+    return uploads.map((upload, index) => ({
       doc_id: `upload_${Date.now()}_${index}`,
       track_id: null,
-      file_path: file.name,
+      file_path: upload.file.name,
       content_summary: 'Upload queued, waiting for ingestion worker.',
-      content_length: file.size,
+      content_length: upload.file.size,
       status: 'PENDING',
       _optimisticUpload: true,
       chunks_count: null,
@@ -386,8 +406,10 @@ function AppShell() {
       updated_at: now,
       error_msg: null,
       metadata: {
-        size_bytes: file.size,
+        size_bytes: upload.file.size,
         upload_state: 'pending',
+        classification: upload.classification ?? 'internal',
+        rag_engine: upload.ragEngine ?? 'lightrag',
       },
       type: 'file',
       tags: [...tags],
@@ -470,19 +492,27 @@ function AppShell() {
       return;
     }
 
-    const optimisticDocs = makeOptimisticUploadDocs(
-      action.rawFiles,
-      action.tags,
+    const uploadInputs: readonly UploadDocumentInput[] = action.rawFiles.map(
+      (file, index) => {
+        const opts = action.fileOptions[index];
+        return {
+          file,
+          classification: opts?.classification ?? 'internal',
+          ragEngine: opts?.ragEngine ?? 'lightrag',
+        };
+      },
     );
+
+    const optimisticDocs = makeOptimisticUploadDocs(uploadInputs, action.tags);
     setOptimisticUploadDocs((current) => [...optimisticDocs, ...current]);
 
     pushToast({
       kind: 'propagating',
       title: 'Uploading sources…',
-      sub: `${action.rawFiles.length} file${action.rawFiles.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
+      sub: `${uploadInputs.length} file${uploadInputs.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
     });
 
-    const results = await uploadDocs.mutateAsync(action.rawFiles);
+    const results = await uploadDocs.mutateAsync(uploadInputs);
     const failedOptimisticIds = new Set(
       optimisticDocs
         .filter((_, index) => results[index]?.status === 'rejected')
@@ -552,7 +582,7 @@ function AppShell() {
     const uploadAuditWrites = results.map((result, index) => {
       if (result.status !== 'fulfilled') return null;
       return api.recordSourceUploaded({
-        source: action.rawFiles[index]?.name ?? result.value.track_id,
+        source: uploadInputs[index]?.file.name ?? result.value.track_id,
         track_id: result.value.track_id,
         status: result.value.status,
         actor: currentActor,
@@ -911,6 +941,17 @@ function AppShell() {
     if (params) {
       Object.entries(params).forEach(([k, v]) => search.set(k, v));
     }
+    if (nextTab === 'documents' && (params?.doc || params?.source)) {
+      setDetailDoc(null);
+      setDetailChunkId(null);
+      setDetailRequest({
+        doc: params.doc,
+        source: params.source,
+        chunk: params.chunk,
+      });
+    } else {
+      setDetailRequest(null);
+    }
     const qs = search.toString();
     window.history.replaceState(
       null,
@@ -927,6 +968,8 @@ function AppShell() {
     setReadNotificationIds(new Set());
     setClearedNotificationIds(new Set());
     setDetailDoc(null);
+    setDetailChunkId(null);
+    setDetailRequest(null);
     setReadSourceDoc(null);
     setRetagDoc(null);
     setRetagBulk(null);
@@ -980,6 +1023,17 @@ function AppShell() {
     );
     return dedupeDocumentsBySource([...pendingUploads, ...backendDocList]);
   }, [backendDocList, folder, optimisticUploadDocs]);
+  const requestedDetailDoc = useMemo(() => {
+    if (tab !== 'documents' || !detailRequest) return null;
+    const target =
+      docList.find((doc) => doc.doc_id === detailRequest.doc) ??
+      docList.find((doc) => doc.file_path === detailRequest.source);
+    if (!target || target._optimisticUpload) return null;
+    return target;
+  }, [detailRequest, docList, tab]);
+  const activeDetailDoc = detailDoc ?? requestedDetailDoc;
+  const activeDetailChunkId =
+    detailDoc !== null ? detailChunkId : (detailRequest?.chunk ?? null);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come
@@ -1109,7 +1163,11 @@ function AppShell() {
               onOpenRetag={(d) => setRetagDoc(d)}
               onOpenBulkRetag={(ds) => setRetagBulk(ds)}
               onAddToast={onAddToast}
-              onDeleteDoc={(d) => setDetailDoc(d)}
+              onOpenDetail={(d) => {
+                setDetailRequest(null);
+                setDetailChunkId(null);
+                setDetailDoc(d);
+              }}
               onBulkDelete={onDeleteBulk}
               onScanRetry={onScanRetry}
               pipelineStatus={pipelineStatus.data ?? null}
@@ -1140,9 +1198,6 @@ function AppShell() {
           {tab === 'retrieval' && (
             <RetrievalTab
               onSendQuery={async (params) => {
-                // TR-RET-02 step 3 / audit C1: tag_filter is NOT sent
-                // to /query because LightRAG 1.4.x does not apply it
-                // to retrieval. The backend now 422s if it slips in.
                 const res = await api.query({
                   query: params.query,
                   actor: currentActor,
@@ -1157,12 +1212,12 @@ function AppShell() {
                   user_prompt: params.userPrompt,
                   enable_rerank: params.enableRerank,
                   min_score: params.minScore,
+                  tag_filter: params.tagFilter,
+                  doc_filter: params.docFilter,
                 });
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
               onStreamQuery={async (params, onChunk) => {
-                // Same C1 honesty as the non-stream branch above:
-                // no tag_filter forwarded to /query/stream.
                 const res = await api.queryStream(
                   {
                     query: params.query,
@@ -1178,6 +1233,8 @@ function AppShell() {
                     user_prompt: params.userPrompt,
                     enable_rerank: params.enableRerank,
                     min_score: params.minScore,
+                    tag_filter: params.tagFilter,
+                    doc_filter: params.docFilter,
                   },
                   onChunk,
                 );
@@ -1185,6 +1242,9 @@ function AppShell() {
               }}
               initialThreads={[]}
               suggestions={[]}
+              tagOptions={tagCatalog.map((tag) => tag.tag)}
+              docOptions={docList.map((doc) => doc.doc_id)}
+              docLabels={graphDocLabels}
               onNavigate={onNavigate}
             />
           )}
@@ -1250,10 +1310,17 @@ function AppShell() {
         )}
       </Suspense>
       <DocDetailPanel
-        doc={detailDoc}
-        onClose={() => setDetailDoc(null)}
+        doc={activeDetailDoc}
+        initialExpandedChunkId={activeDetailChunkId}
+        onClose={() => {
+          setDetailDoc(null);
+          setDetailChunkId(null);
+          setDetailRequest(null);
+        }}
         onRetag={(d) => {
           setDetailDoc(null);
+          setDetailChunkId(null);
+          setDetailRequest(null);
           setRetagDoc(d);
         }}
         onReprocess={(d) => {
@@ -1292,6 +1359,8 @@ function AppShell() {
         }}
         onDelete={(d) => {
           setDetailDoc(null);
+          setDetailChunkId(null);
+          setDetailRequest(null);
           void onDeleteSingle(d);
         }}
       />

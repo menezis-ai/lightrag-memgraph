@@ -405,6 +405,31 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.doc-chunk-text.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.doc-chunk-toggle {
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--twin-accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+}
+.doc-chunk-toggle:hover {
+  color: var(--twin-accent-hover);
+  text-decoration: underline;
 }
 
 /* Lineage tab */
@@ -736,6 +761,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cell-source .source-name-button {
+  display: inline-block;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.cell-source .source-name-button:hover,
+.cell-source .source-name-button:focus-visible {
+  color: var(--twin-accent);
 }
 .cell-summary .summary-text {
   min-width: 0;

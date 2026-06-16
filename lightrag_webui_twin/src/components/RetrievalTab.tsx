@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import {
+  useUrlArrayParam,
   useUrlNumberParam,
   useUrlParam,
 } from '../hooks/useUrlParam';
@@ -62,6 +63,8 @@ export interface RetrievalTabProps {
     userPrompt: string;
     enableRerank: boolean;
     minScore: number;
+    tagFilter?: RetrievalAdvancedFilter;
+    docFilter?: RetrievalAdvancedFilter;
   }) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
@@ -80,11 +83,13 @@ export interface RetrievalTabProps {
       historyTurns: number;
       conversationHistory: readonly ConversationHistoryMessage[];
       onlyContext: boolean;
-    onlyPrompt: boolean;
-    userPrompt: string;
-    enableRerank: boolean;
-    minScore: number;
-  },
+      onlyPrompt: boolean;
+      userPrompt: string;
+      enableRerank: boolean;
+      minScore: number;
+      tagFilter?: RetrievalAdvancedFilter;
+      docFilter?: RetrievalAdvancedFilter;
+    },
     onChunk: (chunk: string) => void,
   ) => Promise<{
     response: string;
@@ -95,6 +100,12 @@ export interface RetrievalTabProps {
   initialThreads?: readonly RetrievalThread[];
   /** Suggestions displayed in the empty state. */
   suggestions?: readonly string[];
+  /** Canonical tags for source filtering. */
+  tagOptions?: readonly string[];
+  /** Document ids or source paths for source filtering. */
+  docOptions?: readonly string[];
+  /** Optional doc id -> display label. */
+  docLabels?: Readonly<Record<string, string>>;
   /** Host-controlled tab navigation for citation/source drill-downs. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
@@ -129,11 +140,39 @@ interface ConversationHistoryMessage {
   content: string;
 }
 
+interface RetrievalAdvancedFilter {
+  all?: readonly string[];
+  any?: readonly string[];
+}
+
+type FilterMode = 'any' | 'all';
+
+function filterPayload(
+  selected: readonly string[],
+  mode: FilterMode,
+): RetrievalAdvancedFilter | undefined {
+  if (selected.length === 0) return undefined;
+  return mode === 'all' ? { all: selected } : { any: selected };
+}
+
+function sourceDrilldownParams(source: RetrievalSource): Record<string, string> {
+  const looksLikePath = source.type === 'file' && source.name.includes('.');
+  const params: Record<string, string> = looksLikePath
+    ? { source: source.name }
+    : { q: source.name };
+  if (source.doc_id) params.doc = source.doc_id;
+  if (source.chunk_id) params.chunk = source.chunk_id;
+  return params;
+}
+
 export function RetrievalTab({
   onSendQuery,
   onStreamQuery,
   initialThreads = [],
   suggestions = DEFAULT_SUGGESTIONS,
+  tagOptions = [],
+  docOptions = [],
+  docLabels,
   onNavigate,
 }: RetrievalTabProps) {
   const [query, setQuery] = useState('');
@@ -162,6 +201,18 @@ export function RetrievalTab({
   const [maxTok, setMaxTok] = useUrlNumberParam('maxtok', 30000);
   const [history, setHistory] = useUrlNumberParam('hist', 3);
   const [minScore, setMinScore] = useUrlNumberParam('minscore', 0);
+  const [tagFilter, setTagFilter] = useUrlArrayParam('rtag', []);
+  const [docFilter, setDocFilter] = useUrlArrayParam('rdoc', []);
+  const [tagFilterMode, setTagFilterMode] = useUrlParam<FilterMode>(
+    'rtagmode',
+    'any',
+    { validate: (v) => v === 'any' || v === 'all' },
+  );
+  const [docFilterMode, setDocFilterMode] = useUrlParam<FilterMode>(
+    'rdocmode',
+    'any',
+    { validate: (v) => v === 'any' || v === 'all' },
+  );
   const [onlyCtx, setOnlyCtx] = useState(false);
   const [onlyPrompt, setOnlyPrompt] = useState(false);
   const [userPrompt, setUserPrompt] = useState('');
@@ -348,6 +399,8 @@ export function RetrievalTab({
     userPrompt,
     enableRerank,
     minScore,
+    tagFilter: filterPayload(tagFilter, tagFilterMode),
+    docFilter: filterPayload(docFilter, docFilterMode),
   });
 
   const send = (text?: string) => {
@@ -439,21 +492,13 @@ export function RetrievalTab({
     setHighlightSrc(n);
     const source = sources?.find((s) => s.n === n);
     if (source) {
-      onNavigate?.('documents', { q: source.name });
+      onNavigate?.('documents', sourceDrilldownParams(source));
     }
     setTimeout(() => setHighlightSrc(null), 1400);
   };
   const onSourceClick = onNavigate
     ? (source: RetrievalSource) => {
-        // Prefer the exact source filter when the backend gave a doc id
-        // or a file-path-shaped name; fall back to a search by name so
-        // confluence / URL-shaped sources still resolve.
-        const looksLikePath =
-          source.type === 'file' && source.name.includes('.');
-        const params: Record<string, string> = looksLikePath
-          ? { source: source.name }
-          : { q: source.name };
-        onNavigate('documents', params);
+        onNavigate('documents', sourceDrilldownParams(source));
       }
     : undefined;
 
@@ -633,16 +678,40 @@ export function RetrievalTab({
           </select>
         </div>
 
-        {/* TR-RET-02 step 3 / audit C1: the "Tag filter — Twin"
-            input used to live here and forwarded ``tagFilters`` to
-            the backend, where LightRAG 1.4.x silently ignored it
-            (its ``QueryParam`` has no ``tag_filter`` field). The
-            affordance has been removed entirely rather than
-            relabelled, because there is no honest backend path to
-            redirect to while audit C2 (the /query/data post-filter
-            still on metadata.tags instead of TAGGED_WITH) is open.
-            Restoring this control is gated on a real server-side
-            pre-filter — see ``docs/audits/lightrag-interactions/``. */}
+        <div className="field retrieval-filter-field">
+          <label className="field-label">Source tag filters</label>
+          <RetrievalFilterPicker
+            label="Retrieval tag filter"
+            options={tagOptions}
+            selected={tagFilter}
+            onChange={setTagFilter}
+            placeholder="Add tag filter…"
+          />
+          <FilterModeToggle
+            label="Retrieval tag filter mode"
+            value={tagFilterMode}
+            onChange={setTagFilterMode}
+            disabled={tagFilter.length < 2}
+          />
+        </div>
+
+        <div className="field retrieval-filter-field">
+          <label className="field-label">Source document filters</label>
+          <RetrievalFilterPicker
+            label="Retrieval document filter"
+            options={docOptions}
+            selected={docFilter}
+            onChange={setDocFilter}
+            placeholder="Add document filter…"
+            format={(id) => docLabels?.[id] ?? id}
+          />
+          <FilterModeToggle
+            label="Retrieval document filter mode"
+            value={docFilterMode}
+            onChange={setDocFilterMode}
+            disabled={docFilter.length < 2}
+          />
+        </div>
 
         <div className="field">
           <label className="field-label">Top K results</label>
@@ -1008,6 +1077,126 @@ function Turn({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+interface RetrievalFilterPickerProps {
+  label: string;
+  options: readonly string[];
+  selected: readonly string[];
+  onChange: (next: readonly string[]) => void;
+  placeholder: string;
+  format?: (value: string) => string;
+}
+
+function RetrievalFilterPicker({
+  label,
+  options,
+  selected,
+  onChange,
+  placeholder,
+  format = (value) => value,
+}: RetrievalFilterPickerProps) {
+  const [draft, setDraft] = useState('');
+  const available = useMemo(() => {
+    const values = new Set<string>();
+    options.forEach((value) => values.add(value));
+    selected.forEach((value) => values.add(value));
+    return Array.from(values).sort((a, b) => format(a).localeCompare(format(b)));
+  }, [format, options, selected]);
+  const datalistId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-options`;
+
+  const addValue = (raw: string) => {
+    const value = raw.trim();
+    if (!value || selected.includes(value)) return;
+    onChange([...selected, value]);
+    setDraft('');
+  };
+
+  return (
+    <div className="retrieval-filter-picker">
+      <div className="retrieval-filter-input-row">
+        <input
+          className="mini-input"
+          list={datalistId}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addValue(draft);
+            }
+          }}
+          placeholder={placeholder}
+          aria-label={label}
+        />
+        <datalist id={datalistId}>
+          {available.map((value) => (
+            <option key={value} value={value}>
+              {format(value)}
+            </option>
+          ))}
+        </datalist>
+        <button
+          type="button"
+          className="ghost-btn small"
+          onClick={() => addValue(draft)}
+          disabled={!draft.trim() || selected.includes(draft.trim())}
+        >
+          <Icon name="plus" size={12} />
+        </button>
+      </div>
+      {selected.length > 0 && (
+        <div className="retrieval-filter-chips">
+          {selected.map((value) => (
+            <span key={value} className="retrieval-filter-chip">
+              <span title={value}>{format(value)}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${format(value)}`}
+                onClick={() => onChange(selected.filter((item) => item !== value))}
+              >
+                <Icon name="x" size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface FilterModeToggleProps {
+  label: string;
+  value: FilterMode;
+  onChange: (value: FilterMode) => void;
+  disabled: boolean;
+}
+
+function FilterModeToggle({
+  label,
+  value,
+  onChange,
+  disabled,
+}: FilterModeToggleProps) {
+  return (
+    <div
+      className={`retrieval-filter-mode${disabled ? ' is-disabled' : ''}`}
+      role="group"
+      aria-label={label}
+    >
+      {(['any', 'all'] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          className={value === mode ? 'is-on' : ''}
+          onClick={() => onChange(mode)}
+          disabled={disabled}
+        >
+          {mode === 'any' ? 'Any' : 'All'}
+        </button>
+      ))}
     </div>
   );
 }

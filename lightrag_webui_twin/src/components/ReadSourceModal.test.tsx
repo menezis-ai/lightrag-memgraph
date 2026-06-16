@@ -150,7 +150,7 @@ describe('ReadSourceModal — chunks loading + states (audit C6)', () => {
     expect(screen.getByText('Second chunk content.')).toBeInTheDocument();
   });
 
-  it('surfaces redacted chunks explicitly', async () => {
+  it('renders chunk text without redaction badges', async () => {
     server.use(
       http.get('*/documents/:id/chunks', () =>
         HttpResponse.json([
@@ -162,7 +162,7 @@ describe('ReadSourceModal — chunks loading + states (audit C6)', () => {
           {
             chunk_id: 'chunk-conf',
             order: 1,
-            text: 'Truncated preview…',
+            text: 'Previously flagged content now shown to the admin user.',
             redacted: true,
           },
         ]),
@@ -174,15 +174,16 @@ describe('ReadSourceModal — chunks loading + states (audit C6)', () => {
       expect(screen.getByTestId('rs-chunks-list')).toBeInTheDocument(),
     );
 
-    // The clear chunk does NOT carry a redacted indicator.
+    expect(screen.getByText('Open clear chunk.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Previously flagged content now shown to the admin user.'),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId('rs-chunk-redacted-chunk-clear'),
     ).toBeNull();
-    // The redacted chunk carries the indicator + the wording is
-    // honest about the truncation.
-    const indicator = screen.getByTestId('rs-chunk-redacted-chunk-conf');
-    expect(indicator.textContent).toMatch(/redacted/i);
-    expect(indicator.textContent).toMatch(/truncated/i);
+    expect(
+      screen.queryByTestId('rs-chunk-redacted-chunk-conf'),
+    ).toBeNull();
   });
 
   it('never renders the pre-C6 demo placeholder copy', async () => {

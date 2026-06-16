@@ -287,16 +287,36 @@ describe('RetrievalTab — params panel', () => {
     expect(sel.value).toBe('hybrid');
   });
 
-  it('does not render a Tag filter affordance (TR-RET-02 step 3 / audit C1)', () => {
-    // The "Tag filter — Twin" control used to live in this panel and
-    // forwarded a tagFilters array that LightRAG 1.4.x silently
-    // ignored at retrieval time. The whole affordance has been
-    // removed rather than relabelled (no honest backend path to
-    // redirect to while audit C2 is open). This test pins that the
-    // control cannot sneak back without being noticed.
-    render(<RetrievalTab {...defaultProps()} />);
-    expect(screen.queryByLabelText('Retrieval tag input')).toBeNull();
-    expect(screen.queryByText(/Tag filter/i)).toBeNull();
+  it('renders advanced source filters for tags and documents', async () => {
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        tagOptions={['oracle', 'rman']}
+        docOptions={['doc-oracle']}
+        docLabels={{ 'doc-oracle': 'oracle-runbook.pdf' }}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Retrieval tag filter'), 'oracle');
+    await userEvent.click(
+      screen
+        .getByLabelText('Retrieval tag filter')
+        .closest('.retrieval-filter-input-row')!
+        .querySelector('button')!,
+    );
+    await userEvent.type(
+      screen.getByLabelText('Retrieval document filter'),
+      'doc-oracle',
+    );
+    await userEvent.click(
+      screen
+        .getByLabelText('Retrieval document filter')
+        .closest('.retrieval-filter-input-row')!
+        .querySelector('button')!,
+    );
+
+    expect(screen.getAllByText('oracle').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('oracle-runbook.pdf').length).toBeGreaterThan(0);
   });
 
   it('passes advanced retrieval params to onSendQuery', async () => {
@@ -306,6 +326,8 @@ describe('RetrievalTab — params panel', () => {
         {...defaultProps()}
         initialThreads={[]}
         onSendQuery={onSendQuery}
+        tagOptions={['oracle', 'rman']}
+        docOptions={['doc-oracle', 'doc-network']}
       />,
     );
 
@@ -325,6 +347,33 @@ describe('RetrievalTab — params panel', () => {
       'prefer operational runbooks',
     );
     await userEvent.click(screen.getByLabelText('Enable rerank'));
+    await userEvent.type(screen.getByLabelText('Retrieval tag filter'), 'oracle');
+    await userEvent.click(
+      screen
+        .getByLabelText('Retrieval tag filter')
+        .closest('.retrieval-filter-input-row')!
+        .querySelector('button')!,
+    );
+    await userEvent.type(screen.getByLabelText('Retrieval tag filter'), 'rman');
+    await userEvent.click(
+      screen
+        .getByLabelText('Retrieval tag filter')
+        .closest('.retrieval-filter-input-row')!
+        .querySelector('button')!,
+    );
+    await userEvent.click(
+      screen.getByRole('group', { name: 'Retrieval tag filter mode' }).querySelectorAll('button')[1],
+    );
+    await userEvent.type(
+      screen.getByLabelText('Retrieval document filter'),
+      'doc-oracle',
+    );
+    await userEvent.click(
+      screen
+        .getByLabelText('Retrieval document filter')
+        .closest('.retrieval-filter-input-row')!
+        .querySelector('button')!,
+    );
     await userEvent.type(screen.getByLabelText('Query input'), 'Advanced query');
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
 
@@ -340,13 +389,9 @@ describe('RetrievalTab — params panel', () => {
         historyTurns: 2,
         userPrompt: 'prefer operational runbooks',
         enableRerank: false,
+        tagFilter: { all: ['oracle', 'rman'] },
+        docFilter: { any: ['doc-oracle'] },
       }),
-    );
-    // TR-RET-02 step 3 / audit C1: ``tagFilters`` must NOT be in the
-    // forwarded params anymore — the field has been removed from the
-    // contract so the backend 422 on /query / /stream never triggers.
-    expect(onSendQuery).toHaveBeenCalledWith(
-      expect.not.objectContaining({ tagFilters: expect.anything() }),
     );
   });
 
@@ -676,6 +721,90 @@ describe('RetrievalTab — source cards', () => {
       'documents',
       expect.objectContaining({ source: expect.stringContaining('.pdf') }),
     );
+  });
+
+  it('clicking a source card forwards doc and chunk drill-down params', async () => {
+    const onNavigate = vi.fn();
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        onNavigate={onNavigate}
+        initialThreads={[
+          {
+            id: 'th_drilldown',
+            title: 'Drilldown',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer [1]'],
+                sources: [
+                  {
+                    n: 1,
+                    type: 'file' as const,
+                    name: 'runbook.pdf',
+                    score: 0.9,
+                    doc_id: 'doc-runbook',
+                    chunk_id: 'chunk-runbook-2',
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('source-1'));
+
+    expect(onNavigate).toHaveBeenCalledWith('documents', {
+      source: 'runbook.pdf',
+      doc: 'doc-runbook',
+      chunk: 'chunk-runbook-2',
+    });
+  });
+
+  it('clicking an inline citation forwards doc and chunk drill-down params', async () => {
+    const onNavigate = vi.fn();
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        onNavigate={onNavigate}
+        initialThreads={[
+          {
+            id: 'th_citation_drilldown',
+            title: 'Citation drilldown',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer [1]'],
+                sources: [
+                  {
+                    n: 1,
+                    type: 'file' as const,
+                    name: 'runbook.pdf',
+                    score: 0.9,
+                    doc_id: 'doc-runbook',
+                    chunk_id: 'chunk-runbook-2',
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('citation-1'));
+
+    expect(onNavigate).toHaveBeenCalledWith('documents', {
+      source: 'runbook.pdf',
+      doc: 'doc-runbook',
+      chunk: 'chunk-runbook-2',
+    });
   });
 
   it('source cards are disabled when no onNavigate prop is provided', async () => {

@@ -67,6 +67,32 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
     expect(data.length).toBeGreaterThan(0);
   });
 
+  it('GET /documents/:id/chunks never returns placeholder content for uploaded text files', async () => {
+    const form = new FormData();
+    form.append(
+      'file',
+      new File(['real uploaded chunk text'], 'real-upload.md', {
+        type: 'text/markdown',
+      }),
+    );
+    const upload = await fetch(BASE + '/documents/upload', {
+      method: 'POST',
+      body: form,
+    });
+    expect(upload.ok).toBe(true);
+
+    const docs = await getJson<{
+      items: Array<{ doc_id: string; file_path: string }>;
+    }>('/documents?q=real-upload');
+    const doc = docs.items[0];
+    const chunks = await getJson<Array<{ text: string }>>(
+      `/documents/${doc.doc_id}/chunks`,
+    );
+
+    expect(chunks[0].text).toBe('real uploaded chunk text');
+    expect(chunks[0].text).not.toMatch(/placeholder content/i);
+  });
+
   it('GET /health returns ok', async () => {
     const data = await getJson<{ status: string }>('/health');
     expect(data.status).toBe('ok');

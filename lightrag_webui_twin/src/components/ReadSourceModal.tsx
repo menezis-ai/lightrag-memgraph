@@ -15,9 +15,6 @@
  *   visible. We don't recreate a fake impression of continuous
  *   extracted text — the indexed content is chunked, the view says
  *   so.
- * - ``chunk.redacted === true`` is surfaced as a discrete
- *   indicator; we never pretend the chunk is complete when the
- *   backend marked it as truncated.
  * - No silent fallback to ``doc.extracted_text``. The field stays
  *   on the TS Document type (for back-compat with fixtures) but
  *   is no longer rendered — chunks are the source of truth.
@@ -148,14 +145,6 @@ export function ReadSourceModal({ doc, onClose }: ReadSourceModalProps) {
                   <div className="rs-chunk-meta">
                     <code className="mono">{c.chunk_id}</code>
                     <span className="muted">#{c.order}</span>
-                    {c.redacted === true && (
-                      <span
-                        className="muted"
-                        data-testid={`rs-chunk-redacted-${c.chunk_id}`}
-                      >
-                        · redacted (truncated)
-                      </span>
-                    )}
                   </div>
                   <pre className="rs-chunk-text">{c.text}</pre>
                 </li>

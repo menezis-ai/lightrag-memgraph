@@ -68,16 +68,11 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
     await expect(page.getByTestId('kg-node-e_memgraph')).toBeHidden();
   });
 
-  test('@regression @retrieval sends thread history (no tag_filter) to the backend', async ({
+  test('@regression @retrieval sends thread history without inactive filters', async ({
     page,
   }) => {
-    // TR-RET-02 step 3 / audit C1: ``tag_filter`` is no longer
-    // forwarded by the front (the input was removed, the App.tsx
-    // callback drops the field) and the backend 422s if it slips
-    // in. This test now asserts the body NEVER carries
-    // ``tag_filter`` while still pinning the conversation_history
-    // round-trip (the real thread-history part of the original
-    // regression).
+    // No inactive filter noise in the wire body while still pinning
+    // the conversation_history round-trip.
     await openTab(page, 'Retrieval');
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Top K', { exact: true }).fill('1');
@@ -110,8 +105,8 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
       history_turns: 3,
       conversation_history: [],
     });
-    // C1 contract: ``tag_filter`` MUST NOT be in the wire body.
     expect(firstBody).not.toHaveProperty('tag_filter');
+    expect(firstBody).not.toHaveProperty('doc_filter');
 
     const secondBody = queryRequests[1].body;
     expect(secondBody).toMatchObject({
@@ -120,6 +115,7 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
       history_turns: 3,
     });
     expect(secondBody).not.toHaveProperty('tag_filter');
+    expect(secondBody).not.toHaveProperty('doc_filter');
     expect(secondBody.conversation_history).toEqual([
       { role: 'user', content: 'First retrieval history probe' },
       {
@@ -127,5 +123,43 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
         content: 'Mock retrieval response for: First retrieval history probe',
       },
     ]);
+  });
+
+  test('@regression @retrieval sends active tag and document filters', async ({
+    page,
+  }) => {
+    await openTab(page, 'Retrieval');
+    await page.getByRole('button', { name: /New/ }).click();
+
+    await page.getByLabel('Retrieval tag filter', { exact: true }).fill('oracle');
+    await page.locator('.retrieval-filter-input-row').first().getByRole('button').click();
+    await page.getByLabel('Retrieval tag filter', { exact: true }).fill('rman');
+    await page.locator('.retrieval-filter-input-row').first().getByRole('button').click();
+    await page
+      .getByRole('group', { name: 'Retrieval tag filter mode' })
+      .getByRole('button', { name: 'All' })
+      .click();
+
+    await page
+      .getByLabel('Retrieval document filter', { exact: true })
+      .fill('d1');
+    await page.locator('.retrieval-filter-input-row').nth(1).getByRole('button').click();
+
+    await page.getByLabel('Query input').fill('Filtered retrieval probe');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('.retrieval-conv')).toContainText(
+      'Mock retrieval response for: Filtered retrieval probe',
+      { timeout: 20_000 },
+    );
+
+    const stats = await getMswStats(page);
+    const body = stats.queryRequests
+      .filter((request) => request.path.endsWith('/twin/api/query/stream'))
+      .at(-1)?.body;
+    expect(body).toMatchObject({
+      query: 'Filtered retrieval probe',
+      tag_filter: { all: ['oracle', 'rman'] },
+      doc_filter: { any: ['d1'] },
+    });
   });
 });

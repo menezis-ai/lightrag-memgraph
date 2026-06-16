@@ -114,10 +114,8 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(
       latestAssistant.getByTestId('source-1'),
     ).toBeVisible({ timeout: 12_000 });
-    // TR-RET-02 step 3 / audit C1: the Retrieval tag-filter input was
-    // removed (LightRAG 1.4.x ignored it). The cross-navigation flow
-    // now jumps straight to the next setting under test — Only need
-    // context — without touching tag-filter chips.
+    // The cross-navigation flow jumps straight to the next setting
+    // under test — Only need context — without changing filters.
     await page.getByLabel('Only need context').click();
     await expect(page.getByLabel('Only need context')).toHaveAttribute('aria-checked', 'true');
 
@@ -275,7 +273,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByTestId('doc-detail-view-raw').click();
     await expect(page.getByRole('dialog', { name: 'View raw notice' })).toBeVisible();
     await expect(page.getByRole('dialog', { name: 'View raw notice' })).toContainText(
-      'Source classification',
+      'Raw content is large',
     );
     await page
       .getByRole('dialog', { name: 'View raw notice' })
@@ -890,7 +888,7 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @documents reprocess on a non-failed document tells the truth', async ({ page }) => {
-    await page.getByTestId('docs-row-delete-d1').click();
+    await page.getByTestId('docs-row-filename-d1').click();
     await expect(page.getByRole('dialog', { name: /Detail: oracle-restart-procedure.pdf/ })).toBeVisible();
     await page.getByTestId('doc-detail-reprocess').click();
     await expect(page.locator('.toast-viewport')).toContainText('Re-process not applicable');

@@ -355,56 +355,77 @@ class TestQueryEndpoint:
         assert param.enable_rerank is False
         assert param.stream is False
 
-    async def test_tag_filter_rejected_with_422_on_query(self, make_client):
-        """Audit C1 / TR-RET-02 step 3: ``tag_filter`` is not applied
-        to retrieval by LightRAG 1.4.x. Accepting it would lie to the
-        operator about scoping — reject loudly. The message MUST NOT
-        point at /query/data, which has its own audit-C2 issue
-        (metadata.tags vs TAGGED_WITH) being fixed separately."""
-        rag = FakeRag(answer="tagged")
+    async def test_tag_filter_filters_projected_sources_on_query(self, make_client):
+        rag = FakeRag(
+            answer="tagged",
+            chunks=[
+                {"id": "chunk-a", "file_path": "/oracle", "score": 0.9},
+                {"id": "chunk-b", "file_path": "/network", "score": 0.8},
+            ],
+            chunk_to_doc={"chunk-a": "doc-oracle", "chunk-b": "doc-network"},
+        )
         client = await make_client(rag)
-        async with client:
-            r = await client.post(
-                "/query",
-                json={
-                    "query": "tagged retrieval",
-                    "tag_filter": {"all": ["oracle", "rman"], "any": []},
-                },
-            )
+        async def fake_tags(doc_id: str, folder: str):
+            assert folder == "default"
+            return {
+                "doc-oracle": {"oracle", "rman"},
+                "doc-network": {"network"},
+            }.get(doc_id, set())
 
-        assert r.status_code == 422
-        detail = r.json()["detail"]
-        assert "tag_filter is not applied to retrieval" in detail
-        assert "remove it from /query and /query/stream requests" in detail
-        # No alternative path suggested — /query/data is broken in a
-        # different way (audit C2) and pointing operators at any
-        # "data endpoint" while that is open would just replace one
-        # lie with another.
-        assert "/query/data" not in detail
-        assert "data endpoint" not in detail
-        # Backend never reached aquery_llm — the rejection is pre-RAG.
-        assert rag.llm_calls == []
+        with patch(
+            "twindb_lightrag_memgraph.server.twin_query_routes._fetch_doc_graph_tags",
+            AsyncMock(side_effect=fake_tags),
+        ):
+            async with client:
+                r = await client.post(
+                    "/query",
+                    json={
+                        "query": "tagged retrieval",
+                        "tag_filter": {"all": ["oracle", "rman"], "any": []},
+                    },
+                )
 
-    async def test_tag_filter_rejected_with_422_on_query_stream(
+        assert r.status_code == 200
+        assert [s["doc_id"] for s in r.json()["sources"]] == ["doc-oracle"]
+        _query, param = rag.llm_calls[0]
+        assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
+
+    async def test_tag_filter_filters_projected_sources_on_query_stream(
         self, make_client
     ):
-        rag = FakeRag(stream_chunks=["irrelevant"])
+        rag = FakeRag(
+            stream_chunks=["tagged"],
+            chunks=[
+                {"id": "chunk-a", "file_path": "/oracle", "score": 0.9},
+                {"id": "chunk-b", "file_path": "/network", "score": 0.8},
+            ],
+            chunk_to_doc={"chunk-a": "doc-oracle", "chunk-b": "doc-network"},
+        )
         client = await make_client(rag)
-        async with client:
-            r = await client.post(
-                "/query/stream",
-                json={
-                    "query": "tagged retrieval",
-                    "tag_filter": {"all": ["oracle"]},
-                },
-            )
-        assert r.status_code == 422
-        detail = r.json()["detail"]
-        assert "tag_filter is not applied to retrieval" in detail
-        assert "remove it from /query and /query/stream requests" in detail
-        assert "/query/data" not in detail
-        assert "data endpoint" not in detail
-        assert rag.llm_calls == []
+        async def fake_tags(doc_id: str, folder: str):
+            return {
+                "doc-oracle": {"oracle"},
+                "doc-network": {"network"},
+            }.get(doc_id, set())
+
+        with patch(
+            "twindb_lightrag_memgraph.server.twin_query_routes._fetch_doc_graph_tags",
+            AsyncMock(side_effect=fake_tags),
+        ):
+            async with client:
+                r = await client.post(
+                    "/query/stream",
+                    json={
+                        "query": "tagged retrieval",
+                        "tag_filter": {"all": ["oracle"]},
+                    },
+                )
+
+        assert r.status_code == 200
+        lines = [line for line in r.text.splitlines() if line.strip()]
+        sources_event = next(json for json in lines if '"type": "sources"' in json)
+        assert '"doc_id": "doc-oracle"' in sources_event
+        assert '"doc_id": "doc-network"' not in sources_event
 
     async def test_tag_filter_is_absent_when_omitted(self, make_client):
         rag = FakeRag(answer="untagged")
@@ -438,6 +459,27 @@ class TestQueryEndpoint:
 
         assert unknown_key.status_code == 422
         assert non_list_value.status_code == 422
+
+    async def test_doc_filter_filters_projected_sources(self, make_client):
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {"id": "a", "file_path": "/a", "score": 0.91},
+                {"id": "b", "file_path": "/b", "score": 0.82},
+            ],
+            chunk_to_doc={"a": "doc-a", "b": "doc-b"},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={"query": "x", "doc_filter": {"any": ["doc-b"]}},
+            )
+
+        assert r.status_code == 200
+        assert [s["doc_id"] for s in r.json()["sources"]] == ["doc-b"]
+        _query, param = rag.llm_calls[0]
+        assert param.doc_filter == {"any": ["doc-b"]}
 
     async def test_only_need_prompt_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="prompt that would be sent")

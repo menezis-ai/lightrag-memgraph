@@ -172,6 +172,43 @@ describe('GraphTab — filters', () => {
     expect(screen.getByTestId(`kg-node-${GRAPH_ENTITY_FIXTURES[8].id}`)).toBeInTheDocument();
   });
 
+  it('transfers active tag and document filters to Retrieval URL params', async () => {
+    const onNavigate = vi.fn();
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            tags: ['oracle'],
+            source_docs: ['doc-oracle'],
+          },
+          {
+            ...GRAPH_ENTITY_FIXTURES[8],
+            tags: ['memgraph'],
+            source_docs: ['doc-memgraph'],
+          },
+        ]}
+        relations={[]}
+        tagCatalog={['oracle', 'memgraph']}
+        onNavigate={onNavigate}
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText('Filter by tag'));
+    await userEvent.click(screen.getByTestId('kg-pick-oracle'));
+    await userEvent.click(screen.getByLabelText('Filter by document'));
+    await userEvent.click(screen.getByTestId('kg-pick-doc-oracle'));
+    await userEvent.click(screen.getByTestId('kg-transfer-filters'));
+
+    expect(onNavigate).toHaveBeenCalledWith('retrieval', {
+      rtag: 'oracle',
+      rtagmode: 'any',
+      rdoc: 'doc-oracle',
+      rdocmode: 'any',
+    });
+  });
+
   it('header shows the active folder label and hides the segment when unset', () => {
     const { unmount } = renderWithClient(
       <GraphTab {...defaultProps()} folderLabel="Run & Ops KB" />,

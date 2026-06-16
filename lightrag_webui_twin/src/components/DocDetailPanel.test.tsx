@@ -5,15 +5,15 @@
  *   - returns null when no doc selected
  *   - 3 tabs: Chunks, Lineage, Audit; default = Chunks
  *   - Chunks fetches from /documents/{id}/chunks
- *   - Lineage shows uploader, classification, dates, tags
+ *   - Lineage shows uploader, dates, tags
  *   - Audit fetches /twin/api/activity?resource.id={id}
- *   - View raw notice gates above-internal classification
+ *   - View raw notice explains the future raw download endpoint
  *   - Footer buttons fire onRetag / onReprocess / onDelete
  *   - Escape closes
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -125,6 +125,82 @@ describe('DocDetailPanel — tabs', () => {
     await waitFor(() =>
       expect(screen.getByTestId('doc-detail-chunks-list')).toBeInTheDocument(),
     );
+    expect(screen.getByText('Chunk 1 text content for the document.')).toBeInTheDocument();
+    expect(screen.getByText('Chunk 2 text content with extra details.')).toBeInTheDocument();
+  });
+
+  it('shows two-line chunk previews with a full-text toggle', async () => {
+    server.use(
+      http.get('*/documents/:id/chunks', () =>
+        HttpResponse.json([
+          {
+            chunk_id: 'chunk-long',
+            order: 0,
+            text: 'Line one of real content.\nLine two of real content.\nLine three visible only after expanding.',
+          },
+        ]),
+      ),
+    );
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel doc={makeDoc()} onClose={() => {}} />
+      </Wrap>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('doc-detail-chunks-list')).toBeInTheDocument(),
+    );
+    const text = screen.getByTestId('doc-detail-chunk-text');
+    expect(text).toHaveClass('doc-chunk-text');
+    expect(text).not.toHaveClass('expanded');
+
+    await userEvent.click(screen.getByTestId('doc-detail-chunk-toggle-chunk-long'));
+    expect(text).toHaveClass('expanded');
+    expect(
+      screen.getByText(/Line three visible only after expanding/),
+    ).toBeInTheDocument();
+  });
+
+  it('auto-expands the cited chunk when opened from a retrieval source', async () => {
+    server.use(
+      http.get('*/documents/:id/chunks', () =>
+        HttpResponse.json([
+          {
+            chunk_id: 'chunk-first',
+            order: 0,
+            text: 'First chunk preview.',
+          },
+          {
+            chunk_id: 'chunk-cited',
+            order: 1,
+            text: 'Cited chunk line one.\nCited chunk line two.\nCited chunk line three.',
+          },
+        ]),
+      ),
+    );
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialExpandedChunkId="chunk-cited"
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('doc-detail-chunk-chunk-cited')).toBeInTheDocument(),
+    );
+    const citedChunk = screen.getByTestId('doc-detail-chunk-chunk-cited');
+    expect(within(citedChunk).getByTestId('doc-detail-chunk-text')).toHaveClass(
+      'expanded',
+    );
+    expect(within(citedChunk).getByTestId('doc-detail-chunk-toggle-chunk-cited')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
   });
 
   it('Lineage tab shows the uploader and the tags', async () => {
@@ -154,8 +230,8 @@ describe('DocDetailPanel — tabs', () => {
   });
 });
 
-describe('DocDetailPanel — classification gating', () => {
-  it('truncates chunks when classification > internal', async () => {
+describe('DocDetailPanel — chunks content', () => {
+  it('renders full chunk text even when metadata carries a restricted classification', async () => {
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
@@ -168,10 +244,10 @@ describe('DocDetailPanel — classification gating', () => {
       </Wrap>,
     );
     await waitFor(() =>
-      expect(
-        screen.getAllByTestId('doc-detail-chunks-redacted').length,
-      ).toBeGreaterThan(0),
+      expect(screen.getByTestId('doc-detail-chunks-list')).toBeInTheDocument(),
     );
+    expect(screen.getByText('Chunk 1 text content for the document.')).toBeInTheDocument();
+    expect(screen.queryByTestId('doc-detail-chunks-redacted')).toBeNull();
   });
 });
 

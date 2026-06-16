@@ -61,7 +61,14 @@ describe('mapTwinQueryResponseForRetrievalTab — answer_status wiring', () => {
     const out = mapTwinQueryResponseForRetrievalTab({
       response: 'A real answer.',
       sources: [
-        { n: 1, type: 'file', name: '/a/runbook.pdf', score: 0.9 },
+        {
+          n: 1,
+          type: 'file',
+          name: '/a/runbook.pdf',
+          score: 0.9,
+          doc_id: 'doc-runbook',
+          chunk_id: 'chunk-runbook-2',
+        },
       ],
       answer_status: 'grounded',
     });
@@ -69,6 +76,8 @@ describe('mapTwinQueryResponseForRetrievalTab — answer_status wiring', () => {
     expect(out.sources).toHaveLength(1);
     expect(out.sources[0].n).toBe(1);
     expect(out.sources[0].type).toBe('file');
+    expect(out.sources[0].doc_id).toBe('doc-runbook');
+    expect(out.sources[0].chunk_id).toBe('chunk-runbook-2');
   });
 
   it('passes answer_status through as undefined when absent (legacy backend)', () => {

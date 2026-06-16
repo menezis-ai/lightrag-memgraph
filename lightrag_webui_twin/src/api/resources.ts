@@ -55,8 +55,29 @@ export interface DocumentChunk {
   chunk_id: string;
   order: number;
   text: string;
-  /** Truncated preview when classification > internal (compliance rule). */
-  redacted?: boolean;
+}
+
+export type UploadClassification = 'public' | 'internal' | 'restricted';
+export type UploadRagEngine = 'lightrag' | 'rag15';
+
+export interface UploadDocumentOptions {
+  signal?: AbortSignal;
+  classification?: UploadClassification;
+  ragEngine?: UploadRagEngine;
+}
+
+export interface UploadDocumentInput {
+  file: File;
+  classification?: UploadClassification;
+  ragEngine?: UploadRagEngine;
+}
+
+interface RawDocumentChunk {
+  chunk_id: string;
+  order?: number;
+  chunk_order_index?: number;
+  text?: string;
+  content?: string;
 }
 
 export interface TwinQueryRequest {
@@ -77,6 +98,10 @@ export interface TwinQueryRequest {
   enable_rerank?: boolean;
   min_score?: number;
   tag_filter?: {
+    all?: readonly string[];
+    any?: readonly string[];
+  };
+  doc_filter?: {
     all?: readonly string[];
     any?: readonly string[];
   };
@@ -204,9 +229,15 @@ export const lightragApi = {
         })),
       })),
   listDocumentChunks: (docId: string, init?: ApiRequestInit) =>
-    apiFetch<readonly DocumentChunk[]>(
+    apiFetch<readonly RawDocumentChunk[]>(
       `/documents/${encodeURIComponent(docId)}/chunks`,
       init,
+    ).then((chunks) =>
+      chunks.map((chunk, index) => ({
+        chunk_id: chunk.chunk_id,
+        order: chunk.order ?? chunk.chunk_order_index ?? index,
+        text: chunk.text ?? chunk.content ?? '',
+      })),
     ),
   /**
    * Resolve all DocStatus rows associated with an ingestion track_id
@@ -261,10 +292,12 @@ export const lightragApi = {
    */
   uploadDocument: async (
     file: File,
-    init?: { signal?: AbortSignal },
+    init?: UploadDocumentOptions,
   ): Promise<{ status: string; message: string; track_id: string }> => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('classification', init?.classification ?? 'internal');
+    formData.append('rag_engine', init?.ragEngine ?? 'lightrag');
     const res = await fetch(buildApiUrl('/documents/upload'), {
       method: 'POST',
       headers: buildApiHeaders(),

@@ -332,6 +332,20 @@ export function GraphTab({
     setZoom(1);
     setPan({ x: 0, y: 0 });
   };
+  const hasTransferableFilters = tagFilter.length > 0 || docFilter.length > 0;
+  const transferFiltersToRetrieval = () => {
+    if (!hasTransferableFilters) return;
+    const params: Record<string, string> = {};
+    if (tagFilter.length > 0) {
+      params.rtag = tagFilter.join(',');
+      params.rtagmode = tagMatchMode;
+    }
+    if (docFilter.length > 0) {
+      params.rdoc = docFilter.join(',');
+      params.rdocmode = docMatchMode;
+    }
+    onNavigate?.('retrieval', params);
+  };
 
   return (
     <div className="kg">
@@ -382,6 +396,15 @@ export function GraphTab({
           </button>
           <button className="ghost-btn" onClick={resetView} title="Reset view">
             <Icon name="refresh" size={12} /> Reset view
+          </button>
+          <button
+            className="ghost-btn"
+            onClick={transferFiltersToRetrieval}
+            disabled={!hasTransferableFilters}
+            title="Open Retrieval with these tag/document filters"
+            data-testid="kg-transfer-filters"
+          >
+            <Icon name="message-circle" size={12} /> Chat with filters
           </button>
         </div>
       </div>
@@ -1594,8 +1617,8 @@ function RelationEditor({
 // and bypassed the canonical vocabulary; the backend now 422s on
 // unknown tags (see ``server/webui_router._validate_graph_entity_tags``)
 // and this editor mirrors the same rule client-side: autocomplete
-// proposes catalog matches on the typed prefix and the Add affordance
-// stays disabled while the typed value isn't an exact catalog match.
+// proposes catalog matches on the typed prefix. Enter only commits an
+// exact catalog match; unknown values surface an inline warning.
 export function TagAttrEditor({
   tags,
   tagCatalog,
@@ -1627,9 +1650,6 @@ export function TagAttrEditor({
       .slice(0, 6);
   }, [tagCatalog, tags, normalized, bindingActive, focused]);
   const isKnown = !bindingActive || catalogSet.has(normalized);
-  const canAdd =
-    Boolean(normalized) && !tags.includes(normalized) && isKnown;
-
   const add = (value?: string) => {
     const t = (value ?? normalized).trim().toLowerCase().replace(/\s+/g, '-');
     if (!t || tags.includes(t)) return;
@@ -1669,14 +1689,6 @@ export function TagAttrEditor({
           placeholder="Add tag…"
           aria-label="Add node tag"
         />
-        <button
-          className="ghost-btn small"
-          onClick={() => add()}
-          disabled={!canAdd}
-          type="button"
-        >
-          Add
-        </button>
       </div>
       {bindingActive && normalized && !isKnown && (
         <div

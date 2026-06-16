@@ -36,6 +36,10 @@ export interface RetrievalSource {
   meta?: string | null;
   /** Cosine / hybrid similarity, 0..1. */
   score: number;
+  /** Optional document id for direct drill-down from citations/sources. */
+  doc_id?: string | null;
+  /** Optional chunk id cited by the backend. */
+  chunk_id?: string | null;
 }
 
 export type ChatRole = 'user' | 'assistant';

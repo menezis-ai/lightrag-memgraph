@@ -70,7 +70,9 @@ export interface DocumentsTabProps {
   pipelineError?: string | null;
   onTogglePipeline?: () => void;
   onRefreshPipeline?: () => void;
-  /** Delete a single document (cascade), per #149. */
+  /** Open the document detail panel with chunks, lineage, audit and delete actions. */
+  onOpenDetail?: (doc: Document) => void;
+  /** @deprecated Use onOpenDetail. Kept for older callers/tests. */
   onDeleteDoc?: (doc: Document) => void;
   /** Bulk delete the selected documents (cascade), per #149. */
   onBulkDelete?: (docs: readonly Document[]) => void;
@@ -100,11 +102,13 @@ export function DocumentsTab({
   pipelineError = null,
   onTogglePipeline,
   onRefreshPipeline,
+  onOpenDetail,
   onDeleteDoc,
   onBulkDelete,
   nowMs,
   pendingSlot,
 }: DocumentsTabProps) {
+  const openDetail = onOpenDetail ?? onDeleteDoc;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [statusFilter, setStatusFilter] = useUrlParam<StatusFilterKey>(
     'status',
@@ -613,7 +617,7 @@ export function DocumentsTab({
               onToggle={toggleRow}
               onOpenRetag={onOpenRetag}
               onClickTag={clickTagOnRow}
-              onDelete={onDeleteDoc}
+              onOpenDetail={openDetail}
               nowMs={nowMs}
             />
           ))}
@@ -629,7 +633,7 @@ interface DocRowProps {
   onToggle: (id: string) => void;
   onOpenRetag: (doc: Document) => void;
   onClickTag: (e: React.MouseEvent, tag: string) => void;
-  onDelete?: (doc: Document) => void;
+  onOpenDetail?: (doc: Document) => void;
   nowMs?: number;
 }
 
@@ -639,12 +643,13 @@ function DocRow({
   onToggle,
   onOpenRetag,
   onClickTag,
-  onDelete,
+  onOpenDetail,
   nowMs,
 }: DocRowProps) {
   const isFail = doc.status === 'FAILED';
   const isDeleting = doc._deleting === true;
   const isOptimisticUpload = doc._optimisticUpload === true;
+  const canOpenDetail = Boolean(onOpenDetail && !isOptimisticUpload);
   const visibleTags = doc.tags.slice(0, 2);
   const overflow = doc.tags.length - visibleTags.length;
   const filterStatus = STATUS_TO_FILTER[doc.status];
@@ -669,12 +674,28 @@ function DocRow({
       </div>
       <div className="cell-source">
         <SourceIcon type={doc.type} size={14} />
-        <span
-          className={`source-name${doc.type !== 'file' ? ' mono' : ''}`}
-          title={doc.file_path}
-        >
-          {doc.file_path}
-        </span>
+        {canOpenDetail ? (
+          <button
+            type="button"
+            className={`source-name source-name-button${doc.type !== 'file' ? ' mono' : ''}`}
+            title={doc.file_path}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDetail?.(doc);
+            }}
+            data-testid={`docs-row-filename-${doc.doc_id}`}
+            aria-label={`Open details for ${doc.file_path}`}
+          >
+            {doc.file_path}
+          </button>
+        ) : (
+          <span
+            className={`source-name${doc.type !== 'file' ? ' mono' : ''}`}
+            title={doc.file_path}
+          >
+            {doc.file_path}
+          </span>
+        )}
         <ClassPill
           cls={doc.metadata?.classification as ClassificationValue}
           docId={doc.doc_id}
@@ -756,16 +777,16 @@ function DocRow({
             >
               <Icon name="tags" size={13} />
             </button>
-            {onDelete && (
+            {canOpenDetail && (
               <button
                 type="button"
-                className="row-action row-action-danger"
-                onClick={() => onDelete(doc)}
+                className="row-action"
+                onClick={() => onOpenDetail?.(doc)}
                 data-testid={`docs-row-delete-${doc.doc_id}`}
-                aria-label={`Delete ${doc.file_path}`}
-                title="Delete (cascade)"
+                aria-label={`Open details for ${doc.file_path}`}
+                title="Open details"
               >
-                <Icon name="x" size={13} />
+                <Icon name="file-text" size={13} />
               </button>
             )}
           </>

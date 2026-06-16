@@ -46,6 +46,8 @@ export function mapTwinQueryResponseForRetrievalTab(
     name: s.name,
     meta: s.meta ?? undefined,
     score: s.score,
+    doc_id: s.doc_id ?? undefined,
+    chunk_id: s.chunk_id ?? undefined,
   }));
   return {
     response: res.response,

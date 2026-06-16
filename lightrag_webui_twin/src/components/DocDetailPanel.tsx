@@ -2,15 +2,9 @@
  * DocDetailPanel — right-side document inspector with 3 tabs: Chunks, Lineage,
  * Audit. Opened from a row click in DocumentsTab; closes via X or backdrop.
  *
- * Compliance gating:
- *   - Chunks content is truncated when the doc classification > internal.
- *     The metadata.classification field carries that hint.
- *   - "View raw" surfaces a prompt reminder, never actually exposes content
- *     above the operator's clearance.
- *
  * Footer actions (#105 + #149 spec révisée):
  *   - Retag: opens RetagModal via callback
- *   - View raw: gated by classification, surfaces a notice if above palier
+ *   - View raw: surfaces a notice until the raw download endpoint is wired
  *   - Re-process: POST /documents/reprocess_failed (audit C7 —
  *     the per-doc ``/documents/{id}/scan`` endpoint exists for API
  *     compat but is a no-op; the host handler in App.tsx routes
@@ -19,19 +13,13 @@
  *   - Delete (cascade): DELETE /documents/{id}, both individual & multi
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
-import { ClassPill } from './ClassPill';
 import { relativeTime } from '../utils/relativeTime';
 import type { Document } from '../types/document';
-import {
-  getClassName,
-  isAboveInternal,
-  type ClassificationValue,
-} from '../types/classification';
 
 export type DetailTab = 'chunks' | 'lineage' | 'audit';
 
@@ -41,27 +29,8 @@ export interface DocDetailPanelProps {
   onRetag?: (doc: Document) => void;
   onReprocess?: (doc: Document) => void;
   onDelete?: (doc: Document) => void;
+  initialExpandedChunkId?: string | null;
   nowMs?: number;
-}
-
-/**
- * Get a single human-readable classification token from either shape
- * (legacy string maquette baseline OR structured ClassificationResult from
- * the PR #157 MIP extractor). Used in the header text + raw-notice modal.
- */
-function classificationOf(doc: Document): string {
-  const cls = doc.metadata?.classification as ClassificationValue;
-  return getClassName(cls);
-}
-
-/**
- * "Is this above what an internal-cleared operator can read?" Drives the
- * chunks-tab truncation + the raw-bytes notice gate (compliance doctrine 28/05).
- * Handles both legacy `string` and structured `ClassificationResult` shapes
- * via `isAboveInternal()` in `types/classification.ts`.
- */
-function isClassificationAboveInternal(doc: Document): boolean {
-  return isAboveInternal(doc.metadata?.classification as ClassificationValue);
 }
 
 export function DocDetailPanel({
@@ -70,6 +39,7 @@ export function DocDetailPanel({
   onRetag,
   onReprocess,
   onDelete,
+  initialExpandedChunkId,
   nowMs,
 }: DocDetailPanelProps) {
   const [tabState, setTabState] = useState<{
@@ -111,11 +81,6 @@ export function DocDetailPanel({
           <strong className={doc.type !== 'file' ? 'mono' : ''}>
             {doc.file_path}
           </strong>
-          <ClassPill
-            cls={doc.metadata?.classification as ClassificationValue}
-            docId={doc.doc_id}
-          />
-          <span className="muted">· {classificationOf(doc)}</span>
         </div>
         <button
           type="button"
@@ -143,7 +108,12 @@ export function DocDetailPanel({
       </nav>
 
       <section className="doc-detail-body">
-        {tab === 'chunks' && <ChunksTab docId={doc.doc_id} doc={doc} />}
+        {tab === 'chunks' && (
+          <ChunksTab
+            docId={doc.doc_id}
+            initialExpandedChunkId={initialExpandedChunkId}
+          />
+        )}
         {tab === 'lineage' && <LineageTab doc={doc} nowMs={nowMs} />}
         {tab === 'audit' && <AuditTab docId={doc.doc_id} nowMs={nowMs} />}
       </section>
@@ -220,22 +190,11 @@ export function DocDetailPanel({
               </button>
             </div>
             <div className="modal-body">
-              <p>
-                Source classification: <code>{classificationOf(doc)}</code>.
+              <p className="muted">
+                Raw content is large and downloads as a stream. This is a
+                notice gate — the actual download endpoint is wired in backend
+                phase 2.
               </p>
-              {isClassificationAboveInternal(doc) ? (
-                <p className="muted">
-                  Raw bytes are not exposed in the Twin UI above{' '}
-                  <code>internal</code>. To view this source, request access
-                  through your Steward.
-                </p>
-              ) : (
-                <p className="muted">
-                  Raw content is large and downloads as a stream. This is a
-                  notice gate — the actual download endpoint is wired in
-                  backend phase 2.
-                </p>
-              )}
             </div>
             <div className="modal-footer">
               <button
@@ -255,15 +214,37 @@ export function DocDetailPanel({
 
 interface ChunksTabProps {
   docId: string;
-  doc: Document;
+  initialExpandedChunkId?: string | null;
 }
 
-function ChunksTab({ docId, doc }: ChunksTabProps) {
+function ChunksTab({ docId, initialExpandedChunkId }: ChunksTabProps) {
+  const [manualExpanded, setManualExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [manualCollapsed, setManualCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const { data, isLoading } = useQuery({
     queryKey: ['doc-chunks', docId] as const,
     queryFn: () => api.listDocumentChunks(docId),
   });
-  const above = isClassificationAboveInternal(doc);
+  const expanded = useMemo(() => {
+    const next = new Set(manualExpanded);
+    if (initialExpandedChunkId && !manualCollapsed.has(initialExpandedChunkId)) {
+      next.add(initialExpandedChunkId);
+    }
+    return next;
+  }, [initialExpandedChunkId, manualCollapsed, manualExpanded]);
+
+  useEffect(() => {
+    if (!initialExpandedChunkId || !data?.length) return;
+    window.setTimeout(() => {
+      const target = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-chunk-id]'),
+      ).find((el) => el.dataset.chunkId === initialExpandedChunkId);
+      target?.scrollIntoView?.({ block: 'center' });
+    }, 0);
+  }, [data, initialExpandedChunkId]);
   if (isLoading) {
     return (
       <div className="muted" data-testid="doc-detail-chunks-loading">
@@ -281,25 +262,58 @@ function ChunksTab({ docId, doc }: ChunksTabProps) {
   return (
     <ul className="doc-chunks" data-testid="doc-detail-chunks-list">
       {data.map((c) => {
-        const shown = above ? c.text.slice(0, Math.floor(c.text.length * 0.2)) : c.text;
+        const isExpanded = expanded.has(c.chunk_id);
+        const hasText = c.text.trim().length > 0;
         return (
-          <li key={c.chunk_id} className="doc-chunk">
+          <li
+            key={c.chunk_id}
+            className="doc-chunk"
+            data-chunk-id={c.chunk_id}
+            data-testid={`doc-detail-chunk-${c.chunk_id}`}
+          >
             <div className="doc-chunk-meta">
               <code className="mono">{c.chunk_id}</code>
               <span className="muted">#{c.order}</span>
             </div>
-            <div className="doc-chunk-text">
-              {shown}
-              {above && (
-                <span
-                  className="muted"
-                  data-testid="doc-detail-chunks-redacted"
-                >
-                  {' '}
-                  · (truncated, classification &gt; internal)
-                </span>
+            <div
+              className={`doc-chunk-text${isExpanded ? ' expanded' : ''}`}
+              data-testid="doc-detail-chunk-text"
+            >
+              {hasText ? (
+                c.text
+              ) : (
+                <span className="muted">No text stored for this chunk.</span>
               )}
             </div>
+            {hasText && (
+              <button
+                type="button"
+                className="doc-chunk-toggle"
+                onClick={() => {
+                  setManualExpanded((current) => {
+                    const next = new Set(current);
+                    if (isExpanded) next.delete(c.chunk_id);
+                    else next.add(c.chunk_id);
+                    return next;
+                  });
+                  setManualCollapsed((current) => {
+                    const next = new Set(current);
+                    if (isExpanded) next.add(c.chunk_id);
+                    else next.delete(c.chunk_id);
+                    return next;
+                  });
+                }}
+                aria-expanded={isExpanded}
+                aria-label={
+                  isExpanded
+                    ? `Collapse chunk ${c.chunk_id}`
+                    : `Show full chunk ${c.chunk_id}`
+                }
+                data-testid={`doc-detail-chunk-toggle-${c.chunk_id}`}
+              >
+                {isExpanded ? 'Réduire' : 'Voir tout'}
+              </button>
+            )}
           </li>
         );
       })}

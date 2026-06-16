@@ -107,3 +107,65 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(res.answer_status).toBe('grounded');
   });
 });
+
+describe('listDocumentChunks', () => {
+  it('normalizes native chunk content fields to the UI shape', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            chunk_id: 'chunk-a',
+            chunk_order_index: 7,
+            content: 'Native content field from chunk route.',
+          },
+        ]),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const chunks = await api.listDocumentChunks('doc-a');
+
+    expect(chunks).toEqual([
+      {
+        chunk_id: 'chunk-a',
+        order: 7,
+        text: 'Native content field from chunk route.',
+      },
+    ]);
+  });
+});
+
+describe('uploadDocument', () => {
+  it('sends classification and RAG engine fields in the multipart payload', async () => {
+    const bodies: FormData[] = [];
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.body instanceof FormData) bodies.push(init.body);
+        return new Response(
+          JSON.stringify({
+            status: 'success',
+            message: 'ok',
+            track_id: 'track-upload',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      },
+    );
+
+    await api.uploadDocument(new File(['payload'], 'classified.md'), {
+      classification: 'restricted',
+      ragEngine: 'lightrag',
+    });
+
+    const body = bodies[0];
+    expect(body.get('classification')).toBe('restricted');
+    expect(body.get('rag_engine')).toBe('lightrag');
+    expect((body.get('file') as File | null)?.name).toBe('classified.md');
+  });
+});
