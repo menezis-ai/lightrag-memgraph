@@ -216,6 +216,28 @@ describe('DocDetailPanel — tabs', () => {
     expect(panel.textContent).toContain('rman');
   });
 
+  it('Lineage tab shows the document hash when metadata carries one', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc({
+            metadata: {
+              uploader: 'claire.benoit',
+              classification: 'internal',
+              sha1: 'ABCDEF012345',
+            },
+          })}
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+    await userEvent.click(screen.getByTestId('doc-detail-tab-lineage'));
+    expect(screen.getByTestId('doc-detail-hash')).toHaveTextContent(
+      'SHA1: abcdef012345',
+    );
+  });
+
   it('Audit tab fetches scoped to the doc id', async () => {
     const Wrap = wrap(new QueryClient());
     render(

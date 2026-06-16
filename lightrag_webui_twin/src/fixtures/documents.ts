@@ -127,6 +127,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     metadata: {
       mime: 'application/pdf',
       uploader: 'claire.benoit',
+      sha1: '8c6a7f5e2d9b4a103e6f71c2d8a5b9e0f4c3d2a1',
       // Structured MIP classification (post-ingestion via PR #157 hook).
       // C2 = Confidentiel — most CIB runbooks land here. Visible as a yellow
       // pill in DocumentsTab + PendingDocs cards.

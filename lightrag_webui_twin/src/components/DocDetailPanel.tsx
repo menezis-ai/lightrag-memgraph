@@ -19,6 +19,7 @@ import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { relativeTime } from '../utils/relativeTime';
+import { documentContentHash } from '../utils/documents';
 import type { Document } from '../types/document';
 
 export type DetailTab = 'chunks' | 'lineage' | 'audit';
@@ -327,6 +328,7 @@ interface LineageTabProps {
 }
 
 function LineageTab({ doc, nowMs }: LineageTabProps) {
+  const hash = documentContentHash(doc);
   return (
     <div className="doc-lineage" data-testid="doc-detail-lineage">
       <dl className="settings-dl">
@@ -342,6 +344,10 @@ function LineageTab({ doc, nowMs }: LineageTabProps) {
         <dd>{relativeTime(doc.updated_at, nowMs)}</dd>
         <dt>Track id</dt>
         <dd className="mono">{doc.track_id ?? 'n/a'}</dd>
+        <dt>Hash</dt>
+        <dd className="mono" data-testid="doc-detail-hash">
+          {hash ? `${hash.label}: ${hash.value}` : 'n/a'}
+        </dd>
         <dt>Status</dt>
         <dd>{doc.status}</dd>
         <dt>Chunks</dt>

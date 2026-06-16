@@ -11,19 +11,33 @@ const HASH_METADATA_KEYS = [
   'checksum',
 ] as const;
 
-function contentHash(doc: Document): string | null {
+export interface DocumentContentHash {
+  label: string;
+  value: string;
+}
+
+export function documentContentHash(doc: Document): DocumentContentHash | null {
   for (const key of HASH_METADATA_KEYS) {
     const value = doc.metadata[key];
     if (typeof value === 'string' && value.trim() !== '') {
-      return value.trim().toLocaleLowerCase();
+      return { label: hashLabel(key), value: value.trim().toLocaleLowerCase() };
     }
   }
   return null;
 }
 
+function hashLabel(key: (typeof HASH_METADATA_KEYS)[number]): string {
+  if (key === 'sha1') return 'SHA1';
+  if (key === 'sha256') return 'SHA256';
+  if (key === 'md5') return 'MD5';
+  if (key === 'contentHash') return 'content_hash';
+  if (key === 'fileHash') return 'file_hash';
+  return key;
+}
+
 function sourceKey(doc: Document): string {
-  const hash = contentHash(doc);
-  if (hash) return `hash:${hash}`;
+  const hash = documentContentHash(doc);
+  if (hash) return `hash:${hash.value}`;
   return `path:${doc.file_path.trim().toLocaleLowerCase()}`;
 }
 
