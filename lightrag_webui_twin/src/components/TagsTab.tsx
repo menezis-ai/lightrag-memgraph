@@ -355,8 +355,8 @@ export function TagsTab({
               palier-pill killed per the 30/05 cleanup. Role is JWT-only —
               the operator's capabilities (canEdit / canSuggest) are gated
               silently below; surfacing "palier 3 · admin / steward" as a
-              header chrome chip was a maquette gimmick that doesn't carry
-              its weight in production.
+              header chrome chip was a gimmick that doesn't carry its
+              weight in production.
             */}
           </div>
         </div>

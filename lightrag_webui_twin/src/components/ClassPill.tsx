@@ -30,8 +30,8 @@ export interface ClassPillProps {
 
 export function ClassPill({ cls, docId }: ClassPillProps) {
   // Render only when we have a structured classification payload. Legacy
-  // string-based classifications (the maquette baseline) stay invisible —
-  // the DocDetailPanel's "View raw" notice still surfaces them when needed.
+  // string-based classifications stay invisible — the DocDetailPanel's
+  // "View raw" notice still surfaces them when needed.
   if (!isStructured(cls)) return null;
 
   const id = getClassId(cls);

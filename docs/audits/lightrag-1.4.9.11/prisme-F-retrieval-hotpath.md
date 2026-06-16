@@ -1,6 +1,6 @@
 # Prisme F — Hot path retrieval LightRAG 1.4.9.11
 
-Audit du chemin retrieval de LightRAG **tel qu'installé dans le venv local** (`/Users/julien/twindb-lightrag-memgraph/.venv/lib/python3.14/site-packages/lightrag/`) et confrontation avec le code du wrapper `twindb-lightrag-memgraph` (branche `feat/maquette-source-revalidation`). Toutes les références `$LRAG/...` ci-dessous désignent l'arborescence du venv ; les références sans préfixe (`src/...`) désignent ce repo.
+Audit du chemin retrieval de LightRAG **tel qu'installé dans le venv local** (`/Users/julien/twindb-lightrag-memgraph/.venv/lib/python3.14/site-packages/lightrag/`) et confrontation avec le code du wrapper `twindb-lightrag-memgraph` (branche `stable/0.6.x`). Toutes les références `$LRAG/...` ci-dessous désignent l'arborescence du venv ; les références sans préfixe (`src/...`) désignent ce repo.
 
 ## Avertissement de version
 
@@ -947,12 +947,12 @@ Si on choisit Option A synthesis (§6.4), on perd **les deux** caches LLM. À re
 
 ### 9.7 Compatibilité avec `aquery_data` / `aquery_llm`
 
-Le patch 7.A wrap **uniquement `aquery`**. Les callers internes du wrapper L3 qui passent par `aquery_data` (ex : la maquette `/api/retrieval`, le `webui_router.py` du Twin server, `aquery_llm` direct) ne sont **pas** interceptés. Si l'on veut couvrir aussi ces routes :
+Le patch 7.A wrap **uniquement `aquery`**. Les callers internes du wrapper L3 qui passent par `aquery_data` (ex : le `webui_router.py` du Twin server, `aquery_llm` direct) ne sont **pas** interceptés. Si l'on veut couvrir aussi ces routes :
 
 - patcher aussi `aquery_data` (`$LRAG/lightrag.py:2514-2719`) ;
 - patcher aussi `aquery_llm` (`$LRAG/lightrag.py:2721-2857`).
 
-Pour v1 : `aquery_data` est destiné aux callers qui veulent **les données brutes** (maquette, WebUI) — il serait contre-productif d'y injecter Intent/REASON qui transforment la question. Garder `aquery_data` natif.
+Pour v1 : `aquery_data` est destiné aux callers qui veulent **les données brutes** (WebUI) — il serait contre-productif d'y injecter Intent/REASON qui transforment la question. Garder `aquery_data` natif.
 
 `aquery_llm` est appelé par `aquery`, donc patcher `aquery_llm` revient à patcher tout. Préférer patcher au niveau `aquery` (consommateurs publics) pour ne pas affecter `aquery_data` qui appelle aussi `kg_query` mais sans passer par `aquery_llm`.
 
@@ -978,7 +978,7 @@ Pas de risque si `_orig_aquery` retourne déjà l'iterator (pas un `await` inuti
 
 Pour v1, choix recommandé : **le second**. `TwinRAGEngine.aquery` reste l'entry-point caller (`engine.py:81-198`), et chacun de ses `self.search.hybrid_search(rag, query, config)` (`engine.py:169`) appelle un `rag.aquery(query, ...)` qui passe par le wrapper L3 single-instance — mais ça boucle ! Le wrapper L3 re-applique intent/reason/f03 sur une query déjà reason+expanded.
 
-**Résolution** : le wrapper L3 doit savoir si on est dans un appel **direct caller → LightRAG.aquery** (cas FastAPI ou maquette) ou **TwinRAGEngine.search → LightRAG.aquery** (cas L3 déjà fait son boulot). Solution :
+**Résolution** : le wrapper L3 doit savoir si on est dans un appel **direct caller → LightRAG.aquery** (cas FastAPI) ou **TwinRAGEngine.search → LightRAG.aquery** (cas L3 déjà fait son boulot). Solution :
 
 - ajouter un flag `param._twin_intelligence_skip: bool = False` (champ privé de `QueryParam`) ;
 - `TwinRAGEngine.search.hybrid_search` met `_twin_intelligence_skip = True` ;
@@ -1003,7 +1003,7 @@ C'est un hack léger mais qui évite la double-application et garde la séparati
 
 **Stratégie A (Plug-in `aquery`)**, raison : effort minimal (~60 LOC), risque upstream nul, réversibilité totale, couverture L3 complète des trois phases pre-retrieval (F05, REASON, F03), et la phase rerank passe par le slot officiel `rerank_model_func`.
 
-OBSERVE/synthesis reste en mode natif pour v1 — l'engagement `[Passage X]` vs `[reference_id]` est moins critique que la lecture du sub-graphe filtré par tag (priorité maquette).
+OBSERVE/synthesis reste en mode natif pour v1 — l'engagement `[Passage X]` vs `[reference_id]` est moins critique que la lecture du sub-graphe filtré par tag.
 
 ### 10.2 Roadmap progressive
 
@@ -1054,7 +1054,7 @@ Niveau **faible** pour v1. Les trois fonctions L3 (`IntentClassifier`, `Reasonin
 
 - **Prisme A (HTTP UI mount)** — pas de contradiction. Le wrapper L3 vit sous l'API `lightrag-server`, pas dans la route HTTP elle-même.
 - **Prisme B (Boot lifecycle)** — point d'attention : si `register(intelligence=True)` est appelé **avant** `lightrag-server` import, le patch s'applique. Si l'appel est différé (lazy), les premières requêtes peuvent passer en natif. Prisme B documente probablement les hooks de boot — vérifier que `register()` est appelé en `pre_init` ou `__post_init__` de `LightRAG`.
-- **Prisme C (API contracts)** — `aquery_data` retourne un schéma fixé (`{entities, relationships, chunks, references}`, cf. `$LRAG/lightrag.py:2538-2603`). Option A v2 (§6.4) **doit** respecter ce schéma si la maquette ou la WebUI lisent `aquery_data` plutôt que `aquery` — vérifier dans Prisme C que les endpoints `/api/query/retrieval` ou équivalent passent par `aquery_data`. Si oui, ne pas patcher `aquery_data`.
+- **Prisme C (API contracts)** — `aquery_data` retourne un schéma fixé (`{entities, relationships, chunks, references}`, cf. `$LRAG/lightrag.py:2538-2603`). Option A v2 (§6.4) **doit** respecter ce schéma si la WebUI lit `aquery_data` plutôt que `aquery` — vérifier dans Prisme C que les endpoints `/api/query/retrieval` ou équivalent passent par `aquery_data`. Si oui, ne pas patcher `aquery_data`.
 - **Prisme D (Auth/Security)** — pas de contradiction. F05 Intent classification = filtre sémantique, pas un filtre auth. Une question MALICIOUS ne dispense **pas** des contrôles JWT / RBAC documentés en Prisme D.
 - **Prisme E (Observability)** — `engine.py:73` (`self.trace.start()` / `trace.stop()`) produit un `QueryTrace` qui n'est **pas** logué via le `lightrag` logger natif. À aligner sur le logger `lightrag` (cf. Prisme E) ou exposer en tracing LangSmith (extra `[tracing]` du repo, `tracing.py` du serveur). Le wrapper 7.A doit, dans son fallback `except`, logger via `logger = logging.getLogger("twindb_lightrag_memgraph")` (déjà créé dans `__init__.py:25`).
 - **Prisme G (Vulnerabilities)** — `IntentType.MALICIOUS` court-circuite la pipeline avec une réponse scriptée. Vérifier que la classification MALICIOUS ne devient pas un **side-channel** : un attaquant qui sonde le système peut deviner que sa requête a été classée MALICIOUS si la latence est sensiblement plus courte (~300 ms vs ~5 s). Ajouter une latence artificielle minimale (`asyncio.sleep(random.uniform(1.0, 2.0))`) avant retour scripté si Prisme G recommande cette pratique.

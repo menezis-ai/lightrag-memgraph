@@ -572,7 +572,7 @@ class TestRequireAdminUser:
         ``None``. The route-level ``require_auth`` dep is what gates
         anonymous in this posture; ``require_admin_user`` just signals
         "authenticated, no RBAC yet". Critical for dev / standalone
-        standalone / maquette compat until MyAccess is wired."""
+        compat until MyAccess is wired."""
         idp_jwt.configure_idp(None)
         app = _build_admin_app()
         async with AsyncClient(

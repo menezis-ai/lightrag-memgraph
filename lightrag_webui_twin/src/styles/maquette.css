@@ -257,6 +257,7 @@ body {
   height: 34px;
   border-radius: 8px;
   color: var(--ink-soft);
+  flex: 0 0 auto;
 }
 
 .icon-btn:hover,
@@ -557,7 +558,7 @@ body {
   min-height: 46px;
   grid-template-columns:
     26px minmax(160px, 1.05fr) minmax(190px, 1.3fr) minmax(112px, 0.9fr)
-    82px 50px 66px 26px;
+    82px 50px 66px 64px;
   gap: 9px;
   padding: 7px 14px;
   border-bottom-color: var(--border-soft);
@@ -609,6 +610,12 @@ body {
   gap: 7px;
 }
 
+.row-check {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+}
+
 .cell-source .source-name,
 .cell-source .source-name-button,
 .summary-text {
@@ -636,13 +643,20 @@ body {
 }
 
 .cell-actions {
-  gap: 4px;
+  gap: 6px;
   justify-content: flex-end;
 }
 
 .row-action {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.source-name-button {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .pill {
@@ -1413,17 +1427,46 @@ body {
     min-width: 0;
   }
 
+  .topbar .brand {
+    flex-basis: 100%;
+  }
+
+  .topbar-right {
+    order: 2;
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
   .tabs {
     position: static;
     order: 3;
     width: 100%;
+    flex: 0 0 100%;
+    height: 44px;
+    margin-top: 6px;
+    align-items: center;
+    justify-content: flex-start;
     transform: none;
     overflow-x: auto;
   }
 
   .tab {
-    height: 38px;
+    height: 44px;
+    min-height: 44px;
     flex: 0 0 auto;
+  }
+
+  .folder-pill,
+  .icon-btn,
+  .docs-header-actions .btn,
+  .pill,
+  .tag-add-btn {
+    min-height: 44px;
+  }
+
+  .icon-btn {
+    width: 44px;
+    height: 44px;
   }
 
   .docs-header,
@@ -1434,13 +1477,33 @@ body {
     align-items: stretch;
   }
 
-  .docs-header-actions,
-  .tags-header-actions {
-    flex-wrap: wrap;
+  .docs-header::before {
+    width: 100%;
+    height: auto;
+    flex: 0 0 auto;
   }
 
-  .search-source {
+  .docs-header-actions,
+  .tags-header-actions {
     width: 100%;
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .docs-header h1 {
+    width: 100%;
+  }
+
+  .docs-header-actions .btn {
+    width: 100%;
+    justify-content: center;
+    flex: 1 1 100%;
+  }
+
+  .docs-filters .search-source {
+    width: 100%;
+    height: 44px;
+    flex: 0 0 auto;
     min-width: 0;
     margin-left: 0;
   }

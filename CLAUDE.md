@@ -13,8 +13,6 @@ This package provides Memgraph storage backends (KV, Vector, DocStatus) for [Lig
 - `stable/0.3.2-lts` — frozen LTS = 0.3.2 + auto-create vector index.
 - `main` — tracks 0.5.x; `0.4.x` was abandoned.
 
-The old `maquette-deploy/` prototype was removed as an obsolete artifact in PR #199. Do not reintroduce the legacy JSX/Caddy/SQLite demo path; new WebUI work belongs in `lightrag_webui_twin/` and the real FastAPI/Memgraph server surface.
-
 `pyproject.toml` reports version `1.0.0` and `register()` patches `lightrag.__version__` to `vX.Y.Z+memgraph-1.0.0` so the WebUI shows the composite version. See `changelog.md` for what's in vs. out of stable.
 
 ## Distribution

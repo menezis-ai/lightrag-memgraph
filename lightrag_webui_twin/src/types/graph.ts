@@ -36,8 +36,8 @@ export interface GraphEntity {
   summary: string;
   /** Free-form attribute tags carried on the node itself.
    *  Decoupled from the governed WebuiTag taxonomy (doc-level relations) —
-   *  this is node-attribute metadata, mirrors the JSX maquette EntityEditor
-   *  behavior. Will migrate to [:TAGGED_WITH] once the graph taxonomy lands. */
+   *  this is node-attribute metadata. Will migrate to [:TAGGED_WITH] once
+   *  the graph taxonomy lands. */
   tags?: readonly string[];
   /** Custom key/value metadata. Persisted as node properties in Memgraph. */
   properties?: Readonly<Record<string, string>>;

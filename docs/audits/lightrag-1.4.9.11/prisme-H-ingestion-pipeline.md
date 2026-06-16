@@ -1,6 +1,6 @@
 # Prisme H — Pipeline d'ingestion LightRAG 1.4.9.11
 
-Audit du chemin d'**indexation** (POST `/documents/upload` → DocStatus + KV + Vector + Graph + extraction entités/relations) de LightRAG **tel qu'installé dans le venv local** (`/Users/julien/twindb-lightrag-memgraph/.venv/lib/python3.14/site-packages/lightrag/`) et confrontation avec le code du wrapper `twindb-lightrag-memgraph` (branche `feat/maquette-source-revalidation`). Complément structurel au Prisme F (retrieval). Toutes les références `$LRAG/...` ci-dessous désignent le venv ; les références sans préfixe (`src/...`) désignent ce repo.
+Audit du chemin d'**indexation** (POST `/documents/upload` → DocStatus + KV + Vector + Graph + extraction entités/relations) de LightRAG **tel qu'installé dans le venv local** (`/Users/julien/twindb-lightrag-memgraph/.venv/lib/python3.14/site-packages/lightrag/`) et confrontation avec le code du wrapper `twindb-lightrag-memgraph` (branche `stable/0.6.x`). Complément structurel au Prisme F (retrieval). Toutes les références `$LRAG/...` ci-dessous désignent le venv ; les références sans préfixe (`src/...`) désignent ce repo.
 
 ## Avertissement de version
 
@@ -567,7 +567,7 @@ Transitions :
 - Le doc passe par `_validate_and_fix_document_consistency` qui **reset FAILED → PENDING** si `full_docs.get_by_id(doc_id)` existe (`lightrag.py:1607-1628`).
 - Sinon (full_docs vide), le doc est skip avec un message "Preserving failed document entries for manual review" (`lightrag.py:1542-1546`).
 
-**Implication compliance** : un FAILED dont le `full_docs` a été purgé manuellement reste FAILED. C'est le placeholder visible dans le maquette "Inbox" pour validation humaine (cf. Prisme C §4).
+**Implication compliance** : un FAILED dont le `full_docs` a été purgé manuellement reste FAILED. C'est le placeholder visible dans l'Inbox UI pour validation humaine (cf. Prisme C §4).
 
 ---
 
@@ -984,13 +984,13 @@ Interprétation (`scripts/test_mvcc_parallelization.py:246-269`) :
 
 ### 11.1 RawDocModal vs pipeline natif
 
-Le `RawDocModal` côté maquette (`maquette-deploy/source/components/RawDocModal/`) montre le **document entier** dans un overlay pour validation. Ça matche K1 (`full_docs` KV) et M3 (texte rechargé en RAM pendant le processing) — donc, oui, **le pipeline LightRAG natif fait la même chose** : le document complet existe simultanément en :
+Le `RawDocModal` UI montre le **document entier** dans un overlay pour validation. Ça matche K1 (`full_docs` KV) et M3 (texte rechargé en RAM pendant le processing) — donc, oui, **le pipeline LightRAG natif fait la même chose** : le document complet existe simultanément en :
 - D1/D2 disque (PDF binaire)
 - K1 Memgraph (`full_docs` JSON)
 - M2/M3/M4 RAM transitoire
 - K3 Memgraph (`llm_response_cache`) si flag activé — duplicaté en N copies par chunk
 
-**Conclusion** : la maquette n'invente pas la fuite, elle l'expose. Si la fuite est compliance-bloquante, c'est tout le pipeline qu'il faut hardener, pas juste cacher le modal.
+**Conclusion** : l'UI n'invente pas la fuite, elle l'expose. Si la fuite est compliance-bloquante, c'est tout le pipeline qu'il faut hardener, pas juste cacher le modal.
 
 ### 11.2 Logs en clair contenant du contenu document
 

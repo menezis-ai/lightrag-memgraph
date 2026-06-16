@@ -11,7 +11,7 @@
  *   - gate the chunks tab and the "View raw" notice in `DocDetailPanel`
  *
  * Important: a document may carry either:
- *   - a STRING (legacy maquette shape: `"internal" | "restricted"`), OR
+ *   - a STRING (legacy shape: `"internal" | "restricted"`), OR
  *   - a structured `ClassificationResult` (new MIP-extracted shape).
  *
  * The `isStructured()` / `getClassId()` helpers below let consumers handle
@@ -67,13 +67,13 @@ export interface ClassificationResult {
 
 /**
  * The shape Twin actually persists in `DocStatus.metadata.classification`.
- * Includes the legacy maquette string for back-compat with un-ingested seeds.
+ * Includes the legacy string for back-compat with un-ingested seeds.
  */
 export type ClassificationValue = string | ClassificationResult | undefined;
 
 /**
  * Discriminator: returns true when the value is the new structured payload
- * (vs the legacy maquette string).
+ * (vs the legacy string).
  */
 export function isStructured(
   cls: ClassificationValue,

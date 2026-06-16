@@ -9,9 +9,9 @@
  *   - d6  : `review.state: 'pending-review'` + `extracted_text` for Read source
  *   - d7  : `review.state: 'pending-review'` + `extracted_text` for Read source
  *
- * The string-based `metadata.classification` is the *baseline* shape preserved
- * from the maquette. Couche 2 (tenant classification) will replace it with the
- * structured `ClassificationResult` payload (see `types/classification.ts`).
+ * The string-based `metadata.classification` is the legacy baseline shape.
+ * Couche 2 (tenant classification) will replace it with the structured
+ * `ClassificationResult` payload (see `types/classification.ts`).
  */
 
 import type { Document } from '../types/document';

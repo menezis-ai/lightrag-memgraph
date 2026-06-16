@@ -25,9 +25,8 @@ What's left for BNP:
 - Wire `TWIN_IDP_JWKS_URL` to the real MyAccess JWKS endpoint (Louis HORVAT).
 - Integration test against a real Keycloak/MyAccess (vs PyJWK mock) — ops/deployment, not code.
 
-## Priority 2 — Deployment smoke on OVH `twin-real`
+## Priority 2 — Deployment smoke
 
-- Confirm `twin-real` stack on OVH `37.59.104.111` is actually serving `maquette.sigilum.fr` (vs. the legacy `twin-maquette` JSX stack).
 - Smoke checklist post-deploy:
   - `/webui/` substitution worked (`__TWIN_CONFIG_JSON__` absent from served HTML).
   - `apiBaseUrl` resolves to `/twin/api`.

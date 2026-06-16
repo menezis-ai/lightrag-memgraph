@@ -5,7 +5,7 @@
  *   - API       : OpenAPI browser (delegates to ApiTab)
  *   - Folder    : env vars + retention table read-only
  *
- * REMOVED from the maquette pre-30/05:
+ * REMOVED pre-30/05:
  *   - Providers (removed 30/05 cleanup)
  *   - Members editable (lives in MyAccess)
  *   - Tokens / OAuth2 client management

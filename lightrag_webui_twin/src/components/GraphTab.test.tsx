@@ -364,8 +364,8 @@ describe('GraphTab — selection + detail', () => {
   it('clicking a relation row opens the RelationEditor, then endpoint switches selection', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     // Outgoing RUNS_ON → click the relation row to open the relation editor.
-    // The new EntityEditor doctrine: row click goes to relation editor first
-    // (mirrors the JSX maquette), endpoint click selects the target entity.
+    // The new EntityEditor doctrine: row click goes to relation editor first,
+    // endpoint click selects the target entity.
     const rhelRelRow = Array.from(document.querySelectorAll('[role="button"]')).find(
       (el) => el.textContent?.includes('RHEL 9') && el.className.includes('kg-rel-row'),
     );

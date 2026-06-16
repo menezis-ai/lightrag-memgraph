@@ -1,6 +1,6 @@
 """Contract guards for ``GET /documents`` projection (TR-ING-01).
 
-The point Alberto raised on the maquette: a PDF that finished in
+The point Alberto raised: a PDF that finished in
 ``status=failed`` was rendered with 327 chunks and no error reason
 visible. The fields he wanted to see (``error_msg``, ``chunks_count``,
 ``status``) are already on the LightRAG ``DocProcessingStatus`` and are

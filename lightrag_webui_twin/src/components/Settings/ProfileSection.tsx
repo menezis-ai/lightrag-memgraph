@@ -10,7 +10,7 @@
  *   - Session card   : Sign out
  *
  * Wording: "Role" not "Palier" (palier = JWT-only term). The `role-badge` class
- * replaces the killed `palier-pill` from the maquette pre-30/05 cleanup.
+ * replaces the killed `palier-pill` from the pre-30/05 cleanup.
  */
 
 import { useAuth } from '../../hooks/useAuth';
