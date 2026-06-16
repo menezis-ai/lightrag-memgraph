@@ -443,6 +443,23 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                         f"DROP VECTOR INDEX `{self._index_name()}`"
                     )
                     await result.consume()
-                except Exception:
-                    pass  # Index may not exist
+                except Exception as e:
+                    # Swallow ONLY the idempotent "index already gone" case.
+                    # A bare `except Exception: pass` here previously buried
+                    # EVERY failure — connection resets, auth errors, permission
+                    # denials — while drop() still returned {"status": "success"}.
+                    # That false-success hid a half-completed drop (the nodes were
+                    # deleted but the vector index was left behind, the exact stale
+                    # state the REMOVE-before-DELETE dance above tries to avoid) and
+                    # lied to the caller. Match the "does not exist" message like the
+                    # query() auto-create path does, and re-raise anything else so
+                    # real failures surface instead of being reported as success.
+                    msg = str(e).lower()
+                    if "does not exist" not in msg and "doesn't exist" not in msg:
+                        raise
+                    logger.debug(
+                        "[MemgraphVec:%s] Vector index '%s' already absent on drop",
+                        self.workspace,
+                        self._index_name(),
+                    )
         return {"status": "success", "message": f"Vector namespace {label} dropped"}
