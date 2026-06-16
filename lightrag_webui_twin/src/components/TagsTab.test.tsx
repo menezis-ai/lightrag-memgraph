@@ -9,6 +9,7 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
+  fireEvent,
   render as rtlRender,
   screen,
   waitFor,
@@ -272,18 +273,15 @@ describe('TagsTab — domain taxonomy editor', () => {
       const messagingLabel = within(dialog).getByLabelText(
         'messaging domain label',
       );
-      await userEvent.clear(messagingLabel);
-      await userEvent.type(messagingLabel, 'Communication');
+      fireEvent.change(messagingLabel, { target: { value: 'Communication' } });
 
       await userEvent.click(
         within(dialog).getByRole('button', { name: 'Add domain' }),
       );
       const newId = within(dialog).getByLabelText('New domain domain id');
-      await userEvent.clear(newId);
-      await userEvent.type(newId, 'collaboration');
+      fireEvent.change(newId, { target: { value: 'collaboration' } });
       const newLabel = within(dialog).getByLabelText('collaboration domain label');
-      await userEvent.clear(newLabel);
-      await userEvent.type(newLabel, 'Collaboration');
+      fireEvent.change(newLabel, { target: { value: 'Collaboration' } });
 
       await userEvent.click(
         within(dialog).getByRole('button', { name: 'Save domains' }),
