@@ -47,6 +47,49 @@ export interface TagsTabProps {
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
+interface DomainDraft {
+  key: string;
+  id: string;
+  label: string;
+  color: string;
+  existing: boolean;
+}
+
+const DOMAIN_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+const DOMAIN_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function normalizeDomainId(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function draftFromCategories(categories: readonly TagCategory[]): DomainDraft[] {
+  return categories.map((cat) => ({
+    key: cat.id,
+    id: cat.id,
+    label: cat.label,
+    color: cat.color,
+    existing: true,
+  }));
+}
+
+function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
+  if (draft.length === 0) return 'At least one domain is required.';
+  const seen = new Set<string>();
+  for (const row of draft) {
+    const id = normalizeDomainId(row.id);
+    if (!id || !DOMAIN_ID_RE.test(id)) {
+      return 'Domain ids must use lowercase letters, numbers and hyphens.';
+    }
+    if (seen.has(id)) return `Domain id "${id}" is duplicated.`;
+    seen.add(id);
+    if (!row.label.trim()) return `Domain "${id}" needs a label.`;
+    if (!DOMAIN_COLOR_RE.test(row.color.trim())) {
+      return `Domain "${id}" needs a hex color like #5A7FB4.`;
+    }
+  }
+  return null;
+}
+
 export function TagsTab({
   tags,
   categories,
@@ -72,19 +115,93 @@ export function TagsTab({
     () => new Set(),
   );
 
-  // ── Taxonomy import / template download ─────────────────────────
-  // Doctrine: categories are governance taxonomy, not user-generated.
-  // No UI to *create* a category; instead an admin uploads the
-  // canonical JSON (mirrored to Memgraph by the server). The schema
-  // is at docs/templates/twin-categories.schema.json — server rejects
-  // any payload that doesn't match.
+  // ── Taxonomy import / domain editor / template download ─────────
+  // Categories remain a folder-wide governance taxonomy. Admins can
+  // update the canonical JSON directly or edit the same replacement
+  // payload through the UI below.
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importStatus, setImportStatus] = useState<
     | { kind: 'idle' }
     | { kind: 'success'; count: number }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
+  const [domainEditorOpen, setDomainEditorOpen] = useState(false);
+  const [domainDraft, setDomainDraft] = useState<DomainDraft[]>(() =>
+    draftFromCategories(categories),
+  );
+  const [domainError, setDomainError] = useState<string | null>(null);
   const importCategories = useImportCategories();
+
+  const openDomainEditor = (): void => {
+    setDomainDraft(draftFromCategories(categories));
+    setDomainError(null);
+    setDomainEditorOpen(true);
+  };
+
+  const updateDomainDraft = (
+    key: string,
+    patch: Partial<Pick<DomainDraft, 'id' | 'label' | 'color'>>,
+  ): void => {
+    setDomainDraft((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row)),
+    );
+    setDomainError(null);
+  };
+
+  const addDomainDraft = (): void => {
+    setDomainDraft((current) => {
+      const existingIds = new Set(current.map((row) => normalizeDomainId(row.id)));
+      let nextId = 'new-domain';
+      let index = 2;
+      while (existingIds.has(nextId)) {
+        nextId = `new-domain-${index}`;
+        index += 1;
+      }
+      return [
+        ...current,
+        {
+          key: `draft-${Date.now()}-${index}`,
+          id: nextId,
+          label: 'New domain',
+          color: '#5A7FB4',
+          existing: false,
+        },
+      ];
+    });
+    setDomainError(null);
+  };
+
+  const removeDomainDraft = (key: string): void => {
+    setDomainDraft((current) => current.filter((row) => row.key !== key));
+    setDomainError(null);
+  };
+
+  const saveDomainDraft = async (): Promise<void> => {
+    const validationError = validateDomainDraft(domainDraft);
+    if (validationError) {
+      setDomainError(validationError);
+      return;
+    }
+    const payload = domainDraft.map((row) => ({
+      id: normalizeDomainId(row.id),
+      label: row.label.trim(),
+      color: row.color.trim(),
+    }));
+    try {
+      await importCategories.mutateAsync(payload);
+      setImportStatus({ kind: 'success', count: payload.length });
+      setDomainEditorOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof ApiError && typeof err.body === 'object' && err.body
+          ? (err.body as { detail?: string }).detail ?? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Domain update failed.';
+      setDomainError(message);
+      setImportStatus({ kind: 'error', message });
+    }
+  };
 
   const handleDownloadTemplate = async (): Promise<void> => {
     try {
@@ -175,6 +292,16 @@ export function TagsTab({
     return c;
   }, [tags, categories, knownCategories]);
 
+  const removedDomainsWithTags = useMemo(() => {
+    const draftIds = new Set(domainDraft.map((row) => normalizeDomainId(row.id)));
+    return categories
+      .filter((cat) => !draftIds.has(cat.id) && (counts[cat.id] ?? 0) > 0)
+      .map((cat) => ({
+        ...cat,
+        count: counts[cat.id] ?? 0,
+      }));
+  }, [categories, counts, domainDraft]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return tags.filter((t) => {
@@ -234,6 +361,15 @@ export function TagsTab({
         <div className="tags-header-actions">
           {canEdit && (
             <>
+              <button
+                className="ghost-btn"
+                onClick={openDomainEditor}
+                disabled={importCategories.isPending}
+                title="Edit the folder domain taxonomy"
+                data-testid="taxonomy-edit-domains"
+              >
+                <Icon name="settings" size={12} /> Edit domains
+              </button>
               <button
                 className="ghost-btn"
                 onClick={() => void handleDownloadTemplate()}
@@ -558,6 +694,21 @@ export function TagsTab({
         />
       </div>
 
+      {domainEditorOpen && (
+        <DomainEditorModal
+          draft={domainDraft}
+          error={domainError}
+          tagCounts={counts}
+          removedDomainsWithTags={removedDomainsWithTags}
+          isSaving={importCategories.isPending}
+          onAdd={addDomainDraft}
+          onUpdate={updateDomainDraft}
+          onRemove={removeDomainDraft}
+          onClose={() => setDomainEditorOpen(false)}
+          onSave={() => void saveDomainDraft()}
+        />
+      )}
+
       {modal && (
         <TagActionModal
           action={modal}
@@ -570,6 +721,142 @@ export function TagsTab({
           }}
         />
       )}
+    </div>
+  );
+}
+
+interface DomainEditorModalProps {
+  draft: readonly DomainDraft[];
+  error: string | null;
+  tagCounts: Record<string, number>;
+  removedDomainsWithTags: readonly (TagCategory & { count: number })[];
+  isSaving: boolean;
+  onAdd: () => void;
+  onUpdate: (
+    key: string,
+    patch: Partial<Pick<DomainDraft, 'id' | 'label' | 'color'>>,
+  ) => void;
+  onRemove: (key: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}
+
+function DomainEditorModal({
+  draft,
+  error,
+  tagCounts,
+  removedDomainsWithTags,
+  isSaving,
+  onAdd,
+  onUpdate,
+  onRemove,
+  onClose,
+  onSave,
+}: DomainEditorModalProps) {
+  return (
+    <div
+      className="modal-bg"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      data-testid="domain-editor-backdrop"
+    >
+      <div
+        className="modal domain-editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit domains"
+      >
+        <div className="modal-h">
+          <h3>Edit domains</h3>
+          <div className="modal-h-sub">
+            Folder taxonomy · {draft.length} domain{draft.length === 1 ? '' : 's'}
+          </div>
+          <button className="modal-x" onClick={onClose} aria-label="Close">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+        <div className="modal-body domain-editor-body">
+          <div className="domain-editor-head">
+            <span>Color</span>
+            <span>Id</span>
+            <span>Label</span>
+            <span>Tags</span>
+            <span />
+          </div>
+          <div className="domain-editor-rows">
+            {draft.map((row) => (
+              <div className="domain-editor-row" key={row.key}>
+                <input
+                  className="domain-color-input"
+                  type="color"
+                  value={row.color}
+                  aria-label={`${row.label || row.id} color`}
+                  onChange={(e) =>
+                    onUpdate(row.key, { color: e.target.value.toUpperCase() })
+                  }
+                />
+                <input
+                  className="text-input domain-id-input"
+                  value={row.id}
+                  readOnly={row.existing}
+                  aria-label={`${row.label || row.id} domain id`}
+                  onChange={(e) =>
+                    onUpdate(row.key, { id: normalizeDomainId(e.target.value) })
+                  }
+                />
+                <input
+                  className="text-input"
+                  value={row.label}
+                  aria-label={`${row.id} domain label`}
+                  onChange={(e) => onUpdate(row.key, { label: e.target.value })}
+                />
+                <span className="domain-tag-count">
+                  {row.existing ? (tagCounts[row.id] ?? 0) : 0}
+                </span>
+                <button
+                  className="ghost-btn small danger domain-row-delete"
+                  onClick={() => onRemove(row.key)}
+                  aria-label={`Remove ${row.label || row.id}`}
+                >
+                  <Icon name="trash" size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button className="ghost-btn small domain-add" onClick={onAdd}>
+            <Icon name="plus" size={12} /> Add domain
+          </button>
+          {removedDomainsWithTags.length > 0 && (
+            <div className="impact-box warning" role="status">
+              <Icon name="alert-triangle" size={14} />
+              <span>
+                Removing{' '}
+                {removedDomainsWithTags.map((cat) => (
+                  <code key={cat.id}>
+                    {cat.label} ({cat.count})
+                  </code>
+                ))}{' '}
+                will show those tags as uncategorized until they are edited.
+              </span>
+            </div>
+          )}
+          {error && (
+            <div className="impact-box danger" role="alert">
+              <Icon name="alert-triangle" size={14} />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="ghost-btn" onClick={onClose} disabled={isSaving}>
+            Cancel
+          </button>
+          <button className="primary-btn" onClick={onSave} disabled={isSaving}>
+            {isSaving ? 'Saving…' : 'Save domains'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

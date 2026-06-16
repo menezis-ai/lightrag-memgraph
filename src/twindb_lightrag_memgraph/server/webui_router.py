@@ -2060,6 +2060,7 @@ async def request_tag(body: TagRequestBody) -> dict[str, Any]:
         "category": body.category,
         "status": "pending-review",
         "def": body.def_,
+        "long_description": body.long_description or "",
         "aliases": list(body.aliases),
         "deprecates": [],
         "sources_count": 0,

@@ -691,6 +691,29 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('rail-reliability')).toContainText('Reliability');
   });
 
+  test('@doctrine @tags direct domain editor persists taxonomy changes', async ({
+    page,
+  }) => {
+    await openTab(page, 'Tags');
+    await page.getByTestId('taxonomy-edit-domains').click();
+    const dialog = page.getByRole('dialog', { name: 'Edit domains' });
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByLabel('messaging domain label').fill('Communication');
+    await dialog.getByRole('button', { name: 'Add domain' }).click();
+    await dialog.getByLabel('New domain domain id').fill('collaboration');
+    await dialog.getByLabel('collaboration domain label').fill('Collaboration');
+    await dialog.getByRole('button', { name: 'Save domains' }).click();
+
+    await expect(page.getByTestId('taxonomy-import-status')).toContainText(
+      'domains applied',
+    );
+    await expect(page.getByTestId('rail-messaging')).toContainText('Communication');
+    await expect(page.getByTestId('rail-collaboration')).toContainText(
+      'Collaboration',
+    );
+  });
+
   test('@doctrine @tags invalid category JSON syntax shows a precise banner', async ({
     page,
   }) => {

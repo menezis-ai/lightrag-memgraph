@@ -381,6 +381,40 @@ describe('GraphTab — selection + detail', () => {
     });
   });
 
+  it('shows node tag suggestions when the edit field receives focus', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        tagCatalog={['oracle', 'production']}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('kg-entity-edit'));
+    await userEvent.click(screen.getByLabelText('Add node tag'));
+
+    expect(screen.getByTestId('kg-tag-suggestions')).toHaveTextContent('oracle');
+  });
+
+  it('suggests existing entity property keys when adding metadata', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          { ...GRAPH_ENTITY_FIXTURES[0], properties: {} },
+          { ...GRAPH_ENTITY_FIXTURES[1], properties: { owner: 'dba' } },
+        ]}
+        relations={[]}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('kg-entity-edit'));
+    await userEvent.click(screen.getByLabelText('New property key'));
+
+    expect(
+      document.querySelector('datalist#kg-prop-key-suggestions option[value="owner"]'),
+    ).toBeTruthy();
+  });
+
   it('pinning an entity persists in localStorage and is restored on remount', async () => {
     const { unmount } = renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));

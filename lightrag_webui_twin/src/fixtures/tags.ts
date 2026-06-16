@@ -9,7 +9,7 @@ export const TAG_CATEGORY_FIXTURES: readonly TagCategory[] = [
   { id: 'oracle', label: 'Oracle', color: '#B85A1E' },
   { id: 'infra', label: 'Infrastructure', color: '#5A7FB4' },
   { id: 'network', label: 'Network', color: '#1F8A7A' },
-  { id: 'payment', label: 'Payment', color: '#7B5BB8' },
+  { id: 'messaging', label: 'Messaging', color: '#7B5BB8' },
   { id: 'lifecycle', label: 'Lifecycle', color: '#8A5C0E' },
   { id: 'governance', label: 'Governance', color: '#2C3E50' },
 ];
@@ -151,7 +151,7 @@ export const TAG_FIXTURES: readonly TagEntry[] = [
   {
     tag: 'swift',
     tier: 1,
-    category: 'payment',
+    category: 'messaging',
     status: 'active',
     def: 'SWIFT messaging — MT/MX, FIN, GPI, ISO 20022 migration. Use for any source discussing SWIFT flows or compliance.',
     aliases: [],
@@ -170,7 +170,7 @@ export const TAG_FIXTURES: readonly TagEntry[] = [
   {
     tag: 'iso20022',
     tier: 2,
-    category: 'payment',
+    category: 'messaging',
     status: 'active',
     def: 'ISO 20022 message standard — pacs, pain, camt families. Distinct from generic "swift" for cases where standard precision matters.',
     aliases: [],
@@ -371,7 +371,7 @@ export const TAG_FIXTURES: readonly TagEntry[] = [
   {
     tag: 'pacs008',
     tier: 'requested',
-    category: 'payment',
+    category: 'messaging',
     status: 'pending-review',
     def: 'Proposed: pacs.008 — ISO 20022 customer credit transfer message family.',
     aliases: [],

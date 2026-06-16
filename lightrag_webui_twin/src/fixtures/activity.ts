@@ -202,10 +202,10 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     sev: 'info',
     actor: { user: 'claire.benoit', role: 'KB Admin' },
     target: { type: 'folder', label: 'cib · thesaurus' },
-    summary: 'Added new tag iso20022 (palier 2) · category payment',
+    summary: 'Added new tag iso20022 (palier 2) · category messaging',
     meta: {
       tag: 'iso20022',
-      category: 'payment',
+      category: 'messaging',
       tier: 2,
       requested_by: 'marc.berthier',
     },

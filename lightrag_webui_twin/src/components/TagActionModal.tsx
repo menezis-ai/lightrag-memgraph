@@ -42,6 +42,8 @@ export interface TagActionCommit {
   category?: string;
   /** Reason for `reject`. */
   reason?: string;
+  /** Request/suggest justification text. */
+  justification?: string;
   /** New synonym to add (only for `synonyms`). */
   newSynonym?: string;
   /** Full synonym list when managing aliases. */
@@ -102,6 +104,8 @@ export function TagActionModal({
   const [newSyn, setNewSyn] = useState('');
   const [aliases, setAliases] = useState<readonly string[]>(tag?.aliases ?? []);
   const [reason, setReason] = useState('');
+  const [requestSynonyms, setRequestSynonyms] = useState('');
+  const [justification, setJustification] = useState('');
 
   const eligible = useMemo(
     () =>
@@ -133,6 +137,13 @@ export function TagActionModal({
         payload.newSynonym = newSyn.trim();
       }
     }
+    if (action.kind === 'request') {
+      payload.aliases = requestSynonyms
+        .split(',')
+        .map((alias) => alias.trim())
+        .filter(Boolean);
+      payload.justification = justification.trim();
+    }
     if (action.kind === 'reject') {
       payload.reason = reason.trim();
     }
@@ -148,7 +159,7 @@ export function TagActionModal({
   // Submit gate — block destructive submits until prerequisites are met.
   const submitDisabled =
     (action.kind === 'reject' && !reason.trim()) ||
-    (action.kind === 'request' && !name.trim()) ||
+    (action.kind === 'request' && (!name.trim() || !definition.trim())) ||
     (action.kind === 'delete' && migrateStrategy === 'migrate' && !migrateTo);
 
   return (
@@ -407,6 +418,17 @@ export function TagActionModal({
                 onChange={(e) => setDefinition(e.target.value)}
                 placeholder="What should this tag mean? When should it be applied?"
               />
+              <label className="field-label" htmlFor="tagaction-reqlongdef">
+                Long description <span className="hint">optional</span>
+              </label>
+              <textarea
+                id="tagaction-reqlongdef"
+                className="text-input"
+                rows={3}
+                value={longDescription}
+                onChange={(e) => setLongDescription(e.target.value)}
+                placeholder="Add governance notes, examples, or boundary cases for reviewers."
+              />
               <label className="field-label" htmlFor="tagaction-reqdomain">
                 Domain
               </label>
@@ -429,6 +451,8 @@ export function TagActionModal({
               <input
                 id="tagaction-reqsyn"
                 className="text-input"
+                value={requestSynonyms}
+                onChange={(e) => setRequestSynonyms(e.target.value)}
                 placeholder="comma-separated, e.g. recovery-manager, backup-tool"
               />
               <label className="field-label" htmlFor="tagaction-reqjustif">
@@ -438,6 +462,8 @@ export function TagActionModal({
                 id="tagaction-reqjustif"
                 className="text-input"
                 rows={3}
+                value={justification}
+                onChange={(e) => setJustification(e.target.value)}
                 placeholder="Why is the existing taxonomy insufficient? Cite an example use."
               />
               <div className="impact-box">

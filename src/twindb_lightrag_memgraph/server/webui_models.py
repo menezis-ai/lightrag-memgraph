@@ -366,6 +366,7 @@ class TagRequestBody(_Base):
 
     tag: str
     def_: str = Field(alias="def")
+    long_description: str | None = None
     category: str
     aliases: list[str] = Field(default_factory=list)
     justification: str | None = None

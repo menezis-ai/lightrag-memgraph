@@ -61,6 +61,7 @@ export interface RetrievalTabProps {
     onlyPrompt: boolean;
     userPrompt: string;
     enableRerank: boolean;
+    minScore: number;
   }) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
@@ -79,10 +80,11 @@ export interface RetrievalTabProps {
       historyTurns: number;
       conversationHistory: readonly ConversationHistoryMessage[];
       onlyContext: boolean;
-      onlyPrompt: boolean;
-      userPrompt: string;
-      enableRerank: boolean;
-    },
+    onlyPrompt: boolean;
+    userPrompt: string;
+    enableRerank: boolean;
+    minScore: number;
+  },
     onChunk: (chunk: string) => void,
   ) => Promise<{
     response: string;
@@ -108,6 +110,19 @@ const DEFAULT_SUGGESTIONS = [
   'Summarize recent indexed documents',
   'Find operational procedures by tag',
 ];
+
+function splitThinkBlocks(text: string): { visible: string; thoughts: readonly string[] } {
+  const thoughts: string[] = [];
+  const visible = text
+    .replace(/<think\b[^>]*>([\s\S]*?)(?:<\/think>|$)/gi, (_match, thought) => {
+      const trimmed = String(thought ?? '').trim();
+      if (trimmed) thoughts.push(trimmed);
+      return '';
+    })
+    .replace(/<\/think>/gi, '')
+    .trimStart();
+  return { visible, thoughts };
+}
 
 interface ConversationHistoryMessage {
   role: ChatMessage['role'];
@@ -146,6 +161,7 @@ export function RetrievalTab({
   const [chunkTopK, setChunkTopK] = useUrlNumberParam('chunktopk', 20);
   const [maxTok, setMaxTok] = useUrlNumberParam('maxtok', 30000);
   const [history, setHistory] = useUrlNumberParam('hist', 3);
+  const [minScore, setMinScore] = useUrlNumberParam('minscore', 0);
   const [onlyCtx, setOnlyCtx] = useState(false);
   const [onlyPrompt, setOnlyPrompt] = useState(false);
   const [userPrompt, setUserPrompt] = useState('');
@@ -305,7 +321,7 @@ export function RetrievalTab({
         const content =
           message.role === 'user'
             ? message.text
-            : message.tokens?.join('');
+            : splitThinkBlocks(message.tokens?.join('') ?? '').visible;
         const trimmed = content?.trim();
         if (!trimmed) return null;
         return { role: message.role, content: trimmed };
@@ -331,6 +347,7 @@ export function RetrievalTab({
     onlyPrompt,
     userPrompt,
     enableRerank,
+    minScore,
   });
 
   const send = (text?: string) => {
@@ -655,6 +672,21 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
+          <label className="field-label">Minimum source score</label>
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.01}
+            aria-label="Minimum source score"
+            value={minScore}
+            onChange={(e) => {
+              const next = Number(e.target.value || '0');
+              setMinScore(Math.min(1, Math.max(0, Number.isFinite(next) ? next : 0)));
+            }}
+          />
+        </div>
+        <div className="field">
           <label className="field-label">History turns</label>
           <input
             type="number"
@@ -807,7 +839,9 @@ function Turn({
     return <div className="msg-user">{msg.text}</div>;
   }
 
-  const parts: AnswerPart[] = parseAnswer(msg.tokens ?? []);
+  const answerText = (msg.tokens ?? []).join('');
+  const { visible, thoughts } = splitThinkBlocks(answerText);
+  const parts: AnswerPart[] = parseAnswer([visible]);
   const sources = msg.sources ?? [];
   const citedSourceNumbers = collectCitedSourceNumbers(parts);
   const collapsedVisibleSources = collapsedSources(sources, citedSourceNumbers);
@@ -885,6 +919,14 @@ function Turn({
           />
         )}
       </div>
+      {thoughts.length > 0 && (
+        <details className="reasoning-reveal" data-testid="retrieval-thinking-detail">
+          <summary>
+            <Icon name="info-circle" size={12} /> Reasoning
+          </summary>
+          <pre>{thoughts.join('\n\n')}</pre>
+        </details>
+      )}
       {/* TR-RET-02: when the backend marked the answer
           ``insufficient_information`` (LightRAG fail_response with the
           ``[no-context]`` marker), do NOT render the Sources panel even

@@ -236,7 +236,7 @@ class TestTags:
         body = r.json()
         assert len(body) == len(TAG_CATEGORIES)
         ids = [c["id"] for c in body]
-        for required in ("oracle", "infra", "payment", "lifecycle", "governance", "network"):
+        for required in ("oracle", "infra", "messaging", "lifecycle", "governance", "network"):
             assert required in ids
 
 

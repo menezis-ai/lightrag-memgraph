@@ -11,6 +11,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
   render as rtlRender,
   screen,
+  waitFor,
   within,
   type RenderOptions,
 } from '@testing-library/react';
@@ -117,7 +118,7 @@ describe('TagsTab — filters', () => {
     render(<TagsTab {...defaultProps()} />);
     expect(screen.getByTestId('tag-card-rman')).toBeInTheDocument();
     expect(screen.getByTestId('tag-card-swift')).toBeInTheDocument();
-    await userEvent.click(screen.getByTestId('rail-payment'));
+    await userEvent.click(screen.getByTestId('rail-messaging'));
     expect(screen.queryByTestId('tag-card-rman')).toBeNull();
     expect(screen.getByTestId('tag-card-swift')).toBeInTheDocument();
   });
@@ -250,6 +251,64 @@ describe('TagsTab — approve direct (palier 3)', () => {
   });
 });
 
+describe('TagsTab — domain taxonomy editor', () => {
+  it('saves direct domain edits through the taxonomy import endpoint', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      render(<TagsTab {...defaultProps()} />);
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Edit domains' }),
+      );
+      const dialog = await screen.findByRole('dialog', { name: 'Edit domains' });
+
+      const messagingLabel = within(dialog).getByLabelText(
+        'messaging domain label',
+      );
+      await userEvent.clear(messagingLabel);
+      await userEvent.type(messagingLabel, 'Communication');
+
+      await userEvent.click(
+        within(dialog).getByRole('button', { name: 'Add domain' }),
+      );
+      const newId = within(dialog).getByLabelText('New domain domain id');
+      await userEvent.clear(newId);
+      await userEvent.type(newId, 'collaboration');
+      const newLabel = within(dialog).getByLabelText('collaboration domain label');
+      await userEvent.clear(newLabel);
+      await userEvent.type(newLabel, 'Collaboration');
+
+      await userEvent.click(
+        within(dialog).getByRole('button', { name: 'Save domains' }),
+      );
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain('/tags/categories/_import');
+      expect(init?.method).toBe('POST');
+      const payload = JSON.parse(String(init?.body));
+      expect(payload).toEqual(
+        expect.arrayContaining([
+          { id: 'messaging', label: 'Communication', color: '#7B5BB8' },
+          { id: 'collaboration', label: 'Collaboration', color: '#5A7FB4' },
+        ]),
+      );
+      expect(
+        await screen.findByTestId('taxonomy-import-status'),
+      ).toHaveTextContent(/domains applied/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe('TagsTab — modal dispatch', () => {
   it('Edit on the detail panel opens the edit modal', async () => {
     render(<TagsTab {...defaultProps()} />);
@@ -334,7 +393,7 @@ describe('TagsTab — modal dispatch', () => {
     });
   });
 
-  it('Request modal requires a non-empty proposed name', async () => {
+  it('Request modal commits long description, synonyms and justification', async () => {
     const p = defaultProps();
     render(<TagsTab {...p} />);
     await userEvent.click(
@@ -347,11 +406,32 @@ describe('TagsTab — modal dispatch', () => {
     await new Promise((r) => setTimeout(r, 60));
     (nameInput as HTMLInputElement).focus();
     await userEvent.type(nameInput, 'argocd');
+    expect(submit).toBeDisabled();
+    await userEvent.type(
+      within(dialog).getByLabelText(/Definition/),
+      'Argo CD deployment automation',
+    );
+    await userEvent.type(
+      within(dialog).getByLabelText(/Long description/),
+      'Use for GitOps deployment workflows.',
+    );
+    await userEvent.type(
+      within(dialog).getByLabelText(/Synonyms/),
+      'argo-cd, gitops',
+    );
+    await userEvent.type(
+      within(dialog).getByLabelText(/Justification/),
+      'Existing infra tag is too broad.',
+    );
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
     expect(p.onCommit.mock.calls[0][0]).toMatchObject({
       kind: 'request',
       name: 'argocd',
+      def: 'Argo CD deployment automation',
+      longDescription: 'Use for GitOps deployment workflows.',
+      aliases: ['argo-cd', 'gitops'],
+      justification: 'Existing infra tag is too broad.',
     });
   });
 

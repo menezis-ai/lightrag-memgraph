@@ -113,14 +113,16 @@ class FakeRag:
             references.append(
                 {"reference_id": ref_id, "file_path": file_path}
             )
-            envelope_chunks.append(
-                {
-                    "reference_id": ref_id,
-                    "content": chunk.get("content", ""),
-                    "file_path": file_path,
-                    "chunk_id": chunk_id,
-                }
-            )
+            envelope_chunk = {
+                "reference_id": ref_id,
+                "content": chunk.get("content", ""),
+                "file_path": file_path,
+                "chunk_id": chunk_id,
+            }
+            for key in ("score", "similarity", "cosine_similarity", "__metrics__"):
+                if key in chunk:
+                    envelope_chunk[key] = chunk[key]
+            envelope_chunks.append(envelope_chunk)
         envelope: dict[str, Any] = {
             "status": self._envelope_status,
             "message": "Query processed",
@@ -216,10 +218,7 @@ class TestQueryEndpoint:
         assert first["n"] == 1
         assert first["name"] == "/cib/runbooks/oracle.pdf"
         assert first["meta"] == "1 chunk"
-        # ``score`` is no longer populated by the route (no second
-        # vector pass) — kept at zero for now; can be filled from the
-        # aquery_llm chunk metrics in a future iteration.
-        assert first["score"] == 0.0
+        assert first["score"] == 0.92
         assert first["doc_id"] == "doc-oracle"
         assert first["chunk_id"] == "chunk-aa"
 
@@ -988,19 +987,12 @@ class TestQueryEndpoint:
         assert r.status_code == 500
         assert "KG unavailable" in r.json()["detail"]
 
-    async def test_score_is_zero_baseline_post_aquery_llm(self, make_client):
-        """The legacy ``_build_sources`` fabricated rank-based scores
-        when chunks_vdb didn't expose any. The aquery_llm migration
-        deletes that path — references don't carry a score, so the
-        contract baseline is ``0.0``. This test pins that baseline so
-        a future change wiring real scores from chunk metrics is
-        visible at review.
-        """
+    async def test_scores_come_from_aquery_llm_chunk_metrics(self, make_client):
         rag = FakeRag(
             answer="x",
             chunks=[
-                {"id": "a", "file_path": "/a"},
-                {"id": "b", "file_path": "/b"},
+                {"id": "a", "file_path": "/a", "similarity": 0.82},
+                {"id": "b", "file_path": "/b", "__metrics__": {"score": 0.74}},
                 {"id": "c", "file_path": "/c"},
             ],
         )
@@ -1010,7 +1002,7 @@ class TestQueryEndpoint:
                 "/query", json={"query": "x", "top_k": 3}
             )
         scores = [s["score"] for s in r.json()["sources"]]
-        assert scores == [0.0, 0.0, 0.0]
+        assert scores == [0.82, 0.74, 0.5]
 
     async def test_missing_file_path_falls_back_to_chunk_id(self, make_client):
         rag = FakeRag(
@@ -1022,6 +1014,24 @@ class TestQueryEndpoint:
             r = await client.post("/query", json={"query": "x"})
         body = r.json()
         assert body["sources"][0]["name"] == "chunk-no-path"
+
+    async def test_min_score_filters_sources_after_projection(self, make_client):
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {"id": "a", "file_path": "/a", "score": 0.91},
+                {"id": "b", "file_path": "/b", "score": 0.42},
+                {"id": "c", "file_path": "/c", "score": 0.72},
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query", json={"query": "x", "top_k": 3, "min_score": 0.7}
+            )
+
+        assert r.status_code == 200
+        assert [s["name"] for s in r.json()["sources"]] == ["/a", "/c"]
 
     async def test_500_when_rag_not_captured(self, make_client):
         def boom():

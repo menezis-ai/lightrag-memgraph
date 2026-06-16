@@ -889,7 +889,10 @@ function AppShell() {
                 {
                   tag: commit.name!,
                   def: commit.def ?? '',
+                  long_description: commit.longDescription,
                   category: commit.category ?? 'infra',
+                  aliases: commit.aliases ?? [],
+                  justification: commit.justification,
                   actor,
                 },
                 cb,
@@ -1153,6 +1156,7 @@ function AppShell() {
                   only_need_prompt: params.onlyPrompt,
                   user_prompt: params.userPrompt,
                   enable_rerank: params.enableRerank,
+                  min_score: params.minScore,
                 });
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
@@ -1173,6 +1177,7 @@ function AppShell() {
                     only_need_prompt: params.onlyPrompt,
                     user_prompt: params.userPrompt,
                     enable_rerank: params.enableRerank,
+                    min_score: params.minScore,
                   },
                   onChunk,
                 );

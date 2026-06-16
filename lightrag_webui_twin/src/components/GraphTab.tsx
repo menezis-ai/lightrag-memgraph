@@ -111,6 +111,16 @@ export function GraphTab({
   );
   const [tagFilter, setTagFilter] = useUrlArrayParam('gtag', []);
   const [docFilter, setDocFilter] = useUrlArrayParam('gdoc', []);
+  const [tagMatchMode, setTagMatchMode] = useUrlParam<'any' | 'all'>(
+    'gtagmode',
+    'any',
+    { validate: (v) => v === 'any' || v === 'all' },
+  );
+  const [docMatchMode, setDocMatchMode] = useUrlParam<'any' | 'all'>(
+    'gdocmode',
+    'any',
+    { validate: (v) => v === 'any' || v === 'all' },
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [addEntityError, setAddEntityError] = useState<string | null>(null);
   const createEntity = useCreateGraphEntity();
@@ -141,6 +151,13 @@ export function GraphTab({
     });
     return Array.from(s).sort();
   }, [entities]);
+  const propertyKeySuggestions = useMemo(() => {
+    const s = new Set<string>();
+    entities.forEach((e) => {
+      Object.keys(e.properties ?? {}).forEach((key) => s.add(key));
+    });
+    return Array.from(s).sort();
+  }, [entities]);
   const [selectedId, setSelectedId] = useUrlParam<string>(
     'gent',
     entities[0]?.id ?? '',
@@ -160,14 +177,20 @@ export function GraphTab({
   const nonTypeFiltered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return entities.filter((e) => {
+      const tags = entityTags.get(e.id) ?? [];
+      const sourceDocs = e.source_docs ?? [];
       if (
         tagFilter.length > 0 &&
-        !(entityTags.get(e.id) ?? []).some((t) => tagFilter.includes(t))
+        (tagMatchMode === 'all'
+          ? !tagFilter.every((t) => tags.includes(t))
+          : !tags.some((t) => tagFilter.includes(t)))
       )
         return false;
       if (
         docFilter.length > 0 &&
-        !(e.source_docs ?? []).some((doc) => docFilter.includes(doc))
+        (docMatchMode === 'all'
+          ? !docFilter.every((doc) => sourceDocs.includes(doc))
+          : !sourceDocs.some((doc) => docFilter.includes(doc)))
       )
         return false;
       if (!needle) return true;
@@ -176,7 +199,15 @@ export function GraphTab({
         e.summary.toLowerCase().includes(needle)
       );
     });
-  }, [entities, entityTags, q, tagFilter, docFilter]);
+  }, [
+    entities,
+    entityTags,
+    q,
+    tagFilter,
+    tagMatchMode,
+    docFilter,
+    docMatchMode,
+  ]);
 
   const typeCounts = useMemo(() => {
     const c: Partial<Record<GraphEntityType, number>> = {};
@@ -431,6 +462,12 @@ export function GraphTab({
             onChange={setTagFilter}
             placeholder="Search tags…"
           />
+          <FilterMatchMode
+            label="Tag filter mode"
+            value={tagMatchMode}
+            onChange={setTagMatchMode}
+            disabled={tagFilter.length < 2}
+          />
           <FilterPicker
             label="Filter by document"
             options={allSourceDocs}
@@ -438,6 +475,12 @@ export function GraphTab({
             onChange={setDocFilter}
             placeholder="Search documents…"
             format={(id) => docLabels?.[id] ?? id}
+          />
+          <FilterMatchMode
+            label="Document filter mode"
+            value={docMatchMode}
+            onChange={setDocMatchMode}
+            disabled={docFilter.length < 2}
           />
           <div className="kg-legend">
             <div className="kg-legend-h">Legend</div>
@@ -633,6 +676,7 @@ export function GraphTab({
           relations={relations}
           typeLabels={GRAPH_TYPE_LABEL}
           tagCatalog={tagCatalog}
+          propertyKeySuggestions={propertyKeySuggestions}
           onSelect={(id) => {
             setSelectedRelId(null);
             setSelectedId(id);
@@ -660,6 +704,7 @@ interface GraphDetailPanelProps {
    *  tag editor's autocomplete + lets any free text through (used
    *  by the legacy seed tests that don't render a catalog). */
   tagCatalog: readonly string[];
+  propertyKeySuggestions: readonly string[];
   onSelect: (id: string) => void;
   onSelectRelation: (id: string) => void;
   onClearRelation: () => void;
@@ -677,6 +722,7 @@ function GraphDetailPanel({
   relations,
   typeLabels,
   tagCatalog,
+  propertyKeySuggestions,
   onSelect,
   onSelectRelation,
   onClearRelation,
@@ -725,6 +771,7 @@ function GraphDetailPanel({
         colors={colors}
         typeLabels={typeLabels}
         tagCatalog={tagCatalog}
+        propertyKeySuggestions={propertyKeySuggestions}
         onSelectRelation={onSelectRelation}
         isPinned={pinnedIds.includes(entity.id)}
         onTogglePinned={() => onTogglePinned(entity.id)}
@@ -750,6 +797,7 @@ interface EntityEditorProps {
    *  TagAttrEditor so unknown tags can't reach the backend.
    *  Empty list disables the binding (mirrors GraphTab's default). */
   tagCatalog: readonly string[];
+  propertyKeySuggestions: readonly string[];
   onSelectRelation: (id: string) => void;
   isPinned: boolean;
   onTogglePinned: () => void;
@@ -772,6 +820,7 @@ function EntityEditor({
   colors,
   typeLabels,
   tagCatalog,
+  propertyKeySuggestions,
   onSelectRelation,
   isPinned,
   onTogglePinned,
@@ -987,6 +1036,7 @@ function EntityEditor({
         {editing && draft ? (
           <PropEditor
             properties={draft.properties}
+            suggestions={propertyKeySuggestions}
             onChange={(properties) =>
               setDraft((d) => (d ? { ...d, properties } : d))
             }
@@ -1438,6 +1488,7 @@ function RelationEditor({
         {editing && draft ? (
           <PropEditor
             properties={draft.properties}
+            suggestions={[]}
             onChange={(properties) =>
               setDraft((d) => (d ? { ...d, properties } : d))
             }
@@ -1558,6 +1609,7 @@ export function TagAttrEditor({
   onChange: (next: string[]) => void;
 }) {
   const [v, setV] = useState('');
+  const [focused, setFocused] = useState(false);
   const normalized = v.trim().toLowerCase().replace(/\s+/g, '-');
   const catalogSet = useMemo(
     () => new Set(tagCatalog.map((t) => t.toLowerCase())),
@@ -1565,14 +1617,15 @@ export function TagAttrEditor({
   );
   const bindingActive = tagCatalog.length > 0;
   const suggestions = useMemo(() => {
-    if (!bindingActive || !normalized) return [];
+    if (!bindingActive || (!focused && !normalized)) return [];
     return tagCatalog
       .filter(
         (t) =>
-          !tags.includes(t) && t.toLowerCase().startsWith(normalized),
+          !tags.includes(t) &&
+          (!normalized || t.toLowerCase().startsWith(normalized)),
       )
-      .slice(0, 4);
-  }, [tagCatalog, tags, normalized, bindingActive]);
+      .slice(0, 6);
+  }, [tagCatalog, tags, normalized, bindingActive, focused]);
   const isKnown = !bindingActive || catalogSet.has(normalized);
   const canAdd =
     Boolean(normalized) && !tags.includes(normalized) && isKnown;
@@ -1605,6 +1658,8 @@ export function TagAttrEditor({
         <input
           value={v}
           onChange={(e) => setV(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => window.setTimeout(() => setFocused(false), 120)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -1663,14 +1718,19 @@ export function TagAttrEditor({
 // ─── Properties editor — k/v list with add / rename / remove ───────────
 function PropEditor({
   properties,
+  suggestions,
   onChange,
 }: {
   properties: Record<string, string>;
+  suggestions: readonly string[];
   onChange: (next: Record<string, string>) => void;
 }) {
   const entries = Object.entries(properties);
   const [draftKey, setDraftKey] = useState('');
   const [draftVal, setDraftVal] = useState('');
+  const availableSuggestions = suggestions.filter(
+    (key) => properties[key] === undefined,
+  );
 
   const editValue = (k: string, newVal: string) =>
     onChange({ ...properties, [k]: newVal });
@@ -1733,6 +1793,7 @@ function PropEditor({
         <input
           className="kg-prop-key"
           value={draftKey}
+          list="kg-prop-key-suggestions"
           onChange={(e) => setDraftKey(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && draftKey.trim()) {
@@ -1743,6 +1804,13 @@ function PropEditor({
           placeholder="new key"
           aria-label="New property key"
         />
+        {availableSuggestions.length > 0 && (
+          <datalist id="kg-prop-key-suggestions">
+            {availableSuggestions.map((key) => (
+              <option key={key} value={key} />
+            ))}
+          </datalist>
+        )}
         <span className="kg-prop-sep">:</span>
         <input
           className="kg-prop-val"
@@ -1776,6 +1844,43 @@ function PropEditor({
 // Layout (user request 2026-05-31): search input FIRST, removable pills
 // BELOW the search bar — inverse of the design prototype, more intuitive
 // for "search → click to add → see what's selected just below".
+function FilterMatchMode({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: 'any' | 'all';
+  onChange: (value: 'any' | 'all') => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      className={`kg-filter-mode${disabled ? ' is-disabled' : ''}`}
+      aria-label={label}
+    >
+      <button
+        type="button"
+        className={value === 'any' ? 'is-on' : ''}
+        onClick={() => onChange('any')}
+        aria-pressed={value === 'any'}
+        disabled={disabled}
+      >
+        Any
+      </button>
+      <button
+        type="button"
+        className={value === 'all' ? 'is-on' : ''}
+        onClick={() => onChange('all')}
+        aria-pressed={value === 'all'}
+        disabled={disabled}
+      >
+        All
+      </button>
+    </div>
+  );
+}
 
 interface FilterPickerProps {
   label: string;

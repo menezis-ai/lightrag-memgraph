@@ -115,7 +115,7 @@ NOTIFICATIONS: list[dict[str, Any]] = [
     {"id": "n_002", "kind": "source-failed", "title": "Ingestion failed", "sub": "huge-archive.zip · unsupported MIME", "rel": "30m ago", "read": False},
     {"id": "n_003", "kind": "source-ready", "title": "Source ready", "sub": "memgraph-mage-3.8-release-notes.md · 42 chunks", "rel": "25m ago", "read": False},
     {"id": "n_004", "kind": "pipeline-warning", "title": "Pipeline warning", "sub": "LLM extraction retrying · attempt 2/3", "rel": "57m ago", "read": True},
-    {"id": "n_005", "kind": "tag-mutation", "title": "Tag", "tagname": "iso20022", "suffix": "added", "sub": "palier 2 · category payment", "rel": "22h ago", "read": True},
+    {"id": "n_005", "kind": "tag-mutation", "title": "Tag", "tagname": "iso20022", "suffix": "added", "sub": "palier 2 · category messaging", "rel": "22h ago", "read": True},
 ]
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ THESAURUS: list[dict[str, Any]] = [
     {"tag": "memgraph", "category": "infra", "def": "Memgraph graph database (MAGE extensions)"},
     {"tag": "network", "category": "network", "def": "Networking, routing, firewall topics"},
     {"tag": "cft", "category": "network", "def": "Cross-platform file transfer (Axway CFT)"},
-    {"tag": "swift", "category": "payment", "def": "SWIFT messaging and payment flows"},
+    {"tag": "swift", "category": "messaging", "def": "SWIFT messaging flows"},
     {"tag": "governance", "category": "governance", "def": "Internal governance, audit, or charter"},
     {"tag": "deprecated", "category": "lifecycle", "def": "Marked for archival, do not act on"},
     {"tag": "pending-review", "category": "lifecycle", "def": "Awaiting risk review before publish"},
@@ -146,7 +146,7 @@ TAG_CATEGORIES: list[dict[str, Any]] = [
     {"id": "oracle", "label": "Oracle", "color": "#B85A1E"},
     {"id": "infra", "label": "Infrastructure", "color": "#5A7FB4"},
     {"id": "network", "label": "Network", "color": "#1F8A7A"},
-    {"id": "payment", "label": "Payment", "color": "#7B5BB8"},
+    {"id": "messaging", "label": "Messaging", "color": "#7B5BB8"},
     {"id": "lifecycle", "label": "Lifecycle", "color": "#8A5C0E"},
     {"id": "governance", "label": "Governance", "color": "#2C3E50"},
 ]
@@ -249,7 +249,7 @@ TAGS: list[dict[str, Any]] = [
         examples=["cft-network-architecture.docx"],
     ),
     _tag(
-        "swift", 1, "payment", "active",
+        "swift", 1, "messaging", "active",
         "SWIFT messaging — MT/MX, FIN, GPI, ISO 20022 migration. Use for any source discussing SWIFT flows or compliance.",
         sources_count=18, chunks_count=542, query_freq_30d=94,
         last_edit={"by": "claire.benoit", "at": "2026-05-10", "action": "tag iso20022 split out"},
@@ -257,7 +257,7 @@ TAGS: list[dict[str, Any]] = [
         examples=["swift-iso20022-migration.pdf"],
     ),
     _tag(
-        "iso20022", 2, "payment", "active",
+        "iso20022", 2, "messaging", "active",
         'ISO 20022 message standard — pacs, pain, camt families. Distinct from generic "swift" for cases where standard precision matters.',
         sources_count=4, chunks_count=88, query_freq_30d=17,
         created={"by": "claire.benoit", "at": "2026-05-10"},
@@ -347,7 +347,7 @@ TAGS: list[dict[str, Any]] = [
         justification="Used in 4 new sources scheduled for ingestion this sprint.",
     ),
     _tag(
-        "pacs008", "requested", "payment", "pending-review",
+        "pacs008", "requested", "messaging", "pending-review",
         "Proposed: pacs.008 — ISO 20022 customer credit transfer message family.",
         created={"by": "philippe.marchand", "at": "2026-05-10"},
         last_edit={"by": "philippe.marchand", "at": "2026-05-10", "action": "requested"},
@@ -411,8 +411,8 @@ ACTIVITY: list[dict[str, Any]] = [
          "Retrieval · global · top_k=80 · 12 sources cited · 2.1s",
          {"mode": "global", "top_k": 80, "tag_filter": ["vmware", "production"], "latency_ms": 2104, "tokens_in": 278, "tokens_out": 1024}),
     _evt("evt_01HX8TWA", "2026-05-10T11:48:00Z", "22h ago", "Yesterday", "settings", "info", "claire.benoit", "KB Admin", "folder", "cib · thesaurus",
-         "Added new tag iso20022 (palier 2) · category payment",
-         {"tag": "iso20022", "category": "payment", "tier": 2, "requested_by": "marc.berthier"}),
+         "Added new tag iso20022 (palier 2) · category messaging",
+         {"tag": "iso20022", "category": "messaging", "tier": 2, "requested_by": "marc.berthier"}),
     _evt("evt_01HX8T03", "2026-05-10T09:32:12Z", "1d ago", "Yesterday", "source-failed", "error", "system", "pipeline", "source", "cft-vendor-api-spec.pdf",
          "Embedding provider returned 429 after 3 retries · source marked failed",
          {"provider": "openai", "model": "text-embedding-3-large", "error_code": "E_PROVIDER_RATE_LIMIT", "retries": 3}),

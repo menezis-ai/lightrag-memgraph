@@ -75,6 +75,7 @@ export interface TwinQueryRequest {
   }[];
   user_prompt?: string;
   enable_rerank?: boolean;
+  min_score?: number;
   tag_filter?: {
     all?: readonly string[];
     any?: readonly string[];
@@ -499,6 +500,7 @@ export const twinApi = {
     body: {
       tag: string;
       def: string;
+      long_description?: string;
       category: string;
       aliases?: readonly string[];
       justification?: string;
@@ -766,7 +768,10 @@ export const api = {
   reprocessFailedDocuments: lightragApi.reprocessFailedDocuments,
   trackStatus: lightragApi.trackStatus,
   uploadDocument: lightragApi.uploadDocument,
-  deleteDocument: lightragApi.deleteDocument,
+  deleteDocument: (docId: string, init?: ApiRequestInit) =>
+    twinApi.bulkDeleteDocuments({ doc_ids: [docId] }, init).then(() => ({
+      ok: true as const,
+    })),
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,

@@ -182,6 +182,28 @@ class GraphAnswerEnvelopeError(Exception):
     """
 
 
+def _reference_score(
+    chunks: list[dict[str, Any]],
+    *,
+    rank: int,
+    total: int,
+) -> float:
+    for chunk in chunks:
+        for key in ("score", "similarity", "cosine_similarity"):
+            value = chunk.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+        metrics = chunk.get("__metrics__")
+        if isinstance(metrics, dict):
+            for key in ("score", "similarity", "cosine_similarity"):
+                value = metrics.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+    if total <= 0:
+        return 0.5
+    return round(0.95 - 0.45 * (rank / max(total - 1, 1)), 3)
+
+
 def classify_aquery_llm_result(
     result: dict[str, Any],
 ) -> tuple[str, AnswerStatus]:
@@ -298,7 +320,7 @@ def build_sources_from_raw_data(
         chunks_by_ref.setdefault(ref_id, []).append(chunk)
 
     sources: list[dict[str, Any]] = []
-    for reference in references:
+    for rank, reference in enumerate(references):
         if not isinstance(reference, dict):
             raise GraphAnswerEnvelopeError(
                 f"reference entry is {type(reference).__name__}, expected dict"
@@ -341,7 +363,11 @@ def build_sources_from_raw_data(
                 "type": "file",
                 "name": file_path or (chunk_id or f"reference-{n_value}"),
                 "meta": meta_label,
-                "score": 0.0,
+                "score": _reference_score(
+                    matching_chunks,
+                    rank=rank,
+                    total=len(references),
+                ),
                 "doc_id": doc_id,
                 "chunk_id": chunk_id,
             }

@@ -82,6 +82,7 @@ class TwinQueryBody(BaseModel):
     history_turns: int | None = Field(default=None, ge=0, le=20)
     user_prompt: str | None = Field(default=None, max_length=4000)
     enable_rerank: bool | None = Field(default=None)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
     tag_filter: dict[str, list[str]] | None = Field(default=None)
 
     @field_validator("tag_filter")
@@ -120,6 +121,20 @@ class TwinQueryResponse(BaseModel):
     # Typed as ``AnswerStatus`` so the generated OpenAPI schema
     # advertises the enum to clients/tooling instead of an open str.
     answer_status: AnswerStatus = Field(default=ANSWER_STATUS_GROUNDED)
+
+
+def _filter_sources_by_min_score(
+    sources: list[dict[str, Any]],
+    min_score: float,
+) -> list[dict[str, Any]]:
+    if min_score <= 0:
+        return sources
+    return [
+        source
+        for source in sources
+        if isinstance(source.get("score"), (int, float))
+        and float(source["score"]) >= min_score
+    ]
 
 
 class TwinQueryDataResponse(BaseModel):
@@ -718,6 +733,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
                 exc,
             )
             sources = []
+        sources = _filter_sources_by_min_score(sources, body.min_score)
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=False
         )
@@ -977,6 +993,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
                     exc,
                 )
                 sources = []
+            sources = _filter_sources_by_min_score(sources, body.min_score)
             await _record_retrieval_activity(
                 body, request, sources_count=len(sources), stream=True
             )

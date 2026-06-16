@@ -15,7 +15,7 @@ export const THESAURUS_FIXTURES: readonly ThesaurusEntry[] = [
   { tag: 'memgraph', category: 'infra', def: 'Memgraph graph database (MAGE extensions)' },
   { tag: 'network', category: 'network', def: 'Networking, routing, firewall topics' },
   { tag: 'cft', category: 'network', def: 'Cross-platform file transfer (Axway CFT)' },
-  { tag: 'swift', category: 'payment', def: 'SWIFT messaging and payment flows' },
+  { tag: 'swift', category: 'messaging', def: 'SWIFT messaging flows' },
   { tag: 'governance', category: 'governance', def: 'Internal governance, audit, or charter' },
   { tag: 'deprecated', category: 'lifecycle', def: 'Marked for archival, do not act on' },
   { tag: 'pending-review', category: 'lifecycle', def: 'Awaiting risk review before publish' },

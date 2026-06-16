@@ -46,7 +46,7 @@ export const NOTIFICATION_FIXTURES: readonly Notification[] = [
     title: 'Tag',
     tagname: 'iso20022',
     suffix: 'added',
-    sub: 'palier 2 · category payment',
+    sub: 'palier 2 · category messaging',
     rel: '22h ago',
     read: true,
   },

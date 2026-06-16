@@ -316,6 +316,8 @@ describe('RetrievalTab — params panel', () => {
     await userEvent.type(screen.getByLabelText('Chunk top K'), '6');
     await userEvent.clear(screen.getByLabelText('Max tokens'));
     await userEvent.type(screen.getByLabelText('Max tokens'), '2048');
+    await userEvent.clear(screen.getByLabelText('Minimum source score'));
+    await userEvent.type(screen.getByLabelText('Minimum source score'), '0.7');
     await userEvent.clear(screen.getByLabelText('History turns'));
     await userEvent.type(screen.getByLabelText('History turns'), '2');
     await userEvent.type(
@@ -334,6 +336,7 @@ describe('RetrievalTab — params panel', () => {
         topK: 12,
         chunkTopK: 6,
         maxTokens: 2048,
+        minScore: 0.7,
         historyTurns: 2,
         userPrompt: 'prefer operational runbooks',
         enableRerank: false,
@@ -623,6 +626,38 @@ describe('RetrievalTab — source cards', () => {
     expect(screen.getByText('validate backup')).toBeInTheDocument();
     expect(screen.getByText('open incident')).toBeInTheDocument();
     expect(screen.getByTestId('citation-1')).toBeInTheDocument();
+  });
+
+  it('hides <think> blocks from the rendered answer and exposes them separately', () => {
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_think',
+            title: 'Think',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['<think>private chain</think>Visible answer [1]'],
+                sources: [
+                  { n: 1, type: 'file' as const, name: 'runbook.pdf', score: 0.9 },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(document.querySelector('.msg-text')).toHaveTextContent('Visible answer');
+    expect(document.querySelector('.msg-text')).not.toHaveTextContent('private chain');
+    expect(screen.getByTestId('retrieval-thinking-detail')).toHaveTextContent(
+      'private chain',
+    );
+    expect(screen.queryByText(/<think>/)).toBeNull();
   });
 
   it('clicking a source card navigates to documents with a source filter for file paths', async () => {
