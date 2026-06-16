@@ -25,11 +25,15 @@ The old `maquette-deploy/` prototype was removed as an obsolete artifact in PR #
 - **GitHub `origin/main` (`menezis-ai/lightrag-memgraph`) — public backend patch only.** Strictly the storage adapter slice: `src/twindb_lightrag_memgraph/{__init__,_buffered_graph,_constants,_hooks,_pool,kv_impl,vector_impl,docstatus_impl}.py` + `tests/` for those + `pyproject.toml` + `README.md` + `sonar-project.properties`. **No `server/`, no `intelligence/`, no `classification*.py`, no `_folders.py`, no `asgi.py`, no `lightrag_server.py`, no `lightrag_webui_twin/`, no CLAUDE.md.** Used (a) for visibility on the Memgraph adapter, (b) as the receiving surface for Claude-action PRs from the GitHub integration when they target storage code, (c) as the substrate `export-1.0.0` rebuilds from.
 - **GitHub `origin/export-1.0.0` — BNP delivery snapshot.** Full repo with prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/` (no Bun/Node in the BNP runtime path). Rebuilt from `stable/0.6.x` via `EXPORT_PROCEDURE.md`. **Never** pushed to `bunker`. Nothing else is pushed to `origin`.
 
-**Triage rule for a fix that lands on bunker first** (the only normal flow):
-- Touched **only** the public-backend files listed above → **eligible** to flow back to GitHub `main` (open a separate PR there, cite the bunker PR for provenance).
-- Touched **anything else** (`server/`, `intelligence/`, `classification*.py`, `_folders.py`, `asgi.py`, `lightrag_server.py`, `lightrag_webui_twin/`, doctrine docs) → **bunker only**. Do not push to GitHub.
+**Flow direction is INTO bunker only — do not propose bunker → GitHub propagation as a routine step.** Clarified 2026-06-16 after a session over-invested in mirror-pushing a bunker fix back to GitHub `main`:
 
-The global directive §7 ("push to all remotes") does **not** apply: bunker is the default, and `origin` only sees scoped slices. See `EXPORT_PROCEDURE.md` for the `export-1.0.0` rebuild flow.
+- **Bunker is the source of truth, period.** GitHub `origin/main` is a derived public-visibility slice; it can drift behind bunker. There is no per-fix back-port doctrine.
+- **GitHub PRs flow INTO bunker**: Claude-action PRs on `menezis-ai/lightrag-memgraph` are triaged → absorbed into bunker (cherry-pick / port) → close the GitHub PR with the absorption note. Do NOT then mirror bunker's accepted version back to GitHub via a follow-up PR.
+- A fix that touches `intelligence/`, `server/`, `classification*.py`, `_folders.py`, `asgi.py`, `lightrag_server.py`, `lightrag_webui_twin/`, or doctrine docs → bunker only (GitHub `origin/main`'s file scope simply excludes them).
+- A fix that touches the public-backend files (`__init__.py`, `_buffered_graph.py`, `_constants.py`, `_hooks.py`, `_pool.py`, `kv_impl.py`, `vector_impl.py`, `docstatus_impl.py`) → still bunker only by default. If the public slice on `origin/main` needs to be re-synced, that's a deliberate batch operation (re-publish, release), not a per-fix flow.
+- The only sanctioned bunker → GitHub flow is the `export-1.0.0` rebuild via `EXPORT_PROCEDURE.md` for BNP delivery.
+
+The global directive §7 ("push to all remotes") does **not** apply here.
 
 ## Doctrine layer
 

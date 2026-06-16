@@ -4,7 +4,13 @@ Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.
 
 LightRAG already ships with a built-in `MemgraphStorage` for the **graph** layer. This package fills the remaining 3 slots (KV, Vector, DocStatus) so that an entire LightRAG instance can run on a single Memgraph database.
 
-**Version 1.0.0** ships the complete Twin runtime: the storage backends, a FastAPI server overlay (`/twin/api/*` — folders, tags governance, activity, knowledge-graph CRUD, structured query) and an embedded operator WebUI served at `/webui` (pre-built, no Node toolchain required on the host). Everything activates through a single `register()` call — see `twin_main.py` for the container entrypoint, `Dockerfile.example` for the minimal image wiring, and `ENV_VARIABLES.txt` for the full configuration reference.
+**Version 1.0.0** ships the complete Twin runtime: the storage backends, a FastAPI server overlay (`/twin/api/*` — folders, tags governance, activity, knowledge-graph CRUD, structured query) and an embedded operator WebUI served at `/webui` (pre-built, no Node toolchain required on the host). Everything activates through a single `register()` call. Three production entrypoints are available depending on the launcher:
+
+- `python twin_main.py` — reference entrypoint, `register(...)` is called with explicit flags then `lightrag_server.main()` runs.
+- `python -m twindb_lightrag_memgraph.lightrag_server` — BNP container entrypoint, importable as a module so the production `Dockerfile`'s `ENTRYPOINT` is `-m`-launchable.
+- `gunicorn 'twindb_lightrag_memgraph.asgi:get_application()' -k uvicorn.workers.UvicornWorker` (or `uvicorn --factory twindb_lightrag_memgraph.asgi:get_application`) — for launchers that import the app once per worker; overlay activation is env-driven via `TWIN_REPLACE_UI` / `TWIN_MOUNT_SERVER` / `TWIN_SHIM_NATIVE_ROUTES`.
+
+See `Dockerfile.example` for the minimal image wiring and `ENV_VARIABLES.txt` for the full configuration reference.
 
 ## Why this exists
 
@@ -403,8 +409,10 @@ With multiple LightRAG workspaces, a second workspace "prod" would create `KV_pr
 ## Tests
 
 ```bash
-# Unit tests only (no Memgraph needed)
-pytest tests/test_register.py -v
+# Unit tests only (no Memgraph needed) — collects storage, intelligence,
+# and server suites. conftest.py auto-skips @pytest.mark.integration when
+# MEMGRAPH_URI is unset.
+pytest tests/ --ignore=tests/test_bench.py -v
 
 # All integration tests (requires running Memgraph)
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
@@ -414,6 +422,15 @@ MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_kv.py::TestMemgraphKVStorag
 
 # Benchmarks (latency, throughput, scaling at 100/1K/10K items)
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_bench.py -v -s
+
+# Coverage (workaround for Python 3.14 + numpy double-import on --cov)
+coverage run -m pytest tests/ --ignore=tests/test_bench.py
+coverage xml  # produces coverage.xml for SonarQube
+
+# Restricted-runtime smoke test (stdlib-only, for BNP-style containers
+# where no pip install is possible — validates the deployed instance)
+export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
+python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 ```
 
 **Quick Memgraph for testing (Docker):**
