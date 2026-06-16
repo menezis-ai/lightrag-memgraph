@@ -8,6 +8,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getActiveFolder } from './client';
 import { api } from './resources';
 import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
@@ -18,8 +19,27 @@ const DEFAULTS = { staleTime: 60_000 } as const;
 const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
 const PIPELINE_REFETCH_INTERVAL_MS = 2_000;
 const DEFAULT_UPLOAD_CONCURRENCY = 4;
-type QueryGate = { enabled?: boolean };
+type QueryGate = { enabled?: boolean; folderKey?: string | null };
 type UploadBatchItem = UploadDocumentInput | File;
+
+function gateOptions(options: QueryGate): Pick<QueryGate, 'enabled'> {
+  return { enabled: options.enabled };
+}
+
+function folderScope(
+  options: QueryGate,
+  requestedFolder?: string | null,
+): string {
+  return options.folderKey ?? requestedFolder ?? getActiveFolder() ?? 'default';
+}
+
+function graphEntitiesKey(folder = getActiveFolder() ?? 'default') {
+  return ['graph-entities', folder] as const;
+}
+
+function graphRelationsKey(folder = getActiveFolder() ?? 'default') {
+  return ['graph-relations', folder] as const;
+}
 
 function normalizeUploadInput(item: UploadBatchItem): UploadDocumentInput {
   return item instanceof File ? { file: item } : item;
@@ -63,8 +83,9 @@ export function useDocuments(
   } = {},
   options: QueryGate = {},
 ) {
+  const scope = folderScope(options, query.folder);
   return useQuery({
-    queryKey: ['documents', query] as const,
+    queryKey: ['documents', scope, query] as const,
     queryFn: ({ signal }) => api.listDocuments(query, { signal }),
     ...DEFAULTS,
     staleTime: 0,
@@ -72,19 +93,20 @@ export function useDocuments(
     refetchIntervalInBackground: true,
     refetchOnReconnect: 'always',
     refetchOnWindowFocus: 'always',
-    ...options,
+    ...gateOptions(options),
   });
 }
 
 export function usePipelineStatus(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['pipeline_status'] as const,
+    queryKey: ['pipeline_status', scope] as const,
     queryFn: ({ signal }) => api.pipelineStatus({ signal }),
     ...DEFAULTS,
     staleTime: 0,
     refetchInterval: PIPELINE_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: true,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -94,7 +116,7 @@ export function useFolders(options: QueryGate = {}) {
     queryKey: ['folders'] as const,
     queryFn: ({ signal }) => api.listFolders({ signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -137,11 +159,12 @@ export function useDeleteFolder() {
 }
 
 export function useNotifications(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['notifications'] as const,
+    queryKey: ['notifications', scope] as const,
     queryFn: ({ signal }) => api.listNotifications({ signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -164,29 +187,32 @@ export function useClearNotifications() {
 export function useThesaurus(options: QueryGate = {}) {
   // Legacy compatibility for /thesaurus. Runtime tag pickers should use
   // useTags(), which is the canonical catalog surface.
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['thesaurus'] as const,
+    queryKey: ['thesaurus', scope] as const,
     queryFn: ({ signal }) => api.listThesaurus({ signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
 export function useTags(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['tags'] as const,
+    queryKey: ['tags', scope] as const,
     queryFn: ({ signal }) => api.listTags({ signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
 export function useTagCategories(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['tag-categories'] as const,
+    queryKey: ['tag-categories', scope] as const,
     queryFn: ({ signal }) => api.listTagCategories({ signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -201,11 +227,12 @@ export function useActivity(
   } = {},
   options: QueryGate = {},
 ) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['activity', query] as const,
+    queryKey: ['activity', scope, query] as const,
     queryFn: ({ signal }) => api.listActivity(query, { signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -227,25 +254,27 @@ export function useOpenApi(options: QueryGate = {}) {
       return parseOpenApiSpec(await resp.json());
     },
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
 export function useGraphEntities(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['graph-entities'] as const,
+    queryKey: graphEntitiesKey(scope),
     queryFn: ({ signal }) => api.listGraphEntities({}, { signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
 export function useGraphRelations(options: QueryGate = {}) {
+  const scope = folderScope(options);
   return useQuery({
-    queryKey: ['graph-relations'] as const,
+    queryKey: graphRelationsKey(scope),
     queryFn: ({ signal }) => api.listGraphRelations({}, { signal }),
     ...DEFAULTS,
-    ...options,
+    ...gateOptions(options),
   });
 }
 
@@ -263,18 +292,19 @@ export function useUpdateGraphEntity() {
     }: { id: string; patch: Parameters<typeof api.updateGraphEntity>[1] }) =>
       api.updateGraphEntity(id, patch),
     onMutate: async ({ id, patch }) => {
-      await qc.cancelQueries({ queryKey: ['graph-entities'] });
-      const prev = qc.getQueryData<readonly GraphEntity[]>(['graph-entities']);
+      const key = graphEntitiesKey();
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<readonly GraphEntity[]>(key);
       if (prev) {
         qc.setQueryData<readonly GraphEntity[]>(
-          ['graph-entities'],
+          key,
           prev.map((e) => (e.id === id ? { ...e, ...patch } : e)),
         );
       }
       return { prev };
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['graph-entities'], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(graphEntitiesKey(), ctx.prev);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['graph-entities'] });
@@ -292,18 +322,19 @@ export function useUpdateGraphRelation() {
     }: { id: string; patch: Parameters<typeof api.updateGraphRelation>[1] }) =>
       api.updateGraphRelation(id, patch),
     onMutate: async ({ id, patch }) => {
-      await qc.cancelQueries({ queryKey: ['graph-relations'] });
-      const prev = qc.getQueryData<readonly GraphRelation[]>(['graph-relations']);
+      const key = graphRelationsKey();
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<readonly GraphRelation[]>(key);
       if (prev) {
         qc.setQueryData<readonly GraphRelation[]>(
-          ['graph-relations'],
+          key,
           prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
         );
       }
       return { prev };
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['graph-relations'], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(graphRelationsKey(), ctx.prev);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['graph-relations'] });
@@ -340,23 +371,23 @@ export function useDeleteGraphEntity() {
     onMutate: async (id) => {
       // Optimistically prune the entity + any incident relation so
       // the canvas reflows immediately. Roll back on error.
-      await qc.cancelQueries({ queryKey: ['graph-entities'] });
-      await qc.cancelQueries({ queryKey: ['graph-relations'] });
-      const prevEntities = qc.getQueryData<readonly GraphEntity[]>([
-        'graph-entities',
-      ]);
-      const prevRelations = qc.getQueryData<readonly GraphRelation[]>([
-        'graph-relations',
-      ]);
+      const entitiesKey = graphEntitiesKey();
+      const relationsKey = graphRelationsKey();
+      await qc.cancelQueries({ queryKey: entitiesKey });
+      await qc.cancelQueries({ queryKey: relationsKey });
+      const prevEntities =
+        qc.getQueryData<readonly GraphEntity[]>(entitiesKey);
+      const prevRelations =
+        qc.getQueryData<readonly GraphRelation[]>(relationsKey);
       if (prevEntities) {
         qc.setQueryData<readonly GraphEntity[]>(
-          ['graph-entities'],
+          entitiesKey,
           prevEntities.filter((e) => e.id !== id),
         );
       }
       if (prevRelations) {
         qc.setQueryData<readonly GraphRelation[]>(
-          ['graph-relations'],
+          relationsKey,
           prevRelations.filter((r) => r.source !== id && r.target !== id),
         );
       }
@@ -364,9 +395,9 @@ export function useDeleteGraphEntity() {
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.prevEntities)
-        qc.setQueryData(['graph-entities'], ctx.prevEntities);
+        qc.setQueryData(graphEntitiesKey(), ctx.prevEntities);
       if (ctx?.prevRelations)
-        qc.setQueryData(['graph-relations'], ctx.prevRelations);
+        qc.setQueryData(graphRelationsKey(), ctx.prevRelations);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['graph-entities'] });
@@ -393,20 +424,19 @@ export function useDeleteGraphRelation() {
   return useMutation({
     mutationFn: (id: string) => api.deleteGraphRelation(id),
     onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: ['graph-relations'] });
-      const prev = qc.getQueryData<readonly GraphRelation[]>([
-        'graph-relations',
-      ]);
+      const key = graphRelationsKey();
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<readonly GraphRelation[]>(key);
       if (prev) {
         qc.setQueryData<readonly GraphRelation[]>(
-          ['graph-relations'],
+          key,
           prev.filter((r) => r.id !== id),
         );
       }
       return { prev };
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(['graph-relations'], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(graphRelationsKey(), ctx.prev);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['graph-relations'] });

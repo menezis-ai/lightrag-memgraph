@@ -56,7 +56,7 @@ export function PendingDocsSection({
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const busyDocIdsRef = useRef(new Set<string>());
   const [busyDocIds, setBusyDocIds] = useState<ReadonlySet<string>>(
     () => new Set(),

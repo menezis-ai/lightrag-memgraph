@@ -67,6 +67,14 @@ function wrap(qc: QueryClient) {
   };
 }
 
+async function openPendingDocsSection() {
+  await userEvent.click(
+    screen.getByRole('button', {
+      name: /To be validated by your reviewer/i,
+    }),
+  );
+}
+
 beforeEach(() => {
   approveCalls.length = 0;
   rejectCalls.length = 0;
@@ -89,7 +97,7 @@ describe('PendingDocsSection — rendering', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders a card per pending doc', () => {
+  it('is collapsed by default and renders cards when opened', async () => {
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
@@ -99,6 +107,13 @@ describe('PendingDocsSection — rendering', () => {
         />
       </Wrap>,
     );
+    expect(screen.queryByTestId('pending-doc-pending-1')).toBeNull();
+    expect(
+      screen.getByRole('button', {
+        name: /To be validated by your reviewer/i,
+      }),
+    ).toHaveAttribute('aria-expanded', 'false');
+    await openPendingDocsSection();
     expect(screen.getByTestId('pending-doc-pending-1')).toBeInTheDocument();
     expect(screen.getByTestId('pending-doc-pending-2')).toBeInTheDocument();
   });
@@ -117,6 +132,7 @@ describe('PendingDocsSection — Approve', () => {
         />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(screen.getByTestId('pending-doc-approve-pending-1'));
     await waitFor(() => expect(approveCalls.length).toBe(1));
     expect(approveCalls[0].id).toBe('pending-1');
@@ -133,6 +149,7 @@ describe('PendingDocsSection — Edit & Approve (#150 fix)', () => {
         <PendingDocsSection docs={[makePendingDoc()]} onToast={() => {}} />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(
       screen.getByTestId('pending-doc-edit-approve-pending-1'),
     );
@@ -152,6 +169,7 @@ describe('PendingDocsSection — Edit & Approve (#150 fix)', () => {
         />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(
       screen.getByTestId('pending-doc-edit-approve-pending-1'),
     );
@@ -177,6 +195,7 @@ describe('PendingDocsSection — Reject', () => {
         <PendingDocsSection docs={[makePendingDoc()]} onToast={() => {}} />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(screen.getByTestId('pending-doc-reject-pending-1'));
     const submit = screen.getByTestId('pending-doc-reject-submit');
     expect(submit).toBeDisabled();
@@ -201,6 +220,7 @@ describe('PendingDocsSection — Read source (B2)', () => {
         />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(screen.getByTestId('pending-doc-read-pending-1'));
     expect(onReadSource).toHaveBeenCalledTimes(1);
     expect(onReadSource.mock.calls[0][0].doc_id).toBe('pending-1');
@@ -228,13 +248,14 @@ describe('PendingDocsSection — Modified variant (Confluence revalidation)', ()
     };
   }
 
-  it('renders the Modified source pill and the diff summary', () => {
+  it('renders the Modified source pill and the diff summary', async () => {
     const Wrap = wrap(new QueryClient());
     render(
       <Wrap>
         <PendingDocsSection docs={[makeModifiedDoc()]} onToast={() => {}} />
       </Wrap>,
     );
+    await openPendingDocsSection();
     const card = screen.getByTestId('pending-doc-mod-1');
     expect(card.className).toContain('modified');
     expect(card.textContent).toContain('Modified source');
@@ -252,6 +273,7 @@ describe('PendingDocsSection — Modified variant (Confluence revalidation)', ()
         />
       </Wrap>,
     );
+    await openPendingDocsSection();
     await userEvent.click(screen.getByTestId('pending-doc-approve-update-mod-1'));
     await waitFor(() => expect(approveCalls.length).toBe(1));
     expect(approveCalls[0].id).toBe('mod-1');

@@ -65,24 +65,41 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
+async function openTagRequests() {
+  await userEvent.click(
+    screen.getByRole('button', { name: /Tag requests/i }),
+  );
+}
+
 describe('TagsTab — rendering', () => {
   it('renders header with active + pending counts; no palier pill', () => {
-    render(<TagsTab {...defaultProps()} />);
+    render(<TagsTab {...defaultProps()} folderLabel="sandbox" />);
     expect(screen.getByRole('heading', { name: 'Tags' })).toBeInTheDocument();
     // 21 fixtures - 2 requested = 19 active
     const sub = document.querySelector('.tags-sub') as HTMLElement;
     expect(sub.textContent).toMatch(/19 active tags · 2 pending requests/);
+    expect(sub.textContent).toMatch(/folder sandbox/);
     // palier-pill killed per 30/05 cleanup — role lives in JWT, not in chrome
     expect(sub.textContent).not.toMatch(/palier 3/);
     expect(document.querySelector('.palier-pill')).toBeNull();
   });
 
-  it('renders the pending requests section with Approve/Edit-approve/Reject for palier 3', () => {
+  it('renders the pending requests section collapsed by default', () => {
     render(<TagsTab {...defaultProps()} />);
     expect(screen.getByText('Tag requests')).toBeInTheDocument();
     expect(document.querySelector('.pending-counts')?.textContent).toMatch(
       /2 tag requests awaiting review/,
     );
+    expect(screen.queryByTestId('pending-argocd')).toBeNull();
+    expect(screen.getByRole('button', { name: /Tag requests/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('opens pending requests with Approve/Edit-approve/Reject for palier 3', async () => {
+    render(<TagsTab {...defaultProps()} />);
+    await openTagRequests();
     expect(screen.getByTestId('pending-argocd')).toBeInTheDocument();
     expect(screen.getByTestId('pending-pacs008')).toBeInTheDocument();
     const argocd = screen.getByTestId('pending-argocd');
@@ -93,8 +110,9 @@ describe('TagsTab — rendering', () => {
     expect(within(argocd).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });
 
-  it('palier 2 sees pending section but only "Awaiting reviewer approval" caption', () => {
+  it('palier 2 sees pending section but only "Awaiting reviewer approval" caption', async () => {
     render(<TagsTab {...defaultProps(PALIER2)} />);
+    await openTagRequests();
     const argocd = screen.getByTestId('pending-argocd');
     expect(within(argocd).queryByRole('button', { name: 'Approve' })).toBeNull();
     expect(within(argocd).getByText('Awaiting reviewer approval')).toBeInTheDocument();
@@ -245,6 +263,7 @@ describe('TagsTab — approve direct (palier 3)', () => {
   it('Approve button on a pending request calls onApprove with the tag', async () => {
     const p = defaultProps();
     render(<TagsTab {...p} />);
+    await openTagRequests();
     const argocd = screen.getByTestId('pending-argocd');
     await userEvent.click(within(argocd).getByRole('button', { name: 'Approve' }));
     expect(p.onApprove).toHaveBeenCalledTimes(1);
@@ -374,6 +393,7 @@ describe('TagsTab — modal dispatch', () => {
   it('Reject modal requires a non-empty reason', async () => {
     const p = defaultProps();
     render(<TagsTab {...p} />);
+    await openTagRequests();
     const argocd = screen.getByTestId('pending-argocd');
     await userEvent.click(within(argocd).getByRole('button', { name: 'Reject' }));
     const dialog = await screen.findByRole('dialog', { name: 'Reject request' });

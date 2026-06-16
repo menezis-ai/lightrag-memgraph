@@ -30,8 +30,11 @@ afterEach(() => {
 
 describe('ActivityTab — rendering', () => {
   it('renders the header and live indicator (paused)', () => {
-    render(<ActivityTab {...defaultProps()} />);
+    render(<ActivityTab {...defaultProps()} folderLabel="sandbox" />);
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+    expect(document.querySelector('.activity-sub')?.textContent).toMatch(
+      /folder sandbox/,
+    );
     expect(screen.getByText('Polling paused')).toBeInTheDocument();
   });
 

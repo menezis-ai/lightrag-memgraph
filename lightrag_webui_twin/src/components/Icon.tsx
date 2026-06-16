@@ -58,6 +58,12 @@ const paths: Record<string, ReactNode> = {
       <circle cx="12" cy="12" r="3" />
     </>
   ),
+  edit: (
+    <>
+      <path d="M11 4H5a2 2 0 0 0 -2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2 -2v-6" />
+      <path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1l1 -4l9.5 -9.5z" />
+    </>
+  ),
   'info-circle': (
     <>
       <circle cx="12" cy="12" r="9" />
@@ -154,6 +160,7 @@ const paths: Record<string, ReactNode> = {
   ),
   activity: <path d="M3 12h4l3 8l4 -16l3 8h4" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  check: <path d="M5 12l5 5l10 -10" />,
   x: <path d="M18 6L6 18M6 6l12 12" />,
   search: (
     <>

@@ -96,7 +96,7 @@ export function FoldersAdminSection({
             }}
           />
         ) : (
-          <div style={{ margin: '8px 0' }}>
+          <div className="settings-folder-add-row">
             <button
               type="button"
               className="ghost-btn primary"
@@ -114,7 +114,6 @@ export function FoldersAdminSection({
             {atMax && (
               <span
                 className="muted"
-                style={{ marginLeft: 10, fontSize: 12 }}
                 data-testid="settings-folders-at-max"
               >
                 At max — {MAX_FOLDERS} folder cap reached.
@@ -124,7 +123,7 @@ export function FoldersAdminSection({
         )
       )}
 
-      <ul className="settings-folders-list" style={{ padding: 0, margin: 0 }}>
+      <ul className="settings-folders-list">
         {list.map((folder, idx) => {
           // First fixture / first env-injected entry is the
           // SRE-provisioned default — the picker uses `current` for
@@ -208,10 +207,9 @@ function AddFolderForm({
 
   return (
     <form
-      className="set-card"
+      className="set-card folder-form"
       data-testid="settings-add-folder-form"
       onSubmit={submit}
-      style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
     >
       <div className="set-card-h">
         Add folder{' '}
@@ -219,8 +217,8 @@ function AddFolderForm({
           <Icon name="plus" size={10} /> runtime
         </span>
       </div>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+      <label className="settings-field">
+        <span>
           ID <em>(alphanumeric, underscore or dash)</em>
         </span>
         <input
@@ -234,10 +232,8 @@ function AddFolderForm({
           className="mono"
         />
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Display name
-        </span>
+      <label className="settings-field">
+        <span>Display name</span>
         <input
           type="text"
           value={label}
@@ -247,10 +243,8 @@ function AddFolderForm({
           data-testid="settings-add-folder-label"
         />
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-          Kind
-        </span>
+      <label className="settings-field">
+        <span>Kind</span>
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value)}
@@ -263,8 +257,8 @@ function AddFolderForm({
           <option value="team">Team</option>
         </select>
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+      <label className="settings-field">
+        <span>
           Description <em>(optional)</em>
         </span>
         <input
@@ -276,7 +270,7 @@ function AddFolderForm({
           data-testid="settings-add-folder-description"
         />
       </label>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <div className="settings-form-actions">
         <button type="button" className="ghost-btn" onClick={onCancel}>
           Cancel
         </button>
@@ -292,7 +286,7 @@ function AddFolderForm({
       {!idValid && trimmedId.length > 0 && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="settings-error"
           data-testid="settings-add-folder-id-invalid"
         >
           Invalid id — use only alphanumeric characters, underscore or dash.
@@ -301,7 +295,7 @@ function AddFolderForm({
       {duplicate && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="settings-error"
           data-testid="settings-add-folder-duplicate"
         >
           A folder with id “{trimmedId}” already exists.
@@ -310,7 +304,7 @@ function AddFolderForm({
       {error && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="settings-error"
           data-testid="settings-add-folder-error"
         >
           {error}
@@ -365,38 +359,18 @@ function FolderRow({
 
   return (
     <li
-      className="set-card"
+      className="set-card settings-folder-row"
       data-testid={`settings-folder-row-${folder.id}`}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        marginBottom: 10,
-      }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-        }}
-      >
+      <div className="settings-folder-row-head">
         <code
           className="mono"
-          style={{ fontSize: 12, fontWeight: 600 }}
           data-testid={`settings-folder-id-${folder.id}`}
         >
           {folder.id}
         </code>
         {folder.current && (
-          <span
-            className="env-badge"
-            style={{
-              background: 'var(--twin-accent-soft, rgba(56,113,180,0.12))',
-              color: 'var(--twin-accent, #3871b4)',
-            }}
-          >
+          <span className="env-badge active">
             active
           </span>
         )}
@@ -412,14 +386,13 @@ function FolderRow({
       </div>
 
       {editing ? (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div className="settings-folder-edit-row">
           <input
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             aria-label={`Edit label for folder ${folder.id}`}
             data-testid={`settings-folder-edit-label-${folder.id}`}
-            style={{ flex: 1 }}
           />
           <button
             type="button"
@@ -442,8 +415,8 @@ function FolderRow({
           </button>
         </div>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ flex: 1, fontSize: 13 }}>{folder.kb}</span>
+        <div className="settings-folder-row-body">
+          <span>{folder.kb}</span>
           {!envSeeded && canManage && (
             <>
               <button
@@ -467,14 +440,6 @@ function FolderRow({
                 }}
                 disabled={pendingDelete}
                 data-testid={`settings-folder-delete-${folder.id}`}
-                style={
-                  armedDelete
-                    ? {
-                        color: 'var(--twin-red-vivid, #b03060)',
-                        borderColor: 'var(--twin-red-vivid, #b03060)',
-                      }
-                    : undefined
-                }
               >
                 <Icon
                   name={armedDelete ? 'alert-triangle' : 'trash'}
@@ -494,7 +459,7 @@ function FolderRow({
       {(updateError || deleteError) && (
         <div
           role="alert"
-          style={{ fontSize: 11, color: 'var(--twin-red-vivid, #b03060)' }}
+          className="settings-error"
           data-testid={`settings-folder-error-${folder.id}`}
         >
           {updateError ?? deleteError}

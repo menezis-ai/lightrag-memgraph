@@ -47,6 +47,8 @@ import type { Toast } from '../types/toast';
 import { useQueryClient } from '@tanstack/react-query';
 
 const tagsOf = (e: GraphEntity): readonly string[] => e.tags ?? [];
+const entityRadius = (e: GraphEntity): number =>
+  8 + Math.min(18, Math.sqrt(e.mentions) * 0.9);
 
 const TYPE_KEYS = Object.keys(GRAPH_TYPE_LABEL) as readonly GraphEntityType[];
 const PINNED_STORAGE_KEY = 'twin.kg.pinned.v1';
@@ -567,16 +569,25 @@ export function GraphTab({
                   selected && (r.source === selected.id || r.target === selected.id);
                 const dim = selected && !hi;
                 const strong = r.strength >= 0.75;
+                const dx = t.x - s.x;
+                const dy = t.y - s.y;
+                const len = Math.hypot(dx, dy) || 1;
+                const sourceRadius = entityRadius(s) + 1.5;
+                const targetRadius = entityRadius(t) + 2;
+                const x1 = s.x + (dx / len) * sourceRadius;
+                const y1 = s.y + (dy / len) * sourceRadius;
+                const x2 = t.x - (dx / len) * targetRadius;
+                const y2 = t.y - (dy / len) * targetRadius;
                 return (
                   <g
                     key={r.id}
                     className={`kg-edge${hi ? ' is-hi' : ''}${dim ? ' is-dim' : ''}`}
                   >
                     <line
-                      x1={s.x}
-                      y1={s.y}
-                      x2={t.x}
-                      y2={t.y}
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
                       stroke={hi ? 'var(--twin-accent)' : 'currentColor'}
                       strokeWidth={hi ? 1.6 : strong ? 1.1 : 0.7}
                       strokeOpacity={hi ? 0.9 : dim ? 0.08 : 0.32}
@@ -597,7 +608,7 @@ export function GraphTab({
               })}
               {/* Nodes */}
               {matches.map((e) => {
-                const radius = 8 + Math.min(18, Math.sqrt(e.mentions) * 0.9);
+                const radius = entityRadius(e);
                 const isSelected = !!selected && selected.id === e.id;
                 const isNeighbor = highlightIds.has(e.id) && !isSelected;
                 const isDim = !!selected && !highlightIds.has(e.id);

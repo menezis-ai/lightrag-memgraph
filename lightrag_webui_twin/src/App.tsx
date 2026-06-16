@@ -185,6 +185,9 @@ declare global {
   }
 }
 
+const THEME_STORAGE_KEY = 'twin.ui.theme.v1';
+const FOLDER_STORAGE_KEY = 'twin.ui.folder.v1';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -198,7 +201,35 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   window.__TWIN_E2E_QUERY_CLIENT = queryClient;
 }
 
-function getInitialFolderId(): string {
+function readUiPreference(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeUiPreference(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Browsers can reject localStorage in private/restricted modes. The UI
+    // still works for the current session; only refresh persistence is lost.
+  }
+}
+
+function isTheme(value: string | null): value is Theme {
+  return value === 'light' || value === 'dark';
+}
+
+function getInitialTheme(): Theme {
+  const stored = readUiPreference(THEME_STORAGE_KEY);
+  return isTheme(stored) ? stored : 'light';
+}
+
+function getConfiguredDefaultFolderId(): string {
   const cfg = getTwinRuntimeConfig();
   return (
     cfg.defaultFolderId ||
@@ -207,9 +238,20 @@ function getInitialFolderId(): string {
   );
 }
 
+function getInitialFolderId(): string {
+  const cfg = getTwinRuntimeConfig();
+  const fallback = getConfiguredDefaultFolderId();
+  const stored = readUiPreference(FOLDER_STORAGE_KEY);
+  if (!stored) return fallback;
+  if (cfg.folders && !cfg.folders.some((folder) => folder.id === stored)) {
+    return fallback;
+  }
+  return stored;
+}
+
 function AppShell() {
   const [tab, setTab] = useState('documents');
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionKey>('profile');
   const [folder, setFolderState] = useState(() => {
@@ -258,31 +300,39 @@ function AppShell() {
   const docs = useDocuments(
     { folder },
     {
+      folderKey: folder,
       enabled:
         authReady &&
         (tab === 'documents' || tab === 'retrieval' || tab === 'graph'),
     },
   );
   const folders = useFolders({ enabled: authReady });
-  const notificationsQ = useNotifications({ enabled: authReady });
+  const notificationsQ = useNotifications({ enabled: authReady, folderKey: folder });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
   // are lightweight, the catalog is used cross-tab (badge counts, filter
   // pickers, retag modal), and the e2e contract on "switching folder
   // rescopes /twin/api/tags immediately" depends on the query existing
   // in the cache for `refetchQueries` to trigger. Gating heavy reads
   // (documents, graph) preserves the bulk of the perf win.
-  const tags = useTags({ enabled: authReady });
-  const tagCategories = useTagCategories({ enabled: authReady });
+  const tags = useTags({ enabled: authReady, folderKey: folder });
+  const tagCategories = useTagCategories({ enabled: authReady, folderKey: folder });
   // Activity stays always-enabled (vs. tab-gated): the feed drives the
   // topbar unread counters cross-tab, and the e2e contract requires
   // `/twin/api/activity` to refire under the new folder header at switch
   // time. Lightweight read (bounded via `limit`), so the perf cost is
   // negligible compared to documents / graph which remain gated.
-  const activity = useActivity({}, { enabled: authReady });
-  const graphEntities = useGraphEntities({ enabled: authReady && tab === 'graph' });
-  const graphRelations = useGraphRelations({ enabled: authReady && tab === 'graph' });
+  const activity = useActivity({}, { enabled: authReady, folderKey: folder });
+  const graphEntities = useGraphEntities({
+    enabled: authReady && tab === 'graph',
+    folderKey: folder,
+  });
+  const graphRelations = useGraphRelations({
+    enabled: authReady && tab === 'graph',
+    folderKey: folder,
+  });
   const pipelineStatus = usePipelineStatus({
     enabled: authReady && tab === 'documents',
+    folderKey: folder,
   });
 
   // Notifications carry mutable client state (read/cleared) on top of the
@@ -297,6 +347,7 @@ function AppShell() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    writeUiPreference(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const notificationSource = notificationsQ.data ?? [];
@@ -323,6 +374,20 @@ function AppShell() {
     return folders.data ?? [];
   }, [configuredFolders, folder, folders]);
   const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
+
+  useEffect(() => {
+    if (folderList.length === 0) return;
+    if (folderList.some((item) => item.id === folder)) {
+      writeUiPreference(FOLDER_STORAGE_KEY, folder);
+      return;
+    }
+    const fallback =
+      folderList.find((item) => item.id === runtimeConfig.defaultFolderId)?.id ??
+      folderList[0].id;
+    setActiveFolder(fallback);
+    setFolderState(fallback);
+    writeUiPreference(FOLDER_STORAGE_KEY, fallback);
+  }, [folder, folderList, runtimeConfig.defaultFolderId]);
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
@@ -1027,6 +1092,7 @@ function AppShell() {
   const onSwitchFolder = (nextFolder: string) => {
     window.history.replaceState(null, '', window.location.pathname);
     setActiveFolder(nextFolder);
+    writeUiPreference(FOLDER_STORAGE_KEY, nextFolder);
     setFolderState(nextFolder);
     setReadNotificationIds(new Set());
     setClearedNotificationIds(new Set());
@@ -1036,18 +1102,15 @@ function AppShell() {
     setReadSourceDoc(null);
     setRetagDoc(null);
     setRetagBulk(null);
-    // Use `refetchQueries` with `type: 'all'` so disabled (tab-gated)
-    // queries also fetch immediately on folder switch — otherwise the
-    // invariant "switching folder rescopes every Twin overlay surface"
-    // breaks for inactive tabs and the e2e contract on
-    // `/twin/api/tags` (under sandbox header) fails. Preserves the
-    // perf gain at boot/tab switch; only the user-initiated folder
-    // switch pays the cost of refreshing all four resources.
     void Promise.all([
-      queryClient.refetchQueries({ queryKey: ['documents'], type: 'all' }),
-      queryClient.refetchQueries({ queryKey: ['tags'], type: 'all' }),
-      queryClient.refetchQueries({ queryKey: ['activity'], type: 'all' }),
-      queryClient.refetchQueries({ queryKey: ['notifications'], type: 'all' }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
+      queryClient.invalidateQueries({ queryKey: ['pipeline_status'] }),
+      queryClient.invalidateQueries({ queryKey: ['tags'] }),
+      queryClient.invalidateQueries({ queryKey: ['tag-categories'] }),
+      queryClient.invalidateQueries({ queryKey: ['activity'] }),
+      queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      queryClient.invalidateQueries({ queryKey: ['graph-entities'] }),
+      queryClient.invalidateQueries({ queryKey: ['graph-relations'] }),
     ]);
   };
 
@@ -1315,6 +1378,7 @@ function AppShell() {
             <ActivityTab
               events={activityEvents}
               nowMs={activityNow}
+              folderLabel={kbName || folder}
               density="comfortable"
               live={true}
               onPushToast={pushToast}
@@ -1339,6 +1403,7 @@ function AppShell() {
               tags={tagList}
               categories={tagCategoryList}
               currentUser={CURRENT_USER}
+              folderLabel={kbName || folder}
               onApprove={onTagApprove}
               onCommit={onTagCommit}
               onNavigate={onNavigate}

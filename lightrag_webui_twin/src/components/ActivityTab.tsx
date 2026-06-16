@@ -35,6 +35,7 @@ export interface ActivityTabProps {
   events: readonly ActivityEvent[];
   /** Pinned "now" for deterministic ranges. Defaults to `Date.now()`. */
   nowMs?: number;
+  folderLabel?: string;
   density?: ActivityDensity;
   /** When true, simulate live polling (pending-event counter ticks). */
   live?: boolean;
@@ -51,6 +52,7 @@ const RANGE_IDS = ACTIVITY_RANGES.map((r) => r.id);
 export function ActivityTab({
   events,
   nowMs,
+  folderLabel = 'default',
   density = 'comfortable',
   live = true,
   groupByDay = true,
@@ -164,7 +166,7 @@ export function ActivityTab({
           <h1>Activity</h1>
           <div className="activity-sub">
             <span>
-              Audit trail · folder <code>default</code>
+              Audit trail · folder <code>{folderLabel}</code>
             </span>
             <span className="dot-sep">·</span>
             <span

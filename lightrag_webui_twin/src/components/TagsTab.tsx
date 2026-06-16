@@ -39,6 +39,7 @@ export interface TagsTabProps {
   tags: readonly TagEntry[];
   categories: readonly TagCategory[];
   currentUser: TagCurrentUser;
+  folderLabel?: string;
   /** Direct approve (palier-3 fast path for a pending request). */
   onApprove?: (action: TagApproveAction) => void | Promise<void>;
   /** Commit handler for the 8-kind modal dispatch. */
@@ -94,6 +95,7 @@ export function TagsTab({
   tags,
   categories,
   currentUser,
+  folderLabel = 'default',
   onApprove,
   onCommit,
   onNavigate,
@@ -109,7 +111,7 @@ export function TagsTab({
   );
   const [q, setQ] = useUrlParam<string>('q', '');
   const [selectedTag, setSelectedTag] = useUrlParam<string>('tag', tags[0]?.tag ?? '');
-  const [pendingOpen, setPendingOpen] = useState(true);
+  const [pendingOpen, setPendingOpen] = useState(false);
   const [modal, setModal] = useState<TagAction | null>(null);
   const [approvingTags, setApprovingTags] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -347,7 +349,7 @@ export function TagsTab({
           <div className="tags-sub">
             <span>
               Tag catalog governance · {totalActive} active tags · {requested.length}{' '}
-              pending requests · folder <code>default</code>
+              pending requests · folder <code>{folderLabel}</code>
             </span>
             {/*
               palier-pill killed per the 30/05 cleanup. Role is JWT-only —

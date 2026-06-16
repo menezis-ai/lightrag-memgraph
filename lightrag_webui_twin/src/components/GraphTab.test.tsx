@@ -96,6 +96,25 @@ describe('GraphTab — rendering', () => {
     expect(detail.textContent).toMatch(/Product/);
   });
 
+  it('renders an edit icon in the entity editor action', () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    const edit = screen.getByTestId('kg-entity-edit');
+    expect(edit.querySelector('svg[data-icon="edit"] path')).toBeTruthy();
+  });
+
+  it('draws relation arrows to the node surface instead of the node centre', () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    const firstRelation = GRAPH_RELATION_FIXTURES[0];
+    const target = GRAPH_ENTITY_FIXTURES.find(
+      (entity) => entity.id === firstRelation.target,
+    );
+    const line = document.querySelector('.kg-edge line') as SVGLineElement;
+    expect(target).toBeDefined();
+    expect(line).toBeTruthy();
+    expect(Number(line.getAttribute('x2'))).not.toBe(target?.x);
+    expect(Number(line.getAttribute('y2'))).not.toBe(target?.y);
+  });
+
   it('shows the neutral state when the selected entity no longer exists', () => {
     // Simulate the post-delete state: URL still carries `gent=kg_gone`
     // but `gone` is not in the entities[] array (deleted by cascade).
