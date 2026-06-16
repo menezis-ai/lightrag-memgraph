@@ -384,8 +384,6 @@ function AppShell() {
     const fallback =
       folderList.find((item) => item.id === runtimeConfig.defaultFolderId)?.id ??
       folderList[0].id;
-    setActiveFolder(fallback);
-    setFolderState(fallback);
     writeUiPreference(FOLDER_STORAGE_KEY, fallback);
   }, [folder, folderList, runtimeConfig.defaultFolderId]);
 
