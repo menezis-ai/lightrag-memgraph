@@ -816,40 +816,35 @@ body {
 
 .activity {
   height: calc(100vh - 62px);
-  min-height: 660px;
-  grid-template-columns: minmax(0, 1fr) 396px;
-  gap: 0;
-  padding: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  padding: 22px 28px 28px;
+  align-items: start;
   overflow: hidden;
 }
 
 .activity-main {
-  padding: 28px 30px 48px;
-  overflow: auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border-right: 0;
+  overflow: hidden;
 }
 
-.activity-filters,
-.activity-timeline,
-.activity-detail {
+.activity-header {
+  max-width: 1380px;
+  margin: 0 0 18px;
+  align-items: flex-start;
+}
+
+.activity-filters {
   max-width: none;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-}
-
-.activity-header {
-  max-width: none;
-  margin: 0 0 16px;
-  align-items: flex-start;
-}
-
-.activity-header > div:first-child::before {
-  display: none;
-}
-
-.activity-filters {
-  padding: 0;
   margin-bottom: 14px;
 }
 
@@ -904,8 +899,14 @@ body {
 }
 
 .activity-timeline {
-  padding: 0;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 260px;
+  padding: 14px 18px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  overflow: auto;
 }
 
 .day-group {
@@ -948,8 +949,13 @@ body {
 }
 
 .activity-detail {
-  border-left: 1px solid var(--border);
+  height: max-content;
+  min-height: 0;
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 13px;
   background: var(--surface);
+  box-shadow: var(--shadow-md);
   overflow: auto;
 }
 
