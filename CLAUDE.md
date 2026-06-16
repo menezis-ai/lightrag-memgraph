@@ -19,9 +19,17 @@ The old `maquette-deploy/` prototype was removed as an obsolete artifact in PR #
 
 ## Distribution
 
-**Forgejo-first** since 2026-05-11. Day-to-day development pushes only to `bunker` (Forgejo at `192.168.1.61`); the `origin` GitHub remote (`menezis-ai/lightrag-memgraph`) is otherwise archived. The single sanctioned exception is the **`export-1.0.0` branch on GitHub**, which is the BNP delivery target rebuilt from `stable/0.6.x` via the procedure in `EXPORT_PROCEDURE.md` (prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/`, no Bun/Node in the BNP runtime path). Do not push `export-1.0.0` to `bunker`, and do not push anything else to `origin`.
+**Three-surface model** (re-articulated 2026-06-16, supersedes the looser "Forgejo-first / GitHub archived" framing of 2026-05-11). Each surface has a strict file-level scope; the source-of-truth flow is always **bunker → (GitHub `main` xor GitHub `export-1.0.0`)**, never the reverse.
 
-The repo contains the **full** package — storage backends (KV / Vector / DocStatus), intelligence layer (TwinRAGEngine, ReAct, DSEP ontology), and server module. The previous public/private split (L1 GitHub + L2/L3 ZIP for BNP) is retired; no more `.gitignore` exclusions for `intelligence/` or `server/`.
+- **`bunker` (Forgejo, `192.168.1.61`) — full source of truth.** Storage backends + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module (FastAPI overlay, classification, folders, idp_jwt, native_shims) + WebUI fork (`lightrag_webui_twin/`) + doctrine docs (`CLAUDE.md`, `DOCTRINE.md`, `WEBUI-WIRING-*`). Day-to-day dev pushes here. Active branch: `stable/0.6.x`. The L1/L2/L3 ZIP-delivery split is retired here; intelligence/server are tracked normally and no longer gitignored.
+- **GitHub `origin/main` (`menezis-ai/lightrag-memgraph`) — public backend patch only.** Strictly the storage adapter slice: `src/twindb_lightrag_memgraph/{__init__,_buffered_graph,_constants,_hooks,_pool,kv_impl,vector_impl,docstatus_impl}.py` + `tests/` for those + `pyproject.toml` + `README.md` + `sonar-project.properties`. **No `server/`, no `intelligence/`, no `classification*.py`, no `_folders.py`, no `asgi.py`, no `lightrag_server.py`, no `lightrag_webui_twin/`, no CLAUDE.md.** Used (a) for visibility on the Memgraph adapter, (b) as the receiving surface for Claude-action PRs from the GitHub integration when they target storage code, (c) as the substrate `export-1.0.0` rebuilds from.
+- **GitHub `origin/export-1.0.0` — BNP delivery snapshot.** Full repo with prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/` (no Bun/Node in the BNP runtime path). Rebuilt from `stable/0.6.x` via `EXPORT_PROCEDURE.md`. **Never** pushed to `bunker`. Nothing else is pushed to `origin`.
+
+**Triage rule for a fix that lands on bunker first** (the only normal flow):
+- Touched **only** the public-backend files listed above → **eligible** to flow back to GitHub `main` (open a separate PR there, cite the bunker PR for provenance).
+- Touched **anything else** (`server/`, `intelligence/`, `classification*.py`, `_folders.py`, `asgi.py`, `lightrag_server.py`, `lightrag_webui_twin/`, doctrine docs) → **bunker only**. Do not push to GitHub.
+
+The global directive §7 ("push to all remotes") does **not** apply: bunker is the default, and `origin` only sees scoped slices. See `EXPORT_PROCEDURE.md` for the `export-1.0.0` rebuild flow.
 
 ## Doctrine layer
 
@@ -283,7 +291,7 @@ The `bind_request_folder` dependency (FastAPI dep used by `webui_router`) now ca
 
 ## Git workflow specific to this repo
 
-Forgejo-first since 2026-05-11. Day-to-day development pushes to `bunker` (Forgejo at `192.168.1.61`); the `origin` GitHub remote is otherwise dormant:
+Default remote = `bunker` (Forgejo at `192.168.1.61`). Day-to-day branches:
 
 ```
 git push bunker <branch>
@@ -291,8 +299,8 @@ git push bunker <branch>
 
 If `bunker` is missing: `git remote add bunker http://192.168.1.61:3000/<user>/<repo>.git`.
 
-Stable branches are named `stable/X.Y.x` and protected on the Forgejo remote.
+Stable branches are named `stable/X.Y.x` and protected on both `bunker` and `origin` (pre-receive hook on bunker; branch protection on GitHub). Direct push refused → open a PR.
 
-The global directive §7 ("push to all remotes") does **not** apply here — the dual-remote era ended with the GitHub archive. The `origin` remote stays configured for two purposes only: historical pull, and the **`export-1.0.0`** BNP delivery branch (see `EXPORT_PROCEDURE.md`). That export branch is rebuilt from `stable/0.6.x` with prebuilt WebUI assets and explicitly pushed to `origin` — never to `bunker`.
+The global directive §7 ("push to all remotes") does **not** apply here. `origin` is split-scope (see the Distribution section): a separate PR against GitHub `main` for a storage-only fix, a separate `export-1.0.0` rebuild for a BNP delivery, nothing else. Anything touching `server/` / `intelligence/` / `lightrag_webui_twin/` / doctrine docs stays on bunker.
 
 **Push doctrine (do not project onto the user)**: pushing to `bunker` from this Mac is normal. Do **not** say "tu pushes depuis le LAN" or any equivalent — that framing was a temporary travel-period assumption, obsolete from 2026-06-10. When closing a session with a commit, either push if it was asked / is the natural follow-up, or ask explicitly. Never assume Julien will do it himself. See memory `feedback_codex_brief_push.md` — that rule is scoped to Codex briefs only, not to Claude on this Mac.
