@@ -31,6 +31,8 @@ The repo contains the **full** package — storage backends (KV / Vector / DocSt
 
 `docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. The current open one is `docs/audits/lightrag-interactions/audit-2026-06-13.md`, which flags two priorities to be aware of when touching `/twin/api/query` or retrieval: (1) Twin sources are still reconstructed by a second vector search after `aquery()` returns, so they are not guaranteed to be the context LightRAG actually grounded on — migrating the nominal path to LightRAG's `aquery_llm()` + native references is the structural fix; (2) the WebUI `tag_filter` is accepted by both UI and backend but `QueryParam` in LightRAG 1.4.9.11 does not know the field, so the filter is a no-op at retrieval time. Read the relevant audit before claiming a fix in those areas.
 
+Other open audit areas under `docs/audits/`: `infra-ovh/`, `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
+
 ## Commands
 
 ### Install
@@ -48,7 +50,7 @@ python -m twindb_lightrag_memgraph.server   # uvicorn factory, default port
 LIGHTRAG_PORT=8080 python -m twindb_lightrag_memgraph.server
 ```
 
-Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightRAGServerSettings`. See `WEBUI-WIRING-PLAN.md` (repo root) for the full Couche 2 / Couche 3 contract this server exposes to the WebUI fork.
+Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightRAGServerSettings`. See `WEBUI-WIRING-PLAN.md` (entry point; status split across `WEBUI-WIRING-WIRED.md` as-built and `WEBUI-WIRING-TO-WIRE.md` remaining) for the full Couche 2 / Couche 3 contract this server exposes to the WebUI fork.
 
 ### Environment variables
 
@@ -59,10 +61,13 @@ Requires `MEMGRAPH_URI` + the LLM credentials read by `server/settings.py:LightR
 
 ### Production-style entrypoints
 
-Two entrypoints, same doctrine (`register()` before LightRAG server import), different launch surfaces:
+Three entrypoints, same doctrine (`register()` before LightRAG server import), different launch surfaces:
 
 - `twin_main.py` (repo root) — readable reference entrypoint. Calls `register(replace_ui=True, mount_server=True, shim_native_routes=True)` at module top, then imports `lightrag.api.lightrag_server.main` and runs it. Use it when launching the runtime directly (e.g. `python twin_main.py`) or when the orchestrator can set `CMD ["python", "twin_main.py"]`.
-- `src/twindb_lightrag_memgraph/lightrag_server.py` — the **BNP container entrypoint**, `python -m twindb_lightrag_memgraph.lightrag_server`. Same three flags, but importable as a module so the production Dockerfile's `ENTRYPOINT` is `-m`-launchable. Its module docstring spells out the why: *"Do not rely on sitecustomize for production activation. Some launchers and python -m execution paths can import/execute the LightRAG server in a way that bypasses a module patched by name."* If you change either entrypoint's flags, change both — they're parallel.
+- `src/twindb_lightrag_memgraph/lightrag_server.py` — the **BNP container entrypoint**, `python -m twindb_lightrag_memgraph.lightrag_server`. Same three flags, but importable as a module so the production Dockerfile's `ENTRYPOINT` is `-m`-launchable. Its module docstring spells out the why: *"Do not rely on sitecustomize for production activation. Some launchers and python -m execution paths can import/execute the LightRAG server in a way that bypasses a module patched by name."*
+- `src/twindb_lightrag_memgraph/asgi.py` — **gunicorn / uvicorn-factory entrypoint** (`gunicorn 'twindb_lightrag_memgraph.asgi:get_application()' -k uvicorn.workers.UvicornWorker` or `uvicorn --factory twindb_lightrag_memgraph.asgi:get_application`). Runs a bare `register()` at import time (no flags — relies on `TWIN_REPLACE_UI` / `TWIN_MOUNT_SERVER` / `TWIN_SHIM_NATIVE_ROUTES` env activation per `ENV_VARIABLES.txt` §0), then imports `lightrag.api.lightrag_server.get_application`. Required when the launcher imports the app via an import string per worker — a separate boot script never executes inside the worker, so the native LightRAG app would otherwise be served unpatched.
+
+If you change the `twin_main.py` / `lightrag_server.py` flag set, change both — they're parallel. `asgi.py` is env-driven by design; decide separately whether the deployment's overlay env needs to track the flag change.
 
 The ordering is doctrine: `register()` MUST run before the LightRAG server module is imported. Calling it from inside `lightrag_server` (e.g. via a sed-prepended import) creates a circular import because `create_app` doesn't exist yet mid-import.
 
