@@ -254,6 +254,17 @@ function mintMockToken(): { full: string; preview: string } {
   const body = `mock${apiKeyCounter.toString().padStart(28, '0')}`;
   return { full: `twk_${body}`, preview: `twk_${body.slice(0, 8)}…` };
 }
+function publicApiKey(k: ApiKeyMockEntry): Omit<ApiKeyMockEntry, 'full_value'> {
+  return {
+    id: k.id,
+    name: k.name,
+    prefix: k.prefix,
+    created_at: k.created_at,
+    created_by: k.created_by,
+    last_used_at: k.last_used_at,
+    revoked_at: k.revoked_at,
+  };
+}
 
 interface E2eScenario {
   bulkRetagStatus?: number;
@@ -1126,12 +1137,7 @@ export const handlers = [
     handleDeleteFolder(String(params.id)),
   ),
   http.get(`${ANY}${TWIN}/settings/api-keys`, () =>
-    HttpResponse.json(
-      apiKeyState.map((k) => {
-        const { full_value: _full, ...rest } = k;
-        return rest;
-      }),
-    ),
+    HttpResponse.json(apiKeyState.map(publicApiKey)),
   ),
   http.post(`${ANY}${TWIN}/settings/api-keys`, async ({ request }) => {
     const body = (await request.json()) as { name?: string };
@@ -1169,8 +1175,7 @@ export const handlers = [
     if (current.revoked_at === null) {
       apiKeyState[idx] = { ...current, revoked_at: Date.now() };
     }
-    const { full_value: _full, ...rest } = apiKeyState[idx];
-    return HttpResponse.json(rest);
+    return HttpResponse.json(publicApiKey(apiKeyState[idx]));
   }),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinFolderRequest(request);
