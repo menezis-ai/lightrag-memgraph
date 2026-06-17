@@ -14,6 +14,8 @@ import { useMemo, useState } from 'react';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { ClassPill } from './ClassPill';
+import { QuotaBanner } from './QuotaBanner';
+import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
@@ -239,8 +241,11 @@ export function DocumentsTab({
     clearSelection();
   };
 
+  const ingestionDisabled = useIngestionDisabled();
+
   return (
     <div className="docs">
+      <QuotaBanner tone="block" />
       <div className="docs-header">
         <h1>Document management</h1>
         <div className="docs-header-actions">
@@ -382,16 +387,18 @@ export function DocumentsTab({
           <button
             type="button"
             className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
-            disabled={failedCount === 0}
+            disabled={failedCount === 0 || ingestionDisabled}
             title={
-              failedCount === 0
-                ? 'No failed sources to re-process'
-                : `Re-process ${failedCount} failed source${
-                    failedCount > 1 ? 's' : ''
-                  } (POST /documents/reprocess_failed)`
+              ingestionDisabled
+                ? 'Memgraph instance quota reached — free space before re-processing'
+                : failedCount === 0
+                  ? 'No failed sources to re-process'
+                  : `Re-process ${failedCount} failed source${
+                      failedCount > 1 ? 's' : ''
+                    } (POST /documents/reprocess_failed)`
             }
             onClick={() => {
-              if (failedCount === 0) return;
+              if (failedCount === 0 || ingestionDisabled) return;
               if (onScanRetry) {
                 onScanRetry(failedCount);
                 return;
@@ -413,7 +420,18 @@ export function DocumentsTab({
               </span>
             )}
           </button>
-          <button type="button" className="btn primary" onClick={onOpenAdd}>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={onOpenAdd}
+            disabled={ingestionDisabled}
+            title={
+              ingestionDisabled
+                ? 'Memgraph instance quota reached — free space before uploading'
+                : undefined
+            }
+            data-testid="docs-add-source"
+          >
             <Icon name="cloud-upload" size={14} /> Add source
           </button>
         </div>

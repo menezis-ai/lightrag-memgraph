@@ -13,14 +13,26 @@
  *   - empty state appears when filters match no doc
  */
 
+import type { ReactElement } from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DocumentsTab } from './DocumentsTab';
 import {
   DOCUMENT_FIXTURES,
   TAG_FIXTURES,
 } from '../fixtures';
+
+function renderTab(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 function defaultProps() {
   return {
@@ -42,7 +54,7 @@ afterEach(() => {
 
 describe('DocumentsTab — rendering', () => {
   it('renders all docs by default', () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     expect(screen.getByText('Document management')).toBeInTheDocument();
     expect(screen.getByText('Indexed preview')).toBeInTheDocument();
     expect(screen.queryByText('Summary')).toBeNull();
@@ -52,7 +64,7 @@ describe('DocumentsTab — rendering', () => {
   });
 
   it('shows status counts in the filter pills', () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     // DOCUMENT_FIXTURES = 7 docs: 4 PROCESSED, 1 FAILED, 2 PROCESSING
     expect(screen.getByRole('button', { name: /^All \(7\)/ })).toBeInTheDocument();
     expect(
@@ -78,7 +90,7 @@ describe('DocumentsTab — rendering', () => {
       _optimisticUpload: true,
     };
 
-    render(
+    renderTab(
       <DocumentsTab
         {...defaultProps()}
         docs={[optimisticDoc]}
@@ -101,7 +113,7 @@ describe('DocumentsTab — rendering', () => {
 
 describe('DocumentsTab — filters', () => {
   it('status filter narrows the visible rows', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByRole('button', { name: /^Failed \(1\)/ }));
     // Only the failed doc visible
     expect(screen.getByTestId('docs-row-d3')).toBeInTheDocument();
@@ -115,7 +127,7 @@ describe('DocumentsTab — filters', () => {
       '',
       `/?source=${encodeURIComponent(target)}`,
     );
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
 
     // Filter applied AND visible — it must never be an invisible filter.
     expect(screen.getByTestId('source-filter-row')).toBeInTheDocument();
@@ -131,7 +143,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('search filters by source name', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');
     await userEvent.type(searchBox, 'oracle');
     expect(screen.getByTestId('docs-row-d1')).toBeInTheDocument();
@@ -139,7 +151,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('status counts are scoped by the active search filter', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');
     await userEvent.type(searchBox, 'oracle');
 
@@ -156,7 +168,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('clicking a tag on a row adds it as a filter', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     // d1 has tags rman + oracle; click the chip in the row
     const tagSpan = screen.getByTestId('row-tag-d1-rman');
     await userEvent.click(tagSpan);
@@ -168,7 +180,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('status counts are scoped by the active tag filter', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
 
     expect(screen.getByRole('button', { name: /^All \(2\)/ })).toBeInTheDocument();
@@ -184,7 +196,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('status and tag filters are URL backed', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
 
     await userEvent.click(screen.getByRole('button', { name: /^Failed \(1\)/ }));
     expect(window.location.search).toContain('status=failed');
@@ -196,7 +208,7 @@ describe('DocumentsTab — filters', () => {
   });
 
   it('empty state appears when filters match nothing', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');
     await userEvent.type(searchBox, 'nope-no-match-zzz');
     expect(screen.getByTestId('docs-empty')).toBeInTheDocument();
@@ -205,7 +217,7 @@ describe('DocumentsTab — filters', () => {
 
 describe('DocumentsTab — selection + bulk', () => {
   it('toggling rows builds a selection and reveals the bulk bar', async () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByLabelText('Select oracle-restart-procedure.pdf'));
     const bulkBar = screen.getByRole('region', { name: 'Bulk actions' });
     expect(bulkBar).toBeInTheDocument();
@@ -216,7 +228,7 @@ describe('DocumentsTab — selection + bulk', () => {
 
   it('Bulk Retag invokes onOpenBulkRetag with selected docs', async () => {
     const p = defaultProps();
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     await userEvent.click(screen.getByLabelText('Select oracle-restart-procedure.pdf'));
     await userEvent.click(
       screen.getByRole('button', { name: /Retag 1 sources/ }),
@@ -231,14 +243,14 @@ describe('DocumentsTab — selection + bulk', () => {
 describe('DocumentsTab — header actions', () => {
   it('Add source button calls onOpenAdd', async () => {
     const p = defaultProps();
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     await userEvent.click(screen.getByRole('button', { name: /Add source/ }));
     expect(p.onOpenAdd).toHaveBeenCalled();
   });
 
   it('"Re-process failed sources" invokes the retry callback with the failed count', async () => {
     const p = { ...defaultProps(), onScanRetry: vi.fn() };
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     // DOCUMENT_FIXTURES carries 1 FAILED doc (huge-archive.zip).
     const btn = screen.getByRole('button', {
       name: /Re-process failed sources/,
@@ -257,7 +269,7 @@ describe('DocumentsTab — header actions', () => {
       ),
       onScanRetry: vi.fn(),
     };
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     const btn = screen.getByRole('button', {
       name: /Re-process failed sources/,
     });
@@ -270,7 +282,7 @@ describe('DocumentsTab — header actions', () => {
   });
 
   it('shows the failed count and POST /documents/reprocess_failed in the button tooltip (audit C7)', () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const btn = screen.getByRole('button', {
       name: /Re-process failed sources/,
     });
@@ -297,7 +309,7 @@ describe('DocumentsTab — header actions', () => {
         ],
       },
     };
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
 
     const dialog = screen.getByRole('dialog', { name: 'Pipeline logs' });
     expect(dialog).toHaveTextContent('document indexing');
@@ -311,7 +323,7 @@ describe('DocumentsTab — header actions', () => {
   });
 
   it('does not render any of the legacy "Scan" wording (audit C7)', () => {
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const legacyRetryLabel = new RegExp(['Scan', 'Retry'].join(' \\/ '));
     const legacyPipelineToast = new RegExp(['Pipeline', 'scan'].join(' '));
     const legacyCompletedToast = new RegExp(['Scan', 'completed'].join(' '));
@@ -327,7 +339,7 @@ describe('DocumentsTab — header actions', () => {
 
   it('row Retag button calls onOpenRetag with the doc', async () => {
     const p = defaultProps();
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     await userEvent.click(
       screen.getByLabelText('Retag oracle-restart-procedure.pdf'),
     );
@@ -337,7 +349,7 @@ describe('DocumentsTab — header actions', () => {
 
   it('source filename opens the document detail callback', async () => {
     const p = { ...defaultProps(), onOpenDetail: vi.fn() };
-    render(<DocumentsTab {...p} />);
+    renderTab(<DocumentsTab {...p} />);
     await userEvent.click(screen.getByTestId('docs-row-filename-d1'));
     expect(p.onOpenDetail).toHaveBeenCalledTimes(1);
     expect(p.onOpenDetail.mock.calls[0][0].doc_id).toBe('d1');
@@ -350,7 +362,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
     // d3 = the FAILED fixture with error_msg='Unsupported MIME type: …'.
     // Before this PR the row went red without ever exposing the reason —
     // Alberto's exact complaint.
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const err = screen.getByTestId('docs-row-error-d3');
     expect(err.textContent).toMatch(/indexing failed/i);
     expect(err.textContent).toContain('Unsupported MIME type: application/zip');
@@ -358,7 +370,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
 
   it('omits the error line on a row that has no error_msg', () => {
     // d1 = PROCESSED, no error_msg → the slot must not render at all.
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     expect(screen.queryByTestId('docs-row-error-d1')).toBeNull();
   });
 
@@ -375,7 +387,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
       ...defaultProps(),
       docs: [failedWithChunks],
     };
-    render(<DocumentsTab {...props} />);
+    renderTab(<DocumentsTab {...props} />);
     const cell = screen.getByTestId('docs-row-chunks-d3-with-chunks');
     expect(cell.textContent).toBe('327');
     expect(cell.getAttribute('title')).toBe(
@@ -385,7 +397,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
 
   it('omits the chunks tooltip on a FAILED row with zero chunks', () => {
     // d3 has chunks_count = 0 — no "created before failure" claim to make.
-    render(<DocumentsTab {...defaultProps()} />);
+    renderTab(<DocumentsTab {...defaultProps()} />);
     const cell = screen.getByTestId('docs-row-chunks-d3');
     expect(cell.getAttribute('title')).toBeNull();
   });

@@ -33,6 +33,7 @@ import type {
   GraphRelationPatch,
 } from '../types/graph';
 import type { ApiKeyCreated, ApiKeyPublic } from '../types/apiKey';
+import type { QuotaSnapshot } from '../types/quota';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
@@ -493,6 +494,12 @@ export const twinApi = {
   health: (init?: ApiRequestInit) =>
     apiFetch<{ status: 'ok' | 'degraded' | 'down' }>(`${TWIN}/health`, init),
 
+  // ── Instance storage quota (Memgraph memory limit) ───────────────
+  // Public read — banner needs to render even for anonymous browsing
+  // surfaces. Polled every 30s by the WebUI; cheap server-side.
+  getQuotaSnapshot: (init?: ApiRequestInit) =>
+    apiFetch<QuotaSnapshot>(`${TWIN}/quota`, init),
+
   // ── API key management ───────────────────────────────────────────
   // Per-operator keys minted via Settings → API keys. Distinct from
   // the static LIGHTRAG_API_KEY (infra root, never exposed via UI).
@@ -873,6 +880,7 @@ export const api = {
   listApiKeys: twinApi.listApiKeys,
   createApiKey: twinApi.createApiKey,
   revokeApiKey: twinApi.revokeApiKey,
+  getQuotaSnapshot: twinApi.getQuotaSnapshot,
 };
 
 export type ApiClient = typeof api;

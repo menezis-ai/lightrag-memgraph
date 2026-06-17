@@ -381,6 +381,47 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     except ImportError:
         pass
 
+    # -- Quota snapshot endpoint (public read for the WebUI banner).
+    try:
+        from .quota_routes import router as quota_router
+
+        app.include_router(quota_router, prefix="/twin/api")
+        logger.info("Quota snapshot route mounted at /twin/api/quota")
+    except ImportError:
+        pass
+
+    # -- Instance quota middleware: refuses 507 on ingestion endpoints
+    # when Memgraph is at MEMGRAPH_MEMORY_LIMIT. Path-matched so the
+    # snapshot endpoint and every read path stay fast.
+    from .quota import enforce_instance_quota as _enforce_quota
+
+    _QUOTA_GATED_PATHS = {
+        "/documents/upload",
+        "/documents/reprocess_failed",
+    }
+    _SCAN_PREFIX = "/documents/"
+    _SCAN_SUFFIX = "/scan"
+
+    @app.middleware("http")
+    async def _instance_quota_middleware(request, call_next):
+        if request.method == "POST":
+            path = request.url.path
+            if (
+                path in _QUOTA_GATED_PATHS
+                or (path.startswith(_SCAN_PREFIX) and path.endswith(_SCAN_SUFFIX))
+            ):
+                from fastapi import HTTPException
+                from fastapi.responses import JSONResponse
+
+                try:
+                    await _enforce_quota()
+                except HTTPException as exc:
+                    return JSONResponse(
+                        {"detail": exc.detail},
+                        status_code=exc.status_code,
+                    )
+        return await call_next(request)
+
     return app
 
 

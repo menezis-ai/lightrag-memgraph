@@ -158,6 +158,18 @@ export function useDeleteFolder() {
   });
 }
 
+// Instance storage quota — polled every 30s so the banner reflects
+// Memgraph pressure without forcing a manual refresh.
+export function useInstanceQuota(options: QueryGate = {}) {
+  return useQuery({
+    queryKey: ['quota'] as const,
+    queryFn: ({ signal }) => api.getQuotaSnapshot({ signal }),
+    refetchInterval: 30_000,
+    ...DEFAULTS,
+    ...gateOptions(options),
+  });
+}
+
 // API keys — per-operator, distinct from the static LIGHTRAG_API_KEY.
 export function useApiKeys(options: QueryGate = {}) {
   return useQuery({

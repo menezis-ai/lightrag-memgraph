@@ -245,6 +245,46 @@ interface ApiKeyMockEntry {
 }
 let apiKeyState: ApiKeyMockEntry[] = [];
 let apiKeyCounter = 0;
+
+// Instance storage quota — in-memory snapshot tests inject via the
+// scenario knob ``setMockQuotaState`` exported below. Defaults: the
+// snapshot is "configured" with a 2 GiB limit and 100 MiB used (well
+// within the OK band) so render-only tests don't see a banner unless
+// they ask for one.
+interface MockQuotaState {
+  used_bytes: number | null;
+  limit_bytes: number | null;
+  used_pct: number | null;
+  status: 'ok' | 'warning' | 'blocked';
+  warn_threshold: number;
+  configured: boolean;
+}
+function defaultQuotaState(): MockQuotaState {
+  const used = 100 * 1024 * 1024;
+  const limit = 2 * 1024 * 1024 * 1024;
+  return {
+    used_bytes: used,
+    limit_bytes: limit,
+    used_pct: used / limit,
+    status: 'ok',
+    warn_threshold: 0.85,
+    configured: true,
+  };
+}
+let quotaState: MockQuotaState = defaultQuotaState();
+export function setMockQuotaState(patch: Partial<MockQuotaState>): void {
+  quotaState = { ...quotaState, ...patch };
+  if (
+    (patch.used_bytes !== undefined || patch.limit_bytes !== undefined) &&
+    patch.used_pct === undefined &&
+    quotaState.limit_bytes
+  ) {
+    quotaState.used_pct =
+      quotaState.used_bytes !== null
+        ? quotaState.used_bytes / quotaState.limit_bytes
+        : null;
+  }
+}
 function nextApiKeyId(): string {
   apiKeyCounter += 1;
   return `mock-key-${apiKeyCounter}`;
@@ -368,6 +408,7 @@ export function resetDocumentsState(): void {
   activityState = cloneActivity(ACTIVITY_FIXTURES);
   apiKeyState = [];
   apiKeyCounter = 0;
+  quotaState = defaultQuotaState();
   graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
     ...e,
     tags: e.tags ? [...e.tags] : [],
@@ -1136,6 +1177,7 @@ export const handlers = [
   http.delete(`${ANY}${TWIN}/folders/:id`, ({ params }) =>
     handleDeleteFolder(String(params.id)),
   ),
+  http.get(`${ANY}${TWIN}/quota`, () => HttpResponse.json(quotaState)),
   http.get(`${ANY}${TWIN}/settings/api-keys`, () =>
     HttpResponse.json(apiKeyState.map(publicApiKey)),
   ),

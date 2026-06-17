@@ -1,0 +1,31 @@
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Section 6 — Instance quota banner (Memgraph memory cap)
+ * ════════════════════════════════════════════════════════════════════════ */
+
+.quota-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0 0 12px;
+}
+.quota-banner-compact { font-size: 12px; padding: 8px 10px; margin-bottom: 8px; }
+.quota-banner strong { font-weight: 600; }
+.quota-banner-sub {
+  font-size: 12px;
+  opacity: 0.85;
+}
+.quota-banner.quota-warning {
+  background: color-mix(in oklab, var(--twin-amber-500, #d97706) 14%, var(--color-background-primary));
+  border: 1px solid color-mix(in oklab, var(--twin-amber-500, #d97706) 38%, transparent);
+  color: var(--twin-amber-700, #92400e);
+}
+.quota-banner.quota-blocked {
+  background: var(--twin-red-50, #fef2f2);
+  border: 1px solid var(--twin-red-border, #fecaca);
+  color: var(--twin-red-vivid, #B11E1E);
+}
