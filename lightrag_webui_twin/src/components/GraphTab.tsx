@@ -1623,7 +1623,7 @@ function RelationEditor({
 
 // ─── Tag chip editor (node attribute strings) ──────────────────────────
 //
-// TR-KG-03 (recette Alberto 2026-06-12): node tags must come from the
+// TR-KG-03 (QA report 2026-06-12): node tags must come from the
 // active tag catalog. The previous free-text input accepted any value
 // and bypassed the canonical vocabulary; the backend now 422s on
 // unknown tags (see ``server/webui_router._validate_graph_entity_tags``)

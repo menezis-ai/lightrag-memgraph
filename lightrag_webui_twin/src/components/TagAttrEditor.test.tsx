@@ -1,5 +1,5 @@
 /**
- * Unit tests for ``TagAttrEditor`` (TR-KG-03 / recette Alberto
+ * Unit tests for ``TagAttrEditor`` (TR-KG-03 / QA report
  * 2026-06-12). The component is exported from ``GraphTab.tsx`` for
  * exactly this purpose: it owns the node-tag binding to the active
  * tag catalog client-side. The backend mirrors the rule in

@@ -5600,7 +5600,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
 /* === Tier B — 1024 to 1099px: drop low-signal chrome ========= */
 @media (max-width: 1099px) {
 
-  /* TR-RESP-01 (recette Alberto 2026-06-12): below this tier,
+  /* TR-RESP-01 (QA report 2026-06-12): below this tier,
      ``.brand`` (flex: 1) and ``.topbar-right`` (flex: 1) each tried
      to grow into half of the viewport while ``.tabs`` was
      absolutely centered on top, producing a visible overlap with

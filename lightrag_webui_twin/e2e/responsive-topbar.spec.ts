@@ -1,5 +1,5 @@
 /**
- * Responsive topbar regression (TR-RESP-01 / recette Alberto
+ * Responsive topbar regression (TR-RESP-01 / QA report
  * 2026-06-12). Below 1100px the brand + KB name used to overlap the
  * absolutely-centered tabs nav. The fix in ``styles/legacy.css``
  * switches ``.tabs`` to in-flow flex at the same breakpoint where
@@ -16,7 +16,7 @@ test.describe('Responsive topbar', () => {
   }) => {
     // Pick a viewport well inside the Tier-B band (1024-1099px is
     // where the absolute-centered ``.tabs`` overlapped the brand;
-    // 900px is the value Alberto's recette report described).
+    // 900px is the value the QA report described).
     await page.setViewportSize({ width: 900, height: 720 });
     await boot(page);
 

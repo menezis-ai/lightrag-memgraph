@@ -1,8 +1,8 @@
 """Contract guards for ``GET /documents`` projection (TR-ING-01).
 
-The point Alberto raised: a PDF that finished in
+The QA issue raised here: a PDF that finished in
 ``status=failed`` was rendered with 327 chunks and no error reason
-visible. The fields he wanted to see (``error_msg``, ``chunks_count``,
+visible. The fields the operator needed to see (``error_msg``, ``chunks_count``,
 ``status``) are already on the LightRAG ``DocProcessingStatus`` and are
 projected through ``native_shims._project_doc``. These tests pin that
 they reach the public ``GET /documents`` envelope intact so a future
@@ -79,14 +79,14 @@ def _make_client(monkeypatch, docs: dict[str, FakeDocStatus]) -> AsyncClient:
 
 
 class TestDocumentsFailedProjection:
-    """The four fields Alberto needs to see on a failed doc must reach
+    """The four fields the operator needs to see on a failed doc must reach
     the public ``GET /documents`` envelope intact.
     """
 
     async def test_failed_doc_preserves_status_chunks_count_and_error_msg(
         self, monkeypatch
     ):
-        # Alberto's case: 327 chunks indexed before a downstream failure,
+        # QA reported case: 327 chunks indexed before a downstream failure,
         # with an explicit error reason.
         docs = {
             "627-57-PB": FakeDocStatus(

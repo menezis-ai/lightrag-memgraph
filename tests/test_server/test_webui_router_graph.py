@@ -589,7 +589,7 @@ class TestGraphLifecycle:
 
 
 class TestGraphEntityTagThesaurusBinding:
-    """TR-KG-03 / audit Alberto 2026-06-12: node tags must come from
+    """TR-KG-03 / QA audit 2026-06-12: node tags must come from
     the active tag catalog. Both PATCH and POST entry points enforce
     this; an unknown tag is a 422 with an explicit message naming
     the rejected values, not a silent acceptance into

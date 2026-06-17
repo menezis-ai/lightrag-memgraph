@@ -361,7 +361,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
   it('renders the indexing failure reason inline on a FAILED row', () => {
     // d3 = the FAILED fixture with error_msg='Unsupported MIME type: …'.
     // Before this PR the row went red without ever exposing the reason —
-    // Alberto's exact complaint.
+    // the operator's exact complaint from QA.
     renderTab(<DocumentsTab {...defaultProps()} />);
     const err = screen.getByTestId('docs-row-error-d3');
     expect(err.textContent).toMatch(/indexing failed/i);
@@ -375,7 +375,7 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
   });
 
   it('labels chunks "created before failure" when FAILED with chunks > 0', () => {
-    // Alberto's case: 327 chunks indexed before a downstream failure.
+    // QA reported case: 327 chunks indexed before a downstream failure.
     // The chunks count stays a number (no relabel in the table) but the
     // cell carries a tooltip that names the partial state honestly.
     const failedWithChunks = {

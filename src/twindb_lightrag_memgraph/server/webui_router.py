@@ -1637,7 +1637,7 @@ async def _validate_graph_entity_tags(
     tags: list[str] | None,
 ) -> None:
     """Enforce that node tags belong to the active tag catalog
-    (TR-KG-03 / Alberto recette 2026-06-12).
+    (TR-KG-03 / QA report 2026-06-12).
 
     Both ``PATCH /twin/api/graph/entities/{id}`` and
     ``POST /twin/api/graph/entities`` accept a ``tags`` field on the
