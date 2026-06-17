@@ -177,6 +177,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure persistent npm cache dir
+        # Owned by the runner UID so the docker --user mapping can write.
+        # Persisted across runs on the runner host -> npm ci becomes
+        # "unpack from local cache" instead of "download 250+ tarballs".
+        run: mkdir -p "$HOME/.cache/twin-ci-npm"
+        working-directory: ${{ github.workspace }}
+
       - name: Run Playwright e2e
         run: |
           docker run --rm \
@@ -185,9 +192,10 @@ jobs:
             -e npm_config_cache=/tmp/npm \
             -e CI=true \
             -v "$PWD:/work" \
+            -v "$HOME/.cache/twin-ci-npm:/tmp/npm" \
             -w /work \
             mcr.microsoft.com/playwright:v1.60.0-noble \
-            sh -lc 'npm ci && npm run test:e2e'
+            sh -lc 'npm ci --prefer-offline --no-audit --no-fund && npm run test:e2e'
 
   webui-e2e-real:
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
@@ -300,6 +308,9 @@ jobs:
             python:3.12-bookworm \
             sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install neo4j && python scripts/real_backend_e2e_fixtures.py seed'
 
+      - name: Ensure persistent npm cache dir
+        run: mkdir -p "$HOME/.cache/twin-ci-npm"
+
       - name: Run real-backend Playwright e2e
         run: |
           docker run --rm \
@@ -312,9 +323,10 @@ jobs:
             -e VITE_AUTH_TOKEN="$VITE_AUTH_TOKEN" \
             -e REAL_E2E_EXPECT_AUTH="$REAL_E2E_EXPECT_AUTH" \
             -v "$PWD/lightrag_webui_twin:/work" \
+            -v "$HOME/.cache/twin-ci-npm:/tmp/npm" \
             -w /work \
             mcr.microsoft.com/playwright:v1.60.0-noble \
-            sh -lc 'npm ci && npm run test:e2e:real'
+            sh -lc 'npm ci --prefer-offline --no-audit --no-fund && npm run test:e2e:real'
 
       - name: Cleanup real-backend e2e fixtures
         if: always()
