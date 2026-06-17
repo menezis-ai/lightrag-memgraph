@@ -47,10 +47,14 @@ class TestOverlayMountsApiKeys:
         assert resp.status_code != 405, "api-keys POST shadowed by static mount"
         assert resp.status_code == 422
 
-    def test_list_and_revoke_routes_are_mounted(self):
-        c = _overlay_client()
-        assert c.get("/twin/api/settings/api-keys").status_code != 404
-        assert c.delete("/twin/api/settings/api-keys/probe").status_code != 404
+    def test_list_route_is_mounted(self):
+        # GET list: a mounted route never 404s (200 with a reachable store,
+        # 500 without — both prove it exists; 404 would mean it fell through
+        # to the static mount). DELETE/{id} ships in the SAME atomic
+        # include_router, so GET + POST mounting implies it is mounted too —
+        # and we must NOT assert DELETE != 404, because a DELETE on an unknown
+        # key is a *legitimate* 404 ("not found") once the store is reachable.
+        assert _overlay_client().get("/twin/api/settings/api-keys").status_code != 404
 
 
 class TestOverlayMountsQuota:
