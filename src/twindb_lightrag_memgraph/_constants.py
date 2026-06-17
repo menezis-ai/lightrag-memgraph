@@ -40,8 +40,16 @@ MEMGRAPH_READ_POOL_SIZE_ENV = "MEMGRAPH_READ_POOL_SIZE"
 DEFAULT_READ_POOL_SIZE = 20
 
 # Pagination — default page size for paginated document listings
-# (mirrors the LightRAG-native paginated route default).
+# (mirrors the LightRAG-native paginated route default). MAX_PAGE_SIZE
+# caps a single page so a hostile/buggy caller cannot ask for an
+# unbounded SKIP/LIMIT (negative SKIP errors out, huge LIMIT can OOM).
 DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 1000
+
+# TLS enforcement — when MEMGRAPH_REQUIRE_TLS=true the pool refuses to
+# build a driver over a plaintext connection (rather than only warning),
+# so credentials can never be sent in clear by misconfiguration.
+MEMGRAPH_REQUIRE_TLS_ENV = "MEMGRAPH_REQUIRE_TLS"
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 

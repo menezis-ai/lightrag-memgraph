@@ -27,6 +27,7 @@ from ._constants import (
     MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV,
     MEMGRAPH_POOL_SIZE_ENV,
     MEMGRAPH_READ_POOL_SIZE_ENV,
+    MEMGRAPH_REQUIRE_TLS_ENV,
     MEMGRAPH_WRITE_CONCURRENCY_ENV,
     validate_identifier,
 )
@@ -109,20 +110,43 @@ def _read_connection_config(*, pool_size_override: int | None = None):
     validate_identifier(database, "database")
 
     _parsed_uri = urlparse(uri)
+    _scheme = _parsed_uri.scheme
+    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").lower()
+
+    # TLS is active when the URI scheme carries it (bolt+s://, neo4j+s://,
+    # +ssc variants) or it is explicitly turned on via MEMGRAPH_ENCRYPTED.
+    _tls_active = (
+        _scheme.endswith("+s")
+        or _scheme.endswith("+ssc")
+        or encrypted_env == "true"
+    )
+
+    # Strict mode: refuse to build a plaintext driver outright, so a
+    # misconfiguration can never silently leak credentials over the wire.
+    if (
+        os.environ.get(MEMGRAPH_REQUIRE_TLS_ENV, "").lower() == "true"
+        and not _tls_active
+    ):
+        raise ValueError(
+            f"{MEMGRAPH_REQUIRE_TLS_ENV}=true but the connection is plaintext "
+            f"(uri scheme {_scheme!r}, MEMGRAPH_ENCRYPTED={encrypted_env!r}). "
+            "Use a bolt+s:// / neo4j+s:// URI or set MEMGRAPH_ENCRYPTED=true."
+        )
+
     _localhost = {"localhost", "127.0.0.1", "::1"}
     if (
-        _parsed_uri.scheme in ("bolt", "neo4j")
+        not _tls_active
+        and _scheme in ("bolt", "neo4j")
         and _parsed_uri.hostname
         and _parsed_uri.hostname not in _localhost
     ):
         logger.warning(
             "Plaintext Bolt connection to remote host %s — credentials "
             "will be sent unencrypted. Use bolt+s:// or set "
-            "MEMGRAPH_ENCRYPTED=true for TLS.",
+            "MEMGRAPH_ENCRYPTED=true for TLS (or MEMGRAPH_REQUIRE_TLS=true "
+            "to refuse plaintext entirely).",
             _parsed_uri.hostname,
         )
-
-    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").lower()
 
     driver_kwargs = {
         "auth": (username, password),

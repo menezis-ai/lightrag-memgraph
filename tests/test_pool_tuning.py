@@ -171,6 +171,36 @@ class TestConnectionConfig:
         assert kwargs["liveness_check_timeout"] == 5
         assert kwargs["max_connection_lifetime"] == 1800
 
+    def test_require_tls_rejects_plaintext_bolt(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REQUIRE_TLS", "true")
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt://memgraph.internal:7687")
+        monkeypatch.delenv("MEMGRAPH_ENCRYPTED", raising=False)
+        with pytest.raises(ValueError, match="MEMGRAPH_REQUIRE_TLS"):
+            pool._read_connection_config()
+
+    def test_require_tls_accepts_encrypted_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REQUIRE_TLS", "true")
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt://memgraph.internal:7687")
+        monkeypatch.setenv("MEMGRAPH_ENCRYPTED", "true")
+        _, _, kwargs = pool._read_connection_config()
+        assert kwargs["encrypted"] is True
+
+    def test_require_tls_accepts_tls_scheme(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_REQUIRE_TLS", "true")
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt+s://memgraph.internal:7687")
+        monkeypatch.delenv("MEMGRAPH_ENCRYPTED", raising=False)
+        # Must not raise — TLS is carried by the +s scheme.
+        uri, _, _ = pool._read_connection_config()
+        assert uri == "bolt+s://memgraph.internal:7687"
+
+    def test_plaintext_allowed_when_not_required(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_REQUIRE_TLS", raising=False)
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt://memgraph.internal:7687")
+        monkeypatch.delenv("MEMGRAPH_ENCRYPTED", raising=False)
+        # Warns (remote plaintext) but does not raise.
+        uri, _, _ = pool._read_connection_config()
+        assert uri == "bolt://memgraph.internal:7687"
+
     def test_driver_kwargs_accepted_by_async_driver(self):
         """Smoke-check: the runtime neo4j driver accepts the new kwargs.
 
