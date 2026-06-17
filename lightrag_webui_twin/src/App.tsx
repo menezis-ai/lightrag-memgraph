@@ -1277,6 +1277,7 @@ function AppShell() {
                 <PendingDocsSection
                   docs={pendingDocs}
                   actor={auth.user?.email ?? 'anonymous'}
+                  defaultOpen
                   onReadSource={(d) => setReadSourceDoc(d)}
                   onToast={(kind, title, sub) =>
                     pushToast({ kind, title, sub })
@@ -1402,6 +1403,7 @@ function AppShell() {
               categories={tagCategoryList}
               currentUser={CURRENT_USER}
               folderLabel={kbName || folder}
+              defaultPendingOpen
               onApprove={onTagApprove}
               onCommit={onTagCommit}
               onNavigate={onNavigate}

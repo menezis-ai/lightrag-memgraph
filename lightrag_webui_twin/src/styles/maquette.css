@@ -824,10 +824,6 @@ body {
   overflow: visible;
 }
 
-.tag-detail .detail-section:nth-of-type(n+3) {
-  display: none;
-}
-
 .activity {
   height: calc(100vh - 62px);
   min-height: 0;
@@ -900,10 +896,6 @@ body {
   gap: 9px;
   flex-wrap: nowrap;
   margin-bottom: 4px;
-}
-
-.activity-actions .ghost-btn[title="Refresh activity events"] {
-  display: none;
 }
 
 .activity-stats {
@@ -1322,14 +1314,10 @@ body {
   .docs-row.has-select {
     grid-template-columns:
       24px minmax(150px, 1.1fr) minmax(170px, 1.2fr) minmax(96px, 0.85fr)
-      76px 46px 62px 0;
+      76px 46px 62px 60px;
     gap: 8px;
     padding: 7px 12px;
     font-size: 11px;
-  }
-
-  .docs-row.has-select > :last-child {
-    display: none;
   }
 
   .cell-tags .tag-chip {
@@ -1357,7 +1345,7 @@ body {
   .docs-row.has-select {
     grid-template-columns:
       24px minmax(140px, 1.05fr) minmax(155px, 1.15fr) minmax(78px, 0.75fr)
-      72px 42px 58px 0;
+      72px 42px 58px 56px;
   }
 
   .cell-tags .tag-chip:nth-child(n+2) {
@@ -1396,7 +1384,7 @@ body {
 @media (max-width: 900px) {
   .docs-row.has-select {
     grid-template-columns:
-      24px minmax(150px, 1.2fr) minmax(150px, 1fr) 70px 42px 54px;
+      24px minmax(150px, 1.2fr) minmax(150px, 1fr) 70px 42px 54px 56px;
   }
 
   .docs-row.has-select > :nth-child(4),
@@ -1417,43 +1405,49 @@ body {
   .topbar {
     height: auto;
     min-height: 62px;
-    flex-wrap: wrap;
-    padding: 10px 14px;
+    flex-wrap: nowrap;
+    padding: 0 10px;
+    gap: 8px;
   }
 
   .topbar .brand,
   .topbar-right {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
   }
 
   .topbar .brand {
-    flex-basis: 100%;
+    flex: 0 1 150px;
+    max-width: 170px;
+    gap: 8px;
+  }
+
+  .brand-kb {
+    display: none;
   }
 
   .topbar-right {
-    order: 2;
-    flex-basis: 100%;
-    justify-content: flex-start;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .tabs {
     position: static;
-    order: 3;
-    width: 100%;
-    flex: 0 0 100%;
-    height: 44px;
-    margin-top: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 62px;
+    overflow-x: auto;
     align-items: center;
     justify-content: flex-start;
     transform: none;
-    overflow-x: auto;
   }
 
   .tab {
-    height: 44px;
-    min-height: 44px;
+    height: 62px;
+    min-height: 62px;
     flex: 0 0 auto;
+    padding: 0 8px;
+    font-size: 12px;
   }
 
   .folder-pill,

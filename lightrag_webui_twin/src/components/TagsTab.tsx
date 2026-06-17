@@ -46,6 +46,8 @@ export interface TagsTabProps {
   onCommit?: (commit: TagActionCommit) => void;
   /** Host-controlled tab navigation (replaces direct window.history mutation). */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  /** Expand pending review cards on first render for operator shells. */
+  defaultPendingOpen?: boolean;
 }
 
 interface DomainDraft {
@@ -99,6 +101,7 @@ export function TagsTab({
   onApprove,
   onCommit,
   onNavigate,
+  defaultPendingOpen = false,
 }: TagsTabProps) {
   const [selectedCat, setSelectedCat] = useUrlParam<string>('cat', 'all');
   const [selectedStatus, setSelectedStatus] = useUrlParam<TagStatusFilter>(
@@ -111,7 +114,7 @@ export function TagsTab({
   );
   const [q, setQ] = useUrlParam<string>('q', '');
   const [selectedTag, setSelectedTag] = useUrlParam<string>('tag', tags[0]?.tag ?? '');
-  const [pendingOpen, setPendingOpen] = useState(false);
+  const [pendingOpen, setPendingOpen] = useState(defaultPendingOpen);
   const [modal, setModal] = useState<TagAction | null>(null);
   const [approvingTags, setApprovingTags] = useState<ReadonlySet<string>>(
     () => new Set(),

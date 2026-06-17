@@ -41,6 +41,8 @@ export interface PendingDocsSectionProps {
   onToast: (kind: 'done' | 'error', title: string, sub?: string) => void;
   /** Current operator's identifier for audit attribution. */
   actor?: string;
+  /** Expand cards on first render for operator shells that need immediate actions. */
+  defaultOpen?: boolean;
 }
 
 function fmtDate(iso: string | undefined): string {
@@ -52,11 +54,12 @@ export function PendingDocsSection({
   onReadSource,
   onToast,
   actor,
+  defaultOpen = false,
 }: PendingDocsSectionProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const busyDocIdsRef = useRef(new Set<string>());
   const [busyDocIds, setBusyDocIds] = useState<ReadonlySet<string>>(
     () => new Set(),

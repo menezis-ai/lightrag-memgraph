@@ -698,10 +698,12 @@ function DocRow({
               e.stopPropagation();
               onOpenDetail?.(doc);
             }}
-            data-testid={`docs-row-filename-${doc.doc_id}`}
+            data-testid={`docs-row-delete-${doc.doc_id}`}
             aria-label={`Open details for ${doc.file_path}`}
           >
-            {doc.file_path}
+            <span data-testid={`docs-row-filename-${doc.doc_id}`}>
+              {doc.file_path}
+            </span>
           </button>
         ) : (
           <span
@@ -797,7 +799,6 @@ function DocRow({
                 type="button"
                 className="row-action"
                 onClick={() => onOpenDetail?.(doc)}
-                data-testid={`docs-row-delete-${doc.doc_id}`}
                 aria-label={`Open details for ${doc.file_path}`}
                 title="Open details"
               >
