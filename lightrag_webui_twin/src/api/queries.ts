@@ -158,6 +158,39 @@ export function useDeleteFolder() {
   });
 }
 
+// API keys — per-operator, distinct from the static LIGHTRAG_API_KEY.
+export function useApiKeys(options: QueryGate = {}) {
+  return useQuery({
+    queryKey: ['api-keys'] as const,
+    queryFn: ({ signal }) => api.listApiKeys({ signal }),
+    ...DEFAULTS,
+    ...gateOptions(options),
+  });
+}
+
+export function useCreateApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createApiKey>[0]) =>
+      api.createApiKey(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['api-keys'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
+export function useRevokeApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.revokeApiKey(id),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['api-keys'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
 export function useNotifications(options: QueryGate = {}) {
   const scope = folderScope(options);
   return useQuery({

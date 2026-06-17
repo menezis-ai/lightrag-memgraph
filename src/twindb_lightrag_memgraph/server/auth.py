@@ -269,10 +269,48 @@ async def require_auth(
             # require_idp_user raises on missing/invalid token. If it
             # returns, the request is authenticated against the IdP.
             return "idp_user"
-        # No auth backend configured at all: open access, preserving
-        # the v1.0.x storage-only behaviour and LightRAG-native parity
-        # (product decision 2026-06-10). When the IdP is configured,
-        # the branch above fails closed instead.
+        # Per-operator API key opt-in: even in open-access mode, a
+        # client that explicitly presents a ``twk_``-prefixed bearer is
+        # opting into the per-operator key contract — validate it or
+        # 401. Anonymous (no bearer) requests still pass through as
+        # before, preserving LightRAG-native parity. This lets a
+        # deployment use API keys minted via Settings → API keys as
+        # the sole auth backend without first setting LIGHTRAG_API_KEY
+        # or TOKEN_SECRET in env.
+        if credentials is not None:
+            from . import api_key_store
+            from .._constants import resolve_workspace
+
+            token = credentials.credentials
+            if token.startswith(api_key_store.KEY_PREFIX):
+                try:
+                    workspace = resolve_workspace()
+                    entry = await api_key_store.validate_bearer(workspace, token)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[auth] api_key_store.validate_bearer crashed (open-access)"
+                    )
+                    entry = None
+                if entry is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid credentials",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                import asyncio
+
+                key_id = str(entry.get("id"))
+                try:
+                    asyncio.create_task(
+                        api_key_store.mark_used(workspace, key_id)
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("[auth] mark_used schedule failed")
+                return f"api_key:{key_id}"
+        # No auth backend configured at all and no twk_ opt-in: open
+        # access, preserving the v1.0.x storage-only behaviour and
+        # LightRAG-native parity (product decision 2026-06-10). When the
+        # IdP is configured, the branch above fails closed instead.
         return None
 
     if credentials is None and _jwt_secret and request is not None:
@@ -290,11 +328,39 @@ async def require_auth(
 
     token = credentials.credentials
 
-    # 2. Static API key
+    # 2. Static API key (env-set, infra root key — never exposed via UI).
     if _static_api_key and _secret_equal(token, _static_api_key):
         return "api_key"
 
-    # 3. Legacy local JWT
+    # 3. Per-operator API keys minted via Settings → API keys. Only
+    #    bearers starting with ``api_key_store.KEY_PREFIX`` are probed,
+    #    so this branch is a cheap no-op for JWT-shaped tokens. Hash
+    #    comparison is constant-time inside the store.
+    from . import api_key_store
+    from .._constants import resolve_workspace
+
+    if token.startswith(api_key_store.KEY_PREFIX):
+        try:
+            workspace = resolve_workspace()
+            entry = await api_key_store.validate_bearer(workspace, token)
+        except Exception:  # noqa: BLE001 — never break auth on store glitch
+            logger.exception("[auth] api_key_store.validate_bearer crashed")
+            entry = None
+        if entry is not None:
+            # Fire-and-forget last-used bump. Schedule on the loop so the
+            # request returns before the write completes.
+            import asyncio
+
+            key_id = str(entry.get("id"))
+            try:
+                asyncio.create_task(
+                    api_key_store.mark_used(workspace, key_id)
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("[auth] mark_used schedule failed")
+            return f"api_key:{key_id}"
+
+    # 4. Legacy local JWT
     if _jwt_secret:
         payload = _decode_jwt(token)
         return payload.get("sub", "unknown")
@@ -337,6 +403,31 @@ async def auth_status(
             )
 
     if not _auth_enabled:
+        # Open-access mode mirrors require_auth: a bearer prefixed
+        # with twk_ opts into per-operator key validation; anonymous
+        # falls through as authenticated=true (LightRAG-parity default).
+        from . import api_key_store
+        from .._constants import resolve_workspace
+
+        bearer = credentials.credentials if credentials is not None else None
+        if bearer and bearer.startswith(api_key_store.KEY_PREFIX):
+            try:
+                ws = resolve_workspace()
+                entry = await api_key_store.validate_bearer(ws, bearer)
+            except Exception:  # noqa: BLE001
+                entry = None
+            if entry is not None:
+                return AuthStatusResponse(
+                    auth_enabled=False,
+                    authenticated=True,
+                    user=f"api_key:{entry.get('id')}",
+                    login_required=False,
+                )
+            return AuthStatusResponse(
+                auth_enabled=False,
+                authenticated=False,
+                login_required=False,
+            )
         return AuthStatusResponse(
             auth_enabled=False,
             authenticated=True,
@@ -363,6 +454,24 @@ async def auth_status(
             user="api_key",
             login_required=False,
         )
+
+    # Per-operator API keys minted via Settings → API keys.
+    from . import api_key_store
+    from .._constants import resolve_workspace
+
+    if token.startswith(api_key_store.KEY_PREFIX):
+        try:
+            workspace = resolve_workspace()
+            entry = await api_key_store.validate_bearer(workspace, token)
+        except Exception:  # noqa: BLE001
+            entry = None
+        if entry is not None:
+            return AuthStatusResponse(
+                auth_enabled=True,
+                authenticated=True,
+                user=f"api_key:{entry.get('id')}",
+                login_required=False,
+            )
 
     if _jwt_secret:
         try:

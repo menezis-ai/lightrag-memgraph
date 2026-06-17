@@ -6722,3 +6722,59 @@ input:focus, textarea:focus, select:focus { outline: none; }
 .kg-strength-edit { display: flex; align-items: center; gap: 10px; }
 .kg-strength-edit input[type="range"] { flex: 1; accent-color: var(--twin-accent); }
 .kg-strength-edit code { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-primary); min-width: 36px; text-align: right; }
+
+/* Settings → API keys */
+.settings-api-keys-actions { margin: 12px 0 16px; }
+.settings-api-keys-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.settings-api-keys-table th,
+.settings-api-keys-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border-soft, #e5e7eb);
+}
+.settings-api-keys-table th { font-weight: 600; color: var(--color-text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.settings-api-keys-table tr.is-revoked td { color: var(--color-text-tertiary); }
+.settings-api-keys-table td.actions { text-align: right; white-space: nowrap; }
+.settings-api-keys-table td.actions .ghost-btn,
+.settings-api-keys-table td.actions .primary-btn { margin-left: 6px; padding: 3px 9px; font-size: 11.5px; }
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.status-pill.active { background: color-mix(in oklab, var(--twin-green-700, #2F7A40) 12%, var(--color-background-primary)); color: var(--twin-green-700, #2F7A40); }
+.status-pill.revoked { background: var(--twin-red-50, #fef2f2); color: var(--twin-red-vivid, #B11E1E); }
+
+.modal-small { max-width: 480px; width: 92vw; }
+.warning-banner {
+  background: color-mix(in oklab, var(--twin-amber-500, #d97706) 14%, var(--color-background-primary));
+  border: 1px solid color-mix(in oklab, var(--twin-amber-500, #d97706) 35%, transparent);
+  color: var(--twin-amber-700, #92400e);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  margin: 10px 0;
+}
+.inline-error {
+  color: var(--twin-red-vivid, #B11E1E);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.settings-api-keys-reveal-value {
+  background: var(--color-background-tertiary);
+  border: 1px dashed var(--color-border-soft, #e5e7eb);
+  padding: 10px 12px;
+  border-radius: 6px;
+  word-break: break-all;
+  font-size: 12px;
+  margin-top: 4px;
+}

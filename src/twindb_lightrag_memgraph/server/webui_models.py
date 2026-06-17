@@ -195,6 +195,8 @@ class ActivityEvent(_Base):
         "graph-relation-edited",
         "auth",
         "settings",
+        "api-key-created",
+        "api-key-revoked",
     ]
     sev: Literal["info", "warning", "error", "critical"]
     actor: ActivityActor

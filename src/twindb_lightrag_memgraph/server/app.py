@@ -363,6 +363,24 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     except ImportError:
         pass
 
+    # -- API key management routes (Settings → API keys, admin only).
+    # ``require_admin_user`` is applied at the sub-router level; the
+    # outer ``require_auth`` is still needed so anonymous requests are
+    # rejected before the admin check sees them.
+    try:
+        from .api_key_routes import router as api_key_router
+
+        app.include_router(
+            api_key_router,
+            prefix="/twin/api",
+            dependencies=[Depends(require_auth)],
+        )
+        logger.info(
+            "API key management routes mounted at /twin/api/settings/api-keys"
+        )
+    except ImportError:
+        pass
+
     return app
 
 

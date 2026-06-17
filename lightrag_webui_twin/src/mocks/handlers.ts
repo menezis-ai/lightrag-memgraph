@@ -231,6 +231,30 @@ const envSeededFolderIds = new Set(
   FOLDER_FIXTURES.slice(0, 1).map((w) => w.id),
 );
 
+// API keys — per-operator credentials minted via Settings → API keys.
+// In-memory only; tests reset via resetDocumentsState() below.
+interface ApiKeyMockEntry {
+  id: string;
+  name: string;
+  prefix: string;
+  full_value: string;
+  created_at: number;
+  created_by: string;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+let apiKeyState: ApiKeyMockEntry[] = [];
+let apiKeyCounter = 0;
+function nextApiKeyId(): string {
+  apiKeyCounter += 1;
+  return `mock-key-${apiKeyCounter}`;
+}
+function mintMockToken(): { full: string; preview: string } {
+  apiKeyCounter += 1;
+  const body = `mock${apiKeyCounter.toString().padStart(28, '0')}`;
+  return { full: `twk_${body}`, preview: `twk_${body.slice(0, 8)}…` };
+}
+
 interface E2eScenario {
   bulkRetagStatus?: number;
   approveDelayMs?: number;
@@ -331,6 +355,8 @@ export function resetDocumentsState(): void {
   tagState = cloneTags(TAG_FIXTURES);
   notificationState = cloneNotifications(NOTIFICATION_FIXTURES);
   activityState = cloneActivity(ACTIVITY_FIXTURES);
+  apiKeyState = [];
+  apiKeyCounter = 0;
   graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
     ...e,
     tags: e.tags ? [...e.tags] : [],
@@ -1099,6 +1125,53 @@ export const handlers = [
   http.delete(`${ANY}${TWIN}/folders/:id`, ({ params }) =>
     handleDeleteFolder(String(params.id)),
   ),
+  http.get(`${ANY}${TWIN}/settings/api-keys`, () =>
+    HttpResponse.json(
+      apiKeyState.map((k) => {
+        const { full_value: _full, ...rest } = k;
+        return rest;
+      }),
+    ),
+  ),
+  http.post(`${ANY}${TWIN}/settings/api-keys`, async ({ request }) => {
+    const body = (await request.json()) as { name?: string };
+    const name = (body?.name ?? '').trim();
+    if (!name) {
+      return HttpResponse.json(
+        { detail: 'Name is required.' },
+        { status: 422 },
+      );
+    }
+    const minted = mintMockToken();
+    const entry: ApiKeyMockEntry = {
+      id: nextApiKeyId(),
+      name: name.slice(0, 120),
+      prefix: minted.preview,
+      full_value: minted.full,
+      created_at: Date.now(),
+      created_by: 'mock-operator',
+      last_used_at: null,
+      revoked_at: null,
+    };
+    apiKeyState = [entry, ...apiKeyState];
+    return HttpResponse.json(entry, { status: 201 });
+  }),
+  http.delete(`${ANY}${TWIN}/settings/api-keys/:id`, ({ params }) => {
+    const id = String(params.id);
+    const idx = apiKeyState.findIndex((k) => k.id === id);
+    if (idx === -1) {
+      return HttpResponse.json(
+        { detail: `API key '${id}' not found` },
+        { status: 404 },
+      );
+    }
+    const current = apiKeyState[idx];
+    if (current.revoked_at === null) {
+      apiKeyState[idx] = { ...current, revoked_at: Date.now() };
+    }
+    const { full_value: _full, ...rest } = apiKeyState[idx];
+    return HttpResponse.json(rest);
+  }),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinFolderRequest(request);
     return HttpResponse.json(notificationState);

@@ -32,6 +32,7 @@ import type {
   GraphRelation,
   GraphRelationPatch,
 } from '../types/graph';
+import type { ApiKeyCreated, ApiKeyPublic } from '../types/apiKey';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
@@ -492,6 +493,26 @@ export const twinApi = {
   health: (init?: ApiRequestInit) =>
     apiFetch<{ status: 'ok' | 'degraded' | 'down' }>(`${TWIN}/health`, init),
 
+  // ── API key management ───────────────────────────────────────────
+  // Per-operator keys minted via Settings → API keys. Distinct from
+  // the static LIGHTRAG_API_KEY (infra root, never exposed via UI).
+  listApiKeys: (init?: ApiRequestInit) =>
+    apiFetch<readonly ApiKeyPublic[]>(`${TWIN}/settings/api-keys`, init),
+  createApiKey: (body: { name: string }, init?: ApiRequestInit) =>
+    apiFetch<ApiKeyCreated>(`${TWIN}/settings/api-keys`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  revokeApiKey: (id: string, init?: ApiRequestInit) =>
+    apiFetch<ApiKeyPublic>(
+      `${TWIN}/settings/api-keys/${encodeURIComponent(id)}`,
+      {
+        ...init,
+        method: 'DELETE',
+      },
+    ),
+
   // Tag governance. listThesaurus is legacy compatibility only; new UI
   // surfaces must use listTags as the canonical runtime catalog.
   listThesaurus: (init?: ApiRequestInit) =>
@@ -849,6 +870,9 @@ export const api = {
   createFolder: twinApi.createFolder,
   updateFolder: twinApi.updateFolder,
   deleteFolder: twinApi.deleteFolder,
+  listApiKeys: twinApi.listApiKeys,
+  createApiKey: twinApi.createApiKey,
+  revokeApiKey: twinApi.revokeApiKey,
 };
 
 export type ApiClient = typeof api;

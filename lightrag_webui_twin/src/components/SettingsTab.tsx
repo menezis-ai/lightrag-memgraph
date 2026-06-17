@@ -20,6 +20,7 @@
 
 import { useState } from 'react';
 import { ApiTab } from './ApiTab';
+import { ApiKeysSection } from './Settings/ApiKeysSection';
 import { ProfileSection } from './Settings/ProfileSection';
 import { FoldersAdminSection } from './Settings/FoldersAdminSection';
 import { FolderSection } from './Settings/FolderSection';
@@ -28,11 +29,16 @@ import { useAuth } from '../hooks/useAuth';
 import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
-export type SettingsSectionKey = 'profile' | 'api' | 'folder';
+export type SettingsSectionKey = 'profile' | 'api' | 'api-keys' | 'folder';
 
-const SECTIONS: { key: SettingsSectionKey; label: string; icon: 'circle-dot' | 'world' | 'folder' }[] = [
+const SECTIONS: {
+  key: SettingsSectionKey;
+  label: string;
+  icon: 'circle-dot' | 'world' | 'folder' | 'lock';
+}[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
+  { key: 'api-keys', label: 'API keys', icon: 'lock' },
   { key: 'folder', label: 'Folder', icon: 'folder' },
 ];
 
@@ -92,6 +98,7 @@ export function SettingsTab({
           <ProfileSection onSignOut={onSignOut} />
         )}
         {section === 'api' && <ApiSection />}
+        {section === 'api-keys' && <ApiKeysSection />}
         {section === 'folder' && (
           <>
             <FolderSection

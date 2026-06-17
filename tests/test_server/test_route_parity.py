@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi.routing import APIRoute
 
+from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
 from twindb_lightrag_memgraph.server.auth import auth_router
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.native_shims import (
@@ -73,6 +74,7 @@ def _backend_routes() -> set[Route]:
         | _fastapi_routes_from_router(
             build_twin_query_router(_fake_rag), prefix="/twin/api"
         )
+        | _fastapi_routes_from_router(api_key_router, prefix="/twin/api")
     )
 
 
