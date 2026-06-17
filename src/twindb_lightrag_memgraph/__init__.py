@@ -1601,6 +1601,51 @@ def _mount_twin_subapp(
         dependencies=[Depends(require_auth)],
     )
 
+    # API key management routes (Settings → API keys). The standalone
+    # factory in server/app.py mounts these; the production overlay path
+    # (register(mount_server=True), the BNP entrypoint) is a separate,
+    # hand-maintained router list and MUST mount them too — otherwise the
+    # WebUI's "Create API key" POST falls through to the /twin static
+    # mount and returns 404/405 (verified absent on lightrag 1.4.9.11).
+    # Import directly (no silent except): we are already inside the
+    # [server] extra, so a failure here is a real packaging bug to surface.
+    from .server.api_key_routes import router as api_key_router
+
+    app.include_router(
+        api_key_router,
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
+
+    # Instance memory-cap quota — public snapshot endpoint (the WebUI
+    # QuotaBanner polls it) + a 507 guard on ingestion endpoints. Mirror
+    # of server/app.py; the overlay must mount both or the banner 404s
+    # and ingestion has no early-pressure signal at BNP.
+    from .server.quota import enforce_instance_quota as _enforce_quota
+    from .server.quota_routes import router as quota_router
+
+    app.include_router(quota_router, prefix=prefix)
+
+    _QUOTA_GATED_PATHS = {"/documents/upload", "/documents/reprocess_failed"}
+
+    @app.middleware("http")
+    async def _instance_quota_middleware(request, call_next):
+        if request.method == "POST":
+            path = request.url.path
+            if path in _QUOTA_GATED_PATHS or (
+                path.startswith("/documents/") and path.endswith("/scan")
+            ):
+                from fastapi import HTTPException
+                from fastapi.responses import JSONResponse
+
+                try:
+                    await _enforce_quota()
+                except HTTPException as exc:
+                    return JSONResponse(
+                        {"detail": exc.detail}, status_code=exc.status_code
+                    )
+        return await call_next(request)
+
     # Twin overlay query route — wraps LightRAG `aquery` and returns
     # structured `{response, sources}` so the React port can render
     # clickable citations. Mounted under the same prefix so the
