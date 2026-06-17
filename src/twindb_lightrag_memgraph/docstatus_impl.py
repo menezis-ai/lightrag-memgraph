@@ -36,6 +36,26 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     def _label(self) -> str:
         return f"DocStatus_{self.workspace}"
 
+    @staticmethod
+    def _status_value(status: DocStatus | str) -> str:
+        return status.value if hasattr(status, "value") else str(status)
+
+    @staticmethod
+    def _doc_status_supports(field_name: str) -> bool:
+        return field_name in getattr(DocProcessingStatus, "__dataclass_fields__", {})
+
+    @staticmethod
+    def resolve_status_filter_values(
+        status_filter: DocStatus | None = None,
+        status_filters: list[DocStatus] | None = None,
+    ) -> set[str] | None:
+        values: set[str] = set()
+        if status_filter is not None:
+            values.add(MemgraphDocStatusStorage._status_value(status_filter))
+        for status in status_filters or []:
+            values.add(MemgraphDocStatusStorage._status_value(status))
+        return values or None
+
     async def initialize(self):
         label = self._label()
         _, database = await _pool.get_driver()
@@ -54,6 +74,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 "track_id",
                 "updated_at",
                 "created_at",
+                "content_hash",
             ]:
                 try:
                     result = await session.run(f"CREATE INDEX ON :`{label}`({prop})")
@@ -98,6 +119,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             "error_msg",
             "track_id",
             "file_path",
+            "content_hash",
         ):
             val = getattr(status, field_name, None)
             if val is not None:
@@ -156,6 +178,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         )
         if hasattr(DocProcessingStatus, "multimodal_processed"):
             kwargs["multimodal_processed"] = props.get("multimodal_processed")
+        if MemgraphDocStatusStorage._doc_status_supports("content_hash"):
+            kwargs["content_hash"] = props.get("content_hash")
         return DocProcessingStatus(**kwargs)
 
     # ── BaseKVStorage interface ────────────────────────────────────────
@@ -357,6 +381,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     async def get_docs_paginated(
         self,
         status_filter: DocStatus | None = None,
+        status_filters: list[DocStatus] | None = None,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
         sort_field: str = "updated_at",
@@ -371,11 +396,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         if sort_field not in allowed_sort:
             sort_field = "updated_at"
 
+        status_values = self.resolve_status_filter_values(status_filter, status_filters)
         where_clause = ""
         params: dict[str, Any] = {}
-        if status_filter is not None:
-            where_clause = "WHERE n.status = $status"
-            params["status"] = status_filter.value
+        if status_values is not None:
+            where_clause = "WHERE n.status IN $statuses"
+            params["statuses"] = list(status_values)
 
         # Run count and fetch in parallel on separate read sessions —
         # cuts round-trip time roughly in half on large collections, which
@@ -431,6 +457,42 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             await result.consume()
             if record:
                 return dict(record["props"])
+            return None
+
+    async def get_doc_by_file_basename(
+        self, basename: str
+    ) -> tuple[str, dict[str, Any]] | None:
+        label = self._label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}` {{file_path: $basename}})
+                RETURN n.id AS id, properties(n) AS props
+                """,
+                basename=basename,
+            )
+            record = await result.single()
+            await result.consume()
+            if record:
+                return record["id"], self._deserialize_props(record["props"])
+            return None
+
+    async def get_doc_by_content_hash(
+        self, content_hash: str
+    ) -> tuple[str, dict[str, Any]] | None:
+        label = self._label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}` {{content_hash: $content_hash}})
+                RETURN n.id AS id, properties(n) AS props
+                """,
+                content_hash=content_hash,
+            )
+            record = await result.single()
+            await result.consume()
+            if record:
+                return record["id"], self._deserialize_props(record["props"])
             return None
 
     async def drop(self) -> dict[str, str]:

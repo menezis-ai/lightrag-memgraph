@@ -20,7 +20,7 @@ is caught at test time instead of in production.
 """
 
 import dataclasses
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -66,6 +66,115 @@ def test_docstatus_storage_instantiates():
         embedding_func=MagicMock(),
     )
     assert store is not None
+
+
+def test_docstatus_serializes_content_hash():
+    """LightRAG 1.5 duplicate detection writes ``content_hash`` through
+    DocProcessingStatus; the Memgraph row must preserve it as a top-level
+    property so ``get_doc_by_content_hash`` can use an indexed lookup.
+    """
+    from lightrag.base import DocProcessingStatus, DocStatus
+
+    kwargs = {}
+    if "content_hash" in getattr(DocProcessingStatus, "__dataclass_fields__", {}):
+        kwargs["content_hash"] = "abc123"
+    props = MemgraphDocStatusStorage._serialize_status(
+        "doc-1",
+        DocProcessingStatus(
+            content_summary="hello",
+            content_length=5,
+            file_path="report.pdf",
+            status=DocStatus.PENDING,
+            created_at="2026-06-17T00:00:00Z",
+            updated_at="2026-06-17T00:00:00Z",
+            **kwargs,
+        ),
+    )
+
+    if kwargs:
+        assert props["content_hash"] == "abc123"
+    else:
+        assert "content_hash" not in props
+
+
+def _docstatus_read_session(record: dict | None):
+    result = AsyncMock()
+    result.single = AsyncMock(return_value=record)
+    result.consume = AsyncMock()
+
+    session = AsyncMock()
+    session.run = AsyncMock(return_value=result)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_docstatus_get_doc_by_file_basename_queries_canonical_file_path():
+    storage = MemgraphDocStatusStorage(
+        namespace="docstatus",
+        global_config={},
+        embedding_func=MagicMock(),
+    )
+    session = _docstatus_read_session(
+        {
+            "id": "doc-1",
+            "props": {
+                "file_path": "report.pdf",
+                "metadata": '{"source": "upload"}',
+                "chunks_list": '["chunk-1"]',
+            },
+        }
+    )
+
+    with patch(
+        "twindb_lightrag_memgraph._pool.get_read_session",
+        return_value=session,
+    ):
+        result = await storage.get_doc_by_file_basename("report.pdf")
+
+    assert result == (
+        "doc-1",
+        {
+            "file_path": "report.pdf",
+            "metadata": {"source": "upload"},
+            "chunks_list": ["chunk-1"],
+        },
+    )
+    assert session.run.call_args.kwargs["basename"] == "report.pdf"
+
+
+@pytest.mark.asyncio
+async def test_docstatus_get_doc_by_content_hash_queries_top_level_hash():
+    storage = MemgraphDocStatusStorage(
+        namespace="docstatus",
+        global_config={},
+        embedding_func=MagicMock(),
+    )
+    session = _docstatus_read_session(
+        {
+            "id": "doc-2",
+            "props": {
+                "file_path": "other.pdf",
+                "content_hash": "abc123",
+            },
+        }
+    )
+
+    with patch(
+        "twindb_lightrag_memgraph._pool.get_read_session",
+        return_value=session,
+    ):
+        result = await storage.get_doc_by_content_hash("abc123")
+
+    assert result == (
+        "doc-2",
+        {
+            "file_path": "other.pdf",
+            "content_hash": "abc123",
+        },
+    )
+    assert session.run.call_args.kwargs["content_hash"] == "abc123"
 
 
 def _query_param_cls():
