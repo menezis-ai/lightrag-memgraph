@@ -18,7 +18,12 @@ from lightrag.base import DocProcessingStatus, DocStatus, DocStatusStorage
 from lightrag.utils import logger
 
 from . import _pool
-from ._constants import DEFAULT_PAGE_SIZE, resolve_workspace, validate_identifier
+from ._constants import (
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+    resolve_workspace,
+    validate_identifier,
+)
 
 
 @dataclass
@@ -354,6 +359,29 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             await result.consume()
             return docs
 
+    @staticmethod
+    def _normalize_pagination(page: Any, page_size: Any) -> tuple[int, int]:
+        """Clamp pagination inputs to a safe (skip, limit) pair.
+
+        Guards the Cypher SKIP/LIMIT against hostile or buggy callers:
+        a non-positive ``page`` would otherwise yield a negative SKIP
+        (Cypher error → 500), and an unbounded ``page_size`` lets a single
+        request pull the whole collection into memory. ``page`` is forced
+        to ``>= 1`` and ``page_size`` to ``[1, MAX_PAGE_SIZE]``; non-int
+        inputs fall back to the defaults.
+        """
+        try:
+            page = int(page)
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(page_size)
+        except (TypeError, ValueError):
+            page_size = DEFAULT_PAGE_SIZE
+        page = max(1, page)
+        page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+        return (page - 1) * page_size, page_size
+
     async def get_docs_paginated(
         self,
         status_filter: DocStatus | None = None,
@@ -363,7 +391,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         sort_direction: str = "desc",
     ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:
         label = self._label()
-        skip = (page - 1) * page_size
+        skip, page_size = self._normalize_pagination(page, page_size)
         order = "DESC" if sort_direction == "desc" else "ASC"
 
         # Whitelist sort fields to prevent injection
