@@ -30,7 +30,7 @@ def api_wiring_probes(api_prefix: str = "/twin/api") -> tuple[ApiWiringProbe, ..
         ApiWiringProbe("POST", f"{prefix}/settings/api-keys", "api-keys:create"),
         ApiWiringProbe(
             "DELETE",
-            f"{prefix}/settings/api-keys/__wiring_probe__",
+            f"{prefix}/settings/api-keys/{{key_id}}",
             "api-keys:revoke",
         ),
         ApiWiringProbe("GET", f"{prefix}/quota", "quota:snapshot"),
@@ -44,14 +44,54 @@ def _route_matches(route: object, *, method: str, path: str) -> bool:
     methods = getattr(route, "methods", None)
     if not methods or method not in methods:
         return False
+    route_path = getattr(route, "path", None)
+    if route_path == path:
+        return True
     path_regex = getattr(route, "path_regex", None)
     if path_regex is not None:
         return path_regex.match(path) is not None
-    route_path = getattr(route, "path", None)
-    return route_path == path
+    return False
 
 
-def _has_api_route(app: object, *, method: str, path: str) -> bool:
+def _openapi_pairs(app: object) -> set[tuple[str, str]]:
+    """``(METHOD, templated_path)`` pairs from the live OpenAPI schema.
+
+    OpenAPI is the version-robust source of truth. FastAPI 0.137 wraps
+    ``include_router`` results in ``_IncludedRouter`` objects that expose
+    neither ``.path`` nor ``.routes``, so a raw ``app.routes`` scan misses
+    *every* included route — the exact blindness that let this check report
+    api-keys/quota as missing while they were mounted. The schema also
+    naturally excludes ``Mount``/``StaticFiles``, which is precisely the
+    surface this sanity check must not count as healthy.
+    """
+    openapi = getattr(app, "openapi", None)
+    if not callable(openapi):
+        return set()
+    try:
+        paths = (openapi() or {}).get("paths", {}) or {}
+    except Exception:  # pragma: no cover - schema build is best-effort here
+        return set()
+    return {
+        (str(m).upper(), str(path))
+        for path, ops in paths.items()
+        if isinstance(ops, dict)
+        for m in ops
+    }
+
+
+def _has_api_route(
+    app: object,
+    *,
+    method: str,
+    path: str,
+    openapi_pairs: set[tuple[str, str]] | None = None,
+) -> bool:
+    if openapi_pairs is None:
+        openapi_pairs = _openapi_pairs(app)
+    if (method.upper(), path) in openapi_pairs:
+        return True
+    # Fallback: raw route-table scan (flattened routes / older FastAPI /
+    # in-schema=False routes the OpenAPI schema omits).
     router = getattr(app, "router", None)
     routes = getattr(router, "routes", getattr(app, "routes", ()))
     return any(_route_matches(route, method=method, path=path) for route in routes)
@@ -69,10 +109,13 @@ def log_api_wiring_sanity(
     operators see in Elastic.
     """
 
+    openapi_pairs = _openapi_pairs(app)
     present: list[ApiWiringProbe] = []
     missing: list[ApiWiringProbe] = []
     for probe in probes:
-        if _has_api_route(app, method=probe.method, path=probe.path):
+        if _has_api_route(
+            app, method=probe.method, path=probe.path, openapi_pairs=openapi_pairs
+        ):
             present.append(probe)
         else:
             missing.append(probe)
