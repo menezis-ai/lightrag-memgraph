@@ -1,26 +1,36 @@
 """Instance-wide Memgraph storage quota.
 
-Memgraph caps in-process memory via ``--memory-limit`` (env
-``MEMGRAPH_MEMORY_LIMIT``, value like ``2GiB``). When the cap is
-reached, ingestion fails *at write time* with no early signal to the
-operator. This module surfaces the cap up to the WebUI so an operator
-sees pressure (≥85 %) before it becomes a wall (100 %) and so blocking
-endpoints can refuse uploads with a clear 507 before partial writes
-corrupt state.
+Memgraph rejects writes once its tracked allocations reach the effective
+memory limit (``--memory-limit``, or — on Enterprise — the lower of that
+and the license capacity). When the wall is hit, ingestion fails *at
+write time* with no early signal. This module reads Memgraph's own
+accounting and surfaces the pressure so an operator sees ``warning``
+(≥85 %) before the ``blocked`` wall, and so ingestion endpoints can
+refuse uploads with a clear 507 before partial writes corrupt state.
 
-Public surface:
+What it measures (verified empirically against Memgraph 3.9.0 **and**
+3.10.1 — ``SHOW STORAGE INFO`` field names differ across versions, see
+the ``_*_KEYS`` tuples):
 
-- :func:`parse_memgraph_limit` — env-string → bytes (``GiB`` / ``MiB``
-  / ``KiB`` / ``B`` / plain integer)
-- :func:`snapshot` — async, returns ``{used_bytes, limit_bytes,
-  used_pct, status}`` with ``status ∈ {ok, warning, blocked}``
-- :func:`enforce_instance_quota` — FastAPI dependency that raises 507
-  when ``status == "blocked"``
+- **used**  = ``global_memory_tracked`` (3.10) / ``memory_tracked`` (3.9)
+  — the allocation count Memgraph enforces its limit against. NOT the
+  process RSS (``memory_res``, which includes allocator overhead and
+  over-reports ~2×), and NOT the sum of ingested file sizes (originals
+  are deleted; only chunks + graph + vectors remain).
+- **limit** = ``global_runtime_allocation_limit`` (3.10) /
+  ``allocation_limit`` (3.9) — read straight from Memgraph, so it tracks
+  the real ``--memory-limit`` and the Enterprise license cap without a
+  hand-maintained env. Falls back to ``MEMGRAPH_MEMORY_LIMIT`` only when
+  Memgraph reports no limit.
+- **graph_bytes / vector_bytes** — the actual data footprint
+  (``db_storage_memory_tracked`` + ``db_embedding_memory_tracked`` on
+  3.10; ``graph_memory_tracked`` + ``vector_index_memory_tracked`` on
+  3.9), surfaced for capacity visibility.
 
-If ``MEMGRAPH_MEMORY_LIMIT`` is not set, the limit is ``None`` and
-every dependency / snapshot reports ``status="ok"`` with
-``limit_bytes=None`` so dev environments without a cap never trip
-the guard.
+Values come back as unit strings (``"409.72MiB"``, ``"2.00GiB"``,
+``"unlimited"``, ``"0B"``) — :func:`_parse_size` handles those plus raw
+numbers. A probe failure is **fail-open**: the guard never blocks on its
+own malfunction, only on a real over-quota condition.
 """
 
 from __future__ import annotations
@@ -43,9 +53,9 @@ BLOCK_THRESHOLD: Final[float] = 1.0
 
 _MEMGRAPH_LIMIT_ENV = "MEMGRAPH_MEMORY_LIMIT"
 
-# Accept binary (KiB / MiB / GiB / TiB) and decimal (KB / MB / GB / TB)
-# suffixes plus the bare ``B``. Whitespace and case insensitive.
-_LIMIT_RE = re.compile(
+# Accept binary (KiB/MiB/GiB/TiB) and decimal (KB/MB/GB/TB) suffixes plus
+# the bare ``B``, with an optional decimal part. Case/whitespace insensitive.
+_SIZE_RE = re.compile(
     r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[KMGT]?i?B|B)?\s*$",
     re.IGNORECASE,
 )
@@ -61,44 +71,66 @@ _UNIT_FACTORS: Final[dict[str, int]] = {
     "TIB": 1024 ** 4,
 }
 
+# ``SHOW STORAGE INFO`` keys, newest name first, older name(s) after.
+# Verified on 3.10.1 and 3.9.0 — note graph/vector keys are *swapped*
+# between the two releases, hence both must be tried.
+_USED_KEYS: Final = ("global_memory_tracked", "memory_tracked")
+_USED_RSS_KEYS: Final = ("memory_res",)  # coarse last resort (process RSS)
+_LIMIT_KEYS: Final = ("global_runtime_allocation_limit", "allocation_limit")
+_GRAPH_KEYS: Final = ("db_storage_memory_tracked", "graph_memory_tracked")
+_VECTOR_KEYS: Final = (
+    "db_embedding_memory_tracked",
+    "vector_index_memory_tracked",
+    "embeddings_memory_tracked",
+)
+
+
+def _parse_size(value: Any) -> int | None:
+    """Parse a Memgraph size value to bytes.
+
+    Handles raw ints/floats, unit strings (``"409.72MiB"``, ``"2.00GiB"``,
+    ``"0B"``, ``"2048"``), and the sentinels Memgraph emits for "no
+    limit" (``"unlimited"``). Returns ``None`` when not a size.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if not text or text.lower() in ("unlimited", "inf", "infinite", "none"):
+        return None
+    m = _SIZE_RE.match(text)
+    if not m:
+        return None
+    factor = _UNIT_FACTORS.get((m.group("unit") or "B").upper())
+    if factor is None:
+        return None
+    return int(float(m.group("value")) * factor)
+
 
 def parse_memgraph_limit(raw: str | None) -> int | None:
-    """Parse a ``MEMGRAPH_MEMORY_LIMIT`` value to bytes.
+    """Parse a ``MEMGRAPH_MEMORY_LIMIT`` env value to bytes (or ``None``).
 
-    Returns ``None`` when ``raw`` is missing, empty, or unparseable
-    (the caller treats ``None`` as "no quota configured" and disables
-    the guard). Accepts ``2GiB``, ``2 GiB``, ``2048MiB``, ``2GB``,
-    ``2000000000``, ``2147483648B``. Floats like ``1.5GiB`` are
-    rounded down to the nearest byte.
+    Used only as the fallback limit when Memgraph itself reports none.
     """
     if raw is None:
         return None
     text = raw.strip()
     if not text:
         return None
-    m = _LIMIT_RE.match(text)
-    if not m:
+    parsed = _parse_size(text)
+    if parsed is None:
         logger.warning(
             "MEMGRAPH_MEMORY_LIMIT=%r is not a recognised size literal; "
-            "instance quota guard disabled",
+            "instance quota fallback limit disabled",
             raw,
         )
-        return None
-    value = float(m.group("value"))
-    unit = (m.group("unit") or "B").upper()
-    factor = _UNIT_FACTORS.get(unit)
-    if factor is None:
-        logger.warning(
-            "MEMGRAPH_MEMORY_LIMIT=%r: unit %r not recognised; guard disabled",
-            raw,
-            unit,
-        )
-        return None
-    return int(value * factor)
+    return parsed
 
 
 def get_limit_bytes() -> int | None:
-    """Resolve the configured quota at call time (env reads cheap)."""
+    """Env-override / fallback limit (sync). :func:`snapshot` prefers the
+    allocation limit Memgraph reports itself."""
     return parse_memgraph_limit(os.environ.get(_MEMGRAPH_LIMIT_ENV))
 
 
@@ -107,18 +139,33 @@ def get_limit_bytes() -> int | None:
 # ---------------------------------------------------------------------------
 
 
-async def get_used_bytes() -> int | None:
-    """Best-effort read of Memgraph's current memory usage in bytes.
+def _index_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Parse ``SHOW STORAGE INFO`` rows → ``{lower_key: bytes}``.
 
-    Uses ``SHOW STORAGE INFO`` which Memgraph (both Community and
-    Enterprise) exposes as a result-set of ``(storage info, value)``
-    rows. We grep for ``memory_res`` (resident set) first, then fall
-    back to ``memory_allocated`` if the build emits only that key.
+    Pure (no I/O) so version compatibility is unit-testable against the
+    real 3.9 and 3.10 field sets. Each row is ``{"storage info": <key>,
+    "value": <unit-string|number>}`` (older builds vary the column names).
+    """
+    indexed: dict[str, int] = {}
+    for row in rows:
+        key = next(
+            (row[c] for c in ("storage info", "storage_info", "name", "key") if c in row),
+            None,
+        )
+        if key is None:
+            continue
+        raw = next((row[c] for c in ("value", "size", "bytes") if c in row), None)
+        parsed = _parse_size(raw)
+        if parsed is not None:
+            indexed[str(key).strip().lower()] = parsed
+    return indexed
 
-    Returns ``None`` on any failure — the caller treats a missing
-    probe as "guard cannot enforce" and lets the request through. This
-    is fail-OPEN by design: we never want a quota probe failure to
-    block ingestion, only a real over-quota condition.
+
+async def _read_storage_info() -> dict[str, int]:
+    """One ``SHOW STORAGE INFO`` probe → ``{key: bytes}`` (lower-cased keys).
+
+    Fail-open: returns ``{}`` on any error so the guard never blocks on
+    its own malfunction.
     """
     try:
         async with _pool.get_read_session() as session:
@@ -127,47 +174,24 @@ async def get_used_bytes() -> int | None:
             await result.consume()
     except Exception:  # noqa: BLE001 — fail-open, never propagate
         logger.exception("[quota] SHOW STORAGE INFO failed; guard inactive")
-        return None
-    return _extract_memory_bytes(rows)
+        return {}
+    return _index_rows(rows)
 
 
-def _extract_memory_bytes(rows: list[dict[str, Any]]) -> int | None:
-    """Pull the memory-usage byte count out of ``SHOW STORAGE INFO`` rows.
-
-    Memgraph ``SHOW STORAGE INFO`` rows are typed as
-    ``{"storage info": <key>, "value": <number>}`` (older builds may
-    use different column names; we accept the union).
-
-    Preference order:
-
-      1. ``memory_res`` (resident set size — what the OS sees)
-      2. ``memory_tracked`` (Memgraph's internal accounting)
-      3. ``memory_allocated`` (legacy alias)
-    """
-    if not rows:
-        return None
-    preference = ("memory_res", "memory_tracked", "memory_allocated")
-    indexed: dict[str, int] = {}
-    for row in rows:
-        key = None
-        for cand in ("storage info", "storage_info", "name", "key"):
-            if cand in row:
-                key = row[cand]
-                break
-        if key is None:
-            continue
-        value = None
-        for cand in ("value", "size", "bytes"):
-            if cand in row:
-                value = row[cand]
-                break
-        if not isinstance(value, (int, float)):
-            continue
-        indexed[str(key).strip().lower()] = int(value)
-    for key in preference:
+def _pick(indexed: dict[str, int], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
         if key in indexed:
             return indexed[key]
     return None
+
+
+async def get_used_bytes() -> int | None:
+    """Tracked memory Memgraph enforces its limit against
+    (``global_memory_tracked`` / ``memory_tracked``), falling back to the
+    process RSS (``memory_res``) only if the tracker isn't exposed."""
+    indexed = await _read_storage_info()
+    used = _pick(indexed, _USED_KEYS)
+    return used if used is not None else _pick(indexed, _USED_RSS_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -187,47 +211,43 @@ def _status_from(used_pct: float | None) -> str:
 
 
 async def snapshot() -> dict[str, Any]:
-    """Build the full quota payload consumed by ``GET /twin/api/quota``
-    and the ingestion dependency.
+    """Full quota payload for ``GET /twin/api/quota`` and the 507 guard.
 
-    Shape:
-
-    .. code-block:: json
-
-        {
-          "used_bytes": 1234567,
-          "limit_bytes": 2147483648,
-          "used_pct": 0.000575,
-          "status": "ok",
-          "warn_threshold": 0.85,
-          "configured": true
-        }
-
-    Fields:
-
-    - ``configured`` — false when ``MEMGRAPH_MEMORY_LIMIT`` is unset
-      (the guard is then inert).
-    - ``used_pct`` — ``null`` when either ``used_bytes`` or
-      ``limit_bytes`` is ``null``.
-    - ``status`` — derived from ``used_pct`` via the warn / block
-      thresholds; ``"ok"`` when no quota is configured.
+    One Memgraph probe feeds every field. ``used_basis`` /
+    ``limit_source`` make the measurement legible (tracked-vs-rss,
+    memgraph-vs-env) — the whole point is to never hand-wave what is
+    being measured.
     """
-    limit_bytes = get_limit_bytes()
-    used_bytes = await get_used_bytes()
-    used_pct: float | None
-    if limit_bytes is None or used_bytes is None:
-        used_pct = None
-    elif limit_bytes <= 0:
+    indexed = await _read_storage_info()
+
+    used = _pick(indexed, _USED_KEYS)
+    used_basis: str | None = "tracked" if used is not None else None
+    if used is None:
+        used = _pick(indexed, _USED_RSS_KEYS)
+        used_basis = "rss" if used is not None else None
+
+    limit = _pick(indexed, _LIMIT_KEYS)
+    limit_source: str | None = "memgraph" if limit is not None else None
+    if limit is None:
+        limit = get_limit_bytes()
+        limit_source = "env" if limit is not None else None
+
+    if used is None or limit is None or limit <= 0:
         used_pct = None
     else:
-        used_pct = used_bytes / limit_bytes
+        used_pct = used / limit
+
     return {
-        "used_bytes": used_bytes,
-        "limit_bytes": limit_bytes,
+        "used_bytes": used,
+        "limit_bytes": limit,
         "used_pct": used_pct,
         "status": _status_from(used_pct),
         "warn_threshold": WARN_THRESHOLD,
-        "configured": limit_bytes is not None,
+        "configured": limit is not None,
+        "graph_bytes": _pick(indexed, _GRAPH_KEYS),
+        "vector_bytes": _pick(indexed, _VECTOR_KEYS),
+        "used_basis": used_basis,
+        "limit_source": limit_source,
     }
 
 
@@ -245,10 +265,9 @@ def _format_gib(n: int | None) -> str:
 async def enforce_instance_quota() -> None:
     """FastAPI dependency: 507 when the Memgraph instance is at quota.
 
-    ``configured == False`` → no-op. Probe failure → no-op (fail-open).
-    ``status == "blocked"`` → ``HTTPException(507)`` with a message
-    that names the absolute usage in GiB so the operator immediately
-    knows how much to free.
+    No limit reported (Memgraph + env both silent) → no-op. Probe failure
+    → no-op (fail-open). ``status == "blocked"`` → ``HTTPException(507)``
+    naming the absolute usage in GiB so the operator knows how much to free.
     """
     snap = await snapshot()
     if snap["status"] != "blocked":

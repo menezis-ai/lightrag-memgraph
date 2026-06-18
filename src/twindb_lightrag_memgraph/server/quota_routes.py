@@ -24,6 +24,13 @@ class QuotaSnapshot(BaseModel):
     status: str = "ok"
     warn_threshold: float = quota.WARN_THRESHOLD
     configured: bool = False
+    # Actual data footprint (graph nodes/edges + vector index), distinct
+    # from used_bytes which is Memgraph's whole tracked allocation.
+    graph_bytes: int | None = None
+    vector_bytes: int | None = None
+    # Transparency: which metric/limit the numbers came from.
+    used_basis: str | None = None  # "tracked" | "rss"
+    limit_source: str | None = None  # "memgraph" | "env"
 
 
 @router.get("", response_model=QuotaSnapshot)
