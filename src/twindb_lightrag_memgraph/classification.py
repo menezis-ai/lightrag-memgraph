@@ -2,8 +2,9 @@
 Microsoft Information Protection (MIP / AIP) sensitivity-label extraction.
 
 Detects sensitivity labels embedded by Microsoft 365 in Office documents and
-maps them to a tenant-specific classification scheme (e.g. a C1 / C2 /
-C3 / C4 ladder).
+maps them to a tenant-specific classification scheme (Public / Internal /
+Confidential / Secret / Private). The legacy C1-C4 ladder is still accepted
+for older tenant maps.
 
 Why this module exists
 ----------------------
@@ -28,7 +29,7 @@ Supported formats
   (`.docm`, `.xlsm`, `.pptm`). Label lives in `docProps/custom.xml` as
   `MSIP_Label_<GUID>_Name` and related properties. Pure stdlib (no extra
   dependency).
-- Legacy OLE binary: `.doc`, `.xls`, `.ppt`. Properties live in OLE streams
+- Legacy OLE binary: `.doc`, `.xls`, `.ppt`, `.msg`. Properties live in OLE streams
   ("\\005DocumentSummaryInformation", "\\005SummaryInformation"). Requires
   `olefile` (optional dependency; the extractor returns `None` gracefully
   if olefile is unavailable, with `reason='olefile-missing'` in `meta`).
@@ -36,7 +37,7 @@ Supported formats
   degradation if pikepdf is unavailable.
 
 The label-to-classification mapping is *tenant-specific* — the same GUID
-means C2 in one tenant but might mean something else in another tenant.
+means Internal in one tenant but might mean something else in another tenant.
 Mappings are loaded from a JSON file pointed to by `TWIN_MIP_LABEL_MAP`
 (see `load_label_map`).
 
@@ -88,8 +89,9 @@ _OOXML_EXTS: Final = frozenset({
     ".pptx", ".pptm", ".potx", ".potm",
 })
 
-# Legacy OLE binary extensions (need olefile).
-_OLE_EXTS: Final = frozenset({".doc", ".xls", ".ppt"})
+# Legacy OLE binary extensions (need olefile). Outlook `.msg` is also an OLE
+# container and can carry MSIP custom properties.
+_OLE_EXTS: Final = frozenset({".doc", ".xls", ".ppt", ".msg"})
 
 # PDF extension (needs pikepdf for XMP metadata).
 _PDF_EXTS: Final = frozenset({".pdf"})
@@ -107,12 +109,12 @@ class ClassificationResult:
     Attributes
     ----------
     class_id:
-        Tenant-specific class identifier (e.g. ``"C2"``) resolved from the
+        Tenant-specific class identifier (e.g. ``"Internal"``) resolved from the
         MIP label GUID via the loaded label map. ``None`` when the file
         carries no MIP label, when the label is unknown to the map, or when
         extraction failed (see ``reason``).
     class_name:
-        Human-readable class label (e.g. ``"C2 Confidentiel"``). May be the
+        Human-readable class label (e.g. ``"Internal"``). May be the
         raw MIP label name when the GUID maps to ``UNKNOWN``.
     label_guid:
         Normalized (lowercase, braceless) MIP label GUID, when detected.
@@ -183,16 +185,16 @@ def load_label_map(path: str | os.PathLike[str] | None = None) -> dict[str, str]
     File format::
 
         {
-          "guid-of-c1": {"id": "C1", "name": "C1 Public"},
-          "guid-of-c2": {"id": "C2", "name": "C2 Confidentiel"},
+          "guid-of-public": {"id": "Public", "name": "Public"},
+          "guid-of-internal": {"id": "Internal", "name": "Internal"},
           ...
         }
 
     or shorthand::
 
         {
-          "guid-of-c1": "C1",
-          "guid-of-c2": "C2",
+          "guid-of-public": "Public",
+          "guid-of-internal": "Internal",
           ...
         }
 
@@ -472,13 +474,39 @@ def _result_from_msip_fields(
 # ---------------------------------------------------------------------------
 
 
-def is_above(class_id: str | None, threshold: str, *, ladder: tuple[str, ...] = (
-    "C1", "C2", "C3", "C4",
-)) -> bool:
+_CLASS_ALIASES: Final[dict[str, str]] = {
+    "c1": "Public",
+    "public": "Public",
+    "c2": "Internal",
+    "internal": "Internal",
+    "c3": "Confidential",
+    "confidential": "Confidential",
+    "restricted": "Confidential",
+    "c4": "Secret",
+    "secret": "Secret",
+    "private": "Private",
+}
+
+_DEFAULT_CLASS_LADDER: Final = ("Public", "Internal", "Private", "Confidential", "Secret")
+
+
+def _normalize_class_id(class_id: str | None) -> str | None:
+    if class_id is None:
+        return None
+    return _CLASS_ALIASES.get(str(class_id).strip().lower(), class_id)
+
+
+def is_above(
+    class_id: str | None,
+    threshold: str,
+    *,
+    ladder: tuple[str, ...] = _DEFAULT_CLASS_LADDER,
+) -> bool:
     """Return True when `class_id` strictly outranks `threshold`.
 
-    Unknown class ids (None, "UNKNOWN", or not in the ladder) are treated
-    as ABOVE the threshold by default — fail-closed.
+    Unknown class ids ("UNKNOWN", or not in the ladder) are treated as ABOVE
+    the threshold by default — fail-closed. ``None`` means "no MIP label
+    detected" and is not above any ceiling.
 
     Examples
     --------
@@ -489,8 +517,12 @@ def is_above(class_id: str | None, threshold: str, *, ladder: tuple[str, ...] = 
     >>> is_above("UNKNOWN", "C2")
     True
     """
-    if class_id not in ladder:
+    normalized_class = _normalize_class_id(class_id)
+    normalized_threshold = _normalize_class_id(threshold)
+    if normalized_class is None:
+        return False
+    if normalized_class not in ladder:
         return True
-    if threshold not in ladder:
+    if normalized_threshold not in ladder:
         raise ValueError(f"threshold {threshold!r} not in ladder {ladder!r}")
-    return ladder.index(class_id) > ladder.index(threshold)
+    return ladder.index(normalized_class) > ladder.index(normalized_threshold)

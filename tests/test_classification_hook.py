@@ -70,14 +70,13 @@ class TestClassifyForIngestion:
             classify_for_ingestion(path, label_map={}, ceiling="C2")
 
     def test_unsupported_extension_returns_payload_with_reason(self, tmp_path):
-        # An unsupported extension is NOT a rejection — the file simply
-        # has no detectable label, treated as UNKNOWN, then rejected by
-        # the ceiling. (Caller can lower ceiling to allow it through.)
+        # Unsupported here means "no MIP label extraction applied", not
+        # "unknown MIP label". It should not invent a default classification.
         path = tmp_path / "notes.txt"
         path.write_text("nothing here")
-        with pytest.raises(ClassificationRejection) as exc_info:
-            classify_for_ingestion(path, label_map={}, ceiling="C2")
-        assert "unsupported-extension" in (exc_info.value.result.reason or "")
+        payload = classify_for_ingestion(path, label_map={}, ceiling="C2")
+        assert payload["class_id"] is None
+        assert "unsupported-extension" in (payload["reason"] or "")
 
     def test_audit_emit_called_on_detection_and_rejection(self, tmp_path):
         path = _build_docx_with_label(tmp_path, "C3 Strict", C3_GUID)

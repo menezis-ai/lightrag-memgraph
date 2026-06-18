@@ -333,13 +333,21 @@ class TestIsAbove:
         ("C4", "C2", True),
         ("C4", "C3", True),
         ("C1", "C1", False),
+        ("Public", "Internal", False),
+        ("Internal", "Internal", False),
+        ("Private", "Internal", True),
+        ("Confidential", "Internal", True),
+        ("Secret", "Confidential", True),
     ])
     def test_known_classes(self, class_id, threshold, expected):
         assert is_above(class_id, threshold) is expected
 
-    @pytest.mark.parametrize("unknown", [None, "UNKNOWN", "C7", ""])
+    @pytest.mark.parametrize("unknown", ["UNKNOWN", "C7", ""])
     def test_unknown_is_treated_as_above_fail_closed(self, unknown):
         assert is_above(unknown, "C2") is True
+
+    def test_missing_class_is_not_a_mip_class(self):
+        assert is_above(None, "C2") is False
 
     def test_invalid_threshold_raises(self):
         with pytest.raises(ValueError, match="threshold"):
