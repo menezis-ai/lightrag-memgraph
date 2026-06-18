@@ -1676,6 +1676,14 @@ def _mount_twin_subapp(
         # LightRAG native /query still works for the React port.
         pass
 
+    from .server.api_wiring import api_wiring_probes, log_api_wiring_sanity
+
+    log_api_wiring_sanity(
+        app,
+        probes=api_wiring_probes(prefix),
+        surface=f"overlay:{prefix}",
+    )
+
     if webui_stores == "seed":
         # Sync setup; the seed includes pre-populated tags / activity /
         # notifications visible from the very first request.

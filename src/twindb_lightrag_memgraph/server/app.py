@@ -32,6 +32,7 @@ from lightrag import LightRAG
 from pydantic import BaseModel
 
 from .auth import auth_router, configure_auth, require_auth
+from .api_wiring import log_api_wiring_sanity
 from .chunk_routes import create_chunk_routes, router as chunk_router
 from .settings import LightRAGServerSettings, get_settings
 from .tracing import apply_lang_with_tracing, extract_trace_parent
@@ -421,6 +422,8 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
                         status_code=exc.status_code,
                     )
         return await call_next(request)
+
+    log_api_wiring_sanity(app, surface="standalone")
 
     return app
 
