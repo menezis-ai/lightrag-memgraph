@@ -27,7 +27,13 @@ export type Method = (typeof HTTP_METHODS)[number];
 
 const INJECTION = "x`) MATCH (n) DETACH DELETE n; //";
 const NONEXISTENT = '__twin_e2e_nonexistent_0000__';
-const DRIVER_LEAK = /neo4j|memgraph|cypher|Neo\.ClientError|SyntaxError at/i;
+// A genuine driver/query error leaking to the client — error CLASS names,
+// Neo/Memgraph error codes, or a Python traceback. Deliberately NOT the bare
+// words "neo4j"/"memgraph"/"cypher": those appear in legitimate payloads such
+// as the composite version string `v1.4.9.11+memgraph-1.0.0` that /health and
+// /auth-status return (register() patches __version__), which must not trip it.
+const DRIVER_LEAK =
+  /Neo\.[A-Za-z.]+Error|Memgraph\.[A-Za-z.]+Error|neo4j\.exceptions|CypherSyntaxError|ServiceUnavailable|Failed to establish connection|Traceback \(most recent/i;
 
 // Reachable without an auth backend by design.
 const PUBLIC_TWIN_PATHS = new Set([
