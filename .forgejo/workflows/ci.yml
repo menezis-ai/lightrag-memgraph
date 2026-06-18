@@ -371,3 +371,137 @@ jobs:
           if [ -f .ci-real-network ]; then
             docker network rm "$(cat .ci-real-network)" || true
           fi
+
+  webui-e2e-keygen:
+    # Same adversarial API-coverage protocol as webui-e2e-real, but every
+    # request is authenticated with a key MINTED THROUGH the Settings -> API
+    # keys endpoint (api_key_store), proving generated keys are real
+    # credentials. Separate runner + its own backend on port 9622 (distinct
+    # container/network names) so it can run beside webui-e2e-real without
+    # colliding. No fixture seed: the coverage is adversarial (unknown ids,
+    # malformed input, anonymous), so it needs no pre-seeded documents.
+    runs-on: [self-hosted, high]
+    env:
+      MEMGRAPH_URI: bolt://memgraph:7687
+      REAL_BACKEND_URL: http://127.0.0.1:9622
+      REAL_BACKEND_FOLDER: default
+      REAL_BACKEND_AUTH_TOKEN: real-e2e-token
+      VITE_AUTH_TOKEN: real-e2e-token
+      REAL_E2E_EXPECT_AUTH: "true"
+      TWIN_DEFAULT_FOLDER: default
+      TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start real backend (keygen)
+        run: |
+          net="twin-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-keygen"
+          memgraph="twin-ci-memgraph-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-keygen"
+          backend="twin-ci-backend-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-keygen"
+          printf '%s\n' "$net" > .ci-keygen-network
+          printf '%s\n' "$memgraph" > .ci-keygen-memgraph
+          printf '%s\n' "$backend" > .ci-keygen-backend
+
+          docker rm -f "$backend" "$memgraph" >/dev/null 2>&1 || true
+          docker network rm "$net" >/dev/null 2>&1 || true
+          docker network create "$net"
+
+          docker run -d \
+            --name "$memgraph" \
+            --network "$net" \
+            --network-alias memgraph \
+            --memory 3g \
+            --memory-swap 3g \
+            memgraph/memgraph-mage:3.10.1
+
+          for i in $(seq 1 120); do
+            if docker exec "$memgraph" bash -lc "echo 'RETURN 1;' | mgconsole"; then
+              break
+            fi
+            if [ "$i" = "120" ]; then
+              docker logs "$memgraph" || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+          docker run -d \
+            --name "$backend" \
+            --network "$net" \
+            -p 127.0.0.1:9622:9622 \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$PWD:/work" \
+            -w /work \
+            -e MEMGRAPH_URI="$MEMGRAPH_URI" \
+            -e HOST=0.0.0.0 \
+            -e PORT=9622 \
+            -e LIGHTRAG_API_KEY="$REAL_BACKEND_AUTH_TOKEN" \
+            -e LIGHTRAG_KV_STORAGE=MemgraphKVStorage \
+            -e LIGHTRAG_VECTOR_STORAGE=MemgraphVectorDBStorage \
+            -e LIGHTRAG_GRAPH_STORAGE=MemgraphStorage \
+            -e LIGHTRAG_DOC_STATUS_STORAGE=MemgraphDocStatusStorage \
+            -e LLM_BINDING=openai \
+            -e LLM_BINDING_API_KEY=ci-disabled \
+            -e EMBEDDING_BINDING=openai \
+            -e EMBEDDING_BINDING_API_KEY=ci-disabled \
+            -e EMBEDDING_MODEL=text-embedding-3-small \
+            -e EMBEDDING_DIM=1536 \
+            -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
+            -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
+            python:3.12-bookworm \
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" "lightrag-hku[api]==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+
+      - name: Wait for real backend (keygen)
+        run: |
+          for i in $(seq 1 300); do
+            if curl -fsS \
+              -H "Authorization: Bearer $REAL_BACKEND_AUTH_TOKEN" \
+              "$REAL_BACKEND_URL/twin/api/health"; then
+              exit 0
+            fi
+            if [ $((i % 30)) = 0 ]; then
+              docker logs --tail 80 "$(cat .ci-keygen-backend)" || true
+            fi
+            sleep 2
+          done
+          docker logs --tail 200 "$(cat .ci-keygen-backend)" || true
+          exit 1
+
+      - name: Ensure persistent npm cache dir
+        run: mkdir -p "$HOME/.cache/twin-ci-npm"
+
+      - name: Run generated-key Playwright e2e
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --network host \
+            -e HOME=/tmp \
+            -e npm_config_cache=/tmp/npm \
+            -e CI=true \
+            -e REAL_BACKEND_URL="$REAL_BACKEND_URL" \
+            -e REAL_BACKEND_AUTH_TOKEN="$REAL_BACKEND_AUTH_TOKEN" \
+            -e REAL_BACKEND_FOLDER="$REAL_BACKEND_FOLDER" \
+            -e REAL_E2E_EXPECT_AUTH="$REAL_E2E_EXPECT_AUTH" \
+            -v "$PWD/lightrag_webui_twin:/work" \
+            -v "$HOME/.cache/twin-ci-npm:/tmp/npm" \
+            -w /work \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            sh -lc 'npm ci --prefer-offline --no-audit --no-fund && npm run test:e2e:keygen'
+
+      - name: Print backend log on failure (keygen)
+        if: failure()
+        run: |
+          if [ -f .ci-keygen-backend ]; then
+            docker logs --tail 300 "$(cat .ci-keygen-backend)" || true
+          fi
+
+      - name: Cleanup keygen backend containers
+        if: always()
+        run: |
+          if [ -f .ci-keygen-backend ] && [ -f .ci-keygen-memgraph ]; then
+            docker rm -f "$(cat .ci-keygen-backend)" "$(cat .ci-keygen-memgraph)" || true
+          fi
+          if [ -f .ci-keygen-network ]; then
+            docker network rm "$(cat .ci-keygen-network)" || true
+          fi

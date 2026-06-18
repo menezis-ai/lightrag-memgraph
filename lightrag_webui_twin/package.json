@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:e2e": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test",
     "test:e2e:real": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 VITE_USE_MSW=false VITE_API_BASE_URL=${REAL_BACKEND_URL:-http://127.0.0.1:9621} playwright test e2e/real-backend.spec.ts e2e/api-coverage-real.spec.ts",
+    "test:e2e:keygen": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 VITE_USE_MSW=false VITE_API_BASE_URL=${REAL_BACKEND_URL:-http://127.0.0.1:9622} playwright test e2e/api-coverage-generated-key.spec.ts",
     "test:e2e:ui": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test --ui",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
