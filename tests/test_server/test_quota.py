@@ -96,14 +96,14 @@ class TestVersionFieldCompat:
     def test_memgraph_3_9_0(self):
         idx = quota._index_rows(REAL_3_9_0)
         assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("252.97MiB")
-        assert quota._pick(idx, quota._LIMIT_KEYS) == quota._parse_size("7.82GiB")
+        assert quota._pick(idx, quota._RAM_LIMIT_KEYS) == quota._parse_size("7.82GiB")
         assert quota._pick(idx, quota._GRAPH_KEYS) == quota._parse_size("252.97MiB")
         assert quota._pick(idx, quota._VECTOR_KEYS) == 0  # "0B"
 
     def test_memgraph_3_10_1(self):
         idx = quota._index_rows(REAL_3_10_1)
         assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("409.72MiB")
-        assert quota._pick(idx, quota._LIMIT_KEYS) == quota._parse_size("2.00GiB")
+        assert quota._pick(idx, quota._RAM_LIMIT_KEYS) == quota._parse_size("2.00GiB")
         assert quota._pick(idx, quota._GRAPH_KEYS) == quota._parse_size("56.64MiB")
         assert quota._pick(idx, quota._VECTOR_KEYS) == quota._parse_size("29.68MiB")
 
@@ -145,86 +145,122 @@ class TestStatusMapping:
         assert quota._status_from(pct) == expected
 
 
-class TestSnapshot:
-    def _patch_storage(self, monkeypatch, indexed):
-        async def _fake():
-            return indexed
-        monkeypatch.setattr(quota, "_read_storage_info", _fake)
+def _patch_storage(monkeypatch, indexed):
+    async def _fake():
+        return indexed
+    monkeypatch.setattr(quota, "_read_storage_info", _fake)
 
-    async def test_3_10_real_numbers(self, monkeypatch):
+
+class TestSnapshotRamWall:
+    """Community (OVH) / no license → the headline binds on the RAM wall."""
+
+    async def test_3_10_community(self, monkeypatch):
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
-        self._patch_storage(monkeypatch, quota._index_rows(REAL_3_10_1))
+        monkeypatch.delenv("MEMGRAPH_BUDGET_ENFORCE", raising=False)
+        # REAL_3_10_1 has license "unlimited" → no license wall → RAM binds.
+        _patch_storage(monkeypatch, quota._index_rows(REAL_3_10_1))
         snap = await quota.snapshot()
-        assert snap["configured"] is True
+        assert snap["binding"] == "ram"
+        assert snap["budget_enforce"] == "reject"
         assert snap["used_bytes"] == quota._parse_size("409.72MiB")
         assert snap["limit_bytes"] == 2 * GIB
-        assert snap["used_basis"] == "tracked"
-        assert snap["limit_source"] == "memgraph"
+        assert snap["ram_basis"] == "tracked"
+        assert snap["license_limit_bytes"] is None  # "unlimited"
         assert snap["graph_bytes"] == quota._parse_size("56.64MiB")
         assert snap["vector_bytes"] == quota._parse_size("29.68MiB")
-        assert 0.19 < snap["used_pct"] < 0.21  # ~20%, NOT the 45% RSS would give
+        assert 0.19 < snap["used_pct"] < 0.21  # ~20% tracked, NOT 45% RSS
         assert snap["status"] == "ok"
 
-    async def test_3_9_real_numbers(self, monkeypatch):
+    async def test_3_9(self, monkeypatch):
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
-        self._patch_storage(monkeypatch, quota._index_rows(REAL_3_9_0))
+        _patch_storage(monkeypatch, quota._index_rows(REAL_3_9_0))
         snap = await quota.snapshot()
+        assert snap["binding"] == "ram"
         assert snap["used_bytes"] == quota._parse_size("252.97MiB")
         assert snap["limit_bytes"] == quota._parse_size("7.82GiB")
-        assert snap["limit_source"] == "memgraph"
-        assert snap["status"] == "ok"
 
-    async def test_env_fallback_when_memgraph_reports_no_limit(self, monkeypatch):
+    async def test_env_fallback_limit(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "1GiB")
-        # tracked present, but no allocation_limit field
-        self._patch_storage(monkeypatch, {"memory_tracked": int(0.9 * GIB)})
+        monkeypatch.setenv("MEMGRAPH_BUDGET_ENFORCE", "reject")
+        _patch_storage(monkeypatch, {"memory_tracked": int(0.9 * GIB)})
         snap = await quota.snapshot()
         assert snap["limit_bytes"] == GIB
-        assert snap["limit_source"] == "env"
+        assert snap["budget_enforce"] == "reject"
         assert snap["status"] == "warning"
+
+    async def test_budget_enforce_mode_is_normalized(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_BUDGET_ENFORCE", "  WARN  ")
+        assert quota.budget_enforce_mode() == "warn"
 
     async def test_rss_basis_when_only_rss(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "1GiB")
-        self._patch_storage(monkeypatch, {"memory_res": 100})
+        _patch_storage(monkeypatch, {"memory_res": 100})
         snap = await quota.snapshot()
-        assert snap["used_basis"] == "rss"
+        assert snap["ram_basis"] == "rss"
         assert snap["used_bytes"] == 100
 
-    async def test_no_limit_anywhere_is_unconfigured_ok(self, monkeypatch):
+    async def test_no_limit_anywhere(self, monkeypatch):
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
-        self._patch_storage(monkeypatch, {"memory_tracked": 1234})
+        _patch_storage(monkeypatch, {"memory_tracked": 1234})
         snap = await quota.snapshot()
         assert snap["configured"] is False
-        assert snap["limit_bytes"] is None
         assert snap["used_pct"] is None
         assert snap["status"] == "ok"
 
-    async def test_probe_failure_keeps_ok(self, monkeypatch):
+    async def test_probe_failure_fail_open(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "2GiB")
-        self._patch_storage(monkeypatch, {})  # fail-open → empty
+        _patch_storage(monkeypatch, {})
         snap = await quota.snapshot()
-        assert snap["used_bytes"] is None
-        assert snap["used_pct"] is None
+        assert snap["used_pct"] is None and snap["status"] == "ok"
+
+
+class TestSnapshotLicenseWall:
+    """Enterprise → the billed footprint (graph [+vec]) vs the license cap."""
+
+    # license binds: data ~98% of a 1 GiB license, RAM far below its 4 GiB.
+    ENT = {
+        "global_memory_tracked": int(1.1 * GIB),
+        "global_runtime_allocation_limit": 4 * GIB,
+        "global_license_allocation_limit": GIB,
+        "db_storage_memory_tracked": 800 * MIB,   # graph
+        "db_embedding_memory_tracked": 200 * MIB,  # vectors
+    }
+
+    async def test_graph_analytics_bills_graph_plus_vectors(self, monkeypatch):
+        monkeypatch.delenv("TWIN_MEMGRAPH_LICENSE_PLAN", raising=False)  # default
+        _patch_storage(monkeypatch, dict(self.ENT))
+        snap = await quota.snapshot()
+        assert snap["binding"] == "license"
+        assert snap["vectors_billed"] is True
+        assert snap["billed_bytes"] == 1000 * MIB  # graph + vectors
+        assert snap["license_limit_bytes"] == GIB
+        assert snap["used_bytes"] == 1000 * MIB  # headline = billed
+        assert snap["limit_bytes"] == GIB
+        assert snap["status"] == "warning"  # ~97.6%
+
+    async def test_ai_platform_excludes_vectors(self, monkeypatch):
+        monkeypatch.setenv("TWIN_MEMGRAPH_LICENSE_PLAN", "ai-platform")
+        _patch_storage(monkeypatch, dict(self.ENT))
+        snap = await quota.snapshot()
+        assert snap["vectors_billed"] is False
+        assert snap["billed_bytes"] == 800 * MIB  # graph only — vectors free
+        assert snap["billed_pct"] == 800 * MIB / GIB
+        # 800/1024 = 0.78 (ok) < ram 1.1/4 = 0.275 → license still binds but ok
         assert snap["status"] == "ok"
 
-    async def test_blocked(self, monkeypatch):
-        self._patch_storage(
-            monkeypatch,
-            {"memory_tracked": GIB + 1, "allocation_limit": GIB},
-        )
+    async def test_ram_binds_when_closer_than_license(self, monkeypatch):
+        monkeypatch.delenv("TWIN_MEMGRAPH_LICENSE_PLAN", raising=False)
+        _patch_storage(monkeypatch, {
+            "global_memory_tracked": int(3.5 * GIB),
+            "global_runtime_allocation_limit": 4 * GIB,  # ram 87.5%
+            "global_license_allocation_limit": 10 * GIB,
+            "db_storage_memory_tracked": 800 * MIB,
+            "db_embedding_memory_tracked": 200 * MIB,    # billed 1G/10G = 10%
+        })
         snap = await quota.snapshot()
-        assert snap["status"] == "blocked"
-        assert snap["used_pct"] >= 1.0
-
-    async def test_zero_limit_no_div_zero(self, monkeypatch):
-        self._patch_storage(
-            monkeypatch, {"memory_tracked": 100, "allocation_limit": 0}
-        )
-        # 0 from Memgraph isn't a real cap → falls through to env (none here)
-        monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
-        snap = await quota.snapshot()
-        assert snap["used_pct"] is None
-        assert snap["status"] == "ok"
+        assert snap["binding"] == "ram"
+        assert snap["used_bytes"] == int(3.5 * GIB)
+        assert snap["status"] == "warning"
 
 
 class TestEnforceDependency:
@@ -242,9 +278,21 @@ class TestEnforceDependency:
                 "status": "blocked",
                 "used_bytes": 2 * GIB + 1,
                 "limit_bytes": 2 * GIB,
+                "budget_enforce": "reject",
             }
         monkeypatch.setattr(quota, "snapshot", _snap)
         with pytest.raises(HTTPException) as exc:
             await quota.enforce_instance_quota()
         assert exc.value.status_code == 507
         assert "quota reached" in exc.value.detail and "GiB" in exc.value.detail
+
+    async def test_blocked_warn_mode_does_not_raise(self, monkeypatch):
+        async def _snap():
+            return {
+                "status": "blocked",
+                "used_bytes": 2 * GIB + 1,
+                "limit_bytes": 2 * GIB,
+                "budget_enforce": "warn",
+            }
+        monkeypatch.setattr(quota, "snapshot", _snap)
+        await quota.enforce_instance_quota()

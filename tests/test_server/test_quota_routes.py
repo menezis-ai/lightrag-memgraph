@@ -20,6 +20,7 @@ async def client_factory(monkeypatch):
     """Yields a builder that takes a status fixture and returns the client."""
     webui_router.reset_store()
     monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "2GiB")
+    monkeypatch.setenv("MEMGRAPH_BUDGET_ENFORCE", "reject")
     app = create_app()
 
     def _patch(status: str, used: int, limit: int) -> None:
@@ -31,6 +32,7 @@ async def client_factory(monkeypatch):
                 "used_pct": (used / limit) if limit else None,
                 "warn_threshold": quota.WARN_THRESHOLD,
                 "configured": True,
+                "budget_enforce": "reject",
             }
 
         monkeypatch.setattr(quota, "snapshot", _fake_snapshot)
@@ -55,6 +57,7 @@ class TestQuotaSnapshotEndpoint:
         assert body["limit_bytes"] == 2 * 1024 ** 3
         assert 0 < body["used_pct"] < 0.85
         assert body["configured"] is True
+        assert body["budget_enforce"] == "reject"
         assert body["warn_threshold"] == 0.85
 
     async def test_warning_state(self, client_factory):
@@ -132,14 +135,15 @@ class TestQuotaMiddlewareGate:
 
 class TestQuotaUnconfiguredBypass:
     async def test_no_env_var_yields_ok_and_no_gating(self, monkeypatch):
-        """Dev posture: MEMGRAPH_MEMORY_LIMIT unset → guard inert."""
+        """Dev posture: no Memgraph/env limit → guard inert."""
         webui_router.reset_store()
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
+        monkeypatch.delenv("MEMGRAPH_BUDGET_ENFORCE", raising=False)
 
-        async def _fake_probe():
-            return 100
+        async def _fake_storage_info():
+            return {"memory_tracked": 100}
 
-        monkeypatch.setattr(quota, "get_used_bytes", _fake_probe)
+        monkeypatch.setattr(quota, "_read_storage_info", _fake_storage_info)
         app = create_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

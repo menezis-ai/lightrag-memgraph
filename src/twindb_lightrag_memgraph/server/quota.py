@@ -52,6 +52,8 @@ WARN_THRESHOLD: Final[float] = 0.85
 BLOCK_THRESHOLD: Final[float] = 1.0
 
 _MEMGRAPH_LIMIT_ENV = "MEMGRAPH_MEMORY_LIMIT"
+_BUDGET_ENFORCE_ENV = "MEMGRAPH_BUDGET_ENFORCE"
+_BUDGET_REJECT = "reject"
 
 # Accept binary (KiB/MiB/GiB/TiB) and decimal (KB/MB/GB/TB) suffixes plus
 # the bare ``B``, with an optional decimal part. Case/whitespace insensitive.
@@ -76,13 +78,39 @@ _UNIT_FACTORS: Final[dict[str, int]] = {
 # between the two releases, hence both must be tried.
 _USED_KEYS: Final = ("global_memory_tracked", "memory_tracked")
 _USED_RSS_KEYS: Final = ("memory_res",)  # coarse last resort (process RSS)
-_LIMIT_KEYS: Final = ("global_runtime_allocation_limit", "allocation_limit")
+_RAM_LIMIT_KEYS: Final = ("global_runtime_allocation_limit", "allocation_limit")
+# The Enterprise license cap, billed on data. 3.10+ only; absent on 3.9 and
+# "unlimited" on Community (→ parsed to None, no license wall).
+_LICENSE_LIMIT_KEYS: Final = ("global_license_allocation_limit",)
 _GRAPH_KEYS: Final = ("db_storage_memory_tracked", "graph_memory_tracked")
 _VECTOR_KEYS: Final = (
     "db_embedding_memory_tracked",
     "vector_index_memory_tracked",
     "embeddings_memory_tracked",
 )
+
+# Which Memgraph Enterprise plan BNP is on — decides whether vector index
+# memory counts toward the *billed* footprint:
+#   - "graph-analytics" (default): graph + vectors are billed.
+#   - "ai-platform": only graph is billed; vector indexes are free.
+# (SHOW STORAGE INFO doesn't expose the plan, so it's operator-declared.)
+_LICENSE_PLAN_ENV = "TWIN_MEMGRAPH_LICENSE_PLAN"
+_AI_PLATFORM = "ai-platform"
+
+
+def _vectors_are_billed() -> bool:
+    return os.environ.get(_LICENSE_PLAN_ENV, "graph-analytics").strip().lower() != _AI_PLATFORM
+
+
+def budget_enforce_mode() -> str:
+    """Instance budget enforcement mode.
+
+    BNP production declares ``MEMGRAPH_BUDGET_ENFORCE=reject``. ``reject``
+    remains the default to preserve the existing 507 guard whenever an
+    instance limit is configured, while making the env contract explicit
+    in the quota payload.
+    """
+    return os.environ.get(_BUDGET_ENFORCE_ENV, _BUDGET_REJECT).strip().lower() or _BUDGET_REJECT
 
 
 def _parse_size(value: Any) -> int | None:
@@ -210,32 +238,60 @@ def _status_from(used_pct: float | None) -> str:
     return "ok"
 
 
+def _pct(used: int | None, limit: int | None) -> float | None:
+    if used is None or limit is None or limit <= 0:
+        return None
+    return used / limit
+
+
 async def snapshot() -> dict[str, Any]:
     """Full quota payload for ``GET /twin/api/quota`` and the 507 guard.
 
-    One Memgraph probe feeds every field. ``used_basis`` /
-    ``limit_source`` make the measurement legible (tracked-vs-rss,
-    memgraph-vs-env) — the whole point is to never hand-wave what is
-    being measured.
+    Two distinct walls are computed from one probe and the binding one
+    becomes the headline (``used_bytes`` / ``limit_bytes`` / ``status``):
+
+    - **license** — the *billed* footprint (graph [+ vectors, unless the
+      AI-Platform plan]) vs ``global_license_allocation_limit``. This is
+      what Memgraph charges for and what triggers read-only writes on
+      Enterprise once exceeded. Absent on Community (license "unlimited").
+    - **ram** — Memgraph's tracked allocation vs the effective
+      ``--memory-limit`` (``global_runtime_allocation_limit``). Binds on
+      Community, or when ``--memory-limit`` is lower than the license.
+
+    Every field is surfaced so the operator can see *which* wall binds
+    and what the data actually weighs — never a hand-waved number.
     """
     indexed = await _read_storage_info()
 
-    used = _pick(indexed, _USED_KEYS)
-    used_basis: str | None = "tracked" if used is not None else None
-    if used is None:
-        used = _pick(indexed, _USED_RSS_KEYS)
-        used_basis = "rss" if used is not None else None
+    graph = _pick(indexed, _GRAPH_KEYS)
+    vector = _pick(indexed, _VECTOR_KEYS)
+    vectors_billed = _vectors_are_billed()
 
-    limit = _pick(indexed, _LIMIT_KEYS)
-    limit_source: str | None = "memgraph" if limit is not None else None
-    if limit is None:
-        limit = get_limit_bytes()
-        limit_source = "env" if limit is not None else None
+    # --- RAM wall: tracked allocation vs the effective allocation limit ---
+    ram_used = _pick(indexed, _USED_KEYS)
+    ram_basis: str | None = "tracked" if ram_used is not None else None
+    if ram_used is None:
+        ram_used = _pick(indexed, _USED_RSS_KEYS)
+        ram_basis = "rss" if ram_used is not None else None
+    ram_limit = _pick(indexed, _RAM_LIMIT_KEYS)
+    if ram_limit is None:
+        ram_limit = get_limit_bytes()  # MEMGRAPH_MEMORY_LIMIT env fallback
+    ram_pct = _pct(ram_used, ram_limit)
 
-    if used is None or limit is None or limit <= 0:
-        used_pct = None
+    # --- License wall (what Memgraph bills): data vs the license cap ---
+    license_limit = _pick(indexed, _LICENSE_LIMIT_KEYS)
+    billed: int | None = None
+    if graph is not None:
+        billed = graph + (vector if (vectors_billed and vector is not None) else 0)
+    billed_pct = _pct(billed, license_limit)
+
+    # Headline = the binding wall (closest to its cap) → the banner alerts
+    # on whichever constraint will actually block writes first.
+    if billed_pct is not None and (ram_pct is None or billed_pct >= ram_pct):
+        used, limit, binding = billed, license_limit, "license"
     else:
-        used_pct = used / limit
+        used, limit, binding = ram_used, ram_limit, "ram"
+    used_pct = _pct(used, limit)
 
     return {
         "used_bytes": used,
@@ -244,10 +300,21 @@ async def snapshot() -> dict[str, Any]:
         "status": _status_from(used_pct),
         "warn_threshold": WARN_THRESHOLD,
         "configured": limit is not None,
-        "graph_bytes": _pick(indexed, _GRAPH_KEYS),
-        "vector_bytes": _pick(indexed, _VECTOR_KEYS),
-        "used_basis": used_basis,
-        "limit_source": limit_source,
+        "budget_enforce": budget_enforce_mode(),
+        "binding": binding,
+        # data footprint (the billed components)
+        "graph_bytes": graph,
+        "vector_bytes": vector,
+        "vectors_billed": vectors_billed,
+        # license / billed wall — the cost number
+        "billed_bytes": billed,
+        "license_limit_bytes": license_limit,
+        "billed_pct": billed_pct,
+        # RAM wall (--memory-limit; binds on Community or when RAM < license)
+        "ram_used_bytes": ram_used,
+        "ram_limit_bytes": ram_limit,
+        "ram_pct": ram_pct,
+        "ram_basis": ram_basis,
     }
 
 
@@ -270,6 +337,8 @@ async def enforce_instance_quota() -> None:
     naming the absolute usage in GiB so the operator knows how much to free.
     """
     snap = await snapshot()
+    if snap.get("budget_enforce") != _BUDGET_REJECT:
+        return
     if snap["status"] != "blocked":
         return
     used = _format_gib(snap.get("used_bytes"))
@@ -286,6 +355,7 @@ async def enforce_instance_quota() -> None:
 __all__ = [
     "BLOCK_THRESHOLD",
     "WARN_THRESHOLD",
+    "budget_enforce_mode",
     "enforce_instance_quota",
     "get_limit_bytes",
     "get_used_bytes",
