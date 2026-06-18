@@ -1,12 +1,9 @@
 /* Imports must come first per PostCSS. Order matters: tokens define vars
- * legacy.css references; both load before Tailwind so utility classes can
- * still win via specificity at use sites. */
+ * app.css references; both load before Tailwind so utility classes can
+ * still win via specificity at use sites. app.css consolidates the former
+ * legacy/overrides/polish/prototype/maquette/app cascade into one file —
+ * its internal section order IS that cascade, do not reorder. */
 @import './styles/tokens.css';
-@import './styles/legacy.css';
-@import './styles/overrides.css';
-@import './styles/polish.css';
-@import './styles/prototype.css';
-@import './styles/maquette.css';
 @import './styles/app.css';
 
 @tailwind base;
