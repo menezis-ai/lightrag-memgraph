@@ -118,7 +118,10 @@ jobs:
     # beyond `bun install`). Runs in parallel with the heavier WebUI
     # jobs so a style/error regression fails fast without waiting for
     # vitest / build / e2e.
-    runs-on: [self-hosted, docker]
+    # Doctrine: lint = light job → low/lint pool, NOT docker. (Was
+    # [self-hosted, docker]: mislabelled, landed on docker CTs and tripped
+    # setup-bun's unzip dependency.)
+    runs-on: [self-hosted, low, lint]
     defaults:
       run:
         working-directory: lightrag_webui_twin
