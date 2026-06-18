@@ -166,12 +166,14 @@ describe('SettingsTab — API', () => {
     renderWith(new QueryClient());
     await userEvent.click(screen.getByTestId('settings-rail-api'));
     const blurb = screen.getByTestId('settings-api-blurb');
-    // The new copy names the only path that honors tag_filter, the
-    // 422 contract on the retrieval paths, and the canonical graph
-    // relation used to apply it.
+    // Keep the section scannable: one compact contract strip, not card soup.
+    expect(blurb.textContent).toContain('Contract');
+    expect(blurb.textContent).toContain('/twin/api/*');
+    expect(blurb.textContent).toContain('tag_filter');
     expect(blurb.textContent).toContain('/twin/api/query/data');
     expect(blurb.textContent).toContain('TAGGED_WITH');
     expect(blurb.textContent).toContain('422');
+    expect(blurb.querySelectorAll('dt')).toHaveLength(0);
     // No more "gateway transparently injects tag_filter / visibility".
     expect(blurb.textContent).not.toMatch(/transparently injects/i);
     expect(blurb.textContent).not.toMatch(/visibility/i);

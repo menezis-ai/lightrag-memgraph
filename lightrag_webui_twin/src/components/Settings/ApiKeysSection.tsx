@@ -215,8 +215,13 @@ export function ApiKeysSection({
                   data-testid={`settings-api-keys-row-${k.id}`}
                 >
                   <td>{k.name}</td>
-                  <td className="mono" data-testid={`settings-api-keys-prefix-${k.id}`}>
-                    {k.prefix}
+                  <td
+                    className="settings-api-keys-prefix"
+                    data-testid={`settings-api-keys-prefix-${k.id}`}
+                  >
+                    <span className="mono settings-api-keys-prefix-value">
+                      {k.prefix}
+                    </span>
                   </td>
                   <td title={new Date(k.created_at).toISOString()}>
                     {formatMs(k.created_at)}
@@ -281,50 +286,55 @@ export function ApiKeysSection({
 
       {createOpen && (
         <div
-          className="modal-backdrop"
+          className="modal-backdrop api-key-modal-backdrop"
           role="dialog"
           aria-modal="true"
           aria-labelledby="api-key-create-title"
           data-testid="settings-api-keys-create-backdrop"
         >
-          <div className="modal modal-small">
-            <h4 id="api-key-create-title">Create API key</h4>
-            <p className="muted">
-              Give the key a memorable name. You will see the full value
-              once, then only its prefix.
-            </p>
-            <label className="field-label" htmlFor="api-key-name">
-              Name
-            </label>
-            <input
-              id="api-key-name"
-              type="text"
-              value={newName}
-              onChange={(e) => {
-                setNewName(e.target.value);
-                if (createError) setCreateError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void submitCreate();
-                }
-              }}
-              placeholder="ingestion-agent"
-              maxLength={120}
-              autoFocus
-              data-testid="settings-api-keys-create-name"
-            />
-            {createError && (
-              <div
-                className="inline-error"
-                role="alert"
-                data-testid="settings-api-keys-create-error"
-              >
-                {createError}
+          <div className="modal modal-small api-key-modal">
+            <div className="modal-header api-key-modal-header">
+              <div>
+                <h2 id="api-key-create-title">Create API key</h2>
+                <p className="ctx">
+                  You will see the full value once, then only its prefix.
+                </p>
               </div>
-            )}
-            <div className="modal-actions">
+            </div>
+            <div className="modal-body api-key-modal-body">
+              <label className="field-label" htmlFor="api-key-name">
+                Name
+              </label>
+              <input
+                id="api-key-name"
+                type="text"
+                value={newName}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  if (createError) setCreateError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void submitCreate();
+                  }
+                }}
+                placeholder="ingestion-agent"
+                maxLength={120}
+                autoFocus
+                data-testid="settings-api-keys-create-name"
+              />
+              {createError && (
+                <div
+                  className="inline-error"
+                  role="alert"
+                  data-testid="settings-api-keys-create-error"
+                >
+                  {createError}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer api-key-modal-footer">
               <button
                 type="button"
                 className="ghost-btn"
@@ -350,32 +360,46 @@ export function ApiKeysSection({
 
       {revealed && (
         <div
-          className="modal-backdrop"
+          className="modal-backdrop api-key-modal-backdrop"
           role="dialog"
           aria-modal="true"
           aria-labelledby="api-key-reveal-title"
           data-testid="settings-api-keys-reveal-backdrop"
         >
-          <div className="modal modal-small">
-            <h4 id="api-key-reveal-title">
-              <Icon name="lock" size={14} /> Your new API key
-            </h4>
-            <p className="warning-banner" role="alert">
-              <strong>This value will not be shown again.</strong> Copy it
-              now and store it somewhere safe.
-            </p>
-            <label className="field-label">Name</label>
-            <div className="mono" data-testid="settings-api-keys-reveal-name">
-              {revealed.name}
+          <div className="modal modal-small api-key-modal api-key-reveal-modal">
+            <div className="modal-header api-key-modal-header">
+              <div>
+                <h2 id="api-key-reveal-title">
+                  <Icon name="lock" size={14} /> Your new API key
+                </h2>
+                <p className="ctx">Copy the secret before closing this dialog.</p>
+              </div>
             </div>
-            <label className="field-label">Full value</label>
-            <div
-              className="mono settings-api-keys-reveal-value"
-              data-testid="settings-api-keys-reveal-value"
-            >
-              {revealed.full_value}
+            <div className="modal-body api-key-modal-body">
+              <p className="warning-banner" role="alert">
+                <strong>This value will not be shown again.</strong> Copy it
+                now and store it somewhere safe.
+              </p>
+              <div className="api-key-reveal-field">
+                <label className="field-label">Name</label>
+                <div
+                  className="api-key-reveal-name"
+                  data-testid="settings-api-keys-reveal-name"
+                >
+                  {revealed.name}
+                </div>
+              </div>
+              <div className="api-key-reveal-field">
+                <label className="field-label">Full value</label>
+                <div
+                  className="mono settings-api-keys-reveal-value"
+                  data-testid="settings-api-keys-reveal-value"
+                >
+                  {revealed.full_value}
+                </div>
+              </div>
             </div>
-            <div className="modal-actions">
+            <div className="modal-footer api-key-modal-footer">
               <button
                 type="button"
                 className="ghost-btn"

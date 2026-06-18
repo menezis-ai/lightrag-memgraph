@@ -719,7 +719,7 @@ function makeE2eDocument(patch: Partial<Document>, index: number): Document {
     created_at: patch.created_at ?? '2026-06-02T00:00:00Z',
     updated_at: patch.updated_at ?? '2026-06-02T00:00:00Z',
     error_msg: patch.error_msg ?? null,
-    metadata: patch.metadata ?? { classification: 'internal' },
+    metadata: patch.metadata ?? {},
     type: patch.type ?? 'file',
     tags: patch.tags ?? [],
     folder: patch.folder ?? 'default',
@@ -871,7 +871,7 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const form = await request.formData();
     const file = form.get('file');
-    const classification = String(form.get('classification') || 'internal');
+    const classification = form.get('classification');
     const ragEngine = String(form.get('rag_engine') || 'lightrag');
     const name =
       file instanceof File && file.name
@@ -907,7 +907,7 @@ export const handlers = [
         metadata: {
           mime: file instanceof File ? file.type : 'text/plain',
           uploader: 'e2e',
-          classification,
+          ...(classification ? { classification: String(classification) } : {}),
           rag_engine: ragEngine,
         },
         type: 'file',

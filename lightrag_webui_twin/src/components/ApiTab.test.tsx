@@ -49,16 +49,14 @@ describe('ApiTab — rendering', () => {
     expect(screen.getByRole('button', { name: /Authorize$/ })).toBeInTheDocument();
   });
 
-  it('banner reflects the audit-C8 honest copy (no transparent-injection claim)', () => {
+  it('does not duplicate the Settings API contract inside the explorer', () => {
     render(<ApiTab {...defaultProps()} />);
-    const banner = screen.getByTestId('apitab-banner');
-    expect(banner.textContent).toContain('/twin/api/*');
-    expect(banner.textContent).toContain('/twin/api/query/data');
+    expect(screen.queryByTestId('apitab-banner')).toBeNull();
     // The previous lie must be gone — operator should not read
     // "the gateway transparently injects tag_filter / visibility"
     // anywhere in this surface.
-    expect(banner.textContent).not.toMatch(/transparently injects/i);
-    expect(banner.textContent).not.toMatch(/visibility/i);
+    expect(screen.queryByText(/transparently injects/i)).toBeNull();
+    expect(screen.queryByText(/visibility/i)).toBeNull();
   });
 });
 

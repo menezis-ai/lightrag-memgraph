@@ -128,14 +128,21 @@ function ApiSection() {
   return (
     <div className="settings-section settings-api" data-testid="settings-api">
       <h3>API</h3>
-      <p className="muted" data-testid="settings-api-blurb">
-        Twin overlay extends the LightRAG OpenAPI surface with{' '}
-        <code>/twin/api/*</code> routes. <code>tag_filter</code> is honored
-        server-side only on <code>/twin/api/query/data</code> via{' '}
-        <code>TAGGED_WITH</code>. <code>/twin/api/query</code> and{' '}
-        <code>/twin/api/query/stream</code> reject <code>tag_filter</code>{' '}
-        with 422. Native LightRAG routes pass through unchanged.
-      </p>
+      <div className="settings-api-brief" data-testid="settings-api-blurb">
+        <span className="settings-api-brief-label">Contract</span>
+        <span className="settings-api-brief-facts">
+          <span>
+            <code>/twin/api/*</code> routes
+          </span>
+          <span>
+            <code>tag_filter</code> only on <code>/twin/api/query/data</code> via{' '}
+            <code>TAGGED_WITH</code>
+          </span>
+          <span>
+            <code>/query</code> rejects it with <code>422</code>
+          </span>
+        </span>
+      </div>
       {isLoading && (
         <div className="muted" data-testid="settings-api-loading">
           Loading OpenAPI surface…

@@ -127,6 +127,7 @@ export function DocumentsTab({
   const [sourceFilters, setSourceFilters] = useUrlArrayParam('source', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
+  const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(0);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
 
   const searchAndTagFiltered = useMemo(() => {
@@ -179,6 +180,7 @@ export function DocumentsTab({
     if (t && !tagFilters.includes(t)) setTagFilters([...tagFilters, t]);
     setTagAddVal('');
     setTagAddOpen(false);
+    setActiveTagSuggestionIndex(0);
   };
 
   const tagSuggestions = useMemo(() => {
@@ -189,6 +191,11 @@ export function DocumentsTab({
       .sort(tagSuggestionComparator(v))
       .slice(0, 5);
   }, [tagAddVal, tagFilters, tagCatalog]);
+  const activeTagSuggestion =
+    tagSuggestions[
+      Math.min(activeTagSuggestionIndex, Math.max(tagSuggestions.length - 1, 0))
+    ];
+  const tagListboxId = 'documents-tag-suggestions';
 
   const clickTagOnRow = (e: React.MouseEvent, tag: string) => {
     e.stopPropagation();
@@ -453,13 +460,16 @@ export function DocumentsTab({
             </button>
           ))}
         </div>
-        <input
-          className="search-source"
-          placeholder="Search source name…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search source"
-        />
+        <div className="search-source-field">
+          <Icon name="search" size={13} color="var(--color-text-tertiary)" />
+          <input
+            className="search-source"
+            placeholder="Search source name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search source"
+          />
+        </div>
       </div>
 
       {sourceFilters.length > 0 && (
@@ -496,43 +506,67 @@ export function DocumentsTab({
             <div className="autocomplete-anchor">
               <input
                 autoFocus
+                className="tag-filter-input"
                 value={tagAddVal}
-                onChange={(e) => setTagAddVal(e.target.value)}
+                onChange={(e) => {
+                  setTagAddVal(e.target.value);
+                  setActiveTagSuggestionIndex(0);
+                }}
                 onBlur={() => setTimeout(() => setTagAddOpen(false), 150)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && tagSuggestions[0])
-                    addTagFilter(tagSuggestions[0].tag);
-                  if (e.key === 'Escape') setTagAddOpen(false);
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActiveTagSuggestionIndex((i) =>
+                      tagSuggestions.length === 0
+                        ? 0
+                        : (i + 1) % tagSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActiveTagSuggestionIndex((i) =>
+                      tagSuggestions.length === 0
+                        ? 0
+                        : (i - 1 + tagSuggestions.length) %
+                          tagSuggestions.length,
+                    );
+                    return;
+                  }
+                  if (e.key === 'Enter' && activeTagSuggestion) {
+                    e.preventDefault();
+                    addTagFilter(activeTagSuggestion.tag);
+                  }
+                  if (e.key === 'Escape') {
+                    setTagAddOpen(false);
+                    setActiveTagSuggestionIndex(0);
+                  }
                 }}
                 placeholder="tag…"
                 aria-label="Add tag filter"
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '11px',
-                  padding: '3px 8px',
-                  border: '0.5px solid var(--twin-accent)',
-                  borderRadius: '999px',
-                  width: 110,
-                  background: 'var(--color-background-primary)',
-                }}
+                aria-autocomplete="list"
+                aria-controls={tagListboxId}
+                aria-expanded={tagSuggestions.length > 0}
               />
               {tagSuggestions.length > 0 && (
                 <div
+                  id={tagListboxId}
                   className="autocomplete floating-autocomplete"
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    marginTop: 4,
-                    minWidth: 200,
-                    zIndex: 30,
-                  }}
+                  role="listbox"
+                  aria-label="Tag suggestions"
                 >
                   {tagSuggestions.map((s, i) => (
-                    <div
+                    <button
+                      type="button"
                       key={s.tag}
-                      className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
-                      onMouseDown={() => addTagFilter(s.tag)}
+                      className={`autocomplete-row${
+                        i === activeTagSuggestionIndex ? ' focus' : ''
+                      }`}
+                      role="option"
+                      aria-selected={i === activeTagSuggestionIndex}
+                      onMouseEnter={() => setActiveTagSuggestionIndex(i)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => addTagFilter(s.tag)}
                       data-testid={`docs-tag-sugg-${s.tag}`}
                     >
                       <div className="row1">
@@ -540,7 +574,7 @@ export function DocumentsTab({
                         <span className="badge">{s.category}</span>
                       </div>
                       <div className="def">{s.def}</div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -596,31 +630,26 @@ export function DocumentsTab({
         <div className="docs-table">
           <div className="docs-row header has-select">
             <div className="cell-select">
-              <input
-                type="checkbox"
-                className="row-check"
-                checked={allFilteredSelected}
-                ref={(el) => {
-                  if (el)
-                    el.indeterminate =
-                      !allFilteredSelected && someFilteredSelected;
-                }}
-                onChange={toggleAll}
-                aria-label="Select all visible"
-              />
+              <label className="row-check-target">
+                <input
+                  type="checkbox"
+                  className="row-check"
+                  checked={allFilteredSelected}
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        !allFilteredSelected && someFilteredSelected;
+                  }}
+                  onChange={toggleAll}
+                  aria-label="Select all visible"
+                />
+              </label>
             </div>
             <div>Source</div>
             <div>Indexed preview</div>
             <div>
               Tags{' '}
-              <span
-                style={{
-                  textTransform: 'none',
-                  color: 'var(--color-text-tertiary)',
-                  letterSpacing: 0,
-                  fontSize: 9.5,
-                }}
-              >
+              <span className="docs-table-subhead">
                 — Twin
               </span>
             </div>
@@ -631,12 +660,7 @@ export function DocumentsTab({
           </div>
           {filtered.length === 0 && (
             <div
-              style={{
-                padding: 30,
-                textAlign: 'center',
-                color: 'var(--color-text-tertiary)',
-                fontSize: 12,
-              }}
+              className="docs-empty"
               data-testid="docs-empty"
             >
               No documents match the current filters.
@@ -692,18 +716,20 @@ function DocRow({
       data-testid={`docs-row-${doc.doc_id}`}
     >
       <div className="cell-select" onClick={(e) => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          className="row-check"
-          checked={checked}
-          disabled={isOptimisticUpload}
-          onChange={() => onToggle(doc.doc_id)}
-          aria-label={
-            isOptimisticUpload
-              ? `${doc.file_path} is waiting for ingestion`
-              : `Select ${doc.file_path}`
-          }
-        />
+        <label className="row-check-target">
+          <input
+            type="checkbox"
+            className="row-check"
+            checked={checked}
+            disabled={isOptimisticUpload}
+            onChange={() => onToggle(doc.doc_id)}
+            aria-label={
+              isOptimisticUpload
+                ? `${doc.file_path} is waiting for ingestion`
+                : `Select ${doc.file_path}`
+            }
+          />
+        </label>
       </div>
       <div className="cell-source">
         <SourceIcon type={doc.type} size={14} />
@@ -758,11 +784,6 @@ function DocRow({
           <div
             className="summary-error"
             data-testid={`docs-row-error-${doc.doc_id}`}
-            style={{
-              marginTop: 4,
-              fontSize: 11,
-              color: 'var(--twin-red-vivid)',
-            }}
           >
             Indexing failed: {doc.error_msg}
           </div>

@@ -101,6 +101,12 @@ const paths: Record<string, ReactNode> = {
       <path d="M9 12l2 2l4 -4" />
     </>
   ),
+  shield: (
+    <>
+      <path d="M12 3l7 4v5c0 5 -3.5 8 -7 9c-3.5 -1 -7 -4 -7 -9V7l7 -4z" />
+      <path d="M12 8v8" />
+    </>
+  ),
   'alert-triangle': (
     <>
       <path d="M12 9v4" />

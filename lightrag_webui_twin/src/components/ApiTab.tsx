@@ -72,15 +72,6 @@ export function ApiTab({ apiVersion, groups, baseUrl }: ApiTabProps) {
             Providing API for LightRAG core, Web UI and Ollama Model Emulation
           </span>
         </div>
-        <div className="swagger-banner">
-          <Icon name="info-circle" size={14} color="var(--twin-accent)" />
-          <span data-testid="apitab-banner">
-            Twin overlay adds <code>/twin/api/*</code> routes.{' '}
-            <code>tag_filter</code> is honored server-side only on{' '}
-            <code>/twin/api/query/data</code>. Native LightRAG routes pass
-            through unchanged.
-          </span>
-        </div>
         <div className="swagger-servers">
           <span className="swagger-server-current">
             <Icon name="world" size={12} /> {currentBase || '(no server)'}

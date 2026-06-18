@@ -1,12 +1,5 @@
 /**
- * ClassPill — sensitivity-class badge rendered next to a document's name.
- *
- * Visual contract (CSS lives in `polish.css`):
- *   span.class-pill.class-{c1|c2|c3|c4|unknown}  · text = class_id
- *
- * Tonal scale — restrained for C1 (routine), amber for C2 (frequent in a
- * bank), red for C3, alarm-red for C4. UNKNOWN uses a striped amber pattern
- * to signal "needs reviewer attention" without escalating to red.
+ * ClassPill — MIP sensitivity shield rendered next to a document's name.
  *
  * The pill is SILENT when the document carries no `classification` field
  * (or the legacy string `"internal"` / `"public"` — those don't deserve a
@@ -18,9 +11,12 @@
 import {
   getClassId,
   getClassName,
+  getMipDisplayName,
+  getMipTone,
   isStructured,
   type ClassificationValue,
 } from '../types/classification';
+import { Icon } from './Icon';
 
 export interface ClassPillProps {
   cls: ClassificationValue;
@@ -35,19 +31,27 @@ export function ClassPill({ cls, docId }: ClassPillProps) {
   if (!isStructured(cls)) return null;
 
   const id = getClassId(cls);
-  const label = getClassName(cls);
-  const klass = `class-pill class-${String(id).toLowerCase()}`;
+  const tone = getMipTone(id);
+  if (tone === 'unclassified') return null;
+  const displayName = getMipDisplayName(id);
+  const rawLabel = getClassName(cls);
+  const label = rawLabel && rawLabel !== id ? `${displayName} · ${rawLabel}` : displayName;
+  const klass = `class-pill class-${tone}`;
   const setDate = cls.set_date ? ` · applied ${cls.set_date.slice(0, 10)}` : '';
 
   return (
     <span
       className={klass}
       title={`${label}${setDate}`}
+      tabIndex={0}
       aria-label={`Classification: ${label}`}
       data-testid={docId ? `class-pill-${docId}` : 'class-pill'}
       data-class-id={id}
+      data-class-tone={tone}
+      data-tooltip={`${label}${setDate}`}
     >
-      {id}
+      <Icon name="shield" size={15} strokeWidth={1.8} />
+      <span className="class-pill-label">{displayName}</span>
     </span>
   );
 }

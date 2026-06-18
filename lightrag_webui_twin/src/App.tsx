@@ -534,7 +534,7 @@ function AppShell() {
       metadata: {
         size_bytes: upload.file.size,
         upload_state: 'pending',
-        classification: upload.classification ?? 'internal',
+        ...(upload.classification ? { classification: upload.classification } : {}),
         rag_engine: upload.ragEngine ?? 'lightrag',
       },
       type: 'file',
@@ -623,7 +623,7 @@ function AppShell() {
         const opts = action.fileOptions[index];
         return {
           file,
-          classification: opts?.classification ?? 'internal',
+          classification: opts?.classification,
           ragEngine: opts?.ragEngine ?? 'lightrag',
         };
       },
@@ -1277,7 +1277,6 @@ function AppShell() {
                 <PendingDocsSection
                   docs={pendingDocs}
                   actor={auth.user?.email ?? 'anonymous'}
-                  defaultOpen
                   onReadSource={(d) => setReadSourceDoc(d)}
                   onToast={(kind, title, sub) =>
                     pushToast({ kind, title, sub })
@@ -1403,7 +1402,6 @@ function AppShell() {
               categories={tagCategoryList}
               currentUser={CURRENT_USER}
               folderLabel={kbName || folder}
-              defaultPendingOpen
               onApprove={onTagApprove}
               onCommit={onTagCommit}
               onNavigate={onNavigate}

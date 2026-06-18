@@ -116,14 +116,14 @@ describe('AddSourceModal — Linked sources (Coming soon)', () => {
 });
 
 describe('AddSourceModal — files', () => {
-  it('renders per-file classification and RAG engine controls', () => {
+  it('renders per-file MIP and RAG engine controls with no MIP by default', () => {
     render(
       <AddSourceModal {...defaultProps()} initialFiles={[sampleUploaded]} />,
     );
 
     expect(
       screen.getByLabelText('Classification for oracle-config-guide.pdf'),
-    ).toHaveValue('internal');
+    ).toHaveValue('');
     expect(
       screen.getByTestId('addsource-rag-lightrag-oracle-config-guide.pdf'),
     ).toHaveClass('active');
@@ -252,27 +252,26 @@ describe('AddSourceModal — submit & close', () => {
     expect(action.fileOptions).toEqual([
       {
         name: 'oracle-config-guide.pdf',
-        classification: 'internal',
         ragEngine: 'lightrag',
       },
     ]);
     expect(p.onClose).toHaveBeenCalled();
   });
 
-  it('submits the selected per-file classification', async () => {
+  it('submits the selected per-file MIP classification', async () => {
     const p = defaultProps();
     render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
 
     await userEvent.selectOptions(
       screen.getByLabelText('Classification for oracle-config-guide.pdf'),
-      'restricted',
+      'confidential',
     );
     await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
 
     expect(p.onSubmit.mock.calls[0][0].fileOptions).toEqual([
       {
         name: 'oracle-config-guide.pdf',
-        classification: 'restricted',
+        classification: 'confidential',
         ragEngine: 'lightrag',
       },
     ]);

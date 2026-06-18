@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import {
   getClassId,
   getClassName,
+  getMipDisplayName,
+  getMipTone,
   isAbove,
   isAboveInternal,
   isStructured,
@@ -50,8 +52,11 @@ describe('getClassId', () => {
   it('passes through a legacy string', () => {
     expect(getClassId('internal')).toBe('internal');
   });
-  it('returns UNKNOWN for undefined', () => {
-    expect(getClassId(undefined)).toBe('UNKNOWN');
+  it('returns UNCLASSIFIED for undefined', () => {
+    expect(getClassId(undefined)).toBe('UNCLASSIFIED');
+  });
+  it('returns UNCLASSIFIED for a structured payload with null class_id', () => {
+    expect(getClassId(mkCls({ class_id: null }))).toBe('UNCLASSIFIED');
   });
 });
 
@@ -67,6 +72,11 @@ describe('getClassName', () => {
   it('falls back to class_id when both names are missing', () => {
     expect(getClassName(mkCls({ class_name: null, raw_name: null }))).toBe('C2');
   });
+  it('falls back to unclassified when structured class_id is null', () => {
+    expect(
+      getClassName(mkCls({ class_id: null, class_name: null, raw_name: null })),
+    ).toBe('unclassified');
+  });
   it('returns the legacy string as-is', () => {
     expect(getClassName('restricted')).toBe('restricted');
   });
@@ -75,19 +85,43 @@ describe('getClassName', () => {
   });
 });
 
-describe('isAbove (C1-C4 ladder)', () => {
-  it('C3 outranks C2', () => {
+describe('MIP display mapping', () => {
+  it('maps legacy C ids to the new business names', () => {
+    expect(getMipTone('C1')).toBe('public');
+    expect(getMipTone('C2')).toBe('internal');
+    expect(getMipTone('C3')).toBe('confidential');
+    expect(getMipTone('C4')).toBe('secret');
+    expect(getMipDisplayName('C2')).toBe('Internal');
+  });
+
+  it('keeps the new MIP names as first-class ids', () => {
+    expect(getMipTone('Private')).toBe('private');
+    expect(getMipDisplayName('Secret')).toBe('Secret');
+  });
+});
+
+describe('isAbove (MIP ladder)', () => {
+  it('Confidential outranks Internal', () => {
+    expect(isAbove('Confidential', 'Internal')).toBe(true);
     expect(isAbove('C3', 'C2')).toBe(true);
   });
-  it('C2 does not outrank C2', () => {
+  it('Internal does not outrank Internal', () => {
+    expect(isAbove('Internal', 'Internal')).toBe(false);
     expect(isAbove('C2', 'C2')).toBe(false);
   });
-  it('C1 does not outrank C2', () => {
+  it('Public does not outrank Internal', () => {
+    expect(isAbove('Public', 'Internal')).toBe(false);
     expect(isAbove('C1', 'C2')).toBe(false);
+  });
+  it('Private outranks Internal', () => {
+    expect(isAbove('Private', 'Internal')).toBe(true);
   });
   it('unknown class is treated as above (fail-closed)', () => {
     expect(isAbove('UNKNOWN', 'C2')).toBe(true);
     expect(isAbove('lol', 'C2')).toBe(true);
+  });
+  it('missing classification is not treated as a MIP class', () => {
+    expect(isAbove(undefined, 'Internal')).toBe(false);
   });
   it('throws when threshold is not on the ladder', () => {
     expect(() => isAbove('C2', 'BogusClass')).toThrow(/threshold/);
@@ -95,11 +129,16 @@ describe('isAbove (C1-C4 ladder)', () => {
 });
 
 describe('isAboveInternal', () => {
-  it('returns true for C3+ structured', () => {
+  it('returns true for Confidential/Secret/Private structured', () => {
+    expect(isAboveInternal(mkCls({ class_id: 'Confidential' }))).toBe(true);
+    expect(isAboveInternal(mkCls({ class_id: 'Secret' }))).toBe(true);
+    expect(isAboveInternal(mkCls({ class_id: 'Private' }))).toBe(true);
     expect(isAboveInternal(mkCls({ class_id: 'C3' }))).toBe(true);
     expect(isAboveInternal(mkCls({ class_id: 'C4' }))).toBe(true);
   });
-  it('returns false for C1/C2 structured', () => {
+  it('returns false for Public/Internal structured', () => {
+    expect(isAboveInternal(mkCls({ class_id: 'Public' }))).toBe(false);
+    expect(isAboveInternal(mkCls({ class_id: 'Internal' }))).toBe(false);
     expect(isAboveInternal(mkCls({ class_id: 'C1' }))).toBe(false);
     expect(isAboveInternal(mkCls({ class_id: 'C2' }))).toBe(false);
   });
@@ -112,8 +151,8 @@ describe('isAboveInternal', () => {
     expect(isAboveInternal('restricted')).toBe(true);
     expect(isAboveInternal('confidential')).toBe(true);
   });
-  it('returns true for undefined (fail-closed)', () => {
-    expect(isAboveInternal(undefined)).toBe(true);
+  it('returns false for undefined because no MIP classification is applied', () => {
+    expect(isAboveInternal(undefined)).toBe(false);
   });
   it('returns true for UNKNOWN structured (fail-closed)', () => {
     expect(isAboveInternal(mkCls({ class_id: 'UNKNOWN' }))).toBe(true);

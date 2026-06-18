@@ -32,29 +32,48 @@ describe('ClassPill — silence', () => {
     const { container } = render(<ClassPill cls="internal" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('renders nothing when structured payload has no MIP class id', () => {
+    const { container } = render(<ClassPill cls={mkCls({ class_id: null })} />);
+    expect(container.firstChild).toBeNull();
+  });
 });
 
 describe('ClassPill — structured classification', () => {
-  it('renders C2 class with the class-c2 variant', () => {
+  it('renders legacy C2 as an Internal shield', () => {
     render(<ClassPill cls={mkCls({ class_id: 'C2' })} docId="d1" />);
     const pill = screen.getByTestId('class-pill-d1');
     expect(pill).toBeInTheDocument();
-    expect(pill.textContent).toBe('C2');
-    expect(pill.className).toContain('class-c2');
+    expect(pill.textContent).toBe('Internal');
+    expect(pill.className).toContain('class-internal');
     expect(pill.getAttribute('data-class-id')).toBe('C2');
+    expect(pill.getAttribute('data-class-tone')).toBe('internal');
+    expect(pill.querySelector('[data-icon="shield"]')).toBeInTheDocument();
   });
 
-  it('renders C3 class with the class-c3 variant', () => {
-    render(<ClassPill cls={mkCls({ class_id: 'C3', class_name: 'C3 Strict' })} docId="d2" />);
+  it('renders Confidential class with the class-confidential variant', () => {
+    render(
+      <ClassPill
+        cls={mkCls({ class_id: 'Confidential', class_name: 'Confidential' })}
+        docId="d2"
+      />,
+    );
     const pill = screen.getByTestId('class-pill-d2');
-    expect(pill.textContent).toBe('C3');
-    expect(pill.className).toContain('class-c3');
+    expect(pill.textContent).toBe('Confidential');
+    expect(pill.className).toContain('class-confidential');
   });
 
-  it('renders UNKNOWN class with the class-unknown variant (striped pattern)', () => {
+  it('renders Private class with the class-private variant', () => {
+    render(<ClassPill cls={mkCls({ class_id: 'Private' })} docId="d-private" />);
+    const pill = screen.getByTestId('class-pill-d-private');
+    expect(pill.textContent).toBe('Private');
+    expect(pill.className).toContain('class-private');
+  });
+
+  it('renders UNKNOWN class with the class-unknown variant', () => {
     render(<ClassPill cls={mkCls({ class_id: 'UNKNOWN' })} docId="d3" />);
     const pill = screen.getByTestId('class-pill-d3');
-    expect(pill.textContent).toBe('UNKNOWN');
+    expect(pill.textContent).toBe('Unknown');
     expect(pill.className).toContain('class-unknown');
   });
 

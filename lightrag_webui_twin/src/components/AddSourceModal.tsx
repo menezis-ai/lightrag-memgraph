@@ -29,6 +29,8 @@ const SUPPORTED_EXTENSIONS = new Set([
   'json',
   'log',
   'md',
+  'eml',
+  'msg',
   'pdf',
   'ppt',
   'pptx',
@@ -47,21 +49,28 @@ const SUPPORTED_MIME_TYPES = new Set([
   'application/msword',
   'application/pdf',
   'application/rtf',
+  'application/vnd.ms-outlook',
   'application/vnd.ms-excel',
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/xml',
+  'message/rfc822',
 ]);
 
 export type FileUploadState = 'uploading' | 'uploaded' | 'error';
-export type UploadClassification = 'public' | 'internal' | 'restricted';
+export type UploadClassification =
+  | 'public'
+  | 'internal'
+  | 'confidential'
+  | 'secret'
+  | 'private';
 export type UploadRagEngine = 'lightrag' | 'rag15';
 
 export interface FileUploadOptions {
   name: string;
-  classification: UploadClassification;
+  classification?: UploadClassification;
   ragEngine: UploadRagEngine;
 }
 
@@ -104,8 +113,8 @@ function displayUploadedOverTotal(f: FileUpload): string {
   return `${(f.uploaded ?? 0).toFixed(1)} / ${f.size} MB`;
 }
 
-function fileClassification(f: FileUpload): UploadClassification {
-  return f.classification ?? 'internal';
+function fileClassification(f: FileUpload): UploadClassification | '' {
+  return f.classification ?? '';
 }
 
 function fileRagEngine(f: FileUpload): UploadRagEngine {
@@ -206,7 +215,6 @@ export function AddSourceModal({
         state: 'uploading',
         progress: 0,
         uploaded: 0,
-        classification: 'internal',
         ragEngine: 'lightrag',
       };
     });
@@ -283,11 +291,14 @@ export function AddSourceModal({
       .filter((f): f is File => f !== undefined);
     const fileOptions = files
       .filter((f) => f.state === 'uploaded')
-      .map((f) => ({
-        name: f.name,
-        classification: fileClassification(f),
-        ragEngine: fileRagEngine(f),
-      }));
+      .map((f) => {
+        const classification = fileClassification(f);
+        return {
+          name: f.name,
+          ...(classification ? { classification } : {}),
+          ragEngine: fileRagEngine(f),
+        };
+      });
     onSubmit({ files, rawFiles, fileOptions, urls, tags, readyCount: ready });
     onClose();
   };
@@ -451,16 +462,21 @@ export function AddSourceModal({
                               value={fileClassification(f)}
                               onChange={(e) =>
                                 updateFileOptions(f.name, {
-                                  classification: e.target
-                                    .value as UploadClassification,
+                                  classification:
+                                    e.target.value === ''
+                                      ? undefined
+                                      : (e.target.value as UploadClassification),
                                 })
                               }
                               aria-label={`Classification for ${f.name}`}
                               data-testid={`addsource-classification-${f.name}`}
                             >
+                              <option value="">no MIP</option>
                               <option value="public">public</option>
                               <option value="internal">internal</option>
-                              <option value="restricted">restricted</option>
+                              <option value="confidential">confidential</option>
+                              <option value="secret">secret</option>
+                              <option value="private">private</option>
                             </select>
                           </label>
                           <div

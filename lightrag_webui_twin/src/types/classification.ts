@@ -20,14 +20,28 @@
  */
 
 /**
- * Tenant-mapped class identifier (e.g. C1 / C2 / C3 / C4 ladder).
+ * Tenant-mapped class identifier.
+ *
+ * New MIP mappings use the business names below. The legacy C1-C4 ladder is
+ * still accepted because older fixtures and persisted documents may carry it:
+ * C1=Public, C2=Internal, C3=Confidential, C4=Secret.
  * `UNKNOWN` is returned when the MIP label has no mapping in the tenant
  * table — fail-closed, downstream treats it as above any ceiling.
  */
-export type ClassId = 'C1' | 'C2' | 'C3' | 'C4' | 'UNKNOWN';
+export type ClassId =
+  | 'Public'
+  | 'Internal'
+  | 'Confidential'
+  | 'Secret'
+  | 'Private'
+  | 'C1'
+  | 'C2'
+  | 'C3'
+  | 'C4'
+  | 'UNKNOWN';
 
 /** Format the source file was detected in. */
-export type ClassificationSource = 'ooxml' | 'ole' | 'pdf' | 'unknown';
+export type ClassificationSource = 'ooxml' | 'ole' | 'pdf' | 'email' | 'unknown';
 
 /**
  * Reason emitted when `class_id` resolution failed. `null` means a clean
@@ -48,7 +62,7 @@ export type ClassificationReason =
  * Full MIP classification payload, matches Python `ClassificationResult.as_dict()`.
  */
 export interface ClassificationResult {
-  class_id: ClassId;
+  class_id: ClassId | null;
   /** Human-readable label name (e.g. "C2 Confidentiel"). */
   class_name: string | null;
   /** Normalized lowercase braceless GUID. */
@@ -83,13 +97,13 @@ export function isStructured(
 
 /**
  * Resolve a single class identifier from either shape, defaulting to
- * `'UNKNOWN'` when no classification is present. Use this when you need
+ * `'UNCLASSIFIED'` when no classification is present. Use this when you need
  * a single string for display or comparison.
  */
 export function getClassId(cls: ClassificationValue): ClassId | string {
-  if (cls === undefined || cls === null) return 'UNKNOWN';
+  if (cls === undefined || cls === null) return 'UNCLASSIFIED';
   if (typeof cls === 'string') return cls;
-  return cls.class_id;
+  return cls.class_id ?? 'UNCLASSIFIED';
 }
 
 /**
@@ -99,24 +113,74 @@ export function getClassId(cls: ClassificationValue): ClassId | string {
 export function getClassName(cls: ClassificationValue): string {
   if (cls === undefined || cls === null) return 'unclassified';
   if (typeof cls === 'string') return cls;
-  return cls.class_name ?? cls.raw_name ?? cls.class_id;
+  return cls.class_name ?? cls.raw_name ?? cls.class_id ?? 'unclassified';
 }
 
-const CLASS_LADDER: readonly string[] = ['C1', 'C2', 'C3', 'C4'];
+export type MipTone =
+  | 'public'
+  | 'internal'
+  | 'confidential'
+  | 'secret'
+  | 'private'
+  | 'unknown'
+  | 'unclassified';
+
+const CLASS_ORDER: Record<string, number> = {
+  public: 0,
+  internal: 1,
+  private: 2,
+  confidential: 3,
+  secret: 4,
+};
+
+const LEGACY_TO_TONE: Record<string, MipTone> = {
+  c1: 'public',
+  c2: 'internal',
+  c3: 'confidential',
+  c4: 'secret',
+};
+
+const MIP_LABELS: Record<MipTone, string> = {
+  public: 'Public',
+  internal: 'Internal',
+  confidential: 'Confidential',
+  secret: 'Secret',
+  private: 'Private',
+  unknown: 'Unknown',
+  unclassified: 'Unclassified',
+};
+
+export function getMipTone(classId: string | null | undefined): MipTone {
+  if (classId === undefined || classId === null || classId === '') {
+    return 'unclassified';
+  }
+  const normalized = String(classId).trim().toLowerCase();
+  return LEGACY_TO_TONE[normalized] ?? (
+    normalized in MIP_LABELS ? (normalized as MipTone) : 'unknown'
+  );
+}
+
+export function getMipDisplayName(classId: string | null | undefined): string {
+  return MIP_LABELS[getMipTone(classId)];
+}
 
 /**
  * Returns true when `class_id` strictly outranks `threshold` on the tenant
  * ladder. Unknown / non-ladder ids are treated as ABOVE — fail-closed.
+ * Missing ids are not a MIP classification and are treated as not above.
  * Mirrors the Python `is_above()` semantics in `classification.py`.
  */
-export function isAbove(classId: string, threshold: string): boolean {
-  const ci = CLASS_LADDER.indexOf(classId);
-  const ti = CLASS_LADDER.indexOf(threshold);
-  if (ci === -1) return true;
-  if (ti === -1) {
-    throw new Error(`threshold "${threshold}" not in CLASS_LADDER`);
+export function isAbove(classId: string | null | undefined, threshold: string): boolean {
+  const classTone = getMipTone(classId);
+  const thresholdTone = getMipTone(threshold);
+  if (classTone === 'unclassified') return false;
+  const classRank = CLASS_ORDER[classTone];
+  const thresholdRank = CLASS_ORDER[thresholdTone];
+  if (classRank === undefined) return true;
+  if (thresholdRank === undefined) {
+    throw new Error(`threshold "${threshold}" not in MIP classification ladder`);
   }
-  return ci > ti;
+  return classRank > thresholdRank;
 }
 
 /**
@@ -128,12 +192,11 @@ export function isAbove(classId: string, threshold: string): boolean {
  */
 export function isAboveInternal(cls: ClassificationValue): boolean {
   if (isStructured(cls)) {
-    return isAbove(cls.class_id, 'C2');
+    return isAbove(cls.class_id, 'Internal');
   }
   if (typeof cls === 'string') {
     const c = cls.toLowerCase();
     return c !== 'internal' && c !== 'public';
   }
-  // Missing classification → treat as above (fail-closed).
-  return true;
+  return false;
 }
