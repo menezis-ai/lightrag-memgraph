@@ -1,0 +1,2838 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- runtime inlined at end of body -->
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300;400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>(function(){var s=document.createElement('style');s.textContent="*{box-sizing:border-box}html,body{margin:0;padding:0;background:#EDE9DF}@keyframes tgRise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}@keyframes tgPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}";document.head.appendChild(s);})();</script>
+  <script>(function(){var st=document.createElement('style');st.textContent=`
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; padding:0; }
+    body{ font-family:'Hanken Grotesk', system-ui, sans-serif; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; background:#F1EEE6; transition:background .35s ease; }
+    :root{
+      --canvas:#F1EEE6; --surface:#FFFFFF; --surface-warm:#FBFAF5; --panel:#F7F5EF;
+      --border:#E6E1D6; --border-soft:#EDE9DF; --border-strong:#D8D2C5;
+      --ink:#222A33; --ink-soft:#46505A; --muted:#7C8590; --faint:#A0A6AE;
+      --blue:#2D5A8E; --blue-bright:#3F8EBF; --blue-soft:#EAF1F7; --blue-soft-bd:#CCE0EF;
+      --green:#3D7A4E; --green-bright:#569C6A; --green-soft:#E9F2EB; --green-soft-bd:#CBE3D1;
+      --amber:#946312; --amber-vivid:#C7891C; --amber-soft:#FAF1DA; --amber-soft-bd:#EDDFBA;
+      --red:#B23A2F; --red-soft:#FBECE9; --red-soft-bd:#F1D4CE;
+      --bar-bg:rgba(255,255,255,.86); --code-bg:#23252B; --node-glow:rgba(255,255,255,.9); --edge-pill:rgba(255,255,255,.82); --node-ring:rgba(255,255,255,.7); --edge-dim:#D2CCBE;
+      --serif:'Spectral',Georgia,serif; --sans:'Hanken Grotesk',system-ui,sans-serif; --mono:'IBM Plex Mono',monospace;
+      --sh-sm:0 1px 2px rgba(34,42,51,.05),0 1px 1px rgba(34,42,51,.04);
+      --sh-md:0 4px 16px rgba(34,42,51,.07),0 1px 3px rgba(34,42,51,.05);
+      --sh-lg:0 18px 48px rgba(34,42,51,.16),0 4px 12px rgba(34,42,51,.07);
+    }
+    [data-theme="dark"]{
+      --canvas:#14181E; --surface:#1C212A; --surface-warm:#20262F; --panel:#262D38;
+      --border:#2F3742; --border-soft:#262D37; --border-strong:#3C4552;
+      --ink:#E9EBEF; --ink-soft:#B6BEC9; --muted:#8892A0; --faint:#6B7682;
+      --blue:#62A2D2; --blue-bright:#83BAE2; --blue-soft:#1A2937; --blue-soft-bd:#2E4459;
+      --green:#7CC08F; --green-bright:#93D0A3; --green-soft:#16241F; --green-soft-bd:#2A4533;
+      --amber:#DAA957; --amber-vivid:#E6B569; --amber-soft:#262014; --amber-soft-bd:#473C23;
+      --red:#E48D80; --red-soft:#2A1A18; --red-soft-bd:#4A302C;
+      --bar-bg:rgba(20,24,30,.82); --code-bg:#10141A; --node-glow:rgba(0,0,0,.55); --edge-pill:rgba(28,33,42,.9); --node-ring:rgba(255,255,255,.14); --edge-dim:#3A434F;
+      --sh-sm:0 1px 2px rgba(0,0,0,.45);
+      --sh-md:0 6px 20px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);
+      --sh-lg:0 20px 52px rgba(0,0,0,.62),0 6px 14px rgba(0,0,0,.5);
+    }
+    ::selection{ background:#CCE0EF; color:#1B2733; }
+    [data-theme="dark"] ::selection{ background:#2E4459; color:#E9EBEF; }
+    *::-webkit-scrollbar{ width:10px; height:10px; }
+    *::-webkit-scrollbar-thumb{ background:#D7D1C4; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+    [data-theme="dark"] *::-webkit-scrollbar-thumb{ background:#3C4552; }
+    *::-webkit-scrollbar-track{ background:transparent; }
+    @keyframes twfade{ from{ transform:translateY(6px);} to{ transform:translateY(0);} }
+    @keyframes twpop{ from{ opacity:0; transform:translateY(-6px) scale(.985);} to{ opacity:1; transform:translateY(0) scale(1);} }
+  `;document.head.appendChild(st);})();</script>
+</helmet>
+
+<div data-tg="root" style="position:relative; width:100%; height:100vh; overflow:hidden; background:#EDE9DF; font-family:'Hanken Grotesk',system-ui,sans-serif; user-select:none;">
+
+  <template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#2D5A8E"/><g transform="translate(34 30)"><path d="M0 4C0 1.8 1.8 0 4 0h12v40H4c-2.2 0-4-1.8-4-4V4Z" fill="#fff"/><path d="M32 4c0-2.2-1.8-4-4-4H16v40h12c2.2 0 4-1.8 4-4V4Z" fill="#fff" fill-opacity=".55"/></g></svg></template>
+
+  <!-- ===== LIVE STAGE (embedded app) ===== -->
+  <div data-tg="stage" style="position:absolute; inset:0; transform-origin:0 0; transition:transform 1.05s cubic-bezier(.66,.01,.22,1); will-change:transform;">
+    <div data-theme="{{ theme }}" style="--canvas:#F1EEE6; --surface:#FFFFFF; --surface-warm:#FBFAF5; --panel:#F7F5EF; --border:#E6E1D6; --border-soft:#EDE9DF; --border-strong:#D8D2C5; --ink:#222A33; --ink-soft:#46505A; --muted:#7C8590; --faint:#A0A6AE; --blue:#2D5A8E; --blue-bright:#3F8EBF; --blue-soft:#EAF1F7; --blue-soft-bd:#CCE0EF; --green:#3D7A4E; --green-bright:#569C6A; --green-soft:#E9F2EB; --green-soft-bd:#CBE3D1; --amber:#946312; --amber-vivid:#C7891C; --amber-soft:#FAF1DA; --amber-soft-bd:#EDDFBA; --red:#B23A2F; --red-soft:#FBECE9; --red-soft-bd:#F1D4CE; --bar-bg:rgba(255,255,255,.86); --code-bg:#23252B; --node-glow:rgba(255,255,255,.9); --edge-pill:rgba(255,255,255,.82); --node-ring:rgba(255,255,255,.7); --edge-dim:#D2CCBE; --serif:'Spectral',Georgia,serif; --sans:'Hanken Grotesk',system-ui,sans-serif; --mono:'IBM Plex Mono',monospace; --sh-sm:0 1px 2px rgba(34,42,51,.05),0 1px 1px rgba(34,42,51,.04); --sh-md:0 4px 16px rgba(34,42,51,.07),0 1px 3px rgba(34,42,51,.05); --sh-lg:0 18px 48px rgba(34,42,51,.16),0 4px 12px rgba(34,42,51,.07); font-family:var(--sans); color:var(--ink); background:var(--canvas); min-height:100vh; display:flex; flex-direction:column; position:relative; line-height:1.45;">
+
+  <!-- ============ TOP BAR ============ -->
+  <header style="position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:18px; height:62px; padding:0 22px; background:var(--bar-bg); backdrop-filter:saturate(1.4) blur(10px); border-bottom:1px solid var(--border); box-shadow:0 1px 0 rgba(34,42,51,.02);">
+    <div style="display:flex; align-items:center; gap:11px; min-width:230px;">
+      <div style="width:32px; height:32px; border-radius:9px; background:linear-gradient(150deg,var(--blue) 10%,var(--blue-bright) 120%); display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(45,90,142,.35), inset 0 1px 0 rgba(255,255,255,.25);">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.7 4.7 5 5.5 5H11v14H5.5C4.7 19 4 18.3 4 17.5V6.5Z" fill="#fff" fill-opacity=".95"/><path d="M20 6.5C20 5.7 19.3 5 18.5 5H13v14h5.5c.8 0 1.5-.7 1.5-1.5V6.5Z" fill="#fff" fill-opacity=".6"/></svg>
+      </div>
+      <div style="display:flex; align-items:baseline; gap:9px;">
+        <span style="font-weight:700; font-size:16.5px; letter-spacing:-.01em;"><span style="color:var(--ink);">Twin</span><span style="color:var(--blue);">RAG</span></span>
+        <span style="width:1px; height:16px; background:var(--border-strong); display:inline-block;"></span>
+        <span style="font-family:var(--mono); font-size:11.5px; color:var(--muted); letter-spacing:.01em;">{{ folderLabel }}</span>
+      </div>
+    </div>
+
+    <nav style="display:flex; align-items:stretch; gap:2px; height:100%; flex:1; justify-content:center;">
+      <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="6">
+        <button onClick="{{ n.sel }}" style="position:relative; border:none; background:none; cursor:pointer; font-family:var(--sans); font-size:13.5px; font-weight:600; padding:0 15px; display:flex; align-items:center; height:100%;">
+          <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}"><span style="color:var(--blue);">{{ n.name }}</span></sc-if>
+          <sc-if value="{{ n.inactive }}" hint-placeholder-val="{{ true }}"><span style="color:var(--ink-soft);">{{ n.name }}</span></sc-if>
+          <sc-if value="{{ n.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute; left:13px; right:13px; bottom:0; height:2.5px; border-radius:2px 2px 0 0; background:var(--blue);"></span></sc-if>
+        </button>
+      </sc-for>
+    </nav>
+
+    <div style="display:flex; align-items:center; gap:9px; min-width:230px; justify-content:flex-end;">
+      <div style="position:relative;">
+        <button onClick="{{ toggleFolder }}" style="display:flex; align-items:center; gap:8px; height:34px; padding:0 11px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-family:var(--mono); font-size:12px; color:var(--ink-soft); box-shadow:var(--sh-sm);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5C3 6.7 3.7 6 4.5 6h4l1.7 2H19.5c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-10Z"/></svg>
+          <span>default</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <sc-if value="{{ folderOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; right:0; top:42px; width:300px; background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--sh-lg); padding:7px; animation:twpop .16s ease; z-index:60;">
+            <div style="font-family:var(--mono); font-size:10px; letter-spacing:.12em; color:var(--faint); padding:8px 10px 6px;">FOLDERS</div>
+            <button onClick="{{ closeMenus }}" style="width:100%; text-align:left; border:none; background:var(--blue-soft); border-radius:9px; padding:11px 12px; cursor:pointer; margin-bottom:3px;">
+              <div style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:13.5px; color:var(--ink);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.7"><path d="M3 7.5C3 6.7 3.7 6 4.5 6h4l1.7 2H19.5c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-10Z"/></svg> default <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.2"><path d="M5 12l5 5L20 7"/></svg></div>
+              <div style="font-size:12px; color:var(--muted); margin:3px 0 0 22px;">Default folder · <span style="font-family:var(--mono); font-size:11px;">Internal</span> · 4 sources</div>
+            </button>
+            <button onClick="{{ closeMenus }}" style="width:100%; text-align:left; border:none; background:none; border-radius:9px; padding:11px 12px; cursor:pointer;">
+              <div style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:13.5px; color:var(--ink);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M3 7.5C3 6.7 3.7 6 4.5 6h4l1.7 2H19.5c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-10Z"/></svg> sandbox</div>
+              <div style="font-size:12px; color:var(--muted); margin:3px 0 0 22px;">Sandbox · <span style="font-family:var(--mono); font-size:11px;">Private</span> · 0 sources</div>
+            </button>
+            <div style="border-top:1px solid var(--border-soft); margin-top:5px; padding:9px 10px 4px;"><a style="font-size:12.5px; color:var(--blue); font-weight:600; cursor:pointer; text-decoration:none;">Manage folders →</a></div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="position:relative;">
+        <button onClick="{{ toggleNotif }}" style="position:relative; width:36px; height:34px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; box-shadow:var(--sh-sm);">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ink-soft)" stroke-width="1.6"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+          <span style="position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px; border-radius:9px; background:var(--blue); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:2px solid var(--surface);">3</span>
+        </button>
+        <sc-if value="{{ notifOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; right:0; top:42px; width:368px; background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--sh-lg); animation:twpop .16s ease; z-index:60; overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 15px; border-bottom:1px solid var(--border-soft);">
+              <div style="display:flex; align-items:baseline; gap:9px;"><span style="font-weight:700; font-size:14px;">Notifications</span><span style="font-size:11.5px; color:var(--muted);">3 unread · 5 total</span></div>
+              <a style="font-size:12px; color:var(--blue); font-weight:600; cursor:pointer;">Mark all read</a>
+            </div>
+            <div style="max-height:340px; overflow:auto;">
+              <sc-for list="{{ notifications }}" as="nf" hint-placeholder-count="4">
+                <div style="display:flex; gap:11px; padding:12px 15px; border-bottom:1px solid var(--border-soft); background:{{ nf.bg }};">
+                  <div style="margin-top:1px;">{{ nf.icon }}</div>
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; color:var(--ink); line-height:1.4;">{{ nf.title }}</div>
+                    <div style="font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:3px;">{{ nf.meta }}</div>
+                    <div style="font-size:11px; color:var(--faint); margin-top:3px;">{{ nf.time }}</div>
+                  </div>
+                  <span style="width:7px; height:7px; border-radius:50%; background:{{ nf.dot }}; margin-top:6px; flex-shrink:0;"></span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:11px 15px; background:var(--surface-warm);">
+              <a style="font-size:12px; color:var(--blue); font-weight:600; cursor:pointer;">View full activity log →</a>
+              <a style="font-size:12px; color:var(--muted); cursor:pointer;">Clear all</a>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <button onClick="{{ toggleTheme }}" title="Toggle theme" style="width:36px; height:34px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; box-shadow:var(--sh-sm);">
+        <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-soft)" stroke-width="1.6"><path d="M21 12.5A8.5 8.5 0 1 1 11.5 3a6.5 6.5 0 0 0 9.5 9.5Z"/></svg></sc-if>
+        <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--amber-vivid)" stroke-width="1.7"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.5 1.5M17.9 17.9l1.5 1.5M2.5 12h2M19.5 12h2M4.6 19.4l1.5-1.5M17.9 6.1l1.5-1.5"/></svg></sc-if>
+      </button>
+      <div style="width:34px; height:34px; border-radius:50%; background:linear-gradient(150deg,var(--green-bright),var(--green)); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:12.5px; box-shadow:var(--sh-sm); cursor:pointer;">LO</div>
+    </div>
+  </header>
+
+  <!-- ============ MAIN ============ -->
+  <main style="flex:1; position:relative;">
+
+    <!-- ===== DOCUMENTS ===== -->
+    <sc-if value="{{ isDocuments }}" hint-placeholder-val="{{ true }}">
+    <div data-screen-label="Documents" style="max-width:1380px; margin:0 auto; padding:30px 28px 64px; animation:twfade .25s ease;">
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px;">
+        <div>
+          <div style="font-family:var(--mono); font-size:11px; letter-spacing:.13em; color:var(--blue-bright); margin-bottom:7px;">KNOWLEDGE BASE</div>
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:30px; letter-spacing:-.01em; margin:0; color:var(--ink);">Document management</h1>
+          <p style="margin:6px 0 0; font-size:13.5px; color:var(--muted);">Ingest, review and curate the sources behind every answer.</p>
+        </div>
+        <div style="display:flex; gap:9px;">
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 14px; border:1px solid var(--border-strong); background:var(--surface); border-radius:9px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:13px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h10"/></svg> Pipeline</button>
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 14px; border:1px solid var(--red-soft-bd); background:var(--red-soft); border-radius:9px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:13px; color:var(--red); box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9a8 8 0 0 1 13-3l3 3M20 4v5h-5"/><path d="M20 15a8 8 0 0 1-13 3l-3-3M4 20v-5h5"/></svg> Re-process failed <span style="background:var(--red); color:#fff; border-radius:9px; min-width:17px; height:17px; padding:0 4px; font-size:10.5px; display:inline-flex; align-items:center; justify-content:center;">1</span></button>
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 15px; border:none; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); border-radius:9px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:13px; color:#fff; box-shadow:0 3px 10px rgba(45,90,142,.3);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg> Add source</button>
+        </div>
+      </div>
+
+      <section data-tour="review" style="background:var(--amber-soft); border:1px solid var(--amber-soft-bd); border-radius:14px; padding:16px 18px 18px; margin-bottom:24px; box-shadow:var(--sh-sm);">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="width:24px; height:24px; border-radius:7px; background:var(--surface); display:flex; align-items:center; justify-content:center; box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--amber-vivid)" stroke-width="1.9"><path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+            <span style="font-weight:700; font-size:14px; color:var(--ink);">To be validated by your reviewer</span>
+            <span style="font-size:13px; color:var(--amber);">3 documents awaiting your sign-off</span>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px;">
+          <sc-for list="{{ reviewCards }}" as="c" hint-placeholder-count="3">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px; box-shadow:var(--sh-sm); display:flex; flex-direction:column;">
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:9px;">
+                <div style="display:flex; align-items:flex-start; gap:8px; min-width:0;">
+                  <span style="margin-top:1px; flex-shrink:0;">{{ c.icon }}</span>
+                  <span style="font-weight:600; font-size:13px; color:var(--ink); word-break:break-word; line-height:1.35; font-family:var(--mono);">{{ c.title }}</span>
+                </div>
+                <span>{{ c.badge }}</span>
+              </div>
+              <p style="font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin:0 0 12px;">{{ c.desc }}</p>
+              <div style="font-size:11.5px; color:var(--muted); margin-bottom:13px; line-height:1.55;">{{ c.meta }}</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:auto;">
+                <button style="display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--ink-soft);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="2.6"/></svg> Read source</button>
+                <button style="display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--ink-soft);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg> {{ c.editLabel }}</button>
+                <button style="display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--blue-soft-bd); background:var(--blue-soft); border-radius:7px; cursor:pointer; font-family:var(--sans); font-weight:700; font-size:12px; color:var(--blue);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L20 7"/></svg> {{ c.approveLabel }}</button>
+                <button style="display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--red-soft-bd); background:var(--surface); border-radius:7px; cursor:pointer; font-family:var(--sans); font-weight:700; font-size:12px; color:var(--red);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg> {{ c.rejectLabel }}</button>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <section style="background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--sh-md); overflow:hidden;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid var(--border-soft);">
+          <div style="display:flex; align-items:center; gap:13px; flex-wrap:wrap;">
+            <span style="font-family:var(--serif); font-weight:600; font-size:16px; color:var(--ink);">Uploaded</span>
+            <div style="display:flex; gap:6px;">
+              <sc-for list="{{ docFilters }}" as="f" hint-placeholder-count="5">
+                <button onClick="{{ f.sel }}" style="height:28px; padding:0 11px; border:1px solid {{ f.bd }}; background:{{ f.bg }}; border-radius:20px; cursor:pointer; font-family:var(--sans); font-weight:600; font-size:12px; color:{{ f.color }};">{{ f.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); min-width:230px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+            <span style="font-size:13px; color:var(--faint);">Search source name…</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid var(--border-soft); background:var(--surface-warm);">
+          <span style="font-size:12px; color:var(--muted);">Filter by tag</span>
+          <span style="font-family:var(--mono); font-size:11px; color:var(--faint);">— Twin</span>
+          <button style="display:flex; align-items:center; gap:5px; border:1px dashed var(--border-strong); background:none; border-radius:16px; padding:3px 10px; cursor:pointer; font-size:12px; font-weight:600; color:var(--blue);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add tag</button>
+        </div>
+        <div>
+          <div style="display:grid; grid-template-columns:34px 1.7fr 2.4fr 1fr 0.9fr 0.6fr 0.8fr; gap:14px; padding:11px 18px; border-bottom:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; color:var(--muted);">
+            <span></span><span>SOURCE</span><span>INDEXED PREVIEW</span><span>TAGS</span><span>STATUS</span><span>CHUNKS</span><span>UPDATED</span>
+          </div>
+          <sc-for list="{{ docRows }}" as="r" hint-placeholder-count="4">
+            <div style="display:grid; grid-template-columns:34px 1.7fr 2.4fr 1fr 0.9fr 0.6fr 0.8fr; gap:14px; align-items:center; padding:13px 18px; border-bottom:1px solid var(--border-soft);">
+              <span style="width:16px; height:16px; border:1.5px solid var(--border-strong); border-radius:4px;"></span>
+              <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                <span style="flex-shrink:0; display:flex;">{{ r.icon }}</span>
+                <span style="font-size:13px; font-weight:600; color:{{ r.nameColor }}; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ r.name }}</span>
+                <span style="display:flex;">{{ r.code }}</span>
+              </div>
+              <div style="font-size:12.5px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.preview }}</div>
+              <div style="display:flex; gap:5px; flex-wrap:wrap;">{{ r.tags }}</div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="width:7px; height:7px; border-radius:50%; background:{{ r.statusColor }};"></span><span style="font-size:12.5px; color:var(--ink-soft);">{{ r.status }}</span></div>
+              <span style="font-size:13px; font-family:var(--mono); color:{{ r.chunkColor }};">{{ r.chunks }}</span>
+              <span style="font-size:12px; color:var(--muted);">{{ r.updated }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+    </div>
+    </sc-if>
+
+    <!-- ===== TAGS ===== -->
+    <sc-if value="{{ isTags }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Tags" style="max-width:1440px; margin:0 auto; padding:30px 28px 56px; animation:twfade .25s ease;">
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px;">
+        <div>
+          <div style="font-family:var(--mono); font-size:11px; letter-spacing:.13em; color:var(--blue-bright); margin-bottom:7px;">GOVERNANCE</div>
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:30px; letter-spacing:-.01em; margin:0; color:var(--ink);">Tag catalog</h1>
+          <p style="margin:6px 0 0; font-size:13.5px; color:var(--muted);">19 active tags · 2 pending requests · folder <span style="font-family:var(--mono); font-size:12px; background:var(--panel); border:1px solid var(--border); border-radius:5px; padding:1px 6px;">default</span></p>
+        </div>
+        <div style="display:flex; gap:9px;">
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:9px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg> Download template</button>
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:9px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M12 21V9m0 0 4 4m-4-4-4 4"/><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/></svg> Import categories</button>
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:9px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Export catalog</button>
+          <button style="display:flex; align-items:center; gap:7px; height:38px; padding:0 15px; border:none; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); border-radius:9px; cursor:pointer; font-weight:600; font-size:12.5px; color:#fff; box-shadow:0 3px 10px rgba(45,90,142,.3);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg> Request new tag</button>
+        </div>
+      </div>
+
+      <section style="background:var(--amber-soft); border:1px solid var(--amber-soft-bd); border-radius:14px; padding:16px 18px 18px; margin-bottom:22px; box-shadow:var(--sh-sm);">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+          <span style="width:24px; height:24px; border-radius:7px; background:var(--surface); display:flex; align-items:center; justify-content:center; box-shadow:var(--sh-sm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--amber-vivid)" stroke-width="1.9"><path d="M12 9v4M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+          <span style="font-weight:700; font-size:14px; color:var(--ink);">Tag requests</span>
+          <span style="font-size:13px; color:var(--amber);">2 tag requests awaiting review</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; max-width:760px;">
+          <sc-for list="{{ tagRequests }}" as="q" hint-placeholder-count="2">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px; box-shadow:var(--sh-sm);">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:9px;">
+                <span style="font-family:var(--mono); font-weight:700; font-size:14px; color:var(--ink);">{{ q.name }}</span>
+                <span style="font-size:10.5px; font-weight:700; color:var(--amber); background:var(--amber-soft); border:1px solid var(--amber-soft-bd); border-radius:14px; padding:2px 9px;">Pending</span>
+              </div>
+              <p style="font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin:0 0 10px;">{{ q.reason }}</p>
+              <div style="font-size:11.5px; color:var(--muted); margin-bottom:13px;">Proposed by {{ q.by }} · {{ q.date }} · category {{ q.cat }}</div>
+              <div style="display:flex; gap:8px;">
+                <button style="display:flex; align-items:center; gap:6px; height:32px; padding:0 14px; border:none; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); border-radius:7px; cursor:pointer; font-weight:700; font-size:12px; color:#fff;">Approve</button>
+                <button style="height:32px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-weight:600; font-size:12px; color:var(--ink-soft);">Edit & approve</button>
+                <button style="height:32px; padding:0 12px; border:1px solid var(--red-soft-bd); background:var(--surface); border-radius:7px; cursor:pointer; font-weight:600; font-size:12px; color:var(--red);">Reject</button>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px;">
+        <div style="flex:1; display:flex; align-items:center; gap:9px; height:40px; padding:0 13px; border:1px solid var(--border-strong); border-radius:10px; background:var(--surface); box-shadow:var(--sh-sm);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>
+          <span style="font-size:13.5px; color:var(--faint);">Search by name, definition or synonym…</span>
+        </div>
+        <button style="display:flex; align-items:center; gap:8px; height:40px; padding:0 14px; border:1px solid var(--border-strong); background:var(--surface); border-radius:10px; cursor:pointer; font-weight:600; font-size:13px; color:var(--ink-soft); box-shadow:var(--sh-sm);">All statuses <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+      </div>
+
+      <div style="display:grid; grid-template-columns:212px 1fr 332px; gap:18px; align-items:start;">
+        <!-- domains rail -->
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:8px; box-shadow:var(--sh-sm);">
+          <sc-for list="{{ tagDomains }}" as="d" hint-placeholder-count="8">
+            <button style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px 10px; border:none; background:{{ d.bg }}; border-radius:8px; cursor:pointer; margin-bottom:1px;">
+              <span style="display:flex; align-items:center; gap:9px; font-size:13px; font-weight:600; color:var(--ink);"><span style="width:8px; height:8px; border-radius:50%; background:{{ d.color }};"></span>{{ d.name }}</span>
+              <span style="font-family:var(--mono); font-size:11.5px; color:var(--muted);">{{ d.count }}</span>
+            </button>
+          </sc-for>
+        </div>
+
+        <!-- tag cards -->
+        <div data-tour="tags" style="display:grid; grid-template-columns:repeat(3,1fr); gap:13px;">
+          <sc-for list="{{ tagCards }}" as="tc" hint-placeholder-count="9">
+            <div style="background:var(--surface); border:1px solid {{ tc.bd }}; border-radius:12px; padding:14px; box-shadow:{{ tc.shadow }}; display:flex; flex-direction:column; min-height:148px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;">
+                <span style="font-family:var(--mono); font-weight:700; font-size:14.5px; color:var(--ink);">{{ tc.name }}</span>
+                <span>{{ tc.catChip }}</span>
+              </div>
+              <p style="font-size:11.5px; color:var(--ink-soft); line-height:1.5; margin:0 0 11px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;">{{ tc.desc }}</p>
+              <div style="margin-top:auto;">
+                <div style="display:flex; align-items:center; gap:6px; min-height:18px; margin-bottom:10px;"><span style="font-size:10.5px; color:var(--faint);">{{ tc.synLabel }}</span>{{ tc.synChips }}</div>
+                <div style="display:flex; align-items:center; justify-content:space-between;">
+                  <span style="font-size:11.5px; color:var(--muted);">{{ tc.docs }} · <span style="font-family:var(--mono); font-size:11px;">{{ tc.rate }}</span></span>
+                  <span>{{ tc.status }}</span>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <!-- detail panel -->
+        <div data-tour="tag-detail" style="background:var(--surface); border:1px solid var(--border); border-radius:13px; box-shadow:var(--sh-md); overflow:hidden;">
+          <div style="padding:16px 16px 14px;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:11px;"><span style="width:9px; height:9px; border-radius:50%; background:var(--amber-vivid);"></span><span style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted);">ORACLE</span></div>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:13px;"><span style="font-family:var(--mono); font-weight:700; font-size:20px; color:var(--ink);">rman</span><span style="font-size:10.5px; font-weight:600; color:var(--green); background:var(--green-soft); border:1px solid var(--green-soft-bd); border-radius:14px; padding:2px 9px;">Active</span></div>
+            <div style="display:flex; align-items:center; gap:7px; margin-bottom:12px;"><span style="font-size:11.5px; color:var(--muted);">Synonyms:</span><span style="font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel); border:1px solid var(--border); border-radius:5px; padding:1px 7px;">recovery-manager</span></div>
+            <p style="font-size:12.5px; color:var(--ink-soft); line-height:1.6; margin:0;">Oracle Recovery Manager — the supported backup and recovery toolchain for Oracle Database. Use for any source dealing with rman backups, archive log management, restore procedures, or PITR.</p>
+          </div>
+          <div style="border-top:1px solid var(--border-soft); padding:15px 16px;">
+            <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:11px;">USAGE</div>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:9px;">
+              <sc-for list="{{ tagUsage }}" as="u" hint-placeholder-count="3">
+                <div style="background:var(--surface-warm); border:1px solid var(--border-soft); border-radius:9px; padding:11px 10px; text-align:center;">
+                  <div style="font-family:var(--serif); font-weight:600; font-size:20px; color:var(--blue); line-height:1;">{{ u.n }}</div>
+                  <div style="font-family:var(--mono); font-size:9px; letter-spacing:.05em; color:var(--muted); margin-top:5px;">{{ u.l }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="border-top:1px solid var(--border-soft); padding:15px 16px;">
+            <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:11px;">LAST TAGGED DOCS</div>
+            <a style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 11px; border:1px solid var(--border); border-radius:8px; margin-bottom:8px; cursor:pointer; text-decoration:none;"><span style="display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px; color:var(--ink);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.6"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z"/></svg>oracle-restart-procedure.pdf</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+            <a style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 11px; border:1px solid var(--border); border-radius:8px; cursor:pointer; text-decoration:none;"><span style="display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px; color:var(--ink); min-width:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue-bright)" stroke-width="1.6"><path d="M9 15 15 9"/><path d="M11 6.5 13 4.5a4 4 0 0 1 6 6l-2 2"/><path d="M13 17.5 11 19.5a4 4 0 0 1-6-6l2-2"/></svg><span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">/cib/runbooks/rman-restore-cookbook</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          </div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== RETRIEVAL ===== -->
+    <sc-if value="{{ isRetrieval }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Retrieval" style="display:grid; grid-template-columns:248px 1fr 316px; height:calc(100vh - 62px); min-height:660px; animation:twfade .25s ease;">
+      <!-- conversations -->
+      <aside style="border-right:1px solid var(--border); background:var(--surface-warm); display:flex; flex-direction:column; padding:16px 14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <span style="font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--muted);">CONVERSATIONS</span>
+          <button style="display:flex; align-items:center; gap:5px; height:28px; padding:0 10px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-weight:600; font-size:12px; color:var(--blue); box-shadow:var(--sh-sm);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> New</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <sc-for list="{{ conversations }}" as="cv" hint-placeholder-count="4">
+            <button style="text-align:left; border:1px solid {{ cv.bd }}; background:{{ cv.bg }}; border-radius:9px; padding:10px 11px; cursor:pointer;">
+              <div style="font-size:13px; font-weight:600; color:{{ cv.tcol }}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ cv.title }}</div>
+              <div style="font-family:var(--mono); font-size:10.5px; color:var(--muted); margin-top:4px;">{{ cv.meta }}</div>
+            </button>
+          </sc-for>
+        </div>
+      </aside>
+
+      <!-- thread -->
+      <section style="display:flex; flex-direction:column; min-width:0; background:var(--canvas);">
+        <div style="flex:1; overflow:auto; padding:28px 40px;">
+          <div style="max-width:760px; margin:0 auto;">
+            <!-- user -->
+            <div style="display:flex; justify-content:flex-end; margin-bottom:22px;">
+              <div style="max-width:75%; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); color:#fff; padding:12px 16px; border-radius:14px 14px 4px 14px; font-size:14px; line-height:1.5; box-shadow:0 3px 10px rgba(45,90,142,.25);">How do I safely restart the Oracle DB on RHEL 9 in CIB prod?</div>
+            </div>
+            <!-- assistant -->
+            <div data-tour="answer" style="display:flex; gap:13px; margin-bottom:8px;">
+              <div style="width:32px; height:32px; border-radius:9px; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); flex-shrink:0; display:flex; align-items:center; justify-content:center; box-shadow:var(--sh-sm);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.7 4.7 5 5.5 5H11v14H5.5C4.7 19 4 18.3 4 17.5V6.5Z" fill="#fff" fill-opacity=".95"/><path d="M20 6.5C20 5.7 19.3 5 18.5 5H13v14h5.5c.8 0 1.5-.7 1.5-1.5V6.5Z" fill="#fff" fill-opacity=".6"/></svg></div>
+              <div style="flex:1; min-width:0;">
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:4px 14px 14px 14px; padding:17px 19px; box-shadow:var(--sh-sm);">
+                  <p style="margin:0 0 12px; font-size:14px; line-height:1.65; color:var(--ink);">Follow the CIB-approved graceful sequence — never a hard <span style="font-family:var(--mono); font-size:12.5px; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:0 5px;">kill</span> on the instance:</p>
+                  <ol style="margin:0 0 14px; padding-left:20px; font-size:14px; line-height:1.75; color:var(--ink-soft);">
+                    <li>Notify the on-call DBA and raise a change ticket <span style="color:var(--blue-bright); font-weight:600; cursor:pointer;">[1]</span>.</li>
+                    <li>Drain the listener, then <span style="font-family:var(--mono); font-size:12.5px; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:0 5px;">shutdown immediate</span> — confirm no active RMAN job is running <span style="color:var(--blue-bright); font-weight:600; cursor:pointer;">[1]</span>.</li>
+                    <li>On RHEL 9, watch for PGA OOM on large-pages hosts; the 2026-04 cascade started here <span style="color:var(--blue-bright); font-weight:600; cursor:pointer;">[2]</span>.</li>
+                    <li>Restart, then validate AWR snapshots before re-opening to traffic <span style="color:var(--blue-bright); font-weight:600; cursor:pointer;">[3]</span>.</li>
+                  </ol>
+                  <div style="padding:11px 13px; background:var(--green-soft); border:1px solid var(--green-soft-bd); border-radius:9px; font-size:13px; color:var(--green); line-height:1.55;"><strong>Tip —</strong> the runbook ships a pre-flight checklist script; run it first to confirm the listener drain completed cleanly.</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:14px; margin:10px 2px 0; font-family:var(--mono); font-size:11px; color:var(--muted);">
+                  <span style="display:flex; align-items:center; gap:5px;"><span style="width:6px; height:6px; border-radius:50%; background:var(--green-bright);"></span>hybrid</span>
+                  <span>top_k 60</span><span>5 sources cited</span><span>1.4s</span>
+                </div>
+
+                <!-- sources -->
+                <div style="margin-top:16px;">
+                  <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:9px;">CITED SOURCES</div>
+                  <div style="display:flex; flex-direction:column; gap:8px;">
+                    <sc-for list="{{ sources }}" as="s" hint-placeholder-count="3">
+                      <div style="display:flex; align-items:center; gap:12px; padding:11px 13px; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:var(--sh-sm);">
+                        <span style="width:22px; height:22px; border-radius:6px; background:var(--blue-soft); color:var(--blue); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; font-weight:700; flex-shrink:0;">{{ s.n }}</span>
+                        <span style="flex-shrink:0; display:flex;">{{ s.icon }}</span>
+                        <span style="flex:1; min-width:0; font-family:var(--mono); font-size:12.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.name }}</span>
+                        <div style="display:flex; gap:4px;">{{ s.tags }}</div>
+                        <span style="font-family:var(--mono); font-size:11px; color:var(--muted);">{{ s.chunk }}</span>
+                        <span style="font-family:var(--mono); font-size:11.5px; font-weight:600; color:var(--green); background:var(--green-soft); border:1px solid var(--green-soft-bd); border-radius:6px; padding:2px 7px;">{{ s.score }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- input -->
+        <div style="border-top:1px solid var(--border); background:var(--surface); padding:14px 40px;">
+          <div style="max-width:760px; margin:0 auto; display:flex; align-items:center; gap:10px;">
+            <div style="flex:1; display:flex; align-items:center; gap:10px; height:46px; padding:0 16px; border:1px solid var(--border-strong); border-radius:12px; background:var(--surface-warm);">
+              <span style="font-size:14px; color:var(--faint);">Ask a follow-up about the knowledge base…</span>
+            </div>
+            <button style="display:flex; align-items:center; gap:7px; height:46px; padding:0 20px; border:none; background:linear-gradient(150deg,var(--blue),var(--blue-bright)); border-radius:12px; cursor:pointer; font-weight:600; font-size:14px; color:#fff; box-shadow:0 3px 10px rgba(45,90,142,.3);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/></svg> Send</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- params -->
+      <aside style="border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; padding:20px 18px; overflow:auto;">
+        <div style="font-family:var(--serif); font-weight:600; font-size:16px; color:var(--ink);">Parameters</div>
+        <div style="font-size:12.5px; color:var(--muted); margin:3px 0 18px;">Configure your query</div>
+
+        <label style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); display:block; margin-bottom:7px;">QUERY MODE</label>
+        <div style="display:flex; align-items:center; justify-content:space-between; height:38px; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); margin-bottom:16px;"><span style="font-size:13px; color:var(--ink);">mix</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+          <div><label style="font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--muted); display:block; margin-bottom:7px;">TOP K</label><div style="height:38px; display:flex; align-items:center; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); font-family:var(--mono); font-size:13px; color:var(--ink);">20</div></div>
+          <div><label style="font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--muted); display:block; margin-bottom:7px;">CHUNK TOP K</label><div style="height:38px; display:flex; align-items:center; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); font-family:var(--mono); font-size:13px; color:var(--ink);">20</div></div>
+        </div>
+
+        <label style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); display:block; margin-bottom:7px;">MAX TOKENS · TEXT UNIT</label>
+        <div style="height:38px; display:flex; align-items:center; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); font-family:var(--mono); font-size:13px; color:var(--ink); margin-bottom:16px;">30000</div>
+
+        <label style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); display:block; margin-bottom:7px;">HISTORY TURNS</label>
+        <div style="height:38px; display:flex; align-items:center; padding:0 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); font-family:var(--mono); font-size:13px; color:var(--ink); margin-bottom:16px;">3</div>
+
+        <label style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); display:block; margin-bottom:7px;">SYSTEM PROMPT</label>
+        <div style="min-height:70px; padding:11px 12px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); font-size:13px; color:var(--faint); margin-bottom:18px;">Optional retrieval instruction</div>
+
+        <div style="display:flex; flex-direction:column; gap:13px; padding-top:4px; border-top:1px solid var(--border-soft); margin-top:2px; padding-top:16px;">
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:36px; height:21px; border-radius:11px; background:var(--blue); position:relative; flex-shrink:0;"><span style="position:absolute; top:2px; right:2px; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:var(--sh-sm);"></span></span><span style="font-size:13px; color:var(--ink); font-weight:500;">Enable rerank</span></label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:36px; height:21px; border-radius:11px; background:var(--border-strong); position:relative; flex-shrink:0;"><span style="position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:var(--sh-sm);"></span></span><span style="font-size:13px; color:var(--ink-soft);">Only need context</span></label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><span style="width:36px; height:21px; border-radius:11px; background:var(--border-strong); position:relative; flex-shrink:0;"><span style="position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:var(--sh-sm);"></span></span><span style="font-size:13px; color:var(--ink-soft);">Only need prompt</span></label>
+        </div>
+
+        <div style="margin-top:auto; padding-top:18px; display:flex; align-items:center; gap:7px; font-size:12px; color:var(--green);"><span style="width:8px; height:8px; border-radius:50%; background:var(--green-bright); box-shadow:0 0 0 3px var(--green-soft);"></span>Connected</div>
+      </aside>
+    </div>
+    </sc-if>
+
+    <!-- ===== GRAPH ===== -->
+    <sc-if value="{{ isGraph }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Graph" style="display:grid; grid-template-columns:228px 1fr 320px; height:calc(100vh - 62px); min-height:660px; animation:twfade .25s ease;">
+      <!-- entity types rail -->
+      <aside style="border-right:1px solid var(--border); background:var(--surface-warm); padding:18px 16px; overflow:auto;">
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:11px;">ENTITY TYPES</div>
+        <div style="display:flex; flex-direction:column; gap:2px; margin-bottom:22px;">
+          <sc-for list="{{ entityTypes }}" as="et" hint-placeholder-count="6">
+            <button style="display:flex; align-items:center; justify-content:space-between; padding:8px 9px; border:none; background:none; border-radius:7px; cursor:pointer;">
+              <span style="display:flex; align-items:center; gap:9px; font-size:13px; font-weight:600; color:var(--ink);"><span style="width:10px; height:10px; border-radius:3px; background:{{ et.c }};"></span>{{ et.name }}</span>
+              <span style="font-family:var(--mono); font-size:11.5px; color:var(--muted);">{{ et.count }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:8px;">FILTER BY TAG</div>
+        <div style="display:flex; align-items:center; gap:7px; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); margin-bottom:18px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><span style="font-size:12.5px; color:var(--faint);">Search tags…</span></div>
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:8px;">FILTER BY DOCUMENT</div>
+        <div style="display:flex; align-items:center; gap:7px; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); margin-bottom:22px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><span style="font-size:12.5px; color:var(--faint);">Search documents…</span></div>
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); margin-bottom:10px;">LEGEND</div>
+        <div style="display:flex; flex-direction:column; gap:8px; font-size:11.5px; color:var(--muted);">
+          <span style="display:flex; align-items:center; gap:8px;"><span style="width:24px; height:0; border-top:1.25px solid #D2CCBE;"></span>relation</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="width:24px; height:0; border-top:2px solid #5C90BE;"></span>relation (high confidence)</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span style="width:11px; height:11px; border-radius:50%; background:var(--muted);"></span>node size = mentions</span>
+        </div>
+      </aside>
+
+      <!-- canvas -->
+      <section style="display:flex; flex-direction:column; min-width:0; background:var(--surface);">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 24px; border-bottom:1px solid var(--border-soft);">
+          <div>
+            <h1 style="font-family:var(--serif); font-weight:500; font-size:22px; margin:0; color:var(--ink);">Knowledge Graph</h1>
+            <div style="font-size:12.5px; color:var(--muted); margin-top:3px;">19 entities · 21 relations · folder <span style="font-family:var(--mono); font-size:11px; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:1px 6px;">Default folder</span></div>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="display:flex; align-items:center; gap:7px; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm); min-width:190px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><span style="font-size:12.5px; color:var(--faint);">Search entities…</span></div>
+            <button style="display:flex; align-items:center; gap:6px; height:34px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add entity</button>
+            <button style="display:flex; align-items:center; gap:6px; height:34px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); box-shadow:var(--sh-sm);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M4 9a8 8 0 0 1 13-3l3 3M20 4v5h-5"/><path d="M20 15a8 8 0 0 1-13 3l-3-3M4 20v-5h5"/></svg> Reset view</button>
+          </div>
+        </div>
+        <div data-tour="graph" style="flex:1; position:relative; background-color:var(--surface); background-image:radial-gradient(var(--border) 1px, transparent 1px); background-size:22px 22px; overflow:hidden;">
+          {{ graphViz }}
+          <div style="position:absolute; bottom:18px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:2px; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:var(--sh-md); padding:4px;">
+            <button style="width:30px; height:30px; border:none; background:none; border-radius:7px; cursor:pointer; color:var(--ink-soft); font-size:18px;">−</button>
+            <span style="font-family:var(--mono); font-size:12px; color:var(--ink-soft); padding:0 8px;">100%</span>
+            <button style="width:30px; height:30px; border:none; background:none; border-radius:7px; cursor:pointer; color:var(--ink-soft); font-size:16px;">+</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- entity detail -->
+      <aside style="border-left:1px solid var(--border); background:var(--surface); overflow:auto;">
+        <div style="padding:18px 18px 16px;">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:9px;"><span style="width:11px; height:11px; border-radius:3px; background:var(--blue);"></span><span style="font-family:var(--serif); font-weight:600; font-size:17px; color:var(--ink);">Oracle Database</span></div>
+            <div style="display:flex; gap:6px;">
+              <button style="display:flex; align-items:center; gap:5px; height:28px; padding:0 9px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-weight:600; font-size:11.5px; color:var(--ink-soft);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M12 17V3M5 10l7-7 7 7M5 21h14"/></svg> Pin</button>
+              <button style="display:flex; align-items:center; gap:5px; height:28px; padding:0 9px; border:1px solid var(--border-strong); background:var(--surface); border-radius:7px; cursor:pointer; font-weight:600; font-size:11.5px; color:var(--ink-soft);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg> Edit</button>
+            </div>
+          </div>
+          <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--blue); margin-bottom:11px;">PRODUCT</div>
+          <p style="font-size:12.5px; color:var(--ink-soft); line-height:1.6; margin:0 0 15px;">Relational database engine; primary OLTP backing store for CIB workloads.</p>
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:9px;">
+            <sc-for list="{{ graphStats }}" as="g" hint-placeholder-count="3">
+              <div style="text-align:left;"><div style="font-family:var(--serif); font-weight:600; font-size:22px; color:var(--ink); line-height:1;">{{ g.n }}</div><div style="font-family:var(--mono); font-size:9px; letter-spacing:.05em; color:var(--muted); margin-top:5px;">{{ g.l }}</div></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border-soft); padding:14px 18px;">
+          <div style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); margin-bottom:9px;">TAGS — NODE ATTRIBUTES</div>
+          <div style="font-size:12.5px; color:var(--faint);">No tags.</div>
+        </div>
+        <div style="border-top:1px solid var(--border-soft); padding:14px 18px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:11px;"><span style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted);">OUTGOING (3)</span></div>
+          <div style="display:flex; flex-direction:column; gap:7px;">
+            <sc-for list="{{ outgoing }}" as="o" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--surface-warm); border:1px solid var(--border-soft); border-radius:8px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8" style="flex-shrink:0;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                <span style="font-family:var(--mono); font-size:10px; font-weight:600; color:var(--blue); background:var(--blue-soft); border-radius:4px; padding:1px 6px; flex-shrink:0;">{{ o.rel }}</span>
+                <span style="display:flex; align-items:center; gap:6px; flex:1; min-width:0; font-size:12.5px; color:var(--ink);"><span style="width:8px; height:8px; border-radius:2px; background:{{ o.dot }};"></span><span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ o.tgt }}</span></span>
+                <span style="font-family:var(--mono); font-size:11px; color:var(--muted);">{{ o.n }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border-soft); padding:14px 18px;">
+          <div style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); margin-bottom:11px;">INCOMING (4)</div>
+          <div style="display:flex; flex-direction:column; gap:7px;">
+            <sc-for list="{{ incoming }}" as="ic" hint-placeholder-count="4">
+              <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--surface-warm); border:1px solid var(--border-soft); border-radius:8px;">
+                <span style="display:flex; align-items:center; gap:6px; flex:1; min-width:0; font-size:12.5px; color:var(--ink);"><span style="width:8px; height:8px; border-radius:2px; background:{{ ic.dot }}; flex-shrink:0;"></span><span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ ic.src }}</span></span>
+                <span style="font-family:var(--mono); font-size:10px; font-weight:600; color:var(--blue); background:var(--blue-soft); border-radius:4px; padding:1px 6px; flex-shrink:0;">{{ ic.rel }}</span>
+                <span style="font-family:var(--mono); font-size:11px; color:var(--muted);">{{ ic.n }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border-soft); padding:15px 18px; display:flex; flex-direction:column; gap:9px;">
+          <button style="display:flex; align-items:center; justify-content:center; gap:7px; height:36px; border:1px solid var(--blue-soft-bd); background:var(--blue-soft); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--blue);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z"/></svg> View documents mentioning this entity</button>
+          <button style="display:flex; align-items:center; justify-content:center; gap:7px; height:36px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);">Traverse relations — <span style="font-family:var(--mono); font-size:11px;">Twin Graph</span></button>
+        </div>
+      </aside>
+    </div>
+    </sc-if>
+
+    <!-- ===== ACTIVITY ===== -->
+    <sc-if value="{{ isActivity }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Activity" style="display:grid; grid-template-columns:1fr 396px; height:calc(100vh - 62px); min-height:660px; animation:twfade .25s ease;">
+      <section data-tour="activity" style="overflow:auto; padding:28px 30px 48px;">
+        <div style="margin-bottom:16px;">
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:28px; margin:0; color:var(--ink);">Activity</h1>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:6px; font-size:13px; color:var(--muted);">Audit trail · folder <span style="font-family:var(--mono); font-size:11px; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:1px 6px;">default</span> · <span style="display:inline-flex; align-items:center; gap:6px; color:var(--green);"><span style="width:7px; height:7px; border-radius:50%; background:var(--green-bright); box-shadow:0 0 0 3px var(--green-soft);"></span>Live polling</span></div>
+        </div>
+
+        <div style="display:flex; gap:6px; margin-bottom:13px;">
+          <button style="height:30px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px; color:var(--ink-soft);">24h</button>
+          <button style="height:30px; padding:0 13px; border:1px solid var(--blue); background:var(--blue); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px; color:#fff;">7d</button>
+          <button style="height:30px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px; color:var(--ink-soft);">30d</button>
+          <button style="height:30px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px; color:var(--ink-soft);">All</button>
+        </div>
+
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;">
+          <sc-for list="{{ activityChips }}" as="ch" hint-placeholder-count="10">
+            <button style="display:flex; align-items:center; gap:5px; height:27px; padding:0 10px; border:1px solid var(--border); background:var(--surface); border-radius:16px; cursor:pointer; font-size:11.5px; font-weight:500; color:var(--ink-soft);"><span style="width:6px; height:6px; border-radius:50%; background:var(--border-strong);"></span>{{ ch }}</button>
+          </sc-for>
+        </div>
+
+        <div style="display:flex; gap:9px; margin-bottom:18px;">
+          <button style="display:flex; align-items:center; gap:7px; height:34px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);">All severities <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+          <button style="display:flex; align-items:center; gap:7px; height:34px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);">All actors <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+          <div style="flex:1; display:flex; align-items:center; gap:8px; height:34px; padding:0 11px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface-warm);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><span style="font-size:12.5px; color:var(--faint);">Search summary, target, event ID…</span></div>
+          <button style="display:flex; align-items:center; gap:6px; height:34px; padding:0 12px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Export</button>
+        </div>
+
+        <div style="font-size:12.5px; color:var(--muted); margin-bottom:14px;"><strong style="color:var(--ink-soft);">16</strong> events · <strong style="color:var(--red);">2</strong> errors · <strong style="color:var(--amber)">3</strong> warnings · <strong style="color:var(--blue);">4</strong> retrievals</div>
+
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--faint); margin-bottom:10px;">TODAY</div>
+        <div>
+          <sc-for list="{{ activityEvents }}" as="ev" hint-placeholder-count="6">
+            <div style="display:grid; grid-template-columns:74px 1fr; gap:14px; padding:13px 12px; border-radius:10px; background:{{ ev.rowBg }}; cursor:pointer; border-bottom:1px solid var(--border-soft);">
+              <div style="font-size:11.5px; color:var(--muted); text-align:right; padding-top:2px;">{{ ev.time }}</div>
+              <div style="display:flex; gap:12px; min-width:0;">
+                <div style="display:flex; flex-direction:column; align-items:center; flex-shrink:0;">
+                  <span style="width:26px; height:26px; border-radius:8px; background:var(--surface); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:{{ ev.railCol }}; box-shadow:var(--sh-sm);">{{ ev.icon }}</span>
+                </div>
+                <div style="flex:1; min-width:0;">
+                  <div style="display:flex; align-items:center; gap:9px; flex-wrap:wrap;">
+                    <span style="font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--ink);">{{ ev.actor }}</span>
+                    <span style="font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--muted);">{{ ev.tag }}</span>
+                    <span style="font-size:13.5px; color:var(--ink); font-weight:500;">{{ ev.title }}</span>
+                    <span style="margin-left:auto;">{{ ev.badgeEl }}</span>
+                  </div>
+                  <div style="font-size:12px; color:var(--muted); margin-top:4px; line-height:1.5;">{{ ev.sub }}</div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--faint); margin:18px 0 4px; display:flex; align-items:center; justify-content:space-between;"><span>YESTERDAY</span><span>4</span></div>
+      </section>
+
+      <!-- event detail -->
+      <aside data-tour="activity-detail" style="border-left:1px solid var(--border); background:var(--surface); overflow:auto; padding:24px 22px;">
+        <div style="display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--blue); margin-bottom:13px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg> RETRIEVAL</div>
+        <h2 style="font-family:var(--mono); font-weight:600; font-size:16px; color:var(--ink); margin:0 0 8px; line-height:1.4;">How to restart Oracle on RHEL 9?</h2>
+        <p style="font-size:12.5px; color:var(--muted); margin:0 0 20px;">Retrieval · hybrid · top_k=60 · 5 sources cited · 1.4s</p>
+
+        <div style="display:flex; flex-direction:column; gap:0; border:1px solid var(--border-soft); border-radius:10px; overflow:hidden; margin-bottom:18px;">
+          <sc-for list="{{ eventMeta }}" as="m" hint-placeholder-count="6">
+            <div style="display:grid; grid-template-columns:96px 1fr; gap:12px; padding:10px 13px; border-bottom:1px solid var(--border-soft); background:var(--surface-warm);">
+              <span style="font-family:var(--mono); font-size:10px; letter-spacing:.05em; color:var(--muted); padding-top:1px;">{{ m.k }}</span>
+              <span style="font-size:12.5px; color:var(--ink); font-family:var(--mono); word-break:break-word;">{{ m.v }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--muted); margin-bottom:9px;">METADATA</div>
+        <pre style="margin:0 0 20px; padding:14px 15px; background:var(--code-bg); border-radius:10px; font-family:var(--mono); font-size:12px; line-height:1.65; color:#C9D4E0; overflow:auto; border:1px solid var(--border-soft);">{
+  "mode": <span style="color:#9DCB8A;">"hybrid"</span>,
+  "top_k": <span style="color:#E0B978;">60</span>,
+  "tag_filter": [
+    <span style="color:#9DCB8A;">"rman"</span>,
+    <span style="color:#9DCB8A;">"oracle"</span>
+  ],
+  "latency_ms": <span style="color:#E0B978;">1412</span>,
+  "tokens_in": <span style="color:#E0B978;">312</span>,
+  "tokens_out": <span style="color:#E0B978;">488</span>
+}</pre>
+
+        <div style="display:flex; gap:9px;">
+          <button style="flex:1; display:flex; align-items:center; justify-content:center; gap:7px; height:36px; border:1px solid var(--blue-soft-bd); background:var(--blue-soft); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--blue);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12h14M13 6l6 6-6 6"/></svg> Re-run query</button>
+          <button style="flex:1; display:flex; align-items:center; justify-content:center; gap:7px; height:36px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy payload</button>
+        </div>
+      </aside>
+    </div>
+    </sc-if>
+
+    <!-- ===== SETTINGS ===== -->
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Settings" style="display:grid; grid-template-columns:240px 1fr; min-height:calc(100vh - 62px); animation:twfade .25s ease;">
+      <aside style="border-right:1px solid var(--border); background:var(--surface-warm); padding:22px 16px;">
+        <div style="font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--muted); padding:0 8px; margin-bottom:12px;">SETTINGS</div>
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <sc-for list="{{ settingsNav }}" as="sn" hint-placeholder-count="3">
+            <button onClick="{{ sn.sel }}" style="display:flex; align-items:center; gap:10px; padding:10px 11px; border:none; background:{{ sn.bg }}; border-radius:8px; cursor:pointer; font-weight:600; font-size:13.5px; color:{{ sn.col }};">{{ sn.icon }} {{ sn.name }}</button>
+          </sc-for>
+        </div>
+      </aside>
+
+      <section style="padding:32px 40px 56px; max-width:920px;">
+        <!-- PROFILE -->
+        <sc-if value="{{ isProfile }}" hint-placeholder-val="{{ true }}">
+        <div>
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:26px; margin:0; color:var(--ink);">Profile</h1>
+          <p style="font-size:13.5px; color:var(--muted); margin:6px 0 24px;">Account info inherited from your Keycloak session. Update name/email in the corporate IDP.</p>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:22px; box-shadow:var(--sh-sm); margin-bottom:16px;">
+            <div style="display:flex; align-items:center; gap:16px; padding-bottom:18px; border-bottom:1px solid var(--border-soft);">
+              <div style="width:56px; height:56px; border-radius:14px; background:linear-gradient(150deg,var(--green-bright),var(--green)); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:19px; box-shadow:var(--sh-sm);">LO</div>
+              <div>
+                <div style="font-family:var(--serif); font-weight:600; font-size:19px; color:var(--ink);">Local Operator</div>
+                <div style="font-family:var(--mono); font-size:12.5px; color:var(--muted); margin:3px 0 6px;"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="402f30253221342f32003437292e6e2c2f23212c">[email&#160;protected]</a></div>
+                <span style="font-size:11px; font-weight:600; color:var(--blue); background:var(--blue-soft); border:1px solid var(--blue-soft-bd); border-radius:14px; padding:2px 10px;">Steward</span>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:200px 1fr; gap:10px 16px; padding-top:16px; font-size:13px;">
+              <span style="color:var(--muted);">Identity provider</span><span style="font-family:var(--mono); color:var(--ink);">keycloak · twin-main · sub=clb-7f4e</span>
+              <span style="color:var(--muted);">Session expires</span><span style="font-family:var(--mono); color:var(--ink);">2026-05-19T23:59:00Z</span>
+            </div>
+          </div>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:20px 22px; box-shadow:var(--sh-sm); margin-bottom:16px;">
+            <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:14px;"><span style="font-weight:700; font-size:14px; color:var(--ink);">Scopes</span><span style="font-size:12px; color:var(--muted);">Permissions attached to your bearer token at gateway level.</span></div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <sc-for list="{{ scopes }}" as="sc" hint-placeholder-count="6">
+                <span style="font-family:var(--mono); font-size:11.5px; color:var(--blue); background:var(--blue-soft); border:1px solid var(--blue-soft-bd); border-radius:7px; padding:4px 10px;">{{ sc }}</span>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:20px 22px; box-shadow:var(--sh-sm);">
+            <div style="font-weight:700; font-size:14px; color:var(--ink); margin-bottom:14px;">Session</div>
+            <div style="display:flex; align-items:center; gap:14px;">
+              <button style="display:flex; align-items:center; gap:7px; height:36px; padding:0 15px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--ink-soft);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.7"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg> Sign out</button>
+              <span style="font-size:12.5px; font-style:italic; color:var(--muted);">Local cache (threads, tweaks) is preserved in this browser.</span>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- API -->
+        <sc-if value="{{ isApi }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:26px; margin:0; color:var(--ink);">API</h1>
+          <p style="font-size:13.5px; color:var(--muted); margin:6px 0 22px; line-height:1.6; max-width:760px;">Twin overlay extends the LightRAG OpenAPI surface with <span style="font-family:var(--mono); font-size:12px; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:0 5px;">/twin/api/*</span> routes. Native LightRAG routes pass through unchanged.</p>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; box-shadow:var(--sh-md); overflow:hidden;">
+            <div style="padding:20px 22px; border-bottom:1px solid var(--border-soft);">
+              <div style="display:flex; align-items:center; gap:11px; margin-bottom:6px;"><span style="font-family:var(--serif); font-weight:600; font-size:19px; color:var(--ink);">LightRAG Server API</span><span style="font-family:var(--mono); font-size:11px; color:var(--blue); background:var(--blue-soft); border:1px solid var(--blue-soft-bd); border-radius:5px; padding:2px 7px;">v1.4.12</span><span style="font-family:var(--mono); font-size:11px; color:var(--muted);">OAS 3.1</span></div>
+              <div style="font-size:12.5px; color:var(--muted);"><span style="font-family:var(--mono); color:var(--blue-bright);">/openapi.json</span> · Providing API for LightRAG core, Web UI and Ollama Model Emulation</div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--border-soft); background:var(--surface-warm);">
+              <span style="font-family:var(--mono); font-size:13px; color:var(--ink-soft);">http://localhost:5173</span>
+              <button style="display:flex; align-items:center; gap:6px; height:32px; padding:0 13px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8"><path d="M12 11V7a4 4 0 0 1 8 0"/><rect x="5" y="11" width="12" height="10" rx="2"/></svg> Authorize</button>
+            </div>
+            <div style="padding:10px;">
+              <sc-for list="{{ apiRoutes }}" as="ar" hint-placeholder-count="7">
+                <div style="display:flex; align-items:center; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:9px; margin-bottom:7px; background:var(--surface);">
+                  <span style="font-family:var(--mono); font-size:10.5px; font-weight:700; color:{{ ar.mc }}; background:{{ ar.mbg }}; border:1px solid {{ ar.mbd }}; border-radius:5px; padding:3px 9px; min-width:48px; text-align:center;">{{ ar.m }}</span>
+                  <span style="font-family:var(--mono); font-size:13px; font-weight:600; color:var(--ink);">{{ ar.p }}</span>
+                  <span style="font-size:12.5px; color:var(--muted); margin-left:6px;">{{ ar.d }}</span>
+                  <svg style="margin-left:auto;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.8"><path d="M6 9l6 6 6-6"/></svg>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- FOLDER -->
+        <sc-if value="{{ isFolder }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <h1 style="font-family:var(--serif); font-weight:500; font-size:26px; margin:0; color:var(--ink);">Folder</h1>
+          <p style="font-size:13.5px; color:var(--muted); margin:6px 0 22px;">Configuration for folder <span style="font-family:var(--mono); font-size:12px;">default</span>. Identity is set at deployment time and cannot be changed from the UI.</p>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:20px 22px; box-shadow:var(--sh-sm); margin-bottom:24px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="font-weight:700; font-size:14px; color:var(--ink);">Identity</span><span style="display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:2px 9px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 11V7a4 4 0 0 1 8 0"/><rect x="5" y="11" width="12" height="10" rx="2"/></svg> env-controlled</span></div>
+            <div style="display:grid; grid-template-columns:200px 1fr; gap:12px 16px; font-size:13px;">
+              <span style="color:var(--muted);">Folder ID</span><span style="font-family:var(--mono); color:var(--ink);">default</span>
+              <span style="color:var(--muted);">Display name</span><span style="color:var(--ink);">Default folder</span>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:6px;"><span style="font-weight:700; font-size:15px; color:var(--ink);">Folders</span></div>
+          <p style="font-size:12.5px; color:var(--muted); margin:0 0 14px; line-height:1.6; max-width:760px;">Runtime Twin folders. The SRE-provisioned default is read-only and managed via the deploy env — operator additions are persisted to the runtime catalog.</p>
+          <button style="display:flex; align-items:center; gap:7px; height:36px; padding:0 14px; border:1px solid var(--border-strong); background:var(--surface); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px; color:var(--ink-soft); margin-bottom:14px; box-shadow:var(--sh-sm);"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add folder</button>
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:18px 20px; box-shadow:var(--sh-sm);">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;"><span style="font-family:var(--mono); font-weight:700; font-size:14px; color:var(--ink);">cib</span><span style="font-size:10.5px; font-weight:600; color:var(--blue); background:var(--blue-soft); border:1px solid var(--blue-soft-bd); border-radius:14px; padding:2px 9px;">active</span><span style="display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px; color:var(--muted); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:2px 9px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 11V7a4 4 0 0 1 8 0"/><rect x="5" y="11" width="12" height="10" rx="2"/></svg> env-seeded</span></div>
+            <div style="font-size:13px; color:var(--ink-soft);">CIB KB</div>
+          </div>
+        </div>
+        </sc-if>
+      </section>
+    </div>
+    </sc-if>
+
+    <div data-tabslot="end"></div>
+  </main>
+</div>
+  </div>
+
+  <!-- ===== VIGNETTE ===== -->
+  <div style="position:absolute; inset:0; pointer-events:none; background:radial-gradient(125% 95% at 50% 44%, transparent 42%, rgba(18,22,28,.30) 100%); opacity:{{ vignette }}; transition:opacity 1s ease;"></div>
+
+  <!-- ===== TOP PROGRESS ===== -->
+  <div style="position:absolute; top:0; left:0; right:0; height:3px; background:rgba(34,42,51,.07); z-index:20;">
+    <div style="height:100%; width:{{ progressPct }}; background:linear-gradient(90deg,#2D5A8E,#3F8EBF); border-radius:0 3px 3px 0; transition:width .7s cubic-bezier(.66,.01,.22,1);"></div>
+  </div>
+
+  <!-- ===== EXIT ===== -->
+  <sc-if value="{{ started }}" hint-placeholder-val="{{ false }}">
+    <button onClick="{{ exit }}" style="position:absolute; top:16px; right:18px; z-index:30; display:flex; align-items:center; gap:7px; height:34px; padding:0 13px; border:1px solid rgba(34,42,51,.12); background:rgba(255,255,255,.9); backdrop-filter:blur(8px); border-radius:9px; cursor:pointer; font-family:'Hanken Grotesk',sans-serif; font-weight:600; font-size:12.5px; color:#46505A; box-shadow:0 2px 10px rgba(34,42,51,.12);">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg> Quitter la visite
+    </button>
+  </sc-if>
+
+  <!-- ===== CAPTION ===== -->
+  <sc-if value="{{ showCaption }}" hint-placeholder-val="{{ false }}">
+    <div data-tg="cap" style="position:absolute; left:50%; bottom:34px; transform:translateX(-50%); width:min(720px,92%); z-index:25; background:rgba(255,255,255,.94); backdrop-filter:saturate(1.4) blur(14px); border:1px solid rgba(34,42,51,.09); border-radius:18px; box-shadow:0 22px 60px rgba(18,22,28,.28), 0 4px 14px rgba(18,22,28,.12); padding:20px 22px 17px; transition:opacity .5s ease;">
+      <div style="display:flex; align-items:center; gap:14px;">
+        <span style="width:46px; height:46px; flex-shrink:0; border-radius:13px; background:{{ capTint }}; display:flex; align-items:center; justify-content:center; box-shadow:inset 0 0 0 1px {{ capRing }};">{{ capIcon }}</span>
+        <div style="flex:1; min-width:0;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.13em; color:{{ capAccent }}; margin-bottom:3px;">{{ kicker }}</div>
+          <div style="font-family:'Spectral',Georgia,serif; font-weight:600; font-size:21px; line-height:1.2; color:#222A33; letter-spacing:-.01em;">{{ title }}</div>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#9097A0; flex-shrink:0; align-self:flex-start; padding-top:2px;">{{ counter }}</div>
+      </div>
+      <p style="margin:13px 2px 16px; font-size:14px; line-height:1.6; color:#46505A; text-wrap:pretty;">{{ body }}</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px;">
+        <div style="display:flex; align-items:center; gap:7px;">
+          <sc-for list="{{ dots }}" as="d" hint-placeholder-count="6">
+            <button onClick="{{ d.sel }}" style="width:{{ d.w }}; height:7px; border:none; border-radius:5px; background:{{ d.bg }}; cursor:pointer; padding:0; transition:width .3s, background .3s;"></button>
+          </sc-for>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px;">
+          <button onClick="{{ prev }}" style="display:flex; align-items:center; gap:6px; height:38px; padding:0 15px; border:1px solid rgba(34,42,51,.14); background:#fff; border-radius:10px; cursor:pointer; font-family:'Hanken Grotesk',sans-serif; font-weight:600; font-size:13px; color:#46505A;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg> Précédent
+          </button>
+          <button onClick="{{ next }}" style="display:flex; align-items:center; gap:7px; height:38px; padding:0 18px; border:none; background:linear-gradient(150deg,#2D5A8E,#3F8EBF); border-radius:10px; cursor:pointer; font-family:'Hanken Grotesk',sans-serif; font-weight:600; font-size:13px; color:#fff; box-shadow:0 4px 12px rgba(45,90,142,.32);">
+            {{ nextLabel }} <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ===== WELCOME ===== -->
+  <sc-if value="{{ showWelcome }}" hint-placeholder-val="{{ true }}">
+    <div style="position:absolute; inset:0; z-index:40; display:flex; align-items:center; justify-content:center; background:rgba(28,33,42,.34); backdrop-filter:blur(3px); animation:tgRise .5s ease;">
+      <div style="width:min(560px,90%); background:#FBFAF5; border:1px solid #E6E1D6; border-radius:24px; box-shadow:0 40px 90px rgba(18,22,28,.4); padding:40px 40px 34px; text-align:center;">
+        <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:22px;">
+          <span style="width:38px; height:38px; border-radius:11px; background:linear-gradient(150deg,#2D5A8E,#3F8EBF); display:flex; align-items:center; justify-content:center; box-shadow:0 3px 8px rgba(45,90,142,.35);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 6.5C4 5.7 4.7 5 5.5 5H11v14H5.5C4.7 19 4 18.3 4 17.5V6.5Z" fill="#fff" fill-opacity=".95"/><path d="M20 6.5C20 5.7 19.3 5 18.5 5H13v14h5.5c.8 0 1.5-.7 1.5-1.5V6.5Z" fill="#fff" fill-opacity=".6"/></svg></span>
+          <span style="font-family:'Hanken Grotesk',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.01em;"><span style="color:#222A33;">Twin</span><span style="color:#2D5A8E;">RAG</span></span>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.14em; color:#3F8EBF; margin-bottom:12px;">VISITE GUIDÉE · BNP PARIBAS</div>
+        <h1 style="font-family:'Spectral',Georgia,serif; font-weight:500; font-size:32px; line-height:1.15; color:#222A33; margin:0 0 14px; letter-spacing:-.015em;">La connaissance,<br>bien rangée.</h1>
+        <p style="font-size:14.5px; line-height:1.65; color:#46505A; margin:0 auto 26px; max-width:400px; text-wrap:pretty;">Une courte visite des fonctions clés de la plateforme — six étapes, environ deux minutes. Avancez à votre rythme.</p>
+        <button onClick="{{ start }}" style="display:inline-flex; align-items:center; gap:9px; height:48px; padding:0 26px; border:none; background:linear-gradient(150deg,#2D5A8E,#3F8EBF); border-radius:12px; cursor:pointer; font-family:'Hanken Grotesk',sans-serif; font-weight:600; font-size:15px; color:#fff; box-shadow:0 6px 18px rgba(45,90,142,.36);">
+          Démarrer la visite <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div style="margin-top:18px; font-size:12px; color:#7C8590;">6 fonctions · Documents · Tags · Interrogation · Graphe · Activité</div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ===== END ===== -->
+  <sc-if value="{{ showEnd }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute; inset:0; z-index:40; display:flex; align-items:center; justify-content:center; background:rgba(28,33,42,.40); backdrop-filter:blur(3px); animation:tgRise .5s ease;">
+      <div style="width:min(580px,90%); background:#FBFAF5; border:1px solid #E6E1D6; border-radius:24px; box-shadow:0 40px 90px rgba(18,22,28,.42); padding:38px 40px 32px; text-align:center;">
+        <span style="display:inline-flex; align-items:center; justify-content:center; width:54px; height:54px; border-radius:16px; background:#E9F2EB; border:1px solid #CBE3D1; margin-bottom:20px;"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3D7A4E" stroke-width="2.2"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+        <h1 style="font-family:'Spectral',Georgia,serif; font-weight:500; font-size:28px; line-height:1.2; color:#222A33; margin:0 0 12px; letter-spacing:-.01em;">Vous avez fait le tour</h1>
+        <p style="font-size:14px; line-height:1.65; color:#46505A; margin:0 auto 22px; max-width:420px; text-wrap:pretty;">TwinRAG, c’est une base de connaissances calme et ordonnée — chaque réponse sourcée, chaque action tracée. Tout reste à portée de main.</p>
+        <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:26px;">
+          <sc-for list="{{ recapChips }}" as="rc" hint-placeholder-count="7">
+            <span style="display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:#46505A; background:#fff; border:1px solid #E6E1D6; border-radius:16px; padding:6px 12px;"><span style="width:7px; height:7px; border-radius:50%; background:{{ rc.c }};"></span>{{ rc.t }}</span>
+          </sc-for>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:center;">
+          <button onClick="{{ restart }}" style="display:inline-flex; align-items:center; gap:8px; height:44px; padding:0 22px; border:none; background:linear-gradient(150deg,#2D5A8E,#3F8EBF); border-radius:11px; cursor:pointer; font-family:'Hanken Grotesk',sans-serif; font-weight:600; font-size:14px; color:#fff; box-shadow:0 5px 14px rgba(45,90,142,.34);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 9a8 8 0 0 1 13-3l3 3M20 4v5h-5"/><path d="M20 15a8 8 0 0 1-13 3l-3-3M4 20v-5h5"/></svg> Revoir la visite</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;autostart&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false},&quot;startTab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Documents&quot;,&quot;Tags&quot;,&quot;Retrieval&quot;,&quot;Graph&quot;,&quot;Activity&quot;,&quot;Settings&quot;],&quot;default&quot;:&quot;Documents&quot;}}">
+class Component extends DCLogic {
+  state = {
+    tab: this.props.defaultTab || 'Documents',
+    folderOpen: false,
+    notifOpen: false,
+    settingsSub: 'Profile',
+    sent: false,
+    docFilter: 'All',
+    entity: 'Oracle Database',
+    dark: this.props.defaultTheme === 'Dark',
+      started: !!this.props.autostart,
+    step: 1,
+  };
+
+  
+
+  componentDidMount(){
+    this.STEPS = [
+      null,
+      { tab:'Documents', target:null, accent:'#2D5A8E', kicker:'01 — ESPACE DE TRAVAIL', title:'Vos sources, au même endroit',
+        body:'Toutes les sources qui nourrissent vos réponses — fichiers, runbooks, liens — réunies, filtrables et suivies du dépôt jusqu’à l’indexation.', pad:0.94, maxScale:1.0 },
+      { tab:'Documents', target:'review', accent:'#C7891C', kicker:'02 — VALIDATION', title:'Rien n’entre sans relecture',
+        body:'Les documents sensibles ne rejoignent la base qu’après le feu vert d’un relecteur. Approuvez, corrigez ou refusez — vous gardez la main sur ce que l’IA pourra citer.', pad:0.82, maxScale:1.6 },
+      { tab:'Tags', target:'tag-detail', accent:'#3D7A4E', kicker:'03 — GOUVERNANCE', title:'Un catalogue de tags maîtrisé',
+        body:'Chaque tag est documenté : définition, synonymes, usage et sources rattachées. Un vocabulaire commun et gouverné, jamais un fourre-tout.', maxScale:1.45, top:0.16 },
+      { tab:'Retrieval', target:'answer', accent:'#2D5A8E', kicker:'04 — INTERROGATION', title:'Des réponses toujours sourcées',
+        body:'Posez votre question : la réponse arrive avec ses sources numérotées et leur score de pertinence. Rien n’est affirmé sans pouvoir être vérifié.', pad:0.8, maxScale:1.55 },
+      { tab:'Graph', target:'graph', accent:'#7E68B8', kicker:'05 — CONNAISSANCES', title:'Le graphe relie tout',
+        body:'Entités et relations extraites de vos documents, tissées en un graphe navigable. On voit d’un coup d’œil ce qui touche à quoi.', fixedScale:1.5 },
+      { tab:'Activity', target:'activity-detail', accent:'#2D5A8E', kicker:'06 — TRAÇABILITÉ', title:'Chaque action est journalisée',
+        body:'Recherche, validation, ingestion, accès : tout est horodaté, attribué et rejouable. Un journal d’audit clair, prêt pour la conformité.', maxScale:1.45, top:0.16 },
+    ];
+    this.LAST = 7;
+    this.curS = 1; this.curTx = 0; this.curTy = 0;
+    if(this.state.started) this.schedule();
+    window.addEventListener('keydown', this.onKey);
+    window.addEventListener('resize', this.onResize);
+  }
+  componentWillUnmount(){
+    clearTimeout(this._t); window.removeEventListener('keydown', this.onKey); window.removeEventListener('resize', this.onResize);
+  }
+  componentDidUpdate(_p, prev){
+    if(!prev) return;
+    if(prev.step !== this.state.step || prev.started !== this.state.started){
+      const cap = document.querySelector('[data-tg="cap"]');
+      if(cap && this.state.started && this.state.step < this.LAST) cap.style.opacity = '0';
+      this.schedule();
+    }
+  }
+
+  onKey = (e)=>{
+    if(!this.state.started) return;
+    if(e.key === 'ArrowRight') this.next();
+    else if(e.key === 'ArrowLeft') this.prev();
+    else if(e.key === 'Escape') this.exit();
+  };
+  onResize = ()=>{ clearTimeout(this._r); this._r = setTimeout(()=>this.focus(), 120); };
+
+  schedule(){ clearTimeout(this._t); this._t = setTimeout(()=>this.focus(), 540); }
+
+  setT(S, tx, ty){
+    this.curS = S; this.curTx = tx; this.curTy = ty;
+    const st = document.querySelector('[data-tg="stage"]');
+    if(st){ st.style.transformOrigin = '0 0'; st.style.transform = `translate(${tx}px,${ty}px) scale(${S})`; }
+  }
+
+  localRect(el, stage){
+    let x=0, y=0, n=el;
+    while(n && n !== stage){ x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent; }
+    return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+  }
+
+  focus(){
+    const outer = document.querySelector('[data-tg="root"]');
+    const stage = document.querySelector('[data-tg="stage"]');
+    if(!outer || !stage) return;
+    const Vw = outer.clientWidth, Vh = outer.clientHeight;
+    const step = this.state.step;
+    const cap = document.querySelector('[data-tg="cap"]');
+    if(cap) cap.style.opacity = '1';
+    if(!this.state.started || step >= this.LAST){ this.setT(1, 0, 0); return; }
+    const s = this.STEPS[step];
+    // overview: gentle pull-back
+    if(!s || !s.target){ const S = 0.9; this.setT(S, Vw*(1-S)/2, Vh*0.045); return; }
+    const el = document.querySelector('[data-tour="'+s.target+'"]');
+    if(!el){ this.setT(1, 0, 0); return; }
+    const r = this.localRect(el, stage);
+    if(!r.w || !r.h){ this.setT(1, 0, 0); return; }
+    const cx = r.x + r.w/2, cyc = r.y + r.h/2;
+    // forced-zoom: scale to a fixed factor and center on the target (for full-bleed areas like the graph)
+    if(s.fixedScale){
+      const S = s.fixedScale;
+      this.setT(S, Vw/2 - cx*S, Vh/2 - cyc*S);
+      return;
+    }
+    // width-based push-in, target top anchored high so content flows under the caption
+    const padW = s.padW || 0.86;
+    let S = (Vw * padW) / r.w;
+    S = Math.max(1.0, Math.min(S, s.maxScale || 1.5));
+    const topFrac = (s.top != null) ? s.top : 0.13;
+    const tx = Vw/2 - cx*S;
+    const ty = Vh*topFrac - r.y*S;
+    this.setT(S, tx, ty);
+  }
+
+  afterChange(){ const cap = document.querySelector('[data-tg="cap"]'); if(cap) cap.style.opacity = '0'; this.schedule(); }
+  start = ()=>{ this.setState({ started:true, step:1 }); this.afterChange(); };
+  exit = ()=>{ this.setState({ started:false, step:1 }); this.afterChange(); };
+  restart = ()=>{ this.setState({ started:true, step:1 }); this.afterChange(); };
+  go = (n)=>{ const step = Math.max(1, Math.min(this.LAST, n)); this.setState({ step }); this.afterChange(); };
+  next = ()=>{ if(!this.state.started){ this.start(); return; } this.go(this.state.step + 1); };
+  prev = ()=>{ if(this.state.step <= 1){ this.exit(); return; } this.go(this.state.step - 1); };
+
+  tourVals(){
+    const STEPS = this.STEPS || [];
+    const LAST = this.LAST || 7;
+    const started = this.state.started;
+    const step = this.state.step;
+    const feat = Math.min(step, 6);
+    const s = STEPS[feat] || { tab:'Documents', accent:'#2D5A8E', kicker:'', title:'', body:'' };
+    const isEnd = started && step >= LAST;
+    const showCaption = started && step >= 1 && step < LAST;
+
+    const iconPaths = {
+      1:'<path d="M3 7.5C3 6.7 3.7 6 4.5 6h4l1.7 2H19.5c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-10Z"/>',
+      2:'<path d="M9 12.5 11 15l4-5"/><path d="M12 3 4 6v6c0 4.5 3.4 7.6 8 9 4.6-1.4 8-4.5 8-9V6l-8-3Z"/>',
+      3:'<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/>',
+      4:'<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-3.9A8.5 8.5 0 1 1 21 11.5Z"/>',
+      5:'<circle cx="6" cy="7" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="16" cy="18" r="2.4"/><path d="M8 8l8-1M8.6 8.5 15 16"/>',
+      6:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+    };
+    const capIcon = React.createElement('svg', { width:21, height:21, viewBox:'0 0 24 24', fill:'none', stroke:s.accent, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round', dangerouslySetInnerHTML:{ __html: iconPaths[feat] || iconPaths[1] } });
+
+    const tint = (hex)=>{
+      const m = { '#2D5A8E':['#EAF1F7','#CCE0EF'], '#C7891C':['#FAF1DA','#EDDFBA'], '#3D7A4E':['#E9F2EB','#CBE3D1'], '#7E68B8':['#F0ECF7','#DED4EE'] };
+      return m[hex] || m['#2D5A8E'];
+    };
+    const [capTint, capRing] = tint(s.accent);
+
+    const dots = [1,2,3,4,5,6].map(i => ({
+      sel: ()=>this.go(i),
+      w: i===feat ? '22px' : '7px',
+      bg: i===feat ? s.accent : (i<feat ? 'rgba(45,90,142,.4)' : 'rgba(34,42,51,.16)'),
+    }));
+
+    const recapChips = [
+      { t:'Documents', c:'#2D5A8E' }, { t:'Validation', c:'#C7891C' }, { t:'Tags', c:'#3D7A4E' },
+      { t:'Interrogation', c:'#2D5A8E' }, { t:'Graphe', c:'#7E68B8' }, { t:'Activité', c:'#3F8EBF' },
+      { t:'Réglages & mode sombre', c:'#7C8590' },
+    ];
+
+    return {
+      tourTab: started ? (s.tab || 'Documents') : (this.props.startTab || 'Documents'),
+      started, showWelcome: !started, showCaption, showEnd: isEnd,
+      vignette: (showCaption && STEPS[feat] && STEPS[feat].target) ? '1' : (showCaption ? '0.35' : '0'),
+      progressPct: started ? (isEnd ? '100%' : Math.round((feat/6)*100) + '%') : '0%',
+      kicker: s.kicker, title: s.title, body: s.body, counter: String(feat).padStart(2,'0') + ' / 06',
+      capAccent: s.accent, capIcon, capTint, capRing,
+      nextLabel: feat >= 6 ? 'Terminer' : 'Suivant',
+      dots, recapChips,
+      start: this.start, next: this.next, prev: this.prev, exit: this.exit, restart: this.restart,
+    };
+  }
+
+
+  
+
+  closeMenus = () => this.setState({ folderOpen:false, notifOpen:false });
+  setTab(t){ this.setState({ tab:t, folderOpen:false, notifOpen:false }); }
+
+  // ---- element helpers ----
+  svg(w, kids, stroke='currentColor', sw=1.7){
+    return React.createElement('svg', {width:w, height:w, viewBox:'0 0 24 24', fill:'none', stroke, strokeWidth:sw, style:{display:'block', flexShrink:0}}, ...kids);
+  }
+  P(d, ex){ return React.createElement('path', Object.assign({d}, ex||{})); }
+  C(cx,cy,r,ex){ return React.createElement('circle', Object.assign({cx,cy,r}, ex||{})); }
+  sp(style, ...kids){ return React.createElement('span', {style}, ...kids); }
+  frag(...kids){ return React.createElement(React.Fragment, null, ...kids); }
+
+  iFile(c='var(--muted)'){ return this.svg(15,[this.P('M14 3v5h5'), this.P('M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z')], c); }
+  iLink(c='var(--blue-bright)'){ return this.svg(15,[this.P('M9 15 15 9'), this.P('M11 6.5 13 4.5a4 4 0 0 1 6 6l-2 2'), this.P('M13 17.5 11 19.5a4 4 0 0 1-6-6l2-2')], c); }
+
+  chip(t, c, bg, bd){ return this.sp({fontFamily:'var(--mono)', fontSize:'10.5px', fontWeight:600, color:c, background:bg, border:'1px solid '+bd, borderRadius:'5px', padding:'1px 6px', whiteSpace:'nowrap'}, t); }
+  codeChip(t){ return this.chip(t, 'var(--amber)', 'var(--amber-soft)', 'var(--amber-soft-bd)'); }
+  tagPill(t){ return this.sp({fontFamily:'var(--mono)', fontSize:'10.5px', color:'var(--green)', background:'var(--green-soft)', border:'1px solid var(--green-soft-bd)', borderRadius:'5px', padding:'1px 6px'}, t); }
+  modBadge(){ return this.sp({display:'inline-flex', alignItems:'center', gap:'4px', fontSize:'10.5px', fontWeight:700, color:'var(--amber)', background:'var(--amber-soft)', border:'1px solid var(--amber-soft-bd)', borderRadius:'14px', padding:'2px 8px', whiteSpace:'nowrap'},
+    this.svg(11,[this.P('M12 9v4M12 17h.01'), this.P('M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z')], 'var(--amber-vivid)', 1.9), 'Modified source'); }
+  bold(s){ return this.sp({color:'var(--ink-soft)', fontWeight:700}, s); }
+  catChip(label){
+    const m = {ORACLE:['var(--amber-soft)','var(--amber)','var(--amber-soft-bd)'], INFRASTRUCTURE:['var(--blue-soft)','var(--blue)','var(--blue-soft-bd)'], NETWORK:['var(--green-soft)','var(--green)','var(--green-soft-bd)'], PAYMENT:['#F0ECF7','#6A57A0','#DED4EE'], LIFECYCLE:['#E5F1EF','#2F7A72','#CBE5E1'], GOVERNANCE:['#ECEEF1','#566270','#DADEE3']};
+    const a = m[label]||m.GOVERNANCE;
+    return this.sp({fontFamily:'var(--mono)', fontSize:'9.5px', fontWeight:600, letterSpacing:'.04em', color:a[1], background:a[0], border:'1px solid '+a[2], borderRadius:'4px', padding:'2px 6px', whiteSpace:'nowrap'}, label);
+  }
+  statusPill(t){ return this.sp({fontSize:'10.5px', fontWeight:600, color:'var(--green)', background:'var(--green-soft)', border:'1px solid var(--green-soft-bd)', borderRadius:'14px', padding:'2px 9px'}, t); }
+  synChip(t){ return this.sp({fontFamily:'var(--mono)', fontSize:'10px', color:'var(--muted)', background:'var(--panel)', border:'1px solid var(--border)', borderRadius:'4px', padding:'1px 6px'}, t); }
+
+  domainColor(d){ const m={Oracle:'var(--amber-vivid)', Infrastructure:'var(--blue-bright)', Network:'var(--green-bright)', Payment:'#7E68B8', Lifecycle:'#3E9B90', Governance:'#7C8590', Uncategorized:'var(--faint)'}; return m[d]||'var(--faint)'; }
+
+  tagsData(){
+    const tagDomains = [
+      {name:'All domains', count:19, all:true}, {name:'Oracle', count:2}, {name:'Infrastructure', count:7},
+      {name:'Network', count:2}, {name:'Payment', count:2}, {name:'Lifecycle', count:4},
+      {name:'Governance', count:2}, {name:'Uncategorized', count:0},
+    ].map(d=>({...d, color:this.domainColor(d.name), bg: d.all ? 'var(--blue-soft)' : 'transparent'}));
+
+    const tagCardsRaw = [
+      {name:'rman', cat:'ORACLE', desc:'Oracle Recovery Manager — the supported backup and recovery toolchain for Oracle Database. Use for any source…', syn:['recovery-manager'], docs:'47 docs', rate:'312/30d', sel:true},
+      {name:'oracle', cat:'ORACLE', desc:'Oracle Database engine and ecosystem — covers any source about RDBMS configuration, tuning, RAC, ASM, Data…', syn:['oracle-db','ora'], docs:'89 docs', rate:'504/30d'},
+      {name:'vmware', cat:'INFRASTRUCTURE', desc:'VMware vSphere and ESXi runtime — virtualization platform topics: clusters, vMotion, DRS, storage policies.', syn:[], docs:'31 docs', rate:'87/30d'},
+      {name:'memgraph', cat:'INFRASTRUCTURE', desc:'Memgraph graph database, including MAGE extensions, vector_search procedure, and Cypher dialect specifics.', syn:['mage'], docs:'8 docs', rate:'41/30d'},
+      {name:'rhel9', cat:'INFRASTRUCTURE', desc:'Red Hat Enterprise Linux 9 — OS-level configuration, kernel tuning, systemd, SELinux specific to RHEL 9.', syn:['redhat-9','el9'], docs:'12 docs', rate:'22/30d'},
+      {name:'network', cat:'NETWORK', desc:'Networking topics — routing, firewall rules, load balancers, DNS, TLS/PKI, observability of network flows.', syn:[], docs:'24 docs', rate:'58/30d'},
+      {name:'cft', cat:'NETWORK', desc:'Cross-platform File Transfer (Axway CFT) — partner connectivity, flow definitions, monitoring.', syn:[], docs:'9 docs', rate:'14/30d'},
+      {name:'swift', cat:'PAYMENT', desc:'SWIFT messaging — MT/MX, FIN, GPI, ISO 20022 migration. Use for any source discussing SWIFT flows or compliance.', syn:[], docs:'17 docs', rate:'33/30d'},
+      {name:'iso20022', cat:'PAYMENT', desc:'ISO 20022 message standard — pacs, pain, camt families. Distinct from generic "swift" for standard schema cases.', syn:[], docs:'21 docs', rate:'46/30d'},
+    ];
+    const tagCards = tagCardsRaw.map(tc => ({
+      ...tc,
+      catChip: this.catChip(tc.cat),
+      status: this.statusPill('Active'),
+      synLabel: tc.syn.length ? 'syn:' : '',
+      synChips: this.frag(...tc.syn.map(s=>this.synChip(s))),
+      bd: tc.sel ? 'var(--blue)' : 'var(--border)',
+      shadow: tc.sel ? '0 0 0 3px var(--blue-soft), var(--sh-sm)' : 'var(--sh-sm)',
+    }));
+
+    const tagRequests = [
+      {name:'argocd', cat:'infra', by:'marc.berthier', date:'2026-05-09', reason:'Used in 4 new sources scheduled for ingestion this sprint.'},
+      {name:'pacs008', cat:'payment', by:'philippe.marchand', date:'2026-05-10', reason:'Granularity needed below iso20022; we have 3 sources discussing pacs.008 specifically.'},
+    ];
+
+    const tagUsage = [{n:'47', l:'DOCS'},{n:'1,842', l:'CHUNKS'},{n:'312', l:'QUERIES / 30D'}];
+    return { tagDomains, tagCards, tagRequests, tagUsage };
+  }
+
+  retrievalData(){
+    const conversations = [
+      {title:'Oracle restart on RHEL 9', meta:'5 sources · 12m ago', active:true},
+      {title:'RMAN PITR procedure', meta:'8 sources · 44m ago'},
+      {title:'SWIFT pacs.008 field mapping', meta:'3 sources · 2h ago'},
+      {title:'Memgraph vector_search tuning', meta:'6 sources · yesterday'},
+    ].map(c=>({...c, bg:c.active?'var(--blue-soft)':'transparent', bd:c.active?'var(--blue-soft-bd)':'transparent', tcol:c.active?'var(--blue)':'var(--ink)'}));
+
+    const sources = [
+      {n:'1', icon:this.iFile(), name:'oracle-restart-procedure.pdf', chunk:'chunk 12', score:'0.94', tags:this.frag(this.tagPill('rman'), this.tagPill('oracle'))},
+      {n:'2', icon:this.iLink(), name:'/cib/incidents/2026-04-prod-outage', chunk:'chunk 88', score:'0.89', tags:this.frag(this.tagPill('incident'))},
+      {n:'3', icon:this.iLink(), name:'/cib/runbooks/oracle-pga-tuning', chunk:'chunk 31', score:'0.81', tags:this.frag(this.tagPill('rman'))},
+    ];
+    return { conversations, sources };
+  }
+
+  graphData(){
+    const C = {Product:'#2D5A8E', Technology:'#7E68B8', Concept:'#C7891C', Org:'#569C6A', Person:'#C25B6B', Location:'#6B7785'};
+    const N = {
+      oracle:{x:37,y:43,r:32,t:'Product',l:'Oracle Database',sel:true},
+      archive:{x:16,y:29,r:18,t:'Concept',l:'Archive Log'},
+      pga:{x:41,y:15,r:17,t:'Concept',l:'PGA tuning'},
+      rman:{x:20,y:55,r:22,t:'Technology',l:'RMAN'},
+      rhel:{x:38,y:65,r:18,t:'Product',l:'RHEL 9'},
+      vmware:{x:57,y:47,r:24,t:'Product',l:'VMware vSphere 8'},
+      vmotion:{x:67,y:36,r:12,t:'Technology',l:'vMotion',f:1},
+      swift:{x:81,y:19,r:13,t:'Org',l:'SWIFT',f:1},
+      iso:{x:85,y:43,r:19,t:'Concept',l:'ISO 20022'},
+      esxi:{x:64,y:65,r:14,t:'Product',l:'ESXi host',f:1},
+      cft:{x:79,y:61,r:13,t:'Product',l:'CFT',f:1},
+      dcParis:{x:71,y:79,r:11,t:'Location',l:'DC Paris',f:1},
+      marc:{x:20,y:75,r:13,t:'Person',l:'Marc Berthier'},
+      lightrag:{x:33,y:83,r:13,t:'Product',l:'LightRAG',f:1},
+      memgraph:{x:50,y:83,r:15,t:'Product',l:'Memgraph'},
+      mage:{x:59,y:93,r:12,t:'Product',l:'MAGE 3.8',f:1},
+      cypher:{x:41,y:91,r:11,t:'Technology',l:'Cypher',f:1},
+      claire:{x:27,y:93,r:11,t:'Person',l:'Claire Benoit',f:1},
+    };
+    const E = [
+      ['oracle','rhel','RUNS_ON',1],['oracle','pga','TUNED_VIA',1],['oracle','vmware','HOSTED_ON',1],
+      ['oracle','rman','BACKS_UP',0],['oracle','archive','GENERATED_BY',0],['oracle','iso','PERSISTED_IN',1],
+      ['rman','marc','',0],['vmware','vmotion','',0],['vmware','esxi','',0],['vmware','iso','',0],
+      ['esxi','cft','',0],['cft','dcParis','',0],['lightrag','memgraph','',0],['memgraph','mage','',0],
+      ['memgraph','cypher','',0],['lightrag','claire','',0],['rman','rhel','',0],['marc','lightrag','',0],
+    ];
+    const h = React.createElement;
+    const lines = E.map((e,i)=>{ const a=N[e[0]], b=N[e[1]]; return h('line',{key:i, x1:a.x, y1:a.y, x2:b.x, y2:b.y, vectorEffect:'non-scaling-stroke', style:{stroke:e[3]?'var(--blue)':'var(--edge-dim)', strokeWidth:e[3]?2:1.25, strokeOpacity:e[3]?0.95:0.7}}); });
+    const edgeSvg = h('svg',{width:'100%', height:'100%', viewBox:'0 0 100 100', preserveAspectRatio:'none', style:{position:'absolute', inset:0}}, ...lines);
+    const labels = E.filter(e=>e[2]).map((e,i)=>{ const a=N[e[0]], b=N[e[1]]; const mx=(a.x+b.x)/2, my=(a.y+b.y)/2; return h('div',{key:'lb'+i, style:{position:'absolute', left:mx+'%', top:my+'%', transform:'translate(-50%,-50%)', fontFamily:'var(--mono)', fontSize:'8.5px', letterSpacing:'.03em', color:'var(--blue)', background:'var(--edge-pill)', padding:'0 3px', borderRadius:'3px', whiteSpace:'nowrap', pointerEvents:'none'}}, e[2]); });
+    const nodeEls = Object.values(N).map((n,i)=>{
+      const col = C[n.t];
+      const circle = h('div',{style:{width:n.r*2+'px', height:n.r*2+'px', borderRadius:'50%', background:n.sel?col:(n.f?col:col), opacity:n.f?0.42:1, boxShadow:n.sel?('0 0 0 3px var(--canvas), 0 0 0 6px '+col+', 0 4px 12px rgba(0,0,0,.3)'):'0 1px 3px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.18)', border:n.sel?'none':'1.5px solid var(--node-ring)'}});
+      const label = h('div',{style:{position:'absolute', top:'calc(100% + 4px)', left:'50%', transform:'translateX(-50%)', fontFamily:'var(--sans)', fontSize:'10px', fontWeight:n.sel?700:500, color:n.f?'var(--faint)':'var(--ink-soft)', whiteSpace:'nowrap', pointerEvents:'none', textShadow:'0 1px 3px var(--node-glow)'}}, n.l);
+      return h('div',{key:i, style:{position:'absolute', left:n.x+'%', top:n.y+'%', transform:'translate(-50%,-50%)', cursor:'pointer'}}, circle, label);
+    });
+    const graphViz = h('div',{style:{position:'absolute', inset:0}}, edgeSvg, ...labels, ...nodeEls);
+
+    const entityTypes = [
+      {name:'Product',count:8,c:C.Product},{name:'Technology',count:3,c:C.Technology},
+      {name:'Concept',count:3,c:C.Concept},{name:'Org',count:1,c:C.Org},
+      {name:'Person',count:2,c:C.Person},{name:'Location',count:2,c:C.Location},
+    ];
+    const outgoing = [
+      {rel:'RUNS_ON',tgt:'RHEL 9',n:'88',dot:C.Product},
+      {rel:'TUNED_VIA',tgt:'PGA tuning',n:'61',dot:C.Concept},
+      {rel:'HOSTED_ON',tgt:'VMware vSphere 8',n:'66',dot:C.Product},
+    ];
+    const incoming = [
+      {rel:'BACKS_UP',src:'RMAN',n:'92',dot:C.Technology},
+      {rel:'GENERATED_BY',src:'Archive Log',n:'55',dot:C.Concept},
+      {rel:'PERSISTED_IN',src:'ISO 20022',n:'42',dot:C.Concept},
+      {rel:'AUTHORED_ON',src:'Marc Berthier',n:'79',dot:C.Person},
+    ];
+    const graphStats = [{n:'412',l:'MENTIONS'},{n:'47',l:'SOURCES'},{n:'7',l:'RELATIONS'}];
+    return { graphViz, entityTypes, outgoing, incoming, graphStats };
+  }
+
+  evIcon(kind){
+    const m = {
+      retrieval:[this.P('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z'), this.C(12,12,2.6)],
+      tag:[this.P('M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z'), this.C(8,8,1.2,{fill:'currentColor',stroke:'none'})],
+      ready:[this.C(12,12,9), this.P('M8.5 12.5 11 15l4.5-5')],
+      failed:[this.P('M12 9v4M12 17h.01'), this.P('M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z')],
+      pipeline:[this.P('M12 9v4M12 17h.01'), this.P('M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z')],
+      upload:[this.P('M12 16V4m0 0 4 4m-4-4-4 4'), this.P('M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2')],
+      auth:[this.P('M12 11V7a4 4 0 0 1 8 0'), this.P('M5 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z')],
+    };
+    return this.svg(15, m[kind]||m.retrieval, 'currentColor', 1.7);
+  }
+
+  activityData(){
+    const chips = ['Retrieval','Tag mutation','Document retagged','Document approved','Document rejected','Document deleted','Classification rejected','Source uploaded','Source ready','Source failed','Pipeline','Graph entity edited','Graph relation edited','Auth','Settings'];
+    const raw = [
+      {time:'12m ago', actor:'marc.berthier', kind:'retrieval', tag:'RETRIEVAL', title:'How to restart Oracle on RHEL 9?', sub:'Retrieval · hybrid · top_k=60 · 5 sources cited · 1.4s', sel:true, ic:'retrieval', col:'var(--blue)'},
+      {time:'19m ago', actor:'claire.benoit', kind:'tag', tag:'TAG MUTATION', title:'oracle-restart-procedure.pdf', sub:'Added tag rman · removed tag pending-review · 418 chunks re-tagged', ic:'tag', col:'var(--green)'},
+      {time:'25m ago', actor:'system', kind:'ready', tag:'SOURCE READY', title:'memgraph-mage-3.8-release-notes.md', sub:'Indexing completed · 42 chunks · 3 entities · 7 relations', ic:'ready', col:'var(--green)'},
+      {time:'30m ago', actor:'claire.benoit', kind:'failed', tag:'SOURCE FAILED', title:'huge-archive.zip', sub:'Ingestion rejected — unsupported MIME type & 312 MB > 50 MB limit', badge:'ERROR', ic:'failed', col:'var(--red)'},
+      {time:'44m ago', actor:'yann.dubois', kind:'retrieval', tag:'RETRIEVAL', title:'RMAN restore point-in-time procedure', sub:'Retrieval · local · top_k=40 · 8 sources cited · 0.9s', ic:'retrieval', col:'var(--blue)'},
+      {time:'57m ago', actor:'system', kind:'pipeline', tag:'PIPELINE', title:'cib-incidents-2026-Q1-postmortems', sub:'LLM extraction timeout on chunk 78/124 · retrying (attempt 2/3)', badge:'WARNING', ic:'pipeline', col:'var(--amber-vivid)'},
+      {time:'1h ago', actor:'claire.benoit', kind:'upload', tag:'SOURCE UPLOADED', title:'swift-iso20022-migration.pdf', sub:'Uploaded · 14.2 MB · queued for ingestion', ic:'upload', col:'var(--ink-soft)'},
+      {time:'1h ago', actor:'marc.berthier', kind:'auth', tag:'AUTH', title:'Bearer token issued', sub:'Login successful · scope: read:documents read:query · expires in 24h', ic:'auth', col:'var(--ink-soft)'},
+    ];
+    const events = raw.map(e=>({ ...e, icon:this.evIcon(e.ic),
+      badgeEl: e.badge ? this.sp({fontFamily:'var(--mono)', fontSize:'9.5px', fontWeight:700, letterSpacing:'.05em', color:e.badge==='ERROR'?'var(--red)':'var(--amber)', background:e.badge==='ERROR'?'var(--red-soft)':'var(--amber-soft)', border:'1px solid '+(e.badge==='ERROR'?'var(--red-soft-bd)':'var(--amber-soft-bd)'), borderRadius:'14px', padding:'2px 9px'}, e.badge) : null,
+      rowBg: e.sel ? 'var(--blue-soft)' : 'transparent', railCol: e.col }));
+    const meta = [
+      {k:'EVENT ID', v:'evt_01HX9Z7Q', mono:true},{k:'TIMESTAMP', v:'2026-05-11T09:42:18Z', mono:true},
+      {k:'RELATIVE', v:'12m ago'},{k:'ACTOR', v:'marc.berthier (DBA)'},
+      {k:'TARGET', v:'query · How to restart Oracle on RHEL 9?'},{k:'SEVERITY', v:'info'},
+    ];
+    return { activityChips: chips, activityEvents: events, eventMeta: meta };
+  }
+
+  settingsData(){
+    const sub = this.state.settingsSub;
+    const navIcon = {
+      Profile:[this.C(12,12,9), this.C(12,12,3.2)],
+      API:[this.C(12,12,9), this.P('M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18')],
+      Folder:[this.P('M3 7.5C3 6.7 3.7 6 4.5 6h4l1.7 2H19.5c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-15C3.7 19 3 18.3 3 17.5v-10Z')],
+    };
+    const settingsNav = ['Profile','API','Folder'].map(n=>({
+      name:n, active:n===sub, sel:()=>this.setState({settingsSub:n}),
+      icon:this.svg(15, navIcon[n], n===sub?'var(--blue)':'var(--muted)', 1.7),
+      bg:n===sub?'var(--blue-soft)':'transparent', col:n===sub?'var(--blue)':'var(--ink-soft)',
+    }));
+    const scopes = ['read:documents','write:documents','read:query','read:activity','admin:tags','admin:folders'];
+    const apiRoutes = [
+      {m:'GET', p:'/', d:'Redirect To Webui'},{m:'GET', p:'/auth-status', d:'Get Auth Status'},
+      {m:'POST', p:'/login', d:'Login'},{m:'GET', p:'/health', d:'Get system health and configuration status'},
+      {m:'POST', p:'/documents/upload', d:'Upload Document'},{m:'POST', p:'/documents/text', d:'Insert Text'},
+      {m:'POST', p:'/documents/scan', d:'Scan For New Documents'},
+    ].map(r=>({...r, mc: r.m==='GET'?'var(--blue)':'var(--green)', mbg: r.m==='GET'?'var(--blue-soft)':'var(--green-soft)', mbd: r.m==='GET'?'var(--blue-soft-bd)':'var(--green-soft-bd)'}));
+    return { settingsNav, scopes, apiRoutes,
+      isProfile: sub==='Profile', isApi: sub==='API', isFolder: sub==='Folder' };
+  }
+
+  appVals(){
+    const t = this.activeTab();
+    const tabs = ['Documents','Tags','Retrieval','Graph','Activity','Settings'];
+    const navItems = tabs.map(n => ({
+      name:n, sel:()=>this.setTab(n), active:n===t, inactive:n!==t,
+    }));
+
+    const reviewCards = [
+      { icon:this.iFile(), title:'cft-vendor-api-spec-draft.pdf', badge:this.codeChip('C3'),
+        desc:'Vendor-provided spec — needs sign-off by a reviewer before retrieval. Confidence sourcing uncertain.',
+        meta:this.frag('Submitted by ', this.bold('marc.berthier'), ' · 2026-05-20 · 47 chunks', React.createElement('br'), 'tags cft, network'),
+        editLabel:'Edit & approve', approveLabel:'Approve', rejectLabel:'Reject' },
+      { icon:this.iLink(), title:'/cib/runbooks/incident-2026-Q2-postmortem-draft', badge:null,
+        desc:'Contains client-impact figures — reviewer review required before exposure to broader retrieval.',
+        meta:this.frag('Submitted by ', this.bold('yann.dubois'), ' · 2026-05-20 · 89 chunks', React.createElement('br'), 'tags incident, production'),
+        editLabel:'Edit & approve', approveLabel:'Approve', rejectLabel:'Reject' },
+      { icon:this.iLink(), title:'/cib/runbooks/oracle-pga-tuning', badge:this.modBadge(),
+        desc:'Added 2 new sections: "PGA sizing on RHEL 9 large pages" and "AWR snapshot interpretation for memory pressure". ~340 words added.',
+        meta:this.frag('Modified by ', this.bold('yann.dubois'), ' · 2026-05-26 · 54 chunks indexed · tags rman'),
+        editLabel:'Edit', approveLabel:'Approve update', rejectLabel:'Reject' },
+    ];
+
+    const filt = this.state.docFilter;
+    const mkFilter = (label, key, active) => ({
+      label, sel:()=>this.setState({docFilter:key}),
+      bg: filt===key ? 'var(--blue)' : 'var(--surface)',
+      bd: filt===key ? 'var(--blue)' : 'var(--border-strong)',
+      color: filt===key ? '#fff' : (active||'var(--ink-soft)'),
+    });
+    const docFilters = [
+      mkFilter('All (4)','All'), mkFilter('Completed (3)','Completed'),
+      mkFilter('Processing (0)','Processing','var(--amber)'), mkFilter('Pending (0)','Pending'),
+      mkFilter('Failed (1)','Failed'),
+    ];
+
+    const docRows = [
+      { icon:this.iFile(), name:'oracle-restart-procedure.pdf', nameColor:'var(--ink)', code:this.codeChip('C2'),
+        preview:this.sp({color:'var(--ink-soft)'}, 'Step-by-step guide for restarting Oracle DB on RHEL 9 in CIB prod'),
+        tags:this.frag(this.tagPill('rman'), this.tagPill('oracle')), status:'completed', statusColor:'var(--green-bright)', chunks:'418', chunkColor:'var(--ink-soft)', updated:'17d ago' },
+      { icon:this.iLink('var(--red)'), name:'huge-archive.zip', nameColor:'var(--red)', code:null,
+        preview:this.frag(this.sp({color:'var(--red)', fontWeight:600}, '⚠ Failed ingest — unsupported MIME · '), this.sp({color:'var(--muted)'}, 'application/zip')),
+        tags:null, status:'failed', statusColor:'var(--red)', chunks:'0', chunkColor:'var(--red)', updated:'17d ago' },
+      { icon:this.iFile(), name:'memgraph-mage-3.8-release-notes.md', nameColor:'var(--ink)', code:this.codeChip('C1'),
+        preview:this.sp({color:'var(--ink-soft)'}, 'Memgraph MAGE 3.8 release notes — vector_search improvements'),
+        tags:this.frag(this.tagPill('memgraph'), this.tagPill('mage')), status:'completed', statusColor:'var(--green-bright)', chunks:'42', chunkColor:'var(--ink-soft)', updated:'17d ago' },
+      { icon:this.iLink(), name:'/cib/incidents/2026-04-prod-outage', nameColor:'var(--ink)', code:null,
+        preview:this.sp({color:'var(--ink-soft)'}, 'Postmortem: 2026-04 prod outage, Oracle PGA OOM cascade'),
+        tags:this.frag(this.tagPill('incident'), this.tagPill('oracle')), status:'completed', statusColor:'var(--green-bright)', chunks:'156', chunkColor:'var(--ink-soft)', updated:'20d ago' },
+    ];
+
+    const notifications = [
+      { icon:this.svg(16,[this.P('M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z'), this.C(8,8,1.3,{fill:'currentColor', stroke:'none'})], 'var(--green)'), dot:'var(--blue)', bg:'var(--surface)',
+        title:this.frag('Tag ', this.sp({fontFamily:'var(--mono)', fontSize:'11px', background:'var(--green-soft)', color:'var(--green)', padding:'1px 5px', borderRadius:'4px'}, 'rman'), ' applied'), meta:'oracle-restart-procedure.pdf · 418 chunks', time:'12m ago' },
+      { icon:this.svg(16,[this.P('M12 9v4M12 17h.01'), this.P('M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z')], 'var(--red)'), dot:'var(--blue)', bg:'var(--surface)',
+        title:'Ingestion failed', meta:'huge-archive.zip · unsupported MIME', time:'30m ago' },
+      { icon:this.svg(16,[this.C(12,12,9), this.P('M8.5 12.5 11 15l4.5-5')], 'var(--green)'), dot:'var(--blue)', bg:'var(--surface)',
+        title:'Source ready', meta:'memgraph-mage-3.8-release-notes.md · 42 chunks', time:'25m ago' },
+      { icon:this.svg(16,[this.P('M12 9v4M12 17h.01'), this.P('M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z')], 'var(--amber-vivid)'), dot:'transparent', bg:'var(--surface-warm)',
+        title:'Pipeline warning', meta:'LLM extraction retrying · attempt 2/3', time:'57m ago' },
+    ];
+
+    return {
+      folderLabel: this.props.folderLabel || 'Default folder',
+      operatorName: this.props.operatorName || 'Local Operator',
+      theme: this.state.dark ? 'dark' : 'light',
+      isDark: this.state.dark, isLight: !this.state.dark,
+      toggleTheme: ()=>this.setState(s=>({dark:!s.dark})),
+      navItems,
+      isDocuments: t==='Documents', isTags: t==='Tags', isRetrieval: t==='Retrieval',
+      isGraph: t==='Graph', isActivity: t==='Activity', isSettings: t==='Settings',
+      folderOpen: this.state.folderOpen, notifOpen: this.state.notifOpen,
+      toggleFolder: ()=>this.setState(s=>({folderOpen:!s.folderOpen, notifOpen:false})),
+      toggleNotif: ()=>this.setState(s=>({notifOpen:!s.notifOpen, folderOpen:false})),
+      closeMenus: this.closeMenus,
+      reviewCards, docFilters, docRows, notifications,
+      ...this.tagsData(),
+      ...this.retrievalData(),
+      ...this.graphData(),
+      ...this.activityData(),
+      ...this.settingsData(),
+    };
+  }
+
+
+  activeTab(){ if(this.state && this.state.started){ const f = Math.min(this.state.step || 1, 6); return (this.STEPS && this.STEPS[f] && this.STEPS[f].tab) || 'Documents'; } return this.state.tab || 'Documents'; }
+  renderVals(){ return Object.assign({}, this.appVals(), this.tourVals()); }
+}
+</script>
+<script>
+// GENERATED from dc-runtime/src/*.ts — do not edit. Rebuild with `cd dc-runtime && bun run build`.
+"use strict";
+(() => {
+  var __defProp = Object.defineProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
+  // src/react.ts
+  function getReact() {
+    const R = window.React;
+    if (!R) throw new Error("dc-runtime: window.React is not available yet");
+    return R;
+  }
+  function getReactDOM() {
+    const RD = window.ReactDOM;
+    if (!RD) throw new Error("dc-runtime: window.ReactDOM is not available yet");
+    return RD;
+  }
+  var h = ((...args) => getReact().createElement(
+    ...args
+  ));
+
+  // src/parse.ts
+  function parseDcDocument(doc) {
+    const dc = doc.querySelector("x-dc");
+    if (!dc) return null;
+    const scriptEl = doc.querySelector("script[data-dc-script]");
+    const { props, preview } = parseDataProps(
+      scriptEl?.getAttribute("data-props") ?? null
+    );
+    return {
+      template: dc.innerHTML,
+      js: scriptEl ? scriptEl.textContent || "" : "",
+      props,
+      preview
+    };
+  }
+  function parseDcText(src) {
+    const openMatch = /<x-dc(?:\s[^>]*)?>/.exec(src);
+    if (!openMatch) return null;
+    const close = src.lastIndexOf("</x-dc>");
+    if (close === -1 || close < openMatch.index) return null;
+    const template = src.slice(openMatch.index + openMatch[0].length, close);
+    const doc = new DOMParser().parseFromString(src, "text/html");
+    const scriptEl = doc.querySelector("script[data-dc-script]");
+    const { props, preview } = parseDataProps(
+      scriptEl?.getAttribute("data-props") ?? null
+    );
+    return {
+      template,
+      js: scriptEl ? scriptEl.textContent || "" : "",
+      props,
+      preview
+    };
+  }
+  function parseDataProps(raw) {
+    if (!raw) return { props: null, preview: null };
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { props: null, preview: null };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { props: null, preview: null };
+    }
+    const obj = parsed;
+    const preview = obj.$preview && typeof obj.$preview === "object" ? obj.$preview : null;
+    const rest = {};
+    for (const k of Object.keys(obj)) {
+      if (k[0] !== "$") rest[k] = obj[k];
+    }
+    return { props: Object.keys(rest).length ? rest : null, preview };
+  }
+  function dcNameFromPath(pathname) {
+    let p = pathname || "";
+    try {
+      p = decodeURIComponent(p);
+    } catch {
+    }
+    const base = p.split("/").pop() || "Root";
+    return base.replace(/\.dc\.html$/, "").replace(/\.html?$/, "") || "Root";
+  }
+
+  // src/boot.ts
+  var BASE_CSS = `
+    .sc-placeholder{background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;overflow:hidden}
+    @keyframes sc-shine{0%{background-position:100% 50%}100%{background-position:0% 50%}}
+    html.sc-dc-streaming .sc-placeholder,
+    html.sc-dc-streaming .sc-interp.sc-missing{position:relative;
+      background:color-mix(in srgb,currentColor 5%,transparent);
+      border-color:transparent}
+    html.sc-dc-streaming .sc-placeholder::before,
+    html.sc-dc-streaming .sc-interp.sc-missing::before{content:'';
+      position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(90deg,rgba(217,119,87,0) 25%,rgba(247,225,211,.95) 37%,rgba(217,119,87,0) 63%);
+      background-size:400% 100%;animation:sc-shine 1.4s ease infinite}
+    html.sc-dc-streaming .sc-placeholder:nth-child(n+9 of .sc-placeholder)::before,
+    html.sc-dc-streaming .sc-interp.sc-missing:nth-child(n+9 of .sc-interp.sc-missing)::before{animation:none;
+      background:color-mix(in srgb,currentColor 8%,transparent)}
+    .sc-placeholder-error{padding:4px 8px;font:11px/1.4 ui-monospace,monospace;
+      color:rgba(0,0,0,.7);word-break:break-word}
+    .sc-interp.sc-missing{display:inline-block;width:2em;height:1em;overflow:hidden;
+      vertical-align:text-bottom;background:rgba(255,255,255,.3);border:1px solid rgba(0,0,0,.5);
+      border-radius:2px;box-sizing:border-box;color:transparent;
+      user-select:none}
+    .sc-interp.sc-unresolved{font-family:ui-monospace,monospace;font-size:.85em;
+      color:rgba(0,0,0,.5);background:rgba(0,0,0,.05);border-radius:3px;
+      padding:0 3px}
+    .sc-host.sc-has-error{position:relative}
+    .sc-logic-error{position:absolute;top:8px;left:8px;z-index:2147483647;max-width:60ch;
+      padding:6px 10px;background:#b00020;color:#fff;font:12px/1.4 ui-monospace,monospace;
+      border-radius:4px;white-space:pre-wrap;pointer-events:none}
+    /* Mirrors PRINT_BASELINE_CSS in apps/web deck-stage-export.ts \u2014 keep both
+       in sync until dc-runtime regains a build step. */
+    @media print {
+      @page { margin: 0.5cm; }
+      section, article, figure, table { break-inside: avoid; }
+      *, *::before, *::after {
+        print-color-adjust: exact; -webkit-print-color-adjust: exact;
+        backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        animation-delay: -99s !important; animation-duration: .001s !important;
+        animation-iteration-count: 1 !important; animation-fill-mode: both !important;
+        animation-play-state: running !important; transition-duration: 0s !important;
+      }
+    }
+  `;
+  var FULL_PAGE_CSS = "html,body{height:100%;margin:0}#dc-root,#dc-root>.sc-host{height:100%}";
+  function rootNameForDocument(doc, loc) {
+    let bootPath = loc.pathname || "";
+    if (!/\.dc\.html?$/i.test(safeDecode(bootPath))) {
+      try {
+        bootPath = new URL(doc.baseURI || "/").pathname;
+      } catch {
+      }
+    }
+    return dcNameFromPath(bootPath);
+  }
+  function safeDecode(s) {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  }
+  function boot(runtime, doc = document) {
+    const parsed = parseDcDocument(doc);
+    if (!parsed) return null;
+    const React = getReact();
+    const rootName = rootNameForDocument(doc, location);
+    runtime.markFetched(rootName);
+    runtime.adoptParsed(rootName, parsed);
+    fetch(location.href).then((res) => res.ok ? res.text() : "").then((t) => {
+      const raw = t ? parseDcText(t) : null;
+      if (raw?.template) runtime.updateHtml(rootName, raw.template);
+    }).catch(() => {
+    });
+    const dc = doc.querySelector("x-dc");
+    const hostEl = doc.createElement("div");
+    hostEl.id = "dc-root";
+    dc.replaceWith(hostEl);
+    if (!parsed.preview) {
+      const s = doc.createElement("style");
+      s.textContent = FULL_PAGE_CSS;
+      doc.head.appendChild(s);
+    }
+    const Root = runtime.getDC(rootName);
+    const entry = runtime.registry.get(rootName);
+    function StandaloneRoot() {
+      const [, setTick] = React.useState(0);
+      React.useEffect(() => {
+        const sub = () => setTick((n) => n + 1);
+        entry.subs.add(sub);
+        return () => {
+          entry.subs.delete(sub);
+        };
+      }, []);
+      return h(Root, entry.propOverrides || null);
+    }
+    const ReactDOM = getReactDOM();
+    if (ReactDOM.createRoot)
+      ReactDOM.createRoot(hostEl).render(h(StandaloneRoot));
+    else ReactDOM.render(h(StandaloneRoot), hostEl);
+    return rootName;
+  }
+
+  // src/expr.ts
+  var IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*/;
+  var NUMBER_RE = /^-?\d+(\.\d+)?$/;
+  function resolve(vals, src) {
+    const expr = String(src).trim();
+    if (!expr) return void 0;
+    if (expr[0] === "(" && expr[expr.length - 1] === ")" && parensWrapWhole(expr)) {
+      return resolve(vals, expr.slice(1, -1));
+    }
+    const eq = findTopLevelEquality(expr);
+    if (eq) {
+      const lv = resolve(vals, expr.slice(0, eq.index));
+      const rv = resolve(vals, expr.slice(eq.index + eq.op.length));
+      switch (eq.op) {
+        case "===":
+          return lv === rv;
+        case "!==":
+          return lv !== rv;
+        case "==":
+          return lv == rv;
+        default:
+          return lv != rv;
+      }
+    }
+    if (expr[0] === "!") return !resolve(vals, expr.slice(1));
+    if (expr === "true") return true;
+    if (expr === "false") return false;
+    if (expr === "null") return null;
+    if (expr === "undefined") return void 0;
+    if (NUMBER_RE.test(expr)) return Number(expr);
+    if (expr.length >= 2 && (expr[0] === '"' || expr[0] === "'") && expr[expr.length - 1] === expr[0]) {
+      return expr.slice(1, -1);
+    }
+    return resolvePath(vals, expr);
+  }
+  function parensWrapWhole(expr) {
+    let depth = 0;
+    for (let i = 0; i < expr.length - 1; i++) {
+      if (expr[i] === "(") depth++;
+      else if (expr[i] === ")") {
+        depth--;
+        if (depth === 0) return false;
+      }
+    }
+    return true;
+  }
+  function findTopLevelEquality(expr) {
+    let depth = 0;
+    for (let i = 0; i < expr.length; i++) {
+      const c = expr[i];
+      if (c === "[" || c === "(") depth++;
+      else if (c === "]" || c === ")") depth--;
+      else if (depth === 0 && (c === "=" || c === "!") && expr[i + 1] === "=") {
+        if (i > 0 && (expr[i - 1] === "=" || expr[i - 1] === "!")) continue;
+        if (!expr.slice(0, i).trim()) continue;
+        const op = expr[i + 2] === "=" ? c + "==" : c + "=";
+        return { index: i, op };
+      }
+    }
+    return null;
+  }
+  function resolvePath(vals, expr) {
+    const head = expr.match(IDENT_RE);
+    if (!head) return void 0;
+    let cur = vals == null ? void 0 : vals[head[0]];
+    let i = head[0].length;
+    while (i < expr.length) {
+      if (expr[i] === ".") {
+        const m = expr.slice(i + 1).match(IDENT_RE) || expr.slice(i + 1).match(/^\d+/);
+        if (!m) return void 0;
+        cur = cur == null ? void 0 : cur[m[0]];
+        i += 1 + m[0].length;
+      } else if (expr[i] === "[") {
+        let depth = 1;
+        let j = i + 1;
+        while (j < expr.length && depth > 0) {
+          if (expr[j] === "[") depth++;
+          else if (expr[j] === "]") {
+            depth--;
+            if (depth === 0) break;
+          }
+          j++;
+        }
+        if (depth !== 0) return void 0;
+        const key = resolve(vals, expr.slice(i + 1, j));
+        cur = cur == null ? void 0 : cur[key];
+        i = j + 1;
+      } else {
+        return void 0;
+      }
+    }
+    return cur;
+  }
+
+  // src/encode.ts
+  var CAMEL_ATTR = "sc-camel-";
+  var RAW_WRAP = {
+    select: "sc-raw-select",
+    table: "sc-raw-table",
+    tbody: "sc-raw-tbody",
+    thead: "sc-raw-thead",
+    tfoot: "sc-raw-tfoot",
+    tr: "sc-raw-tr",
+    td: "sc-raw-td",
+    th: "sc-raw-th",
+    caption: "sc-raw-caption"
+  };
+  var RAW_UNWRAP = Object.fromEntries(
+    Object.entries(RAW_WRAP).map(([k, v]) => [v, k])
+  );
+  var EVENT_MAP = {
+    onclick: "onClick",
+    onchange: "onChange",
+    oninput: "onInput",
+    onsubmit: "onSubmit",
+    onkeydown: "onKeyDown",
+    onkeyup: "onKeyUp",
+    onkeypress: "onKeyPress",
+    onmousedown: "onMouseDown",
+    onmouseup: "onMouseUp",
+    onmouseenter: "onMouseEnter",
+    onmouseleave: "onMouseLeave",
+    onfocus: "onFocus",
+    onblur: "onBlur",
+    ondoubleclick: "onDoubleClick",
+    oncontextmenu: "onContextMenu"
+  };
+  var ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`;
+  var IMPORT_SELF_CLOSE_RE = new RegExp(
+    "<(x-import|dc-import)(" + ATTRS + ")/>",
+    "gi"
+  );
+  var CAMEL_ATTR_RE = /(\s)([a-z]+[A-Z][A-Za-z0-9]*)(\s*=)/g;
+  function encodeCase(html) {
+    html = html.replace(
+      IMPORT_SELF_CLOSE_RE,
+      (_, t, a) => "<" + t + a + "></" + t + ">"
+    );
+    html = html.replace(/<helmet(\s|>)/gi, "<sc-helmet$1");
+    html = html.replace(/<\/helmet\s*>/gi, "</sc-helmet>");
+    html = html.replace(
+      CAMEL_ATTR_RE,
+      (_, sp, name, eq) => sp + CAMEL_ATTR + name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()) + eq
+    );
+    for (const [real, alias] of Object.entries(RAW_WRAP)) {
+      html = html.replace(
+        new RegExp("(</?)" + real + "(?=[\\s>])", "gi"),
+        "$1" + alias
+      );
+    }
+    return html;
+  }
+  function kebabToCamel(s) {
+    return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  }
+  function cssToObj(css) {
+    const o = {};
+    for (const decl of css.split(";")) {
+      const i = decl.indexOf(":");
+      if (i < 0) continue;
+      const prop = decl.slice(0, i).trim();
+      o[prop.startsWith("--") ? prop : kebabToCamel(prop)] = decl.slice(i + 1).trim();
+    }
+    return o;
+  }
+  function compileAttr(raw) {
+    const whole = raw.match(/^\s*\{\{([\s\S]+?)\}\}\s*$/);
+    if (whole) {
+      const path = whole[1];
+      return (vals) => resolve(vals, path);
+    }
+    if (raw.includes("{{")) {
+      const parts = raw.split(/\{\{([\s\S]+?)\}\}/g);
+      return (vals) => parts.map((s, i) => i & 1 ? resolve(vals, s) ?? "" : s).join("");
+    }
+    return () => raw;
+  }
+
+  // src/compile.ts
+  function collectProps(node, isComponent, host) {
+    const propGetters = [];
+    const pseudoClasses = [];
+    let hintSize = null;
+    for (const { name, value } of [...node.attributes]) {
+      if (name === "sc-name" || name === "data-dc-tpl") continue;
+      let key = name;
+      if (key.startsWith(CAMEL_ATTR))
+        key = kebabToCamel(key.slice(CAMEL_ATTR.length));
+      if (key === "hint-size") {
+        hintSize = value;
+        continue;
+      }
+      if (key.startsWith("style-")) {
+        pseudoClasses.push(host.pseudoClass(key.slice(6), value));
+        continue;
+      }
+      if (isComponent) {
+        if (key.includes("-")) key = kebabToCamel(key);
+      } else {
+        if (key === "class") key = "className";
+        else if (key === "for") key = "htmlFor";
+        else if (key.startsWith("on"))
+          key = EVENT_MAP[key] || "on" + key[2].toUpperCase() + key.slice(3);
+      }
+      propGetters.push([key, compileAttr(value)]);
+    }
+    return { propGetters, pseudoClasses, hintSize };
+  }
+  var HOST_STYLE_PROPS = /* @__PURE__ */ new Set([
+    "position",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "inset",
+    "width",
+    "height",
+    "z-index",
+    "transform"
+  ]);
+  function hostPositionStyle(style) {
+    const all = typeof style === "string" ? cssToObj(style) : style != null && typeof style === "object" ? style : null;
+    if (!all) return void 0;
+    const out = {};
+    for (const [k, v] of Object.entries(all)) {
+      const kebab = k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+      if (HOST_STYLE_PROPS.has(kebab)) out[k] = v;
+    }
+    return Object.keys(out).length ? out : void 0;
+  }
+  function compileTemplate(html, host) {
+    const tpl = document.createElement("template");
+    //! nosemgrep: direct-inner-html-assignment
+    tpl.innerHTML = encodeCase(html);
+    let tplN = 0;
+    (function stamp(node) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        node.setAttribute("data-dc-tpl", String(tplN++));
+      }
+      for (const c of node.childNodes) stamp(c);
+    })(tpl.content);
+    const builders = walkChildren(tpl.content, host);
+    const render = ((vals, ctx) => builders.map((b, i) => b(vals || {}, ctx, i)));
+    render.__annotated = tpl.innerHTML;
+    return render;
+  }
+  function walkChildren(node, host) {
+    return [...node.childNodes].map((c) => walk(c, host)).filter((b) => b != null);
+  }
+  function walk(node, host) {
+    if (node.nodeType === Node.TEXT_NODE) return walkText(node);
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+    const el = node;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "sc-for") return walkFor(el, host);
+    if (tag === "sc-if") return walkIf(el, host);
+    if (tag === "x-import") return walkXImport(el, host);
+    if (tag === "sc-helmet") return host.helmet(el);
+    if (tag === "dc-import") return walkComponent(el, host);
+    return walkElement(el, host);
+  }
+  var warnedHoles = /* @__PURE__ */ new Set();
+  function warnUnresolved(ctx, what) {
+    const key = (ctx?.__name || "?") + "\0" + what;
+    if (warnedHoles.has(key)) return;
+    warnedHoles.add(key);
+    console.warn("[dc-runtime] " + (ctx?.__name || "template") + ": " + what);
+  }
+  function walkText(node) {
+    const txt = node.nodeValue ?? "";
+    if (!txt.includes("{{")) {
+      if (!txt.trim() && !txt.includes(" ")) return null;
+      return () => txt;
+    }
+    const parts = txt.split(/\{\{([\s\S]+?)\}\}/g);
+    return (vals, ctx, key) => h(
+      getReact().Fragment,
+      { key },
+      ...parts.map((p, i) => {
+        if (!(i & 1)) return p;
+        const v = resolve(vals, p);
+        if (v === void 0) {
+          if (!ctx?.__streamingNow) {
+            if (document.body?.hasAttribute("data-dc-editor-on")) {
+              return h(
+                "span",
+                { key: i, className: "sc-interp sc-unresolved" },
+                "{{ " + p.trim() + " }}"
+              );
+            }
+            warnUnresolved(
+              ctx,
+              "{{ " + p.trim() + " }} never resolved \u2014 rendered as empty"
+            );
+            return null;
+          }
+          return h(
+            "span",
+            { key: i, className: "sc-interp sc-missing" },
+            p.trim()
+          );
+        }
+        if (getReact().isValidElement(v) || Array.isArray(v)) {
+          return h(getReact().Fragment, { key: i }, v);
+        }
+        if (v === null || typeof v === "boolean") return null;
+        return h("span", { key: i, className: "sc-interp" }, String(v));
+      })
+    );
+  }
+  function walkFor(el, host) {
+    const listGet = compileAttr(el.getAttribute("list") || "");
+    const asName = el.getAttribute("as") || "item";
+    const hintN = parseInt(el.getAttribute("hint-placeholder-count") || "0", 10);
+    const kids = walkChildren(el, host);
+    const listSrc = el.getAttribute("list") || "";
+    return (vals, ctx, key) => {
+      let list = listGet(vals);
+      if (!Array.isArray(list)) {
+        if (!ctx?.__streamingNow) {
+          if (list !== void 0 && list !== null) {
+            warnUnresolved(
+              ctx,
+              'sc-for list="' + listSrc + '" is not an array (' + typeof list + ")"
+            );
+          }
+          list = [];
+        } else {
+          list = hintN > 0 ? Array(hintN).fill(void 0) : [];
+        }
+      }
+      return h(
+        getReact().Fragment,
+        { key },
+        list.map((item, i) => {
+          const sub = { ...vals, [asName]: item, $index: i };
+          return h(
+            getReact().Fragment,
+            { key: i },
+            kids.map((b, j) => b(sub, ctx, j))
+          );
+        })
+      );
+    };
+  }
+  function walkIf(el, host) {
+    const valGet = compileAttr(el.getAttribute("value") || "");
+    const hintRaw = el.getAttribute("hint-placeholder-val");
+    const hintGet = hintRaw != null ? compileAttr(hintRaw) : null;
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      let v = valGet(vals);
+      if (v === void 0 && hintGet && ctx?.__streamingNow) v = hintGet(vals);
+      return v ? h(
+        getReact().Fragment,
+        { key },
+        kids.map((b, j) => b(vals, ctx, j))
+      ) : null;
+    };
+  }
+  function walkComponent(el, host) {
+    const name = el.getAttribute("name") || el.getAttribute("component") || "";
+    el.removeAttribute("name");
+    el.removeAttribute("component");
+    const tplId = el.getAttribute("data-dc-tpl");
+    const styleRaw = el.getAttribute("style");
+    el.removeAttribute("style");
+    const styleGet = styleRaw != null ? compileAttr(styleRaw) : null;
+    const { propGetters, hintSize } = collectProps(el, true, host);
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      const props = {
+        key,
+        __hintSize: hintSize,
+        __tplId: tplId,
+        __hostStyle: styleGet ? hostPositionStyle(styleGet(vals)) : void 0
+      };
+      for (const [k, g] of propGetters) props[k] = g(vals);
+      if (kids.length) props.children = kids.map((b, j) => b(vals, ctx, j));
+      return h(host.component(name), props);
+    };
+  }
+  function walkXImport(el, host) {
+    const globalNameGet = compileAttr(
+      el.getAttribute("component-from-global-scope") || ""
+    );
+    const exportNameGet = compileAttr(
+      el.getAttribute("component") || el.getAttribute("name") || ""
+    );
+    const url = el.getAttribute("from") || el.getAttribute("src") || el.getAttribute("import") || "";
+    const kind = /\.(jsx|tsx)(\?|#|$)/i.test(url) ? "jsx" : "js";
+    const tplId = el.getAttribute("data-dc-tpl");
+    const styleRaw = el.getAttribute("style");
+    el.removeAttribute("style");
+    const styleGet = styleRaw != null ? compileAttr(styleRaw) : null;
+    const wrap = tplId != null || styleGet != null;
+    const { propGetters, hintSize } = collectProps(el, true, host);
+    const hasContent = el.children.length > 0 || !!(el.textContent || "").trim();
+    const kids = hasContent ? walkChildren(el, host) : [];
+    const urlBindable = url.includes("{{");
+    if (url && !urlBindable) host.loadExternal(kind, url);
+    const evalName = (g, vals) => {
+      const v = g(vals);
+      const s = v == null ? "" : String(v);
+      return s.includes("{{") ? "" : s;
+    };
+    return (vals, ctx, key) => {
+      const globalName = evalName(globalNameGet, vals);
+      const name = globalName || evalName(exportNameGet, vals);
+      const C = !name || urlBindable ? null : globalName ? host.resolveExternalGlobal(url, globalName) : host.resolveExternal(url, name);
+      const hostStyle = styleGet ? hostPositionStyle(styleGet(vals)) : void 0;
+      const wrapper = wrap ? {
+        key,
+        className: "sc-host-x",
+        "data-dc-tpl": tplId,
+        style: hostStyle || { display: "contents" }
+      } : null;
+      if (!C) {
+        const error = urlBindable ? "x-import `from` cannot contain {{ \u2026 }} \u2014 module URLs are resolved at parse time; use a literal URL" : host.resolveExternalError(url, name);
+        const ph = host.placeholder({
+          key: wrapper ? void 0 : key,
+          name,
+          hintSize,
+          error
+        });
+        return wrapper ? h("div", wrapper, ph) : ph;
+      }
+      const props = wrapper ? {} : { key };
+      let unresolvedHole = false;
+      for (const [k, g] of propGetters) {
+        if (k === "component" || k === "componentFromGlobalScope" || k === "name" || k === "from" || k === "src" || k === "import") {
+          continue;
+        }
+        const v = g(vals);
+        if (v === void 0) unresolvedHole = true;
+        props[k] = v;
+      }
+      if (unresolvedHole && ctx?.__htmlStreamingNow) {
+        const ph = host.placeholder({
+          key: wrapper ? void 0 : key,
+          name,
+          hintSize,
+          error: null
+        });
+        return wrapper ? h("div", wrapper, ph) : ph;
+      }
+      if (kids.length) props.children = kids.map((b, j) => b(vals, ctx, j));
+      return wrapper ? h("div", wrapper, h(C, props)) : h(C, props);
+    };
+  }
+  function walkElement(el, host) {
+    const realTag = RAW_UNWRAP[el.localName] || el.localName;
+    const tplId = el.getAttribute("data-dc-tpl");
+    const { propGetters, pseudoClasses } = collectProps(el, false, host);
+    const kids = walkChildren(el, host);
+    return (vals, ctx, key) => {
+      const props = { key, "data-dc-tpl": tplId };
+      for (const [k, g] of propGetters) {
+        let v = g(vals);
+        if (k === "style" && typeof v === "string") v = cssToObj(v);
+        if ((k === "value" || k === "checked") && v === void 0) {
+          v = k === "checked" ? false : "";
+        }
+        props[k] = v;
+      }
+      if (pseudoClasses.length) {
+        props.className = [props.className, ...pseudoClasses].filter(Boolean).join(" ");
+      }
+      return h(realTag, props, ...kids.map((b, j) => b(vals, ctx, j)));
+    };
+  }
+
+  // src/logic.ts
+  var StreamableLogic = class {
+    constructor(props) {
+      __publicField(this, "props");
+      __publicField(this, "state", {});
+      /** Back-pointer to the wrapper component, installed after construction. */
+      __publicField(this, "__host");
+      this.props = props || {};
+    }
+    setState(update, cb) {
+      this.__host && this.__host.__setLogicState(update, cb);
+    }
+    forceUpdate() {
+      this.__host && this.__host.forceUpdate();
+    }
+    componentDidMount() {
+    }
+    componentDidUpdate(_prevProps) {
+    }
+    componentWillUnmount() {
+    }
+    /** The flat object the template renders against (merged over props). */
+    renderVals() {
+      return {};
+    }
+  };
+  function evalDcLogic(src) {
+    //! nosemgrep: eval-and-function-constructor
+    const fn = new Function(
+      "DCLogic",
+      "StreamableLogic",
+      "React",
+      src + '\n;return (typeof Component!=="undefined"&&Component)||undefined;'
+    );
+    return fn(StreamableLogic, StreamableLogic, getReact());
+  }
+
+  // src/component.ts
+  function shallowEqual(a, b) {
+    if (!b) return false;
+    const ak = Object.keys(a).filter((k) => k !== "children");
+    const bk = Object.keys(b).filter((k) => k !== "children");
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) if (a[k] !== b[k]) return false;
+    return true;
+  }
+  function Placeholder({
+    name,
+    hintSize,
+    streaming,
+    error
+  }) {
+    const [w, hgt] = (hintSize || "100%,60px").split(",");
+    return h(
+      "div",
+      {
+        className: "sc-placeholder" + (streaming ? " sc-streaming" : ""),
+        style: { width: w.trim(), height: hgt && hgt.trim() },
+        title: name
+      },
+      error ? h(
+        "div",
+        { className: "sc-placeholder-error" },
+        (name ? name + ": " : "") + error
+      ) : null
+    );
+  }
+  function hintToMin(hint) {
+    if (!hint) return void 0;
+    const [w, hgt] = hint.split(",");
+    return { minWidth: w.trim(), minHeight: hgt && hgt.trim() };
+  }
+  function createComponentFactory(registry, ensureFetched) {
+    const React = getReact();
+    const AncestorContext = React.createContext([]);
+    class StreamableComponent extends React.Component {
+      constructor(props) {
+        super(props);
+        __publicField(this, "__name");
+        __publicField(this, "__sub");
+        __publicField(this, "__needsDidMount", false);
+        /** Snapshot of the registry's streaming flags taken at render time —
+         *  builders read it off the RenderCtx (this) to pick placeholder vs
+         *  render-nothing for unresolved values. */
+        __publicField(this, "__streamingNow", false);
+        __publicField(this, "__htmlStreamingNow", false);
+        /** When a construct throws, remember the (class, registry.ver, props)
+         *  triple so render-time reconcile doesn't re-attempt it on every parent
+         *  re-render. A registry bump (new class, template, external module
+         *  resolving via bumpAll) changes `ver` and breaks the memo so an
+         *  env-dependent constructor can self-heal. */
+        __publicField(this, "__failedLogic", null);
+        __publicField(this, "__failedUserProps", null);
+        __publicField(this, "__failedVer", -1);
+        /** Per-instance constructor error — kept here (not on the registry entry)
+         *  so one instance's successful construct can't hide a sibling's failure,
+         *  and a construct can never wipe an eval error `updateJs` recorded on
+         *  `r.logicError`. */
+        __publicField(this, "__ctorError", null);
+        __publicField(this, "logic");
+        this.__name = props.__name;
+        this.state = { __v: 0, __err: null };
+        this.__sub = () => {
+          if (this.state.__err) this.setState({ __err: null });
+          this.forceUpdate();
+        };
+        this.__makeLogic(registry.get(this.__name).Logic, null);
+        ensureFetched(this.__name);
+      }
+      /** Error-boundary hook: a render crash anywhere in this DC's subtree
+       *  (its own template, an x-import'd component, a child DC without its
+       *  own deeper boundary) lands here instead of unmounting the page. */
+      static getDerivedStateFromError(e) {
+        return { __err: e instanceof Error && e.message ? e.message : String(e) };
+      }
+      componentDidCatch(e, info) {
+        console.error(
+          "[dc-runtime] render error in <" + this.__name + ">:",
+          e,
+          info?.componentStack || ""
+        );
+      }
+      /** Instantiate the logic class (or the no-op base) and adopt `prevState`
+       *  over its initial state — used both at mount and on hot-swap. */
+      __makeLogic(Logic, prevState) {
+        const L = Logic || StreamableLogic;
+        try {
+          this.logic = new L(this.__userProps());
+          this.__failedLogic = null;
+          this.__failedUserProps = null;
+          this.__ctorError = null;
+        } catch (e) {
+          console.error(e);
+          this.__failedLogic = Logic;
+          this.__failedUserProps = this.__userProps();
+          this.__failedVer = registry.get(this.__name).ver;
+          this.__ctorError = this.__name + ": " + (e instanceof Error && e.message ? e.message : String(e));
+          this.logic = new StreamableLogic(
+            this.__userProps()
+          );
+        }
+        this.logic.__host = this;
+        if (prevState)
+          this.logic.state = { ...this.logic.state || {}, ...prevState };
+      }
+      /** The props the author's logic + template see — internal __-prefixed
+       *  wiring stripped. */
+      __userProps() {
+        const { __name, __hintSize, __tplId, __hostStyle, ...rest } = this.props;
+        return rest;
+      }
+      __setLogicState(update, cb) {
+        const prev = this.logic.state;
+        const patch = typeof update === "function" ? update(prev) : update;
+        this.logic.state = { ...prev, ...patch };
+        this.setState((s) => ({ __v: s.__v + 1 }), cb);
+      }
+      /** Swap the logic instance when the registry's Logic class changed
+       *  (streaming completion, hot reload). State carries over; didMount
+       *  re-fires after the swap commits so refs exist. */
+      __reconcileLogic() {
+        const r = registry.get(this.__name);
+        const Next = r.Logic;
+        const Cur = this.logic.constructor;
+        if (Next === Cur || !Next && Cur === StreamableLogic || Next === this.__failedLogic && r.ver === this.__failedVer && shallowEqual(this.__userProps(), this.__failedUserProps)) {
+          return;
+        }
+        if (!this.__needsDidMount) {
+          try {
+            this.logic.componentWillUnmount();
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        this.__makeLogic(Next, this.logic.state);
+        this.__needsDidMount = true;
+      }
+      componentDidMount() {
+        registry.get(this.__name).subs.add(this.__sub);
+        try {
+          this.logic.componentDidMount();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      componentDidUpdate(prevProps) {
+        this.logic.props = this.__userProps();
+        if (this.__needsDidMount) {
+          if (this.state.__err || !registry.get(this.__name).tpl) return;
+          this.__needsDidMount = false;
+          try {
+            this.logic.componentDidMount();
+          } catch (e) {
+            console.error(e);
+          }
+        } else {
+          try {
+            this.logic.componentDidUpdate(prevProps);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      componentWillUnmount() {
+        registry.get(this.__name).subs.delete(this.__sub);
+        if (!this.__needsDidMount) {
+          try {
+            this.logic.componentWillUnmount();
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      render() {
+        const r = registry.get(this.__name);
+        const cls = "sc-host" + (r.htmlStreaming ? " sc-streaming-html" : "") + (r.jsStreaming ? " sc-streaming-js" : "");
+        const hintStyle = r.htmlStreaming ? hintToMin(this.props.__hintSize) : void 0;
+        const hostStyle = this.props.__hostStyle || hintStyle ? { ...hintStyle || {}, ...this.props.__hostStyle || {} } : void 0;
+        const hostBase = {
+          className: cls,
+          style: hostStyle,
+          "data-sc-name": this.__name,
+          "data-dc-tpl": this.props.__tplId
+        };
+        const chain = Array.isArray(this.context) ? this.context : [];
+        if (chain.includes(this.__name)) {
+          const cycle = [
+            ...chain.slice(chain.indexOf(this.__name)),
+            this.__name
+          ].join(" \u2192 ");
+          return h(
+            "div",
+            { ...hostBase, className: cls + " sc-has-error" },
+            h(Placeholder, {
+              name: this.__name,
+              hintSize: this.props.__hintSize,
+              error: "circular import: " + cycle
+            })
+          );
+        }
+        if (this.state.__err) {
+          return h(
+            "div",
+            { ...hostBase, className: cls + " sc-has-error" },
+            h(
+              "div",
+              { className: "sc-logic-error" },
+              this.__name + ": " + this.state.__err
+            ),
+            h(Placeholder, {
+              name: this.__name,
+              hintSize: this.props.__hintSize,
+              error: this.state.__err
+            })
+          );
+        }
+        this.__reconcileLogic();
+        if (!r.tpl) {
+          return h(
+            "div",
+            hostBase,
+            h(Placeholder, { name: this.__name, hintSize: this.props.__hintSize })
+          );
+        }
+        const userProps = this.__userProps();
+        this.logic.props = userProps;
+        let vals = userProps;
+        let renderErr = r.logicError || this.__ctorError;
+        try {
+          vals = { ...userProps, ...this.logic.renderVals() || {} };
+        } catch (e) {
+          console.error(e);
+          renderErr = this.__name + ".renderVals(): " + (e instanceof Error && e.message ? e.message : String(e));
+        }
+        this.__streamingNow = !!(r.htmlStreaming || r.jsStreaming);
+        this.__htmlStreamingNow = !!r.htmlStreaming;
+        return h(
+          "div",
+          { ...hostBase, className: cls + (renderErr ? " sc-has-error" : "") },
+          renderErr && h("div", { className: "sc-logic-error" }, renderErr),
+          h(
+            AncestorContext.Provider,
+            { value: [...chain, this.__name] },
+            r.tpl(vals, this)
+          )
+        );
+      }
+    }
+    __publicField(StreamableComponent, "contextType", AncestorContext);
+    const named = /* @__PURE__ */ new Map();
+    function getDC(name) {
+      const hit = named.get(name);
+      if (hit) return hit;
+      function Dispatcher(p) {
+        const [, setTick] = React.useState(0);
+        React.useEffect(() => {
+          const sub = () => setTick((n) => n + 1);
+          registry.get(name).subs.add(sub);
+          return () => {
+            registry.get(name).subs.delete(sub);
+          };
+        }, []);
+        ensureFetched(name);
+        return h(StreamableComponent, { ...p, __name: name });
+      }
+      Dispatcher.displayName = name;
+      named.set(name, Dispatcher);
+      return Dispatcher;
+    }
+    return {
+      getDC,
+      StreamableComponent
+    };
+  }
+
+  // src/external.ts
+  var isCustomElementName = (n) => !n.includes(".") && n.includes("-");
+  function isRenderableType(g) {
+    if (typeof g === "function") return !isElementClass(g);
+    return typeof g === "object" && g !== null && typeof g.$$typeof === "symbol";
+  }
+  function resolveDottedPath(root, name) {
+    let cur = root;
+    for (const seg of name.split(".")) {
+      if (cur == null) return void 0;
+      cur = cur[seg];
+    }
+    return cur;
+  }
+  var BABEL_URL = "https://unpkg.com/@babel/standalone@7.26.4/babel.min.js";
+  var GLOBAL_POLL_INTERVAL_MS = 50;
+  var GLOBAL_POLL_TIMEOUT_MS = 3e4;
+  function createExternalModules(onResolved) {
+    const cache = /* @__PURE__ */ new Map();
+    let babelLoading = null;
+    const reportedMissing = /* @__PURE__ */ new Map();
+    const polling = /* @__PURE__ */ new Set();
+    function ensureBabel() {
+      if (window.Babel) return Promise.resolve();
+      if (babelLoading) return babelLoading;
+      babelLoading = new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = BABEL_URL;
+        s.crossOrigin = "anonymous";
+        s.onload = () => res();
+        s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      return babelLoading;
+    }
+    function load(kind, url) {
+      if (cache.has(url)) return;
+      cache.set(url, null);
+      console.info("[dc-runtime] x-import: loading", url, "(" + kind + ")");
+      const ready = kind === "jsx" ? ensureBabel() : Promise.resolve();
+      ready.then(() => fetch(url)).then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      }).then((src) => {
+        const code = kind === "jsx" ? window.Babel.transform(src, {
+          filename: url,
+          presets: ["react", "typescript"]
+        }).code : src;
+        const module = { exports: {} };
+        const before = new Set(Object.keys(window));
+        //! nosemgrep: eval-and-function-constructor
+        new Function("React", "module", "exports", "require", code)(
+          getReact(),
+          module,
+          module.exports,
+          () => ({})
+        );
+        const globals = {};
+        for (const k of Object.keys(window)) {
+          if (!before.has(k) && typeof window[k] === "function") {
+            globals[k] = window[k];
+          }
+        }
+        cache.set(url, { mod: module.exports, globals });
+        console.info(
+          "[dc-runtime] x-import: loaded",
+          url,
+          "\u2014 exports:",
+          Object.keys(module.exports),
+          "window globals:",
+          Object.keys(globals)
+        );
+        onResolved();
+      }).catch((e) => {
+        cache.set(url, {
+          mod: {},
+          globals: {},
+          error: "failed to load: " + (e instanceof Error && e.message ? e.message : String(e))
+        });
+        console.error(
+          "[dc-runtime] x-import: FAILED to load",
+          url,
+          "(" + kind + ")",
+          e
+        );
+        onResolved();
+      });
+    }
+    function resolve2(url, name) {
+      const entry = cache.get(url);
+      if (!entry) return null;
+      const { mod, globals } = entry;
+      const C = mod && mod[name] || globals && globals[name] || typeof window !== "undefined" && window[name] || mod && mod.default;
+      if (typeof C === "function") return C;
+      const key = url + "\0" + name;
+      if (!reportedMissing.has(key)) {
+        reportedMissing.set(
+          key,
+          entry.error || 'no export named "' + name + '" (has: ' + Object.keys(mod).join(", ") + ")"
+        );
+        console.error(
+          "[dc-runtime] x-import: module",
+          url,
+          "loaded but has no component named",
+          JSON.stringify(name),
+          "\u2014 available exports:",
+          Object.keys(mod),
+          "window globals:",
+          Object.keys(globals),
+          ". The module must `module.exports = {" + name + "}` or set `window." + name + "`."
+        );
+      }
+      return null;
+    }
+    function waitForGlobal(name) {
+      if (polling.has(name)) return;
+      polling.add(name);
+      const started = Date.now();
+      const isCE = isCustomElementName(name);
+      const tick = () => {
+        const found = isCE ? customElements.get(name) : isRenderableType(resolveDottedPath(window, name));
+        if (found) {
+          polling.delete(name);
+          onResolved();
+          return;
+        }
+        if (Date.now() - started >= GLOBAL_POLL_TIMEOUT_MS) {
+          console.warn(
+            "[dc-runtime] x-import: global",
+            JSON.stringify(name),
+            "never appeared on window after " + GLOBAL_POLL_TIMEOUT_MS + "ms"
+          );
+          return;
+        }
+        setTimeout(tick, GLOBAL_POLL_INTERVAL_MS);
+      };
+      setTimeout(tick, GLOBAL_POLL_INTERVAL_MS);
+    }
+    function resolveGlobal(url, name) {
+      const isCE = isCustomElementName(name);
+      if (!url) {
+        if (isCE) {
+          if (customElements.get(name)) return name;
+          waitForGlobal(name);
+          return null;
+        }
+        const g2 = resolveDottedPath(window, name);
+        if (isRenderableType(g2)) return g2;
+        waitForGlobal(name);
+        return null;
+      }
+      const entry = cache.get(url);
+      if (!entry) return null;
+      if (isCE && customElements.get(name)) return name;
+      const g = entry.globals[name] ?? resolveDottedPath(window, name);
+      if (isRenderableType(g)) return g;
+      if (name.includes(".")) return null;
+      const key = url + "\0global\0" + name;
+      if (!reportedMissing.has(key)) {
+        reportedMissing.set(key, null);
+        if (isCE && !customElements.get(name)) {
+          console.warn(
+            "[dc-runtime] x-import:",
+            url,
+            "loaded but no custom element",
+            JSON.stringify(name),
+            "is registered and window." + name + " is not a function \u2014 rendering <" + name + "> as an unknown element."
+          );
+        }
+      }
+      return name;
+    }
+    function getError(url, name) {
+      const entry = cache.get(url);
+      if (entry?.error) return entry.error;
+      return reportedMissing.get(url + "\0" + name) || null;
+    }
+    return { load, resolve: resolve2, resolveGlobal, getError };
+  }
+  function isElementClass(g) {
+    try {
+      return typeof g === "function" && typeof HTMLElement !== "undefined" && g.prototype instanceof HTMLElement;
+    } catch {
+      return false;
+    }
+  }
+
+  // src/helmet.ts
+  function createHelmetManager(doc, isStreaming) {
+    const mounted = /* @__PURE__ */ new Set();
+    const live = /* @__PURE__ */ new Map();
+    function compile(node) {
+      const raw = [...node.children];
+      const helmetClosed = node.nextSibling != null || node.parentNode?.nextSibling != null;
+      return (_vals, ctx) => {
+        const name = ctx && ctx.__name || "";
+        const streaming = !!(name && isStreaming(name));
+        for (let i = 0; i < raw.length; i++) {
+          const child = raw[i];
+          const tag = child.tagName;
+          const mayBePartial = streaming && !helmetClosed && i === raw.length - 1;
+          if (tag === "SCRIPT") {
+            if (mayBePartial) continue;
+            const key = "SCRIPT|" + (child.getAttribute("src") || child.textContent || "");
+            if (mounted.has(key)) continue;
+            mounted.add(key);
+            const el = doc.createElement("script");
+            for (const { name: an, value } of [...child.attributes])
+              el.setAttribute(an, value);
+            if (child.textContent) el.textContent = child.textContent;
+            doc.head.appendChild(el);
+          } else if (tag === "LINK" || tag === "META") {
+            if (mayBePartial) continue;
+            const key = tag + "|" + (child.getAttribute("href") || child.getAttribute("src") || child.outerHTML);
+            if (mounted.has(key)) continue;
+            mounted.add(key);
+            doc.head.appendChild(child.cloneNode(true));
+          } else {
+            const key = name + "|" + i;
+            let el = live.get(key);
+            if (!el || el.tagName !== tag) {
+              if (el) el.remove();
+              el = doc.createElement(tag.toLowerCase());
+              live.set(key, el);
+              doc.head.appendChild(el);
+            }
+            for (const { name: an, value } of [...child.attributes]) {
+              if (el.getAttribute(an) !== value) el.setAttribute(an, value);
+            }
+            if (el.textContent !== child.textContent)
+              el.textContent = child.textContent;
+          }
+        }
+        return null;
+      };
+    }
+    return { compile };
+  }
+
+  // src/pseudo.ts
+  function createPseudoSheet(doc) {
+    let el = null;
+    const cache = /* @__PURE__ */ new Map();
+    let n = 0;
+    return (pseudo, css) => {
+      const k = pseudo + "|" + css;
+      const hit = cache.get(k);
+      if (hit) return hit;
+      if (!el) {
+        el = doc.createElement("style");
+        doc.head.appendChild(el);
+      }
+      const cls = "scp" + (n++).toString(36);
+      const sel = pseudo === "before" || pseudo === "after" ? "." + cls + "::" + pseudo : "." + cls + ":" + pseudo;
+      el.sheet.insertRule(sel + "{" + css + "}", el.sheet.cssRules.length);
+      cache.set(k, cls);
+      return cls;
+    };
+  }
+
+  // src/registry.ts
+  function createRegistry() {
+    const entries = /* @__PURE__ */ Object.create(null);
+    function get(name) {
+      return entries[name] || (entries[name] = {
+        html: "",
+        tpl: null,
+        Logic: null,
+        jsStreaming: false,
+        htmlStreaming: false,
+        ver: 0,
+        subs: /* @__PURE__ */ new Set(),
+        fetched: false
+      });
+    }
+    function bump(name) {
+      const r = get(name);
+      r.ver++;
+      for (const fn of r.subs) fn();
+    }
+    return {
+      entries,
+      get,
+      bump,
+      bumpAll() {
+        for (const n in entries) bump(n);
+      }
+    };
+  }
+
+  // src/runtime.ts
+  var COMPONENT_DIR = ".";
+  function createRuntime(doc = document) {
+    const registry = createRegistry();
+    const pseudoClass = createPseudoSheet(doc);
+    const helmet = createHelmetManager(
+      doc,
+      (name) => registry.get(name).htmlStreaming
+    );
+    const external = createExternalModules(() => registry.bumpAll());
+    const factory = createComponentFactory(registry, ensureFetched);
+    const host = {
+      component: (name) => factory.getDC(name),
+      placeholder: (props) => h(Placeholder, props),
+      helmet: (node) => helmet.compile(node),
+      loadExternal: (kind, url) => external.load(kind, url),
+      resolveExternal: (url, name) => external.resolve(url, name),
+      resolveExternalGlobal: (url, name) => external.resolveGlobal(url, name),
+      resolveExternalError: (url, name) => external.getError(url, name),
+      pseudoClass
+    };
+    function ensureFetched(name) {
+      const r = registry.get(name);
+      if (r.fetched) return;
+      r.fetched = true;
+      const url = COMPONENT_DIR + "/" + encodeURIComponent(name) + ".dc.html";
+      fetch(url).then((res) => {
+        if (!res.ok) {
+          console.error(
+            "[dc-runtime] sibling fetch for <" + name + "/> failed:",
+            url,
+            "returned",
+            res.status,
+            "\u2014 the reference renders as an empty placeholder."
+          );
+          return "";
+        }
+        return res.text();
+      }).then((t) => {
+        if (!t) return;
+        const parsed = parseDcText(t);
+        if (!parsed) {
+          console.error(
+            "[dc-runtime] sibling fetch for <" + name + "/>:",
+            url,
+            "has no <x-dc> block \u2014 not a Design Component."
+          );
+          return;
+        }
+        if (parsed.props) r.propsMeta = parsed.props;
+        if (parsed.preview) r.preview = parsed.preview;
+        if (parsed.template && !r.html) updateHtml(name, parsed.template);
+        if (parsed.js && !r.Logic) updateJs(name, parsed.js);
+      }).catch(
+        (e) => console.error(
+          "[dc-runtime] sibling fetch for <" + name + "/> threw:",
+          url,
+          e
+        )
+      );
+    }
+    function updateHtml(name, html) {
+      const r = registry.get(name);
+      r.html = html;
+      try {
+        r.tpl = compileTemplate(html, host);
+      } catch (e) {
+        console.error("[dc-runtime] template compile FAILED for", name, e);
+      }
+      registry.bump(name);
+    }
+    function updateJs(name, src) {
+      const r = registry.get(name);
+      const seq = r.jsSeq = (r.jsSeq || 0) + 1;
+      try {
+        const Cls = evalDcLogic(src);
+        if (r.jsSeq !== seq) return;
+        if (typeof Cls !== "function") {
+          r.logicError = name + ".dc.html: <script data-dc-script> must define `class Component extends DCLogic`";
+        } else {
+          r.logicError = null;
+          r.Logic = Cls;
+        }
+      } catch (e) {
+        if (r.jsSeq !== seq) return;
+        console.error(
+          "[dc-runtime] logic class eval FAILED for",
+          name,
+          "\u2014 the template renders with props only.",
+          e
+        );
+        r.logicError = name + ": " + (e instanceof Error && e.message ? e.message : String(e));
+      }
+      registry.bump(name);
+    }
+    function setStreaming(name, kind, on) {
+      const r = registry.get(name);
+      if (kind === "html") r.htmlStreaming = !!on;
+      else r.jsStreaming = !!on;
+      let any = false;
+      for (const n in registry.entries) {
+        const e = registry.entries[n];
+        if (e && (e.htmlStreaming || e.jsStreaming)) {
+          any = true;
+          break;
+        }
+      }
+      doc.documentElement.classList.toggle("sc-dc-streaming", any);
+      registry.bump(name);
+    }
+    function dcUpdate(name, kind, content, streaming) {
+      if (streaming) registry.get(name).fetched = true;
+      if (kind === "html") {
+        setStreaming(name, "html", !!streaming);
+        updateHtml(name, content);
+      } else if (kind === "js") {
+        setStreaming(name, "js", !!streaming);
+        if (!streaming) updateJs(name, content);
+      } else if (kind === "props") {
+        const { props, preview } = parseDataProps(content);
+        const r = registry.get(name);
+        r.propsMeta = props ?? void 0;
+        r.preview = preview;
+        registry.bump(name);
+      }
+    }
+    function setProps(name, overrides) {
+      registry.get(name).propOverrides = overrides && typeof overrides === "object" ? { ...overrides } : null;
+      registry.bump(name);
+    }
+    function adoptParsed(name, parsed) {
+      if (!parsed) return;
+      const r = registry.get(name);
+      if (parsed.props) r.propsMeta = parsed.props;
+      if (parsed.preview) r.preview = parsed.preview;
+      if (parsed.template) updateHtml(name, parsed.template);
+      if (parsed.js) updateJs(name, parsed.js);
+    }
+    return {
+      registry,
+      getDC: factory.getDC,
+      updateHtml,
+      updateJs,
+      dcUpdate,
+      setProps,
+      adoptParsed,
+      markFetched: (name) => {
+        registry.get(name).fetched = true;
+      },
+      annotatedTemplate: (name) => {
+        const r = registry.get(name);
+        return r.tpl && r.tpl.__annotated || null;
+      },
+      templateSource: (name) => registry.get(name).html || null,
+      StreamableLogic
+    };
+  }
+
+  // src/index.ts
+  var REACT_URL = "https://unpkg.com/react@18.3.1/umd/react.production.min.js";
+  var REACT_SRI = "sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z";
+  var REACT_DOM_URL = "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js";
+  var REACT_DOM_SRI = "sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1";
+  function hideRawTemplate() {
+    const s = document.createElement("style");
+    s.textContent = "x-dc{display:none!important}";
+    document.head.appendChild(s);
+  }
+  function loadScript(src, integrity) {
+    return new Promise((resolve2, reject) => {
+      //! nosemgrep: create-script-element
+      const s = document.createElement("script");
+      s.src = src;
+      s.integrity = integrity;
+      s.crossOrigin = "anonymous";
+      s.async = false;
+      s.onload = () => resolve2();
+      s.onerror = () => reject(new Error(`failed to load ${src}`));
+      document.head.appendChild(s);
+    });
+  }
+  function loadReactUmd() {
+    const w = window;
+    if (w.React && w.ReactDOM) return Promise.resolve();
+    return Promise.all([
+      loadScript(REACT_URL, REACT_SRI),
+      loadScript(REACT_DOM_URL, REACT_DOM_SRI)
+    ]).then(() => void 0);
+  }
+  function init() {
+    const runtime = createRuntime(document);
+    let rootName = "Root";
+    const baseCss = document.createElement("style");
+    baseCss.textContent = BASE_CSS;
+    document.head.prepend(baseCss);
+    const notifyHost = () => {
+      if (window.parent === window) return;
+      const r = runtime.registry.entries[rootName];
+      try {
+        window.parent.postMessage(
+          {
+            type: "__dc_booted",
+            rootName,
+            propsMeta: r && r.propsMeta || null,
+            preview: r && r.preview || null
+          },
+          "*"
+        );
+      } catch {
+      }
+    };
+    const api = {
+      __dcUpdate: (name, kind, content, streaming) => {
+        runtime.dcUpdate(name, kind, content, streaming);
+        if (name === rootName && !streaming && kind === "props") notifyHost();
+      },
+      __dcSetProps: (name, overrides) => runtime.setProps(name, overrides),
+      /** Name of the component currently mounted as the page root — DC tools
+       *  push their template-stream here when targeting "the open page". */
+      __dcRootName: () => rootName,
+      /** Editor bridge — the encoded, `data-dc-tpl`-annotated template source.
+       *  The host editor parses this into its own template DOM so it can map a
+       *  rendered node (carrying the same `data-dc-tpl`) back to the source
+       *  node that emitted it. Returns the encoded form (`<sc-comp>`,
+       *  `sc-camel-*` attrs); the editor decodes on serialize. */
+      __dcAnnotatedTemplate: (name) => runtime.annotatedTemplate(name),
+      /** Editor bridge — the *original* (decoded) template source. */
+      __dcTemplateSource: (name) => runtime.templateSource(name),
+      __dcBoot: () => {
+        rootName = boot(runtime, document) ?? rootName;
+        notifyHost();
+      },
+      __dcRegistry: runtime.registry.entries,
+      getDC: (name) => runtime.getDC(name),
+      // `DCLogic` is the documented base class name; `StreamableLogic` is the
+      // implementation alias kept for any project that already references it.
+      DCLogic: runtime.StreamableLogic,
+      StreamableLogic: runtime.StreamableLogic
+    };
+    Object.assign(window, api);
+    if (document.readyState !== "loading") api.__dcBoot();
+    else document.addEventListener("DOMContentLoaded", () => api.__dcBoot());
+  }
+  hideRawTemplate();
+  loadReactUmd().then(init).catch((err) => {
+    console.error("[dc] failed to load React or boot:", err);
+    throw err;
+  });
+})();
+
+</script>
+</body>
+</html>
