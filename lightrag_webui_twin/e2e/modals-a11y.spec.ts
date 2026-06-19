@@ -42,6 +42,22 @@ test.describe('Modal dialogs a11y contract', () => {
     await expect(trigger).toBeFocused();
   });
 
+  test('@a11y @modals @bug04 Add Source tag input keeps focus while typing char-by-char', async ({
+    page,
+  }) => {
+    // Regression for BUG-04 (Alberto recette): the modal a11y autofocus
+    // re-fired on every keystroke (unstable onClose in deps), yanking focus
+    // out of the non-first "Apply tags to all" input mid-typing. Use
+    // pressSequentially (real per-key events) — fill() set the value
+    // atomically and masked the bug.
+    await page.getByRole('button', { name: 'Add source' }).click();
+    const input = page.getByRole('textbox', { name: 'Tag input' });
+    await input.click();
+    await input.pressSequentially('rman', { delay: 40 });
+    await expect(input).toHaveValue('rman');
+    await expect(input).toBeFocused();
+  });
+
   test('@a11y @modals Add Source closes from the backdrop and the close button', async ({
     page,
   }) => {

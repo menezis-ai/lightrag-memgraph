@@ -14,7 +14,7 @@
  *   - On close: restores focus to whatever was focused before open.
  */
 
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE_SELECTOR = [
   'input:not([disabled]):not([type=hidden])',
@@ -32,6 +32,12 @@ export interface UseModalA11yOptions {
 }
 
 export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void {
+  // Keep onClose in a ref so an unstable (inline) onClose from the caller does
+  // NOT re-run this effect on every render. Re-running mid-typing fired the
+  // cleanup's focus-restore + re-autofocus, yanking focus out of a non-first
+  // input on each keystroke (BUG-04: "Apply tags to all" lost focus per char).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open || !ref.current) return;
     const node = ref.current;
@@ -63,7 +69,7 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       if (e.key === 'Tab') {
@@ -104,5 +110,5 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
         }
       }
     };
-  }, [open, onClose, ref]);
+  }, [open, ref]);
 }
