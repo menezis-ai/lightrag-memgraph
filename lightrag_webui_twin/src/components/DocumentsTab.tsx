@@ -88,6 +88,14 @@ export interface DocumentsTabProps {
    * (~/Downloads/prototype/src/app.jsx — `pendingSlot` prop).
    */
   pendingSlot?: React.ReactNode;
+  /** Cursor pagination ("Load more"). The list can exceed one page; the host
+   *  pulls additional pages on demand. Counts/filters stay client-side over the
+   *  loaded subset. */
+  loadedCount?: number;
+  totalCount?: number;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export function DocumentsTab({
@@ -109,6 +117,11 @@ export function DocumentsTab({
   onBulkDelete,
   nowMs,
   pendingSlot,
+  loadedCount,
+  totalCount,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: DocumentsTabProps) {
   const openDetail = onOpenDetail ?? onDeleteDoc;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -679,6 +692,23 @@ export function DocumentsTab({
             />
           ))}
         </div>
+        {hasMore && (
+          <div className="docs-load-more">
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+              data-testid="docs-load-more"
+            >
+              {isLoadingMore
+                ? 'Loading…'
+                : totalCount != null && loadedCount != null
+                  ? `Load more (${loadedCount} of ${totalCount} loaded)`
+                  : 'Load more'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -552,7 +552,7 @@ function AppShell() {
     for (let i = 0; i < 30 && pending.size > 0; i += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
       const result = await docs.refetch();
-      for (const item of result.data?.items ?? []) {
+      for (const item of result.data?.pages.flatMap((p) => p.items) ?? []) {
         if (item.track_id) pending.delete(item.track_id);
       }
     }
@@ -1127,9 +1127,12 @@ function AppShell() {
   // + the backend error banner make failures visible instead of showing stale
   // sample data.
   const backendDocList = useMemo(
-    () => docs.data?.items ?? [],
-    [docs.data?.items],
+    () => docs.data?.pages.flatMap((p) => p.items) ?? [],
+    [docs.data],
   );
+  // Real DB total (from the first page envelope) — the loaded list may be a
+  // subset until the operator pulls more pages.
+  const docsTotal = docs.data?.pages[0]?.total ?? backendDocList.length;
   const docList = useMemo(() => {
     const backendTrackIds = new Set(
       backendDocList.map((doc) => doc.track_id).filter(Boolean),
@@ -1272,6 +1275,11 @@ function AppShell() {
           {tab === 'documents' && (
             <DocumentsTab
               docs={nonPendingDocs}
+              loadedCount={backendDocList.length}
+              totalCount={docsTotal}
+              hasMore={docs.hasNextPage}
+              isLoadingMore={docs.isFetchingNextPage}
+              onLoadMore={() => void docs.fetchNextPage()}
               tagCatalog={tagCatalog}
               pendingSlot={
                 <PendingDocsSection

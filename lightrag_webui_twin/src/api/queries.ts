@@ -7,7 +7,12 @@
  * use `queryClient.invalidateQueries(['notifications'])` to refresh.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { getActiveFolder } from './client';
 import { api } from './resources';
 import { parseOpenApiSpec } from './openapi-parser';
@@ -84,9 +89,18 @@ export function useDocuments(
   options: QueryGate = {},
 ) {
   const scope = folderScope(options, query.folder);
-  return useQuery({
+  // Infinite (cursor) pagination: the documents list can be arbitrarily large
+  // (BNP-scale KBs + RAG 1.5). The backend returns one page + a `next_cursor`;
+  // the operator pulls more via "Load more" in DocumentsTab. No hard cap.
+  return useInfiniteQuery({
     queryKey: ['documents', scope, query] as const,
-    queryFn: ({ signal }) => api.listDocuments(query, { signal }),
+    queryFn: ({ pageParam, signal }) =>
+      api.listDocuments(
+        { ...query, cursor: pageParam as string | undefined },
+        { signal },
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     ...DEFAULTS,
     staleTime: 0,
     refetchInterval: DOCUMENTS_REFETCH_INTERVAL_MS,

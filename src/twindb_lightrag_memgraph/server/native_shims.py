@@ -77,6 +77,10 @@ class _ListEnvelope(BaseModel):
 
     items: list[_DocumentEnvelope]
     total: int
+    # Opaque cursor for the next page (page number as string), or None when
+    # this is the last page. The WebUI forwards it to fetch the next page
+    # ("Load more"). Without it the list was hard-capped at one page_size.
+    next_cursor: str | None = None
 
 
 class _DocumentChunk(BaseModel):
@@ -352,11 +356,15 @@ def build_native_shims_router(
             except ValueError:
                 logger.warning("twindb shim: unknown status filter %r", status)
 
-        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
+        docs_tuples, total = await rag.doc_status.get_docs_paginated(
             page=page,
             page_size=page_size,
             status_filter=status_enum,
         )
+        # More pages exist when this page came back full. Cursor = next page
+        # number (opaque to the client). Based on the DB page (pre q/tag
+        # client-filter) so paging is stable regardless of client-side filters.
+        next_cursor = str(page + 1) if len(docs_tuples) == page_size else None
 
         # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
         projected: list[dict[str, Any]] = []
@@ -375,7 +383,8 @@ def build_native_shims_router(
 
         return _ListEnvelope(
             items=[_DocumentEnvelope(**d) for d in filtered],
-            total=len(filtered),
+            total=total,
+            next_cursor=next_cursor,
         )
 
     @router.get(
