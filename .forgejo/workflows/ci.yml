@@ -55,10 +55,11 @@ jobs:
         # different runs of the same commit). Same logic as the 3.7.2/3.8.0
         # Memgraph drop: matrix = BNP target + forward-compat only.
         lightrag-version: ["1.4.9.11", "1.4.11", "1.4.12"]
-        # 3.7.2 / 3.8.0 dropped: never deployed at BNP. 3.10.1 is the current
-        # BNP prod target — pinned explicitly so the rolling `latest` tag
-        # can't silently move the coverage point under us.
-        memgraph-version: ["3.10.1"]
+        # 3.7.2 / 3.8.0 dropped: never deployed at BNP. BNP rolled back to
+        # 3.9.0 on 2026-06-19 (now the prod target); 3.10.1 kept as forward-
+        # compat (3.11 imminent). Both pinned explicitly so the rolling
+        # `latest` tag can't silently move the coverage point under us.
+        memgraph-version: ["3.9.0", "3.10.1"]
     steps:
       - uses: actions/checkout@v4
 
@@ -239,7 +240,7 @@ jobs:
             --network-alias memgraph \
             --memory 3g \
             --memory-swap 3g \
-            memgraph/memgraph-mage:3.10.1
+            memgraph/memgraph-mage:3.9.0
 
           for i in $(seq 1 120); do
             if docker exec "$memgraph" bash -lc "echo 'RETURN 1;' | mgconsole"; then
@@ -415,7 +416,7 @@ jobs:
             --network-alias memgraph \
             --memory 3g \
             --memory-swap 3g \
-            memgraph/memgraph-mage:3.10.1
+            memgraph/memgraph-mage:3.9.0
 
           for i in $(seq 1 120); do
             if docker exec "$memgraph" bash -lc "echo 'RETURN 1;' | mgconsole"; then

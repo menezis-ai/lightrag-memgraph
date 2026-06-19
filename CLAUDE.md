@@ -153,7 +153,7 @@ CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions. Two runner pools:
 
 Jobs:
 - **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9.11 / 1.4.11 / 1.4.12 (no Memgraph). Runs `pytest tests/ --ignore=tests/test_bench.py` inside a `python:${ver}-bookworm` container — `conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset.
-- **integration-tests**: LightRAG matrix × Memgraph **3.10.1** only (BNP prod target; pinned so `latest` can't drift the coverage point). `max-parallel: 1` — each matrix job spins its own isolated docker network + Memgraph container to avoid cross-job contention. URI inside the network: `bolt://memgraph:7687`.
+- **integration-tests**: LightRAG matrix × Memgraph **3.9.0 + 3.10.1** (3.9.0 = BNP prod target after the 2026-06-19 rollback; 3.10.1 kept as forward-compat, 3.11 imminent; both pinned so `latest` can't drift the coverage point). `max-parallel: 1` — each matrix job spins its own isolated docker network + Memgraph container to avoid cross-job contention. URI inside the network: `bolt://memgraph:7687`.
 - **webui-lint**: cheap ESLint gate on `lightrag_webui_twin/` (parallel to the heavier WebUI jobs).
 - **webui-tests**: `bun install --frozen-lockfile && bun run typecheck && bun run test:run && bun run build`. Bun pinned to `1.3.6` (never `latest` — `setup-bun` would hit api.github.com's 60/h anonymous rate limit and the bunker runner pool shares its outbound IP).
 - **webui-e2e**: Playwright operator journeys against the MSW-backed WebUI (`high` pool).
@@ -162,7 +162,7 @@ Jobs:
 Matrix exclusions (don't re-add without checking):
 - LightRAG `1.4.9` vanilla dropped 2026-05-29 — BNP runs `1.4.9.11`, vanilla `1.4.9` flaked on the bunker runner.
 - LightRAG `1.4.10` dropped (issue #6) — intermittent failures under integration load, fixed upstream in 1.4.11+.
-- Memgraph `3.7.2` / `3.8.0` / `latest` dropped — never deployed at BNP, `3.10.1` is the prod target.
+- Memgraph `3.7.2` / `3.8.0` / `latest` dropped — never deployed at BNP. `3.9.0` is the prod target after BNP's 2026-06-19 rollback from `3.10.1`; `3.10.1` retained as forward-compat coverage (3.11 imminent). e2e jobs run on `3.9.0` only (single BNP target — Playwright jobs aren't matrixed across versions to spare the `high` pool).
 
 Branch protection on `main`, `stable/0.5.x`, `stable/0.3.2-lts` requires the `CI / unit-tests*`, `CI / integration-tests*`, `CI / webui-lint`, `CI / webui-tests`, `CI / webui-e2e*` checks to be green before merge.
 

@@ -25,13 +25,13 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 
 ### Tested compatibility matrix
 
-| | Memgraph MAGE 3.10.1 |
-|---|:-:|
-| **LightRAG 1.4.9.11** | OK |
-| **LightRAG 1.4.11** | OK |
-| **LightRAG 1.4.12** | OK |
+| | Memgraph MAGE 3.9.0 | Memgraph MAGE 3.10.1 |
+|---|:-:|:-:|
+| **LightRAG 1.4.9.11** | OK | OK |
+| **LightRAG 1.4.11** | OK | OK |
+| **LightRAG 1.4.12** | OK | OK |
 
-CI runs this matrix on every push/PR. Memgraph MAGE `3.10.1` is the current production target, pinned explicitly so a rolling `latest` tag cannot silently move the coverage point. LightRAG `1.4.10` is excluded due to a transient timing regression under integration load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once no deployment used them.
+CI runs this matrix on every push/PR. Memgraph MAGE `3.9.0` is the current production target (BNP rolled back from `3.10.1` on 2026-06-19); `3.10.1` is kept as forward-compat coverage (3.11 imminent). Both are pinned explicitly so a rolling `latest` tag cannot silently move the coverage point. LightRAG `1.4.10` is excluded due to a transient timing regression under integration load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once no deployment used them.
 
 ## Installation
 
