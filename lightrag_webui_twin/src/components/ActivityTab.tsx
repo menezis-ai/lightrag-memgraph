@@ -22,6 +22,7 @@ import {
   ACTIVITY_KIND_META,
   ACTIVITY_RANGE_MS,
   ACTIVITY_RANGES,
+  resolveKindMeta,
   type ActivityEvent,
   type ActivityKind,
   type ActivityRange,
@@ -461,7 +462,7 @@ interface ActivityRowProps {
 }
 
 function ActivityRow({ e, selected, onClick }: ActivityRowProps) {
-  const m = ACTIVITY_KIND_META[e.kind];
+  const m = resolveKindMeta(e.kind);
   return (
     <button
       className={'activity-row ' + (selected ? 'is-selected' : '') + ' sev-' + e.sev}
@@ -503,7 +504,7 @@ function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
       </aside>
     );
   }
-  const m = ACTIVITY_KIND_META[e.kind];
+  const m = resolveKindMeta(e.kind);
   const copyId = () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       void navigator.clipboard.writeText(e.id);

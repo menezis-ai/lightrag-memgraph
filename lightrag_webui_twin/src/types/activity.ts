@@ -22,6 +22,8 @@ export type ActivityKind =
   | 'pipeline-warning'
   | 'graph-entity-edited'
   | 'graph-relation-edited'
+  | 'api-key-created'
+  | 'api-key-revoked'
   | 'auth'
   | 'settings';
 
@@ -124,6 +126,16 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     icon: 'link',
     color: 'var(--twin-accent)',
   },
+  'api-key-created': {
+    label: 'API key created',
+    icon: 'lock',
+    color: 'var(--twin-green-700)',
+  },
+  'api-key-revoked': {
+    label: 'API key revoked',
+    icon: 'lock',
+    color: 'var(--twin-amber-vivid)',
+  },
   auth: { label: 'Auth', icon: 'lock', color: 'var(--color-text-secondary)' },
   settings: {
     label: 'Settings',
@@ -131,6 +143,22 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     color: 'var(--color-text-secondary)',
   },
 };
+
+/**
+ * Safe meta lookup. The backend may emit kinds the UI map does not
+ * enumerate (e.g. dynamic settings sub-kinds via `body.kind`), so a raw
+ * `ACTIVITY_KIND_META[kind]` can be `undefined` and crash the whole feed
+ * when a row dereferences `.color`/`.icon`. Never crash on an unknown kind:
+ * fall back to a neutral, self-describing meta.
+ */
+export function resolveKindMeta(kind: string): ActivityKindMeta {
+  const known = ACTIVITY_KIND_META[kind as ActivityKind];
+  if (known) return known;
+  const label = kind
+    ? kind.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())
+    : 'Activity';
+  return { label, icon: 'activity', color: 'var(--color-text-secondary)' };
+}
 
 export const ACTIVITY_RANGES: readonly { id: ActivityRange; label: string }[] = [
   { id: '24h', label: '24h' },

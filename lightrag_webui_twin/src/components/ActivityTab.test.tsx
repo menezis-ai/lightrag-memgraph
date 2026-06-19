@@ -190,6 +190,42 @@ describe('ActivityTab — immutable ledger (no Clear)', () => {
   });
 });
 
+describe('ActivityTab — unknown kind resilience (real backend)', () => {
+  // Regression: the live backend emits kinds the UI map does not enumerate
+  // (api-key-*, dynamic settings sub-kinds). Before resolveKindMeta(),
+  // ActivityRow did `ACTIVITY_KIND_META[e.kind].color` and crashed the
+  // whole tab on a single unknown event ("can't access property color").
+  it('renders events whose kind is absent from ACTIVITY_KIND_META without crashing', () => {
+    const base = ACTIVITY_FIXTURES[0];
+    const events = [
+      { ...base, id: 'evt-apikey', kind: 'api-key-created', summary: 'key created' },
+      {
+        ...base,
+        id: 'evt-mystery',
+        kind: 'settings-future-subkind',
+        summary: 'mystery event',
+      },
+    ] as unknown as typeof ACTIVITY_FIXTURES;
+    expect(() =>
+      render(
+        <ActivityTab
+          events={events}
+          nowMs={ACTIVITY_NOW_MS}
+          live={false}
+          onPushToast={vi.fn()}
+          onNavigate={vi.fn()}
+        />,
+      ),
+    ).not.toThrow();
+    // newly-mapped api-key kind gets a friendly label
+    expect(screen.getAllByText('API key created').length).toBeGreaterThan(0);
+    // truly-unknown kind falls back to a humanized label instead of crashing
+    expect(
+      screen.getAllByText('Settings future subkind').length,
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe('exportActivityCsv helper', () => {
   it('produces a CSV with header + one row per event and escapes quotes', () => {
     const calls: { type: string; arg: unknown }[] = [];
