@@ -1715,20 +1715,34 @@ def _graph_seed_fallback_allowed() -> bool:
     return get_store().mode == "seed"
 
 
-@router.get("/graph/entities", response_model=list[GraphEntity])
-async def list_graph_entities() -> list[dict[str, Any]]:
-    """Return the live Memgraph-backed entities for the deployed KB.
-
-    Falls back to the in-memory seed only when the explicit demo-mode
-    gate (:func:`_graph_seed_fallback_allowed`) is open — i.e. the
-    store was built with ``webui_stores="seed"`` AND IdP is dormant.
-    Production deploys (memgraph mode or IdP active) get an explicit
-    empty list, never a silent demo (audit C5).
-    """
+async def _native_graph(label: str, max_nodes: int, max_depth: int):
+    """Run LightRAG's native focus+context selection once; returns
+    (entities, relations) or ([], []) when rag is absent/failed."""
     from . import graph_reader
 
-    label = _graph_memgraph_label()
-    entities = await graph_reader.read_graph_entities(label)
+    ws = _graph_memgraph_label()
+    try:
+        rag = _get_rag()
+    except Exception:
+        return [], []
+    return await graph_reader.read_graph_native(
+        rag, ws, node_label=label, max_nodes=max_nodes, max_depth=max_depth
+    )
+
+
+@router.get("/graph/entities", response_model=list[GraphEntity])
+async def list_graph_entities(
+    label: str = "*",
+    max_nodes: int = 1000,
+    max_depth: int = 3,
+) -> list[dict[str, Any]]:
+    """Live Memgraph entities via LightRAG's native focus+context selection
+    (``get_knowledge_graph``): ``label="*"`` = top hubs by degree (capped at
+    ``max_nodes``); ``label=<entity>`` = BFS neighbourhood (``max_depth``).
+    Replaces the old flat ``LIMIT 200`` scan that surfaced an arbitrary 1%
+    slice of a 17k+ entity KB. Seed fallback only under the demo gate (C5).
+    """
+    entities, _ = await _native_graph(label, max_nodes, max_depth)
     if entities:
         return entities
     if not _graph_seed_fallback_allowed():
@@ -1737,27 +1751,34 @@ async def list_graph_entities() -> list[dict[str, Any]]:
 
 
 @router.get("/graph/relations", response_model=list[GraphRelation])
-async def list_graph_relations() -> list[dict[str, Any]]:
-    """Return the live Memgraph-backed relations for the deployed KB.
-
-    Same audit-C5 gate as ``/graph/entities``: seed relations only
-    surface when demo mode is explicit AND IdP is dormant. Otherwise
-    return ``[]`` rather than leak the demo. Relations are filtered
-    to endpoints that survived the entity read so a truncated node
-    set doesn't show dangling edges.
-    """
-    from . import graph_reader
-
-    label = _graph_memgraph_label()
-    entities = await graph_reader.read_graph_entities(label)
+async def list_graph_relations(
+    label: str = "*",
+    max_nodes: int = 1000,
+    max_depth: int = 3,
+) -> list[dict[str, Any]]:
+    """Relations for the same native subgraph as ``/graph/entities`` (same
+    ``label``/``max_nodes``/``max_depth`` → consistent node set, no dangling
+    edges). Seed fallback under the audit-C5 demo gate only."""
+    entities, relations = await _native_graph(label, max_nodes, max_depth)
     if entities:
-        valid_ids = [e["id"] for e in entities]
-        return await graph_reader.read_graph_relations(
-            label, valid_node_ids=valid_ids
-        )
+        return relations
     if not _graph_seed_fallback_allowed():
         return []
     return get_store().list_graph_relations()
+
+
+@router.get("/graph/search")
+async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
+    """Server-side fuzzy entity-label search (native ``search_labels``) so the
+    Graph search box reaches the whole KB, not just the loaded subgraph. The
+    selected label is passed back as ``?label=`` to focus the subgraph."""
+    from . import graph_reader
+
+    try:
+        rag = _get_rag()
+    except Exception:
+        return []
+    return await graph_reader.search_graph_labels(rag, q, limit=limit)
 
 
 @router.patch("/graph/entities/{entity_id}", response_model=GraphEntity)

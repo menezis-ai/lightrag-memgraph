@@ -453,6 +453,100 @@ async def read_graph_entities(
         return []
 
 
+async def read_graph_native(
+    rag: Any,
+    workspace: str,
+    *,
+    node_label: str = "*",
+    max_depth: int = 3,
+    max_nodes: int = 1000,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build the WebUI graph by delegating node/edge SELECTION to LightRAG's
+    native ``rag.get_knowledge_graph`` instead of a flat ``LIMIT`` scan.
+
+    Why: a flat ``MATCH (n:label) LIMIT 200`` returns an arbitrary, unordered
+    1% slice of a large KB (17k+ entities) — the graph looked "dénutri" and a
+    searched entity (e.g. schizophrenia) was simply not in the slice. The
+    native API is the focus+context model the LightRAG UI itself uses:
+      - ``node_label="*"`` → top nodes by degree (the meaningful hubs), capped;
+      - ``node_label=X``  → BFS neighbourhood (``max_depth``) around entity X,
+        so any entity reached via search brings its context with it.
+
+    We keep the Twin ``GraphEntity``/``GraphRelation`` contract by mapping the
+    returned ``KnowledgeGraph`` nodes/edges through the same projectors used by
+    the legacy reader. Returns ``([], [])`` on any failure so callers fall back
+    to the seed / empty per the audit-C5 gate.
+    """
+    try:
+        kg = await rag.get_knowledge_graph(
+            node_label=node_label,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+        )
+    except Exception:
+        logger.exception(
+            "graph_reader: native get_knowledge_graph failed "
+            "(label=%s, workspace=%s)",
+            node_label,
+            workspace,
+        )
+        return [], []
+
+    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+
+    entities: list[dict[str, Any]] = []
+    for node in getattr(kg, "nodes", []) or []:
+        props = getattr(node, "properties", None) or {}
+        entity_id = props.get("entity_id") or getattr(node, "id", None)
+        if not entity_id:
+            continue
+        row = {
+            "entity_id": entity_id,
+            "entity_type": props.get("entity_type"),
+            "description": props.get("description"),
+            "source_id": props.get("source_id"),
+            "display_name": props.get("display_name"),
+            "twin_tags_json": props.get("twin_tags_json"),
+            "twin_props_json": props.get("twin_props_json"),
+        }
+        entities.append(_node_record_to_entity(row, chunk_to_doc))
+
+    valid_ids = {e["id"] for e in entities}
+    relations: list[dict[str, Any]] = []
+    for i, edge in enumerate(getattr(kg, "edges", []) or []):
+        src = getattr(edge, "source", None)
+        tgt = getattr(edge, "target", None)
+        if not src or not tgt:
+            continue
+        eprops = getattr(edge, "properties", None) or {}
+        row = {
+            "source_id": src,
+            "target_id": tgt,
+            "keywords": eprops.get("keywords"),
+            "weight": eprops.get("weight"),
+            "twin_props_json": eprops.get("twin_props_json"),
+        }
+        rel = _edge_record_to_relation(row, i)
+        if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
+            continue
+        _remember_relation(workspace, rel["id"], str(src), str(tgt))
+        relations.append(rel)
+
+    return entities, relations
+
+
+async def search_graph_labels(rag: Any, q: str, *, limit: int = 50) -> list[str]:
+    """Server-side fuzzy entity-label search (delegates to LightRAG's native
+    ``search_labels``) so the Graph search box reaches the whole KB, not just
+    the loaded subgraph."""
+    try:
+        graph = rag.chunk_entity_relation_graph
+        return list(await graph.search_labels(q, limit))
+    except Exception:
+        logger.exception("graph_reader: native search_labels failed (q=%r)", q)
+        return []
+
+
 async def read_graph_relations(
     workspace: str,
     *,

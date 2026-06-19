@@ -45,11 +45,13 @@ class TestGraphRoutesMemgraphFirst:
                 }
             ]
 
-        async def fake_relations(workspace, *, valid_node_ids=None, max_edges=600):
-            return []
+        async def fake_native(
+            rag, workspace, *, node_label="*", max_depth=3, max_nodes=1000
+        ):
+            return (await fake_entities(workspace), [])
 
-        monkeypatch.setattr(gr, "read_graph_entities", fake_entities)
-        monkeypatch.setattr(gr, "read_graph_relations", fake_relations)
+        monkeypatch.setattr(gr, "read_graph_native", fake_native)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
 
         r = await client.get("/graph/entities")
         assert r.status_code == 200
@@ -85,23 +87,27 @@ class TestGraphRoutesMemgraphFirst:
                 },
             ]
 
-        async def fake_relations(workspace, *, valid_node_ids=None, max_edges=600):
-            # The router must pass the node ids it just read so dangling
-            # edges don't surface.
-            assert valid_node_ids is not None
-            assert "kg_A" in valid_node_ids
-            return [
-                {
-                    "id": "kr_000000",
-                    "source": "kg_A",
-                    "target": "kg_B",
-                    "label": "USES",
-                    "strength": 0.7,
-                }
-            ]
+        async def fake_native(
+            rag, workspace, *, node_label="*", max_depth=3, max_nodes=1000
+        ):
+            # read_graph_native returns a CONSISTENT (entities, relations)
+            # pair from one native subgraph selection — no dangling edges by
+            # construction, so the route no longer threads valid_node_ids.
+            return (
+                await fake_entities(workspace),
+                [
+                    {
+                        "id": "kr_000000",
+                        "source": "kg_A",
+                        "target": "kg_B",
+                        "label": "USES",
+                        "strength": 0.7,
+                    }
+                ],
+            )
 
-        monkeypatch.setattr(gr, "read_graph_entities", fake_entities)
-        monkeypatch.setattr(gr, "read_graph_relations", fake_relations)
+        monkeypatch.setattr(gr, "read_graph_native", fake_native)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
 
         r = await client.get("/graph/relations")
         assert r.status_code == 200
@@ -731,3 +737,62 @@ class TestGraphEntityTagThesaurusBinding:
         )
         assert r.status_code == 200
         assert r.json()["tags"] == []
+
+
+class TestGraphNativeDelegation:
+    """The graph routes delegate node/edge selection + label search to
+    LightRAG's native focus+context API (get_knowledge_graph / search_labels)
+    instead of a flat LIMIT scan. Regression for the 'graph dénutri' recette
+    finding (200 arbitrary nodes of a 17k-entity KB; searched entities absent).
+    """
+
+    async def test_search_delegates_to_native_search_labels(
+        self, monkeypatch, client
+    ):
+        async def fake_search(rag, q, *, limit=50):
+            assert q == "schizo"
+            return ["Schizophrenia", "Schizoaffective Disorder"]
+
+        monkeypatch.setattr(gr, "search_graph_labels", fake_search)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
+
+        r = await client.get("/graph/search", params={"q": "schizo"})
+        assert r.status_code == 200
+        assert r.json() == ["Schizophrenia", "Schizoaffective Disorder"]
+
+    async def test_entities_forwards_focus_label_to_native(
+        self, monkeypatch, client
+    ):
+        seen: dict[str, object] = {}
+
+        async def fake_native(
+            rag, workspace, *, node_label="*", max_depth=3, max_nodes=1000
+        ):
+            seen["label"] = node_label
+            seen["max_nodes"] = max_nodes
+            return (
+                [
+                    {
+                        "id": "kg_Schizophrenia",
+                        "name": "Schizophrenia",
+                        "type": "CONCEPT",
+                        "x": 0,
+                        "y": 0,
+                        "mentions": 1,
+                        "sources": 1,
+                        "summary": "",
+                    }
+                ],
+                [],
+            )
+
+        monkeypatch.setattr(gr, "read_graph_native", fake_native)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
+
+        r = await client.get(
+            "/graph/entities", params={"label": "Schizophrenia", "max_nodes": 500}
+        )
+        assert r.status_code == 200
+        assert seen["label"] == "Schizophrenia"
+        assert seen["max_nodes"] == 500
+        assert r.json()[0]["name"] == "Schizophrenia"
