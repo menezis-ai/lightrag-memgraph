@@ -97,19 +97,29 @@ export function PendingDocsSection({
     state: 'approved' | 'rejected',
     edits?: Partial<Document>,
   ) => {
-    queryClient.setQueriesData<
-      { items: readonly Document[]; [key: string]: unknown } | undefined
-    >({ queryKey: ['documents'] }, (old) => {
-      if (!old) return old;
-      return {
-        ...old,
-        items: old.items.map((doc) =>
-          doc.doc_id === docId
-            ? { ...doc, ...edits, review: { ...doc.review, state } }
-            : doc,
-        ),
-      };
-    });
+    // The documents query is an infinite (cursor) query: the cache is
+    // `{ pages: ListEnvelope<Document>[], pageParams }`, not a bare `{ items }`.
+    // Mapping `old.items` here silently no-ops (undefined) and the optimistic
+    // approve/reject never lands — map across every page's items instead.
+    type DocsPage = { items: readonly Document[]; [key: string]: unknown };
+    type InfiniteDocs = { pages: DocsPage[]; pageParams: unknown[] };
+    queryClient.setQueriesData<InfiniteDocs | undefined>(
+      { queryKey: ['documents'] },
+      (old) => {
+        if (!old?.pages) return old;
+        return {
+          ...old,
+          pages: old.pages.map((p) => ({
+            ...p,
+            items: p.items.map((doc) =>
+              doc.doc_id === docId
+                ? { ...doc, ...edits, review: { ...doc.review, state } }
+                : doc,
+            ),
+          })),
+        };
+      },
+    );
   };
 
   const approveMut = useMutation({

@@ -208,12 +208,21 @@ describe('useBulkDeleteDocuments', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    // The documents query is an infinite (cursor) query — cache shape is
+    // { pages: ListEnvelope[], pageParams }, not a bare { items }.
     client.setQueryData(['documents'], {
-      items: [
-        { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
-        { doc_id: 'doc-b', status: 'PROCESSED', file_path: 'b.pdf' },
-        { doc_id: 'doc-c', status: 'PROCESSED', file_path: 'c.pdf' },
+      pages: [
+        {
+          items: [
+            { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
+            { doc_id: 'doc-b', status: 'PROCESSED', file_path: 'b.pdf' },
+            { doc_id: 'doc-c', status: 'PROCESSED', file_path: 'c.pdf' },
+          ],
+          total: 3,
+          next_cursor: null,
+        },
       ],
+      pageParams: [undefined],
     });
 
     const { result } = renderHook(() => useBulkDeleteDocuments(), {
@@ -229,11 +238,14 @@ describe('useBulkDeleteDocuments', () => {
     });
 
     await waitFor(() => {
-      const data = client.getQueryData<{ items: Array<{ doc_id: string; _deleting?: boolean }> }>(
-        ['documents'],
-      );
+      const data = client.getQueryData<{
+        pages: Array<{ items: Array<{ doc_id: string; _deleting?: boolean }> }>;
+      }>(['documents']);
       const flags = Object.fromEntries(
-        (data?.items ?? []).map((d) => [d.doc_id, d._deleting ?? false]),
+        (data?.pages.flatMap((p) => p.items) ?? []).map((d) => [
+          d.doc_id,
+          d._deleting ?? false,
+        ]),
       );
       expect(flags).toEqual({ 'doc-a': true, 'doc-b': false, 'doc-c': true });
     });

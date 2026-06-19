@@ -532,27 +532,40 @@ function invalidateTagSideEffects(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['documents'] });
 }
 
-function updateDocumentTags(
-  data:
-    | { items: readonly Document[]; [key: string]: unknown }
-    | undefined,
+// The documents query is an infinite (cursor) query, so its cache is
+// `{ pages: ListEnvelope<Document>[], pageParams }`, NOT a bare
+// `{ items }`. Optimistic updates must map across every page's items —
+// touching `old.items` directly silently no-ops (undefined) and was the
+// cause of the RC-1 "mutation doesn't survive reload" regression.
+type DocsPage = { items: readonly Document[]; [key: string]: unknown };
+type InfiniteDocs = { pages: DocsPage[]; pageParams: unknown[] };
+
+function mapDocumentsPages(
+  old: InfiniteDocs | undefined,
+  mapItems: (items: readonly Document[]) => readonly Document[],
+): InfiniteDocs | undefined {
+  if (!old?.pages) return old;
+  return {
+    ...old,
+    pages: old.pages.map((p) => ({ ...p, items: mapItems(p.items) })),
+  };
+}
+
+function applyDocumentTags(
+  items: readonly Document[],
   targets: readonly string[],
   adds: readonly string[],
   removes: readonly string[],
-): { items: readonly Document[]; [key: string]: unknown } | undefined {
-  if (!data) return data;
+): readonly Document[] {
   const targetSet = new Set(targets);
   const removeSet = new Set(removes);
-  return {
-    ...data,
-    items: data.items.map((doc) => {
-      if (!targetSet.has(doc.doc_id)) return doc;
-      const nextTags = Array.from(
-        new Set([...doc.tags.filter((tag) => !removeSet.has(tag)), ...adds]),
-      );
-      return { ...doc, tags: nextTags };
-    }),
-  };
+  return items.map((doc) => {
+    if (!targetSet.has(doc.doc_id)) return doc;
+    const nextTags = Array.from(
+      new Set([...doc.tags.filter((tag) => !removeSet.has(tag)), ...adds]),
+    );
+    return { ...doc, tags: nextTags };
+  });
 }
 
 export function useRequestTag() {
@@ -659,22 +672,12 @@ function flagDocsAsDeleting(
   ids: readonly string[],
 ): { previous: ReadonlyArray<[unknown, unknown]> } {
   const idSet = new Set(ids);
-  const previous = qc.getQueriesData<{
-    items: readonly Document[];
-    [key: string]: unknown;
-  }>({ queryKey: ['documents'] });
-  qc.setQueriesData<{
-    items: readonly Document[];
-    [key: string]: unknown;
-  }>({ queryKey: ['documents'] }, (old) => {
-    if (!old) return old;
-    return {
-      ...old,
-      items: old.items.map((d) =>
-        idSet.has(d.doc_id) ? { ...d, _deleting: true } : d,
-      ),
-    };
-  });
+  const previous = qc.getQueriesData<InfiniteDocs>({ queryKey: ['documents'] });
+  qc.setQueriesData<InfiniteDocs>({ queryKey: ['documents'] }, (old) =>
+    mapDocumentsPages(old, (items) =>
+      items.map((d) => (idSet.has(d.doc_id) ? { ...d, _deleting: true } : d)),
+    ),
+  );
   return { previous };
 }
 
@@ -784,15 +787,13 @@ export function useBulkRetagDocuments() {
       api.bulkRetagDocuments(body),
     onMutate: async (body) => {
       await qc.cancelQueries({ queryKey: ['documents'] });
-      const previousDocuments = qc.getQueriesData<{
-        items: readonly Document[];
-        [key: string]: unknown;
-      }>({ queryKey: ['documents'] });
-      qc.setQueriesData<{
-        items: readonly Document[];
-        [key: string]: unknown;
-      }>({ queryKey: ['documents'] }, (old) =>
-        updateDocumentTags(old, body.targets, body.adds, body.removes),
+      const previousDocuments = qc.getQueriesData<InfiniteDocs>({
+        queryKey: ['documents'],
+      });
+      qc.setQueriesData<InfiniteDocs>({ queryKey: ['documents'] }, (old) =>
+        mapDocumentsPages(old, (items) =>
+          applyDocumentTags(items, body.targets, body.adds, body.removes),
+        ),
       );
       return { previousDocuments };
     },
