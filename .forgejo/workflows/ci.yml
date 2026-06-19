@@ -66,8 +66,9 @@ jobs:
       - name: Run integration tests
         run: |
           safe_version="$(printf '%s' '${{ matrix.lightrag-version }}' | tr -c 'A-Za-z0-9' '-')"
-          net="twin-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-integration-${safe_version}"
-          memgraph="twin-ci-memgraph-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${safe_version}"
+          safe_mg="$(printf '%s' '${{ matrix.memgraph-version }}' | tr -c 'A-Za-z0-9' '-')"
+          net="twin-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-integration-${safe_version}-${safe_mg}"
+          memgraph="twin-ci-memgraph-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${safe_version}-${safe_mg}"
 
           docker rm -f "$memgraph" >/dev/null 2>&1 || true
           docker network rm "$net" >/dev/null 2>&1 || true
@@ -483,6 +484,7 @@ jobs:
             -e HOME=/tmp \
             -e npm_config_cache=/tmp/npm \
             -e CI=true \
+            -e PLAYWRIGHT_PORT=4175 \
             -e REAL_BACKEND_URL="$REAL_BACKEND_URL" \
             -e REAL_BACKEND_AUTH_TOKEN="$REAL_BACKEND_AUTH_TOKEN" \
             -e REAL_BACKEND_FOLDER="$REAL_BACKEND_FOLDER" \
