@@ -409,19 +409,18 @@ describe('DocumentsTab — cursor pagination (Load more)', () => {
     expect(screen.queryByTestId('docs-load-more')).toBeNull();
   });
 
-  it('renders a Load more button with loaded/total counts and calls onLoadMore', async () => {
+  it('renders a Load more button with the loaded count and calls onLoadMore', async () => {
     const onLoadMore = vi.fn();
     renderTab(
       <DocumentsTab
         {...defaultProps()}
         loadedCount={50}
-        totalCount={77}
         hasMore
         onLoadMore={onLoadMore}
       />,
     );
     const btn = screen.getByTestId('docs-load-more');
-    expect(btn).toHaveTextContent('50 of 77 loaded');
+    expect(btn).toHaveTextContent('50 loaded');
     await userEvent.click(btn);
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
@@ -431,7 +430,6 @@ describe('DocumentsTab — cursor pagination (Load more)', () => {
       <DocumentsTab
         {...defaultProps()}
         loadedCount={50}
-        totalCount={77}
         hasMore
         isLoadingMore
         onLoadMore={vi.fn()}

@@ -356,14 +356,16 @@ def build_native_shims_router(
             except ValueError:
                 logger.warning("twindb shim: unknown status filter %r", status)
 
-        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
             page=page,
             page_size=page_size,
             status_filter=status_enum,
         )
-        # More pages exist when this page came back full. Cursor = next page
-        # number (opaque to the client). Based on the DB page (pre q/tag
-        # client-filter) so paging is stable regardless of client-side filters.
+        # More pages exist when this DB page came back full. Cursor = next page
+        # number (opaque to the client). Based on the DB page size (pre folder/
+        # q/tag client-filter) so paging never stops early just because a page
+        # held few folder-matching docs — the operator keeps pulling until the
+        # underlying status page is short.
         next_cursor = str(page + 1) if len(docs_tuples) == page_size else None
 
         # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
@@ -382,8 +384,13 @@ def build_native_shims_router(
         filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
 
         return _ListEnvelope(
+            # Folder-scoped count: _filter_docs already restricted to this
+            # folder, so the total reflects folder isolation (NOT the global DB
+            # total — that would leak cross-folder counts, breaking the
+            # default/sandbox isolation contract). It is per-page; the WebUI
+            # accumulates pages via next_cursor and counts client-side.
             items=[_DocumentEnvelope(**d) for d in filtered],
-            total=total,
+            total=len(filtered),
             next_cursor=next_cursor,
         )
 

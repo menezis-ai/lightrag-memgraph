@@ -1130,9 +1130,6 @@ function AppShell() {
     () => docs.data?.pages.flatMap((p) => p.items) ?? [],
     [docs.data],
   );
-  // Real DB total (from the first page envelope) — the loaded list may be a
-  // subset until the operator pulls more pages.
-  const docsTotal = docs.data?.pages[0]?.total ?? backendDocList.length;
   const docList = useMemo(() => {
     const backendTrackIds = new Set(
       backendDocList.map((doc) => doc.track_id).filter(Boolean),
@@ -1276,7 +1273,6 @@ function AppShell() {
             <DocumentsTab
               docs={nonPendingDocs}
               loadedCount={backendDocList.length}
-              totalCount={docsTotal}
               hasMore={docs.hasNextPage}
               isLoadingMore={docs.isFetchingNextPage}
               onLoadMore={() => void docs.fetchNextPage()}

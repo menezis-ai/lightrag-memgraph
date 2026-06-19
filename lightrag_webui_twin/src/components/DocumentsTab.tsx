@@ -92,7 +92,6 @@ export interface DocumentsTabProps {
    *  pulls additional pages on demand. Counts/filters stay client-side over the
    *  loaded subset. */
   loadedCount?: number;
-  totalCount?: number;
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
@@ -118,7 +117,6 @@ export function DocumentsTab({
   nowMs,
   pendingSlot,
   loadedCount,
-  totalCount,
   hasMore = false,
   isLoadingMore = false,
   onLoadMore,
@@ -703,8 +701,8 @@ export function DocumentsTab({
             >
               {isLoadingMore
                 ? 'Loading…'
-                : totalCount != null && loadedCount != null
-                  ? `Load more (${loadedCount} of ${totalCount} loaded)`
+                : loadedCount != null
+                  ? `Load more (${loadedCount} loaded)`
                   : 'Load more'}
             </button>
           </div>
