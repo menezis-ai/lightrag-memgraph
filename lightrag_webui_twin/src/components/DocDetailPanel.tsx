@@ -6,10 +6,10 @@
  *   - Retag: opens RetagModal via callback
  *   - View raw: surfaces a notice until the raw download endpoint is wired
  *   - Re-process: POST /documents/reprocess_failed (audit C7 —
- *     the per-doc ``/documents/{id}/scan`` endpoint exists for API
- *     compat but is a no-op; the host handler in App.tsx routes
- *     FAILED docs through the failed-batch endpoint instead, and
- *     toasts an explanatory cue on any other status).
+ *     targeted ``/documents/{id}/scan`` is rejected because LightRAG
+ *     has no safe per-document rescan; the host handler in App.tsx
+ *     routes FAILED docs through the failed-batch endpoint instead,
+ *     and toasts an explanatory cue on any other status).
  *   - Delete (cascade): DELETE /documents/{id}, both individual & multi
  */
 

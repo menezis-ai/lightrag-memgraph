@@ -7,14 +7,11 @@
  * `/twin/api/documents/{id}/metadata`.
  *
  * Routes:
- *   GET    /documents                                        -> { items: Document[], total }
- *   POST   /documents                                        -> upload (LightRAG native)
+ *   GET    /documents                                        -> { items, total, page, page_size, status_counts, next_cursor }
+ *   POST   /documents/upload                                 -> upload (LightRAG native)
  *   GET    /documents/{id}/chunks                            -> chunks[]
- *   POST   /documents/{id}/scan                              -> ack-only compat no-op (audit C7;
- *                                                                no UI consumer — the WebUI
- *                                                                routes all per-doc re-process
- *                                                                intent through
- *                                                                /documents/reprocess_failed)
+ *   POST   /documents/{id}/scan                              -> 409 unsupported targeted rescan
+ *   POST   /documents/reprocess_failed                       -> retry failed batch
  *   GET    /twin/api/documents/{id}/metadata                 -> overlay fields
  *   POST   /twin/api/documents/{id}/approve                  -> review approve
  *   POST   /twin/api/documents/{id}/reject                   -> review reject

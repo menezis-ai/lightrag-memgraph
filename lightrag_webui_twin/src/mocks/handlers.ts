@@ -28,7 +28,7 @@ import {
   FOLDER_FIXTURES,
 } from '../fixtures';
 import type { ActivityEvent } from '../types/activity';
-import type { Document } from '../types/document';
+import type { Document, DocumentStatus } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
@@ -602,13 +602,23 @@ function handleDeleteFolder(id: string): Response {
 function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
-  const folder = params.get('folder') ?? params.get('folder');
+  const folder = params.get('folder');
   if (folder && d.folder !== folder) return false;
   const q = params.get('q');
   if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
   const tag = params.get('tag');
   if (tag && !d.tags.includes(tag)) return false;
   return true;
+}
+
+function statusCountsFor(docs: readonly Document[]): Record<DocumentStatus, number> {
+  return docs.reduce<Record<DocumentStatus, number>>(
+    (acc, doc) => {
+      acc[doc.status] = (acc[doc.status] ?? 0) + 1;
+      return acc;
+    },
+    { PENDING: 0, PROCESSING: 0, PROCESSED: 0, FAILED: 0 },
+  );
 }
 
 function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean {
@@ -832,7 +842,21 @@ export const handlers = [
     const filtered = documentsState.filter((d) =>
       matchDocumentsQuery(d, url.searchParams),
     );
-    return HttpResponse.json({ items: filtered, total: filtered.length });
+    const page = Number(url.searchParams.get('cursor') || '1');
+    const pageSize = 50;
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const start = (safePage - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    const nextCursor =
+      safePage * pageSize < filtered.length ? String(safePage + 1) : null;
+    return HttpResponse.json({
+      items,
+      total: filtered.length,
+      page: safePage,
+      page_size: pageSize,
+      status_counts: statusCountsFor(filtered),
+      next_cursor: nextCursor,
+    });
   }),
   http.get(`${ANY}/documents/:id/chunks`, ({ params, request }) => {
     const url = new URL(request.url);

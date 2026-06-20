@@ -38,9 +38,20 @@ async function getJson<T>(path: string): Promise<T> {
 
 describe('MSW handlers — LightRAG-native endpoints', () => {
   it('GET /documents returns the full fixture envelope', async () => {
-    const data = await getJson<{ items: unknown[]; total: number }>('/documents');
+    const data = await getJson<{
+      items: unknown[];
+      total: number;
+      page: number;
+      page_size: number;
+      status_counts: Record<string, number>;
+      next_cursor: string | null;
+    }>('/documents');
     expect(data.total).toBe(DOCUMENT_FIXTURES.length);
     expect(data.items).toHaveLength(DOCUMENT_FIXTURES.length);
+    expect(data.page).toBe(1);
+    expect(data.page_size).toBe(50);
+    expect(data.status_counts.PROCESSED).toBeGreaterThan(0);
+    expect(data.next_cursor).toBeNull();
   });
 
   it('GET /documents?status=FAILED filters the envelope', async () => {

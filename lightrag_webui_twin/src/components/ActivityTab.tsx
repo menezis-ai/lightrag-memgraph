@@ -570,9 +570,10 @@ function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
               onPushToast?.({
                 kind: 'propagating',
                 title: 'Re-processing failed sources',
-                // Audit C7: the per-doc ``/documents/{id}/scan`` is a
-                // no-op. The honest action that includes this row is
-                // the failed-batch endpoint.
+                // Audit C7: targeted ``/documents/{id}/scan`` is rejected
+                // because LightRAG has no safe per-document rescan. The
+                // honest action that includes this row is the failed-batch
+                // endpoint.
                 sub: `${e.target.label} · POST /documents/reprocess_failed`,
               })
             }

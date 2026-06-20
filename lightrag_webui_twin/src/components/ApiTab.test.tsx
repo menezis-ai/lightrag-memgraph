@@ -353,7 +353,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     expect(body.metadata.tag_filter.all).toEqual(['tag-name']);
   });
 
-  it('mockResponseFor /documents (GET) returns paginated items + total', () => {
+  it('mockResponseFor /documents (GET) returns the production list envelope', () => {
     const r = mockResponseFor(
       { m: 'GET', p: '/documents', s: '' },
       '',
@@ -361,6 +361,10 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     );
     const body = JSON.parse(r.body);
     expect(body.total).toBe(1);
+    expect(body.page).toBe(1);
+    expect(body.page_size).toBe(50);
+    expect(body.status_counts.completed).toBe(1);
+    expect(body.next_cursor).toBeNull();
     expect(body.items[0].source).toBe('source-document.pdf');
   });
 });
