@@ -175,6 +175,17 @@ class TestDeleteFolder:
         ]
         assert len(deletes) == 1
 
+    async def test_delete_active_folder_does_not_resurrect_store(self, client):
+        await client.post("/folders", json={"id": "sandbox", "label": "S"})
+
+        r = await client.delete(
+            "/folders/sandbox",
+            headers={"X-Twin-Folder": "sandbox"},
+        )
+
+        assert r.status_code == 204
+        assert "sandbox" not in webui_router._stores  # noqa: SLF001
+
     async def test_delete_403_on_env_seeded(self, client):
         r = await client.delete("/folders/default")
         assert r.status_code == 403

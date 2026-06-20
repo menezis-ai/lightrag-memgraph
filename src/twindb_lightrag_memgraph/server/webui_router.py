@@ -1080,7 +1080,7 @@ async def delete_folder(folder_id: str) -> None:
         raise HTTPException(404, f"Folder '{folder_id}' not found")
     # Evict the per-folder WebUI store so future GETs don't resurrect it.
     _stores.pop(folder_id, None)
-    store = get_store()
+    store = get_store(load_folder_catalog().default_folder_id)
     event = _make_event(
         kind="settings",
         sev="info",
