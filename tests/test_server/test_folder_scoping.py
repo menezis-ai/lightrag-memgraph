@@ -49,8 +49,14 @@ class FakeDocStatusStore:
             ),
         }
 
-    async def get_docs_paginated(self, **_: Any):
-        return list(self.docs.items()), len(self.docs)
+    async def get_docs_paginated(self, **kwargs: Any):
+        folder = kwargs.get("folder")
+        rows = [
+            (doc_id, doc)
+            for doc_id, doc in self.docs.items()
+            if folder is None or (doc.metadata.get("folder") or "default") == folder
+        ]
+        return rows, len(rows)
 
 
 class FakeRag:

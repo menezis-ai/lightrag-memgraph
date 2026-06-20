@@ -20,6 +20,9 @@ recognises it as the LightRAG-aligned label and not the Twin overlay surface.
 
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 
 # Environment variable keys.
 #
@@ -66,6 +69,10 @@ MEMGRAPH_READ_POOL_SIZE_ENV = "MEMGRAPH_READ_POOL_SIZE"
 DEFAULT_READ_POOL_SIZE = 20
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+_active_storage_folder: ContextVar[str | None] = ContextVar(
+    "twin_active_storage_folder",
+    default=None,
+)
 
 
 def validate_identifier(value: str, name: str = "identifier") -> str:
@@ -110,3 +117,38 @@ def resolve_workspace() -> str:
         if candidate:
             return validate_identifier(candidate, "workspace")
     return validate_identifier(DEFAULT_WORKSPACE, "workspace")
+
+
+def default_twin_folder() -> str:
+    """Return the fallback Twin folder id used when no request scope exists."""
+    candidate = (
+        os.environ.get(TWIN_DEFAULT_FOLDER_ENV)
+        or os.environ.get(WORKSPACE_ENV)
+        or "default"
+    ).strip()
+    try:
+        return validate_identifier(candidate, "folder")
+    except ValueError:
+        return "default"
+
+
+def get_active_storage_folder() -> str | None:
+    """Folder captured for storage writes in the current async context."""
+    return _active_storage_folder.get()
+
+
+@contextmanager
+def storage_folder_context(folder: str | None) -> Iterator[None]:
+    """Temporarily bind a Twin folder for low-level storage writes.
+
+    This lives in the storage constants module, not in ``server.folder``, so
+    Memgraph storage backends can read it without importing FastAPI/server
+    code. Callers must pass an already validated folder id.
+    """
+    token = _active_storage_folder.set(
+        validate_identifier(folder, "folder") if folder else None
+    )
+    try:
+        yield
+    finally:
+        _active_storage_folder.reset(token)

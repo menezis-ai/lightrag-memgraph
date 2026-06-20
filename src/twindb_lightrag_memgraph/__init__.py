@@ -1119,6 +1119,8 @@ def _patch_lightrag_server_create_app(
 
     def wrapped_create_app(args):
         app = orig_create_app(args)
+        if shim_native_routes or twin_api_prefix is not None:
+            _install_storage_folder_capture(app)
         if shim_native_routes:
             _inject_native_shims(app)
         if twin_api_prefix is not None:
@@ -1148,6 +1150,81 @@ def _patch_lightrag_server_create_app(
         twin_api_prefix is not None,
         shim_native_routes,
     )
+
+
+def _patch_background_tasks_folder_context() -> None:
+    """Wrap Starlette background tasks with the current storage folder.
+
+    LightRAG's upload endpoint accepts the request synchronously, then writes
+    DocStatus from a ``BackgroundTasks`` callback. A request middleware
+    ContextVar alone is not a reliable contract across that boundary, so this
+    patch captures the folder at ``add_task`` time and re-applies it inside the
+    actual callback.
+    """
+    import inspect
+
+    from starlette.background import BackgroundTasks
+
+    if getattr(BackgroundTasks, "_twindb_folder_context_patched", False):
+        return
+
+    orig_add_task = BackgroundTasks.add_task
+
+    def add_task_with_folder(self, func, *args, **kwargs):
+        from ._constants import get_active_storage_folder, storage_folder_context
+
+        captured_folder = get_active_storage_folder()
+        if not captured_folder:
+            return orig_add_task(self, func, *args, **kwargs)
+
+        async def _run_with_folder(*task_args, **task_kwargs):
+            with storage_folder_context(captured_folder):
+                result = func(*task_args, **task_kwargs)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+
+        return orig_add_task(self, _run_with_folder, *args, **kwargs)
+
+    add_task_with_folder.__wrapped__ = orig_add_task
+    BackgroundTasks.add_task = add_task_with_folder
+    BackgroundTasks._twindb_folder_context_patched = True
+
+
+def _install_storage_folder_capture(app) -> None:
+    """Bind validated ``X-Twin-Folder`` to storage writes for ingestion."""
+    _patch_background_tasks_folder_context()
+
+    if getattr(app, "_twindb_storage_folder_capture_installed", False):
+        return
+
+    ingestion_paths = {
+        "/documents/upload",
+        "/documents/text",
+        "/documents/texts",
+        "/documents/scan",
+    }
+
+    @app.middleware("http")
+    async def _storage_folder_capture_middleware(request, call_next):
+        if request.method != "POST" or request.url.path not in ingestion_paths:
+            return await call_next(request)
+
+        from fastapi import HTTPException
+        from fastapi.responses import JSONResponse
+
+        from ._constants import storage_folder_context
+        from .server.folder import resolve_folder_for_request
+
+        try:
+            folder = resolve_folder_for_request(request)
+        except HTTPException as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+        with storage_folder_context(folder):
+            return await call_next(request)
+
+    app._twindb_storage_folder_capture_installed = True
 
 
 def _inject_native_shims(app) -> None:

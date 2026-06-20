@@ -29,6 +29,7 @@ import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import type { SettingsSectionKey } from './components/SettingsTab';
 import { useAuth } from './hooks/useAuth';
+import { useUrlParam } from './hooks/useUrlParam';
 import {
   useActivity,
   useApproveTag,
@@ -69,6 +70,31 @@ const CURRENT_USER: TagCurrentUser = {
   name: 'operator@twin.local',
   palier: 3,
   role: 'admin / steward',
+};
+
+type DocumentsStatusFilterKey =
+  | 'all'
+  | 'completed'
+  | 'processing'
+  | 'pending'
+  | 'failed';
+
+const DOCUMENTS_STATUS_FILTERS = [
+  'all',
+  'completed',
+  'processing',
+  'pending',
+  'failed',
+] as const;
+
+const DOCUMENTS_STATUS_TO_API: Record<
+  Exclude<DocumentsStatusFilterKey, 'all'>,
+  string
+> = {
+  completed: 'PROCESSED',
+  processing: 'PROCESSING',
+  pending: 'PENDING',
+  failed: 'FAILED',
 };
 
 // Keep the default Documents surface eager, but split secondary tabs and
@@ -284,9 +310,19 @@ function AppShell() {
   });
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
   const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [documentsPage, setDocumentsPage] = useState(1);
+  const [documentsStatusFilter, setDocumentsStatusFilter] =
+    useUrlParam<DocumentsStatusFilterKey>('status', 'all', {
+      validate: (v) =>
+        (DOCUMENTS_STATUS_FILTERS as readonly string[]).includes(v),
+    });
   const [optimisticUploadDocs, setOptimisticUploadDocs] = useState<
     readonly Document[]
   >([]);
+  const documentsStatusParam =
+    documentsStatusFilter === 'all'
+      ? undefined
+      : DOCUMENTS_STATUS_TO_API[documentsStatusFilter];
 
   // Auth
   const auth = useAuth();
@@ -298,7 +334,11 @@ function AppShell() {
   // Data — every visible resource comes from the API query layer. No local
   // sample fallback is allowed on the operator surface.
   const docs = useDocuments(
-    { folder },
+    {
+      folder,
+      cursor: documentsPage > 1 ? String(documentsPage) : undefined,
+      status: documentsStatusParam,
+    },
     {
       folderKey: folder,
       enabled:
@@ -386,6 +426,10 @@ function AppShell() {
       folderList[0].id;
     writeUiPreference(FOLDER_STORAGE_KEY, fallback);
   }, [folder, folderList, runtimeConfig.defaultFolderId]);
+
+  useEffect(() => {
+    setDocumentsPage(1);
+  }, [folder, documentsStatusFilter]);
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
@@ -552,7 +596,7 @@ function AppShell() {
     for (let i = 0; i < 30 && pending.size > 0; i += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
       const result = await docs.refetch();
-      for (const item of result.data?.pages.flatMap((p) => p.items) ?? []) {
+      for (const item of result.data?.items ?? []) {
         if (item.track_id) pending.delete(item.track_id);
       }
     }
@@ -1131,7 +1175,7 @@ function AppShell() {
   // + the backend error banner make failures visible instead of showing stale
   // sample data.
   const backendDocList = useMemo(
-    () => docs.data?.pages.flatMap((p) => p.items) ?? [],
+    () => docs.data?.items ?? [],
     [docs.data],
   );
   const docList = useMemo(() => {
@@ -1276,10 +1320,18 @@ function AppShell() {
           {tab === 'documents' && (
             <DocumentsTab
               docs={nonPendingDocs}
-              loadedCount={backendDocList.length}
-              hasMore={docs.hasNextPage}
-              isLoadingMore={docs.isFetchingNextPage}
-              onLoadMore={() => void docs.fetchNextPage()}
+              currentPage={documentsPage}
+              totalCount={docs.data?.total ?? backendDocList.length}
+              statusCounts={docs.data?.status_counts ?? null}
+              hasNextPage={Boolean(docs.data?.next_cursor)}
+              isPageFetching={docs.isFetching}
+              statusFilter={documentsStatusFilter}
+              onStatusFilterChange={setDocumentsStatusFilter}
+              onFiltersChanged={() => setDocumentsPage(1)}
+              onPreviousPage={() =>
+                setDocumentsPage((page) => Math.max(1, page - 1))
+              }
+              onNextPage={() => setDocumentsPage((page) => page + 1)}
               tagCatalog={tagCatalog}
               pendingSlot={
                 <PendingDocsSection

@@ -31,6 +31,8 @@ class FakeDocStatus:
 
 
 class FakeDocStatusStore:
+    last_kwargs: dict[str, Any] = {}
+
     def __init__(self) -> None:
         self.docs = {
             "doc-default": FakeDocStatus(
@@ -48,8 +50,15 @@ class FakeDocStatusStore:
             ),
         }
 
-    async def get_docs_paginated(self, **_: Any):
-        return list(self.docs.items()), len(self.docs)
+    async def get_docs_paginated(self, **kwargs: Any):
+        self.__class__.last_kwargs = dict(kwargs)
+        folder = kwargs.get("folder")
+        rows = [
+            (doc_id, doc)
+            for doc_id, doc in self.docs.items()
+            if folder is None or (doc.metadata.get("folder") or "default") == folder
+        ]
+        return rows, len(rows)
 
     async def get_by_id(self, doc_id: str):
         return self.docs.get(doc_id)
@@ -104,6 +113,11 @@ async def client(monkeypatch):
 
 
 class TestNativeShimFolders:
+    async def test_documents_passes_folder_to_storage_pagination(self, client):
+        r = await client.get("/documents", headers={"X-Twin-Folder": "sandbox"})
+        assert r.status_code == 200
+        assert FakeDocStatusStore.last_kwargs["folder"] == "sandbox"
+
     async def test_documents_default_folder_sees_legacy_docs_only(self, client):
         r = await client.get("/documents")
         assert r.status_code == 200

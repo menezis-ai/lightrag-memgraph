@@ -8,7 +8,6 @@
  */
 
 import {
-  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -18,7 +17,7 @@ import { api } from './resources';
 import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
-import type { UploadDocumentInput } from './resources';
+import type { ListEnvelope, UploadDocumentInput } from './resources';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
@@ -85,22 +84,21 @@ export function useDocuments(
     q?: string;
     tag?: string;
     folder?: string;
+    cursor?: string;
   } = {},
   options: QueryGate = {},
 ) {
   const scope = folderScope(options, query.folder);
-  // Infinite (cursor) pagination: the documents list can be arbitrarily large
-  // (BNP-scale KBs + RAG 1.5). The backend returns one page + a `next_cursor`;
-  // the operator pulls more via "Load more" in DocumentsTab. No hard cap.
-  return useInfiniteQuery({
+  // Server-side page/cursor pagination: the backend scopes to the active
+  // folder before counting and fetching, so totals and status counters are not
+  // computed from the currently loaded subset.
+  return useQuery({
     queryKey: ['documents', scope, query] as const,
-    queryFn: ({ pageParam, signal }) =>
+    queryFn: ({ signal }) =>
       api.listDocuments(
-        { ...query, cursor: pageParam as string | undefined },
+        { ...query },
         { signal },
       ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     ...DEFAULTS,
     staleTime: 0,
     refetchInterval: DOCUMENTS_REFETCH_INTERVAL_MS,
@@ -532,23 +530,14 @@ function invalidateTagSideEffects(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['documents'] });
 }
 
-// The documents query is an infinite (cursor) query, so its cache is
-// `{ pages: ListEnvelope<Document>[], pageParams }`, NOT a bare
-// `{ items }`. Optimistic updates must map across every page's items —
-// touching `old.items` directly silently no-ops (undefined) and was the
-// cause of the RC-1 "mutation doesn't survive reload" regression.
-type DocsPage = { items: readonly Document[]; [key: string]: unknown };
-type InfiniteDocs = { pages: DocsPage[]; pageParams: unknown[] };
+type DocsEnvelope = ListEnvelope<Document>;
 
-function mapDocumentsPages(
-  old: InfiniteDocs | undefined,
+function mapDocumentsEnvelope(
+  old: DocsEnvelope | undefined,
   mapItems: (items: readonly Document[]) => readonly Document[],
-): InfiniteDocs | undefined {
-  if (!old?.pages) return old;
-  return {
-    ...old,
-    pages: old.pages.map((p) => ({ ...p, items: mapItems(p.items) })),
-  };
+): DocsEnvelope | undefined {
+  if (!old?.items) return old;
+  return { ...old, items: mapItems(old.items) };
 }
 
 function applyDocumentTags(
@@ -672,9 +661,9 @@ function flagDocsAsDeleting(
   ids: readonly string[],
 ): { previous: ReadonlyArray<[unknown, unknown]> } {
   const idSet = new Set(ids);
-  const previous = qc.getQueriesData<InfiniteDocs>({ queryKey: ['documents'] });
-  qc.setQueriesData<InfiniteDocs>({ queryKey: ['documents'] }, (old) =>
-    mapDocumentsPages(old, (items) =>
+  const previous = qc.getQueriesData<DocsEnvelope>({ queryKey: ['documents'] });
+  qc.setQueriesData<DocsEnvelope>({ queryKey: ['documents'] }, (old) =>
+    mapDocumentsEnvelope(old, (items) =>
       items.map((d) => (idSet.has(d.doc_id) ? { ...d, _deleting: true } : d)),
     ),
   );
@@ -787,11 +776,11 @@ export function useBulkRetagDocuments() {
       api.bulkRetagDocuments(body),
     onMutate: async (body) => {
       await qc.cancelQueries({ queryKey: ['documents'] });
-      const previousDocuments = qc.getQueriesData<InfiniteDocs>({
+      const previousDocuments = qc.getQueriesData<DocsEnvelope>({
         queryKey: ['documents'],
       });
-      qc.setQueriesData<InfiniteDocs>({ queryKey: ['documents'] }, (old) =>
-        mapDocumentsPages(old, (items) =>
+      qc.setQueriesData<DocsEnvelope>({ queryKey: ['documents'] }, (old) =>
+        mapDocumentsEnvelope(old, (items) =>
           applyDocumentTags(items, body.targets, body.adds, body.removes),
         ),
       );

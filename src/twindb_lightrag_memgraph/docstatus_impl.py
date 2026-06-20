@@ -18,7 +18,13 @@ from lightrag.base import DocProcessingStatus, DocStatus, DocStatusStorage
 from lightrag.utils import logger
 
 from . import _pool
-from ._constants import DEFAULT_PAGE_SIZE, resolve_workspace, validate_identifier
+from ._constants import (
+    DEFAULT_PAGE_SIZE,
+    default_twin_folder,
+    get_active_storage_folder,
+    resolve_workspace,
+    validate_identifier,
+)
 
 
 @dataclass
@@ -43,6 +49,56 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     @staticmethod
     def _doc_status_supports(field_name: str) -> bool:
         return field_name in getattr(DocProcessingStatus, "__dataclass_fields__", {})
+
+    @staticmethod
+    def _folder_from_metadata(metadata: Any) -> str | None:
+        if isinstance(metadata, str) and metadata:
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if not isinstance(metadata, dict):
+            return None
+        raw = metadata.get("folder")
+        if not raw:
+            return None
+        try:
+            return validate_identifier(str(raw), "folder")
+        except ValueError:
+            logger.warning("Ignoring invalid DocStatus metadata.folder=%r", raw)
+            return None
+
+    @staticmethod
+    def _resolve_folder_for_props(
+        props: dict[str, Any],
+        metadata: Any,
+    ) -> str | None:
+        raw = props.get("folder")
+        if raw:
+            try:
+                return validate_identifier(str(raw), "folder")
+            except ValueError:
+                logger.warning("Ignoring invalid DocStatus folder=%r", raw)
+        metadata_folder = MemgraphDocStatusStorage._folder_from_metadata(metadata)
+        if metadata_folder:
+            return metadata_folder
+        active_folder = get_active_storage_folder()
+        if active_folder:
+            return active_folder
+        return None
+
+    @staticmethod
+    def _folder_for_read_props(props: dict[str, Any]) -> str:
+        raw = props.get("folder")
+        if raw:
+            try:
+                return validate_identifier(str(raw), "folder")
+            except ValueError:
+                logger.warning("Ignoring invalid stored DocStatus folder=%r", raw)
+        metadata_folder = MemgraphDocStatusStorage._folder_from_metadata(
+            props.get("metadata")
+        )
+        return metadata_folder or default_twin_folder()
 
     @staticmethod
     def resolve_status_filter_values(
@@ -71,6 +127,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 "id",
                 "status",
                 "file_path",
+                "folder",
                 "track_id",
                 "updated_at",
                 "created_at",
@@ -93,6 +150,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                             prop,
                             e,
                         )
+            await self._backfill_missing_folders(session, label)
         logger.info(f"[MemgraphDocStatus:{self.workspace}] Indexes created on :{label}")
 
     async def finalize(self):
@@ -102,6 +160,41 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         pass  # Memgraph persists automatically, no flush needed
 
     # ── Serialization helpers ──────────────────────────────────────────
+
+    async def _backfill_missing_folders(self, session, label: str) -> None:
+        """Populate top-level ``folder`` on legacy DocStatus nodes."""
+        default_folder = default_twin_folder()
+        while True:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}`)
+                WHERE n.folder IS NULL AND n.id IS NOT NULL
+                RETURN n.id AS id, n.metadata AS metadata
+                LIMIT 1000
+                """
+            )
+            rows = []
+            async for record in result:
+                metadata_folder = self._folder_from_metadata(record["metadata"])
+                rows.append(
+                    {
+                        "id": record["id"],
+                        "folder": metadata_folder or default_folder,
+                    }
+                )
+            await result.consume()
+            if not rows:
+                return
+            update = await session.run(
+                f"""
+                UNWIND $rows AS row
+                MATCH (n:`{label}` {{id: row.id}})
+                WHERE n.folder IS NULL
+                SET n.folder = row.folder
+                """,
+                rows=rows,
+            )
+            await update.consume()
 
     @staticmethod
     def _serialize_status(doc_id: str, status: DocProcessingStatus) -> dict:
@@ -120,10 +213,16 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             "track_id",
             "file_path",
             "content_hash",
+            "folder",
         ):
             val = getattr(status, field_name, None)
             if val is not None:
                 d[field_name] = val
+        folder = MemgraphDocStatusStorage._resolve_folder_for_props(d, status.metadata)
+        if folder:
+            d["folder"] = folder
+        else:
+            d.pop("folder", None)
         if status.metadata:
             d["metadata"] = json.dumps(status.metadata, default=str)
         if status.chunks_list:
@@ -176,6 +275,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             error_msg=props.get("error_msg"),
             metadata=metadata or {},
         )
+        if MemgraphDocStatusStorage._doc_status_supports("folder"):
+            kwargs["folder"] = MemgraphDocStatusStorage._folder_for_read_props(props)
         if hasattr(DocProcessingStatus, "multimodal_processed"):
             kwargs["multimodal_processed"] = props.get("multimodal_processed")
         if MemgraphDocStatusStorage._doc_status_supports("content_hash"):
@@ -201,6 +302,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     out[key] = json.loads(val)
                 except json.JSONDecodeError:
                     pass
+        out["folder"] = MemgraphDocStatusStorage._folder_for_read_props(out)
         return out
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
@@ -258,16 +360,20 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         for doc_id, doc_data in data.items():
             if isinstance(doc_data, DocProcessingStatus):
                 props = self._serialize_status(doc_id, doc_data)
+                folder = props.get("folder")
+                props.pop("folder", None)
             else:
                 props = {"id": doc_id, **doc_data}
                 props.setdefault("updated_at", now)
                 props.setdefault("created_at", now)
+                folder = self._resolve_folder_for_props(props, props.get("metadata"))
+                props.pop("folder", None)
                 for k, v in props.items():
                     if isinstance(v, (dict, list)):
                         props[k] = json.dumps(v, default=str)
                     elif hasattr(v, "value"):  # Enum
                         props[k] = v.value
-            entries.append({"id": doc_id, "props": props})
+            entries.append({"id": doc_id, "props": props, "folder": folder})
 
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
@@ -276,8 +382,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
                     SET n += e.props
+                    WITH n, e
+                    WHERE n.folder IS NULL
+                    SET n.folder = coalesce(e.folder, $default_folder)
                     """,
                     entries=entries,
+                    default_folder=default_twin_folder(),
                 )
                 await result.consume()
 
@@ -307,11 +417,21 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     # ── DocStatusStorage-specific interface ─────────────────────────────
 
-    async def get_status_counts(self) -> dict[str, int]:
+    async def get_status_counts(self, folder: str | None = None) -> dict[str, int]:
         label = self._label()
+        where_clause = ""
+        params: dict[str, Any] = {}
+        if folder:
+            where_clause = "WHERE n.folder = $folder"
+            params["folder"] = validate_identifier(folder, "folder")
         async with _pool.get_read_session() as session:
             result = await session.run(
-                f"MATCH (n:`{label}`) RETURN n.status AS status, count(n) AS cnt"
+                f"""
+                MATCH (n:`{label}`)
+                {where_clause}
+                RETURN n.status AS status, count(n) AS cnt
+                """,
+                **params,
             )
             counts = {}
             async for record in result:
@@ -386,6 +506,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         page_size: int = DEFAULT_PAGE_SIZE,
         sort_field: str = "updated_at",
         sort_direction: str = "desc",
+        folder: str | None = None,
     ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:
         label = self._label()
         skip = (page - 1) * page_size
@@ -397,11 +518,15 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             sort_field = "updated_at"
 
         status_values = self.resolve_status_filter_values(status_filter, status_filters)
-        where_clause = ""
+        filters: list[str] = []
         params: dict[str, Any] = {}
         if status_values is not None:
-            where_clause = "WHERE n.status IN $statuses"
+            filters.append("n.status IN $statuses")
             params["statuses"] = list(status_values)
+        if folder:
+            filters.append("n.folder = $folder")
+            params["folder"] = validate_identifier(folder, "folder")
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 
         # Run count and fetch in parallel on separate read sessions —
         # cuts round-trip time roughly in half on large collections, which
@@ -440,8 +565,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         docs, total = await asyncio.gather(_fetch(), _count())
         return docs, total
 
-    async def get_all_status_counts(self) -> dict[str, int]:
-        return await self.get_status_counts()
+    async def get_all_status_counts(self, folder: str | None = None) -> dict[str, int]:
+        return await self.get_status_counts(folder=folder)
 
     async def get_doc_by_file_path(self, file_path: str) -> dict[str, Any] | None:
         label = self._label()

@@ -88,13 +88,16 @@ export interface DocumentsTabProps {
    * (~/Downloads/prototype/src/app.jsx — `pendingSlot` prop).
    */
   pendingSlot?: React.ReactNode;
-  /** Cursor pagination ("Load more"). The list can exceed one page; the host
-   *  pulls additional pages on demand. Counts/filters stay client-side over the
-   *  loaded subset. */
-  loadedCount?: number;
-  hasMore?: boolean;
-  isLoadingMore?: boolean;
-  onLoadMore?: () => void;
+  currentPage?: number;
+  totalCount?: number;
+  statusCounts?: Record<string, number> | null;
+  hasNextPage?: boolean;
+  isPageFetching?: boolean;
+  onPreviousPage?: () => void;
+  onNextPage?: () => void;
+  statusFilter?: StatusFilterKey;
+  onStatusFilterChange?: (status: StatusFilterKey) => void;
+  onFiltersChanged?: () => void;
 }
 
 export function DocumentsTab({
@@ -116,14 +119,20 @@ export function DocumentsTab({
   onBulkDelete,
   nowMs,
   pendingSlot,
-  loadedCount,
-  hasMore = false,
-  isLoadingMore = false,
-  onLoadMore,
+  currentPage = 1,
+  totalCount,
+  statusCounts = null,
+  hasNextPage = false,
+  isPageFetching = false,
+  onPreviousPage,
+  onNextPage,
+  statusFilter: controlledStatusFilter,
+  onStatusFilterChange,
+  onFiltersChanged,
 }: DocumentsTabProps) {
   const openDetail = onOpenDetail ?? onDeleteDoc;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [statusFilter, setStatusFilter] = useUrlParam<StatusFilterKey>(
+  const [localStatusFilter, setLocalStatusFilter] = useUrlParam<StatusFilterKey>(
     'status',
     'all',
     {
@@ -140,6 +149,23 @@ export function DocumentsTab({
   const [tagAddVal, setTagAddVal] = useState('');
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(0);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
+  const statusFilter = controlledStatusFilter ?? localStatusFilter;
+  const updateStatusFilter = (next: StatusFilterKey) => {
+    (onStatusFilterChange ?? setLocalStatusFilter)(next);
+    onFiltersChanged?.();
+  };
+  const updateSearch = (next: string) => {
+    setSearch(next);
+    onFiltersChanged?.();
+  };
+  const updateTagFilters = (next: readonly string[]) => {
+    setTagFilters([...next]);
+    onFiltersChanged?.();
+  };
+  const updateSourceFilters = (next: readonly string[]) => {
+    setSourceFilters([...next]);
+    onFiltersChanged?.();
+  };
 
   const searchAndTagFiltered = useMemo(() => {
     return docs.filter((d) => {
@@ -160,6 +186,15 @@ export function DocumentsTab({
   }, [docs, search, tagFilters, sourceFilters]);
 
   const counts = useMemo(() => {
+    if (statusCounts) {
+      return {
+        all: Object.values(statusCounts).reduce((a, b) => a + b, 0),
+        completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
+        processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
+        pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
+        failed: statusCounts.failed ?? statusCounts.FAILED ?? 0,
+      };
+    }
     const c: Record<StatusFilterKey, number> = {
       all: searchAndTagFiltered.length,
       completed: 0,
@@ -171,7 +206,7 @@ export function DocumentsTab({
       c[STATUS_TO_FILTER[d.status]]++;
     });
     return c;
-  }, [searchAndTagFiltered]);
+  }, [searchAndTagFiltered, statusCounts]);
   const failedCount = counts.failed;
 
   const filtered = useMemo(() => {
@@ -186,9 +221,9 @@ export function DocumentsTab({
   }, [searchAndTagFiltered, statusFilter]);
 
   const removeTagFilter = (t: string) =>
-    setTagFilters(tagFilters.filter((x) => x !== t));
+    updateTagFilters(tagFilters.filter((x) => x !== t));
   const addTagFilter = (t: string) => {
-    if (t && !tagFilters.includes(t)) setTagFilters([...tagFilters, t]);
+    if (t && !tagFilters.includes(t)) updateTagFilters([...tagFilters, t]);
     setTagAddVal('');
     setTagAddOpen(false);
     setActiveTagSuggestionIndex(0);
@@ -210,7 +245,7 @@ export function DocumentsTab({
 
   const clickTagOnRow = (e: React.MouseEvent, tag: string) => {
     e.stopPropagation();
-    if (!tagFilters.includes(tag)) setTagFilters([...tagFilters, tag]);
+    if (!tagFilters.includes(tag)) updateTagFilters([...tagFilters, tag]);
   };
 
   const toggleRow = (id: string) => {
@@ -465,7 +500,7 @@ export function DocumentsTab({
               key={k}
               type="button"
               className={`pill ${k}${statusFilter === k ? ' active' : ''}`}
-              onClick={() => setStatusFilter(k)}
+              onClick={() => updateStatusFilter(k)}
             >
               {STATUS_LABELS[k]} ({counts[k]})
             </button>
@@ -477,7 +512,7 @@ export function DocumentsTab({
             className="search-source"
             placeholder="Search source name…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => updateSearch(e.target.value)}
             aria-label="Search source"
           />
         </div>
@@ -494,7 +529,7 @@ export function DocumentsTab({
                   type="button"
                   aria-label={`Remove source filter ${s}`}
                   onClick={() =>
-                    setSourceFilters(sourceFilters.filter((x) => x !== s))
+                    updateSourceFilters(sourceFilters.filter((x) => x !== s))
                   }
                 >
                   ×
@@ -690,20 +725,29 @@ export function DocumentsTab({
             />
           ))}
         </div>
-        {hasMore && (
-          <div className="docs-load-more">
+        {(totalCount != null || currentPage > 1 || hasNextPage) && (
+          <div className="docs-pagination" data-testid="docs-pagination">
+            <span className="docs-pagination-label">
+              Page {currentPage}
+              {totalCount != null ? ` · ${totalCount.toLocaleString()} total` : ''}
+            </span>
             <button
               type="button"
               className="ghost-btn"
-              onClick={onLoadMore}
-              disabled={isLoadingMore}
-              data-testid="docs-load-more"
+              onClick={onPreviousPage}
+              disabled={currentPage <= 1 || isPageFetching}
+              data-testid="docs-page-prev"
             >
-              {isLoadingMore
-                ? 'Loading…'
-                : loadedCount != null
-                  ? `Load more (${loadedCount} loaded)`
-                  : 'Load more'}
+              Previous
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onNextPage}
+              disabled={!hasNextPage || isPageFetching}
+              data-testid="docs-page-next"
+            >
+              {isPageFetching ? 'Loading...' : 'Next'}
             </button>
           </div>
         )}

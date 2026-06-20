@@ -467,7 +467,7 @@ def _coerce_doc_metadata(raw: Any) -> dict[str, Any]:
 def _doc_matches_active_folder(doc: dict[str, Any]) -> bool:
     metadata = doc.get("metadata") or {}
     default_folder = load_folder_catalog().default_folder_id
-    return metadata.get("folder", default_folder) == current_folder_id()
+    return (doc.get("folder") or metadata.get("folder") or default_folder) == current_folder_id()
 
 
 async def _get_doc_for_active_folder(doc_id: str) -> dict[str, Any]:
@@ -587,7 +587,7 @@ def _project_doc_status_for_webui(doc: dict[str, Any]) -> dict[str, Any]:
     )
     file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
     summary = str(doc.get("content_summary") or doc.get("summary") or "")
-    folder = str(metadata.get("folder") or current_folder_id())
+    folder = str(doc.get("folder") or metadata.get("folder") or current_folder_id())
     updated_at = str(
         doc.get("updated_at")
         or doc.get("created_at")
@@ -638,7 +638,12 @@ def _filter_doc_status_rows(
     filtered = [
         doc
         for doc in items
-        if (doc.get("metadata") or {}).get("folder", default_folder) == folder
+        if (
+            doc.get("folder")
+            or (doc.get("metadata") or {}).get("folder")
+            or default_folder
+        )
+        == folder
     ]
     if q:
         needle = q.lower()
@@ -670,11 +675,20 @@ async def _list_documents_from_doc_status(
         except ValueError:
             return []
 
-    docs_tuples, _total = await rag.doc_status.get_docs_paginated(
-        page=1,
-        page_size=500,
-        status_filter=status_filter,
-    )
+    folder = current_folder_id()
+    try:
+        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
+            page=1,
+            page_size=500,
+            status_filter=status_filter,
+            folder=folder,
+        )
+    except TypeError:
+        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
+            page=1,
+            page_size=500,
+            status_filter=status_filter,
+        )
     docs: list[dict[str, Any]] = []
     for doc_id, raw in docs_tuples:
         payload = _status_to_dict(raw)
@@ -833,7 +847,7 @@ async def get_document_metadata(doc_id: str) -> dict[str, Any]:
     metadata = doc.get("metadata") or {}
     graph_tags = await _graph_tags_for_doc(doc_id)
     tags = graph_tags or list(metadata.get("tags") or doc.get("tags") or [])
-    folder = metadata.get("folder") or current_folder_id()
+    folder = doc.get("folder") or metadata.get("folder") or current_folder_id()
     return {
         "tags": tags,
         "folder": folder,

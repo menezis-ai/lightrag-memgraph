@@ -403,40 +403,44 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
   });
 });
 
-describe('DocumentsTab — cursor pagination (Load more)', () => {
-  it('shows no Load more button when there are no further pages', () => {
+describe('DocumentsTab — page pagination', () => {
+  it('shows no pagination controls without backend totals or more pages', () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
-    expect(screen.queryByTestId('docs-load-more')).toBeNull();
+    expect(screen.queryByTestId('docs-pagination')).toBeNull();
   });
 
-  it('renders a Load more button with the loaded count and calls onLoadMore', async () => {
-    const onLoadMore = vi.fn();
+  it('renders page totals and calls next page', async () => {
+    const onNextPage = vi.fn();
     renderTab(
       <DocumentsTab
         {...defaultProps()}
-        loadedCount={50}
-        hasMore
-        onLoadMore={onLoadMore}
+        currentPage={2}
+        totalCount={125}
+        hasNextPage
+        onNextPage={onNextPage}
+        onPreviousPage={vi.fn()}
       />,
     );
-    const btn = screen.getByTestId('docs-load-more');
-    expect(btn).toHaveTextContent('50 loaded');
-    await userEvent.click(btn);
-    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('docs-pagination')).toHaveTextContent('Page 2');
+    expect(screen.getByTestId('docs-pagination')).toHaveTextContent('125 total');
+    await userEvent.click(screen.getByTestId('docs-page-next'));
+    expect(onNextPage).toHaveBeenCalledTimes(1);
   });
 
-  it('disables the Load more button while a page is loading', () => {
+  it('disables page buttons while fetching', () => {
     renderTab(
       <DocumentsTab
         {...defaultProps()}
-        loadedCount={50}
-        hasMore
-        isLoadingMore
-        onLoadMore={vi.fn()}
+        currentPage={2}
+        totalCount={125}
+        hasNextPage
+        isPageFetching
+        onNextPage={vi.fn()}
+        onPreviousPage={vi.fn()}
       />,
     );
-    const btn = screen.getByTestId('docs-load-more');
-    expect(btn).toBeDisabled();
-    expect(btn).toHaveTextContent('Loading');
+    expect(screen.getByTestId('docs-page-prev')).toBeDisabled();
+    expect(screen.getByTestId('docs-page-next')).toBeDisabled();
+    expect(screen.getByTestId('docs-page-next')).toHaveTextContent('Loading');
   });
 });

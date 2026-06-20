@@ -78,9 +78,9 @@ class _ListEnvelope(BaseModel):
     items: list[_DocumentEnvelope]
     total: int
     # Opaque cursor for the next page (page number as string), or None when
-    # this is the last page. The WebUI forwards it to fetch the next page
-    # ("Load more"). Without it the list was hard-capped at one page_size.
+    # this is the last page.
     next_cursor: str | None = None
+    status_counts: dict[str, int] | None = None
 
 
 class _DocumentChunk(BaseModel):
@@ -141,7 +141,12 @@ def _filter_docs(
     out = [
         d
         for d in items
-        if (d.get("metadata") or {}).get("folder", default_folder) == folder
+        if (
+            d.get("folder")
+            or (d.get("metadata") or {}).get("folder")
+            or default_folder
+        )
+        == folder
     ]
     if q:
         needle = q.lower()
@@ -228,7 +233,7 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
         # Tags are populated by _attach_tags_via_graph after this
         # projection (graph-join via [:TAGGED_WITH] edges).
         "tags": [],
-        "folder": metadata.get("folder"),
+        "folder": doc.get("folder") or metadata.get("folder"),
         "review": metadata.get("review"),
         "metadata": metadata,
     }
@@ -242,7 +247,12 @@ def _doc_matches_folder(doc_status: Any, folder: str) -> bool:
     else:
         metadata = getattr(doc_status, "metadata", None) or {}
     default_folder = load_folder_catalog().default_folder_id
-    return metadata.get("folder", default_folder) == folder
+    current = (
+        doc_status.get("folder")
+        if isinstance(doc_status, dict)
+        else getattr(doc_status, "folder", None)
+    )
+    return (current or metadata.get("folder") or default_folder) == folder
 
 
 # ---------------------------------------------------------------------------
@@ -356,17 +366,23 @@ def build_native_shims_router(
             except ValueError:
                 logger.warning("twindb shim: unknown status filter %r", status)
 
-        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
-            page=page,
-            page_size=page_size,
-            status_filter=status_enum,
-        )
+        try:
+            docs_tuples, total = await rag.doc_status.get_docs_paginated(
+                page=page,
+                page_size=page_size,
+                status_filter=status_enum,
+                folder=folder,
+            )
+        except TypeError:
+            docs_tuples, total = await rag.doc_status.get_docs_paginated(
+                page=page,
+                page_size=page_size,
+                status_filter=status_enum,
+            )
         # More pages exist when this DB page came back full. Cursor = next page
-        # number (opaque to the client). Based on the DB page size (pre folder/
-        # q/tag client-filter) so paging never stops early just because a page
-        # held few folder-matching docs — the operator keeps pulling until the
-        # underlying status page is short.
-        next_cursor = str(page + 1) if len(docs_tuples) == page_size else None
+        # number (opaque to the client). The storage call is folder-scoped when
+        # supported, so this cursor no longer skips over non-folder rows.
+        next_cursor = str(page + 1) if page * page_size < total else None
 
         # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
         projected: list[dict[str, Any]] = []
@@ -382,16 +398,19 @@ def build_native_shims_router(
         await _attach_tags_via_graph(projected, folder=folder)
 
         filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
+        status_counts = None
+        try:
+            status_counts = await rag.doc_status.get_status_counts(folder=folder)
+        except TypeError:
+            status_counts = await rag.doc_status.get_status_counts()
+        except AttributeError:
+            status_counts = None
 
         return _ListEnvelope(
-            # Folder-scoped count: _filter_docs already restricted to this
-            # folder, so the total reflects folder isolation (NOT the global DB
-            # total — that would leak cross-folder counts, breaking the
-            # default/sandbox isolation contract). It is per-page; the WebUI
-            # accumulates pages via next_cursor and counts client-side.
             items=[_DocumentEnvelope(**d) for d in filtered],
-            total=len(filtered),
+            total=total if not q and not tag else len(filtered),
             next_cursor=next_cursor,
+            status_counts=status_counts,
         )
 
     @router.get(

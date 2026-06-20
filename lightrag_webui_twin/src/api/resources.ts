@@ -43,6 +43,7 @@ const TWIN = '/twin/api';
 export interface ListEnvelope<T> {
   items: readonly T[];
   total: number;
+  status_counts?: Record<string, number> | null;
   /** Opaque cursor for the next page, or null/absent on the last page. */
   next_cursor?: string | null;
 }

@@ -32,6 +32,7 @@ import { Icon, SourceIcon } from './Icon';
 import { ClassPill } from './ClassPill';
 import type { Document } from '../types/document';
 import type { ClassificationValue } from '../types/classification';
+import type { ListEnvelope } from '../api/resources';
 
 export interface PendingDocsSectionProps {
   docs: readonly Document[];
@@ -97,26 +98,18 @@ export function PendingDocsSection({
     state: 'approved' | 'rejected',
     edits?: Partial<Document>,
   ) => {
-    // The documents query is an infinite (cursor) query: the cache is
-    // `{ pages: ListEnvelope<Document>[], pageParams }`, not a bare `{ items }`.
-    // Mapping `old.items` here silently no-ops (undefined) and the optimistic
-    // approve/reject never lands — map across every page's items instead.
-    type DocsPage = { items: readonly Document[]; [key: string]: unknown };
-    type InfiniteDocs = { pages: DocsPage[]; pageParams: unknown[] };
-    queryClient.setQueriesData<InfiniteDocs | undefined>(
+    type DocsEnvelope = ListEnvelope<Document>;
+    queryClient.setQueriesData<DocsEnvelope | undefined>(
       { queryKey: ['documents'] },
       (old) => {
-        if (!old?.pages) return old;
+        if (!old?.items) return old;
         return {
           ...old,
-          pages: old.pages.map((p) => ({
-            ...p,
-            items: p.items.map((doc) =>
-              doc.doc_id === docId
-                ? { ...doc, ...edits, review: { ...doc.review, state } }
-                : doc,
-            ),
-          })),
+          items: old.items.map((doc) =>
+            doc.doc_id === docId
+              ? { ...doc, ...edits, review: { ...doc.review, state } }
+              : doc,
+          ),
         };
       },
     );
