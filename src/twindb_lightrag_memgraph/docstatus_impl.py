@@ -286,7 +286,11 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     # ── BaseKVStorage interface ────────────────────────────────────────
 
     @staticmethod
-    def _deserialize_props(props: dict) -> dict[str, Any]:
+    def _deserialize_props(
+        props: dict,
+        *,
+        include_default_folder: bool = True,
+    ) -> dict[str, Any]:
         """Deserialize JSON-encoded fields back to Python objects.
 
         Fields like chunks_list and metadata are stored as JSON strings
@@ -302,7 +306,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     out[key] = json.loads(val)
                 except json.JSONDecodeError:
                     pass
-        out["folder"] = MemgraphDocStatusStorage._folder_for_read_props(out)
+        if include_default_folder or out.get("folder"):
+            out["folder"] = MemgraphDocStatusStorage._folder_for_read_props(out)
         return out
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
@@ -599,7 +604,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
-                return record["id"], self._deserialize_props(record["props"])
+                return record["id"], self._deserialize_props(
+                    record["props"],
+                    include_default_folder=False,
+                )
             return None
 
     async def get_doc_by_content_hash(
@@ -617,7 +625,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
-                return record["id"], self._deserialize_props(record["props"])
+                return record["id"], self._deserialize_props(
+                    record["props"],
+                    include_default_folder=False,
+                )
             return None
 
     async def drop(self) -> dict[str, str]:
