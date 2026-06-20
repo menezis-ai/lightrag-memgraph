@@ -138,7 +138,6 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/documents"),
     Route("GET", "/documents/{param}/chunks"),
     Route("GET", "/documents/track_status/{param}"),
-    Route("POST", "/documents/{param}/scan"),
     Route("POST", "/documents/reprocess_failed"),
     Route("POST", "/documents/upload"),
     Route("DELETE", "/documents/{param}"),

@@ -228,3 +228,15 @@ class TestDocumentsFailedProjection:
         assert r.status_code == 200
         doc = r.json()["items"][0]
         assert doc["metadata"] == {"sha256": "real-sha256"}
+
+
+class TestPerDocumentScanContract:
+    async def test_per_document_scan_rejects_instead_of_acknowledging_noop(
+        self,
+        monkeypatch,
+    ):
+        async with _make_client(monkeypatch, {}) as client:
+            r = await client.post("/documents/doc-1/scan")
+
+        assert r.status_code == 409
+        assert "Per-document scan is not supported" in r.json()["detail"]

@@ -78,8 +78,8 @@ def register(
         shim_native_routes: If True, prepend a Twin-shaped APIRouter at the
             HEAD of ``app.router.routes`` to shadow LightRAG's native
             ``GET /documents``, ``GET /health``, ``GET /pipeline_status`` (+
-            add the missing ``GET /documents/{id}/chunks``, per-doc scan,
-            REST-style delete, curated ``/openapi``). Requires the host
+            add the missing ``GET /documents/{id}/chunks``, reject unsupported
+            per-doc scan, REST-style delete, curated ``/openapi``). Requires the host
             LightRAG bootstrap to use the standard ``create_document_routes``
             factory so the ``rag`` instance can be captured.
         webui_stores: Which backend to use for the Twin overlay's

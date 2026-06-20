@@ -3,7 +3,7 @@
  *
  * Path layout mirrors the production split (Étape 0 sprint 2026-05-29):
  *   - LightRAG-native paths: `/documents`, `/documents/:id/chunks`,
- *     `/documents/:id/scan`, `/health`, `/openapi`, `/pipeline_status`.
+ *     `/health`, `/openapi`, `/pipeline_status`.
  *   - Twin overlay paths: every endpoint under `${ANY}/twin/api/*`.
  *
  * Filtering mirrors what the tab implementations do locally on the fixtures so
@@ -860,11 +860,6 @@ export const handlers = [
           ]
         : [];
     return HttpResponse.json(chunks);
-  }),
-  http.post(`${ANY}/documents/:id/scan`, ({ request }) => {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith(TWIN)) return undefined;
-    return HttpResponse.json({ ok: true });
   }),
   http.post(`${ANY}/documents/upload`, async ({ request }) => {
     const url = new URL(request.url);

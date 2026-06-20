@@ -18,8 +18,8 @@ WebUI emits                LightRAG native                           Shim action
 ``GET /documents``         ``POST /documents/paginated``             reshape envelope
 ``GET /documents/{id}/     (none)                                    build from KV
    chunks``                                                          text_chunks
-``POST /documents/{id}/    ``POST /documents/scan`` (global)         no-op + 202
-   scan``
+``POST /documents/{id}/    ``POST /documents/scan`` (global)         reject targeted
+   scan``                                                           scans clearly
 ``DELETE /documents/{id}`` ``DELETE /documents/delete_document``     translate
                            (body=id)                                  path → body
 ``GET /health``            ``GET /health`` (rich)                    project
@@ -468,20 +468,27 @@ def build_native_shims_router(
 
     @router.post(
         "/documents/{doc_id}/scan",
-        response_model=_OkResponse,
-        status_code=202,
         dependencies=protected_deps,
     )
-    async def scan_document(doc_id: str) -> _OkResponse:
-        """Per-doc re-scan stub.
+    async def scan_document(doc_id: str) -> None:
+        """Reject unsupported per-doc re-scan requests.
 
         LightRAG only has a global ``POST /documents/scan`` (scans the input
         directory for new files). A targeted re-scan of a single doc would
         require ``adelete_by_doc_id`` + re-ingest, which is destructive.
-        For now we ack the request and emit an audit event (TODO).
         """
-        logger.info("twindb shim: per-doc scan ack for doc_id=%s (no-op)", doc_id)
-        return _OkResponse()
+        logger.info(
+            "twindb shim: rejected unsupported per-doc scan for doc_id=%s",
+            doc_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Per-document scan is not supported by LightRAG. "
+                "Use /documents/reprocess_failed for failed-doc retries, or "
+                "delete and re-upload the source."
+            ),
+        )
 
     @router.delete(
         "/documents/{doc_id}",

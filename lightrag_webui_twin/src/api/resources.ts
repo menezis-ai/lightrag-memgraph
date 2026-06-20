@@ -255,18 +255,6 @@ export const lightragApi = {
       status_summary: Record<string, number>;
     }>(`/documents/track_status/${encodeURIComponent(trackId)}`, init),
   /**
-   * Audit C7: no UI consumer. ``POST /documents/{id}/scan`` is an
-   * ack-only no-op on LightRAG (and on the Twin native shim). Kept
-   * for API compatibility — direct callers may still rely on the
-   * 200 response — but the WebUI routes all per-doc "re-process"
-   * intent through :func:`reprocessFailedDocuments` instead.
-   */
-  scanDocument: (docId: string, init?: ApiRequestInit) =>
-    apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}/scan`, {
-      ...init,
-      method: 'POST',
-    }),
-  /**
    * Trigger re-processing of all FAILED docs in the folder via
    * LightRAG's native batch endpoint. There is no per-doc-by-id
    * reprocess in LightRAG 1.4.9.11; the DocDetailPanel "Re-process"
@@ -819,7 +807,6 @@ export const api = {
   logoutLocal: lightragApi.logoutLocal,
   listDocuments: lightragApi.listDocuments,
   listDocumentChunks: lightragApi.listDocumentChunks,
-  scanDocument: lightragApi.scanDocument,
   reprocessFailedDocuments: lightragApi.reprocessFailedDocuments,
   trackStatus: lightragApi.trackStatus,
   uploadDocument: lightragApi.uploadDocument,
