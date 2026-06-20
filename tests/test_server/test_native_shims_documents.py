@@ -19,6 +19,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
 from twindb_lightrag_memgraph.server import native_shims
 from twindb_lightrag_memgraph.server.native_shims import build_native_shims_router
 
@@ -110,6 +111,22 @@ class TestDocumentsFailedProjection:
             doc["error_msg"]
             == "LLM extractor: invalid JSON response on chunk 14"
         )
+
+    async def test_documents_envelope_exposes_page_and_page_size(self, monkeypatch):
+        docs = {
+            "doc-1": FakeDocStatus(
+                status="processed",
+                file_path="page.pdf",
+                chunks_count=1,
+            ),
+        }
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents", params={"cursor": "2"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["page"] == 2
+        assert body["page_size"] == DEFAULT_PAGE_SIZE
 
     async def test_failed_doc_without_error_msg_keeps_field_as_null(
         self, monkeypatch

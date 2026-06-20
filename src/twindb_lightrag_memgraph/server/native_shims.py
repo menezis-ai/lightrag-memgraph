@@ -77,6 +77,8 @@ class _ListEnvelope(BaseModel):
 
     items: list[_DocumentEnvelope]
     total: int
+    page: int
+    page_size: int
     # Opaque cursor for the next page (page number as string), or None when
     # this is the last page.
     next_cursor: str | None = None
@@ -409,6 +411,8 @@ def build_native_shims_router(
         return _ListEnvelope(
             items=[_DocumentEnvelope(**d) for d in filtered],
             total=total if not q and not tag else len(filtered),
+            page=page,
+            page_size=page_size,
             next_cursor=next_cursor,
             status_counts=status_counts,
         )

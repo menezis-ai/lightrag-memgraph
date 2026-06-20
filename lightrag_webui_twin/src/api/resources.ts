@@ -4,7 +4,7 @@
  * Two surfaces:
  *   - `lightragApi` : native LightRAG endpoints (no path prefix beyond the
  *     LightRAG mount root). These hit endpoints LightRAG already ships:
- *     /documents, /documents/{id}/chunks, /documents/{id}/scan, /query,
+ *     /documents, /documents/{id}/chunks, /query,
  *     /query/data, /health, /pipeline_status, /openapi.
  *   - `twinApi` : Twin overlay endpoints, served by our FastAPI sub-app
  *     mounted via `register(mount_server=True)`. All paths share the
@@ -43,6 +43,8 @@ const TWIN = '/twin/api';
 export interface ListEnvelope<T> {
   items: readonly T[];
   total: number;
+  page?: number;
+  page_size?: number;
   status_counts?: Record<string, number> | null;
   /** Opaque cursor for the next page, or null/absent on the last page. */
   next_cursor?: string | null;
