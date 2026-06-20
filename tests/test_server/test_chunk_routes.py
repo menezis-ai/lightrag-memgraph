@@ -479,6 +479,28 @@ def _make_chunk_app(rag_mock) -> FastAPI:
     return app
 
 
+async def test_chunk_router_rejects_anonymous_when_mounted_directly():
+    configure_auth(api_key="secret")
+    router.routes.clear()
+    create_chunk_routes(_make_rag_with_anchor(["c0", "c1"], "c0"))
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/chunks/c0/context")
+            assert resp.status_code == 401
+
+            resp = await client.get(
+                "/chunks/c0/context",
+                headers={"Authorization": "Bearer secret"},
+            )
+            assert resp.status_code == 200
+    finally:
+        configure_auth(api_key=None, jwt_secret=None)
+        router.routes.clear()
+
+
 class TestHTTPChunkContext:
     """HTTP-level tests for GET /chunks/{chunk_id}/context."""
 

@@ -21,13 +21,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from lightrag import LightRAG
 from pydantic import BaseModel
 
+from .auth import require_auth
+
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["chunks"])
+router = APIRouter(tags=["chunks"], dependencies=[Depends(require_auth)])
 
 
 # ---------------------------------------------------------------------------
