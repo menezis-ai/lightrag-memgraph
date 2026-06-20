@@ -344,52 +344,41 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # contract (no sources, plain string answer). The Twin overlay
     # routes added here return `{response, sources}` + an NDJSON
     # streaming variant that the React Retrieval tab consumes.
-    try:
-        from .twin_query_routes import build_twin_query_router
+    from .twin_query_routes import build_twin_query_router
 
-        def _get_rag_for_twin_query():
-            rag = _get_rag()
-            if rag is None:
-                raise RuntimeError(
-                    "twindb twin_query: RAG instance not initialised yet."
-                )
-            return rag
+    def _get_rag_for_twin_query():
+        rag = _get_rag()
+        if rag is None:
+            raise RuntimeError(
+                "twindb twin_query: RAG instance not initialised yet."
+            )
+        return rag
 
-        app.include_router(
-            build_twin_query_router(_get_rag_for_twin_query),
-            prefix="/twin/api",
-            dependencies=[Depends(require_auth)],
-        )
-        logger.info("Twin overlay query routes mounted at /twin/api/query{,/stream}")
-    except ImportError:
-        pass
+    app.include_router(
+        build_twin_query_router(_get_rag_for_twin_query),
+        prefix="/twin/api",
+        dependencies=[Depends(require_auth)],
+    )
+    logger.info("Twin overlay query routes mounted at /twin/api/query{,/stream}")
 
     # -- API key management routes (Settings → API keys, admin only).
     # ``require_admin_user`` is applied at the sub-router level; the
     # outer ``require_auth`` is still needed so anonymous requests are
     # rejected before the admin check sees them.
-    try:
-        from .api_key_routes import router as api_key_router
+    from .api_key_routes import router as api_key_router
 
-        app.include_router(
-            api_key_router,
-            prefix="/twin/api",
-            dependencies=[Depends(require_auth)],
-        )
-        logger.info(
-            "API key management routes mounted at /twin/api/settings/api-keys"
-        )
-    except ImportError:
-        pass
+    app.include_router(
+        api_key_router,
+        prefix="/twin/api",
+        dependencies=[Depends(require_auth)],
+    )
+    logger.info("API key management routes mounted at /twin/api/settings/api-keys")
 
     # -- Quota snapshot endpoint (public read for the WebUI banner).
-    try:
-        from .quota_routes import router as quota_router
+    from .quota_routes import router as quota_router
 
-        app.include_router(quota_router, prefix="/twin/api")
-        logger.info("Quota snapshot route mounted at /twin/api/quota")
-    except ImportError:
-        pass
+    app.include_router(quota_router, prefix="/twin/api")
+    logger.info("Quota snapshot route mounted at /twin/api/quota")
 
     # -- Instance quota middleware: refuses 507 on ingestion endpoints
     # when Memgraph is at MEMGRAPH_MEMORY_LIMIT. Path-matched so the

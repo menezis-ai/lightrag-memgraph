@@ -158,3 +158,18 @@ class TestForFolderMemgraphModeIntegration:
             "for_folder when memgraph backends are configured — see "
             "mock-kill F6."
         )
+
+    def test_app_route_imports_fail_fast(self):
+        """Internal route modules are mandatory, not optional plugins.
+
+        Swallowing ImportError here lets the server boot while dropping
+        /twin/api/query, API-key management, or quota routes from the live
+        surface. That is worse than a startup failure because operators see a
+        partially healthy app.
+        """
+        import inspect
+
+        from twindb_lightrag_memgraph.server.app import create_app
+
+        source = inspect.getsource(create_app)
+        assert "except ImportError" not in source
