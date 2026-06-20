@@ -32,6 +32,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from . import webui_seed
+from .auth import require_auth
 from .idp_jwt import require_admin_user
 from .folder import (
     bind_request_folder,
@@ -814,7 +815,10 @@ async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-router = APIRouter(tags=["webui"], dependencies=[Depends(bind_request_folder)])
+router = APIRouter(
+    tags=["webui"],
+    dependencies=[Depends(require_auth), Depends(bind_request_folder)],
+)
 
 
 # -- Read endpoints ----------------------------------------------------------

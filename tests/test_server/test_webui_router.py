@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server.app import create_app
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.webui_seed import (
@@ -424,6 +426,25 @@ class TestAuthGate:
             # Same call with the right bearer succeeds
             r = await c.get("/documents", headers={"Authorization": "Bearer secret"})
             assert r.status_code == 200
+
+    async def test_router_rejects_anonymous_when_mounted_directly(self):
+        configure_auth(api_key="secret")
+        app = FastAPI()
+        app.include_router(webui_router.router)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as c:
+                r = await c.get("/documents")
+                assert r.status_code == 401
+                r = await c.get(
+                    "/documents",
+                    headers={"Authorization": "Bearer secret"},
+                )
+                assert r.status_code == 200
+        finally:
+            configure_auth(api_key=None, jwt_secret=None)
 
 
 # ---------------------------------------------------------------------------
