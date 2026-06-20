@@ -116,20 +116,15 @@ describe('AddSourceModal — Linked sources (Coming soon)', () => {
 });
 
 describe('AddSourceModal — files', () => {
-  it('renders per-file MIP and RAG engine controls with no MIP by default', () => {
+  it('does not render per-file options unsupported by native upload', () => {
     render(
       <AddSourceModal {...defaultProps()} initialFiles={[sampleUploaded]} />,
     );
 
     expect(
-      screen.getByLabelText('Classification for oracle-config-guide.pdf'),
-    ).toHaveValue('');
-    expect(
-      screen.getByTestId('addsource-rag-lightrag-oracle-config-guide.pdf'),
-    ).toHaveClass('active');
-    expect(
-      screen.getByTestId('addsource-rag15-oracle-config-guide.pdf'),
-    ).toBeDisabled();
+      screen.queryByLabelText('Classification for oracle-config-guide.pdf'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('RAG 1.5')).not.toBeInTheDocument();
   });
 
   it('removes a file when its X is clicked', async () => {
@@ -249,12 +244,6 @@ describe('AddSourceModal — submit & close', () => {
     expect(action.files).toHaveLength(1);
     expect(action.urls).toHaveLength(1);
     expect(action.tags).toEqual([]);
-    expect(action.fileOptions).toEqual([
-      {
-        name: 'oracle-config-guide.pdf',
-        ragEngine: 'lightrag',
-      },
-    ]);
     // submit no longer self-closes — the host keeps the modal open during the
     // upload and closes it when the mutation settles.
     expect(p.onClose).not.toHaveBeenCalled();
@@ -282,23 +271,14 @@ describe('AddSourceModal — submit & close', () => {
     expect(p.onClose).not.toHaveBeenCalled();
   });
 
-  it('submits the selected per-file MIP classification', async () => {
+  it('does not render unsupported per-file upload options', () => {
     const p = defaultProps();
     render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
 
-    await userEvent.selectOptions(
-      screen.getByLabelText('Classification for oracle-config-guide.pdf'),
-      'confidential',
-    );
-    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
-
-    expect(p.onSubmit.mock.calls[0][0].fileOptions).toEqual([
-      {
-        name: 'oracle-config-guide.pdf',
-        classification: 'confidential',
-        ragEngine: 'lightrag',
-      },
-    ]);
+    expect(
+      screen.queryByLabelText('Classification for oracle-config-guide.pdf'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('RAG 1.5')).not.toBeInTheDocument();
   });
 });
 

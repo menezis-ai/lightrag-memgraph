@@ -871,8 +871,6 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const form = await request.formData();
     const file = form.get('file');
-    const classification = form.get('classification');
-    const ragEngine = String(form.get('rag_engine') || 'lightrag');
     const name =
       file instanceof File && file.name
         ? file.name
@@ -907,8 +905,6 @@ export const handlers = [
         metadata: {
           mime: file instanceof File ? file.type : 'text/plain',
           uploader: 'e2e',
-          ...(classification ? { classification: String(classification) } : {}),
-          rag_engine: ragEngine,
         },
         type: 'file',
         tags: [],

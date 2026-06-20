@@ -596,8 +596,6 @@ function AppShell() {
       metadata: {
         size_bytes: upload.file.size,
         upload_state: 'pending',
-        ...(upload.classification ? { classification: upload.classification } : {}),
-        rag_engine: upload.ragEngine ?? 'lightrag',
       },
       type: 'file',
       tags: [...tags],
@@ -682,14 +680,7 @@ function AppShell() {
     }
 
     const uploadInputs: readonly UploadDocumentInput[] = action.rawFiles.map(
-      (file, index) => {
-        const opts = action.fileOptions[index];
-        return {
-          file,
-          classification: opts?.classification,
-          ragEngine: opts?.ragEngine ?? 'lightrag',
-        };
-      },
+      (file) => ({ file }),
     );
 
     const optimisticDocs = makeOptimisticUploadDocs(uploadInputs, action.tags);

@@ -139,7 +139,7 @@ describe('listDocumentChunks', () => {
 });
 
 describe('uploadDocument', () => {
-  it('does not send a MIP classification by default', async () => {
+  it('sends only the file field accepted by the native upload route', async () => {
     const bodies: FormData[] = [];
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
       async (_url: string | URL | Request, init?: RequestInit) => {
@@ -158,42 +158,11 @@ describe('uploadDocument', () => {
       },
     );
 
-    await api.uploadDocument(new File(['payload'], 'plain.md'), {
-      ragEngine: 'lightrag',
-    });
+    await api.uploadDocument(new File(['payload'], 'plain.md'));
 
     const body = bodies[0];
+    expect((body.get('file') as File | null)?.name).toBe('plain.md');
     expect(body.has('classification')).toBe(false);
-    expect(body.get('rag_engine')).toBe('lightrag');
-  });
-
-  it('sends classification and RAG engine fields in the multipart payload', async () => {
-    const bodies: FormData[] = [];
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
-      async (_url: string | URL | Request, init?: RequestInit) => {
-        if (init?.body instanceof FormData) bodies.push(init.body);
-        return new Response(
-          JSON.stringify({
-            status: 'success',
-            message: 'ok',
-            track_id: 'track-upload',
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
-      },
-    );
-
-    await api.uploadDocument(new File(['payload'], 'classified.md'), {
-      classification: 'confidential',
-      ragEngine: 'lightrag',
-    });
-
-    const body = bodies[0];
-    expect(body.get('classification')).toBe('confidential');
-    expect(body.get('rag_engine')).toBe('lightrag');
-    expect((body.get('file') as File | null)?.name).toBe('classified.md');
+    expect(body.has('rag_engine')).toBe(false);
   });
 });

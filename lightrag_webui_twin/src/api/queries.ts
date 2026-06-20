@@ -741,10 +741,7 @@ export function useUploadDocumentsBatch() {
         DEFAULT_UPLOAD_CONCURRENCY,
         (item) => {
           const upload = normalizeUploadInput(item);
-          return api.uploadDocument(upload.file, {
-            classification: upload.classification,
-            ragEngine: upload.ragEngine,
-          });
+          return api.uploadDocument(upload.file);
         },
       ),
     onSuccess: () => {

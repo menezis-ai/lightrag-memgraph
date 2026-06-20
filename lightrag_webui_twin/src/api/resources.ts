@@ -62,24 +62,12 @@ export interface DocumentChunk {
   text: string;
 }
 
-export type UploadClassification =
-  | 'public'
-  | 'internal'
-  | 'confidential'
-  | 'secret'
-  | 'private';
-export type UploadRagEngine = 'lightrag' | 'rag15';
-
 export interface UploadDocumentOptions {
   signal?: AbortSignal;
-  classification?: UploadClassification;
-  ragEngine?: UploadRagEngine;
 }
 
 export interface UploadDocumentInput {
   file: File;
-  classification?: UploadClassification;
-  ragEngine?: UploadRagEngine;
 }
 
 interface RawDocumentChunk {
@@ -306,10 +294,6 @@ export const lightragApi = {
   ): Promise<{ status: string; message: string; track_id: string }> => {
     const formData = new FormData();
     formData.append('file', file);
-    if (init?.classification) {
-      formData.append('classification', init.classification);
-    }
-    formData.append('rag_engine', init?.ragEngine ?? 'lightrag');
     const res = await fetch(buildApiUrl('/documents/upload'), {
       method: 'POST',
       headers: buildApiHeaders(),

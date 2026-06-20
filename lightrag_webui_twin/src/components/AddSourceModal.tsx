@@ -60,19 +60,6 @@ const SUPPORTED_MIME_TYPES = new Set([
 ]);
 
 export type FileUploadState = 'uploading' | 'uploaded' | 'error';
-export type UploadClassification =
-  | 'public'
-  | 'internal'
-  | 'confidential'
-  | 'secret'
-  | 'private';
-export type UploadRagEngine = 'lightrag' | 'rag15';
-
-export interface FileUploadOptions {
-  name: string;
-  classification?: UploadClassification;
-  ragEngine: UploadRagEngine;
-}
 
 export interface FileUpload {
   name: string;
@@ -87,8 +74,6 @@ export interface FileUpload {
   progress?: number;
   uploaded?: number;
   error?: string;
-  classification?: UploadClassification;
-  ragEngine?: UploadRagEngine;
 }
 
 /** Format a byte count as "B / KB / MB" depending on magnitude. */
@@ -113,14 +98,6 @@ function displayUploadedOverTotal(f: FileUpload): string {
   return `${(f.uploaded ?? 0).toFixed(1)} / ${f.size} MB`;
 }
 
-function fileClassification(f: FileUpload): UploadClassification | '' {
-  return f.classification ?? '';
-}
-
-function fileRagEngine(f: FileUpload): UploadRagEngine {
-  return f.ragEngine ?? 'lightrag';
-}
-
 export type LinkedSourceType = 'confluence' | 'sharepoint' | 'url';
 
 export interface LinkedSource {
@@ -137,8 +114,6 @@ export interface AddSourceAction {
    * exercise UI flows (initialFiles paths).
   */
   rawFiles: readonly File[];
-  /** Per-file options, aligned with `rawFiles` order when raw files exist. */
-  fileOptions: readonly FileUploadOptions[];
   urls: readonly LinkedSource[];
   tags: readonly string[];
   /** Files in `uploaded` state + all URLs. Mirrors the proto's `ready` count. */
@@ -223,7 +198,6 @@ export function AddSourceModal({
         state: 'uploading',
         progress: 0,
         uploaded: 0,
-        ragEngine: 'lightrag',
       };
     });
     setFiles((current) => [...current, ...dropped]);
@@ -273,11 +247,6 @@ export function AddSourceModal({
     rawFilesRef.current.delete(n);
     setFiles(files.filter((f) => f.name !== n));
   };
-  const updateFileOptions = (name: string, patch: Partial<FileUploadOptions>) => {
-    setFiles((current) =>
-      current.map((f) => (f.name === name ? { ...f, ...patch } : f)),
-    );
-  };
   const addTag = (t: string) => {
     if (t && !tags.includes(t)) setTags([...tags, t]);
     setTagInput('');
@@ -297,17 +266,7 @@ export function AddSourceModal({
       .filter((f) => f.state === 'uploaded')
       .map((f) => rawFilesRef.current.get(f.name))
       .filter((f): f is File => f !== undefined);
-    const fileOptions = files
-      .filter((f) => f.state === 'uploaded')
-      .map((f) => {
-        const classification = fileClassification(f);
-        return {
-          name: f.name,
-          ...(classification ? { classification } : {}),
-          ragEngine: fileRagEngine(f),
-        };
-      });
-    onSubmit({ files, rawFiles, fileOptions, urls, tags, readyCount: ready });
+    onSubmit({ files, rawFiles, urls, tags, readyCount: ready });
     // Do NOT close here: the host keeps the modal open during the upload
     // (submitting=true) and closes it when the mutation settles, so the
     // operator sees progress and can't dismiss an in-flight upload.
@@ -465,64 +424,6 @@ export function AddSourceModal({
                       {f.state === 'error' && (
                         <div className="row2">
                           <Icon name="alert-triangle" size={12} /> {f.error}
-                        </div>
-                      )}
-                      {f.state !== 'error' && (
-                        <div className="file-row-options">
-                          <label
-                            className="file-classification-control"
-                            title="Document classification"
-                          >
-                            <span>C</span>
-                            <select
-                              value={fileClassification(f)}
-                              onChange={(e) =>
-                                updateFileOptions(f.name, {
-                                  classification:
-                                    e.target.value === ''
-                                      ? undefined
-                                      : (e.target.value as UploadClassification),
-                                })
-                              }
-                              aria-label={`Classification for ${f.name}`}
-                              data-testid={`addsource-classification-${f.name}`}
-                            >
-                              <option value="">no MIP</option>
-                              <option value="public">public</option>
-                              <option value="internal">internal</option>
-                              <option value="confidential">confidential</option>
-                              <option value="secret">secret</option>
-                              <option value="private">private</option>
-                            </select>
-                          </label>
-                          <div
-                            className="file-rag-control"
-                            role="group"
-                            aria-label={`RAG engine for ${f.name}`}
-                          >
-                            <button
-                              type="button"
-                              className={
-                                fileRagEngine(f) === 'lightrag' ? 'active' : ''
-                              }
-                              onClick={() =>
-                                updateFileOptions(f.name, {
-                                  ragEngine: 'lightrag',
-                                })
-                              }
-                              data-testid={`addsource-rag-lightrag-${f.name}`}
-                            >
-                              LightRAG
-                            </button>
-                            <button
-                              type="button"
-                              disabled
-                              title="RAG 1.5 ingestion is not wired yet"
-                              data-testid={`addsource-rag15-${f.name}`}
-                            >
-                              RAG 1.5
-                            </button>
-                          </div>
                         </div>
                       )}
                     </div>
