@@ -1,6 +1,11 @@
 from starlette.background import BackgroundTasks
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph import _patch_background_tasks_folder_context
+from twindb_lightrag_memgraph import (
+    _install_storage_folder_capture,
+    _patch_background_tasks_folder_context,
+)
 from twindb_lightrag_memgraph._constants import (
     get_active_storage_folder,
     storage_folder_context,
@@ -40,3 +45,31 @@ def test_docstatus_serialization_uses_storage_folder_context():
         props = MemgraphDocStatusStorage._serialize_status("doc-1", status)
 
     assert props["folder"] == "sandbox"
+
+
+async def test_reprocess_failed_captures_request_storage_folder(monkeypatch):
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
+    monkeypatch.setenv(
+        "TWIN_FOLDERS_JSON",
+        '[{"id":"default","label":"Default","kind":"kb"},'
+        '{"id":"sandbox","label":"Sandbox","kind":"kb"}]',
+    )
+
+    app = FastAPI()
+    _install_storage_folder_capture(app)
+
+    @app.post("/documents/reprocess_failed")
+    async def reprocess_failed_probe():
+        return {"folder": get_active_storage_folder()}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/documents/reprocess_failed",
+            headers={"X-Twin-Folder": "sandbox"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"folder": "sandbox"}

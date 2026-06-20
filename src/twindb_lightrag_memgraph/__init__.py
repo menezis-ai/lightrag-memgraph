@@ -1200,6 +1200,7 @@ def _install_storage_folder_capture(app) -> None:
 
     ingestion_paths = {
         "/documents/upload",
+        "/documents/reprocess_failed",
         "/documents/text",
         "/documents/texts",
         "/documents/scan",
