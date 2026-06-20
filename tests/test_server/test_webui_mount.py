@@ -9,7 +9,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph import _mount_twin_ui, _replace_webui_mount
+from twindb_lightrag_memgraph import (
+    _kill_native_webui,
+    _mount_twin_ui,
+    _replace_webui_mount,
+)
 
 
 def _extract_twin_config(html: str) -> dict:
@@ -158,3 +162,42 @@ async def test_twin_ui_mount_preserves_twin_api_precedence(monkeypatch, tmp_path
 
         config = _extract_twin_config(ui_response.text)
         assert config["apiBaseUrl"] == "/twin/api"
+
+
+async def test_kill_native_webui_removes_mount_and_redirects_to_twin(tmp_path):
+    """replace_ui=True kills the native /webui SPA (unusable login behind the
+    auth shims) and redirects / and /webui → the single Twin UI."""
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Mount
+
+    native = tmp_path / "native"
+    native.mkdir()
+    (native / "index.html").write_text("<html>native</html>", encoding="utf-8")
+
+    app = FastAPI()
+    app.mount(
+        "/webui",
+        StaticFiles(directory=str(native), html=True),
+        name="webui",
+    )
+
+    @app.get("/")
+    async def _root():  # mimics LightRAG's bare "/" → /webui redirect
+        return RedirectResponse("/webui")
+
+    _kill_native_webui(app, "/twin")
+
+    # The native /webui mount is gone …
+    assert not any(
+        isinstance(rt, Mount) and getattr(rt, "name", None) == "webui"
+        for rt in app.router.routes
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        for path in ("/", "/webui", "/webui/", "/webui/index.html"):
+            r = await client.get(path, follow_redirects=False)
+            assert r.status_code == 307, path
+            assert r.headers["location"] == "/twin/", path

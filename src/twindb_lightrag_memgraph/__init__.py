@@ -1131,6 +1131,10 @@ def _patch_lightrag_server_create_app(
             )
         if webui_dist is not None:
             _mount_twin_ui(app, webui_dist, "/twin")
+            # replace_ui=True means REPLACE: kill the native /webui SPA (its
+            # login is unusable behind our auth shims) and redirect / + /webui
+            # to the single Twin interface.
+            _kill_native_webui(app, "/twin")
         return app
 
     wrapped_create_app.__wrapped__ = orig_create_app
@@ -1482,6 +1486,51 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = "/twin") -> None:
         webui_dist,
     )
     logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount %s ready)", prefix)
+
+
+def _kill_native_webui(app, twin_prefix: str = "/twin") -> None:
+    """``replace_ui=True``: there is exactly ONE interface — the Twin UI.
+
+    The native LightRAG ``/webui`` SPA is dead weight on a Twin deploy: its
+    login calls ``/login`` / ``/auth-status``, which our ``native_shims`` shadow
+    with the Twin (JSON / Twin-field) auth contract, so the native SPA can never
+    authenticate — a phantom login screen that only confuses operators. Remove
+    the native ``/webui`` Mount and LightRAG's root redirect to it, then point
+    ``/`` and ``/webui`` at the Twin UI. No second instance, no duplicate
+    bundle, no obese image — just one front door.
+    """
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Mount, Route
+
+    target = f"{twin_prefix}/"
+
+    def _is_dead(route) -> bool:
+        # The native WebUI static mount …
+        if isinstance(route, Mount) and getattr(route, "name", None) == "webui":
+            return True
+        # … and LightRAG's bare "/" → /webui redirect.
+        if isinstance(route, Route) and getattr(route, "path", None) == "/":
+            return True
+        return False
+
+    removed = [r for r in app.router.routes if _is_dead(r)]
+    app.router.routes[:] = [r for r in app.router.routes if not _is_dead(r)]
+
+    async def _to_twin(_request):
+        return RedirectResponse(url=target, status_code=307)
+
+    # Head-insert so these win over any companion native registration.
+    for path in ("/webui/{path:path}", "/webui", "/"):
+        app.router.routes.insert(
+            0, Route(path, _to_twin, include_in_schema=False)
+        )
+
+    logger.info(
+        "twindb: native /webui killed (%d route(s) removed) → / and /webui "
+        "redirect to %s — single Twin interface",
+        len(removed),
+        target,
+    )
 
 
 def _mount_twin_subapp(
