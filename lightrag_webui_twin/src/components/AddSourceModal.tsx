@@ -154,6 +154,10 @@ export interface AddSourceModalProps {
   initialUrls?: readonly LinkedSource[];
   onClose: () => void;
   onSubmit: (action: AddSourceAction) => void;
+  /** Server upload in progress (host's upload mutation pending). While true
+   *  the modal stays open and close (X / backdrop / Escape) + submit are
+   *  disabled so the operator can't dismiss an in-flight upload. */
+  submitting?: boolean;
 }
 
 function fileExtension(name: string): string {
@@ -183,9 +187,13 @@ export function AddSourceModal({
   initialUrls = [],
   onClose,
   onSubmit,
+  submitting = false,
 }: AddSourceModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalA11y({ open, onClose, ref: modalRef });
+  // While an upload is in flight, neutralise close so X / backdrop / Escape
+  // can't dismiss the modal mid-upload (matches LightRAG's native UX).
+  const guardedClose = submitting ? () => {} : onClose;
+  useModalA11y({ open, onClose: guardedClose, ref: modalRef });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<readonly FileUpload[]>(initialFiles);
@@ -300,11 +308,17 @@ export function AddSourceModal({
         };
       });
     onSubmit({ files, rawFiles, fileOptions, urls, tags, readyCount: ready });
-    onClose();
+    // Do NOT close here: the host keeps the modal open during the upload
+    // (submitting=true) and closes it when the mutation settles, so the
+    // operator sees progress and can't dismiss an in-flight upload.
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} data-testid="addsource-backdrop">
+    <div
+      className="modal-backdrop"
+      onClick={guardedClose}
+      data-testid="addsource-backdrop"
+    >
       <div
         ref={modalRef}
         className="modal"
@@ -322,8 +336,10 @@ export function AddSourceModal({
           <button
             type="button"
             className="icon-btn"
-            onClick={onClose}
+            onClick={guardedClose}
+            disabled={submitting}
             aria-label="Close dialog"
+            title={submitting ? 'Upload in progress…' : undefined}
           >
             <Icon name="x" size={18} />
           </button>
@@ -631,16 +647,23 @@ export function AddSourceModal({
               `${ready} ready to ingest`}
           </div>
           <div className="actions">
-            <button type="button" className="btn" onClick={onClose}>
+            <button
+              type="button"
+              className="btn"
+              onClick={guardedClose}
+              disabled={submitting}
+            >
               Cancel
             </button>
             <button
               type="button"
               className="btn primary"
-              disabled={ready === 0}
+              disabled={ready === 0 || submitting}
               onClick={submit}
             >
-              Add {ready} source{ready === 1 ? '' : 's'}
+              {submitting
+                ? 'Uploading…'
+                : `Add ${ready} source${ready === 1 ? '' : 's'}`}
             </button>
           </div>
         </div>

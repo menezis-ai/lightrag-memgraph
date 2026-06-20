@@ -233,7 +233,7 @@ describe('AddSourceModal — submit & close', () => {
     expect(p.onClose).toHaveBeenCalled();
   });
 
-  it('Submit emits the AddSourceAction and closes', async () => {
+  it('Submit emits the AddSourceAction; the host owns closing (modal stays open during upload)', async () => {
     const p = defaultProps();
     render(
       <AddSourceModal
@@ -255,7 +255,31 @@ describe('AddSourceModal — submit & close', () => {
         ragEngine: 'lightrag',
       },
     ]);
-    expect(p.onClose).toHaveBeenCalled();
+    // submit no longer self-closes — the host keeps the modal open during the
+    // upload and closes it when the mutation settles.
+    expect(p.onClose).not.toHaveBeenCalled();
+  });
+
+  it('blocks close (X / Cancel / backdrop) and disables submit while submitting', async () => {
+    const p = defaultProps();
+    render(
+      <AddSourceModal
+        {...p}
+        initialFiles={[sampleUploaded]}
+        submitting
+      />,
+    );
+    const x = screen.getByRole('button', { name: 'Close dialog' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(x).toBeDisabled();
+    expect(cancel).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Uploading/ })).toBeDisabled();
+    // Clicking the (disabled) X must not fire onClose.
+    await userEvent.click(x);
+    expect(p.onClose).not.toHaveBeenCalled();
+    // Backdrop click is also neutralised while uploading.
+    await userEvent.click(screen.getByTestId('addsource-backdrop'));
+    expect(p.onClose).not.toHaveBeenCalled();
   });
 
   it('submits the selected per-file MIP classification', async () => {

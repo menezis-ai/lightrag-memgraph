@@ -615,6 +615,7 @@ function AppShell() {
         title: 'Sources queued',
         sub: `${action.readyCount} entr${action.readyCount === 1 ? 'y' : 'ies'}`,
       });
+      setAddOpen(false);
       return;
     }
 
@@ -639,6 +640,9 @@ function AppShell() {
     });
 
     const results = await uploadDocs.mutateAsync(uploadInputs);
+    // Upload settled → release the modal (it stayed open with close disabled
+    // during the in-flight upload). Post-processing below runs in background.
+    setAddOpen(false);
     const failedOptimisticIds = new Set(
       optimisticDocs
         .filter((_, index) => results[index]?.status === 'rejected')
@@ -1423,6 +1427,7 @@ function AppShell() {
             open={addOpen}
             tagCatalog={tagCatalog}
             formatCategories={FORMAT_CATEGORIES}
+            submitting={uploadDocs.isPending}
             onClose={() => setAddOpen(false)}
             onSubmit={onAddSourceSubmit}
           />
