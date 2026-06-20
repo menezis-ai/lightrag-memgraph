@@ -37,7 +37,10 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
   // cleanup's focus-restore + re-autofocus, yanking focus out of a non-first
   // input on each keystroke (BUG-04: "Apply tags to all" lost focus per char).
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open || !ref.current) return;
     const node = ref.current;

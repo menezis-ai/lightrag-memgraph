@@ -310,12 +310,15 @@ function AppShell() {
   });
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
   const [pipelineOpen, setPipelineOpen] = useState(false);
-  const [documentsPage, setDocumentsPage] = useState(1);
   const [documentsStatusFilter, setDocumentsStatusFilter] =
     useUrlParam<DocumentsStatusFilterKey>('status', 'all', {
       validate: (v) =>
         (DOCUMENTS_STATUS_FILTERS as readonly string[]).includes(v),
     });
+  const [documentsPagination, setDocumentsPagination] = useState<{
+    scope: string;
+    page: number;
+  }>(() => ({ scope: '', page: 1 }));
   const [optimisticUploadDocs, setOptimisticUploadDocs] = useState<
     readonly Document[]
   >([]);
@@ -323,6 +326,25 @@ function AppShell() {
     documentsStatusFilter === 'all'
       ? undefined
       : DOCUMENTS_STATUS_TO_API[documentsStatusFilter];
+  const documentsPageScope = `${folder}:${documentsStatusFilter}`;
+  const documentsPage =
+    documentsPagination.scope === documentsPageScope
+      ? documentsPagination.page
+      : 1;
+  const setDocumentsPageForScope = (
+    updater: number | ((page: number) => number),
+  ) => {
+    setDocumentsPagination((prev) => {
+      const currentPage =
+        prev.scope === documentsPageScope ? prev.page : 1;
+      const nextPage =
+        typeof updater === 'function' ? updater(currentPage) : updater;
+      return {
+        scope: documentsPageScope,
+        page: Math.max(1, nextPage),
+      };
+    });
+  };
 
   // Auth
   const auth = useAuth();
@@ -426,10 +448,6 @@ function AppShell() {
       folderList[0].id;
     writeUiPreference(FOLDER_STORAGE_KEY, fallback);
   }, [folder, folderList, runtimeConfig.defaultFolderId]);
-
-  useEffect(() => {
-    setDocumentsPage(1);
-  }, [folder, documentsStatusFilter]);
 
   const pushToast = (t: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
@@ -1327,11 +1345,11 @@ function AppShell() {
               isPageFetching={docs.isFetching}
               statusFilter={documentsStatusFilter}
               onStatusFilterChange={setDocumentsStatusFilter}
-              onFiltersChanged={() => setDocumentsPage(1)}
+              onFiltersChanged={() => setDocumentsPageForScope(1)}
               onPreviousPage={() =>
-                setDocumentsPage((page) => Math.max(1, page - 1))
+                setDocumentsPageForScope((page) => page - 1)
               }
-              onNextPage={() => setDocumentsPage((page) => page + 1)}
+              onNextPage={() => setDocumentsPageForScope((page) => page + 1)}
               tagCatalog={tagCatalog}
               pendingSlot={
                 <PendingDocsSection
