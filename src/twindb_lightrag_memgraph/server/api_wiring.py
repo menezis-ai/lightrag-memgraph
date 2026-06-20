@@ -26,6 +26,22 @@ class ApiWiringProbe:
 def api_wiring_probes(api_prefix: str = "/twin/api") -> tuple[ApiWiringProbe, ...]:
     prefix = api_prefix.rstrip("/")
     return (
+        ApiWiringProbe("GET", f"{prefix}/health", "health"),
+        ApiWiringProbe("GET", f"{prefix}/folders", "folders:list"),
+        ApiWiringProbe("GET", f"{prefix}/documents", "documents:list"),
+        ApiWiringProbe(
+            "GET",
+            f"{prefix}/documents/{{doc_id}}/metadata",
+            "documents:metadata",
+        ),
+        ApiWiringProbe("GET", f"{prefix}/tags", "tags:list"),
+        ApiWiringProbe("GET", f"{prefix}/activity", "activity:list"),
+        ApiWiringProbe("GET", f"{prefix}/notifications", "notifications:list"),
+        ApiWiringProbe("GET", f"{prefix}/graph/entities", "graph:entities"),
+        ApiWiringProbe("GET", f"{prefix}/graph/relations", "graph:relations"),
+        ApiWiringProbe("POST", f"{prefix}/query", "query"),
+        ApiWiringProbe("POST", f"{prefix}/query/data", "query:data"),
+        ApiWiringProbe("POST", f"{prefix}/query/stream", "query:stream"),
         ApiWiringProbe("GET", f"{prefix}/settings/api-keys", "api-keys:list"),
         ApiWiringProbe("POST", f"{prefix}/settings/api-keys", "api-keys:create"),
         ApiWiringProbe(

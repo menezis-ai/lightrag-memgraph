@@ -11,7 +11,10 @@ import logging
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from twindb_lightrag_memgraph.server.api_wiring import log_api_wiring_sanity
+from twindb_lightrag_memgraph.server.api_wiring import (
+    api_wiring_probes,
+    log_api_wiring_sanity,
+)
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 
@@ -39,10 +42,7 @@ def test_static_twin_mount_does_not_pass_api_wiring_sanity(tmp_path, caplog):
     missing = log_api_wiring_sanity(app, surface="static-only")
 
     assert {probe.label for probe in missing} == {
-        "api-keys:list",
-        "api-keys:create",
-        "api-keys:revoke",
-        "quota:snapshot",
+        probe.label for probe in api_wiring_probes()
     }
     assert "🚨 API CHECK FAILED ❌ surface=static-only" in caplog.text
     assert "action=route_wiring_broken" in caplog.text
@@ -58,6 +58,8 @@ def test_standalone_app_logs_api_wiring_ok(caplog):
     create_app(_settings())
 
     assert "All API Check passes ✅☀️ surface=standalone" in caplog.text
+    assert "POST /twin/api/query" in caplog.text
+    assert "GET /twin/api/folders" in caplog.text
     assert "POST /twin/api/settings/api-keys" in caplog.text
     assert "GET /twin/api/quota" in caplog.text
 
@@ -74,5 +76,7 @@ def test_overlay_logs_api_wiring_ok(caplog):
     t._mount_twin_subapp(app, "/twin/api", webui_stores="seed")
 
     assert "All API Check passes ✅☀️ surface=overlay:/twin/api" in caplog.text
+    assert "POST /twin/api/query" in caplog.text
+    assert "GET /twin/api/folders" in caplog.text
     assert "POST /twin/api/settings/api-keys" in caplog.text
     assert "GET /twin/api/quota" in caplog.text
