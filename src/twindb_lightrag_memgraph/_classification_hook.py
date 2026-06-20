@@ -28,8 +28,8 @@ Design notes
 ------------
 - The hook works only when ingestion receives a file path (the most
   common case). If LightRAG is fed raw text in-memory, classification
-  is unavailable and the document is marked
-  ``metadata.classification.reason = "no-source-path"``.
+  is unavailable and the hook deliberately passes the insertion through
+  without adding classification metadata.
 - The hook NEVER raises into the caller — a failed extraction yields a
   ``classification = {class_id: 'UNKNOWN', reason: 'extraction-failed'}``
   payload and the document is allowed through (or blocked, depending on
