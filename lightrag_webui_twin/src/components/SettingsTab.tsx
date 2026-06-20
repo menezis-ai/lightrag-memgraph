@@ -115,7 +115,7 @@ export function SettingsTab({
 
 /**
  * API section — fetches the live OpenAPI surface from
- * `/twin/api/openapi` instead of bundling a hardcoded fixture (mock-kill
+ * `/openapi.json` instead of bundling a hardcoded fixture (mock-kill
  * F2). Pure prod URL list (`API_SERVERS`) was also removed because the
  * `cib-kb.twin.internal` hostnames didn't exist; the curl preview now
  * uses the current browser origin which always reflects the live deploy.

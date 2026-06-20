@@ -338,10 +338,9 @@ def build_native_shims_router(
     ) -> _ListEnvelope:
         """Shadow the native ``GET /documents`` to expose a flat envelope.
 
-        Pagination model: opaque cursor = page number. The React port doesn't
-        need offset arithmetic; it just forwards whatever ``cursor`` it got
-        from the previous response (TODO: emit a ``next_cursor`` field, see
-        ``_ListEnvelope`` extension).
+        Pagination model: opaque cursor = page number. The response echoes
+        ``page``/``page_size`` and emits ``next_cursor`` so the React port can
+        render pagination without offset arithmetic.
 
         Calls ``MemgraphDocStatusStorage.get_docs_paginated`` which returns
         ``(list[tuple[doc_id, DocProcessingStatus]], total)`` — a tuple, not
