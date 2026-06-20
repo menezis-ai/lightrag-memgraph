@@ -41,6 +41,7 @@ class Route:
 def _normalize_path(path: str) -> str:
     path = path.replace("${ANY}", "")
     path = path.replace("${TWIN}", "/twin/api")
+    path = re.sub(r"\$\{[^}/]+\}", "{param}", path)
     path = path.replace("//", "/")
     path = re.sub(r":[A-Za-z_][A-Za-z0-9_]*", "{param}", path)
     path = re.sub(r"\{[^}/]+\}", "{param}", path)
@@ -92,6 +93,42 @@ def _msw_routes() -> set[Route]:
     return routes
 
 
+def _frontend_routes_from_resources_ts() -> set[Route]:
+    """Extract production client routes from resources.ts.
+
+    This is intentionally a small contract scanner, not a TypeScript parser.
+    The client centralizes backend calls through `apiFetch(path, init)` and
+    the two direct multipart/streaming calls through `fetch(buildApiUrl(path))`.
+    If a future client adds a new route there, this test forces the parity
+    table below to acknowledge it.
+    """
+    text = RESOURCES_TS.read_text(encoding="utf-8")
+    routes: set[Route] = set()
+    patterns = (
+        re.compile(r"apiFetch(?:<[\s\S]*?>)?\(\s*([`'\"])(.*?)\1", re.S),
+        re.compile(r"fetch\(\s*buildApiUrl\(\s*([`'\"])(.*?)\1", re.S),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            raw_path = match.group(2)
+            path = _normalize_path(raw_path)
+            if not path.startswith("/"):
+                continue
+            next_entry = re.search(
+                r"\n  [A-Za-z_][A-Za-z0-9_]*:",
+                text[match.end() :],
+            )
+            snippet_end = (
+                match.end() + next_entry.start() if next_entry else len(text)
+            )
+            snippet = text[match.end() : snippet_end]
+            method_match = re.search(r"method:\s*['\"]([A-Z]+)['\"]", snippet)
+            method = method_match.group(1) if method_match else "GET"
+            if method in {"GET", "POST", "PATCH", "DELETE"}:
+                routes.add(Route(method, path))
+    return routes
+
+
 # Mirrors lightrag_webui_twin/src/api/resources.ts. Keep this list focused on
 # production client paths, not test-only MSW controls.
 FRONTEND_PRODUCTION_ROUTES: set[Route] = {
@@ -108,11 +145,13 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/health"),
     Route("GET", "/pipeline_status"),
     Route("GET", "/openapi"),
-    Route("POST", "/query"),
-    Route("POST", "/query/data"),
     Route("POST", "/twin/api/query"),
     Route("POST", "/twin/api/query/data"),
     Route("POST", "/twin/api/query/stream"),
+    Route("GET", "/twin/api/settings/api-keys"),
+    Route("POST", "/twin/api/settings/api-keys"),
+    Route("DELETE", "/twin/api/settings/api-keys/{param}"),
+    Route("GET", "/twin/api/quota"),
     Route("GET", "/twin/api/folders"),
     Route("POST", "/twin/api/folders"),
     Route("PATCH", "/twin/api/folders/{param}"),
@@ -191,6 +230,20 @@ def test_frontend_contract_paths_are_declared_in_resources_ts():
     missing = {marker for marker in markers if marker not in text}
     assert not missing, "resources.ts no longer declares:\n" + "\n".join(
         sorted(missing)
+    )
+
+
+def test_frontend_route_table_tracks_resources_ts():
+    extracted = _frontend_routes_from_resources_ts()
+    missing = extracted - FRONTEND_PRODUCTION_ROUTES
+    stale = FRONTEND_PRODUCTION_ROUTES - extracted
+    assert not missing, (
+        "resources.ts declares route(s) missing from FRONTEND_PRODUCTION_ROUTES:\n"
+        + _fmt(missing)
+    )
+    assert not stale, (
+        "FRONTEND_PRODUCTION_ROUTES contains route(s) no longer found in "
+        "resources.ts:\n" + _fmt(stale)
     )
 
 
