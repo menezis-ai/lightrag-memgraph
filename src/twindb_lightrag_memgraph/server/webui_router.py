@@ -29,7 +29,8 @@ import secrets
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from . import webui_seed
 from .auth import require_auth
@@ -76,6 +77,8 @@ from .webui_notificationstore import (
 )
 from .webui_tagstore import InMemoryTagStore, MemgraphTagStore
 from .document_hash import enrich_metadata_with_document_hash
+
+_security = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -815,9 +818,18 @@ async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _require_auth_except_health(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+) -> str | None:
+    if request.url.path.endswith("/health"):
+        return None
+    return await require_auth(request=request, credentials=credentials)
+
+
 router = APIRouter(
     tags=["webui"],
-    dependencies=[Depends(require_auth), Depends(bind_request_folder)],
+    dependencies=[Depends(_require_auth_except_health), Depends(bind_request_folder)],
 )
 
 

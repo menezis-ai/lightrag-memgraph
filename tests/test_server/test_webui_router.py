@@ -446,6 +446,20 @@ class TestAuthGate:
         finally:
             configure_auth(api_key=None, jwt_secret=None)
 
+    async def test_health_stays_public_when_router_mounted_directly(self):
+        configure_auth(api_key="secret")
+        app = FastAPI()
+        app.include_router(webui_router.router)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as c:
+                r = await c.get("/health")
+                assert r.status_code == 200
+        finally:
+            configure_auth(api_key=None, jwt_secret=None)
+
 
 # ---------------------------------------------------------------------------
 # WebuiStore.for_folder(mode=...) — mock-kill F6
