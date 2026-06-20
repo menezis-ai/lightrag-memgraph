@@ -1,6 +1,9 @@
 # WebUI Wiring — To Wire
 
-Remaining work after the as-built state captured in [WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md).
+Historical backlog after the as-built state captured in
+[WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md). Use
+[WEBUI-WIRING-PLAN.md](WEBUI-WIRING-PLAN.md) for the current Folder-based
+contract.
 
 ## Priority 1 — Real MyAccess / IdP JWT enforcement
 
@@ -23,7 +26,7 @@ What's done:
 What's left for BNP:
 
 - Wire `TWIN_IDP_JWKS_URL` to the real MyAccess JWKS endpoint (Louis HORVAT).
-- Integration test against a real Keycloak/MyAccess (vs PyJWK mock) — ops/deployment, not code.
+- Integration test against a real Keycloak/MyAccess (vs PyJWK mock) — ops/deployment, not core route code.
 
 ## Priority 2 — Deployment smoke
 
@@ -58,7 +61,7 @@ To do: push the branch, open the PR, merge.
 
 ## PO-Gated / Do Not Start Without Confirmation
 
-- **BNP MIP classification + ingestion hook.** Tabled 2026-06-07 — out of current scope ("ligne de canon digne du VASA"). Existing `classification.py` + `_classification_hook.py` modules remain in the tree as opt-in, but are not wired into the pipeline by default, and there is no `/twin/api/classification/_self_check` endpoint, no `[classification]` packaging extra, no Memgraph e2e coverage for it. Re-evaluate only if BNP product brings it back as a P0.
+- **BNP MIP classification + ingestion hook.** Existing `classification.py` + `_classification_hook.py` modules remain opt-in through `register(classify=True)` or `TWIN_MIP_LABEL_MAP`. The default policy accepts files with no exploitable classification signal, rejects mapped labels above the ceiling, and rejects detected-but-unmapped labels as `UNKNOWN`. There is still no `/twin/api/classification/_self_check` endpoint and no Memgraph e2e coverage for this compliance path.
 - Source-document lifecycle doctrine (the §1.5/§5.5 runbook formalisation prepared on a parallel branch — not landed yet).
 - Auto-approve future source modifications.
 - Provider configure panels in Settings.

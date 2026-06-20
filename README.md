@@ -31,7 +31,16 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 | **LightRAG 1.4.11** | OK | OK |
 | **LightRAG 1.4.12** | OK | OK |
 
-CI runs this matrix on every push/PR. Memgraph MAGE `3.9.0` is the current production target (BNP rolled back from `3.10.1` on 2026-06-19); `3.10.1` is kept as forward-compat coverage (3.11 imminent). Both are pinned explicitly so a rolling `latest` tag cannot silently move the coverage point. LightRAG `1.4.10` is excluded due to a transient timing regression under integration load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once no deployment used them.
+Forgejo CI (`.forgejo/workflows/ci.yml`) runs this matrix on the bunker
+runner for pushes/PRs targeting `main` and `stable/**`. The public GitHub
+mirror only carries a reduced WebUI workflow, so GitHub checks alone are not
+the compatibility gate. Memgraph MAGE `3.9.0` is the current production target
+(BNP rolled back from `3.10.1` on 2026-06-19); `3.10.1` is kept as
+forward-compat coverage (3.11 imminent). Both are pinned explicitly so a
+rolling `latest` tag cannot silently move the coverage point. LightRAG
+`1.4.10` is excluded due to a transient timing regression under integration
+load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once
+no deployment used them.
 
 ## Installation
 
@@ -83,7 +92,7 @@ All backends read their connection settings from environment variables (`os.envi
 | `TWIN_API_BASE_URL` | No | `/twin/api` | Runtime API base injected into the React WebUI for Twin overlay routes. |
 | `TWIN_LIGHTRAG_BASE_URL` | No | `""` | Runtime API base injected into the React WebUI for native LightRAG routes (`/documents`, `/health`, `/pipeline_status`, etc.). |
 | `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
-| `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files outranking this are refused at the pre-insert hook. Unknown classes are treated as above the ceiling (fail-closed). |
+| `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files with a mapped class outranking this are refused at the pre-insert hook. Detected MIP labels missing from the tenant map resolve to `UNKNOWN` and are treated as above the ceiling; files with no exploitable classification signal are accepted by default. |
 
 ## Twin Folders
 
@@ -621,11 +630,11 @@ The returned `classification` dict is intended to be persisted on `DocStatus.met
 |---|---|---|---|
 | Labeled, GUID in map | `"C1".."C4"` | `None` | allow / reject per `is_above(class_id, ceiling)` |
 | Labeled, GUID not in map | `"UNKNOWN"` | `"unknown-label-guid"` | reject (fail-closed) |
-| No `docProps/custom.xml` | `None` | `"no-custom-props"` | reject (fail-closed) |
-| `custom.xml` without MSIP property | `None` | `"no-msip-label"` | reject (fail-closed) |
-| Malformed file | `None` | `"parse-error: <kind>"` | reject (fail-closed) |
-| Unsupported extension | `None` | `"unsupported-extension: <ext>"` | reject (fail-closed) |
-| Missing optional dep | `None` | `"olefile-missing"` / `"pikepdf-missing"` | reject (fail-closed); install the dep to enable detection |
+| No `docProps/custom.xml` | `None` | `"no-custom-props"` | allow (acceptance by default) |
+| `custom.xml` without MSIP property | `None` | `"no-msip-label"` | allow (acceptance by default) |
+| Malformed file | `None` | `"parse-error: <kind>"` | allow (acceptance by default) |
+| Unsupported extension | `None` | `"unsupported-extension: <ext>"` | allow (acceptance by default) |
+| Missing optional dep | `None` | `"olefile-missing"` / `"pikepdf-missing"` | allow (acceptance by default); install the dep to enable detection |
 
 Set `TWIN_MIP_MAX_CLASSIFICATION` to relax the deployment ceiling. Explicit hook overrides (`install_classification_hook(ceiling="C3")`) take precedence over the env var.
 

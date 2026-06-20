@@ -1,27 +1,33 @@
 # WebUI Wiring Plan
 
-Entry point. The plan was split for maintainability — see:
+Current entry point for the Twin WebUI wiring state. The historical split is
+still kept for context, but those files describe older checkpoints and must not
+be read as the live contract without this page:
 
-- **[WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md)** — as-built, what's already implemented and on `stable/0.6.x`.
-- **[WEBUI-WIRING-TO-WIRE.md](WEBUI-WIRING-TO-WIRE.md)** — remaining work + PO-gated items.
+- **[WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md)** — historical as-built notes.
+- **[WEBUI-WIRING-TO-WIRE.md](WEBUI-WIRING-TO-WIRE.md)** — historical backlog notes.
 
-## Status table (2026-06-07)
+The live contract is Folder-based (`TWIN_DEFAULT_FOLDER`, `TWIN_FOLDERS_JSON`,
+`X-Twin-Folder`, `/twin/api/folders`) and is enforced by the Forgejo CI in
+`.forgejo/workflows/ci.yml`.
+
+## Status table (2026-06-20)
 
 | Area | Status |
 |---|---|
 | React WebUI port | Wired |
-| Runtime Twin spaces config | Wired |
-| `X-Twin-Space` frontend/backend contract | Wired |
-| Twin overlay router + per-space stores | Wired |
+| Runtime Twin folders config | Wired |
+| `X-Twin-Folder` frontend/backend contract | Wired |
+| Twin overlay router + per-folder stores | Wired |
 | Memgraph tag / activity / notification stores | Wired |
 | Native LightRAG route shims (`/documents`, `/health`, `/pipeline_status`, etc.) | Wired |
-| Admin Space CRUD + `admin:spaces` gating | Wired (`a62b4b4`) |
+| Admin Folder CRUD + `admin:folders` gating | Wired |
 | Mock-kill remediation (F1+F2+F3+F5+F6) | Wired (`731f0d1`) |
 | Real `/twin/api/query` + streaming + advanced controls | Wired (`524b2a8`) |
 | `tag_filter` end-to-end on retrieval | Wired (`a6ff23a`) |
 | Tag delete cascade (sum graph + seed) | Wired (`7302023`) |
-| Real MyAccess / IdP JWT enforcement | To wire (Priority 1, PO-gated Louis HORVAT) |
-| Deployment smoke on OVH twin-real | To wire (Priority 2) |
+| Real MyAccess / IdP JWT endpoint wiring | Ops/deployment pending |
+| Deployment smoke on OVH twin-real | Pending deployment lane/runbook |
 | Retention / sweep policy for tags + activity | Deferred by PO/compliance |
 | BNP MIP classification + hook | **PO-gated / not in current scope** |
 
