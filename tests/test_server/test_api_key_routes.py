@@ -14,10 +14,38 @@ from __future__ import annotations
 import secrets
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph.server import api_key_store, webui_router
 from twindb_lightrag_memgraph.server.app import create_app
+from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
+from twindb_lightrag_memgraph.server.auth import configure_auth
+from twindb_lightrag_memgraph.server.idp_jwt import configure_idp
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_state():
+    configure_idp(None)
+    yield
+    configure_idp(None)
+    configure_auth(api_key=None, jwt_secret=None)
+
+
+def test_api_key_router_rejects_anonymous_when_mounted_directly():
+    """The admin router must not rely on create_app's outer auth wrapper.
+
+    ``require_admin_user`` intentionally allows authenticated users while
+    the IdP is dormant. If this router carries only that dependency, a direct
+    include can expose API-key listing/mutation before any auth check runs.
+    """
+    configure_auth(api_key="root-secret")
+    app = FastAPI()
+    app.include_router(api_key_router, prefix="/twin/api")
+
+    r = TestClient(app).get("/twin/api/settings/api-keys")
+    assert r.status_code == 401
 
 
 @pytest.fixture()

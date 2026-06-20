@@ -26,21 +26,27 @@ from pydantic import BaseModel, Field
 
 from .._constants import resolve_workspace
 from . import api_key_store
+from .auth import require_auth
 from .idp_jwt import require_admin_user
 
 logger = logging.getLogger(__name__)
 
 
-# Admin gate is at the router level so every route (including future
-# additions) is protected by default. Handlers that also declare
-# ``admin: dict = Depends(require_admin_user)`` do so to INJECT the
-# user dict (for audit ``actor``), not to re-enforce — FastAPI caches
-# the dependency result within a single request, so the call resolves
-# exactly once. The visual duplication is intentional, not a leak.
+# Auth + admin gates are at the router level so every route (including
+# future additions) is protected by default even if the router is mounted
+# outside ``create_app`` / the Forgejo overlay. ``require_admin_user``
+# deliberately treats dormant IdP as "authenticated user is admin", so it
+# must never be the only dependency on an admin router.
+#
+# Handlers that also declare ``admin: dict = Depends(require_admin_user)``
+# do so to INJECT the user dict (for audit ``actor``), not to re-enforce
+# — FastAPI caches the dependency result within a single request, so the
+# call resolves exactly once. The visual duplication is intentional, not a
+# leak.
 router = APIRouter(
     prefix="/settings/api-keys",
     tags=["api-keys"],
-    dependencies=[Depends(require_admin_user)],
+    dependencies=[Depends(require_auth), Depends(require_admin_user)],
 )
 
 
