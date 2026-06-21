@@ -14,6 +14,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+const URL_STATE_EVENT = 'twin:url-state-change';
+
 export interface UseUrlParamOptions<T> {
   parse?: (raw: string) => T;
   serialize?: (value: T) => string;
@@ -31,6 +33,7 @@ function writeParam(key: string, val: string): void {
   const q = p.toString();
   const url = window.location.pathname + (q ? '?' + q : '');
   window.history.replaceState(null, '', url);
+  window.dispatchEvent(new CustomEvent(URL_STATE_EVENT, { detail: { key } }));
 }
 
 export function useUrlParam<T>(
@@ -53,6 +56,31 @@ export function useUrlParam<T>(
       return defaultValue;
     }
   });
+
+  useEffect(() => {
+    const readValue = (): T => {
+      const raw = readParams().get(key);
+      if (raw === null) return defaultValue;
+      try {
+        const parsed = parse(raw);
+        return validate(parsed) ? parsed : defaultValue;
+      } catch {
+        return defaultValue;
+      }
+    };
+    const syncFromUrl = () => {
+      const next = readValue();
+      setVal((current) =>
+        serialize(current) === serialize(next) ? current : next,
+      );
+    };
+    window.addEventListener(URL_STATE_EVENT, syncFromUrl);
+    window.addEventListener('popstate', syncFromUrl);
+    return () => {
+      window.removeEventListener(URL_STATE_EVENT, syncFromUrl);
+      window.removeEventListener('popstate', syncFromUrl);
+    };
+  }, [defaultValue, key, parse, serialize, validate]);
 
   useEffect(() => {
     const ser = serialize(val);

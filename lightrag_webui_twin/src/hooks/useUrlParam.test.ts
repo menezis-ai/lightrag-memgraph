@@ -63,6 +63,16 @@ describe('useUrlParam', () => {
     );
     expect(result.current[0]).toBe('all');
   });
+
+  it('syncs two hook instances bound to the same URL key', () => {
+    const first = renderHook(() => useUrlParam('q', ''));
+    const second = renderHook(() => useUrlParam('q', ''));
+
+    act(() => first.result.current[1]('oracle'));
+
+    expect(second.result.current[0]).toBe('oracle');
+    expect(getQuery()).toBe('q=oracle');
+  });
 });
 
 describe('useUrlArrayParam', () => {

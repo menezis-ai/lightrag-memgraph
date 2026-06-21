@@ -97,6 +97,12 @@ export interface DocumentsTabProps {
   onNextPage?: () => void;
   statusFilter?: StatusFilterKey;
   onStatusFilterChange?: (status: StatusFilterKey) => void;
+  search?: string;
+  onSearchChange?: (search: string) => void;
+  tagFilters?: readonly string[];
+  onTagFiltersChange?: (tags: readonly string[]) => void;
+  sourceFilters?: readonly string[];
+  onSourceFiltersChange?: (sources: readonly string[]) => void;
   onFiltersChanged?: () => void;
 }
 
@@ -128,6 +134,12 @@ export function DocumentsTab({
   onNextPage,
   statusFilter: controlledStatusFilter,
   onStatusFilterChange,
+  search: controlledSearch,
+  onSearchChange,
+  tagFilters: controlledTagFilters,
+  onTagFiltersChange,
+  sourceFilters: controlledSourceFilters,
+  onSourceFiltersChange,
   onFiltersChanged,
 }: DocumentsTabProps) {
   const openDetail = onOpenDetail ?? onDeleteDoc;
@@ -139,31 +151,34 @@ export function DocumentsTab({
       validate: (v) => (STATUS_FILTERS as readonly string[]).includes(v),
     },
   );
-  const [search, setSearch] = useUrlParam<string>('q', '');
-  const [tagFilters, setTagFilters] = useUrlArrayParam('tag', []);
+  const [localSearch, setLocalSearch] = useUrlParam<string>('q', '');
+  const [localTagFilters, setLocalTagFilters] = useUrlArrayParam('tag', []);
   // Set by citation / drill-down navigation (?source=<file_path>). The
   // param survives topbar tab switches, so it MUST stay visible and
   // removable — an invisible filter silently shrank the table to one doc.
-  const [sourceFilters, setSourceFilters] = useUrlArrayParam('source', []);
+  const [localSourceFilters, setLocalSourceFilters] = useUrlArrayParam('source', []);
   const [tagAddOpen, setTagAddOpen] = useState(false);
   const [tagAddVal, setTagAddVal] = useState('');
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(0);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
   const statusFilter = controlledStatusFilter ?? localStatusFilter;
+  const search = controlledSearch ?? localSearch;
+  const tagFilters = controlledTagFilters ?? localTagFilters;
+  const sourceFilters = controlledSourceFilters ?? localSourceFilters;
   const updateStatusFilter = (next: StatusFilterKey) => {
     (onStatusFilterChange ?? setLocalStatusFilter)(next);
     onFiltersChanged?.();
   };
   const updateSearch = (next: string) => {
-    setSearch(next);
+    (onSearchChange ?? setLocalSearch)(next);
     onFiltersChanged?.();
   };
   const updateTagFilters = (next: readonly string[]) => {
-    setTagFilters([...next]);
+    (onTagFiltersChange ?? setLocalTagFilters)([...next]);
     onFiltersChanged?.();
   };
   const updateSourceFilters = (next: readonly string[]) => {
-    setSourceFilters([...next]);
+    (onSourceFiltersChange ?? setLocalSourceFilters)([...next]);
     onFiltersChanged?.();
   };
 

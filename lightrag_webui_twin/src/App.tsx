@@ -29,7 +29,7 @@ import { ToastViewport } from './components/ToastViewport';
 import { Topbar } from './components/Topbar';
 import type { SettingsSectionKey } from './components/SettingsTab';
 import { useAuth } from './hooks/useAuth';
-import { useUrlParam } from './hooks/useUrlParam';
+import { useUrlArrayParam, useUrlParam } from './hooks/useUrlParam';
 import {
   useActivity,
   useApproveTag,
@@ -315,6 +315,10 @@ function AppShell() {
       validate: (v) =>
         (DOCUMENTS_STATUS_FILTERS as readonly string[]).includes(v),
     });
+  const [documentsSearch, setDocumentsSearch] = useUrlParam<string>('q', '');
+  const [documentsTagFilters, setDocumentsTagFilters] = useUrlArrayParam('tag', []);
+  const [documentsSourceFilters, setDocumentsSourceFilters] =
+    useUrlArrayParam('source', []);
   const [documentsPagination, setDocumentsPagination] = useState<{
     scope: string;
     page: number;
@@ -326,7 +330,15 @@ function AppShell() {
     documentsStatusFilter === 'all'
       ? undefined
       : DOCUMENTS_STATUS_TO_API[documentsStatusFilter];
-  const documentsPageScope = `${folder}:${documentsStatusFilter}`;
+  const documentsSearchParam = documentsSearch.trim() || undefined;
+  const documentsTagParam = documentsTagFilters[0] || undefined;
+  const documentsPageScope = [
+    folder,
+    documentsStatusFilter,
+    documentsSearchParam ?? '',
+    documentsTagFilters.join(','),
+    documentsSourceFilters.join(','),
+  ].join(':');
   const documentsPage =
     documentsPagination.scope === documentsPageScope
       ? documentsPagination.page
@@ -360,6 +372,8 @@ function AppShell() {
       folder,
       cursor: documentsPage > 1 ? String(documentsPage) : undefined,
       status: documentsStatusParam,
+      q: documentsSearchParam,
+      tag: documentsTagParam,
     },
     {
       folderKey: folder,
@@ -1247,6 +1261,24 @@ function AppShell() {
         (b.review!.state === 'modified' ? 1 : 0),
     );
   const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
+  const uploadedStatusCounts = useMemo(() => {
+    const raw = docs.data?.status_counts;
+    if (!raw) return null;
+    const counts: Record<string, number> = { ...raw };
+    pendingDocs.forEach((doc) => {
+      const keys = [doc.status, doc.status.toLowerCase()];
+      keys.forEach((key) => {
+        if (typeof counts[key] === 'number') {
+          counts[key] = Math.max(0, counts[key] - 1);
+        }
+      });
+    });
+    return counts;
+  }, [docs.data?.status_counts, pendingDocs]);
+  const uploadedTotalCount = Math.max(
+    0,
+    (docs.data?.total ?? backendDocList.length) - pendingDocs.length,
+  );
   const tagList = tags.data ?? [];
   const tagCatalog = tagCatalogForSuggestions(tagList);
   const tagCategoryList = tagCategories.data ?? [];
@@ -1330,12 +1362,18 @@ function AppShell() {
             <DocumentsTab
               docs={nonPendingDocs}
               currentPage={documentsPage}
-              totalCount={docs.data?.total ?? backendDocList.length}
-              statusCounts={docs.data?.status_counts ?? null}
+              totalCount={uploadedTotalCount}
+              statusCounts={uploadedStatusCounts}
               hasNextPage={Boolean(docs.data?.next_cursor)}
               isPageFetching={docs.isFetching}
               statusFilter={documentsStatusFilter}
               onStatusFilterChange={setDocumentsStatusFilter}
+              search={documentsSearch}
+              onSearchChange={setDocumentsSearch}
+              tagFilters={documentsTagFilters}
+              onTagFiltersChange={setDocumentsTagFilters}
+              sourceFilters={documentsSourceFilters}
+              onSourceFiltersChange={setDocumentsSourceFilters}
               onFiltersChanged={() => setDocumentsPageForScope(1)}
               onPreviousPage={() =>
                 setDocumentsPageForScope((page) => page - 1)

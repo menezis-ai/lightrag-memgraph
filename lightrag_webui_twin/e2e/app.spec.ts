@@ -845,7 +845,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
-  test('@doctrine @tags bulk retag 600 selected documents surfaces backend 413', async ({
+  test('@doctrine @tags bulk retag visible paginated documents surfaces backend 413', async ({
     page,
   }) => {
     const docs = Array.from({ length: 600 }, (_, index) => {
@@ -863,8 +863,8 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Search source').fill('bulk-massive-');
     await expect(page.getByTestId('docs-row-bulk_001')).toBeVisible();
     await page.getByLabel('Select all visible').check();
-    await expect(page.getByLabel('Bulk actions')).toContainText('600 selected');
-    await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 600 sources/ }).click();
+    await expect(page.getByLabel('Bulk actions')).toContainText('50 selected');
+    await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 50 sources/ }).click();
     await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
