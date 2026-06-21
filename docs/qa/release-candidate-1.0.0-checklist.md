@@ -43,7 +43,7 @@ The scanner configuration is versioned in `sonar-project.properties`.
 
 The scan expects:
 
-- SonarQube server: `http://192.168.1.212:9000`
+- SonarQube server: `http://192.168.1.49:9000`
 - project key: `twindb-lightrag-memgraph`
 - project version: `1.0.0`
 - Python coverage report: `coverage.xml`
