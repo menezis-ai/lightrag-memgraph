@@ -182,41 +182,6 @@ npm run test:run
 npm run test:e2e
 ```
 
-### P2-3. Split `GraphTab.tsx`
-
-Objective: make the graph UI maintainable.
-
-Current problem:
-
-- `GraphTab.tsx` is approximately 2347 lines.
-
-Recommended target:
-
-```text
-lightrag_webui_twin/src/components/Graph/
-  GraphTab.tsx
-  GraphCanvas.tsx
-  GraphFilters.tsx
-  GraphInspector.tsx
-  graphLayout.ts
-  graphSelection.ts
-  graphTypes.ts
-```
-
-Acceptance criteria:
-
-- Existing graph tests pass.
-- No visual/layout regression in Playwright graph spec.
-- Top-level `GraphTab.tsx` becomes reviewable.
-
-Suggested verification:
-
-```bash
-cd lightrag_webui_twin
-npm run test:run -- GraphTab
-npm run test:e2e -- e2e/graph.spec.ts
-```
-
 ### P2-4. Split LightRAG Patching From `__init__.py`
 
 Objective: reduce risk in the package entrypoint and make patch behavior easier to test.
@@ -387,7 +352,7 @@ Suggested parallelization:
 
 - Agent A: P0-1 LightRAG CVE posture.
 - Agent B: P2-1 backend WebUI router split.
-- Agent C: P2-2 and P2-3 frontend modularization.
+- Agent C: P2-2 frontend modularization.
 - Agent D: P2-4 and P2-5 patch/query modularization.
 - Agent E: P3 operational readiness endpoints, limits, and observability.
 
