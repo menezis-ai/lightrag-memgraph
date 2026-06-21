@@ -16,7 +16,9 @@ export default defineConfig({
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
+      // lcov feeds SonarQube (sonar.javascript.lcov.reportPaths); text/html
+      // for local inspection.
+      reporter: ['text', 'html', 'lcov'],
       exclude: ['node_modules/', 'src/test/', '**/*.d.ts', 'dist/', 'e2e/'],
     },
   },
