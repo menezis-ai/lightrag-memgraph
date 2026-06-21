@@ -42,6 +42,45 @@ def _runtime_file_path() -> str | None:
     return path.strip() if path and path.strip() else None
 
 
+def _runtime_folder_from_item(path: str, item: dict[str, Any]) -> TwinFolder | None:
+    sid_raw = str(item.get("id") or "").strip()
+    if not sid_raw:
+        return None
+    try:
+        sid = validate_identifier(sid_raw, "folder")
+    except ValueError:
+        logger.warning(
+            "Twin folder runtime file %s: skipping invalid id %r",
+            path,
+            sid_raw,
+        )
+        return None
+    return TwinFolder(
+        id=sid,
+        label=str(item.get("label") or sid),
+        kind=str(item.get("kind") or "custom"),
+        description=str(item.get("description") or ""),
+        sources=int(item.get("sources") or 0),
+    )
+
+
+def _runtime_folders_from_payload(path: str, data: Any) -> dict[str, TwinFolder]:
+    if not isinstance(data, list):
+        logger.warning(
+            "Twin folder runtime file %s: not a JSON list, ignored", path
+        )
+        return {}
+
+    folders: dict[str, TwinFolder] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        folder = _runtime_folder_from_item(path, item)
+        if folder is not None:
+            folders[folder.id] = folder
+    return folders
+
+
 def _load_from_disk_if_configured() -> None:
     """Load the JSON file on first access; idempotent within a process."""
     global _loaded_from_disk
@@ -56,33 +95,7 @@ def _load_from_disk_if_configured() -> None:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if not isinstance(data, list):
-            logger.warning(
-                "Twin folder runtime file %s: not a JSON list, ignored", path
-            )
-            return
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            sid_raw = str(item.get("id") or "").strip()
-            if not sid_raw:
-                continue
-            try:
-                sid = validate_identifier(sid_raw, "folder")
-            except ValueError:
-                logger.warning(
-                    "Twin folder runtime file %s: skipping invalid id %r",
-                    path,
-                    sid_raw,
-                )
-                continue
-            _runtime_folders[sid] = TwinFolder(
-                id=sid,
-                label=str(item.get("label") or sid),
-                kind=str(item.get("kind") or "custom"),
-                description=str(item.get("description") or ""),
-                sources=int(item.get("sources") or 0),
-            )
+        _runtime_folders.update(_runtime_folders_from_payload(path, data))
     except Exception:
         logger.exception(
             "Twin folder runtime file %s: failed to load; starting empty",

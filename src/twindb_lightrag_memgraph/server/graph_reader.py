@@ -453,6 +453,42 @@ async def read_graph_entities(
         return []
 
 
+def _native_node_to_entity(
+    node: Any,
+    chunk_to_doc: dict[str, dict[str, str]],
+) -> dict[str, Any] | None:
+    props = getattr(node, "properties", None) or {}
+    entity_id = props.get("entity_id") or getattr(node, "id", None)
+    if not entity_id:
+        return None
+    row = {
+        "entity_id": entity_id,
+        "entity_type": props.get("entity_type"),
+        "description": props.get("description"),
+        "source_id": props.get("source_id"),
+        "display_name": props.get("display_name"),
+        "twin_tags_json": props.get("twin_tags_json"),
+        "twin_props_json": props.get("twin_props_json"),
+    }
+    return _node_record_to_entity(row, chunk_to_doc)
+
+
+def _native_edge_to_relation(edge: Any, index: int) -> dict[str, Any] | None:
+    src = getattr(edge, "source", None)
+    tgt = getattr(edge, "target", None)
+    if not src or not tgt:
+        return None
+    eprops = getattr(edge, "properties", None) or {}
+    row = {
+        "source_id": src,
+        "target_id": tgt,
+        "keywords": eprops.get("keywords"),
+        "weight": eprops.get("weight"),
+        "twin_props_json": eprops.get("twin_props_json"),
+    }
+    return _edge_record_to_relation(row, index)
+
+
 async def read_graph_native(
     rag: Any,
     workspace: str,
@@ -496,40 +532,19 @@ async def read_graph_native(
 
     entities: list[dict[str, Any]] = []
     for node in getattr(kg, "nodes", []) or []:
-        props = getattr(node, "properties", None) or {}
-        entity_id = props.get("entity_id") or getattr(node, "id", None)
-        if not entity_id:
-            continue
-        row = {
-            "entity_id": entity_id,
-            "entity_type": props.get("entity_type"),
-            "description": props.get("description"),
-            "source_id": props.get("source_id"),
-            "display_name": props.get("display_name"),
-            "twin_tags_json": props.get("twin_tags_json"),
-            "twin_props_json": props.get("twin_props_json"),
-        }
-        entities.append(_node_record_to_entity(row, chunk_to_doc))
+        entity = _native_node_to_entity(node, chunk_to_doc)
+        if entity is not None:
+            entities.append(entity)
 
     valid_ids = {e["id"] for e in entities}
     relations: list[dict[str, Any]] = []
     for i, edge in enumerate(getattr(kg, "edges", []) or []):
-        src = getattr(edge, "source", None)
-        tgt = getattr(edge, "target", None)
-        if not src or not tgt:
+        rel = _native_edge_to_relation(edge, i)
+        if rel is None:
             continue
-        eprops = getattr(edge, "properties", None) or {}
-        row = {
-            "source_id": src,
-            "target_id": tgt,
-            "keywords": eprops.get("keywords"),
-            "weight": eprops.get("weight"),
-            "twin_props_json": eprops.get("twin_props_json"),
-        }
-        rel = _edge_record_to_relation(row, i)
         if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
             continue
-        _remember_relation(workspace, rel["id"], str(src), str(tgt))
+        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
         relations.append(rel)
 
     return entities, relations

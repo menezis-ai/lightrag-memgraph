@@ -124,6 +124,35 @@ async def _fetch_chunks_by_ids(
     return items
 
 
+def _parent_doc_id(anchor: dict[str, Any], chunk_id: str) -> str:
+    doc_id: str = anchor.get("full_doc_id", "")
+    if not doc_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chunk '{chunk_id}' has no parent document",
+        )
+    return doc_id
+
+
+def _chunk_context_window(
+    ordered_ids: list[str],
+    chunk_id: str,
+    doc_id: str,
+    window: int,
+) -> list[str]:
+    try:
+        idx = ordered_ids.index(chunk_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chunk '{chunk_id}' not found in document '{doc_id}' chunk ordering",
+        ) from exc
+
+    start = max(0, idx - window)
+    end = min(len(ordered_ids), idx + window + 1)
+    return ordered_ids[start:end]
+
+
 # ---------------------------------------------------------------------------
 # Route factory
 # ---------------------------------------------------------------------------
@@ -154,26 +183,9 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
     ) -> ChunkContextResponse:
         active_rag = current_rag()
         anchor = await _resolve_chunk(active_rag, chunk_id)
-        doc_id: str = anchor.get("full_doc_id", "")
-        if not doc_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Chunk '{chunk_id}' has no parent document",
-            )
-
+        doc_id = _parent_doc_id(anchor, chunk_id)
         ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
-        try:
-            idx = ordered_ids.index(chunk_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Chunk '{chunk_id}' not found in document '{doc_id}' chunk ordering",
-            ) from exc
-
-        start = max(0, idx - window)
-        end = min(len(ordered_ids), idx + window + 1)
-        window_ids = ordered_ids[start:end]
-
+        window_ids = _chunk_context_window(ordered_ids, chunk_id, doc_id, window)
         items = await _fetch_chunks_by_ids(active_rag, window_ids)
         return ChunkContextResponse(
             chunks=items,
@@ -190,13 +202,7 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
     async def get_chunk_document(chunk_id: str) -> ChunkContextResponse:
         active_rag = current_rag()
         anchor = await _resolve_chunk(active_rag, chunk_id)
-        doc_id: str = anchor.get("full_doc_id", "")
-        if not doc_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Chunk '{chunk_id}' has no parent document",
-            )
-
+        doc_id = _parent_doc_id(anchor, chunk_id)
         ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
         items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
         return ChunkContextResponse(
