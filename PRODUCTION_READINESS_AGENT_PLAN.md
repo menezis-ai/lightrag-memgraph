@@ -23,8 +23,15 @@ P0/P1 production-readiness hardening has been implemented on branch
 
 Current residual work is:
 
-- Resolve or formally risk-accept the deferred LightRAG 1.4.9.11 CVEs.
 - Run final release-candidate validation from a clean checkout/image.
+
+Risk accepted for current release train:
+
+- The known `lightrag-hku==1.4.9.11` advisories `CVE-2026-30762` and
+  `CVE-2026-39413` are temporarily accepted in
+  `docs/security/lightrag-1.4.9.11-risk-acceptance.md`.
+  Review date: 2026-07-21. Intended follow-up: upgrade LightRAG after
+  compatibility validation.
 
 Recent verification:
 
@@ -54,46 +61,7 @@ Definition of done for any workstream:
 
 ## Priority Map
 
-P0 is the deferred security follow-up that still blocks a clean "nothing left" production-readiness plan.
-
-## P0. Deferred Security Follow-Up
-
-### P0-1. Resolve LightRAG 1.4.9.11 CVE Posture
-
-Objective: remove or formally risk-accept the known LightRAG 1.4.9.11 advisories.
-
-Context:
-
-- The project intentionally remains on `lightrag-hku==1.4.9.11`.
-- CI currently ignores `CVE-2026-30762` and `CVE-2026-39413` for that pinned version.
-- This was explicitly deferred and must be revisited before declaring the plan empty.
-
-Likely files:
-
-- `requirements/prod-target.txt`
-- `requirements/constraints-prod.txt`
-- `.forgejo/workflows/ci.yml`
-- `docs/operations/install-runbook.md`
-- `ENV_VARIABLES.txt` if the mitigation changes operator guidance
-
-Options:
-
-1. Upgrade LightRAG after compatibility validation.
-2. Backport or mitigate the vulnerable surface locally.
-3. Keep `1.4.9.11` and add a dated, owner-approved risk acceptance with exploitability rationale and review date.
-
-Acceptance criteria:
-
-- `pip-audit` production gate has no unexplained LightRAG ignores, or each ignore has a documented owner, rationale, and review date.
-- Compatibility with Memgraph storage patches remains covered by tests.
-- The chosen posture is documented for release reviewers.
-
-Suggested verification:
-
-```bash
-uvx pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip
-uv run pytest tests/test_register.py tests/test_upstream_compat.py tests/test_lightrag_server_entrypoint.py -q
-```
+No P0/P1/P2/P3 implementation work remains in this plan.
 
 ## Release Candidate Checklist
 
@@ -128,10 +96,6 @@ python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 ```
 
 ## Agent Work Allocation
-
-Suggested parallelization:
-
-- Agent A: P0-1 LightRAG CVE posture.
 
 Coordination rules:
 

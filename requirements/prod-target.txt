@@ -1,3 +1,5 @@
 # Production runtime target used for release builds.
 # BNP production target. Keep aligned with the deployed LightRAG baseline.
+# CVE-2026-30762 and CVE-2026-39413 are temporarily risk-accepted:
+# docs/security/lightrag-1.4.9.11-risk-acceptance.md
 lightrag-hku==1.4.9.11

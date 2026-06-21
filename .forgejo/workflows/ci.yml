@@ -40,9 +40,11 @@ jobs:
               python -m pip install pip-audit &&
               # Audit production pins, not the broader test environment.
               # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
-              # upstream CVEs are fixed only in 1.4.13/1.4.14; keep the
-              # exception explicit so every other production dependency
-              # vulnerability still fails the gate.
+              # upstream CVEs are temporarily risk-accepted with owner,
+              # rationale, and review date documented in:
+              # docs/security/lightrag-1.4.9.11-risk-acceptance.md
+              # Keep the exception explicit so every other production
+              # dependency vulnerability still fails the gate.
               pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
                 --ignore-vuln CVE-2026-30762 \
                 --ignore-vuln CVE-2026-39413 &&
@@ -124,9 +126,11 @@ jobs:
               python -m pip install pip-audit &&
               # Audit production pins, not the broader test environment.
               # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
-              # upstream CVEs are fixed only in 1.4.13/1.4.14; keep the
-              # exception explicit so every other production dependency
-              # vulnerability still fails the gate.
+              # upstream CVEs are temporarily risk-accepted with owner,
+              # rationale, and review date documented in:
+              # docs/security/lightrag-1.4.9.11-risk-acceptance.md
+              # Keep the exception explicit so every other production
+              # dependency vulnerability still fails the gate.
               pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
                 --ignore-vuln CVE-2026-30762 \
                 --ignore-vuln CVE-2026-39413 &&
