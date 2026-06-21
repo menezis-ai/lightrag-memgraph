@@ -325,6 +325,19 @@ async def _list_documents_from_doc_status(
     return _filter_doc_status_rows(docs, q=q, tag=tag)
 
 
+def _rewrite_doc_tags(
+    tags: Any, name: str, strategy: str, to: str | None
+) -> list[str] | None:
+    """Return the tag list with ``name`` removed (and ``to`` added on migrate),
+    or None when ``tags`` doesn't contain ``name``."""
+    if not isinstance(tags, list) or name not in tags:
+        return None
+    rewritten = [tag for tag in tags if tag != name]
+    if strategy == "migrate" and to and to not in rewritten:
+        rewritten.append(to)
+    return rewritten
+
+
 def _cascade_seed_document_tags(
     store: WebuiStore,
     *,
@@ -337,26 +350,20 @@ def _cascade_seed_document_tags(
     active_folder = current_folder_id()
     affected = 0
 
-    def _rewrite(tags: Any) -> list[str] | None:
-        if not isinstance(tags, list) or name not in tags:
-            return None
-        rewritten = [tag for tag in tags if tag != name]
-        if strategy == "migrate" and to and to not in rewritten:
-            rewritten.append(to)
-        return rewritten
-
     with store._lock:  # noqa: SLF001 - same-module store maintenance
         for doc in store._documents:  # noqa: SLF001 - same-module store maintenance
             metadata = doc.get("metadata") or {}
             folder = doc.get("folder") or metadata.get("folder") or default_folder
             if folder != active_folder:
                 continue
-            rewritten = _rewrite(doc.get("tags"))
+            rewritten = _rewrite_doc_tags(doc.get("tags"), name, strategy, to)
             if rewritten is None:
                 continue
             doc["tags"] = rewritten
             if isinstance(metadata, dict):
-                metadata_tags = _rewrite(metadata.get("tags"))
+                metadata_tags = _rewrite_doc_tags(
+                    metadata.get("tags"), name, strategy, to
+                )
                 if metadata_tags is not None:
                     metadata["tags"] = metadata_tags
             affected += 1

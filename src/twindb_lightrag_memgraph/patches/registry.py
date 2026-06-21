@@ -350,37 +350,36 @@ class _SafeDriverWrapper:
 
     @asynccontextmanager
     async def _safe_session(self, **kwargs):
+        async with self._real.session(**kwargs) as session:
+            await self._apply_use_database(session)
+            yield session
+
+    async def _apply_use_database(self, session):
+        """On bolt:// + custom db, issue ``USE DATABASE``; detect Community once.
+
+        No-op for routing protocols, the default ``memgraph`` db, or once a
+        prior call has detected a Community (no-Enterprise) server.
+        """
+        if self._use_routing or not self._database or self._database == "memgraph":
+            return
+        if self._enterprise_supported is False:
+            return  # Community — skip
         from neo4j.exceptions import ClientError as _ClientError
 
-        async with self._real.session(**kwargs) as session:
-            if (
-                not self._use_routing
-                and self._database
-                and self._database != "memgraph"
-            ):
-                if self._enterprise_supported is False:
-                    pass  # Community — skip
-                else:
-                    try:
-                        _use_result = await session.run(
-                            f"USE DATABASE {self._database}"
-                        )
-                        await _use_result.consume()
-                        if self._enterprise_supported is None:
-                            self._enterprise_supported = True
-                    except _ClientError as exc:
-                        if (
-                            "enterprise" in str(exc).lower()
-                            or "license" in str(exc).lower()
-                        ):
-                            self._enterprise_supported = False
-                            logger.info(
-                                "Memgraph Community detected (graph pool)"
-                                " — USE DATABASE not available"
-                            )
-                        else:
-                            raise
-            yield session
+        try:
+            _use_result = await session.run(f"USE DATABASE {self._database}")
+            await _use_result.consume()
+            if self._enterprise_supported is None:
+                self._enterprise_supported = True
+        except _ClientError as exc:
+            if "enterprise" in str(exc).lower() or "license" in str(exc).lower():
+                self._enterprise_supported = False
+                logger.info(
+                    "Memgraph Community detected (graph pool)"
+                    " — USE DATABASE not available"
+                )
+            else:
+                raise
 
     async def close(self):
         await self._real.close()
@@ -389,12 +388,38 @@ class _SafeDriverWrapper:
         return getattr(self._real, name)
 
 
-async def _patched_initialize(self):
-    _original_logger = None
+def _lightrag_logger():
+    """Return lightrag's logger, or None if lightrag isn't importable yet."""
     try:
-        from lightrag.utils import logger as _original_logger
+        from lightrag.utils import logger
+
+        return logger
     except ImportError:
-        pass
+        return None
+
+
+async def _create_workspace_index(
+    session, workspace_label, workspace, original_logger
+) -> None:
+    """Create the per-workspace entity_id index; tolerate 'already exists'."""
+    try:
+        _idx_result = await session.run(
+            f"CREATE INDEX ON :{workspace_label}(entity_id)"
+        )
+        await _idx_result.consume()
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            pass  # Expected on repeated initialize(); index is already created
+        elif original_logger:
+            original_logger.warning(
+                "[MemgraphGraph:%s] Index creation failed: %s",
+                workspace,
+                e,
+            )
+
+
+async def _patched_initialize(self):
+    _original_logger = _lightrag_logger()
     from lightrag.kg.shared_storage import get_data_init_lock
     from neo4j import AsyncGraphDatabase
 
@@ -414,21 +439,12 @@ async def _patched_initialize(self):
 
         try:
             async with self._driver.session() as session:
-                try:
-                    workspace_label = self._get_workspace_label()
-                    _idx_result = await session.run(
-                        f"CREATE INDEX ON :{workspace_label}(entity_id)"
-                    )
-                    await _idx_result.consume()
-                except Exception as e:
-                    if "already exists" in str(e).lower():
-                        pass  # Expected on repeated initialize(); index is already created
-                    elif _original_logger:
-                        _original_logger.warning(
-                            "[MemgraphGraph:%s] Index creation failed: %s",
-                            self.workspace,
-                            e,
-                        )
+                await _create_workspace_index(
+                    session,
+                    self._get_workspace_label(),
+                    self.workspace,
+                    _original_logger,
+                )
 
                 _ping = await session.run("RETURN 1")
                 await _ping.consume()

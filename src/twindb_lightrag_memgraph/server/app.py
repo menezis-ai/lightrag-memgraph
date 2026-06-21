@@ -511,6 +511,106 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
     return _operational_middleware
 
 
+async def _readiness_response(
+    require_production_auth: bool, auth_backend_configured: bool
+) -> JSONResponse:
+    """Build the ``GET /ready`` payload + status code from live subsystem checks."""
+    rag = _rag
+    auth_ok = not require_production_auth or auth_backend_configured
+    checks: dict[str, dict[str, Any]] = {
+        "lightrag": {
+            "status": "ok" if rag is not None else "failed",
+            "detail": "initialized" if rag is not None else "not initialized",
+        },
+        "memgraph": await _memgraph_readiness_check(),
+        "vector_index": _vector_index_check(rag),
+        "auth_policy": {
+            "status": "ok" if auth_ok else "failed",
+            "detail": (
+                "production auth policy loaded"
+                if require_production_auth
+                else "production auth policy not required"
+            ),
+            "production_required": require_production_auth,
+        },
+    }
+    failed = [name for name, check in checks.items() if check["status"] == "failed"]
+    body = {"status": "ready" if not failed else "not_ready", "checks": checks}
+    return JSONResponse(body, status_code=200 if not failed else 503)
+
+
+def _register_core_routes(
+    app: FastAPI,
+    settings: LightRAGServerSettings,
+    require_production_auth: bool,
+    auth_backend_configured: bool,
+) -> None:
+    """Register the auth-protected core routes (/health, /ready, /query, /insert)."""
+
+    @app.get("/health", response_model=HealthResponse)
+    async def health():
+        from twindb_lightrag_memgraph import __version__ as plugin_version
+        from .tracing import is_tracing_enabled
+
+        return HealthResponse(
+            status="ok",
+            version=plugin_version,
+            workspace=settings.workspace or "(default)",
+            storage_backends={
+                "kv": settings.kv_storage,
+                "vector": settings.vector_storage,
+                "graph": settings.graph_storage,
+                "doc_status": settings.doc_status_storage,
+            },
+            tracing_enabled=is_tracing_enabled(),
+        )
+
+    @app.get("/ready", response_model=ReadinessResponse)
+    async def ready():
+        return await _readiness_response(
+            require_production_auth, auth_backend_configured
+        )
+
+    @app.post(
+        "/query",
+        response_model=QueryResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def query(body: QueryRequest, request: Request):
+        rag = _get_rag()
+
+        # P1: Extract distributed trace context from agent headers
+        trace_ctx = extract_trace_parent(dict(request.headers))
+        if trace_ctx:
+            logger.debug("Distributed trace context: %s", trace_ctx)
+
+        result = await rag.aquery(
+            body.query,
+            param={
+                "mode": body.mode,
+                "only_need_context": body.only_need_context,
+            },
+        )
+
+        # P2: Extract full_doc_ids from the query result
+        source_doc_ids = _extract_doc_ids(result)
+
+        return QueryResponse(
+            response=result if isinstance(result, str) else str(result),
+            source_doc_ids=source_doc_ids,
+        )
+
+    @app.post(
+        "/insert",
+        response_model=InsertResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def insert(body: InsertRequest):
+        rag = _get_rag()
+        await rag.ainsert(body.text)
+        return InsertResponse(status="ok")
+
+
 def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     """Build the FastAPI application."""
     if settings is None:
@@ -573,92 +673,9 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(auth_router)
 
     # -- Core routes (auth-protected) --
-
-    @app.get("/health", response_model=HealthResponse)
-    async def health():
-        from twindb_lightrag_memgraph import __version__ as plugin_version
-        from .tracing import is_tracing_enabled
-
-        return HealthResponse(
-            status="ok",
-            version=plugin_version,
-            workspace=settings.workspace or "(default)",
-            storage_backends={
-                "kv": settings.kv_storage,
-                "vector": settings.vector_storage,
-                "graph": settings.graph_storage,
-                "doc_status": settings.doc_status_storage,
-            },
-            tracing_enabled=is_tracing_enabled(),
-        )
-
-    @app.get("/ready", response_model=ReadinessResponse)
-    async def ready():
-        rag = _rag
-        checks: dict[str, dict[str, Any]] = {
-            "lightrag": {
-                "status": "ok" if rag is not None else "failed",
-                "detail": "initialized" if rag is not None else "not initialized",
-            },
-            "memgraph": await _memgraph_readiness_check(),
-            "vector_index": _vector_index_check(rag),
-            "auth_policy": {
-                "status": "ok"
-                if (not _require_production_auth or _auth_backend_configured)
-                else "failed",
-                "detail": (
-                    "production auth policy loaded"
-                    if _require_production_auth
-                    else "production auth policy not required"
-                ),
-                "production_required": _require_production_auth,
-            },
-        }
-        failed = [name for name, check in checks.items() if check["status"] == "failed"]
-        body = {
-            "status": "ready" if not failed else "not_ready",
-            "checks": checks,
-        }
-        return JSONResponse(body, status_code=200 if not failed else 503)
-
-    @app.post(
-        "/query",
-        response_model=QueryResponse,
-        dependencies=[Depends(require_auth)],
+    _register_core_routes(
+        app, settings, _require_production_auth, _auth_backend_configured
     )
-    async def query(body: QueryRequest, request: Request):
-        rag = _get_rag()
-
-        # P1: Extract distributed trace context from agent headers
-        trace_ctx = extract_trace_parent(dict(request.headers))
-        if trace_ctx:
-            logger.debug("Distributed trace context: %s", trace_ctx)
-
-        result = await rag.aquery(
-            body.query,
-            param={
-                "mode": body.mode,
-                "only_need_context": body.only_need_context,
-            },
-        )
-
-        # P2: Extract full_doc_ids from the query result
-        source_doc_ids = _extract_doc_ids(result)
-
-        return QueryResponse(
-            response=result if isinstance(result, str) else str(result),
-            source_doc_ids=source_doc_ids,
-        )
-
-    @app.post(
-        "/insert",
-        response_model=InsertResponse,
-        dependencies=[Depends(require_auth)],
-    )
-    async def insert(body: InsertRequest):
-        rag = _get_rag()
-        await rag.ainsert(body.text)
-        return InsertResponse(status="ok")
 
     # -- Chunk routes (auth-protected) --
     create_chunk_routes(_get_rag)

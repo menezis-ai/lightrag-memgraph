@@ -90,19 +90,8 @@ async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
     return {"ok": True}
 
 
-@router.post("/documents/_bulk-retag")
-async def bulk_retag_documents(
-    body: dict[str, Any],
-) -> dict[str, Any]:
-    """Apply tag adds/removes to a list of documents as graph edges."""
-    from ... import _pool
-    from ..._constants import resolve_workspace
-
-    targets = body.get("targets") or []
-    adds = list(body.get("adds") or [])
-    removes = list(body.get("removes") or [])
-    actor = body.get("actor") or "system"
-
+def _validate_bulk_retag(targets, adds, removes) -> None:
+    """Reject malformed bulk-retag payloads (size + shape limits)."""
     if not isinstance(targets, list) or not targets:
         raise HTTPException(
             status_code=400,
@@ -124,6 +113,108 @@ async def bulk_retag_documents(
                 status_code=400,
                 detail="tags must be non-empty strings.",
             )
+
+
+async def _apply_bulk_tag_mutations(
+    adds, removes, doc_ids, tag_label, doc_label, placeholder, now, actor
+) -> None:
+    """Apply tag add/remove edges in a single write transaction (or no-op)."""
+    if not (adds or removes):
+        return
+    from ... import _pool
+
+    async with _pool.acquire_write_slot():
+        async with _pool.get_session() as session:
+            tx = await session.begin_transaction()
+            try:
+                if adds:
+                    tag_rows = [
+                        {
+                            "id": tag_id,
+                            "data": placeholder.replace(
+                                '"<PLACEHOLDER>"', json.dumps(tag_id)
+                            ),
+                        }
+                        for tag_id in adds
+                    ]
+                    result = await tx.run(
+                        f"""
+                        UNWIND $tags AS tag
+                        MERGE (t:`{tag_label}` {{id: tag.id}})
+                          ON CREATE SET
+                            t.data = tag.data,
+                            t.`__created_at` = timestamp(),
+                            t.`__auto_via_retag` = true
+                          SET t.`__updated_at` = timestamp()
+                        WITH t
+                        UNWIND $docs AS docId
+                        MATCH (d:`{doc_label}` {{id: docId}})
+                        MERGE (d)-[r:TAGGED_WITH]->(t)
+                          ON CREATE SET r.at = $now, r.actor = $actor
+                        """,
+                        tags=tag_rows,
+                        docs=doc_ids,
+                        now=now,
+                        actor=actor,
+                    )
+                    await result.consume()
+
+                if removes:
+                    result = await tx.run(
+                        f"""
+                        UNWIND $docs AS docId
+                        UNWIND $tags AS tagId
+                        MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
+                        DELETE r
+                        """,
+                        docs=doc_ids,
+                        tags=removes,
+                    )
+                    await result.consume()
+
+                await tx.commit()
+            except Exception:
+                await tx.rollback()
+                raise
+
+
+async def _emit_bulk_retag_events(
+    doc_ids, resulting_by_doc, existing, adds, removes, actor
+) -> None:
+    """Emit one ``doc-retagged`` activity event per affected document."""
+    for doc_id in doc_ids:
+        new_tags = resulting_by_doc.get(doc_id, [])
+        event = _make_event(
+            kind="doc-retagged",
+            sev="info",
+            actor=actor,
+            target_label=existing[doc_id] or doc_id,
+            summary=f"tags: +{','.join(adds) or '∅'} -{','.join(removes) or '∅'}",
+            meta={
+                "doc_id": doc_id,
+                "adds": adds,
+                "removes": removes,
+                "resulting_tags": new_tags,
+            },
+            target_type="document",
+        )
+        await get_store().record_activity(event)
+
+
+@router.post("/documents/_bulk-retag")
+async def bulk_retag_documents(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply tag adds/removes to a list of documents as graph edges."""
+    from ... import _pool
+    from ..._constants import resolve_workspace
+
+    targets = body.get("targets") or []
+    adds = list(body.get("adds") or [])
+    removes = list(body.get("removes") or [])
+    actor = body.get("actor") or "system"
+
+    _validate_bulk_retag(targets, adds, removes)
 
     workspace = resolve_workspace()
     folder = current_folder_id()
@@ -182,60 +273,9 @@ async def bulk_retag_documents(
 
     doc_ids = list(existing.keys())
 
-    if adds or removes:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                tx = await session.begin_transaction()
-                try:
-                    if adds:
-                        tag_rows = [
-                            {
-                                "id": tag_id,
-                                "data": placeholder.replace(
-                                    '"<PLACEHOLDER>"', json.dumps(tag_id)
-                                ),
-                            }
-                            for tag_id in adds
-                        ]
-                        result = await tx.run(
-                            f"""
-                            UNWIND $tags AS tag
-                            MERGE (t:`{tag_label}` {{id: tag.id}})
-                              ON CREATE SET
-                                t.data = tag.data,
-                                t.`__created_at` = timestamp(),
-                                t.`__auto_via_retag` = true
-                              SET t.`__updated_at` = timestamp()
-                            WITH t
-                            UNWIND $docs AS docId
-                            MATCH (d:`{doc_label}` {{id: docId}})
-                            MERGE (d)-[r:TAGGED_WITH]->(t)
-                              ON CREATE SET r.at = $now, r.actor = $actor
-                            """,
-                            tags=tag_rows,
-                            docs=doc_ids,
-                            now=now,
-                            actor=actor,
-                        )
-                        await result.consume()
-
-                    if removes:
-                        result = await tx.run(
-                            f"""
-                            UNWIND $docs AS docId
-                            UNWIND $tags AS tagId
-                            MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
-                            DELETE r
-                            """,
-                            docs=doc_ids,
-                            tags=removes,
-                        )
-                        await result.consume()
-
-                    await tx.commit()
-                except Exception:
-                    await tx.rollback()
-                    raise
+    await _apply_bulk_tag_mutations(
+        adds, removes, doc_ids, tag_label, doc_label, placeholder, now, actor
+    )
 
     async with _pool.get_read_session() as session:
         result = await session.run(
@@ -253,25 +293,9 @@ async def bulk_retag_documents(
             resulting_by_doc[record["docId"]] = tags
         await result.consume()
 
-    for doc_id in doc_ids:
-        new_tags = resulting_by_doc.get(doc_id, [])
-        event = _make_event(
-            kind="doc-retagged",
-            sev="info",
-            actor=actor,
-            target_label=existing[doc_id] or doc_id,
-            summary=(
-                f"tags: +{','.join(adds) or '∅'} -{','.join(removes) or '∅'}"
-            ),
-            meta={
-                "doc_id": doc_id,
-                "adds": adds,
-                "removes": removes,
-                "resulting_tags": new_tags,
-            },
-            target_type="document",
-        )
-        await get_store().record_activity(event)
+    await _emit_bulk_retag_events(
+        doc_ids, resulting_by_doc, existing, adds, removes, actor
+    )
 
     return {"updated": len(doc_ids), "failed": failed}
 
@@ -412,30 +436,29 @@ async def reject_tag(name: str, body: TagRejectBody) -> dict[str, Any]:
     return stored
 
 
-@router.patch("/tags/{name}", response_model=TagEntry)
-async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
-    from .. import webui_router as legacy
+async def _resolve_tag_rename(store, entry, body) -> str | None:
+    """Apply a tag rename to ``entry`` if requested; return the old name or None.
 
-    store = get_store()
-    entry = await store.tags.get_tag(name)
-    if entry is None:
-        raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
-    now = _utcnow_iso()[:10]
+    Raises 400 on empty new name, 409 when the target name already exists.
+    """
+    if body.tag is None:
+        return None
+    new_name = body.tag.strip()
+    if not new_name:
+        raise HTTPException(400, "Tag name cannot be empty")
+    if new_name == entry.get("tag"):
+        return None
+    existing = await store.tags.get_tag(new_name)
+    if existing is not None:
+        raise HTTPException(409, f"Tag '{new_name}' already exists")
+    old_name = entry["tag"]
+    entry["tag"] = new_name
+    return old_name
+
+
+def _apply_scalar_tag_edits(entry, body) -> list[str]:
+    """Apply the non-rename scalar field edits; return the list of changed fields."""
     changed: list[str] = []
-    renamed_from: str | None = None
-    if body.tag is not None:
-        new_name = body.tag.strip()
-        if not new_name:
-            raise HTTPException(400, "Tag name cannot be empty")
-        if new_name != entry.get("tag"):
-            existing = await store.tags.get_tag(new_name)
-            if existing is not None:
-                raise HTTPException(409, f"Tag '{new_name}' already exists")
-            old_name = entry["tag"]
-            entry["tag"] = new_name
-            renamed_from = old_name
-            changed.append("tag")
     if body.def_ is not None and body.def_ != entry.get("def"):
         entry["def"] = body.def_
         changed.append("def")
@@ -454,26 +477,47 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
     if body.deprecates is not None:
         entry["deprecates"] = list(body.deprecates)
         changed.append("deprecates")
+    return changed
+
+
+async def _cascade_tag_rename(store, legacy, renamed_from, new_name, actor) -> int | None:
+    """Migrate seed + graph tag edges from ``renamed_from`` to ``new_name``."""
+    seed_affected = legacy._cascade_seed_document_tags(
+        store, name=renamed_from, strategy="migrate", to=new_name
+    )
+    graph_affected = await legacy._cascade_graph_tag_edges(
+        name=renamed_from,
+        strategy="migrate",
+        to=new_name,
+        actor=actor,
+        strict=isinstance(store.tags, MemgraphTagStore),
+    )
+    return graph_affected if graph_affected is not None else seed_affected
+
+
+@router.patch("/tags/{name}", response_model=TagEntry)
+async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
+    from .. import webui_router as legacy
+
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+
+    changed: list[str] = []
+    renamed_from = await _resolve_tag_rename(store, entry, body)
+    if renamed_from is not None:
+        changed.append("tag")
+    changed.extend(_apply_scalar_tag_edits(entry, body))
     entry["last_edit"] = {"by": actor, "at": now, "action": "edited"}
     stored = await store.tags.upsert_tag(entry)
+
     cascade_affected: int | None = None
     if renamed_from is not None:
-        new_name = entry["tag"]
-        seed_affected = legacy._cascade_seed_document_tags(
-            store,
-            name=renamed_from,
-            strategy="migrate",
-            to=new_name,
-        )
-        graph_affected = await legacy._cascade_graph_tag_edges(
-            name=renamed_from,
-            strategy="migrate",
-            to=new_name,
-            actor=actor,
-            strict=isinstance(store.tags, MemgraphTagStore),
-        )
-        cascade_affected = (
-            graph_affected if graph_affected is not None else seed_affected
+        cascade_affected = await _cascade_tag_rename(
+            store, legacy, renamed_from, entry["tag"], actor
         )
         await store.tags.delete_tag(renamed_from)
     await _emit_tag_audit(
