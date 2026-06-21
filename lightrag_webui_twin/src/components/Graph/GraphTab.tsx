@@ -85,21 +85,21 @@ export function GraphTab({
     const s = new Set<string>();
     tagCatalog.forEach((t) => s.add(t));
     entityTags.forEach((tags) => tags.forEach((t) => s.add(t)));
-    return Array.from(s).sort();
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
   }, [entityTags, tagCatalog]);
   const allSourceDocs = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {
       (e.source_docs ?? []).forEach((doc) => s.add(doc));
     });
-    return Array.from(s).sort();
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
   }, [entities]);
   const propertyKeySuggestions = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {
       Object.keys(e.properties ?? {}).forEach((key) => s.add(key));
     });
-    return Array.from(s).sort();
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
   }, [entities]);
   const [selectedId, setSelectedId] = useUrlParam<string>(
     'gent',
