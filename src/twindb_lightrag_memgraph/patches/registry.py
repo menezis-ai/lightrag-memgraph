@@ -18,6 +18,7 @@ Usage:
 """
 
 import logging
+from contextlib import asynccontextmanager
 from importlib.metadata import version as _pkg_version
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
@@ -269,6 +270,380 @@ def register(
     logger.info(msg)
 
 
+class _SafeDriverWrapper:
+    """Thin proxy around an AsyncDriver that intercepts session().
+
+    When *use_routing* is True (``neo4j://`` / ``neo4j+s://``), the
+    ``database=`` parameter is forwarded natively so the driver can
+    route queries to the correct cluster member.
+
+    When *use_routing* is False (``bolt://`` / ``bolt+s://``), the
+    ``database=`` kwarg is stripped and ``USE DATABASE`` is issued
+    inside the session instead.  On Memgraph Community (no Enterprise
+    license), ``USE DATABASE`` fails — we detect this once and skip
+    it for all subsequent sessions.
+    """
+
+    def __init__(self, real_driver, database, use_routing):
+        self._real = real_driver
+        self._database = database
+        self._use_routing = use_routing
+        self._enterprise_supported: bool | None = None
+
+    def session(self, **kwargs):
+        kwargs.pop("database", None)
+        if self._use_routing and self._database:
+            kwargs["database"] = self._database
+        return self._safe_session(**kwargs)
+
+    @asynccontextmanager
+    async def _safe_session(self, **kwargs):
+        from neo4j.exceptions import ClientError as _ClientError
+
+        async with self._real.session(**kwargs) as session:
+            if (
+                not self._use_routing
+                and self._database
+                and self._database != "memgraph"
+            ):
+                if self._enterprise_supported is False:
+                    pass  # Community — skip
+                else:
+                    try:
+                        _use_result = await session.run(
+                            f"USE DATABASE {self._database}"
+                        )
+                        await _use_result.consume()
+                        if self._enterprise_supported is None:
+                            self._enterprise_supported = True
+                    except _ClientError as exc:
+                        if (
+                            "enterprise" in str(exc).lower()
+                            or "license" in str(exc).lower()
+                        ):
+                            self._enterprise_supported = False
+                            logger.info(
+                                "Memgraph Community detected (graph pool)"
+                                " — USE DATABASE not available"
+                            )
+                        else:
+                            raise
+            yield session
+
+    async def close(self):
+        await self._real.close()
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+async def _patched_initialize(self):
+    _original_logger = None
+    try:
+        from lightrag.utils import logger as _original_logger
+    except ImportError:
+        pass
+    from lightrag.kg.shared_storage import get_data_init_lock
+    from neo4j import AsyncGraphDatabase
+
+    from .._constants import validate_identifier
+    from .._pool import _read_connection_config, _uses_routing_protocol
+
+    async with get_data_init_lock():
+        uri, database, driver_kwargs = _read_connection_config()
+        database = database or "memgraph"
+        validate_identifier(database, "database")
+
+        raw_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        self._driver = _SafeDriverWrapper(
+            raw_driver, database, _uses_routing_protocol()
+        )
+        self._DATABASE = database
+
+        try:
+            async with self._driver.session() as session:
+                try:
+                    workspace_label = self._get_workspace_label()
+                    _idx_result = await session.run(
+                        f"CREATE INDEX ON :{workspace_label}(entity_id)"
+                    )
+                    await _idx_result.consume()
+                except Exception as e:
+                    if "already exists" in str(e).lower():
+                        pass  # Expected on repeated initialize(); index is already created
+                    elif _original_logger:
+                        _original_logger.warning(
+                            "[MemgraphGraph:%s] Index creation failed: %s",
+                            self.workspace,
+                            e,
+                        )
+
+                _ping = await session.run("RETURN 1")
+                await _ping.consume()
+                if _original_logger:
+                    _original_logger.info(
+                        f"[MemgraphGraph:{self.workspace}] GRAPH storage "
+                        f"connected to Memgraph "
+                        f"(db={database}, patched for TLS + multi-db)"
+                    )
+        except Exception as e:
+            if _original_logger:
+                _original_logger.error(
+                    f"[{self.workspace}] Failed to connect to Memgraph: {type(e).__name__}"
+                )
+            raise
+
+
+async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
+    if not node_ids:
+        return {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+    query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"RETURN eid, n"
+    )
+    result = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, ids=node_ids)
+        async for record in records:
+            node_dict = dict(record["n"])
+            if "labels" in node_dict:
+                node_dict["labels"] = [
+                    lbl for lbl in node_dict["labels"] if lbl != ws
+                ]
+            result[record["eid"]] = node_dict
+        await records.consume()
+    return result
+
+
+async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, int]:
+    if not node_ids:
+        return {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+    query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"OPTIONAL MATCH (n)-[r]-() "
+        f"RETURN eid, count(r) AS degree"
+    )
+    result = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, ids=node_ids)
+        async for record in records:
+            result[record["eid"]] = record["degree"]
+        await records.consume()
+    # Missing nodes get degree 0 (matches original node_degree behavior)
+    for nid in node_ids:
+        if nid not in result:
+            result[nid] = 0
+    return result
+
+
+async def _patched_get_edges_batch(
+    self, pairs: list[dict[str, str]]
+) -> dict[tuple[str, str], dict]:
+    if not pairs:
+        return {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+    query = (
+        f"UNWIND $pairs AS pair "
+        f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
+        f"-[r]-"
+        f"(t:`{ws}` {{entity_id: pair.tgt}}) "
+        f"WITH pair, collect(properties(r))[0] AS props "
+        f"RETURN pair.src AS src, pair.tgt AS tgt, props"
+    )
+    _defaults = {
+        "weight": 1.0,
+        "source_id": None,
+        "description": None,
+        "keywords": None,
+    }
+    result = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(
+            query, pairs=[{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
+        )
+        async for record in records:
+            edge_props = dict(record["props"]) if record["props"] else {}
+            for key, default_value in _defaults.items():
+                if key not in edge_props:
+                    edge_props[key] = default_value
+            result[(record["src"], record["tgt"])] = edge_props
+        await records.consume()
+    return result
+
+
+async def _patched_edge_degrees_batch(
+    self, edge_pairs: list[tuple[str, str]]
+) -> dict[tuple[str, str], int]:
+    if not edge_pairs:
+        return {}
+    # Collect unique node IDs, batch-fetch degrees, then sum per pair
+    unique_ids = list({nid for pair in edge_pairs for nid in pair})
+    degrees = await self.node_degrees_batch(unique_ids)
+    return {
+        (src, tgt): degrees.get(src, 0) + degrees.get(tgt, 0)
+        for src, tgt in edge_pairs
+    }
+
+
+async def _patched_get_nodes_edges_batch(
+    self, node_ids: list[str]
+) -> dict[str, list[tuple[str, str]]]:
+    if not node_ids:
+        return {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+    query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"OPTIONAL MATCH (n)-[r]-(connected:`{ws}`) "
+        f"WHERE connected.entity_id IS NOT NULL "
+        f"RETURN eid, "
+        f"collect([n.entity_id, connected.entity_id]) AS edges"
+    )
+    result = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, ids=node_ids)
+        async for record in records:
+            raw_edges = record["edges"]
+            edges = [
+                (pair[0], pair[1])
+                for pair in raw_edges
+                if pair[0] is not None and pair[1] is not None
+            ]
+            result[record["eid"]] = edges
+        await records.consume()
+    # Missing nodes get empty list
+    for nid in node_ids:
+        if nid not in result:
+            result[nid] = []
+    return result
+
+
+async def _patched_get_nodes_with_degrees_batch(
+    self, node_ids: list[str]
+) -> tuple[dict[str, dict], dict[str, int]]:
+    """Fused get_nodes_batch + node_degrees_batch in a single query."""
+    if not node_ids:
+        return {}, {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+    query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"OPTIONAL MATCH (n)-[r]-() "
+        f"RETURN eid, n, count(r) AS degree"
+    )
+    nodes = {}
+    degrees = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, ids=node_ids)
+        async for record in records:
+            node_dict = dict(record["n"])
+            if "labels" in node_dict:
+                node_dict["labels"] = [
+                    lbl for lbl in node_dict["labels"] if lbl != ws
+                ]
+            nodes[record["eid"]] = node_dict
+            degrees[record["eid"]] = record["degree"]
+        await records.consume()
+    for nid in node_ids:
+        if nid not in degrees:
+            degrees[nid] = 0
+    return nodes, degrees
+
+
+async def _patched_get_edges_with_degrees_batch(
+    self, pairs: list[dict[str, str]]
+) -> tuple[dict[tuple[str, str], dict], dict[tuple[str, str], int]]:
+    """Fused get_edges_batch + edge_degrees_batch in a single session.
+
+    Pipelines two queries (edge props + node degrees) in one session
+    instead of two separate sessions via asyncio.gather().
+    """
+    if not pairs:
+        return {}, {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+    ws = self._get_workspace_label()
+
+    edge_query = (
+        f"UNWIND $pairs AS pair "
+        f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
+        f"-[r]-"
+        f"(t:`{ws}` {{entity_id: pair.tgt}}) "
+        f"WITH pair, collect(properties(r))[0] AS props "
+        f"RETURN pair.src AS src, pair.tgt AS tgt, props"
+    )
+    # Collect unique node IDs for degree computation
+    unique_ids = list({nid for p in pairs for nid in (p["src"], p["tgt"])})
+    degree_query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"OPTIONAL MATCH (n)-[r]-() "
+        f"RETURN eid, count(r) AS degree"
+    )
+
+    _defaults = {
+        "weight": 1.0,
+        "source_id": None,
+        "description": None,
+        "keywords": None,
+    }
+    edge_data = {}
+    node_degrees = {}
+
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        # Pipeline both queries in the same session
+        pair_params = [{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
+        edge_records = await session.run(edge_query, pairs=pair_params)
+        async for record in edge_records:
+            key = (record["src"], record["tgt"])
+            edge_props = dict(record["props"]) if record["props"] else {}
+            for k, default_value in _defaults.items():
+                if k not in edge_props:
+                    edge_props[k] = default_value
+            edge_data[key] = edge_props
+        await edge_records.consume()
+
+        deg_records = await session.run(degree_query, ids=unique_ids)
+        async for record in deg_records:
+            node_degrees[record["eid"]] = record["degree"]
+        await deg_records.consume()
+
+    # Sum src + tgt degrees per edge pair
+    edge_degrees = {}
+    for p in pairs:
+        key = (p["src"], p["tgt"])
+        edge_degrees[key] = node_degrees.get(p["src"], 0) + node_degrees.get(
+            p["tgt"], 0
+        )
+    return edge_data, edge_degrees
+
+
 def _patch_builtin_memgraph_storage():
     """Replace MemgraphStorage.initialize to support MEMGRAPH_ENCRYPTED
     and wrap the driver so that database routing works correctly for both
@@ -283,380 +658,14 @@ def _patch_builtin_memgraph_storage():
     The wrapper covers *all* built-in methods (has_node, upsert_node, …)
     without having to monkey-patch each one individually.
     """
-    from contextlib import asynccontextmanager
 
     from lightrag.kg.memgraph_impl import MemgraphStorage
-    from lightrag.kg.shared_storage import get_data_init_lock
-    from neo4j import AsyncGraphDatabase
-
-    from .._constants import validate_identifier
-    from .._pool import _read_connection_config, _uses_routing_protocol
-
-    _original_logger = None
-    try:
-        from lightrag.utils import logger as _original_logger
-    except ImportError:
-        pass
-
-    class _SafeDriverWrapper:
-        """Thin proxy around an AsyncDriver that intercepts session().
-
-        When *use_routing* is True (``neo4j://`` / ``neo4j+s://``), the
-        ``database=`` parameter is forwarded natively so the driver can
-        route queries to the correct cluster member.
-
-        When *use_routing* is False (``bolt://`` / ``bolt+s://``), the
-        ``database=`` kwarg is stripped and ``USE DATABASE`` is issued
-        inside the session instead.  On Memgraph Community (no Enterprise
-        license), ``USE DATABASE`` fails — we detect this once and skip
-        it for all subsequent sessions.
-        """
-
-        def __init__(self, real_driver, database, use_routing):
-            self._real = real_driver
-            self._database = database
-            self._use_routing = use_routing
-            self._enterprise_supported: bool | None = None
-
-        def session(self, **kwargs):
-            kwargs.pop("database", None)
-            if self._use_routing and self._database:
-                kwargs["database"] = self._database
-            return self._safe_session(**kwargs)
-
-        @asynccontextmanager
-        async def _safe_session(self, **kwargs):
-            from neo4j.exceptions import ClientError as _ClientError
-
-            async with self._real.session(**kwargs) as session:
-                if (
-                    not self._use_routing
-                    and self._database
-                    and self._database != "memgraph"
-                ):
-                    if self._enterprise_supported is False:
-                        pass  # Community — skip
-                    else:
-                        try:
-                            _use_result = await session.run(
-                                f"USE DATABASE {self._database}"
-                            )
-                            await _use_result.consume()
-                            if self._enterprise_supported is None:
-                                self._enterprise_supported = True
-                        except _ClientError as exc:
-                            if (
-                                "enterprise" in str(exc).lower()
-                                or "license" in str(exc).lower()
-                            ):
-                                self._enterprise_supported = False
-                                logger.info(
-                                    "Memgraph Community detected (graph pool)"
-                                    " — USE DATABASE not available"
-                                )
-                            else:
-                                raise
-                yield session
-
-        async def close(self):
-            await self._real.close()
-
-        def __getattr__(self, name):
-            return getattr(self._real, name)
-
-    async def _patched_initialize(self):
-        async with get_data_init_lock():
-            uri, database, driver_kwargs = _read_connection_config()
-            database = database or "memgraph"
-            validate_identifier(database, "database")
-
-            raw_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
-            self._driver = _SafeDriverWrapper(
-                raw_driver, database, _uses_routing_protocol()
-            )
-            self._DATABASE = database
-
-            try:
-                async with self._driver.session() as session:
-                    try:
-                        workspace_label = self._get_workspace_label()
-                        _idx_result = await session.run(
-                            f"CREATE INDEX ON :{workspace_label}(entity_id)"
-                        )
-                        await _idx_result.consume()
-                    except Exception as e:
-                        if "already exists" in str(e).lower():
-                            pass  # Expected on repeated initialize(); index is already created
-                        elif _original_logger:
-                            _original_logger.warning(
-                                "[MemgraphGraph:%s] Index creation failed: %s",
-                                self.workspace,
-                                e,
-                            )
-
-                    _ping = await session.run("RETURN 1")
-                    await _ping.consume()
-                    if _original_logger:
-                        _original_logger.info(
-                            f"[MemgraphGraph:{self.workspace}] GRAPH storage "
-                            f"connected to Memgraph "
-                            f"(db={database}, patched for TLS + multi-db)"
-                        )
-            except Exception as e:
-                if _original_logger:
-                    _original_logger.error(
-                        f"[{self.workspace}] Failed to connect to Memgraph: {type(e).__name__}"
-                    )
-                raise
 
     MemgraphStorage.initialize = _patched_initialize
 
     # -- Batch overrides: single-UNWIND queries instead of N round-trips --
 
-    async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
-        if not node_ids:
-            return {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"RETURN eid, n"
-        )
-        result = {}
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            records = await session.run(query, ids=node_ids)
-            async for record in records:
-                node_dict = dict(record["n"])
-                if "labels" in node_dict:
-                    node_dict["labels"] = [
-                        lbl for lbl in node_dict["labels"] if lbl != ws
-                    ]
-                result[record["eid"]] = node_dict
-            await records.consume()
-        return result
-
-    async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, int]:
-        if not node_ids:
-            return {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"OPTIONAL MATCH (n)-[r]-() "
-            f"RETURN eid, count(r) AS degree"
-        )
-        result = {}
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            records = await session.run(query, ids=node_ids)
-            async for record in records:
-                result[record["eid"]] = record["degree"]
-            await records.consume()
-        # Missing nodes get degree 0 (matches original node_degree behavior)
-        for nid in node_ids:
-            if nid not in result:
-                result[nid] = 0
-        return result
-
-    async def _patched_get_edges_batch(
-        self, pairs: list[dict[str, str]]
-    ) -> dict[tuple[str, str], dict]:
-        if not pairs:
-            return {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $pairs AS pair "
-            f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
-            f"-[r]-"
-            f"(t:`{ws}` {{entity_id: pair.tgt}}) "
-            f"WITH pair, collect(properties(r))[0] AS props "
-            f"RETURN pair.src AS src, pair.tgt AS tgt, props"
-        )
-        _defaults = {
-            "weight": 1.0,
-            "source_id": None,
-            "description": None,
-            "keywords": None,
-        }
-        result = {}
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            records = await session.run(
-                query, pairs=[{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
-            )
-            async for record in records:
-                edge_props = dict(record["props"]) if record["props"] else {}
-                for key, default_value in _defaults.items():
-                    if key not in edge_props:
-                        edge_props[key] = default_value
-                result[(record["src"], record["tgt"])] = edge_props
-            await records.consume()
-        return result
-
-    async def _patched_edge_degrees_batch(
-        self, edge_pairs: list[tuple[str, str]]
-    ) -> dict[tuple[str, str], int]:
-        if not edge_pairs:
-            return {}
-        # Collect unique node IDs, batch-fetch degrees, then sum per pair
-        unique_ids = list({nid for pair in edge_pairs for nid in pair})
-        degrees = await self.node_degrees_batch(unique_ids)
-        return {
-            (src, tgt): degrees.get(src, 0) + degrees.get(tgt, 0)
-            for src, tgt in edge_pairs
-        }
-
-    async def _patched_get_nodes_edges_batch(
-        self, node_ids: list[str]
-    ) -> dict[str, list[tuple[str, str]]]:
-        if not node_ids:
-            return {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"OPTIONAL MATCH (n)-[r]-(connected:`{ws}`) "
-            f"WHERE connected.entity_id IS NOT NULL "
-            f"RETURN eid, "
-            f"collect([n.entity_id, connected.entity_id]) AS edges"
-        )
-        result = {}
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            records = await session.run(query, ids=node_ids)
-            async for record in records:
-                raw_edges = record["edges"]
-                edges = [
-                    (pair[0], pair[1])
-                    for pair in raw_edges
-                    if pair[0] is not None and pair[1] is not None
-                ]
-                result[record["eid"]] = edges
-            await records.consume()
-        # Missing nodes get empty list
-        for nid in node_ids:
-            if nid not in result:
-                result[nid] = []
-        return result
-
     # -- Fused queries: merge two gather() calls into one round-trip --
-
-    async def _patched_get_nodes_with_degrees_batch(
-        self, node_ids: list[str]
-    ) -> tuple[dict[str, dict], dict[str, int]]:
-        """Fused get_nodes_batch + node_degrees_batch in a single query."""
-        if not node_ids:
-            return {}, {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"OPTIONAL MATCH (n)-[r]-() "
-            f"RETURN eid, n, count(r) AS degree"
-        )
-        nodes = {}
-        degrees = {}
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            records = await session.run(query, ids=node_ids)
-            async for record in records:
-                node_dict = dict(record["n"])
-                if "labels" in node_dict:
-                    node_dict["labels"] = [
-                        lbl for lbl in node_dict["labels"] if lbl != ws
-                    ]
-                nodes[record["eid"]] = node_dict
-                degrees[record["eid"]] = record["degree"]
-            await records.consume()
-        for nid in node_ids:
-            if nid not in degrees:
-                degrees[nid] = 0
-        return nodes, degrees
-
-    async def _patched_get_edges_with_degrees_batch(
-        self, pairs: list[dict[str, str]]
-    ) -> tuple[dict[tuple[str, str], dict], dict[tuple[str, str], int]]:
-        """Fused get_edges_batch + edge_degrees_batch in a single session.
-
-        Pipelines two queries (edge props + node degrees) in one session
-        instead of two separate sessions via asyncio.gather().
-        """
-        if not pairs:
-            return {}, {}
-        if self._driver is None:
-            raise RuntimeError(_NOT_INITIALIZED_MSG)
-        ws = self._get_workspace_label()
-
-        edge_query = (
-            f"UNWIND $pairs AS pair "
-            f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
-            f"-[r]-"
-            f"(t:`{ws}` {{entity_id: pair.tgt}}) "
-            f"WITH pair, collect(properties(r))[0] AS props "
-            f"RETURN pair.src AS src, pair.tgt AS tgt, props"
-        )
-        # Collect unique node IDs for degree computation
-        unique_ids = list({nid for p in pairs for nid in (p["src"], p["tgt"])})
-        degree_query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"OPTIONAL MATCH (n)-[r]-() "
-            f"RETURN eid, count(r) AS degree"
-        )
-
-        _defaults = {
-            "weight": 1.0,
-            "source_id": None,
-            "description": None,
-            "keywords": None,
-        }
-        edge_data = {}
-        node_degrees = {}
-
-        async with self._driver.session(
-            database=self._DATABASE, default_access_mode="READ"
-        ) as session:
-            # Pipeline both queries in the same session
-            pair_params = [{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
-            edge_records = await session.run(edge_query, pairs=pair_params)
-            async for record in edge_records:
-                key = (record["src"], record["tgt"])
-                edge_props = dict(record["props"]) if record["props"] else {}
-                for k, default_value in _defaults.items():
-                    if k not in edge_props:
-                        edge_props[k] = default_value
-                edge_data[key] = edge_props
-            await edge_records.consume()
-
-            deg_records = await session.run(degree_query, ids=unique_ids)
-            async for record in deg_records:
-                node_degrees[record["eid"]] = record["degree"]
-            await deg_records.consume()
-
-        # Sum src + tgt degrees per edge pair
-        edge_degrees = {}
-        for p in pairs:
-            key = (p["src"], p["tgt"])
-            edge_degrees[key] = node_degrees.get(p["src"], 0) + node_degrees.get(
-                p["tgt"], 0
-            )
-        return edge_data, edge_degrees
 
     MemgraphStorage.get_nodes_batch = _patched_get_nodes_batch
     MemgraphStorage.node_degrees_batch = _patched_node_degrees_batch

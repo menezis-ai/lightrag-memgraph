@@ -791,20 +791,11 @@ class TestSafeDriverWrapper:
 
     @staticmethod
     def _get_wrapper_class():
-        """Extract _SafeDriverWrapper from the patched initialize closure."""
-        _reset()
-        twindb_lightrag_memgraph.register()
-        from lightrag.kg.memgraph_impl import MemgraphStorage
+        """Return the module-level _SafeDriverWrapper (lifted out of the
+        initialize closure by the cognitive-complexity refactor)."""
+        from twindb_lightrag_memgraph.patches.registry import _SafeDriverWrapper
 
-        # The class is stored in _patched_initialize's closure
-        for cell in MemgraphStorage.initialize.__code__.co_consts:
-            pass  # not accessible via co_consts
-        # Simpler: look in the closure cells
-        for cell in MemgraphStorage.initialize.__closure__ or []:
-            val = cell.cell_contents
-            if isinstance(val, type) and val.__name__ == "_SafeDriverWrapper":
-                return val
-        raise RuntimeError("Could not find _SafeDriverWrapper in closure")
+        return _SafeDriverWrapper
 
     def _make_raw_driver(self, mock_session):
         mock_raw = MagicMock()

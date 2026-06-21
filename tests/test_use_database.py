@@ -200,26 +200,15 @@ class TestPoolGetSessionCommunity:
 
 
 def _get_wrapper_class():
-    """Extract _SafeDriverWrapper from the patched MemgraphStorage.initialize.
+    """Return the module-level ``_SafeDriverWrapper`` class.
 
-    The class is defined inside _patch_builtin_memgraph_storage() so we
-    trigger the patch, then inspect the initialize closure to find it.
+    Since the cognitive-complexity refactor it lives at module scope in
+    ``twindb_lightrag_memgraph.patches.registry`` (previously nested inside
+    ``_patch_builtin_memgraph_storage`` and extracted from the closure).
     """
-    import twindb_lightrag_memgraph
+    from twindb_lightrag_memgraph.patches.registry import _SafeDriverWrapper
 
-    twindb_lightrag_memgraph._registered = False
-    twindb_lightrag_memgraph.register()
-
-    from lightrag.kg.memgraph_impl import MemgraphStorage
-
-    init_fn = MemgraphStorage.initialize
-    if init_fn.__closure__:
-        for cell in init_fn.__closure__:
-            val = cell.cell_contents
-            if isinstance(val, type) and val.__name__ == "_SafeDriverWrapper":
-                return val
-
-    raise RuntimeError("Could not find _SafeDriverWrapper in closure")
+    return _SafeDriverWrapper
 
 
 class TestSafeDriverWrapperEnterprise:
