@@ -1,0 +1,1437 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Icon } from '../Icon';
+import {
+  useCreateGraphRelation,
+  useDeleteGraphEntity,
+  useDeleteGraphRelation,
+  useUpdateGraphEntity,
+  useUpdateGraphRelation,
+} from '../../api/queries';
+import {
+  GRAPH_TYPE_LABEL,
+  type GraphEntity,
+  type GraphEntityPatch,
+  type GraphEntityType,
+  type GraphRelation,
+  type GraphRelationPatch,
+} from '../../types/graph';
+import { TYPE_KEYS } from './graphLayout';
+
+interface GraphDetailPanelProps {
+  entity: GraphEntity | null;
+  selectedRel: GraphRelation | null;
+  neighbors: { rels: GraphRelation[]; nodes: GraphEntity[] };
+  colors: Record<GraphEntityType, string>;
+  entities: readonly GraphEntity[];
+  relations: readonly GraphRelation[];
+  typeLabels: Record<GraphEntityType, string>;
+  /** TR-KG-03: active tag catalog. Empty list disables the node
+   *  tag editor's autocomplete + lets any free text through (used
+   *  by the legacy seed tests that don't render a catalog). */
+  tagCatalog: readonly string[];
+  propertyKeySuggestions: readonly string[];
+  onSelect: (id: string) => void;
+  onSelectRelation: (id: string) => void;
+  onClearRelation: () => void;
+  pinnedIds: readonly string[];
+  onTogglePinned: (id: string) => void;
+  onNavigate?: (tab: string, params?: Record<string, string>) => void;
+}
+
+export function GraphDetailPanel({
+  entity,
+  selectedRel,
+  neighbors,
+  colors,
+  entities,
+  relations,
+  typeLabels,
+  tagCatalog,
+  propertyKeySuggestions,
+  onSelect,
+  onSelectRelation,
+  onClearRelation,
+  pinnedIds,
+  onTogglePinned,
+  onNavigate,
+}: GraphDetailPanelProps) {
+  // Relation editor takes priority when an edge is selected.
+  if (selectedRel) {
+    const src = entities.find((n) => n.id === selectedRel.source) ?? null;
+    const tgt = entities.find((n) => n.id === selectedRel.target) ?? null;
+    return (
+      <aside className="kg-detail" data-testid="kg-detail-relation">
+        <RelationEditor
+          rel={selectedRel}
+          src={src}
+          tgt={tgt}
+          colors={colors}
+          onSelectNode={(id) => {
+            onClearRelation();
+            onSelect(id);
+          }}
+          onBack={onClearRelation}
+        />
+      </aside>
+    );
+  }
+
+  if (!entity) {
+    return (
+      <aside className="kg-detail">
+        <div className="kg-detail-empty">
+          <Icon name="circle-dot" size={20} color="var(--color-text-tertiary)" />
+          <div>Select a node to inspect</div>
+        </div>
+      </aside>
+    );
+  }
+  return (
+    <aside className="kg-detail" data-testid="kg-detail-entity">
+      <EntityEditor
+        entity={entity}
+        neighbors={neighbors}
+        entities={entities}
+        relations={relations}
+        colors={colors}
+        typeLabels={typeLabels}
+        tagCatalog={tagCatalog}
+        propertyKeySuggestions={propertyKeySuggestions}
+        onSelectRelation={onSelectRelation}
+        isPinned={pinnedIds.includes(entity.id)}
+        onTogglePinned={() => onTogglePinned(entity.id)}
+        onNavigate={onNavigate}
+      />
+    </aside>
+  );
+}
+
+// ─── Entity editor — view + edit name, type, summary, tags, properties ──
+interface EntityEditorProps {
+  entity: GraphEntity;
+  neighbors: { rels: GraphRelation[]; nodes: GraphEntity[] };
+  /** Full entity list — used as the target picker source when drawing
+   *  a new outgoing relation. The current entity is filtered out. */
+  entities: readonly GraphEntity[];
+  /** Full relation list — used to dedupe a new outgoing relation
+   *  against an existing edge between the same endpoints. */
+  relations: readonly GraphRelation[];
+  colors: Record<GraphEntityType, string>;
+  typeLabels: Record<GraphEntityType, string>;
+  /** TR-KG-03: active tag catalog passed down to the in-editor
+   *  TagAttrEditor so unknown tags can't reach the backend.
+   *  Empty list disables the binding (mirrors GraphTab's default). */
+  tagCatalog: readonly string[];
+  propertyKeySuggestions: readonly string[];
+  onSelectRelation: (id: string) => void;
+  isPinned: boolean;
+  onTogglePinned: () => void;
+  onNavigate?: (tab: string, params?: Record<string, string>) => void;
+}
+
+interface EntityDraft {
+  name: string;
+  type: GraphEntityType;
+  summary: string;
+  tags: string[];
+  properties: Record<string, string>;
+}
+
+function EntityEditor({
+  entity,
+  neighbors,
+  entities,
+  relations,
+  colors,
+  typeLabels,
+  tagCatalog,
+  propertyKeySuggestions,
+  onSelectRelation,
+  isPinned,
+  onTogglePinned,
+  onNavigate,
+}: EntityEditorProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<EntityDraft | null>(null);
+  const updateEntity = useUpdateGraphEntity();
+  const deleteEntity = useDeleteGraphEntity();
+  const createRelation = useCreateGraphRelation();
+  const [addRelOpen, setAddRelOpen] = useState(false);
+  // Two-step destructive confirmation. First click arms the action,
+  // second click within the timeout fires the mutation. Reset on
+  // entity change so navigating away cancels.
+  const [armedDelete, setArmedDelete] = useState(false);
+  useEffect(() => {
+    if (!armedDelete) return;
+    const t = window.setTimeout(() => setArmedDelete(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armedDelete]);
+
+  // Reset edit mode + armed-delete + Add relation form when switching
+  // entities — every transient panel should start fresh on the next node.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on prop change; refactoring to a key prop would shed unrelated state. */
+  useEffect(() => {
+    setEditing(false);
+    setDraft(null);
+    setArmedDelete(false);
+    setAddRelOpen(false);
+  }, [entity.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const startEdit = () => {
+    setDraft({
+      name: entity.name,
+      type: entity.type,
+      summary: entity.summary || '',
+      tags: [...(entity.tags ?? [])],
+      properties: { ...(entity.properties ?? {}) },
+    });
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setDraft(null);
+  };
+  const commit = () => {
+    if (!draft) return;
+    const patch: GraphEntityPatch = {
+      name: draft.name.trim() || entity.name,
+      type: draft.type,
+      summary: draft.summary,
+      tags: draft.tags,
+      properties: draft.properties,
+    };
+    updateEntity.mutate({ id: entity.id, patch });
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const incoming = neighbors.rels.filter((r) => r.target === entity.id);
+  const outgoing = neighbors.rels.filter((r) => r.source === entity.id);
+  const propEntries = Object.entries(entity.properties ?? {});
+
+  return (
+    <>
+      <div className="kg-detail-h">
+        <div className="kg-detail-title">
+          <span
+            className="kg-detail-swatch"
+            style={{ background: colors[entity.type] }}
+          />
+          {editing && draft ? (
+            <input
+              className="kg-edit-input kg-edit-name"
+              value={draft.name}
+              onChange={(e) =>
+                setDraft((d) => (d ? { ...d, name: e.target.value } : d))
+              }
+              placeholder="Name"
+              aria-label="Entity name"
+              autoFocus
+            />
+          ) : (
+            <h2>{entity.name}</h2>
+          )}
+          {!editing && (
+            <div className="kg-detail-title-actions">
+              <button
+                className={`ghost-btn small${isPinned ? ' primary' : ''}`}
+                onClick={onTogglePinned}
+                title={isPinned ? 'Unpin entity' : 'Pin entity'}
+                data-testid="kg-entity-pin"
+                aria-pressed={isPinned}
+              >
+                <Icon name="pin" size={11} /> {isPinned ? 'Pinned' : 'Pin'}
+              </button>
+              <button
+                className="ghost-btn small"
+                onClick={startEdit}
+                title="Edit metadata"
+                data-testid="kg-entity-edit"
+              >
+                <Icon name="edit" size={11} /> Edit
+              </button>
+            </div>
+          )}
+        </div>
+        {editing && draft ? (
+          <div className="kg-edit-row" style={{ marginTop: 6 }}>
+            <span className="muted-sm" style={{ marginRight: 6 }}>
+              Type
+            </span>
+            <select
+              className="kg-edit-select"
+              value={draft.type}
+              onChange={(e) =>
+                setDraft((d) =>
+                  d ? { ...d, type: e.target.value as GraphEntityType } : d,
+                )
+              }
+              aria-label="Entity type"
+            >
+              {(Object.keys(typeLabels) as GraphEntityType[]).map((t) => (
+                <option key={t} value={t}>
+                  {typeLabels[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="kg-detail-type" style={{ color: colors[entity.type] }}>
+            {typeLabels[entity.type]}
+          </div>
+        )}
+        {editing && draft ? (
+          <textarea
+            className="kg-edit-input kg-edit-summary"
+            rows={3}
+            value={draft.summary}
+            onChange={(e) =>
+              setDraft((d) => (d ? { ...d, summary: e.target.value } : d))
+            }
+            placeholder="Short description"
+            aria-label="Entity summary"
+            style={{ marginTop: 6, width: '100%' }}
+          />
+        ) : (
+          <p className="kg-detail-summary">{entity.summary || '—'}</p>
+        )}
+        {!editing && (
+          <div className="kg-detail-stats">
+            <div>
+              <span className="kg-stat-n">{entity.mentions}</span>
+              <span className="kg-stat-l">mentions</span>
+            </div>
+            <div>
+              <span className="kg-stat-n">{entity.sources}</span>
+              <span className="kg-stat-l">sources</span>
+            </div>
+            <div>
+              <span className="kg-stat-n">{neighbors.rels.length}</span>
+              <span className="kg-stat-l">relations</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tags — node-attribute strings, decoupled from the WebuiTag taxonomy. */}
+      <div className="kg-detail-section">
+        <div className="section-label">
+          <span>
+            Tags{' '}
+            {editing ? <em>— edit</em> : <em>— node attributes</em>}
+          </span>
+        </div>
+        {editing && draft ? (
+          <TagAttrEditor
+            tags={draft.tags}
+            tagCatalog={tagCatalog}
+            onChange={(tags) =>
+              setDraft((d) => (d ? { ...d, tags } : d))
+            }
+          />
+        ) : (entity.tags ?? []).length > 0 ? (
+          <div className="tag-chips">
+            {(entity.tags ?? []).map((t) => (
+              <span key={t} className="tag-chip">
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="muted-sm">No tags.</div>
+        )}
+      </div>
+
+      {/* Properties — custom k/v metadata. */}
+      <div className="kg-detail-section">
+        <div className="section-label">
+          <span>
+            Properties{' '}
+            {editing ? (
+              <em>— add / remove</em>
+            ) : (
+              <em>— custom metadata</em>
+            )}
+          </span>
+          {!editing && propEntries.length > 0 && (
+            <span className="kg-prop-count">{propEntries.length}</span>
+          )}
+        </div>
+        {editing && draft ? (
+          <PropEditor
+            properties={draft.properties}
+            suggestions={propertyKeySuggestions}
+            onChange={(properties) =>
+              setDraft((d) => (d ? { ...d, properties } : d))
+            }
+          />
+        ) : propEntries.length === 0 ? (
+          <div className="muted-sm">
+            No custom properties.{' '}
+            <button
+              className="kg-inline-add"
+              onClick={startEdit}
+              type="button"
+            >
+              + Add some
+            </button>
+          </div>
+        ) : (
+          <dl className="kg-prop-list">
+            {propEntries.map(([k, v]) => (
+              <div key={k} className="kg-prop-row">
+                <dt>{k}</dt>
+                <dd>{String(v)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
+
+      {editing && (
+        <div className="kg-detail-section kg-edit-actions">
+          <button className="ghost-btn" onClick={cancel} type="button">
+            Cancel
+          </button>
+          <button
+            className="ghost-btn primary"
+            onClick={commit}
+            disabled={updateEntity.isPending}
+            type="button"
+            data-testid="kg-entity-save"
+          >
+            <Icon name="check" size={11} />{' '}
+            {updateEntity.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      )}
+
+      {!editing && (
+        <>
+          <div className="kg-detail-section">
+            <div
+              className="section-label"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+            >
+              <span>
+                Outgoing ({outgoing.length}) <em>— click to edit</em>
+              </span>
+              {!addRelOpen && (
+                <button
+                  type="button"
+                  className="ghost-btn small"
+                  onClick={() => setAddRelOpen(true)}
+                  data-testid="kg-add-rel-btn"
+                >
+                  <Icon name="plus" size={11} /> Add relation
+                </button>
+              )}
+            </div>
+            {addRelOpen && (
+              <AddRelationForm
+                source={entity}
+                entities={entities}
+                relations={relations}
+                colors={colors}
+                pending={createRelation.isPending}
+                onCancel={() => setAddRelOpen(false)}
+                onSubmit={(payload) => {
+                  createRelation.mutate(payload, {
+                    onSuccess: () => setAddRelOpen(false),
+                  });
+                }}
+              />
+            )}
+            {outgoing.length === 0 ? (
+              <div className="muted-sm">No outgoing relations.</div>
+            ) : (
+              <ul className="kg-rel-list">
+                {outgoing.map((r) => {
+                  const t = neighbors.nodes.find((n) => n.id === r.target);
+                  if (!t) return null;
+                  return (
+                    <li
+                      key={r.id}
+                      className="kg-rel-row"
+                      onClick={() => onSelectRelation(r.id)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter' || ev.key === ' ') {
+                          ev.preventDefault();
+                          onSelectRelation(r.id);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      data-testid={`kg-rel-row-${r.id}`}
+                    >
+                      <span className="kg-rel-arrow">→</span>
+                      <code className="kg-rel-label">{r.label}</code>
+                      <span className="kg-rel-target">
+                        <span
+                          className="kg-rel-swatch"
+                          style={{ background: colors[t.type] }}
+                        />
+                        <span className="kg-rel-target-name">{t.name}</span>
+                      </span>
+                      <span
+                        className="kg-rel-strength"
+                        title={`strength ${r.strength.toFixed(2)}`}
+                      >
+                        {Math.round(r.strength * 100)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="kg-detail-section">
+            <div className="section-label">
+              <span>
+                Incoming ({incoming.length}) <em>— click to edit</em>
+              </span>
+            </div>
+            {incoming.length === 0 ? (
+              <div className="muted-sm">No incoming relations.</div>
+            ) : (
+              <ul className="kg-rel-list">
+                {incoming.map((r) => {
+                  const s = neighbors.nodes.find((n) => n.id === r.source);
+                  if (!s) return null;
+                  return (
+                    <li
+                      key={r.id}
+                      className="kg-rel-row"
+                      onClick={() => onSelectRelation(r.id)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter' || ev.key === ' ') {
+                          ev.preventDefault();
+                          onSelectRelation(r.id);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      data-testid={`kg-rel-row-${r.id}`}
+                    >
+                      <span className="kg-rel-target">
+                        <span
+                          className="kg-rel-swatch"
+                          style={{ background: colors[s.type] }}
+                        />
+                        <span className="kg-rel-target-name">{s.name}</span>
+                      </span>
+                      <code className="kg-rel-label">{r.label}</code>
+                      <span className="kg-rel-arrow">→</span>
+                      <span
+                        className="kg-rel-strength"
+                        title={`strength ${r.strength.toFixed(2)}`}
+                      >
+                        {Math.round(r.strength * 100)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="kg-detail-section kg-detail-cta">
+            <button
+              className="ghost-btn"
+              onClick={() => {
+                // Mock-kill F3 — navigation falls back to a text query
+                // on the entity name; the previous per-entity source
+                // list came from a prototype map keyed by local ids.
+                onNavigate?.('documents', { q: entity.name });
+              }}
+              type="button"
+            >
+              <Icon name="external-link" size={11} /> View documents
+              mentioning this entity
+            </button>
+            <div className="kg-detail-locked">
+              <Icon name="lock" size={11} />
+              <span>
+                Traverse relations with tag filter — <b>Twin Graph</b>
+              </span>
+            </div>
+          </div>
+
+          <div
+            className="kg-detail-section kg-lifecycle"
+            data-testid="kg-entity-lifecycle"
+            style={{ borderTop: '1px solid var(--color-border, #e2e6ec)' }}
+          >
+            <button
+              type="button"
+              className={armedDelete ? 'ghost-btn danger' : 'ghost-btn'}
+              onClick={() => {
+                if (!armedDelete) {
+                  setArmedDelete(true);
+                  return;
+                }
+                deleteEntity.mutate(entity.id);
+                setArmedDelete(false);
+              }}
+              disabled={deleteEntity.isPending}
+              data-testid="kg-entity-delete"
+              style={
+                armedDelete
+                  ? {
+                      color: 'var(--twin-red-vivid, #b03060)',
+                      borderColor: 'var(--twin-red-vivid, #b03060)',
+                    }
+                  : undefined
+              }
+            >
+              <Icon name={armedDelete ? 'alert-triangle' : 'trash'} size={11} />{' '}
+              {deleteEntity.isPending
+                ? 'Deleting…'
+                : armedDelete
+                  ? 'Click again to confirm'
+                  : 'Delete entity'}
+            </button>
+            {armedDelete && (
+              <button
+                type="button"
+                className="ghost-btn small"
+                onClick={() => setArmedDelete(false)}
+                data-testid="kg-entity-delete-cancel"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// ─── Relation editor — label, strength, custom properties ──────────────
+interface RelationEditorProps {
+  rel: GraphRelation;
+  src: GraphEntity | null;
+  tgt: GraphEntity | null;
+  colors: Record<GraphEntityType, string>;
+  onSelectNode: (id: string) => void;
+  onBack: () => void;
+}
+
+interface RelationDraft {
+  label: string;
+  strength: number;
+  properties: Record<string, string>;
+}
+
+function RelationEditor({
+  rel,
+  src,
+  tgt,
+  colors,
+  onSelectNode,
+  onBack,
+}: RelationEditorProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<RelationDraft | null>(null);
+  const updateRelation = useUpdateGraphRelation();
+  const deleteRelation = useDeleteGraphRelation();
+  const [armedDelete, setArmedDelete] = useState(false);
+  useEffect(() => {
+    if (!armedDelete) return;
+    const t = window.setTimeout(() => setArmedDelete(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armedDelete]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset of the relation editor panel when switching to a different edge. */
+  useEffect(() => {
+    setEditing(false);
+    setDraft(null);
+    setArmedDelete(false);
+  }, [rel.id]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const startEdit = () => {
+    setDraft({
+      label: rel.label,
+      strength: rel.strength,
+      properties: { ...(rel.properties ?? {}) },
+    });
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setDraft(null);
+  };
+  const commit = () => {
+    if (!draft) return;
+    const cleaned = draft.label.trim().toUpperCase().replace(/\s+/g, '_');
+    const patch: GraphRelationPatch = {
+      label: cleaned || rel.label,
+      strength: Math.max(0, Math.min(1, draft.strength)),
+      properties: draft.properties,
+    };
+    updateRelation.mutate({ id: rel.id, patch });
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const propEntries = Object.entries(rel.properties ?? {});
+
+  return (
+    <>
+      <div className="kg-detail-h">
+        <button
+          className="ghost-btn small"
+          onClick={onBack}
+          title="Back to entity"
+          type="button"
+          data-testid="kg-rel-back"
+        >
+          <Icon name="chevron-left" size={11} /> Back
+        </button>
+        <div className="kg-detail-title" style={{ marginTop: 4 }}>
+          {editing && draft ? (
+            <input
+              className="kg-edit-input kg-edit-name"
+              value={draft.label}
+              onChange={(e) =>
+                setDraft((d) => (d ? { ...d, label: e.target.value } : d))
+              }
+              placeholder="RELATION_LABEL"
+              aria-label="Relation label"
+              autoFocus
+              style={{
+                fontFamily: 'var(--font-mono)',
+                textTransform: 'uppercase',
+              }}
+            />
+          ) : (
+            <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
+              {rel.label}
+            </h2>
+          )}
+          {!editing && (
+            <button
+              className="ghost-btn small"
+              onClick={startEdit}
+              style={{ marginLeft: 'auto' }}
+              type="button"
+              data-testid="kg-rel-edit"
+            >
+              <Icon name="edit" size={11} /> Edit
+            </button>
+          )}
+        </div>
+        <div className="kg-detail-type" style={{ marginTop: 2 }}>
+          Relation
+        </div>
+        <div className="kg-rel-endpoints" style={{ marginTop: 6 }}>
+          <button
+            className="kg-rel-endpoint"
+            onClick={() => src && onSelectNode(src.id)}
+            type="button"
+            disabled={!src}
+          >
+            <span
+              className="kg-rel-swatch"
+              style={{ background: src ? colors[src.type] : '#888' }}
+            />
+            {src ? src.name : '?'}
+          </button>
+          <span className="kg-rel-arrow">→</span>
+          <button
+            className="kg-rel-endpoint"
+            onClick={() => tgt && onSelectNode(tgt.id)}
+            type="button"
+            disabled={!tgt}
+          >
+            <span
+              className="kg-rel-swatch"
+              style={{ background: tgt ? colors[tgt.type] : '#888' }}
+            />
+            {tgt ? tgt.name : '?'}
+          </button>
+        </div>
+      </div>
+
+      <div className="kg-detail-section">
+        <div className="section-label">
+          <span>
+            Strength{' '}
+            {editing ? <em>— 0.00–1.00</em> : null}
+          </span>
+        </div>
+        {editing && draft ? (
+          <div className="kg-strength-edit">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={draft.strength}
+              onChange={(e) =>
+                setDraft((d) =>
+                  d ? { ...d, strength: parseFloat(e.target.value) } : d,
+                )
+              }
+              aria-label="Relation strength"
+            />
+            <code>{draft.strength.toFixed(2)}</code>
+          </div>
+        ) : (
+          <div className="kg-strength-view">
+            <div className="kg-strength-bar">
+              <div style={{ width: `${rel.strength * 100}%` }} />
+            </div>
+            <code>{Math.round(rel.strength * 100)}%</code>
+          </div>
+        )}
+      </div>
+
+      <div className="kg-detail-section">
+        <div className="section-label">
+          <span>
+            Properties{' '}
+            {editing ? (
+              <em>— add / remove</em>
+            ) : (
+              <em>— custom metadata</em>
+            )}
+          </span>
+          {!editing && propEntries.length > 0 && (
+            <span className="kg-prop-count">{propEntries.length}</span>
+          )}
+        </div>
+        {editing && draft ? (
+          <PropEditor
+            properties={draft.properties}
+            suggestions={[]}
+            onChange={(properties) =>
+              setDraft((d) => (d ? { ...d, properties } : d))
+            }
+          />
+        ) : propEntries.length === 0 ? (
+          <div className="muted-sm">
+            No custom properties.{' '}
+            <button
+              className="kg-inline-add"
+              onClick={startEdit}
+              type="button"
+            >
+              + Add some
+            </button>
+          </div>
+        ) : (
+          <dl className="kg-prop-list">
+            {propEntries.map(([k, v]) => (
+              <div key={k} className="kg-prop-row">
+                <dt>{k}</dt>
+                <dd>{String(v)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
+
+      {editing && (
+        <div className="kg-detail-section kg-edit-actions">
+          <button className="ghost-btn" onClick={cancel} type="button">
+            Cancel
+          </button>
+          <button
+            className="ghost-btn primary"
+            onClick={commit}
+            disabled={updateRelation.isPending}
+            type="button"
+            data-testid="kg-rel-save"
+          >
+            <Icon name="check" size={11} />{' '}
+            {updateRelation.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      )}
+
+      {!editing && (
+        <div
+          className="kg-detail-section kg-lifecycle"
+          data-testid="kg-rel-lifecycle"
+          style={{ borderTop: '1px solid var(--color-border, #e2e6ec)' }}
+        >
+          <button
+            type="button"
+            className={armedDelete ? 'ghost-btn danger' : 'ghost-btn'}
+            onClick={() => {
+              if (!armedDelete) {
+                setArmedDelete(true);
+                return;
+              }
+              deleteRelation.mutate(rel.id, {
+                onSuccess: () => onBack(),
+              });
+              setArmedDelete(false);
+            }}
+            disabled={deleteRelation.isPending}
+            data-testid="kg-rel-delete"
+            style={
+              armedDelete
+                ? {
+                    color: 'var(--twin-red-vivid, #b03060)',
+                    borderColor: 'var(--twin-red-vivid, #b03060)',
+                  }
+                : undefined
+            }
+          >
+            <Icon name={armedDelete ? 'alert-triangle' : 'trash'} size={11} />{' '}
+            {deleteRelation.isPending
+              ? 'Deleting…'
+              : armedDelete
+                ? 'Click again to confirm'
+                : 'Delete relation'}
+          </button>
+          {armedDelete && (
+            <button
+              type="button"
+              className="ghost-btn small"
+              onClick={() => setArmedDelete(false)}
+              data-testid="kg-rel-delete-cancel"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Tag chip editor (node attribute strings) ──────────────────────────
+//
+// TR-KG-03 (QA report 2026-06-12): node tags must come from the
+// active tag catalog. The previous free-text input accepted any value
+// and bypassed the canonical vocabulary; the backend now 422s on
+// unknown tags (see ``server/webui_router._validate_graph_entity_tags``)
+// and this editor mirrors the same rule client-side: autocomplete
+// proposes catalog matches on the typed prefix. Enter only commits an
+// exact catalog match; unknown values surface an inline warning.
+export function TagAttrEditor({
+  tags,
+  tagCatalog,
+  onChange,
+}: {
+  tags: readonly string[];
+  /** Active tag catalog, e.g. derived from ``/tags`` via
+   *  ``tagCatalogForSuggestions`` upstream. An empty list disables
+   *  the binding (isolated tests). */
+  tagCatalog: readonly string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [v, setV] = useState('');
+  const [focused, setFocused] = useState(false);
+  const normalized = v.trim().toLowerCase().replace(/\s+/g, '-');
+  const catalogSet = useMemo(
+    () => new Set(tagCatalog.map((t) => t.toLowerCase())),
+    [tagCatalog],
+  );
+  const bindingActive = tagCatalog.length > 0;
+  const suggestions = useMemo(() => {
+    if (!bindingActive || (!focused && !normalized)) return [];
+    return tagCatalog
+      .filter(
+        (t) =>
+          !tags.includes(t) &&
+          (!normalized || t.toLowerCase().startsWith(normalized)),
+      )
+      .slice(0, 6);
+  }, [tagCatalog, tags, normalized, bindingActive, focused]);
+  const isKnown = !bindingActive || catalogSet.has(normalized);
+  const add = (value?: string) => {
+    const t = (value ?? normalized).trim().toLowerCase().replace(/\s+/g, '-');
+    if (!t || tags.includes(t)) return;
+    if (bindingActive && !catalogSet.has(t)) return;
+    onChange([...tags, t]);
+    setV('');
+  };
+  const remove = (t: string) => onChange(tags.filter((x) => x !== t));
+  return (
+    <div className="kg-tag-editor">
+      <div className="tag-chips">
+        {tags.map((t) => (
+          <span key={t} className="tag-chip">
+            {t}{' '}
+            <button
+              onClick={() => remove(t)}
+              aria-label={`Remove ${t}`}
+              type="button"
+            >
+              <Icon name="x" size={9} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="kg-tag-add-row" style={{ marginTop: 6 }}>
+        <input
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add tag…"
+          aria-label="Add node tag"
+        />
+      </div>
+      {bindingActive && normalized && !isKnown && (
+        <div
+          className="muted-sm"
+          role="alert"
+          data-testid="kg-tag-not-in-catalog"
+          style={{ marginTop: 4, fontSize: 11 }}
+        >
+          “{normalized}” is not in the tag catalog. Pick an existing tag
+          or approve it first in the Tags tab.
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div
+          className="autocomplete panel-autocomplete"
+          role="listbox"
+          data-testid="kg-tag-suggestions"
+          style={{ marginTop: 4 }}
+        >
+          {suggestions.map((s) => (
+            <div
+              key={s}
+              role="option"
+              aria-selected={false}
+              className="autocomplete-row"
+              data-testid={`kg-tag-sugg-${s}`}
+              onMouseDown={() => add(s)}
+              style={{ cursor: 'pointer' }}
+            >
+              <span style={{ fontSize: 12 }}>{s}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Properties editor — k/v list with add / rename / remove ───────────
+function PropEditor({
+  properties,
+  suggestions,
+  onChange,
+}: {
+  properties: Record<string, string>;
+  suggestions: readonly string[];
+  onChange: (next: Record<string, string>) => void;
+}) {
+  const entries = Object.entries(properties);
+  const [draftKey, setDraftKey] = useState('');
+  const [draftVal, setDraftVal] = useState('');
+  const availableSuggestions = suggestions.filter(
+    (key) => properties[key] === undefined,
+  );
+
+  const editValue = (k: string, newVal: string) =>
+    onChange({ ...properties, [k]: newVal });
+  const renameKey = (oldK: string, newK: string) => {
+    if (!newK || newK === oldK || properties[newK] !== undefined) return;
+    const next: Record<string, string> = {};
+    for (const [k, v] of Object.entries(properties)) {
+      next[k === oldK ? newK : k] = v;
+    }
+    onChange(next);
+  };
+  const removeKey = (k: string) => {
+    const next = { ...properties };
+    delete next[k];
+    onChange(next);
+  };
+  const addProp = () => {
+    const k = draftKey.trim();
+    if (!k || properties[k] !== undefined) return;
+    onChange({ ...properties, [k]: draftVal });
+    setDraftKey('');
+    setDraftVal('');
+  };
+
+  return (
+    <div className="kg-prop-editor">
+      {entries.length === 0 && (
+        <div className="muted-sm" style={{ marginBottom: 6 }}>
+          No properties yet — add the first one below.
+        </div>
+      )}
+      {entries.map(([k, v]) => (
+        <div key={k} className="kg-prop-edit-row">
+          <input
+            className="kg-prop-key"
+            value={k}
+            onChange={(e) => renameKey(k, e.target.value.trim())}
+            placeholder="key"
+            aria-label={`Property key ${k}`}
+          />
+          <span className="kg-prop-sep">:</span>
+          <input
+            className="kg-prop-val"
+            value={String(v)}
+            onChange={(e) => editValue(k, e.target.value)}
+            placeholder="value"
+            aria-label={`Property value ${k}`}
+          />
+          <button
+            className="kg-prop-x"
+            onClick={() => removeKey(k)}
+            aria-label={`Remove ${k}`}
+            type="button"
+          >
+            <Icon name="x" size={10} />
+          </button>
+        </div>
+      ))}
+      <div className="kg-prop-add-row">
+        <input
+          className="kg-prop-key"
+          value={draftKey}
+          list="kg-prop-key-suggestions"
+          onChange={(e) => setDraftKey(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draftKey.trim()) {
+              e.preventDefault();
+              addProp();
+            }
+          }}
+          placeholder="new key"
+          aria-label="New property key"
+        />
+        {availableSuggestions.length > 0 && (
+          <datalist id="kg-prop-key-suggestions">
+            {availableSuggestions.map((key) => (
+              <option key={key} value={key} />
+            ))}
+          </datalist>
+        )}
+        <span className="kg-prop-sep">:</span>
+        <input
+          className="kg-prop-val"
+          value={draftVal}
+          onChange={(e) => setDraftVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draftKey.trim()) {
+              e.preventDefault();
+              addProp();
+            }
+          }}
+          placeholder="value"
+          aria-label="New property value"
+        />
+        <button
+          className="kg-prop-add ghost-btn small"
+          onClick={addProp}
+          disabled={!draftKey.trim() || properties[draftKey.trim()] !== undefined}
+          type="button"
+          data-testid="kg-prop-add"
+        >
+          <Icon name="plus" size={10} /> Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Lifecycle: Add entity inline form ────────────────────────────────
+interface AddEntityFormProps {
+  colors: Record<GraphEntityType, string>;
+  existingNames: readonly string[];
+  pending: boolean;
+  error?: string | null;
+  onCancel: () => void;
+  onSubmit: (payload: {
+    name: string;
+    type: GraphEntityType;
+    summary?: string;
+  }) => void;
+}
+
+export function AddEntityForm({
+  colors,
+  existingNames,
+  pending,
+  error,
+  onCancel,
+  onSubmit,
+}: AddEntityFormProps) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState<GraphEntityType>('PRODUCT');
+  const [summary, setSummary] = useState('');
+  const trimmed = name.trim();
+  const duplicate = trimmed.length > 0 && existingNames.includes(trimmed);
+  const canSubmit = trimmed.length > 0 && !duplicate && !pending;
+
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      name: trimmed,
+      type,
+      summary: summary.trim() || undefined,
+    });
+  };
+
+  return (
+    <form
+      className="kg-add-entity"
+      data-testid="kg-add-entity-form"
+      onSubmit={submit}
+    >
+      <label className="kg-form-field kg-form-name">
+        <span>Name</span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Entity name"
+          aria-label="New entity name"
+          autoFocus
+          data-testid="kg-add-entity-name"
+        />
+      </label>
+      <label className="kg-form-field kg-form-type">
+        <span>Type</span>
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value as GraphEntityType)}
+          aria-label="New entity type"
+          data-testid="kg-add-entity-type"
+        >
+          {TYPE_KEYS.map((t) => (
+            <option key={t} value={t}>
+              {GRAPH_TYPE_LABEL[t]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="kg-form-field kg-form-summary">
+        <span>
+          Summary <em style={{ opacity: 0.6 }}>(optional)</em>
+        </span>
+        <input
+          type="text"
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="What is this?"
+          aria-label="New entity summary"
+          data-testid="kg-add-entity-summary"
+        />
+      </label>
+      <div className="kg-form-actions">
+        <span
+          className="kg-type-swatch"
+          style={{ background: colors[type], width: 14, height: 14 }}
+          aria-hidden
+        />
+        <button type="button" className="ghost-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="ghost-btn primary"
+          disabled={!canSubmit}
+          data-testid="kg-add-entity-submit"
+        >
+          <Icon name="check" size={11} /> {pending ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+      {duplicate && (
+        <div
+          role="alert"
+          className="kg-form-error"
+          data-testid="kg-add-entity-duplicate"
+        >
+          An entity named “{trimmed}” already exists.
+        </div>
+      )}
+      {error && (
+        <div
+          role="alert"
+          className="kg-form-error"
+          data-testid="kg-add-entity-error"
+        >
+          {error}
+        </div>
+      )}
+    </form>
+  );
+}
+
+// ─── Lifecycle: Add outgoing relation inline form ─────────────────────
+interface AddRelationFormProps {
+  source: GraphEntity;
+  entities: readonly GraphEntity[];
+  relations: readonly GraphRelation[];
+  colors: Record<GraphEntityType, string>;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (payload: {
+    source: string;
+    target: string;
+    label: string;
+    strength: number;
+  }) => void;
+}
+
+function AddRelationForm({
+  source,
+  entities,
+  relations,
+  colors,
+  pending,
+  onCancel,
+  onSubmit,
+}: AddRelationFormProps) {
+  // Targets = every other entity in the graph. Sorted by name for a
+  // predictable picker order.
+  const targetOptions = useMemo(
+    () =>
+      entities
+        .filter((e) => e.id !== source.id)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [entities, source.id],
+  );
+  const [targetId, setTargetId] = useState<string>(
+    targetOptions[0]?.id ?? '',
+  );
+  const [label, setLabel] = useState('');
+  const [strength, setStrength] = useState(0.7);
+
+  const trimmedLabel = label.trim().toUpperCase().replace(/\s+/g, '_');
+  const duplicate =
+    targetId !== '' &&
+    relations.some((r) => r.source === source.id && r.target === targetId);
+  const canSubmit =
+    targetId !== '' && trimmedLabel.length > 0 && !duplicate && !pending;
+
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      source: source.id,
+      target: targetId,
+      label: trimmedLabel,
+      strength: Math.max(0, Math.min(1, strength)),
+    });
+  };
+
+  const target = targetOptions.find((e) => e.id === targetId) ?? null;
+
+  return (
+    <form
+      className="kg-add-relation"
+      data-testid="kg-add-rel-form"
+      onSubmit={submit}
+    >
+      <label className="kg-form-field kg-form-endpoint">
+        <span>From</span>
+        <span className="kg-form-readonly">
+          <span
+            className="kg-type-swatch"
+            style={{ background: colors[source.type] }}
+            aria-hidden
+          />
+          {source.name}
+        </span>
+      </label>
+      <label className="kg-form-field kg-form-target">
+        <span>To</span>
+        <select
+          value={targetId}
+          onChange={(e) => setTargetId(e.target.value)}
+          aria-label="Relation target entity"
+          data-testid="kg-add-rel-target"
+        >
+          {targetOptions.length === 0 ? (
+            <option value="">No other entities</option>
+          ) : (
+            targetOptions.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} · {e.type}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+      <label className="kg-form-field kg-form-relation-label">
+        <span>Label</span>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="USES, RUNS_ON, …"
+          aria-label="New relation label"
+          data-testid="kg-add-rel-label"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            textTransform: 'uppercase',
+          }}
+        />
+      </label>
+      <label className="kg-form-field kg-form-strength">
+        <span>Strength — {strength.toFixed(2)}</span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={strength}
+          onChange={(e) => setStrength(parseFloat(e.target.value))}
+          aria-label="New relation strength"
+          data-testid="kg-add-rel-strength"
+        />
+      </label>
+      <div className="kg-form-actions">
+        {target && (
+          <span
+            className="kg-type-swatch"
+            style={{ background: colors[target.type], width: 14, height: 14 }}
+            aria-hidden
+          />
+        )}
+        <button type="button" className="ghost-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="ghost-btn primary"
+          disabled={!canSubmit}
+          data-testid="kg-add-rel-submit"
+        >
+          <Icon name="check" size={11} /> {pending ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+      {duplicate && (
+        <div
+          role="alert"
+          className="kg-form-error"
+          data-testid="kg-add-rel-duplicate"
+        >
+          A relation from “{source.name}” to this target already exists.
+        </div>
+      )}
+    </form>
+  );
+}
+
