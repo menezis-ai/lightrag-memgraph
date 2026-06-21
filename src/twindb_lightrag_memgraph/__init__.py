@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 
+from ._hooks import clear_post_index_hooks, register_post_index_hook
 from .patches import registry as _registry
 
 globals().update(
