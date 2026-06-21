@@ -24,7 +24,6 @@ P0/P1 production-readiness hardening has been implemented on branch
 Current residual work is:
 
 - Resolve or formally risk-accept the deferred LightRAG 1.4.9.11 CVEs.
-- Split oversized backend/frontend modules before the next feature wave.
 - Add operational readiness endpoints, request-size posture, and observability baseline.
 - Run final release-candidate validation from a clean checkout/image.
 
@@ -36,7 +35,7 @@ Recent verification:
 
 ## Ground Rules For Agents
 
-Do not start with broad refactors unless assigned to a P2 modularization item. Each agent should take one workstream, keep changes scoped, and preserve existing behavior unless the task explicitly changes production policy.
+Do not start with broad refactors unless explicitly assigned. Each agent should take one workstream, keep changes scoped, and preserve existing behavior unless the task explicitly changes production policy.
 
 Before editing:
 
@@ -57,8 +56,6 @@ Definition of done for any workstream:
 ## Priority Map
 
 P0 is the deferred security follow-up that still blocks a clean "nothing left" production-readiness plan.
-
-P2 improves maintainability and lowers future change risk.
 
 P3 is operational hardening after the first release-readiness gates.
 
@@ -99,122 +96,6 @@ Suggested verification:
 ```bash
 uvx pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip
 uv run pytest tests/test_register.py tests/test_upstream_compat.py tests/test_lightrag_server_entrypoint.py -q
-```
-
-## P2. Modularization And Maintainability
-
-### P2-1. Split `webui_router.py`
-
-Objective: reduce a 2447-line route/store module into maintainable units without changing behavior.
-
-Current problem:
-
-- `webui_router.py` contains models orchestration, store management, folders, documents, tags, graph, activity, notifications, and route definitions.
-
-Recommended target structure:
-
-```text
-src/twindb_lightrag_memgraph/server/webui/
-  __init__.py
-  router.py
-  store.py
-  routes_documents.py
-  routes_tags.py
-  routes_graph.py
-  routes_activity.py
-  routes_notifications.py
-  routes_folders.py
-  events.py
-```
-
-Constraints:
-
-- Preserve existing import path if external callers import `server.webui_router.router`.
-- Keep a compatibility shim in `webui_router.py` initially.
-
-Acceptance criteria:
-
-- No route contract changes.
-- Existing tests pass.
-- `webui_router.py` becomes a thin compatibility module.
-
-Suggested verification:
-
-```bash
-uv run pytest tests/test_server/test_webui_router.py tests/test_server/test_webui_router_graph.py tests/test_server/test_webui_router_mutations.py -q
-```
-
-### P2-4. Split LightRAG Patching From `__init__.py`
-
-Objective: reduce risk in the package entrypoint and make patch behavior easier to test.
-
-Current problem:
-
-- `src/twindb_lightrag_memgraph/__init__.py` is approximately 1943 lines and owns too many patching concerns.
-
-Recommended target:
-
-```text
-src/twindb_lightrag_memgraph/patches/
-  __init__.py
-  registry.py
-  security_baseline.py
-  builtin_memgraph.py
-  merge_write_path.py
-  insert_done.py
-  version.py
-  server_create_app.py
-  native_route_capture.py
-```
-
-Constraints:
-
-- Public API must remain `from twindb_lightrag_memgraph import register`.
-- Preserve idempotency.
-- Preserve import timing guarantees, especially security baseline before LightRAG API imports.
-
-Acceptance criteria:
-
-- `register()` public behavior unchanged.
-- Storage-only mode remains unaffected.
-- Tests around upstream compatibility still pass.
-
-Suggested verification:
-
-```bash
-uv run pytest tests/test_register.py tests/test_upstream_compat.py tests/test_lightrag_server_entrypoint.py -q
-```
-
-### P2-5. Reduce Query Route Complexity
-
-Objective: make `twin_query_routes.py` easier to reason about and test.
-
-Current problem:
-
-- Query, streaming, source projection, tag/doc filtering, activity recording, and LightRAG compatibility all live in one large file.
-
-Recommended target:
-
-```text
-src/twindb_lightrag_memgraph/server/query/
-  router.py
-  models.py
-  params.py
-  sources.py
-  filters.py
-  stream.py
-  activity.py
-```
-
-Acceptance criteria:
-
-- `/twin/api/query`, `/twin/api/query/data`, and `/twin/api/query/stream` contracts unchanged.
-- Tests for grounded vs insufficient information still pass.
-
-Suggested verification:
-
-```bash
-uv run pytest tests/test_server/test_twin_query_routes.py tests/test_query_modes.py -q
 ```
 
 ## P3. Operational Hardening
@@ -269,7 +150,7 @@ Likely files:
 
 - `src/twindb_lightrag_memgraph/server/tracing.py`
 - `src/twindb_lightrag_memgraph/server/app.py`
-- route modules after P2 splits
+- route modules after the modularization splits
 
 Acceptance criteria:
 
@@ -313,13 +194,11 @@ python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 Suggested parallelization:
 
 - Agent A: P0-1 LightRAG CVE posture.
-- Agent B: P2-1 backend WebUI router split.
-- Agent D: P2-4 and P2-5 patch/query modularization.
 - Agent E: P3 operational readiness endpoints, limits, and observability.
 
 Coordination rules:
 
-- P2 refactors should be split into multiple PRs with no behavior change.
+- Refactors should be split into focused PRs with no behavior change.
 - Agents should not run overlapping edits on the same large module.
 - Any production behavior change must include docs and tests in the same PR.
 
