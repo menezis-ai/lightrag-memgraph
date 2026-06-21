@@ -286,6 +286,173 @@ async def _merge_classification_metadata(
         log.warning("Failed to persist classification metadata for %s: %s", doc_id, exc)
 
 
+def _partition_inputs(
+    active_hook, paths: list[Any]
+) -> tuple[list[tuple[int, dict[str, Any]]], list[tuple[int, ClassificationRejection]]]:
+    """Run the classification hook per path; split accepted vs rejected."""
+    accepted: list[tuple[int, dict[str, Any]]] = []
+    rejected: list[tuple[int, ClassificationRejection]] = []
+    for idx, path in enumerate(paths):
+        path_str = str(path or "").strip() or "unknown_source"
+        try:
+            payload = active_hook(path_str)
+        except ClassificationRejection as exc:
+            rejected.append((idx, exc))
+            continue
+        accepted.append((idx, payload))
+    return accepted, rejected
+
+
+async def _apply_classification_metadata(
+    self, accepted, inputs, explicit_ids, ids_provided
+) -> None:
+    """Write ``metadata.classification`` for each accepted document."""
+    for idx, payload in accepted:
+        doc_id = _doc_id_for_insert(
+            str(inputs[idx]),
+            str(explicit_ids[idx]) if ids_provided else None,
+        )
+        await _merge_classification_metadata(self, doc_id, payload)
+
+
+async def _record_rejections(
+    self, rejected, inputs, paths, explicit_ids, ids_provided, resolved_track_id
+) -> None:
+    """Persist failed DocStatus rows for rejected docs and emit audit events."""
+    failed_docs: dict[str, dict[str, Any]] = {}
+    for idx, exc in rejected:
+        doc_id = _doc_id_for_insert(
+            str(inputs[idx]),
+            str(explicit_ids[idx]) if ids_provided else None,
+        )
+        failed_docs[doc_id] = _failed_status_for_rejection(
+            content=str(inputs[idx]),
+            file_path=str(paths[idx] or "unknown_source"),
+            track_id=resolved_track_id,
+            exc=exc,
+        )
+        await _emit_rejection_event(
+            actor="system",
+            doc_id=doc_id,
+            file_path=str(paths[idx] or "unknown_source"),
+            exc=exc,
+        )
+    if failed_docs:
+        await self.doc_status.upsert(failed_docs)
+
+
+async def _reinsert_accepted(
+    self,
+    accepted,
+    inputs,
+    paths,
+    explicit_ids,
+    input,
+    ids,
+    file_paths,
+    split_by_character,
+    split_by_character_only,
+    resolved_track_id,
+) -> str:
+    """Re-run the original ainsert on the accepted subset, then tag metadata."""
+    original_ainsert = self.__class__._twin_original_ainsert
+    accepted_indices = [idx for idx, _payload in accepted]
+    accepted_inputs = [inputs[idx] for idx in accepted_indices]
+    accepted_paths = [paths[idx] for idx in accepted_indices]
+    accepted_ids = (
+        [explicit_ids[idx] for idx in accepted_indices] if ids is not None else None
+    )
+    result_track_id = await original_ainsert(
+        self,
+        accepted_inputs if isinstance(input, list) else accepted_inputs[0],
+        split_by_character,
+        split_by_character_only,
+        accepted_ids if isinstance(ids, list) else (accepted_ids[0] if accepted_ids else None),
+        accepted_paths if isinstance(file_paths, list) else accepted_paths[0],
+        resolved_track_id,
+    )
+    await _apply_classification_metadata(self, accepted, inputs, explicit_ids, ids is not None)
+    return result_track_id
+
+
+async def _patched_ainsert(
+    self,
+    input: str | list[str],
+    split_by_character: str | None = None,
+    split_by_character_only: bool = False,
+    ids: str | list[str] | None = None,
+    file_paths: str | list[str] | None = None,
+    track_id: str | None = None,
+) -> str:
+    """Classification-aware replacement for ``LightRAG.ainsert``.
+
+    Reads the active hook and the captured original ainsert from class
+    attributes (set by ``install_lightrag_ingestion_hook``) rather than a
+    closure, so the function can live at module scope.
+    """
+    original_ainsert = self.__class__._twin_original_ainsert
+    active_hook = self.__class__._twin_classification_hook
+    inputs = _as_list(input)
+    paths = _as_list(file_paths)
+    explicit_ids = _as_list(ids)
+
+    if file_paths is None:
+        return await original_ainsert(
+            self,
+            input,
+            split_by_character,
+            split_by_character_only,
+            ids,
+            file_paths,
+            track_id,
+        )
+    if len(paths) != len(inputs):
+        raise ValueError("Number of file paths must match the number of documents")
+    if ids is not None and len(explicit_ids) != len(inputs):
+        raise ValueError("Number of IDs must match the number of documents")
+
+    accepted, rejected = _partition_inputs(active_hook, paths)
+
+    if not rejected:
+        result_track_id = await original_ainsert(
+            self,
+            input,
+            split_by_character,
+            split_by_character_only,
+            ids,
+            file_paths,
+            track_id,
+        )
+        await _apply_classification_metadata(
+            self, accepted, inputs, explicit_ids, ids is not None
+        )
+        return result_track_id
+
+    from lightrag.utils import generate_track_id
+
+    resolved_track_id = track_id or generate_track_id("insert")
+    await _record_rejections(
+        self, rejected, inputs, paths, explicit_ids, ids is not None, resolved_track_id
+    )
+
+    if not accepted:
+        return resolved_track_id
+
+    return await _reinsert_accepted(
+        self,
+        accepted,
+        inputs,
+        paths,
+        explicit_ids,
+        input,
+        ids,
+        file_paths,
+        split_by_character,
+        split_by_character_only,
+        resolved_track_id,
+    )
+
+
 def install_lightrag_ingestion_hook(
     *,
     label_map_path: str | os.PathLike[str] | None = None,
@@ -299,7 +466,6 @@ def install_lightrag_ingestion_hook(
     ``classification-rejected`` activity event is emitted best-effort.
     """
     from lightrag import LightRAG
-    from lightrag.utils import generate_track_id
 
     hook = install_classification_hook(
         label_map_path=label_map_path,
@@ -311,115 +477,6 @@ def install_lightrag_ingestion_hook(
     if getattr(LightRAG, "_twin_classification_patched", False):
         return
 
-    original_ainsert = LightRAG.ainsert
-    setattr(LightRAG, "_twin_original_ainsert", original_ainsert)
-
-    async def _patched_ainsert(
-        self,
-        input: str | list[str],
-        split_by_character: str | None = None,
-        split_by_character_only: bool = False,
-        ids: str | list[str] | None = None,
-        file_paths: str | list[str] | None = None,
-        track_id: str | None = None,
-    ) -> str:
-        active_hook = getattr(self.__class__, "_twin_classification_hook")
-        inputs = _as_list(input)
-        paths = _as_list(file_paths)
-        explicit_ids = _as_list(ids)
-
-        if file_paths is None:
-            return await original_ainsert(
-                self,
-                input,
-                split_by_character,
-                split_by_character_only,
-                ids,
-                file_paths,
-                track_id,
-            )
-        if len(paths) != len(inputs):
-            raise ValueError("Number of file paths must match the number of documents")
-        if ids is not None and len(explicit_ids) != len(inputs):
-            raise ValueError("Number of IDs must match the number of documents")
-
-        accepted: list[tuple[int, dict[str, Any]]] = []
-        rejected: list[tuple[int, ClassificationRejection]] = []
-        for idx, path in enumerate(paths):
-            path_str = str(path or "").strip() or "unknown_source"
-            try:
-                payload = active_hook(path_str)
-            except ClassificationRejection as exc:
-                rejected.append((idx, exc))
-                continue
-            accepted.append((idx, payload))
-
-        if not rejected:
-            result_track_id = await original_ainsert(
-                self,
-                input,
-                split_by_character,
-                split_by_character_only,
-                ids,
-                file_paths,
-                track_id,
-            )
-            for idx, payload in accepted:
-                doc_id = _doc_id_for_insert(
-                    str(inputs[idx]),
-                    str(explicit_ids[idx]) if ids is not None else None,
-                )
-                await _merge_classification_metadata(self, doc_id, payload)
-            return result_track_id
-
-        resolved_track_id = track_id or generate_track_id("insert")
-        failed_docs: dict[str, dict[str, Any]] = {}
-        for idx, exc in rejected:
-            doc_id = _doc_id_for_insert(
-                str(inputs[idx]),
-                str(explicit_ids[idx]) if ids is not None else None,
-            )
-            failed_docs[doc_id] = _failed_status_for_rejection(
-                content=str(inputs[idx]),
-                file_path=str(paths[idx] or "unknown_source"),
-                track_id=resolved_track_id,
-                exc=exc,
-            )
-            await _emit_rejection_event(
-                actor="system",
-                doc_id=doc_id,
-                file_path=str(paths[idx] or "unknown_source"),
-                exc=exc,
-            )
-
-        if failed_docs:
-            await self.doc_status.upsert(failed_docs)
-
-        if not accepted:
-            return resolved_track_id
-
-        accepted_indices = [idx for idx, _payload in accepted]
-        accepted_inputs = [inputs[idx] for idx in accepted_indices]
-        accepted_paths = [paths[idx] for idx in accepted_indices]
-        accepted_ids = (
-            [explicit_ids[idx] for idx in accepted_indices] if ids is not None else None
-        )
-        result_track_id = await original_ainsert(
-            self,
-            accepted_inputs if isinstance(input, list) else accepted_inputs[0],
-            split_by_character,
-            split_by_character_only,
-            accepted_ids if isinstance(ids, list) else (accepted_ids[0] if accepted_ids else None),
-            accepted_paths if isinstance(file_paths, list) else accepted_paths[0],
-            resolved_track_id,
-        )
-        for idx, payload in accepted:
-            doc_id = _doc_id_for_insert(
-                str(inputs[idx]),
-                str(explicit_ids[idx]) if ids is not None else None,
-            )
-            await _merge_classification_metadata(self, doc_id, payload)
-        return result_track_id
-
+    setattr(LightRAG, "_twin_original_ainsert", LightRAG.ainsert)
     LightRAG.ainsert = _patched_ainsert
     setattr(LightRAG, "_twin_classification_patched", True)
