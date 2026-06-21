@@ -215,10 +215,68 @@ async def _memgraph_readiness_check() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
-    """Build the FastAPI application."""
-    if settings is None:
-        settings = get_settings()
+async def _init_webui_backends(settings: LightRAGServerSettings) -> None:
+    """L2: wire the Memgraph-backed WebUI stores per folder (S4c).
+
+    No-op unless ``enable_webui_routes`` and at least one ``memgraph`` store
+    backend is configured.
+    """
+    if not settings.enable_webui_routes:
+        return
+
+    from .webui_router import WebuiStore, set_store
+    from .webui_activitystore import MemgraphActivityStore
+    from .webui_notificationstore import MemgraphNotificationStore
+    from .webui_tagstore import MemgraphTagStore
+    from .folder import load_folder_catalog
+
+    backends_applied: list[str] = []
+    if settings.webui_tag_backend == "memgraph":
+        backends_applied.append("tags")
+    if settings.webui_activity_backend == "memgraph":
+        backends_applied.append("activity")
+    if settings.webui_notifications_backend == "memgraph":
+        backends_applied.append("notifications")
+    if not backends_applied:
+        return
+
+    for folder in load_folder_catalog().folders:
+        # `mode="memgraph"` so the default folder doesn't silently expose
+        # the demo documents/graph from `webui_seed` through
+        # /twin/api/documents and /twin/api/graph/* on a real deploy
+        # (mock-kill F6).
+        store = WebuiStore.for_folder(folder.id, mode="memgraph")
+        if settings.webui_tag_backend == "memgraph":
+            tag_store = MemgraphTagStore(workspace=folder.id)
+            await tag_store.initialize()
+            await tag_store.bootstrap_categories_if_empty()
+            store._tag_backend = tag_store  # noqa: SLF001
+        if settings.webui_activity_backend == "memgraph":
+            activity_store = MemgraphActivityStore(workspace=folder.id)
+            await activity_store.initialize()
+            store._activity_backend = activity_store  # noqa: SLF001
+        if settings.webui_notifications_backend == "memgraph":
+            notification_store = MemgraphNotificationStore(workspace=folder.id)
+            await notification_store.initialize()
+            store._notification_backend = notification_store  # noqa: SLF001
+        set_store(store, folder=folder.id)
+    logger.info(
+        "L2 patch applied (WebUI Memgraph backends: %s, folders=%s)",
+        ", ".join(backends_applied),
+        ",".join(folder.id for folder in load_folder_catalog().folders),
+    )
+
+
+def _webui_uses_memgraph(settings: LightRAGServerSettings) -> bool:
+    return settings.enable_webui_routes and (
+        settings.webui_tag_backend == "memgraph"
+        or settings.webui_activity_backend == "memgraph"
+        or settings.webui_notifications_backend == "memgraph"
+    )
+
+
+def _build_lifespan(settings: LightRAGServerSettings):
+    """Build the FastAPI lifespan context manager for ``create_app``."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -275,64 +333,190 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             logger.info("L2 patch applied (LangSmith tracing)")
 
         # -- L2 Patch: WebUI store backends (S4c) --
-        if settings.enable_webui_routes:
-            from .webui_router import WebuiStore, set_store
-            from .webui_activitystore import MemgraphActivityStore
-            from .webui_notificationstore import MemgraphNotificationStore
-            from .webui_tagstore import MemgraphTagStore
-            from .folder import load_folder_catalog
-
-            backends_applied: list[str] = []
-            if settings.webui_tag_backend == "memgraph":
-                backends_applied.append("tags")
-            if settings.webui_activity_backend == "memgraph":
-                backends_applied.append("activity")
-            if settings.webui_notifications_backend == "memgraph":
-                backends_applied.append("notifications")
-            if backends_applied:
-                for folder in load_folder_catalog().folders:
-                    # `mode="memgraph"` so the default folder doesn't
-                    # silently expose the demo documents/graph from
-                    # `webui_seed` through /twin/api/documents and
-                    # /twin/api/graph/* on a real deploy (mock-kill F6).
-                    store = WebuiStore.for_folder(folder.id, mode="memgraph")
-                    if settings.webui_tag_backend == "memgraph":
-                        tag_store = MemgraphTagStore(workspace=folder.id)
-                        await tag_store.initialize()
-                        await tag_store.bootstrap_categories_if_empty()
-                        store._tag_backend = tag_store  # noqa: SLF001
-                    if settings.webui_activity_backend == "memgraph":
-                        activity_store = MemgraphActivityStore(workspace=folder.id)
-                        await activity_store.initialize()
-                        store._activity_backend = activity_store  # noqa: SLF001
-                    if settings.webui_notifications_backend == "memgraph":
-                        notification_store = MemgraphNotificationStore(
-                            workspace=folder.id
-                        )
-                        await notification_store.initialize()
-                        store._notification_backend = (  # noqa: SLF001
-                            notification_store
-                        )
-                    set_store(store, folder=folder.id)
-                logger.info(
-                    "L2 patch applied (WebUI Memgraph backends: %s, folders=%s)",
-                    ", ".join(backends_applied),
-                    ",".join(folder.id for folder in load_folder_catalog().folders),
-                )
+        await _init_webui_backends(settings)
 
         yield
 
         # -- Shutdown --
         _rag = None
-        if settings.enable_webui_routes and (
-            settings.webui_tag_backend == "memgraph"
-            or settings.webui_activity_backend == "memgraph"
-            or settings.webui_notifications_backend == "memgraph"
-        ):
+        if _webui_uses_memgraph(settings):
             from .webui_router import reset_store
 
             reset_store()
         logger.info("LightRAG server shut down")
+
+    return lifespan
+
+
+_QUOTA_GATED_PATHS = {
+    DOCUMENTS_UPLOAD_PATH,
+    "/documents/reprocess_failed",
+}
+_SCAN_PREFIX = "/documents/"
+_SCAN_SUFFIX = "/scan"
+
+
+async def _instance_quota_middleware(request, call_next):
+    """Refuse 507 on ingestion endpoints when Memgraph is at its memory limit.
+
+    Path-matched so the snapshot endpoint and every read path stay fast.
+    """
+    if request.method == "POST":
+        path = request.url.path
+        if path in _QUOTA_GATED_PATHS or (
+            path.startswith(_SCAN_PREFIX) and path.endswith(_SCAN_SUFFIX)
+        ):
+            from fastapi import HTTPException
+
+            from .quota import enforce_instance_quota
+
+            try:
+                await enforce_instance_quota()
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                )
+    return await call_next(request)
+
+
+def _request_folder(request) -> str:
+    return getattr(request.state, "folder", None) or request.headers.get(
+        "x-twin-folder", "-"
+    )
+
+
+def _request_trace_id(request) -> str:
+    return getattr(request.state, "trace_id", None) or "-"
+
+
+def _oversized_response(
+    request, request_id, route_group, auth_mode_label, started, limit, body_bytes
+):
+    """Return a 413 response (and log it) when the body exceeds the limit, else None.
+
+    Runs before ``call_next`` so ``request.state.folder`` is not set yet — the
+    folder is read from the header directly here (unlike the post-response logs).
+    """
+    if not (limit and body_bytes is not None and body_bytes > limit):
+        return None
+    response = JSONResponse(
+        {
+            "detail": "Request body too large",
+            "limit_bytes": limit,
+            "request_id": request_id,
+        },
+        status_code=413,
+    )
+    response.headers["x-request-id"] = request_id
+    latency_ms = (time.perf_counter() - started) * 1000
+    logger.warning(
+        "http_request method=%s path=%s status=%s request_id=%s "
+        "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f "
+        "trace_id=%s content_length=%s limit_bytes=%s",
+        request.method,
+        request.url.path,
+        413,
+        request_id,
+        request.headers.get("x-twin-folder", "-"),
+        auth_mode_label,
+        route_group,
+        latency_ms,
+        _request_trace_id(request),
+        body_bytes,
+        limit,
+    )
+    return response
+
+
+def _log_request_failed(request, request_id, route_group, auth_mode_label, started):
+    latency_ms = (time.perf_counter() - started) * 1000
+    logger.exception(
+        "http_request_failed method=%s path=%s status=%s request_id=%s "
+        "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
+        request.method,
+        request.url.path,
+        500,
+        request_id,
+        _request_folder(request),
+        auth_mode_label,
+        route_group,
+        latency_ms,
+        _request_trace_id(request),
+    )
+
+
+def _log_request_completed(
+    request, request_id, route_group, auth_mode_label, started, status_code
+):
+    latency_ms = (time.perf_counter() - started) * 1000
+    log_level = logging.WARNING if status_code >= 500 else logging.INFO
+    logger.log(
+        log_level,
+        "http_request method=%s path=%s status=%s request_id=%s folder=%s "
+        "auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
+        request.method,
+        request.url.path,
+        status_code,
+        request_id,
+        _request_folder(request),
+        auth_mode_label,
+        route_group,
+        latency_ms,
+        _request_trace_id(request),
+    )
+
+
+def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_label: str):
+    """Build the request-logging / body-limit / metrics middleware dispatch."""
+
+    async def _operational_middleware(request: Request, call_next):
+        started = time.perf_counter()
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        path = request.url.path
+        route_group = _route_group(path)
+        request.state.request_id = request_id
+        request.state.route_group = route_group
+
+        trace_ctx = extract_trace_parent(dict(request.headers))
+        if trace_ctx and "traceparent" in trace_ctx:
+            request.state.traceparent = trace_ctx["traceparent"]
+            request.state.trace_id = trace_ctx.get("trace_id")
+
+        limit = _body_limit_for_path(path, settings)
+        body_bytes = _content_length(request.headers)
+        oversized = _oversized_response(
+            request, request_id, route_group, auth_mode_label, started, limit, body_bytes
+        )
+        if oversized is not None:
+            return oversized
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            _record_status_metrics(path, 500)
+            _log_request_failed(
+                request, request_id, route_group, auth_mode_label, started
+            )
+            raise
+
+        response.headers["x-request-id"] = request_id
+        _record_status_metrics(path, response.status_code)
+        _log_request_completed(
+            request, request_id, route_group, auth_mode_label, started,
+            response.status_code,
+        )
+        return response
+
+    return _operational_middleware
+
+
+def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
+    """Build the FastAPI application."""
+    if settings is None:
+        settings = get_settings()
+
+    lifespan = _build_lifespan(settings)
 
     app = FastAPI(
         title="LightRAG Server (Memgraph)",
@@ -556,125 +740,11 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     async def operational_metrics():
         return metrics_snapshot()
 
-    # -- Instance quota middleware: refuses 507 on ingestion endpoints
-    # when Memgraph is at MEMGRAPH_MEMORY_LIMIT. Path-matched so the
-    # snapshot endpoint and every read path stay fast.
-    from .quota import enforce_instance_quota as _enforce_quota
-
-    _QUOTA_GATED_PATHS = {
-        DOCUMENTS_UPLOAD_PATH,
-        "/documents/reprocess_failed",
-    }
-    _SCAN_PREFIX = "/documents/"
-    _SCAN_SUFFIX = "/scan"
-
-    @app.middleware("http")
-    async def _instance_quota_middleware(request, call_next):
-        if request.method == "POST":
-            path = request.url.path
-            if (
-                path in _QUOTA_GATED_PATHS
-                or (path.startswith(_SCAN_PREFIX) and path.endswith(_SCAN_SUFFIX))
-            ):
-                from fastapi import HTTPException
-                from fastapi.responses import JSONResponse
-
-                try:
-                    await _enforce_quota()
-                except HTTPException as exc:
-                    return JSONResponse(
-                        {"detail": exc.detail},
-                        status_code=exc.status_code,
-                    )
-        return await call_next(request)
-
-    @app.middleware("http")
-    async def _operational_middleware(request: Request, call_next):
-        started = time.perf_counter()
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-        path = request.url.path
-        route_group = _route_group(path)
-        request.state.request_id = request_id
-        request.state.route_group = route_group
-
-        trace_ctx = extract_trace_parent(dict(request.headers))
-        if trace_ctx and "traceparent" in trace_ctx:
-            request.state.traceparent = trace_ctx["traceparent"]
-            request.state.trace_id = trace_ctx.get("trace_id")
-
-        limit = _body_limit_for_path(path, settings)
-        body_bytes = _content_length(request.headers)
-        if limit and body_bytes is not None and body_bytes > limit:
-            response = JSONResponse(
-                {
-                    "detail": "Request body too large",
-                    "limit_bytes": limit,
-                    "request_id": request_id,
-                },
-                status_code=413,
-            )
-            response.headers["x-request-id"] = request_id
-            latency_ms = (time.perf_counter() - started) * 1000
-            logger.warning(
-                "http_request method=%s path=%s status=%s request_id=%s "
-                "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f "
-                "trace_id=%s content_length=%s limit_bytes=%s",
-                request.method,
-                path,
-                413,
-                request_id,
-                request.headers.get("x-twin-folder", "-"),
-                _auth_mode_label,
-                route_group,
-                latency_ms,
-                getattr(request.state, "trace_id", None) or "-",
-                body_bytes,
-                limit,
-            )
-            return response
-
-        try:
-            response = await call_next(request)
-        except Exception:
-            _record_status_metrics(path, 500)
-            latency_ms = (time.perf_counter() - started) * 1000
-            logger.exception(
-                "http_request_failed method=%s path=%s status=%s request_id=%s "
-                "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
-                request.method,
-                path,
-                500,
-                request_id,
-                getattr(request.state, "folder", None)
-                or request.headers.get("x-twin-folder", "-"),
-                _auth_mode_label,
-                route_group,
-                latency_ms,
-                getattr(request.state, "trace_id", None) or "-",
-            )
-            raise
-
-        response.headers["x-request-id"] = request_id
-        status_code = response.status_code
-        _record_status_metrics(path, status_code)
-        latency_ms = (time.perf_counter() - started) * 1000
-        log_level = logging.WARNING if status_code >= 500 else logging.INFO
-        logger.log(
-            log_level,
-            "http_request method=%s path=%s status=%s request_id=%s folder=%s "
-            "auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
-            request.method,
-            path,
-            status_code,
-            request_id,
-            getattr(request.state, "folder", None)
-            or request.headers.get("x-twin-folder", "-"),
-            _auth_mode_label,
-            route_group,
-            latency_ms,
-            getattr(request.state, "trace_id", None) or "-",
-        )
-        return response
+    # -- Instance quota + operational middleware. Quota is registered first
+    # so the operational logger wraps it as the outer layer (FastAPI applies
+    # middleware in reverse registration order). --
+    app.middleware("http")(_instance_quota_middleware)
+    app.middleware("http")(_make_operational_middleware(settings, _auth_mode_label))
 
     log_api_wiring_sanity(app, surface="standalone")
 

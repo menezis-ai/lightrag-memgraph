@@ -144,17 +144,19 @@ class TestForFolderMemgraphModeIntegration:
         )
 
     def test_app_lifespan_uses_memgraph_mode(self):
-        """`server/app.py` lifespan call site must pass `mode="memgraph"`
-        when any *_backend setting is 'memgraph'. Same guard rationale."""
+        """`server/app.py` WebUI backend init must pass `mode="memgraph"`
+        when any *_backend setting is 'memgraph'. Same guard rationale.
+
+        The call lives in `_init_webui_backends`, invoked from the lifespan
+        built by `_build_lifespan` (extracted from `create_app` by the
+        cognitive-complexity refactor)."""
         import inspect
 
-        from twindb_lightrag_memgraph.server.app import create_app
+        from twindb_lightrag_memgraph.server.app import _init_webui_backends
 
-        source = inspect.getsource(create_app)
-        # The call lives inside `_lifespan` which is defined inside
-        # `create_app`. Search the enclosing source.
+        source = inspect.getsource(_init_webui_backends)
         assert 'WebuiStore.for_folder(folder.id, mode="memgraph")' in source, (
-            "server/app.py lifespan must pass mode='memgraph' to "
+            "server/app.py _init_webui_backends must pass mode='memgraph' to "
             "for_folder when memgraph backends are configured — see "
             "mock-kill F6."
         )
