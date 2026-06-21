@@ -1,0 +1,628 @@
+"""Tag catalog and governance endpoints for the Twin WebUI."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+
+from ..folder import current_folder_id
+from ..webui_models import (
+    AckResponse,
+    TagApproveBody,
+    TagCategory,
+    TagDeleteBody,
+    TagDeprecateBody,
+    TagEditBody,
+    TagEntry,
+    TagRejectBody,
+    TagRequestBody,
+    TagSynonymsBody,
+    ThesaurusEntry,
+)
+from ..webui_tagstore import MemgraphTagStore
+from .events import _make_event, _make_notification, _utcnow_iso
+from .store import WebuiStore, get_store
+
+router = APIRouter()
+
+
+@router.get("/thesaurus", response_model=list[ThesaurusEntry])
+async def list_thesaurus() -> list[dict[str, Any]]:
+    return await get_store().list_thesaurus()
+
+
+@router.get("/tags", response_model=list[TagEntry])
+async def list_tags() -> list[dict[str, Any]]:
+    return await get_store().list_tags()
+
+
+@router.get("/tags/categories", response_model=list[TagCategory])
+async def list_tag_categories() -> list[dict[str, Any]]:
+    return await get_store().list_tag_categories()
+
+
+_CATEGORIES_TEMPLATE: list[dict[str, Any]] = [
+    {"id": "network", "label": "Network", "color": "#1F8A7A"},
+    {"id": "infra", "label": "Infrastructure", "color": "#5A7FB4"},
+    {"id": "compliance", "label": "Compliance", "color": "#9C2D8E"},
+    {"id": "operations", "label": "Operations", "color": "#C24A24"},
+    {"id": "governance", "label": "Governance", "color": "#2C3E50"},
+    {"id": "lifecycle", "label": "Lifecycle", "color": "#8A5C0E"},
+]
+
+
+@router.get("/tags/categories/template")
+async def get_categories_template():
+    """Return the canonical template JSON that operators can save + edit."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        content=_CATEGORIES_TEMPLATE,
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="twin-categories.template.json"'
+            ),
+        },
+    )
+
+
+@router.post("/tags/categories/_import", response_model=AckResponse)
+async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mirror the uploaded JSON into the active folder's categories store."""
+    backend = get_store().tags
+    if not isinstance(backend, MemgraphTagStore):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Categories import requires the Memgraph store backend "
+                "(register with webui_stores='memgraph'). The current "
+                "backend does not support taxonomy mutation."
+            ),
+        )
+
+    try:
+        await backend.replace_categories_from_list(body, source="import")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"ok": True}
+
+
+@router.post("/documents/_bulk-retag")
+async def bulk_retag_documents(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply tag adds/removes to a list of documents as graph edges."""
+    from ... import _pool
+    from ..._constants import resolve_workspace
+
+    targets = body.get("targets") or []
+    adds = list(body.get("adds") or [])
+    removes = list(body.get("removes") or [])
+    actor = body.get("actor") or "system"
+
+    if not isinstance(targets, list) or not targets:
+        raise HTTPException(
+            status_code=400,
+            detail="targets must be a non-empty list of doc_id strings.",
+        )
+    if len(targets) > 500:
+        raise HTTPException(
+            status_code=413,
+            detail="bulk-retag accepts at most 500 target documents.",
+        )
+    if len(adds) + len(removes) > 50:
+        raise HTTPException(
+            status_code=413,
+            detail="bulk-retag accepts at most 50 tag mutations.",
+        )
+    for tag in (*adds, *removes):
+        if not isinstance(tag, str) or not tag.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="tags must be non-empty strings.",
+            )
+
+    workspace = resolve_workspace()
+    folder = current_folder_id()
+    doc_label = f"DocStatus_{workspace}"
+    tag_label = f"WebuiTag_{folder}"
+    now = _utcnow_iso()
+
+    placeholder = json.dumps(
+        {
+            "tag": "<PLACEHOLDER>",
+            "tier": "requested",
+            "category": "uncategorized",
+            "status": "pending-review",
+            "def": "Auto-created via retag — needs Steward review.",
+            "aliases": [],
+            "deprecates": [],
+            "sources_count": 0,
+            "chunks_count": 0,
+            "query_freq_30d": 0,
+            "related": [],
+            "examples": [],
+            "requested_by": actor,
+            "requested_at": now,
+            "justification": "auto-created via retag",
+            "created": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+            "last_edit": {
+                "by": actor,
+                "at": now[:10],
+                "action": "auto-requested-via-retag",
+            },
+        },
+        sort_keys=True,
+    )
+
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $ids AS id
+            MATCH (n:`{doc_label}` {{id: id}})
+            RETURN n.id AS id, n.file_path AS file_path
+            """,
+            ids=targets,
+        )
+        existing: dict[str, str | None] = {}
+        async for record in result:
+            existing[record["id"]] = record.get("file_path")
+        await result.consume()
+
+    failed = [t for t in targets if t not in existing]
+    if not existing:
+        return {"updated": 0, "failed": failed}
+
+    doc_ids = list(existing.keys())
+
+    if adds or removes:
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                tx = await session.begin_transaction()
+                try:
+                    if adds:
+                        tag_rows = [
+                            {
+                                "id": tag_id,
+                                "data": placeholder.replace(
+                                    '"<PLACEHOLDER>"', json.dumps(tag_id)
+                                ),
+                            }
+                            for tag_id in adds
+                        ]
+                        result = await tx.run(
+                            f"""
+                            UNWIND $tags AS tag
+                            MERGE (t:`{tag_label}` {{id: tag.id}})
+                              ON CREATE SET
+                                t.data = tag.data,
+                                t.`__created_at` = timestamp(),
+                                t.`__auto_via_retag` = true
+                              SET t.`__updated_at` = timestamp()
+                            WITH t
+                            UNWIND $docs AS docId
+                            MATCH (d:`{doc_label}` {{id: docId}})
+                            MERGE (d)-[r:TAGGED_WITH]->(t)
+                              ON CREATE SET r.at = $now, r.actor = $actor
+                            """,
+                            tags=tag_rows,
+                            docs=doc_ids,
+                            now=now,
+                            actor=actor,
+                        )
+                        await result.consume()
+
+                    if removes:
+                        result = await tx.run(
+                            f"""
+                            UNWIND $docs AS docId
+                            UNWIND $tags AS tagId
+                            MATCH (d:`{doc_label}` {{id: docId}})-[r:TAGGED_WITH]->(t:`{tag_label}` {{id: tagId}})
+                            DELETE r
+                            """,
+                            docs=doc_ids,
+                            tags=removes,
+                        )
+                        await result.consume()
+
+                    await tx.commit()
+                except Exception:
+                    await tx.rollback()
+                    raise
+
+    async with _pool.get_read_session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $docs AS docId
+            MATCH (d:`{doc_label}` {{id: docId}})
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+            RETURN docId, collect(t.id) AS tags
+            """,
+            docs=doc_ids,
+        )
+        resulting_by_doc: dict[str, list[str]] = {}
+        async for record in result:
+            tags = sorted(tid for tid in (record["tags"] or []) if tid)
+            resulting_by_doc[record["docId"]] = tags
+        await result.consume()
+
+    for doc_id in doc_ids:
+        new_tags = resulting_by_doc.get(doc_id, [])
+        event = _make_event(
+            kind="doc-retagged",
+            sev="info",
+            actor=actor,
+            target_label=existing[doc_id] or doc_id,
+            summary=(
+                f"tags: +{','.join(adds) or '∅'} -{','.join(removes) or '∅'}"
+            ),
+            meta={
+                "doc_id": doc_id,
+                "adds": adds,
+                "removes": removes,
+                "resulting_tags": new_tags,
+            },
+            target_type="document",
+        )
+        await get_store().record_activity(event)
+
+    return {"updated": len(doc_ids), "failed": failed}
+
+
+async def _emit_tag_audit(
+    *,
+    store: WebuiStore,
+    actor: str,
+    kind: str,
+    sev: str,
+    target_label: str,
+    summary: str,
+    meta: dict[str, Any],
+    notification: dict[str, Any] | None,
+) -> None:
+    """Record an activity event and (optionally) push a notification."""
+    event = _make_event(
+        kind=kind,
+        sev=sev,
+        actor=actor,
+        target_label=target_label,
+        summary=summary,
+        meta=meta,
+    )
+    await store.record_activity(event)
+    if notification is not None:
+        await store.push_notification(notification)
+
+
+@router.post("/tags", response_model=TagEntry, status_code=201)
+async def request_tag(body: TagRequestBody) -> dict[str, Any]:
+    """Propose a new tag (tier='requested', status='pending-review')."""
+    store = get_store()
+    existing = await store.tags.get_tag(body.tag)
+    if existing is not None:
+        raise HTTPException(409, f"Tag '{body.tag}' already exists")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry: dict[str, Any] = {
+        "tag": body.tag,
+        "tier": "requested",
+        "category": body.category,
+        "status": "pending-review",
+        "def": body.def_,
+        "long_description": body.long_description or "",
+        "aliases": list(body.aliases),
+        "deprecates": [],
+        "sources_count": 0,
+        "chunks_count": 0,
+        "query_freq_30d": 0,
+        "created": {"by": actor, "at": now},
+        "last_edit": {"by": actor, "at": now, "action": "requested"},
+        "related": [],
+        "examples": [],
+        "requested_by": actor,
+        "requested_at": now,
+        "justification": body.justification or "",
+    }
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=body.tag,
+        summary=f"Tag {body.tag} requested for palier-3 review",
+        meta={"category": body.category, "justification": body.justification},
+        notification=_make_notification(
+            title="Tag",
+            tagname=body.tag,
+            suffix="requested",
+            sub=body.justification or f"category {body.category}",
+        ),
+    )
+    return stored
+
+
+@router.post("/tags/{name}/approve", response_model=TagEntry)
+async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry["tier"] = 3
+    entry["status"] = "active"
+    entry["last_edit"] = {"by": actor, "at": now, "action": "approved"}
+    entry.pop("requested_by", None)
+    entry.pop("requested_at", None)
+    entry.pop("justification", None)
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=name,
+        summary=f"Tag {name} approved (now Tier 3)",
+        meta={"tier": 3, "status": "active"},
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="approved",
+            sub="Added to tag catalog · Tier 3",
+        ),
+    )
+    return stored
+
+
+@router.post("/tags/{name}/reject", response_model=TagEntry)
+async def reject_tag(name: str, body: TagRejectBody) -> dict[str, Any]:
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry["status"] = "rejected"
+    entry["last_edit"] = {"by": actor, "at": now, "action": "rejected"}
+    entry["reject_reason"] = body.reason
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="warning",
+        target_label=name,
+        summary=f"Tag {name} rejected — {body.reason}",
+        meta={"reason": body.reason},
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="rejected",
+            sub=body.reason,
+        ),
+    )
+    return stored
+
+
+@router.patch("/tags/{name}", response_model=TagEntry)
+async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
+    from .. import webui_router as legacy
+
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    changed: list[str] = []
+    renamed_from: str | None = None
+    if body.tag is not None:
+        new_name = body.tag.strip()
+        if not new_name:
+            raise HTTPException(400, "Tag name cannot be empty")
+        if new_name != entry.get("tag"):
+            existing = await store.tags.get_tag(new_name)
+            if existing is not None:
+                raise HTTPException(409, f"Tag '{new_name}' already exists")
+            old_name = entry["tag"]
+            entry["tag"] = new_name
+            renamed_from = old_name
+            changed.append("tag")
+    if body.def_ is not None and body.def_ != entry.get("def"):
+        entry["def"] = body.def_
+        changed.append("def")
+    if (
+        body.long_description is not None
+        and body.long_description != entry.get("long_description", "")
+    ):
+        entry["long_description"] = body.long_description
+        changed.append("long_description")
+    if body.category is not None and body.category != entry.get("category"):
+        entry["category"] = body.category
+        changed.append("category")
+    if body.aliases is not None and body.aliases != entry.get("aliases"):
+        entry["aliases"] = list(body.aliases)
+        changed.append("aliases")
+    if body.deprecates is not None:
+        entry["deprecates"] = list(body.deprecates)
+        changed.append("deprecates")
+    entry["last_edit"] = {"by": actor, "at": now, "action": "edited"}
+    stored = await store.tags.upsert_tag(entry)
+    cascade_affected: int | None = None
+    if renamed_from is not None:
+        new_name = entry["tag"]
+        seed_affected = legacy._cascade_seed_document_tags(
+            store,
+            name=renamed_from,
+            strategy="migrate",
+            to=new_name,
+        )
+        graph_affected = await legacy._cascade_graph_tag_edges(
+            name=renamed_from,
+            strategy="migrate",
+            to=new_name,
+            actor=actor,
+            strict=isinstance(store.tags, MemgraphTagStore),
+        )
+        cascade_affected = (
+            graph_affected if graph_affected is not None else seed_affected
+        )
+        await store.tags.delete_tag(renamed_from)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=entry.get("tag") or name,
+        summary=(
+            f"Tag {entry.get('tag') or name} edited "
+            f"({', '.join(changed) or 'no-op'})"
+        ),
+        meta={
+            "fields": changed,
+            "renamed_from": renamed_from,
+            "cascade_affected": cascade_affected,
+        },
+        notification=_make_notification(
+            title="Tag",
+            tagname=entry.get("tag") or name,
+            suffix="updated",
+            sub=", ".join(changed) or "no field change",
+        ),
+    )
+    return stored
+
+
+@router.post("/tags/{name}/deprecate", response_model=TagEntry)
+async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry["status"] = "deprecated"
+    entry["last_edit"] = {"by": actor, "at": now, "action": "deprecated"}
+    if body.reason:
+        entry["deprecate_reason"] = body.reason
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="warning",
+        target_label=name,
+        summary=f"Tag {name} deprecated"
+        + (f" — {body.reason}" if body.reason else ""),
+        meta={"reason": body.reason},
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="deprecated",
+            sub=body.reason or "Excluded from default retrieval",
+        ),
+    )
+    return stored
+
+
+@router.post("/tags/{name}/synonyms", response_model=TagEntry)
+async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry["aliases"] = list(body.aliases)
+    entry["last_edit"] = {"by": actor, "at": now, "action": "synonyms updated"}
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=name,
+        summary=f"Tag {name} synonyms updated ({len(body.aliases)} alias)",
+        meta={"aliases": list(body.aliases)},
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="synonyms updated",
+            sub=", ".join(body.aliases) if body.aliases else "no aliases",
+        ),
+    )
+    return stored
+
+
+@router.delete("/tags/{name}", response_model=AckResponse)
+async def delete_tag(
+    name: str, body: TagDeleteBody | None = None
+) -> dict[str, bool]:
+    """Delete a tag and cascade the selected migration strategy to documents."""
+    from .. import webui_router as legacy
+
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    payload = body or TagDeleteBody()
+    if payload.strategy == "migrate" and not payload.to:
+        raise HTTPException(422, "strategy=migrate requires 'to'")
+    if payload.strategy == "migrate" and payload.to == name:
+        raise HTTPException(422, "strategy=migrate requires a different target tag")
+    if payload.strategy == "migrate" and payload.to:
+        target = await store.tags.get_tag(payload.to)
+        if target is None:
+            raise HTTPException(404, f"Migration target tag '{payload.to}' not found")
+    actor = payload.actor or "system"
+
+    seed_affected = legacy._cascade_seed_document_tags(
+        store,
+        name=name,
+        strategy=payload.strategy,
+        to=payload.to,
+    )
+    graph_affected = await legacy._cascade_graph_tag_edges(
+        name=name,
+        strategy=payload.strategy,
+        to=payload.to,
+        actor=actor,
+        strict=isinstance(store.tags, MemgraphTagStore),
+    )
+    affected_docs = (graph_affected or 0) + seed_affected
+
+    deleted = await store.tags.delete_tag(name)
+    suffix = (
+        f"migrated to {payload.to}"
+        if payload.strategy == "migrate"
+        else "deleted (docs untagged)"
+    )
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="warning",
+        target_label=name,
+        summary=f"Tag {name} {suffix}",
+        meta={
+            "strategy": payload.strategy,
+            "to": payload.to,
+            "affected_docs": affected_docs,
+            "sources_count_at_delete": entry.get("sources_count", 0),
+        },
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix=suffix,
+            sub=f"{affected_docs} docs affected",
+        ),
+    )
+    return {"ok": deleted}
