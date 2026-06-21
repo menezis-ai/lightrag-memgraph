@@ -94,10 +94,11 @@ _PALIER_LABEL: dict[int, str] = {
 
 # Default Twin-internal palier capability tokens (mirror the
 # `debugUser.palier.scopes` shim in `_build_runtime_config`).
+TWIN_READ_SCOPE = "twin:read"
 _DEFAULT_PALIER_SCOPES: dict[int, list[str]] = {
-    1: ["twin:read"],
-    2: ["twin:read", "twin:write"],
-    3: ["twin:read", "twin:write", "twin:approve"],
+    1: [TWIN_READ_SCOPE],
+    2: [TWIN_READ_SCOPE, "twin:write"],
+    3: [TWIN_READ_SCOPE, "twin:write", "twin:approve"],
 }
 
 # Default admin groups. Mirrors the Steward-equals-admin doctrine while

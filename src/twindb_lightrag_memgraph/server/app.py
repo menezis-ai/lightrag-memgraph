@@ -28,7 +28,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from lightrag import LightRAG
@@ -46,6 +46,9 @@ from .tracing import (
 )
 
 logger = logging.getLogger(__name__)
+
+DOCUMENTS_UPLOAD_PATH = "/documents/upload"
+TWIN_API_PREFIX = "/twin/api"
 
 # Module-level RAG instance (set during lifespan)
 _rag: LightRAG | None = None
@@ -114,25 +117,25 @@ def _route_group(path: str) -> str:
         return "health"
     if path in {"/query", "/query/data", "/query/stream"}:
         return "query"
-    if path.startswith("/twin/api/query"):
+    if path.startswith(f"{TWIN_API_PREFIX}/query"):
         return "query"
-    if path in {"/insert", "/documents/upload", "/documents/reprocess_failed"}:
+    if path in {"/insert", DOCUMENTS_UPLOAD_PATH, "/documents/reprocess_failed"}:
         return "ingestion"
     if path.endswith("/scan") and path.startswith("/documents/"):
         return "ingestion"
-    if path.startswith("/twin/api/documents"):
+    if path.startswith(f"{TWIN_API_PREFIX}/documents"):
         return "documents"
-    if path.startswith("/twin/api/graph"):
+    if path.startswith(f"{TWIN_API_PREFIX}/graph"):
         return "graph"
-    if path.startswith("/twin/api/settings/api-keys"):
+    if path.startswith(f"{TWIN_API_PREFIX}/settings/api-keys"):
         return "admin"
-    if path.startswith("/twin/api"):
+    if path.startswith(TWIN_API_PREFIX):
         return "twin"
     return "other"
 
 
 def _is_upload_path(path: str) -> bool:
-    return path in {"/documents/upload", "/twin/api/documents/upload"}
+    return path in {DOCUMENTS_UPLOAD_PATH, f"{TWIN_API_PREFIX}/documents/upload"}
 
 
 def _body_limit_for_path(path: str, settings: LightRAGServerSettings) -> int:
@@ -494,10 +497,13 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         app.include_router(webui_router, dependencies=[Depends(require_auth)])
         app.include_router(
             webui_router,
-            prefix="/twin/api",
+            prefix=TWIN_API_PREFIX,
             dependencies=[Depends(require_auth)],
         )
-        logger.info("L2 patch applied (WebUI phase-1 router; mounted at / and /twin/api)")
+        logger.info(
+            "L2 patch applied (WebUI phase-1 router; mounted at / and %s)",
+            TWIN_API_PREFIX,
+        )
 
     # -- Twin overlay query routes (`/twin/api/query` + `/twin/api/query/stream`)
     # The native `POST /query` declared above is the legacy single-shot
@@ -516,10 +522,13 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
 
     app.include_router(
         build_twin_query_router(_get_rag_for_twin_query),
-        prefix="/twin/api",
+        prefix=TWIN_API_PREFIX,
         dependencies=[Depends(require_auth)],
     )
-    logger.info("Twin overlay query routes mounted at /twin/api/query{,/stream}")
+    logger.info(
+        "Twin overlay query routes mounted at %s/query{,/stream}",
+        TWIN_API_PREFIX,
+    )
 
     # -- API key management routes (Settings → API keys, admin only).
     # ``require_admin_user`` is applied at the sub-router level; the
@@ -529,18 +538,21 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
 
     app.include_router(
         api_key_router,
-        prefix="/twin/api",
+        prefix=TWIN_API_PREFIX,
         dependencies=[Depends(require_auth)],
     )
-    logger.info("API key management routes mounted at /twin/api/settings/api-keys")
+    logger.info(
+        "API key management routes mounted at %s/settings/api-keys",
+        TWIN_API_PREFIX,
+    )
 
     # -- Quota snapshot endpoint (public read for the WebUI banner).
     from .quota_routes import router as quota_router
 
-    app.include_router(quota_router, prefix="/twin/api")
-    logger.info("Quota snapshot route mounted at /twin/api/quota")
+    app.include_router(quota_router, prefix=TWIN_API_PREFIX)
+    logger.info("Quota snapshot route mounted at %s/quota", TWIN_API_PREFIX)
 
-    @app.get("/twin/api/ops/metrics", dependencies=[Depends(require_auth)])
+    @app.get(f"{TWIN_API_PREFIX}/ops/metrics", dependencies=[Depends(require_auth)])
     async def operational_metrics():
         return metrics_snapshot()
 
@@ -550,7 +562,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     from .quota import enforce_instance_quota as _enforce_quota
 
     _QUOTA_GATED_PATHS = {
-        "/documents/upload",
+        DOCUMENTS_UPLOAD_PATH,
         "/documents/reprocess_failed",
     }
     _SCAN_PREFIX = "/documents/"

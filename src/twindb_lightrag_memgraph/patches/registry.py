@@ -20,9 +20,13 @@ Usage:
 import logging
 from importlib.metadata import version as _pkg_version
 
-from .._hooks import clear_post_index_hooks, register_post_index_hook
-
 logger = logging.getLogger("twindb_lightrag_memgraph")
+
+LIGHTRAG_SERVER_MODULE = "lightrag.api.lightrag_server"
+WEBUI_INDEX_FILENAME = "index.html"
+TWIN_API_PREFIX = "/twin/api"
+TWIN_UI_PREFIX = "/twin"
+DEFAULT_DEBUG_USER_EMAIL = "operator@twin.local"
 
 _NOT_INITIALIZED_MSG = (
     "Memgraph driver is not initialized. Call 'await initialize()' first."
@@ -56,7 +60,7 @@ def register(
     classification_label_map_path: str | None = None,
     classification_ceiling: str | None = None,
     webui_dist: str | None = None,
-    twin_api_prefix: str = "/twin/api",
+    twin_api_prefix: str = TWIN_API_PREFIX,
     webui_stores: str = "memgraph",
     webui_categories_config: str | None = None,
 ) -> None:
@@ -987,7 +991,7 @@ def _disable_lightrag_dependency_autoinstall() -> None:
     of a boot crash.
     """
     import sys
-    srv = sys.modules.get("lightrag.api.lightrag_server")
+    srv = sys.modules.get(LIGHTRAG_SERVER_MODULE)
     if srv is None:
         return  # not yet imported — will be patched lazily via the create_app hook
 
@@ -996,9 +1000,10 @@ def _disable_lightrag_dependency_autoinstall() -> None:
 
     def _noop():
         logger.warning(
-            "twindb: lightrag.api.lightrag_server.check_and_install_dependencies "
+            "twindb: %s.check_and_install_dependencies "
             "was called but is a no-op under TwinRAG security baseline. "
-            "Verify uvicorn/tiktoken/fastapi are pinned in pyproject.toml."
+            "Verify uvicorn/tiktoken/fastapi are pinned in pyproject.toml.",
+            LIGHTRAG_SERVER_MODULE,
         )
 
     if hasattr(srv, "check_and_install_dependencies"):
@@ -1031,7 +1036,7 @@ def _resolve_webui_dist(explicit: str | None) -> str:
     candidates.append((repo_root / "lightrag_webui_twin" / "dist").resolve())
 
     for candidate in candidates:
-        if candidate.is_dir() and (candidate / "index.html").is_file():
+        if candidate.is_dir() and (candidate / WEBUI_INDEX_FILENAME).is_file():
             return str(candidate)
 
     raise FileNotFoundError(
@@ -1073,8 +1078,8 @@ def _patch_capture_rag() -> None:
     # already imported.
     import sys
 
-    if "lightrag.api.lightrag_server" in sys.modules:
-        srv_mod = sys.modules["lightrag.api.lightrag_server"]
+    if LIGHTRAG_SERVER_MODULE in sys.modules:
+        srv_mod = sys.modules[LIGHTRAG_SERVER_MODULE]
         if hasattr(srv_mod, "create_document_routes"):
             srv_mod.create_document_routes = wrapped_factory
 
@@ -1132,11 +1137,11 @@ def _patch_lightrag_server_create_app(
                 auth_args=args,
             )
         if webui_dist is not None:
-            _mount_twin_ui(app, webui_dist, "/twin")
+            _mount_twin_ui(app, webui_dist, TWIN_UI_PREFIX)
             # replace_ui=True means REPLACE: kill the native /webui SPA (its
             # login is unusable behind our auth shims) and redirect / + /webui
             # to the single Twin interface.
-            _kill_native_webui(app, "/twin")
+            _kill_native_webui(app, TWIN_UI_PREFIX)
         return app
 
     wrapped_create_app.__wrapped__ = orig_create_app
@@ -1144,8 +1149,9 @@ def _patch_lightrag_server_create_app(
     srv.create_app = wrapped_create_app
     srv._twindb_create_app_patched = True
     logger.info(
-        "twindb: lightrag.api.lightrag_server.create_app wrapped "
+        "twindb: %s.create_app wrapped "
         "(replace_ui=%s, mount_server=%s, shim_native_routes=%s)",
+        LIGHTRAG_SERVER_MODULE,
         webui_dist is not None,
         twin_api_prefix is not None,
         shim_native_routes,
@@ -1300,7 +1306,7 @@ def _build_runtime_config() -> dict[str, object]:
         or os.environ.get("LIGHTRAG_API_KEY")
     )
 
-    api_base = os.environ.get("TWIN_API_BASE_URL", "/twin/api")
+    api_base = os.environ.get("TWIN_API_BASE_URL", TWIN_API_PREFIX)
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
     idp_logout = os.environ.get(
         "TWIN_IDP_LOGOUT_URL",
@@ -1309,11 +1315,11 @@ def _build_runtime_config() -> dict[str, object]:
     folder_catalog = load_folder_catalog()
     runtime_folder_config = build_runtime_folder_config()
     debug_user = {
-        "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
-        "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", "operator@twin.local"),
+        "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", DEFAULT_DEBUG_USER_EMAIL),
+        "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", DEFAULT_DEBUG_USER_EMAIL),
         # Neutral anonymous-operator label — must never look like a real
         # colleague (activity events carry this name in open-access mode).
-        "name": os.environ.get("TWIN_DEBUG_USER_NAME", "operator@twin.local"),
+        "name": os.environ.get("TWIN_DEBUG_USER_NAME", DEFAULT_DEBUG_USER_EMAIL),
         "palier": {
             "level": 3,
             "label": "Steward",
@@ -1463,7 +1469,7 @@ def _build_twin_static_files(webui_dist: str):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._template_cache: str | None = None
-            self._template_path = Path(self.directory) / "index.html"
+            self._template_path = Path(self.directory) / WEBUI_INDEX_FILENAME
             self._first_serve_logged = False
 
         async def get_response(self, path: str, scope):
@@ -1471,7 +1477,7 @@ def _build_twin_static_files(webui_dist: str):
             # so GET /twin/ arrives as path == "." (NOT "" or "/"). Explicit
             # GET /twin/index.html arrives as path == "index.html". Both
             # resolve to the same file, so both are substitution targets.
-            if path in (".", "index.html"):
+            if path in (".", WEBUI_INDEX_FILENAME):
                 if not self._first_serve_logged:
                     self._first_serve_logged = True
                     logger.info(
@@ -1516,7 +1522,7 @@ def _build_twin_static_files(webui_dist: str):
     )
 
 
-def _mount_twin_ui(app, webui_dist: str, prefix: str = "/twin") -> None:
+def _mount_twin_ui(app, webui_dist: str, prefix: str = TWIN_UI_PREFIX) -> None:
     """Mount the Twin UI at a stable additive path.
 
     ``/webui`` is owned by upstream LightRAG and has changed across versions.
@@ -1566,7 +1572,7 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = "/twin") -> None:
     logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount %s ready)", prefix)
 
 
-def _kill_native_webui(app, twin_prefix: str = "/twin") -> None:
+def _kill_native_webui(app, twin_prefix: str = TWIN_UI_PREFIX) -> None:
     """``replace_ui=True``: there is exactly ONE interface — the Twin UI.
 
     The native LightRAG ``/webui`` SPA is dead weight on a Twin deploy: its
