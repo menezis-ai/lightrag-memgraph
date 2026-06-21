@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from lightrag import LightRAG
@@ -138,18 +138,19 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
 
     @router.get(
         "/chunks/{chunk_id}/context",
-        response_model=ChunkContextResponse,
         operation_id="get_chunk_context",
         summary="Neighbouring chunks around a given chunk",
     )
     async def get_chunk_context(
         chunk_id: str,
-        window: int = Query(
-            default=3,
-            ge=1,
-            le=50,
-            description="Chunks before/after to include",
-        ),
+        window: Annotated[
+            int,
+            Query(
+                ge=1,
+                le=50,
+                description="Chunks before/after to include",
+            ),
+        ] = 3,
     ) -> ChunkContextResponse:
         active_rag = current_rag()
         anchor = await _resolve_chunk(active_rag, chunk_id)
@@ -183,7 +184,6 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
 
     @router.get(
         "/chunks/{chunk_id}/document",
-        response_model=ChunkContextResponse,
         operation_id="get_chunk_document",
         summary="All chunks of the parent document for a given chunk",
     )
@@ -208,18 +208,19 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
 
     @router.get(
         "/documents/{doc_id}/chunks",
-        response_model=ChunkContextResponse,
         operation_id="get_document_chunks",
         summary="Fetch a range (or all) chunks from a document by doc_id",
     )
     async def get_document_chunks(
         doc_id: str,
-        start: int | None = Query(
-            default=None, ge=0, description="Start index (inclusive)"
-        ),
-        end: int | None = Query(
-            default=None, ge=0, description="End index (inclusive)"
-        ),
+        start: Annotated[
+            int | None,
+            Query(ge=0, description="Start index (inclusive)"),
+        ] = None,
+        end: Annotated[
+            int | None,
+            Query(ge=0, description="End index (inclusive)"),
+        ] = None,
     ) -> ChunkContextResponse:
         active_rag = current_rag()
         ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)

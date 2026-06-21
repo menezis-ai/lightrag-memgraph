@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -48,11 +48,11 @@ async def record_source_uploaded(
 
 @router.get("/activity", response_model=ActivityEnvelope)
 async def list_activity(
-    kind: str | None = Query(default=None),
-    sev: str | None = Query(default=None),
-    actor: str | None = Query(default=None),
-    q: str | None = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=1000),
+    kind: Annotated[str | None, Query()] = None,
+    sev: Annotated[str | None, Query()] = None,
+    actor: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ) -> dict[str, Any]:
     items, now_ms = await get_store().list_activity(
         kind=kind, sev=sev, actor=actor, q=q, limit=limit

@@ -20,7 +20,7 @@ from __future__ import annotations
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -269,7 +269,10 @@ def _jwt_exp_to_iso(payload: dict[str, Any]) -> str | None:
 
 async def require_auth(
     request: Request = None,  # type: ignore[assignment]
-    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_security),
+    ] = None,
 ) -> str | None:
     """FastAPI dependency: validate auth (IdP JWT cookie, static key, or
     legacy local JWT).
@@ -426,10 +429,13 @@ async def require_auth(
     )
 
 
-@auth_router.get("/auth-status", response_model=AuthStatusResponse)
+@auth_router.get("/auth-status")
 async def auth_status(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_security),
+    ] = None,
 ) -> AuthStatusResponse:
     from . import idp_jwt
 
@@ -551,7 +557,7 @@ async def auth_status(
     )
 
 
-@auth_router.post("/login", response_model=LoginResponse)
+@auth_router.post("/login")
 async def login(body: LoginRequest, response: Response) -> LoginResponse:
     """Authenticate with username/password and receive a JWT token."""
     if not _jwt_secret:

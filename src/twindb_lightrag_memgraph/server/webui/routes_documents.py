@@ -8,7 +8,7 @@ while the large router is split incrementally.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -21,9 +21,9 @@ router = APIRouter()
 
 @router.get("/documents", response_model=ListEnvelope[Document])
 async def list_documents(
-    status: str | None = Query(default=None),
-    q: str | None = Query(default=None),
-    tag: str | None = Query(default=None),
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    tag: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     from .. import webui_router as legacy
 
@@ -111,4 +111,3 @@ async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
         await get_store().record_activity(event)
 
     return {"deleted": deleted, "failed": failed}
-

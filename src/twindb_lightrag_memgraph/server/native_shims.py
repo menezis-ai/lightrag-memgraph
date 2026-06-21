@@ -34,7 +34,7 @@ native routes in the FastAPI router list.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -286,10 +286,13 @@ def build_native_shims_router(
         protected_deps = [Depends(auth_dependency)]
     router = APIRouter(tags=["twin-shim"])
 
-    @router.get("/auth-status", response_model=_AuthStatusResponse)
+    @router.get("/auth-status")
     async def auth_status_shim(
         request: Request,
-        credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+        credentials: Annotated[
+            HTTPAuthorizationCredentials | None,
+            Depends(_security),
+        ] = None,
     ) -> _AuthStatusResponse:
         """Shadow LightRAG's native auth status without minting guest JWTs.
 
@@ -303,7 +306,7 @@ def build_native_shims_router(
 
         return await auth_status(request, credentials)
 
-    @router.post("/login", response_model=LoginResponse)
+    @router.post("/login")
     async def login_shim(
         body: LoginRequest,
         response: Response,
@@ -326,15 +329,14 @@ def build_native_shims_router(
 
     @router.get(
         "/documents",
-        response_model=_ListEnvelope,
         dependencies=protected_deps,
     )
     async def list_documents(
         request: Request,
-        status: str | None = Query(default=None),
-        q: str | None = Query(default=None),
-        tag: str | None = Query(default=None),
-        cursor: str | None = Query(default=None),
+        status: Annotated[str | None, Query()] = None,
+        q: Annotated[str | None, Query()] = None,
+        tag: Annotated[str | None, Query()] = None,
+        cursor: Annotated[str | None, Query()] = None,
     ) -> _ListEnvelope:
         """Shadow the native ``GET /documents`` to expose a flat envelope.
 
@@ -418,7 +420,6 @@ def build_native_shims_router(
 
     @router.get(
         "/documents/{doc_id}/chunks",
-        response_model=list[_DocumentChunk],
         dependencies=protected_deps,
     )
     async def list_document_chunks(
@@ -495,7 +496,6 @@ def build_native_shims_router(
 
     @router.delete(
         "/documents/{doc_id}",
-        response_model=_OkResponse,
         dependencies=protected_deps,
     )
     async def delete_document(
@@ -524,7 +524,6 @@ def build_native_shims_router(
 
     @router.get(
         "/pipeline_status",
-        response_model=_SimplePipelineStatus,
         dependencies=protected_deps,
     )
     async def pipeline_status() -> _SimplePipelineStatus:
@@ -610,10 +609,10 @@ def build_health_shim(get_rag) -> APIRouter:
     """
     router = APIRouter(tags=["twin-shim"])
 
-    @router.get("/health", response_model=_SimpleHealth)
+    @router.get("/health")
     async def health() -> _SimpleHealth:
         try:
-            rag = get_rag()
+            get_rag()
         except Exception:
             return _SimpleHealth(status="degraded")
 

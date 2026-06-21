@@ -19,7 +19,7 @@ remains the infra root key, invisible from the UI by design (see
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 # deliberately treats dormant IdP as "authenticated user is admin", so it
 # must never be the only dependency on an admin router.
 #
-# Handlers that also declare ``admin: dict = Depends(require_admin_user)``
-# do so to INJECT the user dict (for audit ``actor``), not to re-enforce
+# Handlers that also inject ``admin`` via ``Depends(require_admin_user)`` do so
+# to INJECT the user dict (for audit ``actor``), not to re-enforce
 # — FastAPI caches the dependency result within a single request, so the
 # call resolves exactly once. The visual duplication is intentional, not a
 # leak.
@@ -140,7 +140,7 @@ async def list_api_keys() -> list[dict[str, Any]]:
 @router.post("", response_model=ApiKeyCreated, status_code=201)
 async def create_api_key(
     body: ApiKeyCreate,
-    admin: dict[str, Any] = Depends(require_admin_user),
+    admin: Annotated[dict[str, Any], Depends(require_admin_user)],
 ) -> dict[str, Any]:
     """Mint a new API key. The ``full_value`` is returned ONCE — clients
     MUST store it client-side immediately. Subsequent list/get calls
@@ -168,7 +168,7 @@ async def create_api_key(
 @router.delete("/{key_id}", response_model=ApiKeyPublic)
 async def revoke_api_key(
     key_id: str,
-    admin: dict[str, Any] = Depends(require_admin_user),
+    admin: Annotated[dict[str, Any], Depends(require_admin_user)],
 ) -> dict[str, Any]:
     """Mark a key as revoked. Subsequent auth attempts with that key
     reject. The entry stays in the listing with a ``revoked_at`` stamp
