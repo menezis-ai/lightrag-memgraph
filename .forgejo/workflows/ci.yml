@@ -190,8 +190,11 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Run tests
-        run: bun run test:run
+      - name: Run tests with coverage
+        # test:coverage = vitest run --coverage (superset of test:run): runs
+        # the suite AND emits coverage/lcov.info for SonarQube
+        # (sonar.javascript.lcov.reportPaths).
+        run: bun run test:coverage
 
       - name: Build
         run: bun run build

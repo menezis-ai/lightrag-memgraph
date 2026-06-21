@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Vitest coverage (lcov for SonarQube, html for local inspection)
+coverage/
+
 # Playwright e2e
 playwright-report/
 test-results/
