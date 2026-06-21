@@ -246,12 +246,22 @@ INFO:     Uvicorn running on http://0.0.0.0:9621
 # Healthcheck LightRAG natif (route inchangée)
 curl -sf http://localhost:9621/health | jq .
 
+# Readiness applicative : Memgraph joignable, LightRAG initialisé,
+# politique auth chargée, handle vectoriel vérifié si exposé par LightRAG.
+curl -sf http://localhost:9621/ready | jq .
+
 # Healthcheck sous-app Twin (route ajoutée par mount_server=True)
 curl -sf http://localhost:9621/twin/api/health | jq .
 
 # WebUI Twin servi à /webui (le HTML reçu doit contenir la signature de notre fork)
 curl -sf http://localhost:9621/webui/index.html | grep -q 'Twin' && echo "OK: WebUI Twin servi"
 ```
+
+En Kubernetes, utiliser `/health` comme `livenessProbe` et `/ready` comme
+`readinessProbe`. `/health` reste volontairement léger et ne contacte pas
+Memgraph ; `/ready` retourne `503` tant que les dépendances critiques ne sont
+pas prêtes. Les limites HTTP sont configurables par
+`LIGHTRAG_MAX_REQUEST_BODY_BYTES` et `LIGHTRAG_MAX_UPLOAD_BODY_BYTES`.
 
 ### 4.3 — Memgraph est joignable et nos schémas sont créés
 
@@ -430,6 +440,22 @@ Le middleware audit (M3, livraison v1.1.0 en cours) loggue en JSON ECS-compatibl
 - `graph.entity.*` / `graph.relation.*`
 
 Chaque event contient au minimum : `ts` (UTC ISO-8601), `event_type`, `event_id`, `trace_id`, `actor.id`, `actor.role`, `source.ip`, `http.method`, `http.path`, `status`, `outcome`, `workspace`, `resource.type/id`.
+
+Le serveur FastAPI standalone émet aussi un access log key-value par requête :
+`request_id`, `folder`, `auth_mode`, `route_group`, `status` et `latency_ms`.
+Il ne journalise ni bearer/JWT/API key, ni body document, ni prompt brut. Le
+header `X-Request-Id` entrant est propagé ; sinon un identifiant est généré et
+renvoyé en réponse.
+
+Compteurs opérationnels exposés aux opérateurs authentifiés :
+
+```bash
+curl -sf -H "Authorization: Bearer $LIGHTRAG_API_KEY" \
+  http://localhost:9621/twin/api/ops/metrics | jq .
+```
+
+Les compteurs incluent `ingestion_failures_total`, `query_failures_total`,
+`quota_rejects_total` et `auth_rejects_total`.
 
 ### 8.2 — Rétention
 

@@ -1,5 +1,7 @@
 """Tests for the app factory and helper functions."""
 
+import logging
+
 import pytest
 
 from twindb_lightrag_memgraph.server.app import _extract_doc_ids
@@ -66,6 +68,7 @@ from twindb_lightrag_memgraph.server.app import (
 )
 from twindb_lightrag_memgraph.server.auth import AuthConfigurationError
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
+from twindb_lightrag_memgraph.server.tracing import metrics_snapshot, reset_metrics
 
 
 def _make_settings(*, api_key="test-key", jwt_secret=None, **overrides):
@@ -338,6 +341,184 @@ class TestHealthEndpoint:
         """GET /health succeeds even when auth is enabled and no token is sent."""
         resp = await _client_with_auth.get("/health")
         assert resp.status_code == 200
+
+    async def test_health_does_not_probe_memgraph(self, monkeypatch, _client_no_auth):
+        async def broken_readiness_probe():
+            raise AssertionError("/health must stay lightweight")
+
+        monkeypatch.setattr(
+            app_module,
+            "_memgraph_readiness_check",
+            broken_readiness_probe,
+        )
+        resp = await _client_no_auth.get("/health")
+        assert resp.status_code == 200
+
+
+class _ReadyVector:
+    async def query(self, *args, **kwargs):
+        return []
+
+
+class TestReadinessEndpoint:
+    async def test_ready_returns_200_when_dependencies_are_available(
+        self, monkeypatch, _mock_rag
+    ):
+        async def memgraph_ok():
+            return {"status": "ok"}
+
+        monkeypatch.setattr(app_module, "_memgraph_readiness_check", memgraph_ok)
+        _mock_rag.chunks_vdb = _ReadyVector()
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/ready")
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ready"
+        assert body["checks"]["memgraph"]["status"] == "ok"
+        assert body["checks"]["lightrag"]["status"] == "ok"
+        assert body["checks"]["vector_index"]["status"] == "ok"
+
+    async def test_ready_returns_503_when_memgraph_is_unreachable(
+        self, monkeypatch, _mock_rag
+    ):
+        async def memgraph_failed():
+            return {"status": "failed", "detail": "ServiceUnavailable"}
+
+        monkeypatch.setattr(app_module, "_memgraph_readiness_check", memgraph_failed)
+        _mock_rag.chunks_vdb = _ReadyVector()
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/ready")
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "not_ready"
+        assert body["checks"]["memgraph"]["status"] == "failed"
+
+
+class TestOperationalMiddleware:
+    async def test_request_id_header_and_access_log_do_not_include_body(
+        self, caplog
+    ):
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        caplog.set_level(logging.INFO, logger=app_module.__name__)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get(
+                "/health",
+                headers={
+                    "x-request-id": "rid-123",
+                    "authorization": "Bearer secret",
+                    "traceparent": (
+                        "00-4bf92f3577b34da6a3ce929d0e0e4736-"
+                        "00f067aa0ba902b7-01"
+                    ),
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.headers["x-request-id"] == "rid-123"
+        assert "request_id=rid-123" in caplog.text
+        assert "route_group=health" in caplog.text
+        assert "trace_id=4bf92f3577b34da6a3ce929d0e0e4736" in caplog.text
+        assert "secret" not in caplog.text
+
+    async def test_regular_body_limit_returns_413_before_auth(self):
+        app = create_app(
+            _make_settings(
+                api_key="test-key",
+                max_request_body_bytes=8,
+                max_upload_body_bytes=100,
+            )
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/query", content=b"123456789")
+
+        assert resp.status_code == 413
+        assert resp.json()["limit_bytes"] == 8
+        assert "x-request-id" in resp.headers
+
+    async def test_upload_path_uses_upload_limit(self):
+        app = create_app(
+            _make_settings(
+                api_key=None,
+                jwt_secret=None,
+                max_request_body_bytes=1,
+                max_upload_body_bytes=100,
+            )
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/documents/upload", content=b"123456789")
+
+        assert resp.status_code != 413
+
+    async def test_auth_reject_counter_increments(self):
+        reset_metrics()
+        app = create_app(_make_settings(api_key="test-key"))
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/query", json={"query": "hello"})
+
+        assert resp.status_code in {401, 403}
+        assert metrics_snapshot()["auth_rejects_total"] == 1
+
+    async def test_query_failure_counter_increments_without_logging_prompt(
+        self, caplog, _mock_rag
+    ):
+        reset_metrics()
+        _mock_rag.aquery.side_effect = RuntimeError("backend offline")
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        caplog.set_level(logging.WARNING, logger=app_module.__name__)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/query",
+                    json={"query": "secret prompt body"},
+                )
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 500
+        assert metrics_snapshot()["query_failures_total"] == 1
+        assert "route_group=query" in caplog.text
+        assert "secret prompt body" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

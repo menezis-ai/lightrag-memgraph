@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 
 _TRACING_ENABLED = False
 _langsmith_available = False
+_METRIC_COUNTERS: dict[str, int] = {
+    "auth_rejects_total": 0,
+    "ingestion_failures_total": 0,
+    "query_failures_total": 0,
+    "quota_rejects_total": 0,
+}
 
 try:
     from langsmith import traceable
@@ -43,6 +49,35 @@ except ImportError:
 def is_tracing_enabled() -> bool:
     """Return True if LangSmith tracing is active."""
     return _TRACING_ENABLED and _langsmith_available
+
+
+def increment_metric(name: str, amount: int = 1) -> None:
+    """Increment an in-process operational counter."""
+    if amount < 1:
+        return
+    _METRIC_COUNTERS[name] = _METRIC_COUNTERS.get(name, 0) + amount
+
+
+def metrics_snapshot() -> dict[str, int]:
+    """Return a copy of operational counters for tests or exporters."""
+    return dict(_METRIC_COUNTERS)
+
+
+def reset_metrics() -> None:
+    """Reset operational counters. Intended for tests."""
+    for name in list(_METRIC_COUNTERS):
+        _METRIC_COUNTERS[name] = 0
+
+
+def current_request_context(request: Any) -> dict[str, Any]:
+    """Return non-sensitive request context for route logs."""
+    state = getattr(request, "state", None)
+    return {
+        "request_id": getattr(state, "request_id", None),
+        "traceparent": getattr(state, "traceparent", None),
+        "route_group": getattr(state, "route_group", None),
+        "folder": getattr(state, "folder", None),
+    }
 
 
 def _check_langsmith_config() -> bool:

@@ -121,6 +121,22 @@ class LightRAGServerSettings(BaseSettings):
         default=False,
         description="Enable LangSmith tracing for LLM/embedding/rerank spans",
     )
+    max_request_body_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        ge=0,
+        description=(
+            "Maximum Content-Length accepted for ordinary HTTP request bodies. "
+            "0 disables the guard."
+        ),
+    )
+    max_upload_body_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        ge=0,
+        description=(
+            "Maximum Content-Length accepted for native document upload bodies. "
+            "0 disables the guard."
+        ),
+    )
 
     # -- WebUI phase-1 surface --
     enable_webui_routes: bool = Field(

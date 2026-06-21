@@ -23,11 +23,14 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from lightrag import LightRAG
 from pydantic import BaseModel
 
@@ -35,7 +38,12 @@ from .auth import auth_router, configure_auth, require_auth
 from .api_wiring import log_api_wiring_sanity
 from .chunk_routes import create_chunk_routes, router as chunk_router
 from .settings import LightRAGServerSettings, get_settings
-from .tracing import apply_lang_with_tracing, extract_trace_parent
+from .tracing import (
+    apply_lang_with_tracing,
+    extract_trace_parent,
+    increment_metric,
+    metrics_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +101,110 @@ class HealthResponse(BaseModel):
     workspace: str
     storage_backends: dict[str, str]
     tracing_enabled: bool
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    checks: dict[str, dict[str, Any]]
+
+
+def _route_group(path: str) -> str:
+    """Classify paths into low-cardinality observability groups."""
+    if path in {"/health", "/ready"} or path.endswith("/health"):
+        return "health"
+    if path in {"/query", "/query/data", "/query/stream"}:
+        return "query"
+    if path.startswith("/twin/api/query"):
+        return "query"
+    if path in {"/insert", "/documents/upload", "/documents/reprocess_failed"}:
+        return "ingestion"
+    if path.endswith("/scan") and path.startswith("/documents/"):
+        return "ingestion"
+    if path.startswith("/twin/api/documents"):
+        return "documents"
+    if path.startswith("/twin/api/graph"):
+        return "graph"
+    if path.startswith("/twin/api/settings/api-keys"):
+        return "admin"
+    if path.startswith("/twin/api"):
+        return "twin"
+    return "other"
+
+
+def _is_upload_path(path: str) -> bool:
+    return path in {"/documents/upload", "/twin/api/documents/upload"}
+
+
+def _body_limit_for_path(path: str, settings: LightRAGServerSettings) -> int:
+    if _is_upload_path(path):
+        return settings.max_upload_body_bytes
+    return settings.max_request_body_bytes
+
+
+def _content_length(headers: Any) -> int | None:
+    raw = headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _record_status_metrics(path: str, status_code: int) -> None:
+    route_group = _route_group(path)
+    if status_code in {401, 403}:
+        increment_metric("auth_rejects_total")
+    if status_code == 507:
+        increment_metric("quota_rejects_total")
+    if route_group == "query" and status_code >= 500:
+        increment_metric("query_failures_total")
+    if route_group == "ingestion" and status_code >= 500:
+        increment_metric("ingestion_failures_total")
+
+
+def _vector_index_check(rag: Any) -> dict[str, Any]:
+    """Best-effort vector handle readiness without running a vector search."""
+    if rag is None:
+        return {"status": "failed", "detail": "LightRAG is not initialized"}
+    for attr in (
+        "chunks_vdb",
+        "entities_vdb",
+        "relationships_vdb",
+        "chunks_vdb_storage",
+        "entities_vdb_storage",
+    ):
+        store = getattr(rag, attr, None)
+        if store is None:
+            continue
+        has_callable = any(
+            callable(getattr(store, method, None))
+            for method in ("query", "upsert", "search")
+        )
+        if has_callable:
+            return {"status": "ok", "detail": f"{attr} handle is callable"}
+        return {"status": "failed", "detail": f"{attr} handle is not callable"}
+    return {
+        "status": "skipped",
+        "detail": "no public vector handle exposed by this LightRAG instance",
+    }
+
+
+async def _memgraph_readiness_check() -> dict[str, Any]:
+    """Verify that the shared Memgraph pool can execute a trivial query."""
+    try:
+        from .. import _pool
+
+        async with _pool.get_session() as session:
+            result = await session.run("RETURN 1 AS ok")
+            await result.consume()
+    except Exception as exc:  # noqa: BLE001 - readiness must report dependency state
+        return {
+            "status": "failed",
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +375,14 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         idp_enabled=_idp_cfg is not None,
     )
     configure_idp(_idp_cfg)
+    _auth_backend_configured = bool(
+        settings.api_key or _resolved_jwt_secret or _idp_cfg is not None
+    )
+    _auth_mode_label = (
+        "idp"
+        if _idp_cfg is not None
+        else ("legacy" if _auth_backend_configured else "open")
+    )
     app.include_router(auth_router)
 
     # -- Core routes (auth-protected) --
@@ -284,6 +404,35 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             },
             tracing_enabled=is_tracing_enabled(),
         )
+
+    @app.get("/ready", response_model=ReadinessResponse)
+    async def ready():
+        rag = _rag
+        checks: dict[str, dict[str, Any]] = {
+            "lightrag": {
+                "status": "ok" if rag is not None else "failed",
+                "detail": "initialized" if rag is not None else "not initialized",
+            },
+            "memgraph": await _memgraph_readiness_check(),
+            "vector_index": _vector_index_check(rag),
+            "auth_policy": {
+                "status": "ok"
+                if (not _require_production_auth or _auth_backend_configured)
+                else "failed",
+                "detail": (
+                    "production auth policy loaded"
+                    if _require_production_auth
+                    else "production auth policy not required"
+                ),
+                "production_required": _require_production_auth,
+            },
+        }
+        failed = [name for name, check in checks.items() if check["status"] == "failed"]
+        body = {
+            "status": "ready" if not failed else "not_ready",
+            "checks": checks,
+        }
+        return JSONResponse(body, status_code=200 if not failed else 503)
 
     @app.post(
         "/query",
@@ -391,6 +540,10 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(quota_router, prefix="/twin/api")
     logger.info("Quota snapshot route mounted at /twin/api/quota")
 
+    @app.get("/twin/api/ops/metrics", dependencies=[Depends(require_auth)])
+    async def operational_metrics():
+        return metrics_snapshot()
+
     # -- Instance quota middleware: refuses 507 on ingestion endpoints
     # when Memgraph is at MEMGRAPH_MEMORY_LIMIT. Path-matched so the
     # snapshot endpoint and every read path stay fast.
@@ -422,6 +575,94 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
                         status_code=exc.status_code,
                     )
         return await call_next(request)
+
+    @app.middleware("http")
+    async def _operational_middleware(request: Request, call_next):
+        started = time.perf_counter()
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        path = request.url.path
+        route_group = _route_group(path)
+        request.state.request_id = request_id
+        request.state.route_group = route_group
+
+        trace_ctx = extract_trace_parent(dict(request.headers))
+        if trace_ctx and "traceparent" in trace_ctx:
+            request.state.traceparent = trace_ctx["traceparent"]
+            request.state.trace_id = trace_ctx.get("trace_id")
+
+        limit = _body_limit_for_path(path, settings)
+        body_bytes = _content_length(request.headers)
+        if limit and body_bytes is not None and body_bytes > limit:
+            response = JSONResponse(
+                {
+                    "detail": "Request body too large",
+                    "limit_bytes": limit,
+                    "request_id": request_id,
+                },
+                status_code=413,
+            )
+            response.headers["x-request-id"] = request_id
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.warning(
+                "http_request method=%s path=%s status=%s request_id=%s "
+                "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f "
+                "trace_id=%s content_length=%s limit_bytes=%s",
+                request.method,
+                path,
+                413,
+                request_id,
+                request.headers.get("x-twin-folder", "-"),
+                _auth_mode_label,
+                route_group,
+                latency_ms,
+                getattr(request.state, "trace_id", None) or "-",
+                body_bytes,
+                limit,
+            )
+            return response
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            _record_status_metrics(path, 500)
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.exception(
+                "http_request_failed method=%s path=%s status=%s request_id=%s "
+                "folder=%s auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
+                request.method,
+                path,
+                500,
+                request_id,
+                getattr(request.state, "folder", None)
+                or request.headers.get("x-twin-folder", "-"),
+                _auth_mode_label,
+                route_group,
+                latency_ms,
+                getattr(request.state, "trace_id", None) or "-",
+            )
+            raise
+
+        response.headers["x-request-id"] = request_id
+        status_code = response.status_code
+        _record_status_metrics(path, status_code)
+        latency_ms = (time.perf_counter() - started) * 1000
+        log_level = logging.WARNING if status_code >= 500 else logging.INFO
+        logger.log(
+            log_level,
+            "http_request method=%s path=%s status=%s request_id=%s folder=%s "
+            "auth_mode=%s route_group=%s latency_ms=%.2f trace_id=%s",
+            request.method,
+            path,
+            status_code,
+            request_id,
+            getattr(request.state, "folder", None)
+            or request.headers.get("x-twin-folder", "-"),
+            _auth_mode_label,
+            route_group,
+            latency_ms,
+            getattr(request.state, "trace_id", None) or "-",
+        )
+        return response
 
     log_api_wiring_sanity(app, surface="standalone")
 

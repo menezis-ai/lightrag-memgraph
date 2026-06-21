@@ -24,7 +24,6 @@ P0/P1 production-readiness hardening has been implemented on branch
 Current residual work is:
 
 - Resolve or formally risk-accept the deferred LightRAG 1.4.9.11 CVEs.
-- Add operational readiness endpoints, request-size posture, and observability baseline.
 - Run final release-candidate validation from a clean checkout/image.
 
 Recent verification:
@@ -56,8 +55,6 @@ Definition of done for any workstream:
 ## Priority Map
 
 P0 is the deferred security follow-up that still blocks a clean "nothing left" production-readiness plan.
-
-P3 is operational hardening after the first release-readiness gates.
 
 ## P0. Deferred Security Follow-Up
 
@@ -98,65 +95,6 @@ uvx pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip
 uv run pytest tests/test_register.py tests/test_upstream_compat.py tests/test_lightrag_server_entrypoint.py -q
 ```
 
-## P3. Operational Hardening
-
-### P3-1. Runtime Health And Readiness
-
-Objective: distinguish "process alive" from "ready for traffic".
-
-Recommended additions:
-
-- `/health` remains lightweight.
-- `/ready` verifies Memgraph connectivity, LightRAG initialized, vector index callable if practical, and auth production policy loaded.
-
-Likely files:
-
-- `src/twindb_lightrag_memgraph/server/app.py`
-- `src/twindb_lightrag_memgraph/server/quota.py`
-- `tests/test_server/test_twin_health_endpoint.py`
-
-Acceptance criteria:
-
-- Readiness fails when Memgraph is unreachable.
-- Liveness stays cheap.
-- Docs explain which endpoint to use for Kubernetes probes.
-
-### P3-2. Request Size And Upload Limits
-
-Objective: reduce DoS exposure from large form or upload bodies.
-
-Likely files:
-
-- `src/twindb_lightrag_memgraph/server/app.py`
-- native LightRAG shim files
-- deployment docs
-
-Acceptance criteria:
-
-- Upload limits are explicit and testable.
-- Operators know where to configure them.
-
-### P3-3. Observability Baseline
-
-Objective: make production incidents diagnosable.
-
-Recommended additions:
-
-- Structured logs for request ID, folder, auth mode, route group, latency.
-- Metric counters for ingestion failures, query failures, quota rejects, auth rejects.
-- Trace correlation in retrieval routes.
-
-Likely files:
-
-- `src/twindb_lightrag_memgraph/server/tracing.py`
-- `src/twindb_lightrag_memgraph/server/app.py`
-- route modules after the modularization splits
-
-Acceptance criteria:
-
-- Logs do not expose bearer tokens, JWTs, API keys, document body content, or raw prompts unless explicitly enabled in a secure debug mode.
-- Each 5xx path logs enough context to identify failing subsystem.
-
 ## Release Candidate Checklist
 
 Before tagging a production release candidate, all of the following must be true:
@@ -194,7 +132,6 @@ python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 Suggested parallelization:
 
 - Agent A: P0-1 LightRAG CVE posture.
-- Agent E: P3 operational readiness endpoints, limits, and observability.
 
 Coordination rules:
 

@@ -62,6 +62,12 @@ LIGHTRAG_KV_STORAGE                 Default: MemgraphKVStorage
 LIGHTRAG_VECTOR_STORAGE             Default: MemgraphVectorDBStorage
 LIGHTRAG_GRAPH_STORAGE              Default: MemgraphStorage (LightRAG built-in)
 LIGHTRAG_DOC_STATUS_STORAGE         Default: MemgraphDocStatusStorage
+LIGHTRAG_MAX_REQUEST_BODY_BYTES     Max Content-Length for ordinary request
+                                    bodies. Default: 16777216 (16 MiB).
+                                    0 disables the guard.
+LIGHTRAG_MAX_UPLOAD_BODY_BYTES      Max Content-Length for /documents/upload.
+                                    Default: 104857600 (100 MiB).
+                                    0 disables the guard.
 
 LLM / embeddings / rerank (used by the overlay; LightRAG-native equivalents
 also honored):
