@@ -258,6 +258,165 @@ def _doc_matches_folder(doc_status: Any, folder: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Route implementations (module-level so the factory stays simple)
+# ---------------------------------------------------------------------------
+
+
+async def _list_documents_impl(
+    get_rag, request, status, q, tag, cursor
+) -> _ListEnvelope:
+    """Body of the ``GET /documents`` shim (flat paginated envelope)."""
+    import dataclasses
+
+    from lightrag.base import DocStatus
+    from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
+    from .folder import resolve_folder_for_request
+
+    rag = get_rag()
+    folder = resolve_folder_for_request(request)
+    page = int(cursor) if (cursor and cursor.isdigit()) else 1
+    page_size = DEFAULT_PAGE_SIZE
+
+    # Translate UI string status → DocStatus enum (the storage method
+    # only accepts the enum; the WebUI sends uppercase strings).
+    status_enum: DocStatus | None = None
+    if status and status not in ("all", ""):
+        try:
+            status_enum = DocStatus(status.lower())
+        except ValueError:
+            logger.warning("twindb shim: unknown status filter %r", status)
+
+    try:
+        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+            folder=folder,
+        )
+    except TypeError:
+        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+        )
+    # More pages exist when this DB page came back full. Cursor = next page
+    # number (opaque to the client). The storage call is folder-scoped when
+    # supported, so this cursor no longer skips over non-folder rows.
+    next_cursor = str(page + 1) if page * page_size < total else None
+
+    # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
+    projected: list[dict[str, Any]] = []
+    for doc_id, dps in docs_tuples:
+        payload = dataclasses.asdict(dps)
+        # asdict() leaves enums as enums — coerce to their string value
+        if hasattr(payload.get("status"), "value"):
+            payload["status"] = payload["status"].value
+        payload["id"] = doc_id
+        projected.append(_project_doc(payload))
+
+    # Tags via graph join — single batch Cypher round-trip.
+    await _attach_tags_via_graph(projected, folder=folder)
+
+    filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
+    status_counts = None
+    try:
+        status_counts = await rag.doc_status.get_status_counts(folder=folder)
+    except TypeError:
+        status_counts = await rag.doc_status.get_status_counts()
+    except AttributeError:
+        status_counts = None
+
+    return _ListEnvelope(
+        items=[_DocumentEnvelope(**d) for d in filtered],
+        total=total if not q and not tag else len(filtered),
+        page=page,
+        page_size=page_size,
+        next_cursor=next_cursor,
+        status_counts=status_counts,
+    )
+
+
+async def _list_document_chunks_impl(
+    get_rag, request, doc_id: str
+) -> list[_DocumentChunk]:
+    """Body of the ``GET /documents/{doc_id}/chunks`` shim."""
+    from .folder import resolve_folder_for_request
+
+    rag = get_rag()
+    folder = resolve_folder_for_request(request)
+    doc_status = await rag.doc_status.get_by_id(doc_id)
+    if doc_status is None or not _doc_matches_folder(doc_status, folder):
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+
+    # DocStatus may come back as dict (Memgraph backend) or dataclass
+    # depending on storage impl. Read chunks_list defensively.
+    if isinstance(doc_status, dict):
+        chunks_list = doc_status.get("chunks_list")
+    else:
+        chunks_list = getattr(doc_status, "chunks_list", None)
+
+    if not chunks_list:
+        return []
+
+    raw_chunks = await rag.text_chunks.get_by_ids(chunks_list)
+    items: list[_DocumentChunk] = []
+    for chunk_id, raw in zip(chunks_list, raw_chunks):
+        if not raw:
+            continue
+        items.append(
+            _DocumentChunk(
+                chunk_id=chunk_id,
+                order=int(raw.get("chunk_order_index") or 0),
+                text=raw.get("content") or "",
+            )
+        )
+    items.sort(key=lambda c: c.order)
+    return items
+
+
+async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
+    """Body of the ``DELETE /documents/{doc_id}`` shim."""
+    from .folder import resolve_folder_for_request
+
+    rag = get_rag()
+    folder = resolve_folder_for_request(request)
+    doc_status = await rag.doc_status.get_by_id(doc_id)
+    if doc_status is None or not _doc_matches_folder(doc_status, folder):
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+    try:
+        await rag.adelete_by_doc_id(doc_id)
+    except Exception as exc:
+        logger.exception("twindb shim: delete_document(%s) failed", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return _OkResponse()
+
+
+async def _pipeline_status_impl(get_rag) -> _SimplePipelineStatus:
+    """Body of the ``GET /pipeline_status`` shim (projected namespace data)."""
+    rag = get_rag()
+    try:
+        from lightrag.kg.shared_storage import get_namespace_data
+
+        data = await get_namespace_data("pipeline_status", workspace=rag.workspace)
+        data = dict(data)
+    except Exception as exc:
+        logger.warning("twindb shim: pipeline_status fallback (%s)", exc)
+        data = {}
+    history = data.get("history_messages") or []
+    if not isinstance(history, list):
+        history = []
+
+    return _SimplePipelineStatus(
+        busy=bool(data.get("busy", False)),
+        # job_count = total docs being processed; LightRAG calls it ``docs``
+        job_count=int(data.get("docs", 0)),
+        job_name=data.get("job_name") or None,
+        latest_message=data.get("latest_message") or None,
+        history_messages=[str(message) for message in history],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
@@ -349,74 +508,7 @@ def build_native_shims_router(
         a dict envelope (the native LightRAG paginated HTTP route assembles
         the dict in the route handler).
         """
-        import dataclasses
-
-        from lightrag.base import DocStatus
-        from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
-        from .folder import resolve_folder_for_request
-
-        rag = get_rag()
-        folder = resolve_folder_for_request(request)
-        page = int(cursor) if (cursor and cursor.isdigit()) else 1
-        page_size = DEFAULT_PAGE_SIZE
-
-        # Translate UI string status → DocStatus enum (the storage method
-        # only accepts the enum; the WebUI sends uppercase strings).
-        status_enum: DocStatus | None = None
-        if status and status not in ("all", ""):
-            try:
-                status_enum = DocStatus(status.lower())
-            except ValueError:
-                logger.warning("twindb shim: unknown status filter %r", status)
-
-        try:
-            docs_tuples, total = await rag.doc_status.get_docs_paginated(
-                page=page,
-                page_size=page_size,
-                status_filter=status_enum,
-                folder=folder,
-            )
-        except TypeError:
-            docs_tuples, total = await rag.doc_status.get_docs_paginated(
-                page=page,
-                page_size=page_size,
-                status_filter=status_enum,
-            )
-        # More pages exist when this DB page came back full. Cursor = next page
-        # number (opaque to the client). The storage call is folder-scoped when
-        # supported, so this cursor no longer skips over non-folder rows.
-        next_cursor = str(page + 1) if page * page_size < total else None
-
-        # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
-        projected: list[dict[str, Any]] = []
-        for doc_id, dps in docs_tuples:
-            payload = dataclasses.asdict(dps)
-            # asdict() leaves enums as enums — coerce to their string value
-            if hasattr(payload.get("status"), "value"):
-                payload["status"] = payload["status"].value
-            payload["id"] = doc_id
-            projected.append(_project_doc(payload))
-
-        # Tags via graph join — single batch Cypher round-trip.
-        await _attach_tags_via_graph(projected, folder=folder)
-
-        filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
-        status_counts = None
-        try:
-            status_counts = await rag.doc_status.get_status_counts(folder=folder)
-        except TypeError:
-            status_counts = await rag.doc_status.get_status_counts()
-        except AttributeError:
-            status_counts = None
-
-        return _ListEnvelope(
-            items=[_DocumentEnvelope(**d) for d in filtered],
-            total=total if not q and not tag else len(filtered),
-            page=page,
-            page_size=page_size,
-            next_cursor=next_cursor,
-            status_counts=status_counts,
-        )
+        return await _list_documents_impl(get_rag, request, status, q, tag, cursor)
 
     @router.get(
         "/documents/{doc_id}/chunks",
@@ -434,41 +526,7 @@ def build_native_shims_router(
         non-standard ``get_all()`` and keeps the query O(chunks per doc)
         instead of O(total chunks in the workspace).
         """
-        from .folder import resolve_folder_for_request
-
-        rag = get_rag()
-        folder = resolve_folder_for_request(request)
-        doc_status = await rag.doc_status.get_by_id(doc_id)
-        if doc_status is None:
-            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-        if not _doc_matches_folder(doc_status, folder):
-            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-
-        # DocStatus may come back as dict (Memgraph backend) or dataclass
-        # depending on storage impl. Read chunks_list defensively.
-        chunks_list: list[str] | None
-        if isinstance(doc_status, dict):
-            chunks_list = doc_status.get("chunks_list")
-        else:
-            chunks_list = getattr(doc_status, "chunks_list", None)
-
-        if not chunks_list:
-            return []
-
-        raw_chunks = await rag.text_chunks.get_by_ids(chunks_list)
-        items: list[_DocumentChunk] = []
-        for chunk_id, raw in zip(chunks_list, raw_chunks):
-            if not raw:
-                continue
-            items.append(
-                _DocumentChunk(
-                    chunk_id=chunk_id,
-                    order=int(raw.get("chunk_order_index") or 0),
-                    text=raw.get("content") or "",
-                )
-            )
-        items.sort(key=lambda c: c.order)
-        return items
+        return await _list_document_chunks_impl(get_rag, request, doc_id)
 
     @router.post(
         "/documents/{doc_id}/scan",
@@ -508,19 +566,7 @@ def build_native_shims_router(
         directly (the HTTP route ``DELETE /documents/delete_document``
         wraps it). We bypass the HTTP and call the method.
         """
-        from .folder import resolve_folder_for_request
-
-        rag = get_rag()
-        folder = resolve_folder_for_request(request)
-        doc_status = await rag.doc_status.get_by_id(doc_id)
-        if doc_status is None or not _doc_matches_folder(doc_status, folder):
-            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-        try:
-            await rag.adelete_by_doc_id(doc_id)
-        except Exception as exc:
-            logger.exception("twindb shim: delete_document(%s) failed", doc_id)
-            raise HTTPException(status_code=500, detail=str(exc))
-        return _OkResponse()
+        return await _delete_document_impl(get_rag, request, doc_id)
 
     @router.get(
         "/pipeline_status",
@@ -533,29 +579,7 @@ def build_native_shims_router(
         straight from LightRAG's shared ``pipeline_status`` namespace; no
         extra runtime details are fabricated in the frontend.
         """
-        rag = get_rag()
-        try:
-            from lightrag.kg.shared_storage import get_namespace_data
-
-            data = await get_namespace_data(
-                "pipeline_status", workspace=rag.workspace
-            )
-            data = dict(data)
-        except Exception as exc:
-            logger.warning("twindb shim: pipeline_status fallback (%s)", exc)
-            data = {}
-        history = data.get("history_messages") or []
-        if not isinstance(history, list):
-            history = []
-
-        return _SimplePipelineStatus(
-            busy=bool(data.get("busy", False)),
-            # job_count = total docs being processed; LightRAG calls it ``docs``
-            job_count=int(data.get("docs", 0)),
-            job_name=data.get("job_name") or None,
-            latest_message=data.get("latest_message") or None,
-            history_messages=[str(message) for message in history],
-        )
+        return await _pipeline_status_impl(get_rag)
 
     @router.get("/openapi", dependencies=protected_deps)
     async def webui_openapi() -> dict[str, Any]:
