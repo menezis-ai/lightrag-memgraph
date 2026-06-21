@@ -52,6 +52,119 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _resolve_overlay_flags(replace_ui, mount_server, shim_native_routes):
+    """Default the three overlay flags from env when the caller passed None.
+
+    Lets deployments whose boot calls a bare ``register()`` activate the
+    UI/server/shims via ``TWIN_*`` env vars only — no host code change.
+    Explicit booleans always win.
+    """
+    if replace_ui is None:
+        replace_ui = _env_flag("TWIN_REPLACE_UI")
+    if mount_server is None:
+        mount_server = _env_flag("TWIN_MOUNT_SERVER")
+    if shim_native_routes is None:
+        shim_native_routes = _env_flag("TWIN_SHIM_NATIVE_ROUTES")
+    return replace_ui, mount_server, shim_native_routes
+
+
+def _patch_storage_registries() -> None:
+    """Register the 3 Memgraph backends in lightrag.kg's registry dicts."""
+    import lightrag.kg as kg_registry
+
+    # 1. STORAGE_IMPLEMENTATIONS - declare our classes as valid implementations
+    _new_impls = {
+        "KV_STORAGE": "MemgraphKVStorage",
+        "VECTOR_STORAGE": "MemgraphVectorDBStorage",
+        "DOC_STATUS_STORAGE": "MemgraphDocStatusStorage",
+    }
+    for storage_type, class_name in _new_impls.items():
+        impls = kg_registry.STORAGE_IMPLEMENTATIONS[storage_type]["implementations"]
+        if class_name not in impls:
+            impls.append(class_name)
+
+    # 2. STORAGE_ENV_REQUIREMENTS - env vars required for each backend
+    kg_registry.STORAGE_ENV_REQUIREMENTS.update(
+        {
+            "MemgraphKVStorage": ["MEMGRAPH_URI"],
+            "MemgraphVectorDBStorage": ["MEMGRAPH_URI"],
+            "MemgraphDocStatusStorage": ["MEMGRAPH_URI"],
+        }
+    )
+
+    # 3. STORAGES - absolute module paths (importlib ignores package= for these)
+    kg_registry.STORAGES.update(
+        {
+            "MemgraphKVStorage": "twindb_lightrag_memgraph.kv_impl",
+            "MemgraphVectorDBStorage": "twindb_lightrag_memgraph.vector_impl",
+            "MemgraphDocStatusStorage": "twindb_lightrag_memgraph.docstatus_impl",
+        }
+    )
+
+
+def _maybe_install_classification(classify, label_map_path, ceiling) -> None:
+    """Install the MIP pre-ingestion classification hook when enabled.
+
+    ``classify`` None → auto-enable iff ``TWIN_MIP_LABEL_MAP`` is set.
+    """
+    import os
+
+    classify_enabled = (
+        bool(os.environ.get("TWIN_MIP_LABEL_MAP")) if classify is None else classify
+    )
+    if not classify_enabled:
+        return
+    from .._classification_hook import install_lightrag_ingestion_hook
+
+    install_lightrag_ingestion_hook(
+        label_map_path=label_map_path,
+        ceiling=ceiling,
+    )
+
+
+def _apply_app_overlays(
+    *,
+    replace_ui,
+    mount_server,
+    shim_native_routes,
+    webui_dist,
+    twin_api_prefix,
+    webui_stores,
+    webui_categories_config,
+) -> None:
+    """Step 8: swap WebUI + mount Twin sub-app + shim native routes.
+
+    When ``replace_ui=True`` but the embedded dist is missing,
+    ``_resolve_webui_dist`` raises FileNotFoundError. Historically that killed
+    the rest of step 8 silently (site.execsitecustomize swallows the traceback),
+    taking mount_server and shim_native_routes down with it — so the runtime
+    served LightRAG's native UI AND none of the Twin overlays. Degrade
+    gracefully: log loud, drop replace_ui only, keep the other overlays alive.
+    """
+    resolved_webui_dist: str | None = None
+    if replace_ui:
+        try:
+            resolved_webui_dist = _resolve_webui_dist(webui_dist)
+        except FileNotFoundError as exc:
+            logger.error(
+                "twindb: replace_ui=True but no WebUI dist found — "
+                "LightRAG native UI will be served. mount_server / "
+                "shim_native_routes WILL still apply. Details: %s",
+                exc,
+            )
+
+    if resolved_webui_dist or mount_server or shim_native_routes:
+        _patch_lightrag_server_create_app(
+            webui_dist=resolved_webui_dist,
+            twin_api_prefix=twin_api_prefix if mount_server else None,
+            shim_native_routes=shim_native_routes,
+            webui_stores=webui_stores if mount_server else "seed",
+            webui_categories_config=(
+                webui_categories_config if mount_server else None
+            ),
+        )
+
+
 def register(
     replace_ui: bool | None = None,
     mount_server: bool | None = None,
@@ -146,12 +259,9 @@ def register(
     # production) can activate the UI/server/shims with environment
     # variables only — no code change on the host side. Explicit booleans
     # passed by the caller always win; ``None`` defers to the env.
-    if replace_ui is None:
-        replace_ui = _env_flag("TWIN_REPLACE_UI")
-    if mount_server is None:
-        mount_server = _env_flag("TWIN_MOUNT_SERVER")
-    if shim_native_routes is None:
-        shim_native_routes = _env_flag("TWIN_SHIM_NATIVE_ROUTES")
+    replace_ui, mount_server, shim_native_routes = _resolve_overlay_flags(
+        replace_ui, mount_server, shim_native_routes
+    )
 
     # 0. Security baseline FIRST — must run before any lightrag.api.* or
     #    lightrag.llm.* import that would trigger pipmaster auto-install.
@@ -159,36 +269,8 @@ def register(
     if security_baseline:
         _patch_security_baseline()
 
-    import lightrag.kg as kg_registry
-
-    # 1. STORAGE_IMPLEMENTATIONS - declare our classes as valid implementations
-    _new_impls = {
-        "KV_STORAGE": "MemgraphKVStorage",
-        "VECTOR_STORAGE": "MemgraphVectorDBStorage",
-        "DOC_STATUS_STORAGE": "MemgraphDocStatusStorage",
-    }
-    for storage_type, class_name in _new_impls.items():
-        impls = kg_registry.STORAGE_IMPLEMENTATIONS[storage_type]["implementations"]
-        if class_name not in impls:
-            impls.append(class_name)
-
-    # 2. STORAGE_ENV_REQUIREMENTS - env vars required for each backend
-    kg_registry.STORAGE_ENV_REQUIREMENTS.update(
-        {
-            "MemgraphKVStorage": ["MEMGRAPH_URI"],
-            "MemgraphVectorDBStorage": ["MEMGRAPH_URI"],
-            "MemgraphDocStatusStorage": ["MEMGRAPH_URI"],
-        }
-    )
-
-    # 3. STORAGES - absolute module paths (importlib ignores package= for these)
-    kg_registry.STORAGES.update(
-        {
-            "MemgraphKVStorage": "twindb_lightrag_memgraph.kv_impl",
-            "MemgraphVectorDBStorage": "twindb_lightrag_memgraph.vector_impl",
-            "MemgraphDocStatusStorage": "twindb_lightrag_memgraph.docstatus_impl",
-        }
-    )
+    # 1-3. Register our storage backends in the lightrag.kg registries.
+    _patch_storage_registries()
 
     # 4. Monkey-patch built-in MemgraphStorage to use our TLS config
     #    and avoid session(database=...) which breaks on Community/Coordinator
@@ -201,18 +283,9 @@ def register(
     _patch_insert_done()
 
     # 6b. Optional MIP pre-ingestion classification gate.
-    import os
-
-    classify_enabled = (
-        bool(os.environ.get("TWIN_MIP_LABEL_MAP")) if classify is None else classify
+    _maybe_install_classification(
+        classify, classification_label_map_path, classification_ceiling
     )
-    if classify_enabled:
-        from .._classification_hook import install_lightrag_ingestion_hook
-
-        install_lightrag_ingestion_hook(
-            label_map_path=classification_label_map_path,
-            ceiling=classification_ceiling,
-        )
 
     # 7. Append our version to lightrag.__version__ so the WebUI displays it
     #    next to the LightRAG version string in the top-right corner.
@@ -226,36 +299,15 @@ def register(
         # when the host's create_app calls it, we capture the rag instance.
         _patch_capture_rag()
 
-    # When replace_ui=True but the embedded dist is missing (e.g. the image
-    # was built without scripts/build_webui.sh / the Dockerfile WebUI stage),
-    # _resolve_webui_dist raises FileNotFoundError. Historically this killed
-    # the rest of step 8 silently (Python's site.execsitecustomize swallows
-    # the traceback), which also took mount_server and shim_native_routes
-    # down with it — so the BNP runtime ended up serving LightRAG's native
-    # UI AND none of the Twin overlays. Degrade gracefully: log loud, drop
-    # replace_ui only, keep the other overlays alive.
-    resolved_webui_dist: str | None = None
-    if replace_ui:
-        try:
-            resolved_webui_dist = _resolve_webui_dist(webui_dist)
-        except FileNotFoundError as exc:
-            logger.error(
-                "twindb: replace_ui=True but no WebUI dist found — "
-                "LightRAG native UI will be served. mount_server / "
-                "shim_native_routes WILL still apply. Details: %s",
-                exc,
-            )
-
-    if resolved_webui_dist or mount_server or shim_native_routes:
-        _patch_lightrag_server_create_app(
-            webui_dist=resolved_webui_dist,
-            twin_api_prefix=twin_api_prefix if mount_server else None,
-            shim_native_routes=shim_native_routes,
-            webui_stores=webui_stores if mount_server else "seed",
-            webui_categories_config=(
-                webui_categories_config if mount_server else None
-            ),
-        )
+    _apply_app_overlays(
+        replace_ui=replace_ui,
+        mount_server=mount_server,
+        shim_native_routes=shim_native_routes,
+        webui_dist=webui_dist,
+        twin_api_prefix=twin_api_prefix,
+        webui_stores=webui_stores,
+        webui_categories_config=webui_categories_config,
+    )
 
     _registered = True
     msg = (
@@ -679,126 +731,162 @@ def _patch_builtin_memgraph_storage():
     _patch_operate_hot_paths()
 
 
-def _patch_operate_hot_paths():
-    """Replace two operate.py functions to use fused single-query methods.
-
-    Falls back to the original asyncio.gather() pattern when the graph
-    storage backend does not expose fused methods (non-Memgraph).
-    """
+async def _fused_get_node_data(
+    query, knowledge_graph_inst, entities_vdb, query_param, query_embedding=None
+):
+    """Fused replacement for operate._get_node_data (single-query node fetch)."""
     import asyncio
 
     import lightrag.operate as operate
     from lightrag.utils import logger as _lr_logger
 
-    _original_get_node_data = operate._get_node_data
-    _original_find_edges = operate._find_most_related_edges_from_entities
+    _lr_logger.info(
+        f"Query nodes: {query} (top_k:{query_param.top_k}, "
+        f"cosine:{entities_vdb.cosine_better_than_threshold})"
+    )
+    results = await entities_vdb.query(
+        query, top_k=query_param.top_k, query_embedding=query_embedding,
+    )
+    if not len(results):
+        return [], []
 
-    async def _fused_get_node_data(
-        query, knowledge_graph_inst, entities_vdb, query_param,
-        query_embedding=None,
-    ):
-        _lr_logger.info(
-            f"Query nodes: {query} (top_k:{query_param.top_k}, "
-            f"cosine:{entities_vdb.cosine_better_than_threshold})"
+    node_ids = [r["entity_name"] for r in results]
+
+    if hasattr(knowledge_graph_inst, "get_nodes_with_degrees_batch"):
+        nodes_dict, degrees_dict = (
+            await knowledge_graph_inst.get_nodes_with_degrees_batch(node_ids)
         )
-        results = await entities_vdb.query(
-            query, top_k=query_param.top_k, query_embedding=query_embedding,
+    else:
+        nodes_dict, degrees_dict = await asyncio.gather(
+            knowledge_graph_inst.get_nodes_batch(node_ids),
+            knowledge_graph_inst.node_degrees_batch(node_ids),
         )
-        if not len(results):
-            return [], []
 
-        node_ids = [r["entity_name"] for r in results]
+    node_datas = [nodes_dict.get(nid) for nid in node_ids]
+    node_degrees = [degrees_dict.get(nid, 0) for nid in node_ids]
 
-        if hasattr(knowledge_graph_inst, "get_nodes_with_degrees_batch"):
-            nodes_dict, degrees_dict = (
-                await knowledge_graph_inst.get_nodes_with_degrees_batch(node_ids)
+    if not all(n is not None for n in node_datas):
+        _lr_logger.warning("Some nodes are missing, maybe the storage is damaged")
+
+    node_datas = [
+        {
+            **n,
+            "entity_name": k["entity_name"],
+            "rank": d,
+            "created_at": k.get("created_at"),
+        }
+        for k, n, d in zip(results, node_datas, node_degrees)
+        if n is not None
+    ]
+
+    use_relations = await operate._find_most_related_edges_from_entities(
+        node_datas,
+        query_param,
+        knowledge_graph_inst,
+    )
+
+    _lr_logger.info(
+        f"Local query: {len(node_datas)} entites, {len(use_relations)} relations"
+    )
+    return node_datas, use_relations
+
+
+async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
+    """Fused replacement for operate._find_most_related_edges_from_entities."""
+    import asyncio
+
+    from lightrag.utils import logger as _lr_logger
+
+    node_names = [dp["entity_name"] for dp in node_datas]
+    batch_edges_dict = await knowledge_graph_inst.get_nodes_edges_batch(node_names)
+
+    all_edges = []
+    seen = set()
+    for node_name in node_names:
+        this_edges = batch_edges_dict.get(node_name, [])
+        for e in this_edges:
+            sorted_edge = tuple(sorted(e))
+            if sorted_edge not in seen:
+                seen.add(sorted_edge)
+                all_edges.append(sorted_edge)
+
+    edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
+
+    if hasattr(knowledge_graph_inst, "get_edges_with_degrees_batch"):
+        edge_data_dict, edge_degrees_dict = (
+            await knowledge_graph_inst.get_edges_with_degrees_batch(edge_pairs_dicts)
+        )
+    else:
+        edge_pairs_tuples = list(all_edges)
+        edge_data_dict, edge_degrees_dict = await asyncio.gather(
+            knowledge_graph_inst.get_edges_batch(edge_pairs_dicts),
+            knowledge_graph_inst.edge_degrees_batch(edge_pairs_tuples),
+        )
+
+    all_edges_data = []
+    for pair in all_edges:
+        edge_props = edge_data_dict.get(pair)
+        if edge_props is None:
+            continue
+        if "weight" not in edge_props:
+            _lr_logger.warning(
+                f"Edge {pair} missing 'weight' attribute, using default value 1.0"
             )
-        else:
-            nodes_dict, degrees_dict = await asyncio.gather(
-                knowledge_graph_inst.get_nodes_batch(node_ids),
-                knowledge_graph_inst.node_degrees_batch(node_ids),
-            )
-
-        node_datas = [nodes_dict.get(nid) for nid in node_ids]
-        node_degrees = [degrees_dict.get(nid, 0) for nid in node_ids]
-
-        if not all(n is not None for n in node_datas):
-            _lr_logger.warning("Some nodes are missing, maybe the storage is damaged")
-
-        node_datas = [
+            edge_props["weight"] = 1.0
+        all_edges_data.append(
             {
-                **n,
-                "entity_name": k["entity_name"],
-                "rank": d,
-                "created_at": k.get("created_at"),
+                "src_tgt": pair,
+                "rank": edge_degrees_dict.get(pair, 0),
+                **edge_props,
             }
-            for k, n, d in zip(results, node_datas, node_degrees)
-            if n is not None
-        ]
-
-        use_relations = await operate._find_most_related_edges_from_entities(
-            node_datas,
-            query_param,
-            knowledge_graph_inst,
         )
 
-        _lr_logger.info(
-            f"Local query: {len(node_datas)} entites, {len(use_relations)} relations"
-        )
-        return node_datas, use_relations
+    return sorted(
+        all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True
+    )
 
-    async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
-        node_names = [dp["entity_name"] for dp in node_datas]
-        batch_edges_dict = await knowledge_graph_inst.get_nodes_edges_batch(node_names)
 
-        all_edges = []
-        seen = set()
-        for node_name in node_names:
-            this_edges = batch_edges_dict.get(node_name, [])
-            for e in this_edges:
-                sorted_edge = tuple(sorted(e))
-                if sorted_edge not in seen:
-                    seen.add(sorted_edge)
-                    all_edges.append(sorted_edge)
+def _patch_operate_hot_paths():
+    """Replace two operate.py functions to use fused single-query methods.
 
-        edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
-
-        if hasattr(knowledge_graph_inst, "get_edges_with_degrees_batch"):
-            edge_data_dict, edge_degrees_dict = (
-                await knowledge_graph_inst.get_edges_with_degrees_batch(
-                    edge_pairs_dicts
-                )
-            )
-        else:
-            edge_pairs_tuples = list(all_edges)
-            edge_data_dict, edge_degrees_dict = await asyncio.gather(
-                knowledge_graph_inst.get_edges_batch(edge_pairs_dicts),
-                knowledge_graph_inst.edge_degrees_batch(edge_pairs_tuples),
-            )
-
-        all_edges_data = []
-        for pair in all_edges:
-            edge_props = edge_data_dict.get(pair)
-            if edge_props is not None:
-                if "weight" not in edge_props:
-                    _lr_logger.warning(
-                        f"Edge {pair} missing 'weight' attribute, using default value 1.0"
-                    )
-                    edge_props["weight"] = 1.0
-                combined = {
-                    "src_tgt": pair,
-                    "rank": edge_degrees_dict.get(pair, 0),
-                    **edge_props,
-                }
-                all_edges_data.append(combined)
-
-        all_edges_data = sorted(
-            all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True
-        )
-        return all_edges_data
+    The fused functions fall back to the original asyncio.gather() pattern
+    when the graph storage backend does not expose fused methods (non-Memgraph).
+    """
+    import lightrag.operate as operate
 
     operate._get_node_data = _fused_get_node_data
     operate._find_most_related_edges_from_entities = _fused_find_edges
+
+
+def _resolve_merge_graph_inst(args, kwargs):
+    """Find the graph-storage instance in merge_nodes_and_edges args.
+
+    Signature evolved across lightrag versions:
+      old: (entity_map, edge_map, knowledge_graph_inst, global_config)
+      new: (chunk_results, knowledge_graph_inst, entity_vdb, ...)
+    Check kwargs first, then positional args by type (MemgraphStorage).
+    """
+    from lightrag.kg.memgraph_impl import MemgraphStorage
+
+    graph_inst = kwargs.get("knowledge_graph_inst")
+    if graph_inst is None:
+        for arg in args:
+            if isinstance(arg, MemgraphStorage):
+                return arg
+    return graph_inst
+
+
+def _swap_merge_graph_inst(args, kwargs, graph_inst, proxy):
+    """Return (args, kwargs) with ``graph_inst`` replaced by the buffer proxy."""
+    if "knowledge_graph_inst" in kwargs:
+        kwargs["knowledge_graph_inst"] = proxy
+        return args, kwargs
+    args = list(args)
+    for i, arg in enumerate(args):
+        if arg is graph_inst:
+            args[i] = proxy
+            break
+    return tuple(args), kwargs
 
 
 def _patch_merge_write_path():
@@ -820,34 +908,11 @@ def _patch_merge_write_path():
     _original_merge = operate.merge_nodes_and_edges
 
     async def _buffered_merge_nodes_and_edges(*args, **kwargs):
-        # Extract knowledge_graph_inst from args or kwargs.
-        # Signature evolved across lightrag versions:
-        #   old: (entity_map, edge_map, knowledge_graph_inst, global_config)
-        #   new: (chunk_results, knowledge_graph_inst, entity_vdb, ...)
-        # We support both by checking kwargs first, then positional args.
-        graph_inst = kwargs.get("knowledge_graph_inst")
-        if graph_inst is None:
-            # Positional: index 2 (old) or index 1 (new).
-            # Detect by type: MemgraphStorage is always the graph instance.
-            for i, arg in enumerate(args):
-                if isinstance(arg, MemgraphStorage):
-                    graph_inst = arg
-                    break
-
+        graph_inst = _resolve_merge_graph_inst(args, kwargs)
         if not isinstance(graph_inst, MemgraphStorage):
             return await _original_merge(*args, **kwargs)
-
         proxy = _BufferedGraphProxy(graph_inst)
-        # Replace the graph instance in args/kwargs
-        if "knowledge_graph_inst" in kwargs:
-            kwargs["knowledge_graph_inst"] = proxy
-        else:
-            args = list(args)
-            for i, arg in enumerate(args):
-                if arg is graph_inst:
-                    args[i] = proxy
-                    break
-            args = tuple(args)
+        args, kwargs = _swap_merge_graph_inst(args, kwargs, graph_inst, proxy)
         await _original_merge(*args, **kwargs)
         await proxy.flush()
 
@@ -917,6 +982,40 @@ _RUNTIME_INSTALL_REFUSED_MSG = (
 )
 
 
+def _refuse_runtime_install(*args, **kwargs):
+    """Hard-refuse a pipmaster install call (security baseline)."""
+    pkg = kwargs.get("package", kwargs.get("package_name", "<unknown>"))
+    if pkg == "<unknown>":
+        for a in args:
+            if isinstance(a, str):
+                pkg = a
+                break
+    raise RuntimeError(_RUNTIME_INSTALL_REFUSED_MSG.format(package=pkg))
+
+
+async def _refuse_runtime_install_async(*args, **kwargs):
+    return _refuse_runtime_install(*args, **kwargs)
+
+
+def _block_pipmaster_classes(pm) -> None:
+    """Replace install*/ensure* methods on every pipmaster manager class."""
+    for cls_name in (
+        "PackageManager", "AsyncPackageManager",
+        "UvPackageManager", "CondaPackageManager",
+    ):
+        cls = getattr(pm, cls_name, None)
+        if cls is None:
+            continue
+        is_async_cls = cls_name == "AsyncPackageManager"
+        for method_name in list(cls.__dict__):
+            if not (method_name.startswith("install") or method_name.startswith("ensure")):
+                continue
+            replacement = (
+                _refuse_runtime_install_async if is_async_cls else _refuse_runtime_install
+            )
+            setattr(cls, method_name, replacement)
+
+
 def _disable_pipmaster_runtime_install() -> None:
     """Replace every pipmaster install entrypoint with a hard refusal.
 
@@ -931,19 +1030,6 @@ def _disable_pipmaster_runtime_install() -> None:
     if getattr(pm, "_twindb_install_blocked", False):
         return
 
-    def _refuse(*args, **kwargs):
-        pkg = kwargs.get("package", kwargs.get("package_name", "<unknown>"))
-        if pkg == "<unknown>":
-            for a in args:
-                if isinstance(a, str):
-                    pkg = a
-                    break
-        raise RuntimeError(_RUNTIME_INSTALL_REFUSED_MSG.format(package=pkg))
-
-    async def _refuse_async(*args, **kwargs):
-        return _refuse(*args, **kwargs)
-
-    # Module-level convenience functions
     _sync_targets = (
         "install", "install_edit", "install_if_missing", "install_multiple",
         "install_multiple_if_not_installed", "install_or_update",
@@ -952,7 +1038,7 @@ def _disable_pipmaster_runtime_install() -> None:
     )
     for name in _sync_targets:
         if hasattr(pm, name):
-            setattr(pm, name, _refuse)
+            setattr(pm, name, _refuse_runtime_install)
 
     _async_targets = (
         "async_install", "async_install_if_missing", "async_install_multiple",
@@ -960,22 +1046,9 @@ def _disable_pipmaster_runtime_install() -> None:
     )
     for name in _async_targets:
         if hasattr(pm, name):
-            setattr(pm, name, _refuse_async)
+            setattr(pm, name, _refuse_runtime_install_async)
 
-    # Class-level methods on every manager
-    for cls_name in (
-        "PackageManager", "AsyncPackageManager",
-        "UvPackageManager", "CondaPackageManager",
-    ):
-        cls = getattr(pm, cls_name, None)
-        if cls is None:
-            continue
-        is_async_cls = cls_name == "AsyncPackageManager"
-        for method_name in list(cls.__dict__):
-            if not (method_name.startswith("install") or method_name.startswith("ensure")):
-                continue
-            replacement = _refuse_async if is_async_cls else _refuse
-            setattr(cls, method_name, replacement)
+    _block_pipmaster_classes(pm)
 
     pm._twindb_install_blocked = True
     logger.info("twindb: pipmaster runtime install blocked (security baseline)")
@@ -1626,46 +1699,15 @@ def _kill_native_webui(app, twin_prefix: str = TWIN_UI_PREFIX) -> None:
     )
 
 
-def _mount_twin_subapp(
-    app,
-    prefix: str,
-    webui_stores: str = "memgraph",
-    webui_categories_config: str | None = None,
-    auth_args=None,
-) -> None:
-    """Mount the Twin overlay as an ``APIRouter`` directly on the host app.
+def _configure_overlay_auth(auth_args, webui_stores: str) -> None:
+    """Resolve auth config from CLI args / env and configure auth + IdP.
 
-    Doctrine: one app, one LightRAG, one lifespan. Earlier revisions
-    instantiated a full FastAPI sub-app with a chained lifespan that
-    booted a second LightRAG — fine for the standalone factory in
-    ``server/app.py`` (still usable for unit tests), doubled the
-    resource footprint in production. The current implementation
-    includes the existing ``webui_router`` directly so:
-
-      - one LightRAG instance for the whole process (the host's),
-      - the same ``/twin/api/*`` surface from ``webui_router`` serves
-        every endpoint the React port expects (folders, notifications,
-        tags + CRUD, thesaurus, activity, graph).
-
-    Storage backend selection (``webui_stores``):
-
-      - ``"memgraph"``: the WebUI store is built **inside a chained
-        lifespan** because the Memgraph store factories are async. On
-        startup, after LightRAG's own lifespan has run
-        ``rag.initialize_storages()``, we instantiate Memgraph-backed
-        backends scoped to ``$WORKSPACE`` and swap them into a
-        :class:`WebuiStore`. Fresh installs boot empty for documents,
-        tags, activity, notifications, and graph.
-      - ``"seed"``: the WebUI store is built sync from
-        :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
-        notifications) are visible immediately. No lifespan wrapping.
-        This mode is demo/dev only.
+    Also emits the mock-kill safeguard warning when an IdP is active but the
+    overlay is still serving demo ``seed`` stores.
     """
     import os
 
-    from fastapi import Depends
-
-    from ..server.auth import configure_auth, require_auth
+    from ..server.auth import configure_auth
     from ..server.idp_jwt import IdpConfig as _IdpConfig, configure_idp
 
     def _arg_value(*names: str):
@@ -1704,17 +1746,15 @@ def _mount_twin_subapp(
         auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
     )
 
-    # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in
-    # the env. Idempotent: dormant when no URL is configured.
+    # Activate the IdP JWT middleware if TWIN_IDP_JWKS_URL is set in the env.
+    # Idempotent: dormant when no URL is configured.
     configure_idp(_idp_cfg)
 
-    # Mock-kill safeguard: if the operator activates an IdP (a strong
-    # signal that this is a real deployment, not a standalone demo),
-    # warn loudly when ``webui_stores`` is still the demo "seed"
-    # backend. The visible Twin overlay (tags / activity /
-    # notifications / documents) would otherwise be in-memory fixtures
-    # that look like real production data until the first restart
-    # erases them.
+    # Mock-kill safeguard: if the operator activates an IdP (a strong signal
+    # this is a real deployment, not a standalone demo), warn loudly when
+    # ``webui_stores`` is still the demo "seed" backend — the visible Twin
+    # overlay would otherwise be in-memory fixtures that look like real
+    # production data until the first restart erases them.
     if _idp_cfg is not None and webui_stores == "seed":
         logger.warning(
             "twindb: DEMO STORES IN PROD — webui_stores='seed' with "
@@ -1724,6 +1764,132 @@ def _mount_twin_subapp(
             "deployment runbook before going live.",
             _idp_cfg.idp_name,
         )
+
+
+async def _overlay_instance_quota_middleware(request, call_next):
+    """507 guard on overlay ingestion endpoints when Memgraph is at its cap."""
+    if request.method == "POST":
+        path = request.url.path
+        if path in {"/documents/upload", "/documents/reprocess_failed"} or (
+            path.startswith("/documents/") and path.endswith("/scan")
+        ):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from ..server.quota import enforce_instance_quota
+
+            try:
+                await enforce_instance_quota()
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail}, status_code=exc.status_code
+                )
+    return await call_next(request)
+
+
+async def _init_overlay_memgraph_stores(
+    webui_categories_config, WebuiStore, set_store
+) -> None:
+    """Swap the Twin overlay stores to per-folder Memgraph backends at startup.
+
+    Bypasses the ``make_memgraph_*_store()`` factories because they call
+    ``bootstrap_if_empty()``, which seeds the folder-backed store with demo
+    fixtures on first init — making a "fresh" folder look pre-populated.
+    Instantiate the classes directly + ``initialize()`` only.
+    """
+    try:
+        from ..server.folder import load_folder_catalog
+        from ..server.webui_activitystore import MemgraphActivityStore
+        from ..server.webui_notificationstore import MemgraphNotificationStore
+        from ..server.webui_tagstore import MemgraphTagStore
+
+        catalog = load_folder_catalog()
+        for folder in catalog.folders:
+            tag_store = MemgraphTagStore(workspace=folder.id)
+            await tag_store.initialize()
+            # Categories — governance taxonomy, NOT user-generated. Two modes:
+            #   1. webui_categories_config set → mirror an external JSON file
+            #      on every boot (Config-as-Code; file is source of truth).
+            #   2. No config path → bootstrap once from the internal seed.
+            if webui_categories_config:
+                n = await tag_store.replace_categories_from_config(
+                    webui_categories_config
+                )
+                logger.info(
+                    "twindb: categories sourced from %s (%d entries, space=%s)",
+                    webui_categories_config,
+                    n,
+                    folder.id,
+                )
+            else:
+                await tag_store.bootstrap_categories_if_empty()
+            activity_store = MemgraphActivityStore(workspace=folder.id)
+            await activity_store.initialize()
+            notif_store = MemgraphNotificationStore(workspace=folder.id)
+            await notif_store.initialize()
+
+            store = WebuiStore.for_folder(folder.id, mode="memgraph")
+            store._tag_backend = tag_store
+            store._activity_backend = activity_store
+            store._notification_backend = notif_store
+            set_store(store, folder=folder.id)
+        logger.info(
+            "twindb: Twin overlay stores switched to Memgraph "
+            "(folders=%s) — fresh folders boot empty.",
+            ",".join(folder.id for folder in catalog.folders),
+        )
+        logger.info(
+            "Chargement de TwinRAG backend Memgraph réussi "
+            "(UI disponible sur /twin/, API disponible sur /twin/api)"
+        )
+    except Exception:
+        logger.exception(
+            "twindb: FAILED to switch stores to Memgraph; "
+            "keeping in-memory seed.",
+        )
+        raise
+
+
+def _mount_twin_subapp(
+    app,
+    prefix: str,
+    webui_stores: str = "memgraph",
+    webui_categories_config: str | None = None,
+    auth_args=None,
+) -> None:
+    """Mount the Twin overlay as an ``APIRouter`` directly on the host app.
+
+    Doctrine: one app, one LightRAG, one lifespan. Earlier revisions
+    instantiated a full FastAPI sub-app with a chained lifespan that
+    booted a second LightRAG — fine for the standalone factory in
+    ``server/app.py`` (still usable for unit tests), doubled the
+    resource footprint in production. The current implementation
+    includes the existing ``webui_router`` directly so:
+
+      - one LightRAG instance for the whole process (the host's),
+      - the same ``/twin/api/*`` surface from ``webui_router`` serves
+        every endpoint the React port expects (folders, notifications,
+        tags + CRUD, thesaurus, activity, graph).
+
+    Storage backend selection (``webui_stores``):
+
+      - ``"memgraph"``: the WebUI store is built **inside a chained
+        lifespan** because the Memgraph store factories are async. On
+        startup, after LightRAG's own lifespan has run
+        ``rag.initialize_storages()``, we instantiate Memgraph-backed
+        backends scoped to ``$WORKSPACE`` and swap them into a
+        :class:`WebuiStore`. Fresh installs boot empty for documents,
+        tags, activity, notifications, and graph.
+      - ``"seed"``: the WebUI store is built sync from
+        :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
+        notifications) are visible immediately. No lifespan wrapping.
+        This mode is demo/dev only.
+    """
+    from fastapi import Depends
+
+    from ..server.auth import require_auth
+
+    _configure_overlay_auth(auth_args, webui_stores)
 
     try:
         from ..server.webui_router import (
@@ -1763,30 +1929,11 @@ def _mount_twin_subapp(
     # QuotaBanner polls it) + a 507 guard on ingestion endpoints. Mirror
     # of server/app.py; the overlay must mount both or the banner 404s
     # and ingestion has no early-pressure signal at BNP.
-    from ..server.quota import enforce_instance_quota as _enforce_quota
     from ..server.quota_routes import router as quota_router
 
     app.include_router(quota_router, prefix=prefix)
 
-    _QUOTA_GATED_PATHS = {"/documents/upload", "/documents/reprocess_failed"}
-
-    @app.middleware("http")
-    async def _instance_quota_middleware(request, call_next):
-        if request.method == "POST":
-            path = request.url.path
-            if path in _QUOTA_GATED_PATHS or (
-                path.startswith("/documents/") and path.endswith("/scan")
-            ):
-                from fastapi import HTTPException
-                from fastapi.responses import JSONResponse
-
-                try:
-                    await _enforce_quota()
-                except HTTPException as exc:
-                    return JSONResponse(
-                        {"detail": exc.detail}, status_code=exc.status_code
-                    )
-        return await call_next(request)
+    app.middleware("http")(_overlay_instance_quota_middleware)
 
     # Twin overlay query route — wraps LightRAG `aquery` and returns
     # structured `{response, sources}` so the React port can render
@@ -1855,72 +2002,9 @@ def _mount_twin_subapp(
             # LightRAG has finished initialize_storages() — Memgraph
             # connection pool is up, indexes are created. Safe to talk
             # to the WebUI store Memgraph backends.
-            #
-            # We **bypass** the ``make_memgraph_*_store()`` factories
-            # because they call ``bootstrap_if_empty()``, which seeds
-            # the folder-backed store with the demo fixtures on first init.
-            # That makes a "fresh" folder look pre-populated (not
-            # what an operator on a clean install expects). We
-            # instantiate the classes directly + ``initialize()`` only.
-            try:
-                from ..server.folder import load_folder_catalog
-                from ..server.webui_activitystore import MemgraphActivityStore
-                from ..server.webui_notificationstore import (
-                    MemgraphNotificationStore,
-                )
-                from ..server.webui_tagstore import MemgraphTagStore
-
-                catalog = load_folder_catalog()
-                for folder in catalog.folders:
-                    tag_store = MemgraphTagStore(workspace=folder.id)
-                    await tag_store.initialize()
-                    # Categories — governance taxonomy, NOT user-generated.
-                    # Two modes:
-                    #   1. webui_categories_config set → mirror an external
-                    #      JSON file on every boot (Config-as-Code doctrine,
-                    #      Option 3). The file is source of truth, edits
-                    #      propagate to Memgraph at next reboot.
-                    #   2. No config path → bootstrap once from the internal
-                    #      seed (Oracle / Infra / Network / Payment /
-                    #      Lifecycle / Governance). Useful for demo + early
-                    #      dev when the admin hasn't shipped a config yet.
-                    if webui_categories_config:
-                        n = await tag_store.replace_categories_from_config(
-                            webui_categories_config
-                        )
-                        logger.info(
-                            "twindb: categories sourced from %s (%d entries, space=%s)",
-                            webui_categories_config,
-                            n,
-                            folder.id,
-                        )
-                    else:
-                        await tag_store.bootstrap_categories_if_empty()
-                    activity_store = MemgraphActivityStore(workspace=folder.id)
-                    await activity_store.initialize()
-                    notif_store = MemgraphNotificationStore(workspace=folder.id)
-                    await notif_store.initialize()
-
-                    store = WebuiStore.for_folder(folder.id, mode="memgraph")
-                    store._tag_backend = tag_store
-                    store._activity_backend = activity_store
-                    store._notification_backend = notif_store
-                    set_store(store, folder=folder.id)
-                logger.info(
-                    "twindb: Twin overlay stores switched to Memgraph "
-                    "(folders=%s) — fresh folders boot empty.",
-                    ",".join(folder.id for folder in catalog.folders),
-                )
-                logger.info(
-                    "Chargement de TwinRAG backend Memgraph réussi "
-                    "(UI disponible sur /twin/, API disponible sur /twin/api)"
-                )
-            except Exception:
-                logger.exception(
-                    "twindb: FAILED to switch stores to Memgraph; "
-                    "keeping in-memory seed.",
-                )
-                raise
+            await _init_overlay_memgraph_stores(
+                webui_categories_config, WebuiStore, set_store
+            )
             yield
 
     app.router.lifespan_context = chained_lifespan

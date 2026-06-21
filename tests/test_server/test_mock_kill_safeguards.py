@@ -128,14 +128,18 @@ class TestForFolderMemgraphModeIntegration:
     ``server/app.py`` standalone lifespan call sites."""
 
     def test_register_path_uses_memgraph_mode(self):
-        """`__init__.py:_mount_twin_subapp` memgraph branch calls
-        `for_folder(..., mode="memgraph")`. We assert the wiring by
-        reading the source — this is a guard against a future refactor
-        accidentally dropping the keyword arg.
+        """The overlay memgraph branch calls `for_folder(..., mode="memgraph")`.
+
+        We assert the wiring by reading the source — a guard against a future
+        refactor accidentally dropping the keyword arg. The per-folder store
+        init lives in `_init_overlay_memgraph_stores` (extracted from
+        `_mount_twin_subapp` by the cognitive-complexity refactor).
         """
         import inspect
 
-        from twindb_lightrag_memgraph import _mount_twin_subapp as fn
+        from twindb_lightrag_memgraph.patches.registry import (
+            _init_overlay_memgraph_stores as fn,
+        )
 
         source = inspect.getsource(fn)
         assert 'WebuiStore.for_folder(folder.id, mode="memgraph")' in source, (
