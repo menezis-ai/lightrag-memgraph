@@ -28,6 +28,95 @@ interface UseDocumentActionsOptions {
   setToasts: Dispatch<SetStateAction<Toast[]>>;
 }
 
+type UploadResponse = { status: string; message: string; track_id: string };
+type UploadResult = PromiseSettledResult<UploadResponse>;
+
+function summarizeUploadResults(results: readonly UploadResult[]) {
+  const ok = results.filter((result) => result.status === 'fulfilled').length;
+  const ko = results.length - ok;
+  const dup = results.filter(
+    (result) =>
+      result.status === 'fulfilled' && result.value.status === 'duplicated',
+  ).length;
+  return { ok, ko, dup };
+}
+
+function failedOptimisticUploadIds(
+  optimisticDocs: readonly Document[],
+  results: readonly UploadResult[],
+): Set<string> {
+  return new Set(
+    optimisticDocs
+      .filter((_, index) => results[index]?.status === 'rejected')
+      .map((doc) => doc.doc_id),
+  );
+}
+
+function acceptedUploadsByOptimisticId(
+  optimisticDocs: readonly Document[],
+  results: readonly UploadResult[],
+): Map<string, UploadResponse> {
+  return new Map(
+    optimisticDocs.flatMap((doc, index) => {
+      const result = results[index];
+      return result?.status === 'fulfilled'
+        ? [[doc.doc_id, result.value] as const]
+        : [];
+    }),
+  );
+}
+
+function patchOptimisticUploadDocs(
+  docs: readonly Document[],
+  acceptedByOptimisticId: ReadonlyMap<string, UploadResponse>,
+  failedIds: ReadonlySet<string>,
+): readonly Document[] {
+  return docs
+    .map((doc) => {
+      const result = acceptedByOptimisticId.get(doc.doc_id);
+      if (!result) return doc;
+      return {
+        ...doc,
+        track_id: result.track_id,
+        content_summary:
+          result.status === 'duplicated'
+            ? 'Upload accepted as duplicate, waiting for source refresh.'
+            : 'Upload accepted, waiting for ingestion worker.',
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...doc.metadata,
+          upload_state: result.status,
+        },
+      };
+    })
+    .filter((doc) => !failedIds.has(doc.doc_id));
+}
+
+function successfulTrackIds(results: readonly UploadResult[]): string[] {
+  return results.flatMap((result) =>
+    result.status === 'fulfilled' ? [result.value.track_id] : [],
+  );
+}
+
+function recordUploadAudit(
+  results: readonly UploadResult[],
+  uploadInputs: readonly UploadDocumentInput[],
+  actor: string,
+): Promise<unknown>[] {
+  return results.flatMap((result, index) =>
+    result.status === 'fulfilled'
+      ? [
+          api.recordSourceUploaded({
+            source: uploadInputs[index]?.file.name ?? result.value.track_id,
+            track_id: result.value.track_id,
+            status: result.value.status,
+            actor,
+          }),
+        ]
+      : [],
+  );
+}
+
 export function useDocumentActions({
   activity,
   currentActor,
@@ -265,53 +354,28 @@ export function useDocumentActions({
       sub: `${uploadInputs.length} file${uploadInputs.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
     });
 
-    const results = await uploadDocs.mutateAsync(uploadInputs);
+    const results: readonly UploadResult[] = await uploadDocs.mutateAsync(uploadInputs);
     setAddOpen(false);
-    const failedOptimisticIds = new Set(
-      optimisticDocs
-        .filter((_, index) => results[index]?.status === 'rejected')
-        .map((doc) => doc.doc_id),
+    const failedOptimisticIds = failedOptimisticUploadIds(
+      optimisticDocs,
+      results,
     );
-    const acceptedByOptimisticId = new Map(
-      optimisticDocs.flatMap((doc, index) => {
-        const result = results[index];
-        return result?.status === 'fulfilled'
-          ? [[doc.doc_id, result.value] as const]
-          : [];
-      }),
+    const acceptedByOptimisticId = acceptedUploadsByOptimisticId(
+      optimisticDocs,
+      results,
     );
     const acceptedTrackIds = Array.from(acceptedByOptimisticId.values()).map(
       (result) => result.track_id,
     );
     setOptimisticUploadDocs((current) =>
-      current
-        .map((doc) => {
-          const result = acceptedByOptimisticId.get(doc.doc_id);
-          if (!result) return doc;
-          return {
-            ...doc,
-            track_id: result.track_id,
-            content_summary:
-              result.status === 'duplicated'
-                ? 'Upload accepted as duplicate, waiting for source refresh.'
-                : 'Upload accepted, waiting for ingestion worker.',
-            updated_at: new Date().toISOString(),
-            metadata: {
-              ...doc.metadata,
-              upload_state: result.status,
-            },
-          };
-        })
-        .filter((doc) => !failedOptimisticIds.has(doc.doc_id)),
+      patchOptimisticUploadDocs(
+        current,
+        acceptedByOptimisticId,
+        failedOptimisticIds,
+      ),
     );
 
-    const ok = results.filter((result) => result.status === 'fulfilled').length;
-    const ko = results.filter((result) => result.status === 'rejected').length;
-    const dup = results.filter(
-      (result) =>
-        result.status === 'fulfilled' &&
-        (result.value as { status?: string }).status === 'duplicated',
-    ).length;
+    const { ok, ko, dup } = summarizeUploadResults(results);
 
     if (ko === 0) {
       pushToast({
@@ -333,33 +397,15 @@ export function useDocumentActions({
       });
     }
 
-    const uploadAuditWrites = results.flatMap((result, index) =>
-      result.status === 'fulfilled'
-        ? [
-            api.recordSourceUploaded({
-              source: uploadInputs[index]?.file.name ?? result.value.track_id,
-              track_id: result.value.track_id,
-              status: result.value.status,
-              actor: currentActor,
-            }),
-          ]
-        : [],
-    );
+    const uploadAuditWrites = recordUploadAudit(results, uploadInputs, currentActor);
     Promise.allSettled(uploadAuditWrites)
       .then(() => activity.refetch())
       .catch(() => undefined);
 
     if (action.tags.length > 0) {
-      const successfulTrackIds = results
-        .filter((result) => result.status === 'fulfilled')
-        .map(
-          (result) =>
-            (result as PromiseFulfilledResult<{ track_id: string }>).value
-              .track_id,
-        )
-        .filter(Boolean);
-      if (successfulTrackIds.length > 0) {
-        void applyInitialTagsAfterIngestion(successfulTrackIds, action.tags);
+      const trackIds = successfulTrackIds(results);
+      if (trackIds.length > 0) {
+        void applyInitialTagsAfterIngestion(trackIds, action.tags);
       }
     }
     void refreshDocumentsUntilUploadsLand(acceptedTrackIds);

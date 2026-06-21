@@ -59,6 +59,37 @@ function cloneDocuments(docs: readonly Document[]): Document[] {
   }));
 }
 
+function trackStatusResponse(trackId: string, docId: string | undefined) {
+  if (e2eScenario.trackStatusMode === 'processed' && docId) {
+    const doc = documentsState.find((d) => d.doc_id === docId);
+    return HttpResponse.json({
+      track_id: trackId,
+      documents: doc
+        ? [{ id: doc.doc_id, status: 'processed', file_path: doc.file_path }]
+        : [],
+      total_count: doc ? 1 : 0,
+      status_summary: doc ? { processed: 1 } : {},
+    });
+  }
+  if (e2eScenario.trackStatusMode === 'timeout') {
+    const doc = documentsState.find((d) => d.doc_id === docId);
+    return HttpResponse.json({
+      track_id: trackId,
+      documents: docId
+        ? [{ id: docId, status: 'processing', file_path: doc?.file_path ?? docId }]
+        : [],
+      total_count: docId ? 1 : 0,
+      status_summary: docId ? { processing: 1 } : {},
+    });
+  }
+  return HttpResponse.json({
+    track_id: trackId,
+    documents: [],
+    total_count: 0,
+    status_summary: {},
+  });
+}
+
 function e2eStorage(): Storage | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -944,33 +975,7 @@ export const handlers = [
     if (url.pathname.startsWith(TWIN)) return undefined;
     const trackId = String(params.trackId);
     const docId = uploadedTrackDocs.get(trackId);
-    if (e2eScenario.trackStatusMode === 'processed' && docId) {
-      const doc = documentsState.find((d) => d.doc_id === docId);
-      return HttpResponse.json({
-        track_id: trackId,
-        documents: doc
-          ? [{ id: doc.doc_id, status: 'processed', file_path: doc.file_path }]
-          : [],
-        total_count: doc ? 1 : 0,
-        status_summary: doc ? { processed: 1 } : {},
-      });
-    }
-    if (e2eScenario.trackStatusMode === 'timeout') {
-      return HttpResponse.json({
-        track_id: trackId,
-        documents: docId
-          ? [{ id: docId, status: 'processing', file_path: documentsState.find((d) => d.doc_id === docId)?.file_path ?? docId }]
-          : [],
-        total_count: docId ? 1 : 0,
-        status_summary: docId ? { processing: 1 } : {},
-      });
-    }
-    return HttpResponse.json({
-      track_id: trackId,
-      documents: [],
-      total_count: 0,
-      status_summary: {},
-    });
+    return trackStatusResponse(trackId, docId);
   }),
   http.post(`${ANY}/documents/reprocess_failed`, ({ request }) => {
     const url = new URL(request.url);

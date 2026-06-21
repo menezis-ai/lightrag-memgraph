@@ -154,6 +154,26 @@ function validateFile(file: File): string | null {
   return errors.length ? errors.join(' · ') : null;
 }
 
+function fileUploadFromFile(file: File, rawFiles: Map<string, File>): FileUpload {
+  const error = validateFile(file);
+  const base = {
+    name: file.name,
+    size: Number((file.size / (1024 * 1024)).toFixed(1)),
+    sizeBytes: file.size,
+  };
+  if (error) {
+    rawFiles.delete(file.name);
+    return { ...base, state: 'error', error };
+  }
+  rawFiles.set(file.name, file);
+  return {
+    ...base,
+    state: 'uploading',
+    progress: 0,
+    uploaded: 0,
+  };
+}
+
 export function AddSourceModal({
   open,
   tagCatalog,
@@ -181,25 +201,9 @@ export function AddSourceModal({
   const appendDroppedFiles = (incoming: FileList | null): void => {
     const incomingArr = Array.from(incoming || []);
     if (incomingArr.length === 0) return;
-    const dropped = incomingArr.map<FileUpload>((f) => {
-      const error = validateFile(f);
-      const base = {
-        name: f.name,
-        size: Number((f.size / (1024 * 1024)).toFixed(1)),
-        sizeBytes: f.size,
-      };
-      if (error) {
-        rawFilesRef.current.delete(f.name);
-        return { ...base, state: 'error', error };
-      }
-      rawFilesRef.current.set(f.name, f);
-      return {
-        ...base,
-        state: 'uploading',
-        progress: 0,
-        uploaded: 0,
-      };
-    });
+    const dropped = incomingArr.map((file) =>
+      fileUploadFromFile(file, rawFilesRef.current),
+    );
     setFiles((current) => [...current, ...dropped]);
   };
   // Linked sources are gated until the RAG 1.5 connector lands — see the
