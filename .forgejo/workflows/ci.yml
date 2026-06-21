@@ -539,3 +539,63 @@ jobs:
           if [ -f .ci-keygen-network ]; then
             docker network rm "$(cat .ci-keygen-network)" || true
           fi
+
+  sonar:
+    # Informational SonarQube analysis (coverage + complexity + quality gate).
+    #
+    # NON-BLOCKING by design (continue-on-error): a failing quality gate shows
+    # a red "CI / sonar" check but never blocks a merge. To make it enforcing
+    # once the codebase is clean: (1) remove `continue-on-error: true` below,
+    # and (2) add `CI / sonar` to the branch-protection required checks on main.
+    #
+    # Requires the SONAR_TOKEN repo secret (Forgejo → repo Settings → Actions →
+    # Secrets). While non-blocking, a missing/invalid token just fails this job
+    # harmlessly. Self-contained: regenerates Python coverage.xml + WebUI
+    # lcov.info, then scans — so it does not depend on artifacts from the other
+    # jobs.
+    runs-on: [self-hosted, docker]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so Sonar SCM blame + new-code period work correctly.
+          fetch-depth: 0
+
+      - name: Python coverage (coverage.xml)
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$PWD:/work" \
+            -w /work \
+            python:3.12-bookworm \
+            sh -lc '
+              python -m venv /tmp/venv &&
+              . /tmp/venv/bin/activate &&
+              python -m pip install --upgrade pip &&
+              python -m pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==1.4.9.11" &&
+              python -m pip install -c requirements/constraints-dev.txt -e ".[intelligence,server,test]" &&
+              coverage run -m pytest tests/ --ignore=tests/test_bench.py &&
+              coverage xml
+            '
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+
+      - name: WebUI coverage (lcov.info)
+        working-directory: lightrag_webui_twin
+        run: |
+          bun install --frozen-lockfile
+          bun run test:coverage
+
+      - name: SonarQube scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          docker run --rm \
+            --network host \
+            -e SONAR_TOKEN \
+            -v "$PWD:/usr/src" \
+            sonarsource/sonar-scanner-cli:11
