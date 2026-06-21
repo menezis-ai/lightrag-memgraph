@@ -104,6 +104,48 @@ def _secret_equal(provided: str, expected: str) -> bool:
     )
 
 
+def _warn_default_passwords(
+    jwt_secret: str | None, accounts: dict[str, str], jwt_password: str
+) -> None:
+    """Emit loud SECURITY warnings when the default 'changeme' password is live."""
+    if not jwt_secret:
+        return
+    if not accounts and jwt_password == DEFAULT_JWT_PASSWORD:
+        logger.warning(
+            "SECURITY: /login is enabled with the default password "
+            "'changeme' (set LIGHTRAG_JWT_PASSWORD or AUTH_ACCOUNTS "
+            "before exposing this server)"
+        )
+    offenders = sorted(
+        user for user, pwd in accounts.items() if pwd == DEFAULT_JWT_PASSWORD
+    )
+    if offenders:
+        logger.warning(
+            "SECURITY: AUTH_ACCOUNTS uses the default password "
+            "'changeme' for: %s",
+            ", ".join(offenders),
+        )
+
+
+def _log_auth_mode(
+    api_key: str | None, jwt_secret: str | None, accounts: dict[str, str]
+) -> None:
+    if not (api_key or jwt_secret):
+        logger.warning(
+            "No API_KEY or JWT_SECRET configured -- auth DISABLED "
+            "(open access, LightRAG-parity default)"
+        )
+        return
+    modes = []
+    if api_key:
+        modes.append("static-key")
+    if jwt_secret:
+        modes.append("JWT")
+    if accounts:
+        modes.append("multi-account-login")
+    logger.info("Auth enabled: %s", " + ".join(modes))
+
+
 def configure_auth(
     *,
     api_key: str | None = None,
@@ -143,22 +185,7 @@ def configure_auth(
             idp_enabled=idp_enabled,
         )
 
-    if jwt_secret:
-        if not accounts and jwt_password == DEFAULT_JWT_PASSWORD:
-            logger.warning(
-                "SECURITY: /login is enabled with the default password "
-                "'changeme' (set LIGHTRAG_JWT_PASSWORD or AUTH_ACCOUNTS "
-                "before exposing this server)"
-            )
-        offenders = sorted(
-            user for user, pwd in accounts.items() if pwd == DEFAULT_JWT_PASSWORD
-        )
-        if offenders:
-            logger.warning(
-                "SECURITY: AUTH_ACCOUNTS uses the default password "
-                "'changeme' for: %s",
-                ", ".join(offenders),
-            )
+    _warn_default_passwords(jwt_secret, accounts, jwt_password)
 
     _static_api_key = api_key
     _jwt_secret = jwt_secret
@@ -170,20 +197,7 @@ def configure_auth(
     _local_jwt_cookie_name = local_jwt_cookie_name
     _auth_enabled = bool(api_key or jwt_secret)
 
-    if not _auth_enabled:
-        logger.warning(
-            "No API_KEY or JWT_SECRET configured -- auth DISABLED "
-            "(open access, LightRAG-parity default)"
-        )
-    else:
-        modes = []
-        if api_key:
-            modes.append("static-key")
-        if jwt_secret:
-            modes.append("JWT")
-        if accounts:
-            modes.append("multi-account-login")
-        logger.info("Auth enabled: %s", " + ".join(modes))
+    _log_auth_mode(api_key, jwt_secret, accounts)
 
 
 def _validate_production_auth_config(
@@ -267,6 +281,97 @@ def _jwt_exp_to_iso(payload: dict[str, Any]) -> str | None:
         return None
 
 
+def _resolve_idp_identity(request, idp_config) -> str | None:
+    """IdP JWT resolution (Couche 3 §3.3) — active when JWKS URL is set.
+
+    An IdP-shaped cookie is authoritative: present → verify or 401. We
+    deliberately do NOT silently fall through to the legacy paths when an IdP
+    cookie is rejected, so a stale static key can't shadow a refused session.
+    An ``Authorization: Bearer`` header with a JWT-shaped value (exactly two
+    ``.`` separators) also routes through IdP verification; non-JWT bearers
+    (e.g. the ``LIGHTRAG_API_KEY`` literal) fall through. Returns the verified
+    identity, or ``None`` when no IdP token applies.
+    """
+    from . import idp_jwt
+
+    if idp_config is None or request is None:
+        return None
+    cookie_token = request.cookies.get(idp_config.cookie_name)
+    if cookie_token:
+        user = idp_jwt.require_idp_user(request)
+        if user is not None:
+            return user.get("sso_subject") or user.get("sub") or "idp_user"
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header.split(" ", 1)[1].strip()
+        if bearer.count(".") == 2:
+            user = idp_jwt.require_idp_user(request)
+            if user is not None:
+                return user.get("sso_subject") or user.get("sub") or "idp_user"
+    return None
+
+
+async def _consume_operator_key(token: str) -> str | None:
+    """Validate a per-operator ``twk_`` bearer and return its identity.
+
+    Returns ``f"api_key:{key_id}"`` on success, or ``None`` when the token is
+    not operator-prefixed, the store rejects it, or the store glitches (auth
+    must never break on a store error). Schedules a fire-and-forget last-used
+    bump so the request returns before the write completes.
+    """
+    from . import api_key_store
+    from .._constants import resolve_workspace
+
+    if not token.startswith(api_key_store.KEY_PREFIX):
+        return None
+    try:
+        workspace = resolve_workspace()
+        entry = await api_key_store.validate_bearer(workspace, token)
+    except Exception:  # noqa: BLE001 — never break auth on store glitch
+        logger.exception("[auth] api_key_store.validate_bearer crashed")
+        entry = None
+    if entry is None:
+        return None
+    import asyncio
+
+    key_id = str(entry.get("id"))
+    try:
+        asyncio.create_task(api_key_store.mark_used(workspace, key_id))
+    except Exception:  # noqa: BLE001
+        logger.exception("[auth] mark_used schedule failed")
+    return f"api_key:{key_id}"
+
+
+async def _resolve_open_access(request, credentials, idp_config) -> str | None:
+    """Auth resolution when no env auth backend is configured (open access).
+
+    Preserves v1.0.x storage-only / LightRAG-native parity (2026-06-10): when
+    the IdP is configured it fails closed; a ``twk_``-prefixed bearer opts into
+    the per-operator key contract (validate or 401); anonymous passes through.
+    """
+    from . import api_key_store
+
+    if idp_config is not None and request is not None:
+        from . import idp_jwt
+
+        idp_jwt.require_idp_user(request)
+        # require_idp_user raises on missing/invalid token; if it returns,
+        # the request is authenticated against the IdP.
+        return "idp_user"
+    if credentials is not None:
+        token = credentials.credentials
+        if token.startswith(api_key_store.KEY_PREFIX):
+            identity = await _consume_operator_key(token)
+            if identity is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return identity
+    return None
+
+
 async def require_auth(
     request: Request = None,  # type: ignore[assignment]
     credentials: Annotated[
@@ -278,97 +383,24 @@ async def require_auth(
     legacy local JWT).
 
     Resolution order:
-      1. IdP JWT — when ``TWIN_IDP_JWKS_URL`` is configured. Token may
-         come from the configured HttpOnly cookie or the ``Authorization``
-         header. Returns the verified ``sso_subject``.
+      1. IdP JWT — when ``TWIN_IDP_JWKS_URL`` is configured (cookie or
+         ``Authorization`` header). Returns the verified ``sso_subject``.
       2. Static API key (``LIGHTRAG_API_KEY``) carried via Authorization.
-      3. Legacy local JWT (``LIGHTRAG_JWT_SECRET``) carried via
-         Authorization — kept for the CFT agent until it migrates to the
-         IdP.
+      3. Per-operator API key (``twk_``) minted via Settings → API keys.
+      4. Legacy local JWT (``LIGHTRAG_JWT_SECRET``) carried via Authorization.
 
     Returns the authenticated identity (username, sso_subject, or
     ``"api_key"``) or ``None`` if no auth path is configured.
     """
     from . import idp_jwt
 
-    # 1. IdP JWT (Couche 3 §3.3) — active when JWKS URL is set.
-    #
-    # An IdP-shaped cookie is treated as authoritative: present →
-    # verify or 401. We deliberately do NOT silently fall through to
-    # the legacy paths when an IdP cookie is rejected, so a stale
-    # static key can't shadow a refused session.
-    #
-    # An ``Authorization: Bearer`` header with a JWT-shaped value also
-    # routes through IdP verification. Non-JWT bearer values (e.g. the
-    # ``LIGHTRAG_API_KEY`` literal carried by the CFT agent) are left
-    # for the legacy branches below.
     idp_config = idp_jwt.get_active_config()
-    if idp_config is not None and request is not None:
-        cookie_token = request.cookies.get(idp_config.cookie_name)
-        if cookie_token:
-            user = idp_jwt.require_idp_user(request)
-            if user is not None:
-                return user.get("sso_subject") or user.get("sub") or "idp_user"
-        auth_header = request.headers.get("authorization") or ""
-        if auth_header.lower().startswith("bearer "):
-            bearer = auth_header.split(" ", 1)[1].strip()
-            # JWTs always carry exactly two ``.`` separators (header,
-            # payload, signature). Anything else is treated as a
-            # legacy bearer and falls through.
-            if bearer.count(".") == 2:
-                user = idp_jwt.require_idp_user(request)
-                if user is not None:
-                    return user.get("sso_subject") or user.get("sub") or "idp_user"
+    identity = _resolve_idp_identity(request, idp_config)
+    if identity is not None:
+        return identity
 
     if not _auth_enabled:
-        if idp_config is not None and request is not None:
-            idp_jwt.require_idp_user(request)
-            # require_idp_user raises on missing/invalid token. If it
-            # returns, the request is authenticated against the IdP.
-            return "idp_user"
-        # Per-operator API key opt-in: even in open-access mode, a
-        # client that explicitly presents a ``twk_``-prefixed bearer is
-        # opting into the per-operator key contract — validate it or
-        # 401. Anonymous (no bearer) requests still pass through as
-        # before, preserving LightRAG-native parity. This lets a
-        # deployment use API keys minted via Settings → API keys as
-        # the sole auth backend without first setting LIGHTRAG_API_KEY
-        # or TOKEN_SECRET in env.
-        if credentials is not None:
-            from . import api_key_store
-            from .._constants import resolve_workspace
-
-            token = credentials.credentials
-            if token.startswith(api_key_store.KEY_PREFIX):
-                try:
-                    workspace = resolve_workspace()
-                    entry = await api_key_store.validate_bearer(workspace, token)
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "[auth] api_key_store.validate_bearer crashed (open-access)"
-                    )
-                    entry = None
-                if entry is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid credentials",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                import asyncio
-
-                key_id = str(entry.get("id"))
-                try:
-                    asyncio.create_task(
-                        api_key_store.mark_used(workspace, key_id)
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception("[auth] mark_used schedule failed")
-                return f"api_key:{key_id}"
-        # No auth backend configured at all and no twk_ opt-in: open
-        # access, preserving the v1.0.x storage-only behaviour and
-        # LightRAG-native parity (product decision 2026-06-10). When the
-        # IdP is configured, the branch above fails closed instead.
-        return None
+        return await _resolve_open_access(request, credentials, idp_config)
 
     if credentials is None and _jwt_secret and request is not None:
         cookie_token = request.cookies.get(_local_jwt_cookie_name)
@@ -389,33 +421,10 @@ async def require_auth(
     if _static_api_key and _secret_equal(token, _static_api_key):
         return "api_key"
 
-    # 3. Per-operator API keys minted via Settings → API keys. Only
-    #    bearers starting with ``api_key_store.KEY_PREFIX`` are probed,
-    #    so this branch is a cheap no-op for JWT-shaped tokens. Hash
-    #    comparison is constant-time inside the store.
-    from . import api_key_store
-    from .._constants import resolve_workspace
-
-    if token.startswith(api_key_store.KEY_PREFIX):
-        try:
-            workspace = resolve_workspace()
-            entry = await api_key_store.validate_bearer(workspace, token)
-        except Exception:  # noqa: BLE001 — never break auth on store glitch
-            logger.exception("[auth] api_key_store.validate_bearer crashed")
-            entry = None
-        if entry is not None:
-            # Fire-and-forget last-used bump. Schedule on the loop so the
-            # request returns before the write completes.
-            import asyncio
-
-            key_id = str(entry.get("id"))
-            try:
-                asyncio.create_task(
-                    api_key_store.mark_used(workspace, key_id)
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("[auth] mark_used schedule failed")
-            return f"api_key:{key_id}"
+    # 3. Per-operator API keys minted via Settings → API keys.
+    identity = await _consume_operator_key(token)
+    if identity is not None:
+        return identity
 
     # 4. Legacy local JWT
     if _jwt_secret:
@@ -426,6 +435,80 @@ async def require_auth(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _operator_key_status(token: str, auth_enabled: bool) -> AuthStatusResponse | None:
+    """Return an authenticated status for a valid ``twk_`` bearer, else None.
+
+    None means the token is not operator-prefixed, the store rejected it, or
+    the store glitched — callers decide what that means for their branch.
+    """
+    from . import api_key_store
+    from .._constants import resolve_workspace
+
+    if not token.startswith(api_key_store.KEY_PREFIX):
+        return None
+    try:
+        workspace = resolve_workspace()
+        entry = await api_key_store.validate_bearer(workspace, token)
+    except Exception:  # noqa: BLE001
+        entry = None
+    if entry is None:
+        return None
+    return AuthStatusResponse(
+        auth_enabled=auth_enabled,
+        authenticated=True,
+        user=f"api_key:{entry.get('id')}",
+        login_required=False,
+    )
+
+
+def _auth_status_idp(request, credentials, idp_config) -> AuthStatusResponse | None:
+    """IdP branch of /auth-status. None → no IdP token present, fall through."""
+    from . import idp_jwt
+
+    if idp_config is None:
+        return None
+    bearer = credentials.credentials if credentials is not None else None
+    has_idp_cookie = bool(request.cookies.get(idp_config.cookie_name))
+    has_idp_bearer = bool(bearer and bearer.count(".") == 2)
+    if not (has_idp_cookie or has_idp_bearer or not _auth_enabled):
+        return None
+    try:
+        user = idp_jwt.require_idp_user(request)
+    except HTTPException:
+        return AuthStatusResponse(
+            auth_enabled=True, authenticated=False, login_required=True
+        )
+    return AuthStatusResponse(
+        auth_enabled=True,
+        authenticated=True,
+        user=str(user.get("sso_subject") or user.get("sub") or "idp_user")
+        if user
+        else "idp_user",
+        login_required=False,
+    )
+
+
+async def _auth_status_open(credentials) -> AuthStatusResponse:
+    """Open-access /auth-status: mirrors require_auth's open-access resolution.
+
+    A ``twk_`` bearer opts into per-operator key validation; anonymous (or any
+    non-prefixed bearer) falls through as authenticated=true (LightRAG parity).
+    """
+    from . import api_key_store
+
+    bearer = credentials.credentials if credentials is not None else None
+    if bearer and bearer.startswith(api_key_store.KEY_PREFIX):
+        resp = await _operator_key_status(bearer, auth_enabled=False)
+        if resp is not None:
+            return resp
+        return AuthStatusResponse(
+            auth_enabled=False, authenticated=False, login_required=False
+        )
+    return AuthStatusResponse(
+        auth_enabled=False, authenticated=True, login_required=False
     )
 
 
@@ -440,59 +523,12 @@ async def auth_status(
     from . import idp_jwt
 
     idp_config = idp_jwt.get_active_config()
-    if idp_config is not None:
-        bearer = credentials.credentials if credentials is not None else None
-        has_idp_cookie = bool(request.cookies.get(idp_config.cookie_name))
-        has_idp_bearer = bool(bearer and bearer.count(".") == 2)
-        if has_idp_cookie or has_idp_bearer or not _auth_enabled:
-            try:
-                user = idp_jwt.require_idp_user(request)
-            except HTTPException:
-                return AuthStatusResponse(
-                    auth_enabled=True,
-                    authenticated=False,
-                    login_required=True,
-                )
-            return AuthStatusResponse(
-                auth_enabled=True,
-                authenticated=True,
-                user=str(user.get("sso_subject") or user.get("sub") or "idp_user")
-                if user
-                else "idp_user",
-                login_required=False,
-            )
+    idp_resp = _auth_status_idp(request, credentials, idp_config)
+    if idp_resp is not None:
+        return idp_resp
 
     if not _auth_enabled:
-        # Open-access mode mirrors require_auth: a bearer prefixed
-        # with twk_ opts into per-operator key validation; anonymous
-        # falls through as authenticated=true (LightRAG-parity default).
-        from . import api_key_store
-        from .._constants import resolve_workspace
-
-        bearer = credentials.credentials if credentials is not None else None
-        if bearer and bearer.startswith(api_key_store.KEY_PREFIX):
-            try:
-                ws = resolve_workspace()
-                entry = await api_key_store.validate_bearer(ws, bearer)
-            except Exception:  # noqa: BLE001
-                entry = None
-            if entry is not None:
-                return AuthStatusResponse(
-                    auth_enabled=False,
-                    authenticated=True,
-                    user=f"api_key:{entry.get('id')}",
-                    login_required=False,
-                )
-            return AuthStatusResponse(
-                auth_enabled=False,
-                authenticated=False,
-                login_required=False,
-            )
-        return AuthStatusResponse(
-            auth_enabled=False,
-            authenticated=True,
-            login_required=False,
-        )
+        return await _auth_status_open(credentials)
 
     token: str | None = None
     if _jwt_secret:
@@ -502,9 +538,7 @@ async def auth_status(
 
     if not token:
         return AuthStatusResponse(
-            auth_enabled=True,
-            authenticated=False,
-            login_required=True,
+            auth_enabled=True, authenticated=False, login_required=True
         )
 
     if _static_api_key and _secret_equal(token, _static_api_key):
@@ -515,32 +549,16 @@ async def auth_status(
             login_required=False,
         )
 
-    # Per-operator API keys minted via Settings → API keys.
-    from . import api_key_store
-    from .._constants import resolve_workspace
-
-    if token.startswith(api_key_store.KEY_PREFIX):
-        try:
-            workspace = resolve_workspace()
-            entry = await api_key_store.validate_bearer(workspace, token)
-        except Exception:  # noqa: BLE001
-            entry = None
-        if entry is not None:
-            return AuthStatusResponse(
-                auth_enabled=True,
-                authenticated=True,
-                user=f"api_key:{entry.get('id')}",
-                login_required=False,
-            )
+    key_resp = await _operator_key_status(token, auth_enabled=True)
+    if key_resp is not None:
+        return key_resp
 
     if _jwt_secret:
         try:
             payload = _decode_jwt(token)
         except HTTPException:
             return AuthStatusResponse(
-                auth_enabled=True,
-                authenticated=False,
-                login_required=True,
+                auth_enabled=True, authenticated=False, login_required=True
             )
         return AuthStatusResponse(
             auth_enabled=True,
@@ -551,9 +569,7 @@ async def auth_status(
         )
 
     return AuthStatusResponse(
-        auth_enabled=True,
-        authenticated=False,
-        login_required=True,
+        auth_enabled=True, authenticated=False, login_required=True
     )
 
 
