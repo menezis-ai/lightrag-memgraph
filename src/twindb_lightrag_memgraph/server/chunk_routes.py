@@ -19,6 +19,7 @@ GET /documents/{doc_id}/chunks?start=0&end=10
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -128,12 +129,17 @@ async def _fetch_chunks_by_ids(
 # ---------------------------------------------------------------------------
 
 
-def create_chunk_routes(rag: LightRAG) -> None:
+def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
     """Register chunk & document routes against the module-level ``router``."""
+    router.routes.clear()
+
+    def current_rag() -> LightRAG:
+        return rag() if callable(rag) and not hasattr(rag, "text_chunks") else rag
 
     @router.get(
         "/chunks/{chunk_id}/context",
         response_model=ChunkContextResponse,
+        operation_id="get_chunk_context",
         summary="Neighbouring chunks around a given chunk",
     )
     async def get_chunk_context(
@@ -145,7 +151,8 @@ def create_chunk_routes(rag: LightRAG) -> None:
             description="Chunks before/after to include",
         ),
     ) -> ChunkContextResponse:
-        anchor = await _resolve_chunk(rag, chunk_id)
+        active_rag = current_rag()
+        anchor = await _resolve_chunk(active_rag, chunk_id)
         doc_id: str = anchor.get("full_doc_id", "")
         if not doc_id:
             raise HTTPException(
@@ -153,7 +160,7 @@ def create_chunk_routes(rag: LightRAG) -> None:
                 detail=f"Chunk '{chunk_id}' has no parent document",
             )
 
-        ordered_ids = await _get_ordered_chunk_ids(rag, doc_id)
+        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
         try:
             idx = ordered_ids.index(chunk_id)
         except ValueError as exc:
@@ -166,7 +173,7 @@ def create_chunk_routes(rag: LightRAG) -> None:
         end = min(len(ordered_ids), idx + window + 1)
         window_ids = ordered_ids[start:end]
 
-        items = await _fetch_chunks_by_ids(rag, window_ids)
+        items = await _fetch_chunks_by_ids(active_rag, window_ids)
         return ChunkContextResponse(
             chunks=items,
             doc_id=doc_id,
@@ -177,10 +184,12 @@ def create_chunk_routes(rag: LightRAG) -> None:
     @router.get(
         "/chunks/{chunk_id}/document",
         response_model=ChunkContextResponse,
+        operation_id="get_chunk_document",
         summary="All chunks of the parent document for a given chunk",
     )
     async def get_chunk_document(chunk_id: str) -> ChunkContextResponse:
-        anchor = await _resolve_chunk(rag, chunk_id)
+        active_rag = current_rag()
+        anchor = await _resolve_chunk(active_rag, chunk_id)
         doc_id: str = anchor.get("full_doc_id", "")
         if not doc_id:
             raise HTTPException(
@@ -188,8 +197,8 @@ def create_chunk_routes(rag: LightRAG) -> None:
                 detail=f"Chunk '{chunk_id}' has no parent document",
             )
 
-        ordered_ids = await _get_ordered_chunk_ids(rag, doc_id)
-        items = await _fetch_chunks_by_ids(rag, ordered_ids)
+        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
+        items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
         return ChunkContextResponse(
             chunks=items,
             doc_id=doc_id,
@@ -200,6 +209,7 @@ def create_chunk_routes(rag: LightRAG) -> None:
     @router.get(
         "/documents/{doc_id}/chunks",
         response_model=ChunkContextResponse,
+        operation_id="get_document_chunks",
         summary="Fetch a range (or all) chunks from a document by doc_id",
     )
     async def get_document_chunks(
@@ -211,7 +221,8 @@ def create_chunk_routes(rag: LightRAG) -> None:
             default=None, ge=0, description="End index (inclusive)"
         ),
     ) -> ChunkContextResponse:
-        ordered_ids = await _get_ordered_chunk_ids(rag, doc_id)
+        active_rag = current_rag()
+        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
         total = len(ordered_ids)
 
         if start is not None or end is not None:
@@ -219,7 +230,7 @@ def create_chunk_routes(rag: LightRAG) -> None:
             e = (end or total - 1) + 1  # inclusive end -> slice end
             ordered_ids = ordered_ids[s:e]
 
-        items = await _fetch_chunks_by_ids(rag, ordered_ids)
+        items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
         file_path = items[0].file_path if items else ""
 
         return ChunkContextResponse(

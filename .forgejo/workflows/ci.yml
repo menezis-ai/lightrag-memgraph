@@ -35,8 +35,17 @@ jobs:
               python -m venv /tmp/venv &&
               . /tmp/venv/bin/activate &&
               python -m pip install --upgrade pip &&
-              python -m pip install -e ".[intelligence,server,test]" &&
-              python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
+              python -m pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==${{ matrix.lightrag-version }}" &&
+              python -m pip install -c requirements/constraints-dev.txt -e ".[intelligence,server,test]" &&
+              python -m pip install pip-audit &&
+              # Audit production pins, not the broader test environment.
+              # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
+              # upstream CVEs are fixed only in 1.4.13/1.4.14; keep the
+              # exception explicit so every other production dependency
+              # vulnerability still fails the gate.
+              pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
+                --ignore-vuln CVE-2026-30762 \
+                --ignore-vuln CVE-2026-39413 &&
               pytest tests/ --ignore=tests/test_bench.py -v
             '
 
@@ -110,8 +119,17 @@ jobs:
               python -m venv /tmp/venv &&
               . /tmp/venv/bin/activate &&
               python -m pip install --upgrade pip &&
-              python -m pip install -e ".[intelligence,server,test]" &&
-              python -m pip install "lightrag-hku==${{ matrix.lightrag-version }}" &&
+              python -m pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==${{ matrix.lightrag-version }}" &&
+              python -m pip install -c requirements/constraints-dev.txt -e ".[intelligence,server,test]" &&
+              python -m pip install pip-audit &&
+              # Audit production pins, not the broader test environment.
+              # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
+              # upstream CVEs are fixed only in 1.4.13/1.4.14; keep the
+              # exception explicit so every other production dependency
+              # vulnerability still fails the gate.
+              pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
+                --ignore-vuln CVE-2026-30762 \
+                --ignore-vuln CVE-2026-39413 &&
               pytest tests/ --ignore=tests/test_bench.py -v
             '
 
@@ -161,6 +179,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Audit production dependencies
+        run: npm run audit:prod
 
       - name: Typecheck
         run: bun run typecheck
@@ -279,7 +300,7 @@ jobs:
             -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
-            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" "lightrag-hku[api]==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -c requirements/constraints-prod.txt -e ".[intelligence,server,test]" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
 
       - name: Wait for real backend
         run: |
@@ -455,7 +476,7 @@ jobs:
             -e TWIN_DEFAULT_FOLDER="$TWIN_DEFAULT_FOLDER" \
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
-            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -e ".[intelligence,server,test]" "lightrag-hku[api]==1.4.9.11" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+            sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -c requirements/constraints-prod.txt -e ".[intelligence,server,test]" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
 
       - name: Wait for real backend (keygen)
         run: |

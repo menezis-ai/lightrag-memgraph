@@ -95,13 +95,23 @@ When NONE of the variables below is set, the server boots in open access
 (LightRAG-parity): anonymous allowed, a loud "auth DISABLED" warning is
 logged and the WebUI shows an open-access notice instead of Sign out.
 
+Fail-closed production switch:
+TWIN_ENV=production           Requires a configured auth backend at startup.
+TWIN_REQUIRE_AUTH=true        Same requirement without changing the env name.
+                              Production mode accepts LIGHTRAG_API_KEY,
+                              LIGHTRAG_JWT_SECRET/TOKEN_SECRET, or
+                              TWIN_IDP_JWKS_URL. It rejects local HS JWT
+                              secrets shorter than 32 bytes and rejects the
+                              default "changeme" password in
+                              LIGHTRAG_JWT_PASSWORD or AUTH_ACCOUNTS.
+
 Mode A — static API key:
 LIGHTRAG_API_KEY             Static key; clients send it as bearer.
 
 Mode B — local JWT login (POST /login → HttpOnly cookie):
 LIGHTRAG_JWT_SECRET          Signing secret. Enables /login.
 LIGHTRAG_JWT_PASSWORD        Login password. "changeme" logs a SECURITY
-                             warning (never refuses to boot).
+                             warning outside production mode.
 LIGHTRAG_JWT_USERNAME        Login username. Default: admin
 LIGHTRAG_JWT_ALGORITHM       Default: HS256
 LIGHTRAG_JWT_EXPIRATION_HOURS  Token TTL.

@@ -5,7 +5,7 @@
 | **Document** | `docs/operations/install-runbook.md` |
 | **Version cible du package** | `1.1.0` |
 | **Version cible de LightRAG** | `1.4.9.11` (= version BNP prod) |
-| **Version cible de Memgraph** | `3.7.2` ou `3.10.1` (MAGE) |
+| **Version cible de Memgraph** | `3.9.0` (MAGE), `3.10.1` en forward-compat |
 | **Audience** | Opérateur BNP qui installe le wheel ; auditeur IG/BCE qui vérifie le processus |
 | **Statut** | Draft pour review (sera figé en cas de release) |
 | **Owner produit** | Julien |
@@ -32,7 +32,7 @@
 
 | Service | Adresse | Rôle |
 |---|---|---|
-| **Memgraph 3.7.2 ou 3.10.1** | `bolt://<host>:7687` (TLS recommandé) | Graph + KV + Vector + DocStatus |
+| **Memgraph 3.9.0 ou 3.10.1** | `bolt://<host>:7687` (TLS recommandé) | Graph + KV + Vector + DocStatus |
 | **LLM provider interne** | URL configurable par env | Chat (`chat_llm`) et indexation (`indexing_llm`) — peuvent être identiques |
 | **SSO BNPP** | URL JWKS BNPP | Validation des JWT (à la sortie v1.2 ; en v1.1 mode legacy-fallback documenté) |
 | **MyAccess** | API d'introspection (futur) | Source des claims `role` / `palier` |
@@ -54,8 +54,9 @@
 | `LIGHTRAG_VECTOR_STORAGE` | **Oui** | `MemgraphVectorDBStorage` | Active notre backend Vector |
 | `LIGHTRAG_DOC_STATUS_STORAGE` | **Oui** | `MemgraphDocStatusStorage` | Active notre backend DocStatus |
 | `LIGHTRAG_GRAPH_STORAGE` | **Oui** | `MemgraphStorage` | Active le graph backend natif LightRAG |
-| `TWIN_AUTH_JWKS_URL` | **Oui (prod)** | URL JWKS BNPP | Validation OAuth2 (v1.1 stub, v1.2 plein) |
-| `TWIN_AUTH_LEGACY_FALLBACK` | Non | `false` (par défaut) | **Ne jamais** mettre à `true` en prod BNP |
+| `TWIN_ENV` | **Oui (prod)** | `production` | Active la validation fail-closed auth au boot |
+| `TWIN_IDP_JWKS_URL` | **Oui (prod IdP)** | URL JWKS BNPP | Validation OAuth2/JWT IdP |
+| `TWIN_REQUIRE_AUTH` | Alternative | `true` | Active la même validation sans utiliser `TWIN_ENV` |
 | `TWIN_LOG_SINK` | Recommandé | `stdout` ou `splunk` ou `file` | Destination de l'audit trail |
 | `TWIN_LOG_LEVEL` | Optionnel | `INFO` | Niveau de log applicatif |
 
@@ -106,11 +107,13 @@ sudo -u twinrag python3.12 -m venv /opt/twinrag/venv
 # 3. Activer le venv (ou utiliser le chemin absolu pip)
 sudo -u twinrag /opt/twinrag/venv/bin/pip install --no-index \
     --find-links /chemin/vers/le/wheel \
+    -c /chemin/vers/requirements/constraints-prod.txt \
     "twindb-lightrag-memgraph[server,intelligence,tracing]==1.1.0"
 ```
 
 **Notes** :
 - `--no-index` désactive la connexion à PyPI. Toutes les deps doivent être présentes en local (offline install).
+- `constraints-prod.txt` est la résolution reproductible du runtime cible. Le rafraîchir via `uv pip compile ... --constraints requirements/prod-target.txt` lors d'une montée de version.
 - Les extras `[server]` + `[intelligence]` + `[tracing]` activent les optional-dependencies correspondants (auth, ReAct, LangSmith).
 - Si l'opérateur n'a pas téléchargé toutes les deps : substituer `--no-index --find-links DIR` par `--index-url <pypi-interne-bnp>` selon la politique BNP.
 
@@ -132,8 +135,8 @@ EMBEDDING_BINDING_HOST=https://llm-interne.bnp/v1
 EMBEDDING_DIM=1024
 
 # Auth Twin
-TWIN_AUTH_JWKS_URL=https://sso-bnpp/.well-known/jwks.json
-TWIN_AUTH_LEGACY_FALLBACK=false
+TWIN_ENV=production
+TWIN_IDP_JWKS_URL=https://sso-bnpp/.well-known/jwks.json
 
 # Observabilité
 TWIN_LOG_SINK=splunk

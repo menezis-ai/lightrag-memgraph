@@ -15,7 +15,8 @@
     "test:e2e:ui": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 playwright test --ui",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "audit:prod": "npm audit --omit=dev"
   },
   "dependencies": {
     "@tanstack/react-query": "^5",

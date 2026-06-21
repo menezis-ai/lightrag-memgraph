@@ -1,0 +1,3 @@
+# Production runtime target used for release builds.
+# BNP production target. Keep aligned with the deployed LightRAG baseline.
+lightrag-hku==1.4.9.11

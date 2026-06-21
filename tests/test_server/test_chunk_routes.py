@@ -479,6 +479,23 @@ def _make_chunk_app(rag_mock) -> FastAPI:
     return app
 
 
+def test_chunk_router_openapi_operation_ids_are_unique():
+    app = _make_chunk_app(_make_rag_with_anchor(["c0", "c1"], "c0"))
+    operations = [
+        operation["operationId"]
+        for path_item in app.openapi()["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+
+    assert sorted(operations) == [
+        "get_chunk_context",
+        "get_chunk_document",
+        "get_document_chunks",
+    ]
+    assert len(operations) == len(set(operations))
+
+
 async def test_chunk_router_rejects_anonymous_when_mounted_directly():
     configure_auth(api_key="secret")
     router.routes.clear()

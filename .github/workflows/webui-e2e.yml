@@ -27,6 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: lightrag_webui_twin/package-lock.json
       - run: npm ci
+      - run: npm run audit:prod
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:run

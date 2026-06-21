@@ -51,6 +51,47 @@ pip install -e .
 pip install -e ".[test]"
 ```
 
+Production container builds use a reproducible constraints file pinned to the
+current BNP target (`lightrag-hku==1.4.9.11`):
+
+```bash
+pip install -c requirements/constraints-prod.txt \
+    -e ".[server,intelligence,tracing]"
+```
+
+For CI/dev compatibility runs, keep the LightRAG version explicit and apply the
+security floor constraints:
+
+```bash
+pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==1.4.12"
+pip install -c requirements/constraints-dev.txt -e ".[server,intelligence,test]"
+```
+
+Refresh `requirements/constraints-prod.txt` after dependency updates with:
+
+```bash
+uv pip compile pyproject.toml --extra intelligence --extra server --extra tracing \
+    --python-version 3.12 --constraints requirements/prod-target.txt \
+    -o requirements/constraints-prod.txt
+```
+
+### Production Auth Posture
+
+The default remains LightRAG-compatible open access when no auth backend is
+configured. Exposed deployments should opt into fail-closed startup by setting
+either:
+
+```bash
+TWIN_ENV=production
+# or
+TWIN_REQUIRE_AUTH=true
+```
+
+In that mode, startup requires one of `LIGHTRAG_API_KEY`,
+`LIGHTRAG_JWT_SECRET` / `TOKEN_SECRET`, or `TWIN_IDP_JWKS_URL`. Local HS JWT
+secrets must be at least 32 bytes, and `LIGHTRAG_JWT_PASSWORD` /
+`AUTH_ACCOUNTS` cannot use the default `changeme` password.
+
 ## Quick start
 
 ```python
@@ -445,7 +486,7 @@ python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 **Quick Memgraph for testing (Docker):**
 
 ```bash
-docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:latest
+docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:3.9.0
 ```
 
 Integration tests use the `@pytest.mark.integration` marker and are **auto-skipped** when `MEMGRAPH_URI` is not set (`conftest.py`).
@@ -491,14 +532,14 @@ mgconsole --host localhost --port 7687 -c "CALL vector_search.search('vec_base_e
 
 ### "Vector index not found" errors
 
-Vector search requires Memgraph MAGE. The standard `memgraph/memgraph` Docker image does **not** include it. Use `memgraph/memgraph-mage`.
+Vector search requires Memgraph MAGE. The standard `memgraph/memgraph` Docker image does **not** include it. Use the pinned `memgraph/memgraph-mage:3.9.0` production target.
 
 ```bash
 # Wrong -- no MAGE
 docker run memgraph/memgraph
 
 # Correct
-docker run memgraph/memgraph-mage
+docker run memgraph/memgraph-mage:3.9.0
 ```
 
 ### Backend not found by LightRAG

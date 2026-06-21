@@ -24,6 +24,7 @@ import pytest
 
 from twindb_lightrag_memgraph.server import auth as auth_module
 from twindb_lightrag_memgraph.server.auth import (
+    AuthConfigurationError,
     DEFAULT_JWT_PASSWORD,
     configure_auth,
     require_auth,
@@ -116,3 +117,65 @@ async def test_api_key_configured_rejects_anonymous():
     with pytest.raises(HTTPException) as exc:
         await require_auth(credentials=None)
     assert exc.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Explicit production mode fails closed
+# ---------------------------------------------------------------------------
+
+
+def test_production_requires_an_auth_backend():
+    with pytest.raises(AuthConfigurationError, match="Production auth requires"):
+        configure_auth(api_key=None, jwt_secret=None, production_mode=True)
+
+
+def test_production_allows_static_api_key():
+    configure_auth(api_key="some-key", jwt_secret=None, production_mode=True)
+    assert auth_module._auth_enabled is True
+
+
+def test_production_allows_idp_backend():
+    configure_auth(
+        api_key=None,
+        jwt_secret=None,
+        production_mode=True,
+        idp_enabled=True,
+    )
+    assert auth_module._auth_enabled is False
+
+
+def test_production_allows_strong_local_jwt():
+    configure_auth(
+        jwt_secret="x" * 32,
+        jwt_password="not-the-default",
+        production_mode=True,
+    )
+    assert auth_module._auth_enabled is True
+
+
+def test_production_rejects_default_jwt_password():
+    with pytest.raises(AuthConfigurationError, match="default LIGHTRAG_JWT_PASSWORD"):
+        configure_auth(
+            jwt_secret="x" * 32,
+            jwt_password=DEFAULT_JWT_PASSWORD,
+            production_mode=True,
+        )
+
+
+def test_production_rejects_default_auth_accounts_password():
+    with pytest.raises(AuthConfigurationError, match="alice"):
+        configure_auth(
+            jwt_secret="x" * 32,
+            jwt_password="not-the-default",
+            auth_accounts={"alice": DEFAULT_JWT_PASSWORD, "bob": "ok"},
+            production_mode=True,
+        )
+
+
+def test_production_rejects_weak_hmac_jwt_secret():
+    with pytest.raises(AuthConfigurationError, match="at least 32 bytes"):
+        configure_auth(
+            jwt_secret="short",
+            jwt_password="not-the-default",
+            production_mode=True,
+        )

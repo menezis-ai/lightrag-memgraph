@@ -21,6 +21,7 @@ ENV PIP_CONFIG_FILE=/tmp/pip.conf
 COPY config/build.conf /tmp/pip.conf
 COPY pyproject.toml /app/twindb_lightrag_memgraph/pyproject.toml
 COPY README.md /app/twindb_lightrag_memgraph/README.md
+COPY requirements /app/twindb_lightrag_memgraph/requirements
 COPY src /app/twindb_lightrag_memgraph/src
 
 # Embed the WebUI dist inside the package source tree BEFORE the editable
@@ -30,8 +31,10 @@ COPY src /app/twindb_lightrag_memgraph/src
 COPY --from=webui-builder /webui/dist \
      /app/twindb_lightrag_memgraph/src/twindb_lightrag_memgraph/webui_dist
 
-# Install dependencies
-RUN pip install --no-cache-dir -e /app/twindb_lightrag_memgraph/
+# Install dependencies through the reproducible production target constraints.
+RUN pip install --no-cache-dir \
+      -c /app/twindb_lightrag_memgraph/requirements/constraints-prod.txt \
+      -e "/app/twindb_lightrag_memgraph/[intelligence,server,tracing]"
 
 COPY src/twindb_lightrag_memgraph /app/twindb_lightrag_memgraph
 

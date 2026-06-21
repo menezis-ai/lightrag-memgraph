@@ -61,8 +61,10 @@ from twindb_lightrag_memgraph.server.app import (
     _build_embedding_func,
     _build_llm_func,
     _get_rag,
+    _production_auth_required,
     create_app,
 )
+from twindb_lightrag_memgraph.server.auth import AuthConfigurationError
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 
 
@@ -158,6 +160,79 @@ class TestCorsConfiguration:
         assert allowed.headers["access-control-allow-credentials"] == "true"
         assert denied.status_code == 400
         assert "access-control-allow-origin" not in denied.headers
+
+
+class TestProductionAuthMode:
+    def test_flag_parser_accepts_explicit_require_auth(self):
+        assert _production_auth_required({"TWIN_REQUIRE_AUTH": "true"}) is True
+        assert _production_auth_required({"TWIN_REQUIRE_AUTH": "1"}) is True
+        assert _production_auth_required({"TWIN_REQUIRE_AUTH": "false"}) is False
+
+    def test_flag_parser_accepts_twin_env_production(self):
+        assert _production_auth_required({"TWIN_ENV": "production"}) is True
+        assert _production_auth_required({"TWIN_ENV": "dev"}) is False
+
+    def test_production_without_auth_backend_fails_fast(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        monkeypatch.delenv("TOKEN_SECRET", raising=False)
+        monkeypatch.delenv("AUTH_ACCOUNTS", raising=False)
+        monkeypatch.delenv("TWIN_IDP_JWKS_URL", raising=False)
+
+        with pytest.raises(AuthConfigurationError, match="Production auth requires"):
+            create_app(_make_settings(api_key=None, jwt_secret=None))
+
+    def test_production_with_static_api_key_boots(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        app = create_app(_make_settings(api_key="test-key", jwt_secret=None))
+        assert app.title.startswith("LightRAG Server")
+
+    def test_production_with_strong_local_jwt_boots(self, monkeypatch):
+        monkeypatch.setenv("TWIN_ENV", "production")
+        app = create_app(
+            _make_settings(
+                api_key=None,
+                jwt_secret="x" * 32,
+                jwt_password="not-the-default",
+            )
+        )
+        assert app.title.startswith("LightRAG Server")
+
+    def test_production_with_idp_backend_boots(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp.example/jwks")
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        assert app.title.startswith("LightRAG Server")
+
+    def test_production_rejects_default_local_jwt_password(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+
+        with pytest.raises(AuthConfigurationError, match="default"):
+            create_app(_make_settings(api_key=None, jwt_secret="x" * 32))
+
+    def test_production_rejects_default_auth_accounts_password(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        monkeypatch.setenv("AUTH_ACCOUNTS", "alice:changeme,bob:ok")
+
+        with pytest.raises(AuthConfigurationError, match="alice"):
+            create_app(
+                _make_settings(
+                    api_key=None,
+                    jwt_secret="x" * 32,
+                    jwt_password="not-the-default",
+                )
+            )
+
+    def test_production_rejects_weak_hs256_secret(self, monkeypatch):
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+
+        with pytest.raises(AuthConfigurationError, match="at least 32 bytes"):
+            create_app(
+                _make_settings(
+                    api_key=None,
+                    jwt_secret="short",
+                    jwt_password="not-the-default",
+                )
+            )
 
 
 def _apply_lifespan_patches(stack, mock_rag, register_mock=None):

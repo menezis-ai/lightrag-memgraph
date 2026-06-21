@@ -18,9 +18,12 @@ RUN apt-get update \
         ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# 2. Install LightRAG core. Pin to a version on the Twin compat
-#    matrix (see README — currently 1.4.9, 1.4.9.11, 1.4.11, 1.4.12).
-RUN pip install --no-cache-dir 'lightrag-hku==1.4.12'
+# 2. Install LightRAG core. Pin to the production runtime target; the
+#    broader compatibility matrix is exercised in CI.
+COPY requirements /tmp/requirements
+RUN pip install --no-cache-dir \
+      -c /tmp/requirements/constraints-prod.txt \
+      'lightrag-hku==1.4.9.11'
 
 # 3. Install the Twin Memgraph patch.
 #    The package MUST contain src/twindb_lightrag_memgraph/webui_dist/
@@ -33,8 +36,10 @@ COPY pyproject.toml /tmp/pkg/
 COPY README.md /tmp/pkg/
 COPY MANIFEST.in /tmp/pkg/
 COPY LICENSE /tmp/pkg/
-RUN pip install --no-cache-dir /tmp/pkg \
- && rm -rf /tmp/pkg
+RUN pip install --no-cache-dir \
+      -c /tmp/requirements/constraints-prod.txt \
+      "/tmp/pkg[server,intelligence,tracing]" \
+ && rm -rf /tmp/pkg /tmp/requirements
 
 # 4. Twin entrypoint — runs register() BEFORE the LightRAG server
 #    imports, then hands off to LightRAG's own main(). Avoids the

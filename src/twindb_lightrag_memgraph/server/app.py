@@ -49,6 +49,16 @@ def _get_rag() -> LightRAG:
     return _rag
 
 
+def _production_auth_required(env: dict[str, str] | None = None) -> bool:
+    """Return whether the deployment explicitly asks auth to fail closed."""
+    env = env if env is not None else os.environ
+    require_auth_flag = (env.get("TWIN_REQUIRE_AUTH") or "").strip().lower()
+    if require_auth_flag in {"1", "true", "yes", "on"}:
+        return True
+    twin_env = (env.get("TWIN_ENV") or "").strip().lower()
+    return twin_env == "production"
+
+
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
@@ -149,10 +159,6 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             apply_lang_with_tracing(_rag)
             logger.info("L2 patch applied (LangSmith tracing)")
 
-        # -- L2 Patch: chunk routes --
-        create_chunk_routes(_rag)
-        logger.info("L2 patch applied (chunk/document routes)")
-
         # -- L2 Patch: WebUI store backends (S4c) --
         if settings.enable_webui_routes:
             from .webui_router import WebuiStore, set_store
@@ -240,6 +246,8 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
 
     _idp_cfg = _IdpConfig.from_env()
     _resolved_jwt_secret = settings.jwt_secret or os.environ.get("TOKEN_SECRET")
+    _auth_accounts = os.environ.get("AUTH_ACCOUNTS")
+    _require_production_auth = _production_auth_required()
     configure_auth(
         api_key=settings.api_key,
         jwt_secret=_resolved_jwt_secret,
@@ -250,7 +258,9 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         ),
         jwt_username=settings.jwt_username,
         jwt_password=settings.jwt_password,
-        auth_accounts=os.environ.get("AUTH_ACCOUNTS"),
+        auth_accounts=_auth_accounts,
+        production_mode=_require_production_auth,
+        idp_enabled=_idp_cfg is not None,
     )
     configure_idp(_idp_cfg)
     app.include_router(auth_router)
@@ -315,6 +325,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         return InsertResponse(status="ok")
 
     # -- Chunk routes (auth-protected) --
+    create_chunk_routes(_get_rag)
     app.include_router(chunk_router, dependencies=[Depends(require_auth)])
 
     # -- WebUI phase-1 surface (auth-protected) --

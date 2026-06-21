@@ -11,7 +11,8 @@ Supports two modes simultaneously (compatible with CFT agent):
    Agent auto-refreshes on 401.
 
 If neither ``LIGHTRAG_API_KEY`` nor ``LIGHTRAG_JWT_SECRET`` is set,
-authentication is disabled (open access).
+authentication is disabled (open access) unless production auth is
+explicitly required by the application factory.
 """
 
 from __future__ import annotations
@@ -44,6 +45,10 @@ _jwt_password: str = DEFAULT_JWT_PASSWORD
 _auth_accounts: dict[str, str] = {}
 _auth_enabled: bool = False
 _local_jwt_cookie_name = "twin_local_token"
+
+
+class AuthConfigurationError(ValueError):
+    """Raised when an explicitly strict auth posture is misconfigured."""
 
 
 class LoginRequest(BaseModel):
@@ -109,14 +114,14 @@ def configure_auth(
     jwt_password: str = DEFAULT_JWT_PASSWORD,
     auth_accounts: str | dict[str, str] | None = None,
     local_jwt_cookie_name: str = "twin_local_token",
+    production_mode: bool = False,
+    idp_enabled: bool = False,
 ) -> None:
     """Configure auth parameters.  Called once at startup.
 
     LightRAG-parity posture (product decision 2026-06-10): insecure
-    defaults are tolerated with a loud warning, never a boot failure.
-    LightRAG native boots open when nothing is configured; Twin does
-    the same so a drop-in deployment can't crash-loop on a missing
-    env var.
+    defaults are tolerated with a loud warning by default. Operators
+    can opt into a fail-closed production posture through ``create_app``.
     """
     global _static_api_key, _jwt_secret, _jwt_algorithm
     global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_accounts
@@ -127,6 +132,16 @@ def configure_auth(
         if isinstance(auth_accounts, dict)
         else _parse_auth_accounts(auth_accounts)
     )
+
+    if production_mode:
+        _validate_production_auth_config(
+            api_key=api_key,
+            jwt_secret=jwt_secret,
+            jwt_algorithm=jwt_algorithm,
+            jwt_password=jwt_password,
+            auth_accounts=accounts,
+            idp_enabled=idp_enabled,
+        )
 
     if jwt_secret:
         if not accounts and jwt_password == DEFAULT_JWT_PASSWORD:
@@ -169,6 +184,45 @@ def configure_auth(
         if accounts:
             modes.append("multi-account-login")
         logger.info("Auth enabled: %s", " + ".join(modes))
+
+
+def _validate_production_auth_config(
+    *,
+    api_key: str | None,
+    jwt_secret: str | None,
+    jwt_algorithm: str,
+    jwt_password: str,
+    auth_accounts: dict[str, str],
+    idp_enabled: bool,
+) -> None:
+    """Fail closed for explicitly production-mode deployments."""
+    if not (api_key or jwt_secret or idp_enabled):
+        raise AuthConfigurationError(
+            "Production auth requires LIGHTRAG_API_KEY, LIGHTRAG_JWT_SECRET, "
+            "TOKEN_SECRET, or TWIN_IDP_JWKS_URL"
+        )
+
+    if not jwt_secret:
+        return
+
+    if jwt_algorithm.upper().startswith("HS") and len(jwt_secret.encode("utf-8")) < 32:
+        raise AuthConfigurationError(
+            "Production JWT auth requires an HMAC secret of at least 32 bytes"
+        )
+
+    if not auth_accounts and jwt_password == DEFAULT_JWT_PASSWORD:
+        raise AuthConfigurationError(
+            "Production JWT auth cannot use the default LIGHTRAG_JWT_PASSWORD"
+        )
+
+    offenders = sorted(
+        user for user, password in auth_accounts.items() if password == DEFAULT_JWT_PASSWORD
+    )
+    if offenders:
+        raise AuthConfigurationError(
+            "Production AUTH_ACCOUNTS cannot use the default password for: "
+            + ", ".join(offenders)
+        )
 
 
 def _create_jwt(payload: dict[str, Any]) -> str:
