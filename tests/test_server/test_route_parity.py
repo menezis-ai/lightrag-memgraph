@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi.routing import APIRoute
+from fastapi import FastAPI
 
 from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
 from twindb_lightrag_memgraph.server.auth import auth_router
@@ -53,15 +53,16 @@ def _fmt(routes: set[Route]) -> str:
 
 
 def _fastapi_routes_from_router(router, *, prefix: str = "") -> set[Route]:
-    routes: set[Route] = set()
-    for route in router.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        for method in route.methods or set():
-            if method not in {"GET", "POST", "PATCH", "DELETE"}:
-                continue
-            routes.add(Route(method, _normalize_path(f"{prefix}{route.path}")))
-    return routes
+    app = FastAPI()
+    app.include_router(router, prefix=prefix)
+    paths = app.openapi().get("paths", {}) or {}
+    return {
+        Route(method.upper(), _normalize_path(path))
+        for path, operations in paths.items()
+        if isinstance(operations, dict)
+        for method in operations
+        if method.upper() in {"GET", "POST", "PATCH", "DELETE"}
+    }
 
 
 def _backend_routes() -> set[Route]:
