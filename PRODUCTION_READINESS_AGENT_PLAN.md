@@ -144,44 +144,6 @@ Suggested verification:
 uv run pytest tests/test_server/test_webui_router.py tests/test_server/test_webui_router_graph.py tests/test_server/test_webui_router_mutations.py -q
 ```
 
-### P2-2. Split `App.tsx`
-
-Objective: move application orchestration out of a 1594-line component.
-
-Recommended target:
-
-```text
-lightrag_webui_twin/src/app/
-  AppShell.tsx
-  queryClient.ts
-  useAppData.ts
-  useAppNavigation.ts
-  useDocumentActions.ts
-  useTagActions.ts
-  useToasts.ts
-```
-
-Constraints:
-
-- Preserve current UI behavior and tests.
-- Avoid broad design changes during this refactor.
-
-Acceptance criteria:
-
-- `App.tsx` is below 300 lines.
-- Unit tests pass.
-- E2E smoke paths still pass.
-
-Suggested verification:
-
-```bash
-cd lightrag_webui_twin
-npm run typecheck
-npm run lint
-npm run test:run
-npm run test:e2e
-```
-
 ### P2-4. Split LightRAG Patching From `__init__.py`
 
 Objective: reduce risk in the package entrypoint and make patch behavior easier to test.
@@ -352,7 +314,6 @@ Suggested parallelization:
 
 - Agent A: P0-1 LightRAG CVE posture.
 - Agent B: P2-1 backend WebUI router split.
-- Agent C: P2-2 frontend modularization.
 - Agent D: P2-4 and P2-5 patch/query modularization.
 - Agent E: P3 operational readiness endpoints, limits, and observability.
 
