@@ -97,6 +97,68 @@ class TwinRAGEngine:
             default_folder=self.config.effective_default_folder,
         )
 
+    def _resolve_folders(self, folder, workspace, folders_publics, workspaces_publics):
+        """Resolve (active_folder, public_folders, explicit_override) from the
+        folder/workspace args, honouring the deprecated ``workspace*`` aliases."""
+        active_folder = folder or workspace or self.config.effective_default_folder
+        public_folders = (
+            folders_publics if folders_publics is not None else workspaces_publics
+        )
+        public_folders = public_folders or [self.config.effective_default_folder]
+        explicit_folder_override = (
+            folder is not None
+            or workspace is not None
+            or folders_publics is not None
+            or workspaces_publics is not None
+        )
+        return active_folder, public_folders, explicit_folder_override
+
+    async def _classify_and_short_circuit(self, question, trace):
+        """STEP 0 (F05): intent classification. Return an early-exit QueryResult
+        for OOS/greeting/malicious intents, or None to continue the pipeline."""
+        if not self.config.enable_oos_detection:
+            return None
+        intent_result = await self.intent_classifier.classify(question)
+        trace.intent = intent_result
+        logger.info(
+            "Intent: %s (conf: %.2f) -- %s",
+            intent_result.intent.value,
+            intent_result.confidence,
+            intent_result.reason,
+        )
+
+        if (
+            intent_result.intent == IntentType.OUT_OF_SCOPE
+            and intent_result.confidence >= self.config.oos_confidence_threshold
+        ):
+            trace.stop(early_exit="OOS")
+            return QueryResult(
+                answer=self._scripted_response(intent_result.intent),
+                citations=[],
+                trace=trace,
+                intent=intent_result,
+            )
+
+        if intent_result.intent == IntentType.GREETING:
+            trace.stop(early_exit="GREETING")
+            return QueryResult(
+                answer=self._scripted_response(IntentType.GREETING),
+                citations=[],
+                trace=trace,
+                intent=intent_result,
+            )
+
+        if intent_result.intent == IntentType.MALICIOUS:
+            logger.warning("Malicious attempt detected: %s", question)
+            trace.stop(early_exit="MALICIOUS")
+            return QueryResult(
+                answer=self._scripted_response(IntentType.MALICIOUS),
+                citations=[],
+                trace=trace,
+                intent=intent_result,
+            )
+        return None
+
     async def aquery(
         self,
         question: str,
@@ -122,18 +184,8 @@ class TwinRAGEngine:
         Returns:
             QueryResult containing answer, citations, trace, intent.
         """
-        active_folder = folder or workspace or self.config.effective_default_folder
-        public_folders = (
-            folders_publics
-            if folders_publics is not None
-            else workspaces_publics
-        )
-        public_folders = public_folders or [self.config.effective_default_folder]
-        explicit_folder_override = (
-            folder is not None
-            or workspace is not None
-            or folders_publics is not None
-            or workspaces_publics is not None
+        active_folder, public_folders, explicit_folder_override = self._resolve_folders(
+            folder, workspace, folders_publics, workspaces_publics
         )
 
         trace = QueryTrace(question=question, workspace=active_folder, user_id=user_id)
@@ -141,46 +193,9 @@ class TwinRAGEngine:
         history = (conversation_history or [])[-self.config.conversation_memory_depth :]
 
         # ---- STEP 0: INTENT CLASSIFICATION (F05) ----
-        if self.config.enable_oos_detection:
-            intent_result = await self.intent_classifier.classify(question)
-            trace.intent = intent_result
-            logger.info(
-                "Intent: %s (conf: %.2f) -- %s",
-                intent_result.intent.value,
-                intent_result.confidence,
-                intent_result.reason,
-            )
-
-            if (
-                intent_result.intent == IntentType.OUT_OF_SCOPE
-                and intent_result.confidence >= self.config.oos_confidence_threshold
-            ):
-                trace.stop(early_exit="OOS")
-                return QueryResult(
-                    answer=self._scripted_response(intent_result.intent),
-                    citations=[],
-                    trace=trace,
-                    intent=intent_result,
-                )
-
-            if intent_result.intent == IntentType.GREETING:
-                trace.stop(early_exit="GREETING")
-                return QueryResult(
-                    answer=self._scripted_response(IntentType.GREETING),
-                    citations=[],
-                    trace=trace,
-                    intent=intent_result,
-                )
-
-            if intent_result.intent == IntentType.MALICIOUS:
-                logger.warning("Malicious attempt detected: %s", question)
-                trace.stop(early_exit="MALICIOUS")
-                return QueryResult(
-                    answer=self._scripted_response(IntentType.MALICIOUS),
-                    citations=[],
-                    trace=trace,
-                    intent=intent_result,
-                )
+        early_exit = await self._classify_and_short_circuit(question, trace)
+        if early_exit is not None:
+            return early_exit
 
         # ---- STEP 1: REASON (Coreference + Query Expansion F03) ----
         reasoning_result = await self.reasoning.analyze(question, history)

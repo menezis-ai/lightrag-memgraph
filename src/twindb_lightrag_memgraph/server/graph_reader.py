@@ -297,6 +297,23 @@ def _node_record_to_entity(
     }
 
 
+def _chunk_ids_from_record(record) -> tuple[str, list] | None:
+    """Extract ``(doc_id, chunk_ids)`` from a DocStatus row, or None if unusable."""
+    doc_id = str(record.get("doc_id") or "")
+    if not doc_id:
+        return None
+    raw = record.get("chunks_list")
+    if not raw:
+        return None
+    try:
+        chunk_ids = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(chunk_ids, list):
+        return None
+    return doc_id, chunk_ids
+
+
 async def _load_chunk_to_doc_index(workspace: str) -> dict[str, str]:
     """Build a ``chunk_id → doc_id`` map from ``DocStatus_{workspace}``.
 
@@ -317,18 +334,10 @@ async def _load_chunk_to_doc_index(workspace: str) -> dict[str, str]:
         async with get_read_session() as session:
             result = await session.run(query)
             async for record in result:
-                doc_id = str(record.get("doc_id") or "")
-                if not doc_id:
+                parsed = _chunk_ids_from_record(record)
+                if parsed is None:
                     continue
-                raw = record.get("chunks_list")
-                if not raw:
-                    continue
-                try:
-                    chunk_ids = json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError):
-                    continue
-                if not isinstance(chunk_ids, list):
-                    continue
+                doc_id, chunk_ids = parsed
                 for chunk_id in chunk_ids:
                     if isinstance(chunk_id, str) and chunk_id:
                         chunk_to_doc[chunk_id] = doc_id

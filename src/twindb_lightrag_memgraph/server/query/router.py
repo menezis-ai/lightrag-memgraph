@@ -559,6 +559,23 @@ async def _row_matches_tag_filter(
     return False
 
 
+async def _filter_rows_by_tags(
+    rag: Any, rows: list, tag_filter, folder: str, tags_cache: dict[str, set[str]]
+) -> tuple[list, set[str]]:
+    """Keep rows whose doc tags match the filter; collect their reference_ids."""
+    kept_rows = []
+    kept_reference_ids: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if await _row_matches_tag_filter(rag, row, tag_filter, folder, tags_cache):
+            kept_rows.append(row)
+            ref_id = row.get("reference_id")
+            if isinstance(ref_id, str) and ref_id:
+                kept_reference_ids.add(ref_id)
+    return kept_rows, kept_reference_ids
+
+
 async def _filter_query_data_by_tags(
     rag: Any,
     response: dict[str, Any],
@@ -583,18 +600,11 @@ async def _filter_query_data_by_tags(
         rows = data.get(key)
         if not isinstance(rows, list):
             continue
-        kept_rows = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if await _row_matches_tag_filter(
-                rag, row, tag_filter, folder, tags_cache
-            ):
-                kept_rows.append(row)
-                ref_id = row.get("reference_id")
-                if isinstance(ref_id, str) and ref_id:
-                    kept_reference_ids.add(ref_id)
+        kept_rows, ref_ids = await _filter_rows_by_tags(
+            rag, rows, tag_filter, folder, tags_cache
+        )
         filtered_data[key] = kept_rows
+        kept_reference_ids |= ref_ids
 
     references = data.get("references")
     if isinstance(references, list):

@@ -182,6 +182,18 @@ class GraphAnswerEnvelopeError(Exception):
     """
 
 
+_SCORE_KEYS = ("score", "similarity", "cosine_similarity")
+
+
+def _first_numeric_metric(d: dict[str, Any], keys) -> float | None:
+    """Return the first key in ``keys`` whose value is numeric, as float."""
+    for key in keys:
+        value = d.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
 def _reference_score(
     chunks: list[dict[str, Any]],
     *,
@@ -189,16 +201,14 @@ def _reference_score(
     total: int,
 ) -> float:
     for chunk in chunks:
-        for key in ("score", "similarity", "cosine_similarity"):
-            value = chunk.get(key)
-            if isinstance(value, (int, float)):
-                return float(value)
+        direct = _first_numeric_metric(chunk, _SCORE_KEYS)
+        if direct is not None:
+            return direct
         metrics = chunk.get("__metrics__")
         if isinstance(metrics, dict):
-            for key in ("score", "similarity", "cosine_similarity"):
-                value = metrics.get(key)
-                if isinstance(value, (int, float)):
-                    return float(value)
+            nested = _first_numeric_metric(metrics, _SCORE_KEYS)
+            if nested is not None:
+                return nested
     if total <= 0:
         return 0.5
     return round(0.95 - 0.45 * (rank / max(total - 1, 1)), 3)
@@ -261,6 +271,107 @@ def classify_aquery_llm_result(
     return cleaned, ANSWER_STATUS_GROUNDED
 
 
+def _parse_envelope_references(result: dict[str, Any]):
+    """Validate the envelope and return ``(references, chunks)`` or None.
+
+    None means "nothing to project" (no ``data`` dict, or both references and
+    chunks absent) — the caller returns empty sources. Raises
+    ``GraphAnswerEnvelopeError`` on malformed (non-list) blocks.
+    """
+    if not isinstance(result, dict):
+        raise GraphAnswerEnvelopeError(
+            f"aquery_llm returned non-dict {type(result).__name__}"
+        )
+    data = result.get("data")
+    if not isinstance(data, dict):
+        # Legitimate envelopes (e.g. bypass mode with no retrieval) sit here.
+        return None
+    references = data.get("references")
+    chunks = data.get("chunks")
+    if references is None and chunks is None:
+        return None
+    if not isinstance(references, list):
+        raise GraphAnswerEnvelopeError(
+            f"data.references is {type(references).__name__}, expected list"
+        )
+    if chunks is None:
+        chunks = []
+    if not isinstance(chunks, list):
+        raise GraphAnswerEnvelopeError(
+            f"data.chunks is {type(chunks).__name__}, expected list"
+        )
+    return references, chunks
+
+
+def _index_chunks_by_ref(
+    chunks: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Pre-index chunks by reference_id for O(1) enrichment + chunk count."""
+    chunks_by_ref: dict[str, list[dict[str, Any]]] = {}
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        ref_id = str(chunk.get("reference_id") or "")
+        if not ref_id:
+            continue
+        chunks_by_ref.setdefault(ref_id, []).append(chunk)
+    return chunks_by_ref
+
+
+def _first_chunk_id(matching_chunks: list[dict[str, Any]]) -> str | None:
+    first_chunk = matching_chunks[0] if matching_chunks else None
+    if isinstance(first_chunk, dict):
+        chunk_id_raw = first_chunk.get("chunk_id")
+        if isinstance(chunk_id_raw, str) and chunk_id_raw:
+            return chunk_id_raw
+    return None
+
+
+def _chunk_count_label(chunk_count: int) -> str | None:
+    if chunk_count > 1:
+        return f"{chunk_count} chunks"
+    if chunk_count == 1:
+        return "1 chunk"
+    return None
+
+
+def _build_source_entry(
+    reference, rank, total, chunks_by_ref, chunk_id_to_doc_id
+) -> dict[str, Any]:
+    """Project one ``data.references`` entry into a WebUI source dict."""
+    if not isinstance(reference, dict):
+        raise GraphAnswerEnvelopeError(
+            f"reference entry is {type(reference).__name__}, expected dict"
+        )
+    ref_id_raw = reference.get("reference_id")
+    if ref_id_raw is None:
+        raise GraphAnswerEnvelopeError("reference missing reference_id")
+    try:
+        n_value = int(str(ref_id_raw))
+    except (TypeError, ValueError) as exc:
+        raise GraphAnswerEnvelopeError(
+            f"reference_id={ref_id_raw!r} is not int-coercible"
+        ) from exc
+
+    file_path = reference.get("file_path") or ""
+    matching_chunks = chunks_by_ref.get(str(ref_id_raw), [])
+    chunk_id = _first_chunk_id(matching_chunks)
+    doc_id = (
+        chunk_id_to_doc_id.get(chunk_id)
+        if (chunk_id and chunk_id_to_doc_id)
+        else None
+    )
+    return {
+        "n": n_value,
+        "type": "file",
+        "name": file_path or (chunk_id or f"reference-{n_value}"),
+        "meta": _chunk_count_label(len(matching_chunks)),
+        "score": _reference_score(matching_chunks, rank=rank, total=total),
+        "doc_id": doc_id,
+        "chunk_id": chunk_id,
+    }
+
+
 def build_sources_from_raw_data(
     result: dict[str, Any],
     chunk_id_to_doc_id: dict[str, str] | None = None,
@@ -283,96 +394,17 @@ def build_sources_from_raw_data(
     ``data.references``/``data.chunks`` block so the route can choose
     to log + return empty sources, not silently rebuild them.
     """
-    if not isinstance(result, dict):
-        raise GraphAnswerEnvelopeError(
-            f"aquery_llm returned non-dict {type(result).__name__}"
-        )
-    data = result.get("data")
-    if not isinstance(data, dict):
-        # An envelope without ``data`` is treated as "nothing to project".
-        # The caller surfaces this as empty sources after logging — not
-        # as an exception, since legitimate envelopes (e.g. bypass mode
-        # which intentionally has no retrieval) sit in this shape.
+    parsed = _parse_envelope_references(result)
+    if parsed is None:
         return []
-    references = data.get("references")
-    chunks = data.get("chunks")
-    if references is None and chunks is None:
-        return []
-    if not isinstance(references, list):
-        raise GraphAnswerEnvelopeError(
-            f"data.references is {type(references).__name__}, expected list"
+    references, chunks = parsed
+    chunks_by_ref = _index_chunks_by_ref(chunks)
+    return [
+        _build_source_entry(
+            reference, rank, len(references), chunks_by_ref, chunk_id_to_doc_id
         )
-    if chunks is None:
-        chunks = []
-    if not isinstance(chunks, list):
-        raise GraphAnswerEnvelopeError(
-            f"data.chunks is {type(chunks).__name__}, expected list"
-        )
-
-    # Pre-index chunks by reference_id for O(1) enrichment + chunk count.
-    chunks_by_ref: dict[str, list[dict[str, Any]]] = {}
-    for chunk in chunks:
-        if not isinstance(chunk, dict):
-            continue
-        ref_id = str(chunk.get("reference_id") or "")
-        if not ref_id:
-            continue
-        chunks_by_ref.setdefault(ref_id, []).append(chunk)
-
-    sources: list[dict[str, Any]] = []
-    for rank, reference in enumerate(references):
-        if not isinstance(reference, dict):
-            raise GraphAnswerEnvelopeError(
-                f"reference entry is {type(reference).__name__}, expected dict"
-            )
-        ref_id_raw = reference.get("reference_id")
-        if ref_id_raw is None:
-            raise GraphAnswerEnvelopeError("reference missing reference_id")
-        try:
-            n_value = int(str(ref_id_raw))
-        except (TypeError, ValueError) as exc:
-            raise GraphAnswerEnvelopeError(
-                f"reference_id={ref_id_raw!r} is not int-coercible"
-            ) from exc
-
-        file_path = reference.get("file_path") or ""
-        matching_chunks = chunks_by_ref.get(str(ref_id_raw), [])
-        chunk_count = len(matching_chunks)
-        first_chunk = matching_chunks[0] if matching_chunks else None
-        chunk_id: str | None = None
-        if isinstance(first_chunk, dict):
-            chunk_id_raw = first_chunk.get("chunk_id")
-            if isinstance(chunk_id_raw, str) and chunk_id_raw:
-                chunk_id = chunk_id_raw
-
-        meta_label: str | None
-        if chunk_count > 1:
-            meta_label = f"{chunk_count} chunks"
-        elif chunk_count == 1:
-            meta_label = "1 chunk"
-        else:
-            meta_label = None
-
-        doc_id: str | None = None
-        if chunk_id and chunk_id_to_doc_id:
-            doc_id = chunk_id_to_doc_id.get(chunk_id)
-
-        sources.append(
-            {
-                "n": n_value,
-                "type": "file",
-                "name": file_path or (chunk_id or f"reference-{n_value}"),
-                "meta": meta_label,
-                "score": _reference_score(
-                    matching_chunks,
-                    rank=rank,
-                    total=len(references),
-                ),
-                "doc_id": doc_id,
-                "chunk_id": chunk_id,
-            }
-        )
-    return sources
+        for rank, reference in enumerate(references)
+    ]
 
 
 def collect_chunk_ids(result: dict[str, Any]) -> list[str]:
