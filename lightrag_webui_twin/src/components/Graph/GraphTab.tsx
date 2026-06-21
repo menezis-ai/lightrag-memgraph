@@ -36,6 +36,23 @@ import { TYPE_KEYS } from './graphLayout';
 import { PINNED_STORAGE_KEY, readPinnedEntityIds, tagsOf } from './graphSelection';
 import type { GraphTabProps } from './graphTypes';
 
+function collectEntityTags(
+  entities: readonly GraphEntity[],
+  docTags?: Readonly<Record<string, readonly string[]>>,
+): Map<string, readonly string[]> {
+  const map = new Map<string, readonly string[]>();
+  for (const entity of entities) {
+    const tags = new Set<string>(tagsOf(entity));
+    for (const doc of entity.source_docs ?? []) {
+      for (const tag of docTags?.[doc] ?? []) {
+        tags.add(tag);
+      }
+    }
+    map.set(entity.id, Array.from(tags));
+  }
+  return map;
+}
+
 export function GraphTab({
   entities,
   relations,
@@ -70,17 +87,10 @@ export function GraphTab({
   const qc = useQueryClient();
 
   // Effective tags = own twin tags ∪ tags inherited from source documents.
-  const entityTags = useMemo(() => {
-    const map = new Map<string, readonly string[]>();
-    entities.forEach((e) => {
-      const s = new Set<string>(tagsOf(e));
-      (e.source_docs ?? []).forEach((doc) => {
-        (docTags?.[doc] ?? []).forEach((t) => s.add(t));
-      });
-      map.set(e.id, Array.from(s));
-    });
-    return map;
-  }, [entities, docTags]);
+  const entityTags = useMemo(
+    () => collectEntityTags(entities, docTags),
+    [entities, docTags],
+  );
   const allTags = useMemo(() => {
     const s = new Set<string>();
     tagCatalog.forEach((t) => s.add(t));

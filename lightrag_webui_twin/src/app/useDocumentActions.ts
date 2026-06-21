@@ -333,18 +333,21 @@ export function useDocumentActions({
       });
     }
 
-    const uploadAuditWrites = results.map((result, index) => {
-      if (result.status !== 'fulfilled') return null;
-      return api.recordSourceUploaded({
-        source: uploadInputs[index]?.file.name ?? result.value.track_id,
-        track_id: result.value.track_id,
-        status: result.value.status,
-        actor: currentActor,
-      });
-    });
-    void Promise.allSettled(uploadAuditWrites.filter(Boolean)).then(() => {
-      void activity.refetch();
-    });
+    const uploadAuditWrites = results.flatMap((result, index) =>
+      result.status === 'fulfilled'
+        ? [
+            api.recordSourceUploaded({
+              source: uploadInputs[index]?.file.name ?? result.value.track_id,
+              track_id: result.value.track_id,
+              status: result.value.status,
+              actor: currentActor,
+            }),
+          ]
+        : [],
+    );
+    Promise.allSettled(uploadAuditWrites)
+      .then(() => activity.refetch())
+      .catch(() => undefined);
 
     if (action.tags.length > 0) {
       const successfulTrackIds = results

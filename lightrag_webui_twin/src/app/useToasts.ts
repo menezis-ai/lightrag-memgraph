@@ -1,5 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
 import { TOAST_AUTO_DISMISS_MS, type Toast } from '../types/toast';
+
+type ToastSetter = Dispatch<SetStateAction<Toast[]>>;
 
 export interface RetagUndoPayload {
   targets: readonly string[];
@@ -28,15 +30,23 @@ export function asRetagUndoPayload(value: unknown): RetagUndoPayload | null {
   };
 }
 
+function removeToast(current: Toast[], id: string): Toast[] {
+  return current.filter((item) => item.id !== id);
+}
+
+function scheduleToastDismiss(setToasts: ToastSetter, id: string): void {
+  window.setTimeout(() => {
+    setToasts((current) => removeToast(current, id));
+  }, TOAST_AUTO_DISMISS_MS);
+}
+
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const pushToast = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = `tst_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`;
     setToasts((current) => [...current, { id, ...toast }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((item) => item.id !== id));
-    }, TOAST_AUTO_DISMISS_MS);
+    scheduleToastDismiss(setToasts, id);
   }, []);
 
   const dismissToast = useCallback((toast: Toast) => {

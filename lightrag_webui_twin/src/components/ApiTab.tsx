@@ -678,8 +678,7 @@ function tryPrettyJson(text: string): string {
 /** @deprecated kept for `ApiTab.test.tsx` legacy coverage of the mock
  *  request-body templates. The component now uses real `fetch` (mock-kill F2). */
 // eslint-disable-next-line react-refresh/only-export-components
-export function mockUnauthorized(ep: OpenApiEndpoint): MockResponse {
-  void ep;
+export function mockUnauthorized(): MockResponse {
   return {
     status: 401,
     statusText: 'Unauthorized',

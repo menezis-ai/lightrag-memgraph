@@ -308,7 +308,7 @@ describe('Helpers — curlFor', () => {
 
 describe('Helpers — mockResponseFor / mockUnauthorized', () => {
   it('mockUnauthorized returns 401 with bearer hint', () => {
-    const r = mockUnauthorized({ m: 'GET', p: '/anything', s: '' });
+    const r = mockUnauthorized();
     expect(r.status).toBe(401);
     expect(JSON.parse(r.body).detail).toMatch(/Bearer token/);
   });
