@@ -95,6 +95,10 @@ def _activate_idp(fake_jwks, *, admin_groups: frozenset[str]) -> None:
     )
 
 
+def _set_idp_cookie(client: AsyncClient, token: str) -> None:
+    client.cookies.set("twin_idp_token", token)
+
+
 # ---------------------------------------------------------------------------
 # App + client fixture
 # ---------------------------------------------------------------------------
@@ -150,30 +154,30 @@ class TestCreateFolderGating:
 
     async def test_non_admin_token_returns_403(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-reader"])
+        _set_idp_cookie(client, token)
         r = await client.post(
             "/folders",
             json={"id": "sandbox", "label": "S"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
         assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["detail"]
 
     async def test_admin_token_returns_201(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(client, token)
         r = await client.post(
             "/folders",
             json={"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 201
         assert r.json()["id"] == "sandbox"
 
     async def test_folder_route_uses_same_admin_gate(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(client, token)
         r = await client.post(
             "/folders",
             json={"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 201
         assert r.json()["id"] == "sandbox"
@@ -187,10 +191,10 @@ class TestCreateFolderGating:
 class TestUpdateFolderGating:
     async def _provision_runtime_folder(self, client, rsa_keypair) -> None:
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(client, admin)
         r = await client.post(
             "/folders",
             json={"id": "sandbox", "label": "Sandbox"},
-            cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 201
 
@@ -207,20 +211,20 @@ class TestUpdateFolderGating:
         await self._provision_runtime_folder(client, rsa_keypair)
         client.cookies.clear()
         token = _make_token(rsa_keypair, groups=["twin-contributor"])
+        _set_idp_cookie(client, token)
         r = await client.patch(
             "/folders/sandbox",
             json={"label": "Renamed"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
 
     async def test_admin_updates_label(self, client, rsa_keypair):
         await self._provision_runtime_folder(client, rsa_keypair)
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(client, admin)
         r = await client.patch(
             "/folders/sandbox",
             json={"label": "Sandbox v2"},
-            cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 200
         assert r.json()["kb"] == "Sandbox v2"
@@ -234,10 +238,10 @@ class TestUpdateFolderGating:
 class TestDeleteFolderGating:
     async def _provision_runtime_folder(self, client, rsa_keypair) -> None:
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(client, admin)
         r = await client.post(
             "/folders",
             json={"id": "sandbox", "label": "Sandbox"},
-            cookies={"twin_idp_token": admin},
         )
         assert r.status_code == 201
 
@@ -251,19 +255,15 @@ class TestDeleteFolderGating:
         await self._provision_runtime_folder(client, rsa_keypair)
         client.cookies.clear()
         token = _make_token(rsa_keypair, groups=["twin-reader"])
-        r = await client.delete(
-            "/folders/sandbox",
-            cookies={"twin_idp_token": token},
-        )
+        _set_idp_cookie(client, token)
+        r = await client.delete("/folders/sandbox")
         assert r.status_code == 403
 
     async def test_admin_deletes_204(self, client, rsa_keypair):
         await self._provision_runtime_folder(client, rsa_keypair)
         admin = _make_token(rsa_keypair, groups=["twin-steward"])
-        r = await client.delete(
-            "/folders/sandbox",
-            cookies={"twin_idp_token": admin},
-        )
+        _set_idp_cookie(client, admin)
+        r = await client.delete("/folders/sandbox")
         assert r.status_code == 204
 
 
@@ -278,9 +278,8 @@ class TestListFoldersNoGate:
         # folder-switcher dropdown). Auth is required (router-level
         # ``require_auth`` dep), but the admin gate isn't.
         token = _make_token(rsa_keypair, groups=["twin-reader"])
-        r = await client.get(
-            "/folders", cookies={"twin_idp_token": token}
-        )
+        _set_idp_cookie(client, token)
+        r = await client.get("/folders")
         assert r.status_code == 200
         assert any(s["id"] == "default" for s in r.json())
 
@@ -318,10 +317,10 @@ class TestCustomAdminGroupsEnv:
 
     async def test_steward_no_longer_admin(self, custom_client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
+        _set_idp_cookie(custom_client, token)
         r = await custom_client.post(
             "/folders",
             json={"id": "sandbox", "label": "S"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 403
 
@@ -329,9 +328,9 @@ class TestCustomAdminGroupsEnv:
         self, custom_client, rsa_keypair
     ):
         token = _make_token(rsa_keypair, groups=["corp.kb-admin"])
+        _set_idp_cookie(custom_client, token)
         r = await custom_client.post(
             "/folders",
             json={"id": "sandbox", "label": "S"},
-            cookies={"twin_idp_token": token},
         )
         assert r.status_code == 201

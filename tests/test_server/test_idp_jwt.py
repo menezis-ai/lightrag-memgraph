@@ -86,6 +86,10 @@ def _make_token(rsa_keypair, **overrides) -> str:
     return pyjwt.encode(claims, private_key, algorithm="RS256")
 
 
+def _set_idp_cookie(client: AsyncClient, token: str) -> None:
+    client.cookies.set("twin_idp_token", token)
+
+
 def _config_for(jwks_client) -> idp_jwt.IdpConfig:
     return idp_jwt.IdpConfig(
         jwks_url="https://idp.example/jwks",
@@ -498,8 +502,8 @@ class TestRequireIdpUser:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/me")
         assert r.status_code == 200
         body = r.json()
@@ -542,8 +546,8 @@ class TestRequireIdpUser:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/me")
         assert r.status_code == 401
         assert 'error="expired"' in r.headers["www-authenticate"]
@@ -606,8 +610,8 @@ class TestRequireAdminUser:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/admin/ping")
         assert r.status_code == 403
         assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["detail"]
@@ -621,8 +625,8 @@ class TestRequireAdminUser:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/admin/ping")
         assert r.status_code == 200
         assert (
@@ -649,12 +653,11 @@ class TestRequireAdminUser:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
-            r_steward = await c.get(
-                "/admin/ping", cookies={"twin_idp_token": steward_token}
-            )
-            r_admin = await c.get(
-                "/admin/ping", cookies={"twin_idp_token": admin_token}
-            )
+            _set_idp_cookie(c, steward_token)
+            r_steward = await c.get("/admin/ping")
+            c.cookies.clear()
+            _set_idp_cookie(c, admin_token)
+            r_admin = await c.get("/admin/ping")
         assert r_steward.status_code == 403
         assert r_admin.status_code == 200
 
@@ -686,8 +689,8 @@ class TestRequireAuthIntegration:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/who")
         assert r.status_code == 200
         assert r.json()["identity"] == "user-42"
@@ -760,9 +763,9 @@ class TestRequireAuthIntegration:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": expired},
             headers={"Authorization": "Bearer secret-key"},
         ) as c:
+            _set_idp_cookie(c, expired)
             r = await c.get("/who")
         # The IdP cookie is present → must validate or 401. The
         # legacy static-key bearer is NOT a silent escape hatch.
@@ -837,8 +840,8 @@ class TestAuthStatusIntegration:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            cookies={"twin_idp_token": token},
         ) as c:
+            _set_idp_cookie(c, token)
             r = await c.get("/auth-status")
         assert r.status_code == 200
         assert r.json()["auth_enabled"] is True

@@ -15,6 +15,10 @@ from twindb_lightrag_memgraph.server.auth import (
     _auth_enabled,
 )
 
+HS256_TEST_SECRET = "test-hs256-secret-minimum-32-bytes"
+OTHER_HS256_TEST_SECRET = "other-hs256-secret-minimum-32-bytes"
+HS384_TEST_SECRET = "test-hs384-secret-minimum-48-bytes-long-enough-now"
+
 
 class TestConfigureAuth:
     def test_disabled_when_no_keys(self):
@@ -132,7 +136,11 @@ class TestConstantTimeComparison:
             return left == right
 
         monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
-        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
 
         resp = await login(LoginRequest(username="admin", password="pass"), Response())
         assert resp.access_token
@@ -149,7 +157,11 @@ class TestConstantTimeComparison:
             return left == right
 
         monkeypatch.setattr(auth.hmac, "compare_digest", fake_compare_digest)
-        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             await login(LoginRequest(username="missing", password="pass"), Response())
@@ -161,7 +173,7 @@ class TestConstantTimeComparison:
 class TestJWT:
     def setup_method(self):
         configure_auth(
-            jwt_secret="test-jwt-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
             jwt_expiration_hours=4,
         )
@@ -184,7 +196,7 @@ class TestJWT:
             "iat": now - timedelta(hours=5),
             "exp": now - timedelta(hours=1),
         }
-        token = pyjwt.encode(expired_payload, "test-jwt-secret", algorithm="HS256")
+        token = pyjwt.encode(expired_payload, HS256_TEST_SECRET, algorithm="HS256")
         with pytest.raises(HTTPException) as exc_info:
             _decode_jwt(token)
         assert exc_info.value.status_code == 401
@@ -236,7 +248,9 @@ class TestRequireAuth:
 
     async def test_jwt_fallback(self):
         configure_auth(
-            api_key="my-key", jwt_secret="secret", jwt_password="test-password"
+            api_key="my-key",
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_password="test-password",
         )
         token = _create_jwt({"sub": "user1"})
         from fastapi.security import HTTPAuthorizationCredentials
@@ -250,7 +264,11 @@ class TestLoginEndpoint:
     async def test_login_success(self):
         from fastapi import Response
 
-        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
         resp = await login(LoginRequest(username="admin", password="pass"), Response())
         assert resp.access_token
         assert resp.token_type == "bearer"
@@ -260,7 +278,7 @@ class TestLoginEndpoint:
         from fastapi import Response
 
         configure_auth(
-            jwt_secret="secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="non-default-pwd",
             auth_accounts="alice:pass,bob:word",
         )
@@ -272,7 +290,7 @@ class TestLoginEndpoint:
         from fastapi import Response
 
         configure_auth(
-            jwt_secret="secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="non-default-pwd",
             auth_accounts=" operator : expected-password ",
         )
@@ -284,7 +302,7 @@ class TestLoginEndpoint:
         from fastapi import Response
 
         configure_auth(
-            jwt_secret="secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="non-default-pwd",
             auth_accounts="alice:pass",
         )
@@ -298,7 +316,11 @@ class TestLoginEndpoint:
     async def test_login_bad_password(self):
         from fastapi import HTTPException
 
-        configure_auth(jwt_secret="secret", jwt_username="admin", jwt_password="pass")
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
         with pytest.raises(HTTPException) as exc_info:
             await login(LoginRequest(username="admin", password="wrong"), Response())
         assert exc_info.value.status_code == 401
@@ -319,7 +341,7 @@ class TestLocalJwtRoutes:
         from twindb_lightrag_memgraph.server.auth import auth_router
 
         configure_auth(
-            jwt_secret="secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="non-default-pwd",
             auth_accounts="alice:pass",
         )
@@ -361,7 +383,7 @@ class TestRequireAuthEdgeCases:
         does not match the static key should authenticate via the JWT path."""
         configure_auth(
             api_key="static-key",
-            jwt_secret="jwt-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
         )
         token = _create_jwt({"sub": "jwt-user"})
@@ -380,7 +402,7 @@ class TestRequireAuthEdgeCases:
 
         configure_auth(
             api_key="static-key",
-            jwt_secret="jwt-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
         )
         from fastapi.security import HTTPAuthorizationCredentials
@@ -400,7 +422,7 @@ class TestRequireAuthEdgeCases:
 
         configure_auth(
             api_key=None,
-            jwt_secret="only-jwt-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
         )
 
@@ -422,7 +444,7 @@ class TestRequireAuthEdgeCases:
         """A JWT with no 'sub' claim should authenticate but return 'unknown'."""
         configure_auth(
             api_key=None,
-            jwt_secret="sub-test-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
         )
         from fastapi.security import HTTPAuthorizationCredentials
@@ -442,7 +464,9 @@ class TestLoginEdgeCases:
         from fastapi import HTTPException
 
         configure_auth(
-            jwt_secret="secret", jwt_username="admin", jwt_password="pass"
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
         )
         with pytest.raises(HTTPException) as exc_info:
             await login(LoginRequest(username="not-admin", password="pass"), Response())
@@ -459,7 +483,7 @@ class TestJWTEdgeCases:
         from datetime import datetime, timezone
 
         configure_auth(
-            jwt_secret="exp-test-secret",
+            jwt_secret=HS256_TEST_SECRET,
             jwt_password="test-password",
             jwt_expiration_hours=1,
         )
@@ -483,12 +507,13 @@ class TestJWTEdgeCases:
         from datetime import datetime, timedelta, timezone
         from fastapi import HTTPException
 
-        # Create token with secret "alpha".
-        configure_auth(jwt_secret="alpha", jwt_password="test-password")
+        configure_auth(jwt_secret=HS256_TEST_SECRET, jwt_password="test-password")
         token = _create_jwt({"sub": "user"})
 
-        # Reconfigure with a different secret "beta".
-        configure_auth(jwt_secret="beta", jwt_password="test-password")
+        configure_auth(
+            jwt_secret=OTHER_HS256_TEST_SECRET,
+            jwt_password="test-password",
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             _decode_jwt(token)
@@ -497,7 +522,7 @@ class TestJWTEdgeCases:
     def test_configure_auth_custom_algorithm(self):
         """Configure HS384 algorithm, create and decode a JWT successfully."""
         configure_auth(
-            jwt_secret="algo-test-secret",
+            jwt_secret=HS384_TEST_SECRET,
             jwt_password="test-password",
             jwt_algorithm="HS384",
         )

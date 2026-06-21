@@ -12,7 +12,7 @@
  * re-written until the user changes them.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const URL_STATE_EVENT = 'twin:url-state-change';
 
@@ -41,10 +41,20 @@ export function useUrlParam<T>(
   defaultValue: T,
   opts: UseUrlParamOptions<T> = {},
 ): [T, (v: T) => void] {
-  const parse = opts.parse ?? ((s: string) => s as unknown as T);
-  const serialize = opts.serialize ?? ((v: T) =>
-    v === null || v === undefined ? '' : String(v));
-  const validate = opts.validate ?? (() => true);
+  const parse = useMemo(
+    () => opts.parse ?? ((s: string) => s as unknown as T),
+    [opts.parse],
+  );
+  const serialize = useMemo(
+    () =>
+      opts.serialize ??
+      ((v: T) => (v === null || v === undefined ? '' : String(v))),
+    [opts.serialize],
+  );
+  const validate = useMemo(
+    () => opts.validate ?? (() => true),
+    [opts.validate],
+  );
 
   const [val, setVal] = useState<T>(() => {
     const raw = readParams().get(key);
