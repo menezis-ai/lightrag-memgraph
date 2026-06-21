@@ -62,12 +62,8 @@ async def get_document_metadata(doc_id: str) -> dict[str, Any]:
     }
 
 
-@router.post("/documents/bulk-delete")
-async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
-    from .. import webui_router as legacy
-
+def _parse_bulk_delete_body(body: dict[str, Any]) -> tuple[list[Any], str]:
     doc_ids = body.get("doc_ids")
-    actor = body.get("actor") or "system"
     if not isinstance(doc_ids, list) or not doc_ids:
         raise HTTPException(
             status_code=400,
@@ -78,36 +74,47 @@ async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
             status_code=413,
             detail="bulk-delete accepts at most 500 target documents.",
         )
+    return doc_ids, str(body.get("actor") or "system")
 
+
+async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -> bool:
+    if not isinstance(doc_id, str) or not doc_id:
+        return False
+    try:
+        doc = await legacy._get_doc_for_active_folder(doc_id)
+        await legacy._delete_doc_from_rag(rag, doc_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        return False
+    except Exception:
+        return False
+
+    event = _make_event(
+        kind="doc-deleted",
+        sev="info",
+        actor=actor,
+        target_label=doc.get("file_path") or doc_id,
+        summary=f"deleted by {actor}",
+        meta={"doc_id": doc_id, "operation": "bulk-delete"},
+        target_type="document",
+    )
+    await get_store().record_activity(event)
+    return True
+
+
+@router.post("/documents/bulk-delete")
+async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
+    from .. import webui_router as legacy
+
+    doc_ids, actor = _parse_bulk_delete_body(body)
     rag = legacy._get_rag()
     deleted = 0
     failed: list[str] = []
     for doc_id in doc_ids:
-        if not isinstance(doc_id, str) or not doc_id:
+        if await _delete_one_document(legacy, rag, doc_id, actor):
+            deleted += 1
+        else:
             failed.append(str(doc_id))
-            continue
-        try:
-            doc = await legacy._get_doc_for_active_folder(doc_id)
-            await legacy._delete_doc_from_rag(rag, doc_id)
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                failed.append(doc_id)
-                continue
-            raise
-        except Exception:
-            failed.append(doc_id)
-            continue
-
-        deleted += 1
-        event = _make_event(
-            kind="doc-deleted",
-            sev="info",
-            actor=actor,
-            target_label=doc.get("file_path") or doc_id,
-            summary=f"deleted by {actor}",
-            meta={"doc_id": doc_id, "operation": "bulk-delete"},
-            target_type="document",
-        )
-        await get_store().record_activity(event)
 
     return {"deleted": deleted, "failed": failed}
