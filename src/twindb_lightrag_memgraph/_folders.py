@@ -90,6 +90,60 @@ def _parse_default_folder() -> str:
         return "default"
 
 
+def _folder_from_item(item: dict[str, object]) -> TwinFolder | None:
+    sid_raw = str(item.get("id") or "").strip()
+    if not sid_raw:
+        return None
+    try:
+        sid = validate_identifier(sid_raw, "folder")
+    except ValueError:
+        logger.exception("Skipping invalid Twin folder id")
+        return None
+    return TwinFolder(
+        id=sid,
+        label=str(item.get("label") or sid),
+        kind=str(item.get("kind") or "custom"),
+        description=str(item.get("description") or ""),
+        sources=int(item.get("sources") or 0),
+    )
+
+
+def _parse_configured_folders(raw: str, max_folders: int) -> list[TwinFolder]:
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise ValueError("TWIN_FOLDERS_JSON must be a JSON array")
+    except Exception:
+        logger.exception("Invalid TWIN_FOLDERS_JSON; falling back to default folder")
+        return []
+
+    folders: list[TwinFolder] = []
+    try:
+        for item in parsed[:max_folders]:
+            if not isinstance(item, dict):
+                continue
+            folder = _folder_from_item(item)
+            if folder is not None:
+                folders.append(folder)
+    except Exception:
+        logger.exception("Invalid TWIN_FOLDERS_JSON; falling back to default folder")
+        return []
+    return folders
+
+
+def _default_folder_entry(default_folder: str) -> TwinFolder:
+    return TwinFolder(
+        id=default_folder,
+        label=(
+            os.environ.get(TWIN_DEFAULT_FOLDER_LABEL_ENV)
+            or "Default folder"
+        ),
+        kind="primary",
+        description="SRE-provisioned default folder for this KB.",
+        sources=0,
+    )
+
+
 def load_folder_catalog() -> TwinFolderCatalog:
     """Load the configured Twin folders from env vars.
 
@@ -100,50 +154,14 @@ def load_folder_catalog() -> TwinFolderCatalog:
     max_folders = _parse_max_folders()
     folders_raw = os.environ.get("TWIN_FOLDERS_JSON")
     explicit = bool(folders_raw)
-    folders: list[TwinFolder] = []
-
-    if folders_raw:
-        try:
-            parsed = json.loads(folders_raw)
-            if not isinstance(parsed, list):
-                raise ValueError("TWIN_FOLDERS_JSON must be a JSON array")
-            for item in parsed[:max_folders]:
-                if not isinstance(item, dict):
-                    continue
-                sid_raw = str(item.get("id") or "").strip()
-                if not sid_raw:
-                    continue
-                try:
-                    sid = validate_identifier(sid_raw, "folder")
-                except ValueError:
-                    logger.exception("Skipping invalid Twin folder id")
-                    continue
-                folders.append(
-                    TwinFolder(
-                        id=sid,
-                        label=str(item.get("label") or sid),
-                        kind=str(item.get("kind") or "custom"),
-                        description=str(item.get("description") or ""),
-                        sources=int(item.get("sources") or 0),
-                    )
-                )
-        except Exception:
-            logger.exception("Invalid TWIN_FOLDERS_JSON; falling back to default folder")
-            folders = []
+    folders = (
+        _parse_configured_folders(folders_raw, max_folders)
+        if folders_raw
+        else []
+    )
 
     if not folders:
-        folders = [
-            TwinFolder(
-                id=default_folder,
-                label=(
-                    os.environ.get(TWIN_DEFAULT_FOLDER_LABEL_ENV)
-                    or "Default folder"
-                ),
-                kind="primary",
-                description="SRE-provisioned default folder for this KB.",
-                sources=0,
-            )
-        ]
+        folders = [_default_folder_entry(default_folder)]
 
     if default_folder not in {folder.id for folder in folders}:
         default_folder = folders[0].id
