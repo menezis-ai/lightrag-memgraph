@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import require_auth
@@ -36,14 +36,12 @@ from .folder import (
 )
 from .webui_models import (
     AckResponse,
-    Document,
     GraphEntity,
     GraphEntityCreate,
     GraphEntityPatch,
     GraphRelation,
     GraphRelationCreate,
     GraphRelationPatch,
-    ListEnvelope,
     OpenApiEnvelope,
     OpenApiGroup,
     TagApproveBody,
@@ -60,6 +58,7 @@ from .webui_models import (
 from .webui.events import _make_event, _make_notification, _utcnow_iso
 from .webui.store import WebuiStore, _stores, get_store, reset_store, set_store
 from .webui.routes_activity import router as activity_router
+from .webui.routes_documents import router as documents_router
 from .webui.routes_folders import router as folders_router
 from .webui.routes_notifications import router as notifications_router
 from .webui_tagstore import MemgraphTagStore
@@ -465,93 +464,7 @@ router = APIRouter(
 )
 
 
-# -- Read endpoints ----------------------------------------------------------
-
-
-@router.get("/documents", response_model=ListEnvelope[Document])
-async def list_documents(
-    status: str | None = Query(default=None),
-    q: str | None = Query(default=None),
-    tag: str | None = Query(default=None),
-) -> dict[str, Any]:
-    store = get_store()
-    with store._lock:  # noqa: SLF001 - same-module route/store coordination
-        has_seed_documents = bool(store._documents)  # noqa: SLF001
-    if has_seed_documents:
-        items = store.list_documents(status=status, q=q, tag=tag)
-        return {"items": items, "total": len(items)}
-    try:
-        items = await _list_documents_from_doc_status(status=status, q=q, tag=tag)
-    except HTTPException as exc:
-        if exc.status_code != 503:
-            raise
-        items = store.list_documents(status=status, q=q, tag=tag)
-    return {"items": items, "total": len(items)}
-
-
-@router.get("/documents/{doc_id}/metadata")
-async def get_document_metadata(doc_id: str) -> dict[str, Any]:
-    doc = await _get_doc_for_active_folder(doc_id)
-    metadata = doc.get("metadata") or {}
-    graph_tags = await _graph_tags_for_doc(doc_id)
-    tags = graph_tags or list(metadata.get("tags") or doc.get("tags") or [])
-    folder = doc.get("folder") or metadata.get("folder") or current_folder_id()
-    return {
-        "tags": tags,
-        "folder": folder,
-        "review": metadata.get("review"),
-        "classification": metadata.get("classification"),
-        "metadata": metadata,
-    }
-
-
-@router.post("/documents/bulk-delete")
-async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
-    doc_ids = body.get("doc_ids")
-    actor = body.get("actor") or "system"
-    if not isinstance(doc_ids, list) or not doc_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="doc_ids must be a non-empty list of document ids.",
-        )
-    if len(doc_ids) > 500:
-        raise HTTPException(
-            status_code=413,
-            detail="bulk-delete accepts at most 500 target documents.",
-        )
-
-    rag = _get_rag()
-    deleted = 0
-    failed: list[str] = []
-    for doc_id in doc_ids:
-        if not isinstance(doc_id, str) or not doc_id:
-            failed.append(str(doc_id))
-            continue
-        try:
-            doc = await _get_doc_for_active_folder(doc_id)
-            await _delete_doc_from_rag(rag, doc_id)
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                failed.append(doc_id)
-                continue
-            raise
-        except Exception:
-            failed.append(doc_id)
-            continue
-
-        deleted += 1
-        event = _make_event(
-            kind="doc-deleted",
-            sev="info",
-            actor=actor,
-            target_label=doc.get("file_path") or doc_id,
-            summary=f"deleted by {actor}",
-            meta={"doc_id": doc_id, "operation": "bulk-delete"},
-            target_type="document",
-        )
-        await get_store().record_activity(event)
-
-    return {"deleted": deleted, "failed": failed}
+router.include_router(documents_router)
 
 
 @router.get("/health")
