@@ -30,7 +30,7 @@ export interface ToastViewportProps {
   onDismiss: (toast: Toast) => void;
 }
 
-export function ToastViewport({ toasts, onUndo, onDismiss }: ToastViewportProps) {
+export function ToastViewport({ toasts, onUndo, onDismiss }: Readonly<ToastViewportProps>) {
   const visible = toasts.slice(-TOAST_MAX_VISIBLE);
   const hidden = toasts.length - visible.length;
 
@@ -109,7 +109,7 @@ interface ToastCardProps {
   onDismiss: (toast: Toast) => void;
 }
 
-function ToastCard({ toast, onUndo, onDismiss }: ToastCardProps) {
+function ToastCard({ toast, onUndo, onDismiss }: Readonly<ToastCardProps>) {
   const kind = toast.kind;
   return (
     <div className={kind === 'error' ? 'toast error' : 'toast'}>

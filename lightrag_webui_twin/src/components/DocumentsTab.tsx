@@ -141,7 +141,7 @@ export function DocumentsTab({
   sourceFilters: controlledSourceFilters,
   onSourceFiltersChange,
   onFiltersChanged,
-}: DocumentsTabProps) {
+}: Readonly<DocumentsTabProps>) {
   const openDetail = onOpenDetail ?? onDeleteDoc;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [localStatusFilter, setLocalStatusFilter] = useUrlParam<StatusFilterKey>(
@@ -789,7 +789,7 @@ function DocRow({
   onClickTag,
   onOpenDetail,
   nowMs,
-}: DocRowProps) {
+}: Readonly<DocRowProps>) {
   const isFail = doc.status === 'FAILED';
   const isDeleting = doc._deleting === true;
   const isOptimisticUpload = doc._optimisticUpload === true;

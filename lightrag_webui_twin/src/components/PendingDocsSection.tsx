@@ -56,7 +56,7 @@ export function PendingDocsSection({
   onToast,
   actor,
   defaultOpen = false,
-}: PendingDocsSectionProps) {
+}: Readonly<PendingDocsSectionProps>) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
@@ -399,7 +399,7 @@ interface EditApproveModalProps {
   onSubmit: (edits: Partial<Document>) => void;
 }
 
-function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
+function EditApproveModal({ doc, onClose, onSubmit }: Readonly<EditApproveModalProps>) {
   const [summary, setSummary] = useState(doc.content_summary);
   const [tags, setTags] = useState(doc.tags.join(', '));
   const charCount = summary.length;
@@ -532,7 +532,7 @@ function RejectModal({
   onClose,
   onSubmit,
   submitting = false,
-}: RejectModalProps) {
+}: Readonly<RejectModalProps>) {
   const [reason, setReason] = useState('');
   const canSubmit = reason.trim().length >= 6;
   return (

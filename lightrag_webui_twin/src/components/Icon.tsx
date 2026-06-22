@@ -208,7 +208,7 @@ export function Icon({
   color = 'currentColor',
   strokeWidth = 1.5,
   className = '',
-}: IconProps) {
+}: Readonly<IconProps>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -244,7 +244,7 @@ export interface SourceIconProps {
 }
 
 /** Picks the right icon for a document source type, defaulting to file-text. */
-export function SourceIcon({ type, size = 15 }: SourceIconProps) {
+export function SourceIcon({ type, size = 15 }: Readonly<SourceIconProps>) {
   const iconName = SOURCE_ICON_MAP[type as SourceType] ?? 'file-text';
   return <Icon name={iconName} size={size} />;
 }

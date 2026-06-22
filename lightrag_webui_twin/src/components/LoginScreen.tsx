@@ -11,7 +11,7 @@ export function LoginScreen({
   checking = false,
   error = null,
   onLogin,
-}: LoginScreenProps) {
+}: Readonly<LoginScreenProps>) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);

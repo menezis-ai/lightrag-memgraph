@@ -174,7 +174,7 @@ export function RetrievalTab({
   docOptions = [],
   docLabels,
   onNavigate,
-}: RetrievalTabProps) {
+}: Readonly<RetrievalTabProps>) {
   const [query, setQuery] = useState('');
   const [threads, setThreads] = useState<readonly RetrievalThread[]>(() => {
     try {
@@ -901,7 +901,7 @@ function Turn({
   onCiteLeave,
   onCiteClick,
   onSourceClick,
-}: TurnProps) {
+}: Readonly<TurnProps>) {
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
 
   if (msg.role === 'user') {
@@ -1097,7 +1097,7 @@ function RetrievalFilterPicker({
   onChange,
   placeholder,
   format = (value) => value,
-}: RetrievalFilterPickerProps) {
+}: Readonly<RetrievalFilterPickerProps>) {
   const [draft, setDraft] = useState('');
   const available = useMemo(() => {
     const values = new Set<string>();
@@ -1179,7 +1179,7 @@ function FilterModeToggle({
   value,
   onChange,
   disabled,
-}: FilterModeToggleProps) {
+}: Readonly<FilterModeToggleProps>) {
   return (
     <div
       className={`retrieval-filter-mode${disabled ? ' is-disabled' : ''}`}

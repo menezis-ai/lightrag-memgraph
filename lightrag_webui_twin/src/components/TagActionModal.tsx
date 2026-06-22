@@ -88,7 +88,7 @@ export function TagActionModal({
   categories,
   onClose,
   onCommit,
-}: TagActionModalProps) {
+}: Readonly<TagActionModalProps>) {
   const modalRef = useRef<HTMLDivElement>(null);
   useModalA11y({ open: true, onClose, ref: modalRef });
 

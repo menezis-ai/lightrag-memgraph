@@ -31,7 +31,7 @@ export interface ReadSourceModalProps {
   onClose: () => void;
 }
 
-export function ReadSourceModal({ doc, onClose }: ReadSourceModalProps) {
+export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>) {
   useEffect(() => {
     if (!doc) return undefined;
     const onKey = (e: KeyboardEvent) => {

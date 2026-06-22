@@ -102,7 +102,7 @@ export function TagsTab({
   onCommit,
   onNavigate,
   defaultPendingOpen = false,
-}: TagsTabProps) {
+}: Readonly<TagsTabProps>) {
   const [selectedCat, setSelectedCat] = useUrlParam<string>('cat', 'all');
   const [selectedStatus, setSelectedStatus] = useUrlParam<TagStatusFilter>(
     'status',
@@ -757,7 +757,7 @@ function DomainEditorModal({
   onRemove,
   onClose,
   onSave,
-}: DomainEditorModalProps) {
+}: Readonly<DomainEditorModalProps>) {
   return (
     <div
       className="modal-bg"
@@ -871,7 +871,7 @@ interface TagsEmptyZeroProps {
   onRequest: () => void;
 }
 
-function TagsEmptyZero({ canSuggest, onRequest }: TagsEmptyZeroProps) {
+function TagsEmptyZero({ canSuggest, onRequest }: Readonly<TagsEmptyZeroProps>) {
   return (
     <div className="tags-empty zero" data-testid="tags-empty-zero">
       <div className="tags-empty-illus" aria-hidden="true">
@@ -968,7 +968,7 @@ function TagsEmptyFiltered({
   onClear,
   onPickTag,
   onRequest,
-}: TagsEmptyFilteredProps) {
+}: Readonly<TagsEmptyFilteredProps>) {
   const catLabel =
     selectedCat !== 'all' ? categories.find((c) => c.id === selectedCat) : null;
   const active = [
@@ -1049,7 +1049,7 @@ function TagDetailPanel({
   onNavigate,
   canEdit,
   canSuggest,
-}: TagDetailPanelProps) {
+}: Readonly<TagDetailPanelProps>) {
   if (!t) return null;
   const cat = categories.find((c) => c.id === t.category);
   return (

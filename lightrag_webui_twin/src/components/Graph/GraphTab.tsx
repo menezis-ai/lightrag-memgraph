@@ -63,7 +63,7 @@ export function GraphTab({
   folderLabel,
   onNavigate,
   onToast,
-}: GraphTabProps) {
+}: Readonly<GraphTabProps>) {
   const [q, setQ] = useUrlParam<string>('gq', '');
   const [activeTypes, setActiveTypes] = useUrlArrayParam(
     'gtype',

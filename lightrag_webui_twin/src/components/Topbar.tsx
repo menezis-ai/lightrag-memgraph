@@ -59,7 +59,7 @@ export function Topbar({
   onOpenActivity,
   onManageFolders,
   tabs,
-}: TopbarProps) {
+}: Readonly<TopbarProps>) {
   const TABS = tabs ?? DEFAULT_TABS;
   const [wsOpen, setWsOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -203,7 +203,7 @@ function FolderMenu({
   folders,
   onPick,
   onManageFolders,
-}: FolderMenuProps) {
+}: Readonly<FolderMenuProps>) {
   return (
     <div className="ws-menu" role="menu" aria-label="Switch folder">
       <div className="ws-menu-h">Folders</div>
@@ -312,7 +312,7 @@ function NotificationsPopover({
   onClear,
   onClose,
   onOpenActivity,
-}: NotificationsPopoverProps) {
+}: Readonly<NotificationsPopoverProps>) {
   const unread = notifications.filter((n) => !n.read).length;
 
   return (

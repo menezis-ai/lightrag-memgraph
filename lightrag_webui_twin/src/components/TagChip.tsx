@@ -32,7 +32,7 @@ export function TagChip({
   onRemove,
   semantics,
   semanticsMap = {},
-}: TagChipProps) {
+}: Readonly<TagChipProps>) {
   const sem = semantics ?? semanticsMap[tag] ?? null;
   const cls = sem ? `tag-chip ${sem}` : 'tag-chip';
   const className = removable ? `${cls} removable` : cls;

@@ -28,7 +28,7 @@ const ACTIONABLE_KINDS = new Set<Notification['kind']>([
   'pipeline-warning',
 ]);
 
-export function TodoBell({ pollMs = 20_000, onOpenActivity }: TodoBellProps) {
+export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellProps>) {
   const { data: notifications = [] } = useQuery({
     queryKey: ['todo-bell-notifications'] as const,
     queryFn: () => api.listNotifications(),

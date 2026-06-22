@@ -29,7 +29,7 @@ function initialsOf(name: string): string {
     .toUpperCase();
 }
 
-export function ProfileSection({ onSignOut }: ProfileSectionProps) {
+export function ProfileSection({ onSignOut }: Readonly<ProfileSectionProps>) {
   const { user } = useAuth();
   if (!user) {
     return (

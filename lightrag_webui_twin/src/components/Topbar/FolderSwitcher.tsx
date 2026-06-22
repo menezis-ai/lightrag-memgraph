@@ -20,7 +20,7 @@ export function FolderSwitcher({
   active,
   folders,
   onPick,
-}: FolderSwitcherProps) {
+}: Readonly<FolderSwitcherProps>) {
   // The corporate IdP gates the parent KB. Folders are scoped inside
   // that KB, so dev/prod both show the configured folder list by default.
   const visible = folders;

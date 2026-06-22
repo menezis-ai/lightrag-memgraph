@@ -58,7 +58,7 @@ export interface SystemStatusIndicatorProps {
 
 export function SystemStatusIndicator({
   pollMs = 30_000,
-}: SystemStatusIndicatorProps) {
+}: Readonly<SystemStatusIndicatorProps>) {
   const lightrag = useQuery({
     queryKey: ['lightrag-health'] as const,
     queryFn: async () => {

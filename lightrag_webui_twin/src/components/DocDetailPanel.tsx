@@ -42,7 +42,7 @@ export function DocDetailPanel({
   onDelete,
   initialExpandedChunkId,
   nowMs,
-}: DocDetailPanelProps) {
+}: Readonly<DocDetailPanelProps>) {
   const [tabState, setTabState] = useState<{
     docId: string;
     tab: DetailTab;
@@ -222,7 +222,7 @@ interface ChunksTabProps {
   initialExpandedChunkId?: string | null;
 }
 
-function ChunksTab({ docId, initialExpandedChunkId }: ChunksTabProps) {
+function ChunksTab({ docId, initialExpandedChunkId }: Readonly<ChunksTabProps>) {
   const [manualExpanded, setManualExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -331,7 +331,7 @@ interface LineageTabProps {
   nowMs?: number;
 }
 
-function LineageTab({ doc, nowMs }: LineageTabProps) {
+function LineageTab({ doc, nowMs }: Readonly<LineageTabProps>) {
   const hash = documentContentHash(doc);
   return (
     <div className="doc-lineage" data-testid="doc-detail-lineage">
@@ -396,7 +396,7 @@ interface AuditTabProps {
   nowMs?: number;
 }
 
-function AuditTab({ docId, nowMs }: AuditTabProps) {
+function AuditTab({ docId, nowMs }: Readonly<AuditTabProps>) {
   const { data, isLoading } = useQuery({
     queryKey: ['doc-audit', docId] as const,
     queryFn: () => api.listActivity({ resourceId: docId }),

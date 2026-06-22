@@ -24,7 +24,7 @@ export interface ClassPillProps {
   docId?: string;
 }
 
-export function ClassPill({ cls, docId }: ClassPillProps) {
+export function ClassPill({ cls, docId }: Readonly<ClassPillProps>) {
   // Render only when we have a structured classification payload. Legacy
   // string-based classifications stay invisible — the DocDetailPanel's
   // "View raw" notice still surfaces them when needed.

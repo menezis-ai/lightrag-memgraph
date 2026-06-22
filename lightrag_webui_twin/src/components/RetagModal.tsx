@@ -53,7 +53,7 @@ export function RetagModal({
   tagCatalog,
   onClose,
   onSubmit,
-}: RetagModalProps) {
+}: Readonly<RetagModalProps>) {
   const modalRef = useRef<HTMLDivElement>(null);
 
   const targets = useMemo<readonly Document[]>(() => {
@@ -120,7 +120,7 @@ function RetagModalBody({
   tagCatalog,
   onClose,
   onSubmit,
-}: RetagModalBodyProps) {
+}: Readonly<RetagModalBodyProps>) {
   const current = sharedTags;
   const [pendingAdd, setPendingAdd] = useState<readonly string[]>([]);
   const [pendingRemove, setPendingRemove] = useState<readonly string[]>([]);

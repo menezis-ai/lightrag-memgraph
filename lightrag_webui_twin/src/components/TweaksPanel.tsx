@@ -94,7 +94,7 @@ export interface TweaksPanelProps {
   children?: ReactNode;
 }
 
-export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: TweaksPanelProps) {
+export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Readonly<TweaksPanelProps>) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [offset, setOffset] = useState<Position>(() => readPosition());
   const offsetRef = useRef<Position>(offset);
@@ -182,7 +182,7 @@ export interface TweakSectionProps {
   children?: ReactNode;
 }
 
-export function TweakSection({ label, children }: TweakSectionProps) {
+export function TweakSection({ label, children }: Readonly<TweakSectionProps>) {
   return (
     <>
       <div className="twk-sect">{label}</div>
@@ -198,7 +198,7 @@ export interface TweakRowProps {
   children?: ReactNode;
 }
 
-export function TweakRow({ label, value, children, inline = false }: TweakRowProps) {
+export function TweakRow({ label, value, children, inline = false }: Readonly<TweakRowProps>) {
   return (
     <div className={inline ? 'twk-row twk-row-h' : 'twk-row'}>
       <div className="twk-lbl">
@@ -230,7 +230,7 @@ export function TweakSlider({
   step = 1,
   unit = '',
   onChange,
-}: TweakSliderProps) {
+}: Readonly<TweakSliderProps>) {
   return (
     <TweakRow label={label} value={`${value}${unit}`}>
       <input
@@ -253,7 +253,7 @@ export interface TweakToggleProps {
   onChange: (v: boolean) => void;
 }
 
-export function TweakToggle({ label, value, onChange }: TweakToggleProps) {
+export function TweakToggle({ label, value, onChange }: Readonly<TweakToggleProps>) {
   return (
     <div className="twk-row twk-row-h">
       <div className="twk-lbl">
@@ -288,7 +288,7 @@ export function TweakRadio<V extends string | number = string>({
   value,
   options,
   onChange,
-}: TweakRadioProps<V>) {
+}: Readonly<TweakRadioProps<V>>) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const valueRef = useRef<V>(value);
@@ -386,7 +386,7 @@ export function TweakSelect<V extends string | number = string>({
   value,
   options,
   onChange,
-}: TweakSelectProps<V>) {
+}: Readonly<TweakSelectProps<V>>) {
   const resolve = (s: string): V => {
     const match = options.find(
       (o) => String(typeof o === 'object' && o !== null && 'value' in o ? o.value : o) === s,
@@ -425,7 +425,7 @@ export interface TweakTextProps {
   onChange: (v: string) => void;
 }
 
-export function TweakText({ label, value, placeholder, onChange }: TweakTextProps) {
+export function TweakText({ label, value, placeholder, onChange }: Readonly<TweakTextProps>) {
   return (
     <TweakRow label={label}>
       <input
@@ -458,7 +458,7 @@ export function TweakNumber({
   step = 1,
   unit = '',
   onChange,
-}: TweakNumberProps) {
+}: Readonly<TweakNumberProps>) {
   const clamp = (n: number): number => {
     if (min != null && n < min) return min;
     if (max != null && n > max) return max;
@@ -541,7 +541,7 @@ export interface TweakColorProps {
   onChange: (v: ColorOption) => void;
 }
 
-export function TweakColor({ label, value, options, onChange }: TweakColorProps) {
+export function TweakColor({ label, value, options, onChange }: Readonly<TweakColorProps>) {
   if (!options || options.length === 0) {
     return (
       <div className="twk-row twk-row-h">
@@ -605,7 +605,7 @@ export interface TweakButtonProps {
   secondary?: boolean;
 }
 
-export function TweakButton({ label, onClick, secondary = false }: TweakButtonProps) {
+export function TweakButton({ label, onClick, secondary = false }: Readonly<TweakButtonProps>) {
   return (
     <button
       type="button"

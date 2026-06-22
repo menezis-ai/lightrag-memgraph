@@ -38,7 +38,7 @@ export function GraphFilters({
   onDocMatchModeChange,
   docLabels,
   onToggleType,
-}: GraphFiltersProps) {
+}: Readonly<GraphFiltersProps>) {
   const toggleType = onToggleType;
   const setTagFilter = onTagFilterChange;
   const setTagMatchMode = onTagMatchModeChange;
@@ -126,12 +126,12 @@ export function FilterMatchMode({
   value,
   onChange,
   disabled,
-}: {
+}: Readonly<{
   label: string;
   value: 'any' | 'all';
   onChange: (value: 'any' | 'all') => void;
   disabled?: boolean;
-}) {
+}>) {
   return (
     <div
       className={`kg-filter-mode${disabled ? ' is-disabled' : ''}`}
@@ -175,7 +175,7 @@ export function FilterPicker({
   onChange,
   placeholder,
   format,
-}: FilterPickerProps) {
+}: Readonly<FilterPickerProps>) {
   const fmt = format ?? ((x: string) => x);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);

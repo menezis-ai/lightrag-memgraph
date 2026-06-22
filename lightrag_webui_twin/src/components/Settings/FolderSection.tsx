@@ -30,7 +30,7 @@ export interface FolderSectionProps {
 export function FolderSection({
   activeFolderId,
   displayName,
-}: FolderSectionProps) {
+}: Readonly<FolderSectionProps>) {
   return (
     <div className="settings-section" data-testid="settings-folder">
       <h3>Folder</h3>

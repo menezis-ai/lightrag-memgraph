@@ -28,7 +28,7 @@ export interface StatusBadgeProps {
   size?: StatusBadgeSize;
 }
 
-export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
+export function StatusBadge({ status, size = 'sm' }: Readonly<StatusBadgeProps>) {
   const m = MAP[status] ?? { label: String(status), cls: 'status-active' };
   return (
     <span className={`status-badge ${m.cls} ${size}`} data-status={status}>

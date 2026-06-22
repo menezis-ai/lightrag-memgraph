@@ -60,7 +60,7 @@ export function ActivityTab({
   onPushToast,
   onNavigate,
   onRefresh,
-}: ActivityTabProps) {
+}: Readonly<ActivityTabProps>) {
   const [range, setRange] = useUrlParam<ActivityRange>('range', '7d', {
     validate: (v) => (RANGE_IDS as readonly string[]).includes(v as string),
   });
@@ -465,7 +465,7 @@ interface ActivityRowProps {
   onClick: () => void;
 }
 
-function ActivityRow({ e, selected, onClick }: ActivityRowProps) {
+function ActivityRow({ e, selected, onClick }: Readonly<ActivityRowProps>) {
   const m = resolveKindMeta(e.kind);
   return (
     <button
@@ -497,7 +497,7 @@ interface ActivityDetailProps {
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
-function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
+function ActivityDetail({ e, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
   const [copied, setCopied] = useState(false);
   if (!e) {
     return (

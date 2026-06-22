@@ -61,7 +61,7 @@ export function SettingsTab({
   onSignOut,
   onToast,
   initialSection = 'profile',
-}: SettingsTabProps) {
+}: Readonly<SettingsTabProps>) {
   const [sectionState, setSectionState] = useState<{
     initial: SettingsSectionKey;
     value: SettingsSectionKey;

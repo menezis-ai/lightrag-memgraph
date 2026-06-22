@@ -54,7 +54,7 @@ export function GraphDetailPanel({
   pinnedIds,
   onTogglePinned,
   onNavigate,
-}: GraphDetailPanelProps) {
+}: Readonly<GraphDetailPanelProps>) {
   // Relation editor takes priority when an edge is selected.
   if (selectedRel) {
     const src = entities.find((n) => n.id === selectedRel.source) ?? null;
@@ -150,7 +150,7 @@ function EntityEditor({
   isPinned,
   onTogglePinned,
   onNavigate,
-}: EntityEditorProps) {
+}: Readonly<EntityEditorProps>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EntityDraft | null>(null);
   const updateEntity = useUpdateGraphEntity();
@@ -638,7 +638,7 @@ function RelationEditor({
   colors,
   onSelectNode,
   onBack,
-}: RelationEditorProps) {
+}: Readonly<RelationEditorProps>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<RelationDraft | null>(null);
   const updateRelation = useUpdateGraphRelation();
@@ -925,14 +925,14 @@ export function TagAttrEditor({
   tags,
   tagCatalog,
   onChange,
-}: {
+}: Readonly<{
   tags: readonly string[];
   /** Active tag catalog, e.g. derived from ``/tags`` via
    *  ``tagCatalogForSuggestions`` upstream. An empty list disables
    *  the binding (isolated tests). */
   tagCatalog: readonly string[];
   onChange: (next: string[]) => void;
-}) {
+}>) {
   const [v, setV] = useState('');
   const [focused, setFocused] = useState(false);
   const normalized = v.trim().toLowerCase().replace(/\s+/g, '-');
@@ -1034,11 +1034,11 @@ function PropEditor({
   properties,
   suggestions,
   onChange,
-}: {
+}: Readonly<{
   properties: Record<string, string>;
   suggestions: readonly string[];
   onChange: (next: Record<string, string>) => void;
-}) {
+}>) {
   const entries = Object.entries(properties);
   const [draftKey, setDraftKey] = useState('');
   const [draftVal, setDraftVal] = useState('');
@@ -1174,7 +1174,7 @@ export function AddEntityForm({
   error,
   onCancel,
   onSubmit,
-}: AddEntityFormProps) {
+}: Readonly<AddEntityFormProps>) {
   const [name, setName] = useState('');
   const [type, setType] = useState<GraphEntityType>('PRODUCT');
   const [summary, setSummary] = useState('');
@@ -1302,7 +1302,7 @@ function AddRelationForm({
   pending,
   onCancel,
   onSubmit,
-}: AddRelationFormProps) {
+}: Readonly<AddRelationFormProps>) {
   // Targets = every other entity in the graph. Sorted by name for a
   // predictable picker order.
   const targetOptions = useMemo(

@@ -183,7 +183,7 @@ export function AddSourceModal({
   onClose,
   onSubmit,
   submitting = false,
-}: AddSourceModalProps) {
+}: Readonly<AddSourceModalProps>) {
   const modalRef = useRef<HTMLDivElement>(null);
   // While an upload is in flight, neutralise close so X / backdrop / Escape
   // can't dismiss the modal mid-upload (matches LightRAG's native UX).

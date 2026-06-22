@@ -37,7 +37,7 @@ export function GraphCanvas({
   onHoverEntity,
   onZoomChange,
   onClearFilters,
-}: GraphCanvasProps) {
+}: Readonly<GraphCanvasProps>) {
   return (
     <div
           ref={canvasRef}

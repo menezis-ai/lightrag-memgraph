@@ -38,7 +38,7 @@ export interface ApiTabProps {
   baseUrl: string;
 }
 
-export function ApiTab({ apiVersion, groups, baseUrl }: ApiTabProps) {
+export function ApiTab({ apiVersion, groups, baseUrl }: Readonly<ApiTabProps>) {
   const [filter, setFilter] = useState('');
   const [authOpen, setAuthOpen] = useState(false);
   const [token, setToken] = useState('');
@@ -152,7 +152,7 @@ interface GroupProps {
   baseUrl: string;
 }
 
-function Group({ g, secured, token, baseUrl }: GroupProps) {
+function Group({ g, secured, token, baseUrl }: Readonly<GroupProps>) {
   const [open, setOpen] = useState(true);
   return (
     <div className="swagger-group" data-testid={`api-group-${g.id}`}>
@@ -203,7 +203,7 @@ interface EndpointRowProps {
   baseUrl: string;
 }
 
-function EndpointRow({ ep, secured, token, baseUrl }: EndpointRowProps) {
+function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>) {
   const [open, setOpen] = useState(false);
   const [tryOpen, setTryOpen] = useState(false);
   const [reqBody, setReqBody] = useState(() => requestBodyFor(ep));
@@ -446,7 +446,7 @@ interface MethodPillProps {
   method: HttpMethod;
 }
 
-function MethodPill({ method }: MethodPillProps) {
+function MethodPill({ method }: Readonly<MethodPillProps>) {
   const c = METHOD_COLOR[method] ?? METHOD_COLOR.GET;
   return (
     <span
@@ -480,7 +480,7 @@ interface AuthorizeDialogProps {
   onClose: () => void;
 }
 
-function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogProps) {
+function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<AuthorizeDialogProps>) {
   const [val, setVal] = useState(token);
   const [revokeArmed, setRevokeArmed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);

@@ -181,7 +181,7 @@ function AddFolderForm({
   error,
   onCancel,
   onSubmit,
-}: AddFolderFormProps) {
+}: Readonly<AddFolderFormProps>) {
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState('custom');
@@ -337,7 +337,7 @@ function FolderRow({
   canManage,
   onSave,
   onDelete,
-}: FolderRowProps) {
+}: Readonly<FolderRowProps>) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(folder.kb);
   const [armedDelete, setArmedDelete] = useState(false);
