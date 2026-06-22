@@ -555,6 +555,14 @@ jobs:
     # harmlessly. Self-contained: regenerates Python coverage.xml + WebUI
     # lcov.info, then scans — so it does not depend on artifacts from the other
     # jobs.
+    #
+    # `needs` + `if: always()` serialize this AFTER the docker-pool gates: it
+    # re-runs the full Python + WebUI suites for coverage, and running that
+    # concurrently on the shared 5-CT docker pool starved the gate jobs into
+    # mass 5s-timeout failures. Waiting for them frees the pool. `if: always()`
+    # keeps it informational even when a gate fails.
+    needs: [unit-tests, integration-tests, webui-lint, webui-tests]
+    if: always()
     runs-on: [self-hosted, docker]
     continue-on-error: true
     steps:
