@@ -753,7 +753,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(quota_router, prefix=TWIN_API_PREFIX)
     logger.info("Quota snapshot route mounted at %s/quota", TWIN_API_PREFIX)
 
-    @app.get(f"{TWIN_API_PREFIX}/ops/metrics", dependencies=[Depends(require_auth)])
+    @app.get(TWIN_API_PREFIX + "/ops/metrics", dependencies=[Depends(require_auth)])
     async def operational_metrics():
         return metrics_snapshot()
 

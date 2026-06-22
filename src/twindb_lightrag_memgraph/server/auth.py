@@ -17,6 +17,7 @@ explicitly required by the application factory.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,7 @@ _jwt_password: str = DEFAULT_JWT_PASSWORD
 _auth_accounts: dict[str, str] = {}
 _auth_enabled: bool = False
 _local_jwt_cookie_name = "twin_local_token"
+_api_key_mark_used_tasks: set[asyncio.Task[Any]] = set()
 
 
 class AuthConfigurationError(ValueError):
@@ -332,11 +334,11 @@ async def _consume_operator_key(token: str) -> str | None:
         entry = None
     if entry is None:
         return None
-    import asyncio
-
     key_id = str(entry.get("id"))
     try:
-        asyncio.create_task(api_key_store.mark_used(workspace, key_id))
+        task = asyncio.create_task(api_key_store.mark_used(workspace, key_id))
+        _api_key_mark_used_tasks.add(task)
+        task.add_done_callback(_api_key_mark_used_tasks.discard)
     except Exception:  # noqa: BLE001
         logger.exception("[auth] mark_used schedule failed")
     return f"api_key:{key_id}"

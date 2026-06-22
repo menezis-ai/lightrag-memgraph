@@ -58,7 +58,7 @@ _BUDGET_REJECT = "reject"
 # Accept binary (KiB/MiB/GiB/TiB) and decimal (KB/MB/GB/TB) suffixes plus
 # the bare ``B``, with an optional decimal part. Case/whitespace insensitive.
 _SIZE_RE = re.compile(
-    r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[KMGT]?i?B|B)?\s*$",
+    r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>(?:[KMGT]i?B|B))?\s*$",
     re.IGNORECASE,
 )
 _UNIT_FACTORS: Final[dict[str, int]] = {

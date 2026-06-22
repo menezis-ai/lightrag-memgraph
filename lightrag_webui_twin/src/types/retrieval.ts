@@ -131,7 +131,7 @@ export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
   const text = stripTrailingReferencesSection(tokens.join(''));
   const lines = text.split('\n');
   const hasMarkdownBlocks = lines.length > 1 || lines.some((line) =>
-    /^(#{1,3})\s+|\s*[-*]\s+|\s*\d+\.\s+/.test(line),
+    /^(?:(?:#{1,3})\s+|\s*[-*]\s+|\s*\d+\.\s+)/.test(line),
   );
 
   if (!hasMarkdownBlocks) {

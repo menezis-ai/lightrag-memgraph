@@ -3225,7 +3225,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   cursor: pointer;
-  font-family: inherit; font-size: 12px;
+  font-family: inherit;
   white-space: nowrap;
 }
 .bulk-action:hover { background: var(--color-background-secondary); }
@@ -4417,7 +4417,6 @@ input:focus, textarea:focus, select:focus { outline: none; }
   cursor: pointer;
   white-space: nowrap;
   font-family: inherit;
-  font-size: 11px;
 }
 .sys-pill:hover { border-color: var(--color-border-secondary); }
 .sys-pill-warn  { border-color: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 35%, var(--color-border-tertiary)); color: var(--twin-amber-vivid, #9C7000); background: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 6%, var(--color-background-primary)); }
