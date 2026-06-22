@@ -618,15 +618,17 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          # sonar.javascript.node.maxspace caps the JS-analysis Node bridge
-          # heap. The scanner auto-sizes it from /proc/meminfo (the LXC CT sees
-          # the host's 32 GB) but the CT's cgroup caps memory lower, so an
-          # unbounded bridge (~4.3 GB) gets OOM-killed mid-analysis ("WebSocket
-          # connection closed abnormally"). Cap it so the bridge + JVM scanner
-          # fit within the CT regardless of pool.
+          # Both the JVM scanner AND the JS-analysis Node bridge auto-size their
+          # heaps from /proc/meminfo — the LXC CT reports the host's 32 GB, but
+          # the cgroup caps at 4096M. Unbounded, the JVM default max heap is 25%
+          # of 32 GB (~8 GB) and the Node bridge ~4.3 GB; their combined
+          # footprint blows the cgroup → OOM-kill mid-analysis ("WebSocket
+          # connection closed abnormally"). Cap BOTH so they fit in 4 GB:
+          #   JVM -Xmx1g  +  Node maxspace 2048  +  tsserver/overhead  < 4 GB.
           docker run --rm \
             --network host \
             -e SONAR_TOKEN \
+            -e SONAR_SCANNER_JAVA_OPTS=-Xmx1g \
             -v "$PWD:/usr/src" \
             sonarsource/sonar-scanner-cli:11 \
             -Dsonar.javascript.node.maxspace=2048
