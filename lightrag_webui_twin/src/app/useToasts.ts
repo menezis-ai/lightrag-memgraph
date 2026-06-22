@@ -35,7 +35,7 @@ function removeToast(current: Toast[], id: string): Toast[] {
 }
 
 function scheduleToastDismiss(setToasts: ToastSetter, id: string): void {
-  window.setTimeout(() => {
+  globalThis.setTimeout(() => {
     setToasts((current) => removeToast(current, id));
   }, TOAST_AUTO_DISMISS_MS);
 }

@@ -3,7 +3,7 @@
  *
  * Used when:
  *   - `import.meta.env.DEV === true` (Vite dev server, vitest run); AND
- *   - `window.__twinConfig` is missing or still equals the FastAPI placeholder
+ *   - `globalThis.__twinConfig` is missing or still equals the FastAPI placeholder
  *     `'__TWIN_CONFIG_JSON__'`, which means the substitution layer didn't
  *     run (typical of `bun run dev` hitting `/index.html` raw).
  *
@@ -63,7 +63,7 @@ const PLACEHOLDER = '__TWIN_CONFIG_JSON__';
 
 /**
  * Resolve the active runtime config, applying the dev fallback when the
- * placeholder is still present (or `window.__twinConfig` is missing).
+ * placeholder is still present (or `globalThis.__twinConfig` is missing).
  *
  * In a PROD build, the absence of a substituted config is normally a hard
  * error — it means the FastAPI sub-app didn't run and the bearer / scopes
@@ -75,8 +75,12 @@ export function resolveRuntimeConfig(
   source: TwinRuntimeConfig | string | undefined,
   isDev: boolean,
 ): TwinRuntimeConfig {
-  if (isDev && typeof window !== 'undefined' && window.__twinE2eRuntimeConfig) {
-    return window.__twinE2eRuntimeConfig;
+  if (
+    isDev &&
+    typeof globalThis.window !== 'undefined' &&
+    globalThis.window.__twinE2eRuntimeConfig
+  ) {
+    return globalThis.window.__twinE2eRuntimeConfig;
   }
   if (!source || source === PLACEHOLDER) {
     if (isDev) return DEV_CONFIG;
@@ -84,7 +88,7 @@ export function resolveRuntimeConfig(
     // shipped without a FastAPI substitution layer; use the demo fallback.
     if (import.meta.env.VITE_FORCE_MSW === 'true') return DEV_CONFIG;
     throw new Error(
-      '[twin-webui] window.__twinConfig was not substituted by the server. ' +
+      '[twin-webui] globalThis.__twinConfig was not substituted by the server. ' +
         'Check that the FastAPI sub-app is serving index.html via register(mount_server=True).',
     );
   }

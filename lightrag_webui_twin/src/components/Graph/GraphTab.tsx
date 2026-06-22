@@ -7,7 +7,7 @@
  *
  * Behavior delta vs the proto:
  *   - Entities, relations, colors injected via props.
- *   - `onNavigate(tab, params)` instead of direct window.history mutation.
+ *   - `onNavigate(tab, params)` instead of direct globalThis.history mutation.
  *   - Wheel/pan use refs to avoid re-attaching listeners on each render.
  */
 
@@ -215,7 +215,7 @@ export function GraphTab({
   }, [selected, neighbors]);
 
   useEffect(() => {
-    window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedIds));
+    globalThis.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedIds));
   }, [pinnedIds]);
 
   const togglePinned = (id: string) => {
@@ -253,11 +253,11 @@ export function GraphTab({
     const onUp = () => {
       dragRef.current = null;
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    globalThis.addEventListener('mousemove', onMove);
+    globalThis.addEventListener('mouseup', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      globalThis.removeEventListener('mousemove', onMove);
+      globalThis.removeEventListener('mouseup', onUp);
     };
   }, []);
   useEffect(() => {

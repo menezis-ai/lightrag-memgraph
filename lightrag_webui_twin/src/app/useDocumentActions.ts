@@ -274,7 +274,7 @@ export function useDocumentActions({
     if (trackIds.length === 0) return;
     const pending = new Set(trackIds);
     for (let i = 0; i < 30 && pending.size > 0; i += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
       const result = await docs.refetch();
       for (const item of result.data?.items ?? []) {
         if (item.track_id) pending.delete(item.track_id);
@@ -415,7 +415,7 @@ export function useDocumentActions({
     trackIds: readonly string[],
     tags: readonly string[],
   ): Promise<void> => {
-    const e2ePoll = window.__TWIN_E2E_INITIAL_TAG_POLL;
+    const e2ePoll = globalThis.window?.__TWIN_E2E_INITIAL_TAG_POLL;
     const pollIntervalMs = e2ePoll?.intervalMs ?? 2000;
     const maxPolls = e2ePoll?.maxPolls ?? 30;
     const terminalStatuses = new Set([

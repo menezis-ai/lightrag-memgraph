@@ -123,7 +123,7 @@ export function SettingsTab({
 function ApiSection() {
   const { data, isLoading, isError, error, refetch } = useOpenApi();
   const baseUrl =
-    typeof window !== 'undefined' ? window.location.origin : '';
+    typeof globalThis.window !== 'undefined' ? globalThis.location.origin : '';
 
   return (
     <div className="settings-section settings-api" data-testid="settings-api">

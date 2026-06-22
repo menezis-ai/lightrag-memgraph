@@ -104,8 +104,8 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
     if (!panel) return;
     const w = panel.offsetWidth;
     const h = panel.offsetHeight;
-    const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
-    const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+    const maxRight = Math.max(PAD, globalThis.innerWidth - w - PAD);
+    const maxBottom = Math.max(PAD, globalThis.innerHeight - h - PAD);
     const next = {
       x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
       y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
@@ -118,8 +118,8 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
     if (!open) return undefined;
     clampToViewport();
     if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', clampToViewport);
-      return () => window.removeEventListener('resize', clampToViewport);
+      globalThis.addEventListener('resize', clampToViewport);
+      return () => globalThis.removeEventListener('resize', clampToViewport);
     }
     const ro = new ResizeObserver(clampToViewport);
     ro.observe(document.documentElement);
@@ -132,8 +132,8 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
     const r = panel.getBoundingClientRect();
     const sx = e.clientX;
     const sy = e.clientY;
-    const startRight = window.innerWidth - r.right;
-    const startBottom = window.innerHeight - r.bottom;
+    const startRight = globalThis.innerWidth - r.right;
+    const startBottom = globalThis.innerHeight - r.bottom;
     const move = (ev: MouseEvent) => {
       offsetRef.current = {
         x: startRight - (ev.clientX - sx),
@@ -143,12 +143,12 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Tweak
       clampToViewport();
     };
     const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+      globalThis.removeEventListener('mousemove', move);
+      globalThis.removeEventListener('mouseup', up);
       writePosition(offsetRef.current);
     };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    globalThis.addEventListener('mousemove', move);
+    globalThis.addEventListener('mouseup', up);
   };
 
   if (!open) return null;
@@ -336,11 +336,11 @@ export function TweakRadio<V extends string | number = string>({
     };
     const up = () => {
       setDragging(false);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+      globalThis.removeEventListener('pointermove', move);
+      globalThis.removeEventListener('pointerup', up);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    globalThis.addEventListener('pointermove', move);
+    globalThis.addEventListener('pointerup', up);
   };
 
   return (
@@ -476,11 +476,11 @@ export function TweakNumber({
       onChange(clamp(Number(snapped.toFixed(decimals))));
     };
     const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+      globalThis.removeEventListener('pointermove', move);
+      globalThis.removeEventListener('pointerup', up);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    globalThis.addEventListener('pointermove', move);
+    globalThis.addEventListener('pointerup', up);
   };
   return (
     <div className="twk-num">

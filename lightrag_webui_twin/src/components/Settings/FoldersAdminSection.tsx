@@ -353,8 +353,8 @@ function FolderRow({
 
   useEffect(() => {
     if (!armedDelete) return;
-    const t = window.setTimeout(() => setArmedDelete(false), 4000);
-    return () => window.clearTimeout(t);
+    const t = globalThis.setTimeout(() => setArmedDelete(false), 4000);
+    return () => globalThis.clearTimeout(t);
   }, [armedDelete]);
 
   return (

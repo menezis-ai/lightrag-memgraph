@@ -9,7 +9,7 @@
  *     directly without a QueryClient wrapper.
  *
  * Env switches:
- *   - window.__twinConfig  → server-injected API bases + current identity.
+ *   - globalThis.__twinConfig  → server-injected API bases + current identity.
  *   - VITE_USE_MSW=false   → skip the MSW worker.
  *   - VITE_API_BASE_URL=…  → optional dev/test backend origin fallback.
  *   - VITE_AUTH_TOKEN=…    → optional dev/test bearer fallback.
@@ -105,7 +105,7 @@ export function AppShell() {
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
   const [detailChunkId, setDetailChunkId] = useState<string | null>(null);
   const [detailRequest, setDetailRequest] = useState<DetailRequest | null>(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(globalThis.location.search);
     const doc = params.get('doc') ?? undefined;
     const source = params.get('source') ?? undefined;
     if (!doc && !source) return null;

@@ -21,7 +21,7 @@ async function unregisterStaleMsw(): Promise<void> {
     sessionStorage.getItem('twin-msw-unregistered') !== '1'
   ) {
     sessionStorage.setItem('twin-msw-unregistered', '1');
-    window.location.reload();
+    globalThis.location.reload();
   }
 }
 

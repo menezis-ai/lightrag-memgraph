@@ -13,7 +13,7 @@ import { handlers } from './handlers';
 export const worker = setupWorker(...handlers);
 
 export async function startMsw(): Promise<void> {
-  if (typeof window === 'undefined') return;
+  if (typeof globalThis.window === 'undefined') return;
   await worker.start({
     onUnhandledRequest: 'bypass',
     serviceWorker: { url: '/mockServiceWorker.js' },

@@ -163,8 +163,8 @@ function EntityEditor({
   const [armedDelete, setArmedDelete] = useState(false);
   useEffect(() => {
     if (!armedDelete) return;
-    const t = window.setTimeout(() => setArmedDelete(false), 4000);
-    return () => window.clearTimeout(t);
+    const t = globalThis.setTimeout(() => setArmedDelete(false), 4000);
+    return () => globalThis.clearTimeout(t);
   }, [armedDelete]);
 
   // Reset edit mode + armed-delete + Add relation form when switching
@@ -646,8 +646,8 @@ function RelationEditor({
   const [armedDelete, setArmedDelete] = useState(false);
   useEffect(() => {
     if (!armedDelete) return;
-    const t = window.setTimeout(() => setArmedDelete(false), 4000);
-    return () => window.clearTimeout(t);
+    const t = globalThis.setTimeout(() => setArmedDelete(false), 4000);
+    return () => globalThis.clearTimeout(t);
   }, [armedDelete]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- intentional reset of the relation editor panel when switching to a different edge. */
@@ -981,7 +981,7 @@ export function TagAttrEditor({
           value={v}
           onChange={(e) => setV(e.target.value)}
           onFocus={() => setFocused(true)}
-          onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+          onBlur={() => globalThis.setTimeout(() => setFocused(false), 120)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();

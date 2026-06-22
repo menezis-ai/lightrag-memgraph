@@ -2,9 +2,9 @@
  * Thin typed fetch wrapper for the Twin RAG backend.
  *
  * Runtime contract:
- *   window.__twinConfig.apiBaseUrl      — Twin overlay base, e.g. /twin/api.
- *   window.__twinConfig.lightragBaseUrl — LightRAG native base, usually empty.
- *   window.__twinConfig.defaultFolderId — SRE-provisioned default Twin folder.
+ *   globalThis.__twinConfig.apiBaseUrl      — Twin overlay base, e.g. /twin/api.
+ *   globalThis.__twinConfig.lightragBaseUrl — LightRAG native base, usually empty.
+ *   globalThis.__twinConfig.defaultFolderId — SRE-provisioned default Twin folder.
  *   VITE_API_BASE_URL                   — optional dev/test origin fallback.
  *   VITE_AUTH_TOKEN                     — optional dev/test bearer fallback.
  *
@@ -32,9 +32,9 @@ export function getActiveFolder(): string | null {
 }
 
 function readStoredAuthToken(): string {
-  if (typeof window === 'undefined') return '';
+  if (typeof globalThis.window === 'undefined') return '';
   try {
-    return window.sessionStorage.getItem(SESSION_AUTH_TOKEN_KEY) ?? '';
+    return globalThis.sessionStorage.getItem(SESSION_AUTH_TOKEN_KEY) ?? '';
   } catch {
     return '';
   }
@@ -42,12 +42,12 @@ function readStoredAuthToken(): string {
 
 export function setSessionAuthToken(token: string | null): void {
   sessionAuthToken = token;
-  if (typeof window === 'undefined') return;
+  if (typeof globalThis.window === 'undefined') return;
   try {
     if (token) {
-      window.sessionStorage.setItem(SESSION_AUTH_TOKEN_KEY, token);
+      globalThis.sessionStorage.setItem(SESSION_AUTH_TOKEN_KEY, token);
     } else {
-      window.sessionStorage.removeItem(SESSION_AUTH_TOKEN_KEY);
+      globalThis.sessionStorage.removeItem(SESSION_AUTH_TOKEN_KEY);
     }
   } catch {
     // Session storage can be unavailable in privacy-restricted contexts.
@@ -120,7 +120,9 @@ export interface ApiRequestInit {
 
 export function getTwinRuntimeConfig() {
   const raw =
-    typeof window !== 'undefined' ? window.__twinConfig : undefined;
+    typeof globalThis.window !== 'undefined'
+      ? globalThis.window.__twinConfig
+      : undefined;
   return resolveRuntimeConfig(raw, Boolean(import.meta.env.DEV));
 }
 

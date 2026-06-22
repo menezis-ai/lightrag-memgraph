@@ -15,6 +15,6 @@ export const queryClient = new QueryClient({
   },
 });
 
-if (typeof window !== 'undefined' && import.meta.env.DEV) {
-  window.__TWIN_E2E_QUERY_CLIENT = queryClient;
+if (typeof globalThis.window !== 'undefined' && import.meta.env.DEV) {
+  globalThis.window.__TWIN_E2E_QUERY_CLIENT = queryClient;
 }

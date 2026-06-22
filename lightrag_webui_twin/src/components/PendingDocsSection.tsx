@@ -84,7 +84,7 @@ export function PendingDocsSection({
   };
 
   const restoreFocusAfterRemovedAction = (): void => {
-    window.requestAnimationFrame(() => {
+    globalThis.requestAnimationFrame(() => {
       if (document.activeElement && document.activeElement !== document.body) return;
       const target = document.querySelector<HTMLElement>(
         '[data-testid^="pending-doc-"] button:not(:disabled), [data-focus-fallback="app-main"]',

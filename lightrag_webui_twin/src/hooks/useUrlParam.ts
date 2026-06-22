@@ -23,7 +23,7 @@ export interface UseUrlParamOptions<T> {
 }
 
 function readParams(): URLSearchParams {
-  return new URLSearchParams(window.location.search);
+  return new URLSearchParams(globalThis.location.search);
 }
 
 function writeParam(key: string, val: string): void {
@@ -31,9 +31,9 @@ function writeParam(key: string, val: string): void {
   if (val === '') p.delete(key);
   else p.set(key, val);
   const q = p.toString();
-  const url = window.location.pathname + (q ? '?' + q : '');
-  window.history.replaceState(null, '', url);
-  window.dispatchEvent(new CustomEvent(URL_STATE_EVENT, { detail: { key } }));
+  const url = globalThis.location.pathname + (q ? '?' + q : '');
+  globalThis.history.replaceState(null, '', url);
+  globalThis.dispatchEvent(new CustomEvent(URL_STATE_EVENT, { detail: { key } }));
 }
 
 export function useUrlParam<T>(
@@ -84,11 +84,11 @@ export function useUrlParam<T>(
         serialize(current) === serialize(next) ? current : next,
       );
     };
-    window.addEventListener(URL_STATE_EVENT, syncFromUrl);
-    window.addEventListener('popstate', syncFromUrl);
+    globalThis.addEventListener(URL_STATE_EVENT, syncFromUrl);
+    globalThis.addEventListener('popstate', syncFromUrl);
     return () => {
-      window.removeEventListener(URL_STATE_EVENT, syncFromUrl);
-      window.removeEventListener('popstate', syncFromUrl);
+      globalThis.removeEventListener(URL_STATE_EVENT, syncFromUrl);
+      globalThis.removeEventListener('popstate', syncFromUrl);
     };
   }, [defaultValue, key, parse, serialize, validate]);
 

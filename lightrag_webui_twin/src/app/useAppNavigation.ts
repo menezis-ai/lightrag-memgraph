@@ -36,7 +36,7 @@ export function useAppNavigation({
   setTab,
 }: UseAppNavigationOptions) {
   const onNavigate = (nextTab: string, params?: Record<string, string>) => {
-    const search = new URLSearchParams(window.location.search);
+    const search = new URLSearchParams(globalThis.location.search);
     Array.from(search.keys()).forEach((key) => search.delete(key));
     if (params) {
       Object.entries(params).forEach(([key, value]) => search.set(key, value));
@@ -53,16 +53,16 @@ export function useAppNavigation({
       setDetailRequest(null);
     }
     const qs = search.toString();
-    window.history.replaceState(
+    globalThis.history.replaceState(
       null,
       '',
-      window.location.pathname + (qs ? '?' + qs : ''),
+      globalThis.location.pathname + (qs ? '?' + qs : ''),
     );
     setTab(nextTab);
   };
 
   const onSwitchFolder = (nextFolder: string) => {
-    window.history.replaceState(null, '', window.location.pathname);
+    globalThis.history.replaceState(null, '', globalThis.location.pathname);
     setActiveFolder(nextFolder);
     writeUiPreference(FOLDER_STORAGE_KEY, nextFolder);
     setFolderState(nextFolder);

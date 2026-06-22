@@ -2,7 +2,7 @@
  * useAuth — the single source of truth for the current MyAccess identity in
  * the WebUI.
  *
- * Reads `window.__twinConfig.debugUser` (dev) or the JWT-decoded payload the
+ * Reads `globalThis.__twinConfig.debugUser` (dev) or the JWT-decoded payload the
  * server already attached at injection time. Components downstream (Topbar,
  * SettingsTab profile section, capability gating in DocumentsTab/TagsTab)
  * consume `palier` to decide what to enable. There is NO PalierSwitcher and
@@ -12,7 +12,7 @@
  * `signout()` follows the spec from the sprint brief:
  *   1. POST /twin/api/auth/logout (revokes server-side session)
  *   2. queryClient.clear() (kills cached PII)
- *   3. window.location.href = idpLogoutUrl?redirect_uri=window.location.origin
+ *   3. globalThis.location.href = idpLogoutUrl?redirect_uri=globalThis.location.origin
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -48,12 +48,12 @@ let cachedConfig: TwinRuntimeConfig | null = null;
 const TWIN_BROWSER_STORAGE_PREFIXES = ['twin-rag.'] as const;
 
 export function clearTwinBrowserState(): void {
-  if (typeof window === 'undefined') return;
-  for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
-    const key = window.localStorage.key(i);
+  if (typeof globalThis.window === 'undefined') return;
+  for (let i = globalThis.localStorage.length - 1; i >= 0; i -= 1) {
+    const key = globalThis.localStorage.key(i);
     if (!key) continue;
     if (TWIN_BROWSER_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
-      window.localStorage.removeItem(key);
+      globalThis.localStorage.removeItem(key);
     }
   }
 }
@@ -93,7 +93,9 @@ function localUser(username: string | null | undefined, config: TwinRuntimeConfi
 function getRuntimeConfig(): TwinRuntimeConfig {
   if (cachedConfig) return cachedConfig;
   const raw =
-    typeof window !== 'undefined' ? window.__twinConfig : undefined;
+    typeof globalThis.window !== 'undefined'
+      ? globalThis.window.__twinConfig
+      : undefined;
   cachedConfig = resolveRuntimeConfig(raw, getDevFlag());
   return cachedConfig;
 }
@@ -255,19 +257,19 @@ export function useAuth(): UseAuthResult {
     setSessionAuthToken(null);
     queryClient.clear();
     clearTwinBrowserState();
-    if (typeof window !== 'undefined') {
+    if (typeof globalThis.window !== 'undefined') {
       if (
-        (window as Window & { __TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION?: boolean })
+        (globalThis.window as Window & { __TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION?: boolean })
           .__TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION
       ) {
         return;
       }
       if (authState.authEnabled) {
-        window.location.reload();
+        globalThis.location.reload();
       } else {
         const target = new URL(config.idpLogoutUrl);
-        target.searchParams.set('redirect_uri', window.location.origin);
-        window.location.href = target.toString();
+        target.searchParams.set('redirect_uri', globalThis.location.origin);
+        globalThis.location.href = target.toString();
       }
     }
   }, [authState.authEnabled, config.idpLogoutUrl, queryClient]);

@@ -5,18 +5,18 @@ export const THEME_STORAGE_KEY = 'twin.ui.theme.v1';
 export const FOLDER_STORAGE_KEY = 'twin.ui.folder.v1';
 
 export function readUiPreference(key: string): string | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof globalThis.window === 'undefined') return null;
   try {
-    return window.localStorage.getItem(key);
+    return globalThis.localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
 export function writeUiPreference(key: string, value: string): void {
-  if (typeof window === 'undefined') return;
+  if (typeof globalThis.window === 'undefined') return;
   try {
-    window.localStorage.setItem(key, value);
+    globalThis.localStorage.setItem(key, value);
   } catch {
     // Browsers can reject localStorage in private/restricted modes. The UI
     // still works for the current session; only refresh persistence is lost.

@@ -91,9 +91,9 @@ function trackStatusResponse(trackId: string, docId: string | undefined) {
 }
 
 function e2eStorage(): Storage | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof globalThis.window === 'undefined') return null;
   try {
-    return window.sessionStorage;
+    return globalThis.sessionStorage;
   } catch {
     return null;
   }
@@ -407,10 +407,12 @@ function recordTwinFolderRequest(request: Request): void {
 }
 
 export function mockCurrentScopes(): readonly string[] | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof globalThis.window === 'undefined') return null;
   const config =
-    window.__twinE2eRuntimeConfig ??
-    (typeof window.__twinConfig === 'object' ? window.__twinConfig : undefined);
+    globalThis.window.__twinE2eRuntimeConfig ??
+    (typeof globalThis.window.__twinConfig === 'object'
+      ? globalThis.window.__twinConfig
+      : undefined);
   return config?.debugUser?.gateway_scopes ?? null;
 }
 

@@ -243,7 +243,7 @@ function ChunksTab({ docId, initialExpandedChunkId }: ChunksTabProps) {
 
   useEffect(() => {
     if (!initialExpandedChunkId || !data?.length) return;
-    window.setTimeout(() => {
+    globalThis.setTimeout(() => {
       const target = Array.from(
         document.querySelectorAll<HTMLElement>('[data-chunk-id]'),
       ).find((el) => el.dataset.chunkId === initialExpandedChunkId);
