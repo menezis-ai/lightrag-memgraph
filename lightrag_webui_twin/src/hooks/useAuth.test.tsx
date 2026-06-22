@@ -97,7 +97,7 @@ describe('resolveRuntimeConfig', () => {
 
   it('throws when source is missing and isDev=false', () => {
     expect(() => resolveRuntimeConfig(undefined, false)).toThrow(
-      /window\.__twinConfig/,
+      /globalThis\.__twinConfig/,
     );
   });
 
