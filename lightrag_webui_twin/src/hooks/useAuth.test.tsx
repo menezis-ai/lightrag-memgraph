@@ -9,7 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { __resetAuthConfigCacheForTests, useAuth } from './useAuth';
+import { apiFetch } from '../api/client';
 import { resolveRuntimeConfig, DEV_CONFIG } from '../config/devConfig';
+
+/** A runtime config with NO debugUser, so the identity derives from
+ *  /auth-status alone (the production shape, unlike the dev fallback). */
+const AUTH_CONFIG = {
+  apiBaseUrl: '/twin/api',
+  lightragBaseUrl: '',
+  idpLogoutUrl: 'https://idp.example.com/logout',
+  defaultFolderId: 'default',
+  folders: [{ id: 'default', label: 'Default folder', kind: 'primary' as const }],
+};
 
 const authStatusMock = vi.hoisted(() => vi.fn());
 const loginMock = vi.hoisted(() => vi.fn());
@@ -182,6 +193,82 @@ describe('useAuth — signout', () => {
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['notifications'])).toBeUndefined();
     expect(window.location.href).toMatch(/realms\/twin/);
+  });
+});
+
+describe('useAuth — session expiry', () => {
+  it('drops to the login screen when a mid-session request returns 401', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockResolvedValue({
+      auth_enabled: true,
+      authenticated: true,
+      user: 'twinadmin',
+      expires_at: null,
+      login_required: false,
+    });
+    const qc = new QueryClient();
+    qc.setQueryData(['documents'], { items: [], total: 0 });
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    // A real 401 flowing through apiFetch must fire the registered handler.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Token expired' }), { status: 401 }),
+    ) as unknown as typeof fetch;
+    try {
+      await act(async () => {
+        await apiFetch('/documents').catch(() => undefined);
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    await waitFor(() => expect(result.current.needsLogin).toBe(true));
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(qc.getQueryData(['documents'])).toBeUndefined();
+  });
+
+  it('logs out proactively at the JWT exp instant even while idle', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    const soon = new Date(Date.now() + 120).toISOString();
+    authStatusMock.mockResolvedValue({
+      auth_enabled: true,
+      authenticated: true,
+      user: 'twinadmin',
+      expires_at: soon,
+      login_required: false,
+    });
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    // No request is made — the expiry timer alone must drive the logout.
+    await waitFor(() => expect(result.current.needsLogin).toBe(true), {
+      timeout: 1500,
+    });
+    expect(result.current.isAuthenticated).toBe(false);
+  });
+
+  it('does NOT arm a timer for a beyond-ceiling expiry (stays authenticated)', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockResolvedValue({
+      auth_enabled: true,
+      authenticated: true,
+      user: 'twinadmin',
+      expires_at: '2099-12-31T23:59:00Z',
+      login_required: false,
+    });
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.needsLogin).toBe(false);
   });
 });
 

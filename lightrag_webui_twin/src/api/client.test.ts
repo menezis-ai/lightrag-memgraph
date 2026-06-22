@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   apiFetch,
+  onUnauthorized,
   setActiveFolder,
   setSessionAuthToken,
 } from './client';
@@ -215,6 +216,55 @@ describe('apiFetch', () => {
     expect(err!.status).toBe(502);
     expect(typeof err!.body).toBe('string');
     expect(err!.body).toMatch(/502/);
+  });
+});
+
+describe('apiFetch — onUnauthorized', () => {
+  it('notifies subscribers on a mid-session 401 (expired/revoked token)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Token expired' }, 401));
+
+    await expect(apiFetch('/documents')).rejects.toMatchObject({ status: 401 });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledWith({ path: '/documents', status: 401 });
+    unsubscribe();
+  });
+
+  it('does NOT notify on a 401 from the /login handshake (wrong password)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'bad creds' }, 401));
+
+    await expect(apiFetch('/login', { method: 'POST' })).rejects.toMatchObject({
+      status: 401,
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('does NOT notify on non-401 errors (403/502)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'forbidden' }, 403));
+
+    await expect(apiFetch('/secure')).rejects.toMatchObject({ status: 403 });
+
+    expect(handler).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('stops notifying after unsubscribe', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    unsubscribe();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Token expired' }, 401));
+
+    await expect(apiFetch('/documents')).rejects.toMatchObject({ status: 401 });
+
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 

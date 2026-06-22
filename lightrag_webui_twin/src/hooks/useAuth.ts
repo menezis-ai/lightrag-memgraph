@@ -15,12 +15,17 @@
  *   3. window.location.href = idpLogoutUrl?redirect_uri=window.location.origin
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/resources';
-import { setSessionAuthToken } from '../api/client';
+import { onUnauthorized, setSessionAuthToken } from '../api/client';
 import { resolveRuntimeConfig } from '../config/devConfig';
 import type { AuthenticatedUser, TwinRuntimeConfig } from '../types/auth';
+
+/** setTimeout clamps delays above ~24.8 days (2^31-1 ms) to fire immediately,
+ *  so an expiry that far out (or a sentinel like the test's year-2099 token)
+ *  must NOT arm a timer — the reactive 401 path covers it instead. */
+const MAX_EXPIRY_TIMER_MS = 2_147_483_647;
 
 export interface UseAuthResult {
   user: AuthenticatedUser | null;
@@ -115,6 +120,49 @@ export function useAuth(): UseAuthResult {
     authEnabled: false,
   });
   const [loginError, setLoginError] = useState<string | null>(null);
+  const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Tear the client back down to an unauthenticated state when the session
+   *  ends mid-use — fired both reactively (a backend 401) and proactively
+   *  (the expiry timer). Clears cached PII before dropping to the login
+   *  screen. In open-access mode (`authEnabled === false`, LightRAG parity)
+   *  we never force a login screen that does not exist. */
+  const expireSession = useCallback(() => {
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
+    setSessionAuthToken(null);
+    queryClient.clear();
+    clearTwinBrowserState();
+    setAuthState((prev) => ({
+      ...prev,
+      checked: true,
+      authenticated: false,
+      loginRequired: prev.authEnabled,
+      user: null,
+    }));
+  }, [queryClient]);
+
+  /** Arm a single timer that expires the session at the JWT `exp` instant,
+   *  so an idle operator is logged out without waiting for the next request.
+   *  Skips unparseable / null / beyond-ceiling values (see MAX_EXPIRY_TIMER_MS). */
+  const scheduleExpiry = useCallback(
+    (expiresAt: string | null | undefined) => {
+      if (expiryTimerRef.current) {
+        clearTimeout(expiryTimerRef.current);
+        expiryTimerRef.current = null;
+      }
+      if (!expiresAt) return;
+      const ms = new Date(expiresAt).getTime() - Date.now();
+      if (Number.isNaN(ms) || ms > MAX_EXPIRY_TIMER_MS) return;
+      expiryTimerRef.current = setTimeout(expireSession, Math.max(0, ms));
+    },
+    [expireSession],
+  );
+
+  // Reactive path: any mid-session 401 (expired/revoked token) drops to login.
+  useEffect(() => onUnauthorized(expireSession), [expireSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +176,7 @@ export function useAuth(): UseAuthResult {
           user: status.user ?? null,
           authEnabled: status.auth_enabled,
         });
+        scheduleExpiry(status.expires_at);
       })
       .catch(() => {
         if (cancelled) return;
@@ -142,7 +191,15 @@ export function useAuth(): UseAuthResult {
     return () => {
       cancelled = true;
     };
-  }, [config.debugUser]);
+  }, [config.debugUser, scheduleExpiry]);
+
+  // Cancel any pending expiry timer when the hook unmounts.
+  useEffect(
+    () => () => {
+      if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
+    },
+    [],
+  );
 
   const user = config.debugUser ?? (
     authState.authenticated ? localUser(authState.user, config) : null
@@ -162,6 +219,7 @@ export function useAuth(): UseAuthResult {
           user: status.user ?? username,
           authEnabled: status.auth_enabled,
         });
+        scheduleExpiry(status.expires_at);
       } catch (err) {
         setSessionAuthToken(null);
         const message =
@@ -176,10 +234,14 @@ export function useAuth(): UseAuthResult {
         throw err;
       }
     },
-    [],
+    [scheduleExpiry],
   );
 
   const signout = useCallback(async () => {
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
     try {
       await api.logoutLocal();
     } catch {

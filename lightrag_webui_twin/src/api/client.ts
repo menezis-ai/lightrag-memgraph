@@ -70,6 +70,41 @@ export class ApiError extends Error {
   }
 }
 
+export interface UnauthorizedEvent {
+  path: string;
+  status: number;
+}
+
+type UnauthorizedHandler = (event: UnauthorizedEvent) => void;
+
+const unauthorizedHandlers = new Set<UnauthorizedHandler>();
+
+/**
+ * Subscribe to backend 401s observed mid-session (expired or revoked JWT).
+ * `useAuth` registers a handler that drops the operator back to the login
+ * screen instead of leaving a stale "authenticated" shell rendering broken
+ * per-component errors. Returns an unsubscribe function.
+ *
+ * The `/login` handshake is exempt: a wrong-password 401 is a failed login
+ * attempt, not a session expiry, and is handled by `useAuth.login` directly.
+ */
+export function onUnauthorized(handler: UnauthorizedHandler): () => void {
+  unauthorizedHandlers.add(handler);
+  return () => {
+    unauthorizedHandlers.delete(handler);
+  };
+}
+
+function notifyUnauthorized(event: UnauthorizedEvent): void {
+  for (const handler of unauthorizedHandlers) {
+    try {
+      handler(event);
+    } catch {
+      // A subscriber must not break the request's own error-propagation path.
+    }
+  }
+}
+
 export interface ApiRequestInit {
   method?: string;
   /** Query string params, serialized via URLSearchParams. Null/undefined skipped. */
@@ -191,6 +226,9 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
 
   if (!res.ok) {
     const body = await parseBody(res);
+    if (res.status === 401 && !path.endsWith('/login')) {
+      notifyUnauthorized({ path, status: res.status });
+    }
     throw new ApiError(
       `${method} ${path} → ${res.status} ${res.statusText}`,
       res.status,
