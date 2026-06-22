@@ -545,6 +545,9 @@ jobs:
   sonar:
     # Informational SonarQube analysis (coverage + complexity + quality gate).
     #
+    # PR-ONLY: the `github.event_name == 'pull_request'` guard means this never
+    # runs on the post-merge push to main — only while a PR is open.
+    #
     # NON-BLOCKING by design (continue-on-error): a failing quality gate shows
     # a red "CI / sonar" check but never blocks a merge. To make it enforcing
     # once the codebase is clean: (1) remove `continue-on-error: true` below,
@@ -556,27 +559,22 @@ jobs:
     # lcov.info, then scans — so it does not depend on artifacts from the other
     # jobs.
     #
-    # Runs on the `high` pool (more memory headroom for the JS-analysis Node
-    # bridge). `high:host` does NOT support setup-* actions (runner-pool
-    # doctrine), so every step here uses `docker run` images — never
-    # setup-bun / setup-python.
+    # Runner pinning — `omega` label is REQUIRED, not optional: SonarQube
+    # (192.168.1.49:9000) is LAN-only (autossh tunnel on ALPHA). The `omega`
+    # label exists only on the LAN-local OMEGA runners (CT 310/311/313/314), so
+    # the scan can reach the server. Plain `[self-hosted, docker]` also matches
+    # the public Hetzner runners (07/08) which have docker but no LAN route →
+    # intermittent "Connect timed out" to .49. General rule: any job that hits a
+    # LAN-only service (SonarQube, internal CTs, Vault) MUST carry `omega`.
     #
-    # `needs` + `if: always()` serialize this AFTER every other job: it re-runs
+    # `needs` + `always()` serialize this AFTER the docker-pool gates: it re-runs
     # the full Python + WebUI suites for coverage, and running that concurrently
-    # starves the runner pools (it previously caused mass 5s-timeout failures in
-    # the gate jobs). Waiting frees the pool; `if: always()` keeps it
-    # informational even when a gate fails. The e2e jobs share the `high` pool,
-    # so they're in `needs` too.
-    needs:
-      - unit-tests
-      - integration-tests
-      - webui-lint
-      - webui-tests
-      - webui-e2e
-      - webui-e2e-real
-      - webui-e2e-keygen
-    if: always()
-    runs-on: [self-hosted, high]
+    # on the shared docker pool starved the gate jobs into mass 5s-timeout
+    # failures. Waiting frees the pool; `always()` keeps it informational even
+    # when a gate fails.
+    needs: [unit-tests, integration-tests, webui-lint, webui-tests]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: [self-hosted, docker, omega]
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -603,18 +601,18 @@ jobs:
               coverage xml
             '
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+
       - name: WebUI coverage (lcov.info)
+        working-directory: lightrag_webui_twin
         run: |
-          # Bun via docker image — the `high` pool can't run setup-* actions.
+          bun install --frozen-lockfile
           # Tolerate flaky component tests: lcov is still written and the scan
           # must run regardless (this job is informational / non-blocking).
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD/lightrag_webui_twin:/work" \
-            -w /work \
-            oven/bun:1.3.6 \
-            sh -lc 'bun install --frozen-lockfile && (bun run test:coverage || true)'
+          bun run test:coverage || true
 
       - name: SonarQube scan
         env:
