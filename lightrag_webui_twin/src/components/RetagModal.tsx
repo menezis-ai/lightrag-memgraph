@@ -185,7 +185,12 @@ function RetagModalBody({
   return (
     <div
       className="modal-backdrop"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
       data-testid="retag-backdrop"
     >
       <div
@@ -196,7 +201,6 @@ function RetagModalBody({
         aria-modal="true"
         aria-labelledby="retag-title"
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <div style={{ flex: 1 }}>
@@ -382,8 +386,14 @@ function RetagModalBody({
                   className={`autocomplete-row${i === focusIdx ? ' focus' : ''}`}
                   onMouseEnter={() => setFocusIdx(i)}
                   onClick={() => addTag(s.tag)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    addTag(s.tag);
+                  }}
                   role="option"
                   aria-selected={i === focusIdx}
+                  tabIndex={-1}
                   data-testid={`sugg-${s.tag}`}
                 >
                   <div className="row1">

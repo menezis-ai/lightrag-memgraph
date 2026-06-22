@@ -168,7 +168,12 @@ export function DocDetailPanel({
       {rawNoticeOpen && (
         <div
           className="modal-backdrop"
-          onClick={() => setRawNoticeOpen(false)}
+          onClick={(e) => {
+            if (e.currentTarget === e.target) setRawNoticeOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setRawNoticeOpen(false);
+          }}
           data-testid="doc-detail-raw-notice"
         >
           <div
@@ -177,7 +182,6 @@ export function DocDetailPanel({
             aria-modal="true"
             aria-label="View raw notice"
             style={{ width: 420 }}
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
               <h2>View raw</h2>

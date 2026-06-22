@@ -57,7 +57,12 @@ export function ReadSourceModal({ doc, onClose }: ReadSourceModalProps) {
   return (
     <div
       className="modal-backdrop"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
       data-testid="read-source-modal"
     >
       <div
@@ -66,7 +71,6 @@ export function ReadSourceModal({ doc, onClose }: ReadSourceModalProps) {
         aria-modal="true"
         aria-label="Indexed chunks"
         style={{ width: 760, maxWidth: '94vw' }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header rs-header">
           <div className="rs-title">

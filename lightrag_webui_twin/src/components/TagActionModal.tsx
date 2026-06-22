@@ -163,7 +163,16 @@ export function TagActionModal({
     (action.kind === 'delete' && migrateStrategy === 'migrate' && !migrateTo);
 
   return (
-    <div className="modal-bg" onClick={onClose} data-testid="tagaction-backdrop">
+    <div
+      className="modal-bg"
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+      data-testid="tagaction-backdrop"
+    >
       <div
         ref={modalRef}
         className="modal tag-action-modal"
@@ -171,7 +180,6 @@ export function TagActionModal({
         aria-modal="true"
         aria-labelledby="tagaction-title"
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-h">
           <h3 id="tagaction-title">{TITLE_MAP[action.kind]}</h3>

@@ -488,7 +488,12 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
   return (
     <div
       className="modal-backdrop"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
       data-testid="authorize-backdrop"
     >
       <div
@@ -497,7 +502,6 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: AuthorizeDialogPr
         aria-modal="true"
         aria-labelledby="auth-title"
         ref={ref}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <div style={{ flex: 1 }}>

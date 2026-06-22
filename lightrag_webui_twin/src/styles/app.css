@@ -2548,6 +2548,11 @@ input:focus, textarea:focus, select:focus { outline: none; }
 }
 .kv code.copyable { cursor: pointer; }
 .kv code.copyable:hover { color: var(--twin-accent); }
+.kv code.copyable:focus-visible {
+  color: var(--twin-accent);
+  outline: 1px solid var(--twin-accent);
+  outline-offset: 2px;
+}
 .kv em { font-style: normal; color: var(--color-text-tertiary); }
 
 .detail-section {
@@ -3184,6 +3189,14 @@ input:focus, textarea:focus, select:focus { outline: none; }
 /* ─── Documents: row select + bulk action bar ────────────────────────── */
 .cell-select {
   display: flex; align-items: center; justify-content: center;
+}
+.tag-chip-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 .row-check {
   width: 14px; height: 14px;

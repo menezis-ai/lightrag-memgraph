@@ -406,7 +406,12 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
   return (
     <div
       className="modal-backdrop"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
       data-testid="pending-doc-edit-modal"
     >
       <div
@@ -415,7 +420,6 @@ function EditApproveModal({ doc, onClose, onSubmit }: EditApproveModalProps) {
         aria-modal="true"
         aria-label="Edit & approve document"
         style={{ width: 620 }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header ea-header">
           <div className="ea-title">
@@ -534,7 +538,12 @@ function RejectModal({
   return (
     <div
       className="modal-backdrop"
-      onClick={onClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
       data-testid="pending-doc-reject-modal"
     >
       <div
@@ -543,7 +552,6 @@ function RejectModal({
         aria-modal="true"
         aria-label="Reject document"
         style={{ width: 480 }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <h2>Reject source</h2>

@@ -279,7 +279,12 @@ export function AddSourceModal({
   return (
     <div
       className="modal-backdrop"
-      onClick={guardedClose}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) guardedClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') guardedClose();
+      }}
       data-testid="addsource-backdrop"
     >
       <div
@@ -290,7 +295,6 @@ export function AddSourceModal({
         aria-modal="true"
         aria-labelledby="addsource-title"
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <div>

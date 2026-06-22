@@ -356,7 +356,12 @@ export function ActivityTab({
       {clearOpen && (
         <div
           className="modal-bg"
-          onClick={() => setClearOpen(false)}
+          onClick={(e) => {
+            if (e.currentTarget === e.target) setClearOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setClearOpen(false);
+          }}
           data-testid="clear-modal-bg"
         >
           <div
@@ -367,7 +372,6 @@ export function ActivityTab({
             aria-modal="true"
             aria-labelledby="clear-title"
             tabIndex={-1}
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-h">
               <h3 id="clear-title">Clear activity events</h3>
@@ -527,7 +531,18 @@ function ActivityDetail({ e, onPushToast, onNavigate }: ActivityDetailProps) {
       <div className="detail-grid">
         <div className="kv">
           <span>Event ID</span>
-          <code className="copyable" onClick={copyId} title="Copy">
+          <code
+            className="copyable"
+            onClick={copyId}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              copyId();
+            }}
+            role="button"
+            tabIndex={0}
+            title="Copy"
+          >
             {e.id} {copied ? '✓' : ''}
           </code>
         </div>

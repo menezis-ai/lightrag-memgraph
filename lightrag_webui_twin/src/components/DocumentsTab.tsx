@@ -802,7 +802,7 @@ function DocRow({
       className={`docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`}
       data-testid={`docs-row-${doc.doc_id}`}
     >
-      <div className="cell-select" onClick={(e) => e.stopPropagation()}>
+      <div className="cell-select">
         <label className="row-check-target">
           <input
             type="checkbox"
@@ -878,13 +878,15 @@ function DocRow({
       </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
-          <span
+          <button
+            type="button"
             key={t}
+            className="tag-chip-button"
             onClick={(e) => onClickTag(e, t)}
             data-testid={`row-tag-${doc.doc_id}-${t}`}
           >
             <TagChip tag={t} />
-          </span>
+          </button>
         ))}
         {overflow > 0 && <span className="tag-overflow">+{overflow}</span>}
       </div>
