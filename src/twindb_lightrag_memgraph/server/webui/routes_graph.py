@@ -175,7 +175,14 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
     return await graph_reader.search_graph_labels(rag, q, limit=limit)
 
 
-@router.patch("/graph/entities/{entity_id}", response_model=GraphEntity)
+@router.patch(
+    "/graph/entities/{entity_id}",
+    response_model=GraphEntity,
+    responses={
+        404: {"description": "Graph entity not found"},
+        422: {"description": "Invalid graph entity tags"},
+    },
+)
 async def update_graph_entity_endpoint(
     entity_id: str, body: GraphEntityPatch
 ) -> dict[str, Any]:
@@ -207,7 +214,17 @@ async def update_graph_entity_endpoint(
     return updated
 
 
-@router.post("/graph/entities", response_model=GraphEntity, status_code=201)
+@router.post(
+    "/graph/entities",
+    response_model=GraphEntity,
+    status_code=201,
+    responses={
+        409: {"description": "Graph entity already exists"},
+        422: {"description": "Invalid graph entity tags"},
+        500: {"description": "Graph projection failed"},
+        503: {"description": "Graph backend rejected the write"},
+    },
+)
 async def create_graph_entity_endpoint(
     body: GraphEntityCreate,
 ) -> dict[str, Any]:
@@ -260,7 +277,11 @@ async def create_graph_entity_endpoint(
     return entity
 
 
-@router.delete("/graph/entities/{entity_id}", status_code=204)
+@router.delete(
+    "/graph/entities/{entity_id}",
+    status_code=204,
+    responses={404: {"description": "Graph entity not found"}},
+)
 async def delete_graph_entity_endpoint(entity_id: str) -> None:
     """Remove an entity from the KB and cascade-delete its edges."""
     from .. import graph_reader
@@ -285,7 +306,12 @@ async def delete_graph_entity_endpoint(entity_id: str) -> None:
     return None
 
 
-@router.post("/graph/relations", response_model=GraphRelation, status_code=201)
+@router.post(
+    "/graph/relations",
+    response_model=GraphRelation,
+    status_code=201,
+    responses={422: {"description": "Invalid graph relation"}},
+)
 async def create_graph_relation_endpoint(
     body: GraphRelationCreate,
 ) -> dict[str, Any]:
@@ -320,7 +346,11 @@ async def create_graph_relation_endpoint(
     return relation
 
 
-@router.delete("/graph/relations/{rel_id}", status_code=204)
+@router.delete(
+    "/graph/relations/{rel_id}",
+    status_code=204,
+    responses={404: {"description": "Graph relation not found"}},
+)
 async def delete_graph_relation_endpoint(rel_id: str) -> None:
     """Remove a relation from the KB."""
     from .. import graph_reader
@@ -348,7 +378,11 @@ async def delete_graph_relation_endpoint(rel_id: str) -> None:
     return None
 
 
-@router.patch("/graph/relations/{rel_id}", response_model=GraphRelation)
+@router.patch(
+    "/graph/relations/{rel_id}",
+    response_model=GraphRelation,
+    responses={404: {"description": "Graph relation not found"}},
+)
 async def update_graph_relation_endpoint(
     rel_id: str, body: GraphRelationPatch
 ) -> dict[str, Any]:

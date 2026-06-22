@@ -996,13 +996,21 @@ def build_twin_query_router(get_rag) -> APIRouter:
     """
     router = APIRouter(tags=["twin-query"])
 
-    @router.post("/query", response_model=TwinQueryResponse)
+    @router.post(
+        "/query",
+        response_model=TwinQueryResponse,
+        responses={500: {"description": "Query backend error"}},
+    )
     async def query_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
         return await _twin_query(get_rag, body, request)
 
-    @router.post("/query/data", response_model=TwinQueryDataResponse)
+    @router.post(
+        "/query/data",
+        response_model=TwinQueryDataResponse,
+        responses={500: {"description": "Query backend error"}},
+    )
     async def query_data_endpoint(
         body: TwinQueryBody, request: Request
     ) -> dict[str, Any]:
@@ -1014,7 +1022,10 @@ def build_twin_query_router(get_rag) -> APIRouter:
         """
         return await _twin_query_data(get_rag, body, request)
 
-    @router.post("/query/stream")
+    @router.post(
+        "/query/stream",
+        responses={500: {"description": "Query backend error"}},
+    )
     async def query_stream_endpoint(
         body: TwinQueryBody, request: Request
     ) -> StreamingResponse:

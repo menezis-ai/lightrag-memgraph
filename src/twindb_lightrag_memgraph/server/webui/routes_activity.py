@@ -13,7 +13,11 @@ from .store import get_store
 router = APIRouter()
 
 
-@router.post("/documents/uploads/activity", response_model=AckResponse)
+@router.post(
+    "/documents/uploads/activity",
+    response_model=AckResponse,
+    responses={400: {"description": "Missing upload source"}},
+)
 async def record_source_uploaded(
     body: dict[str, Any],
 ) -> dict[str, bool]:

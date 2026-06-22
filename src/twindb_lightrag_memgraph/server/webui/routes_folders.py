@@ -30,6 +30,10 @@ async def list_folders() -> list[dict[str, Any]]:
     response_model=Folder,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    responses={
+        409: {"description": "Folder conflict"},
+        422: {"description": "Invalid folder payload"},
+    },
 )
 async def create_folder(body: FolderCreate) -> dict[str, Any]:
     """Admin: provision a new Twin folder at runtime.
@@ -86,6 +90,10 @@ async def create_folder(body: FolderCreate) -> dict[str, Any]:
     "/folders/{folder_id}",
     response_model=Folder,
     dependencies=[Depends(require_admin_user)],
+    responses={
+        403: {"description": "Env-seeded folder cannot be edited"},
+        404: {"description": "Folder not found"},
+    },
 )
 async def update_folder(folder_id: str, body: FolderPatch) -> dict[str, Any]:
     """Admin: edit label / kind / description of a runtime folder.
@@ -130,6 +138,11 @@ async def update_folder(folder_id: str, body: FolderPatch) -> dict[str, Any]:
     "/folders/{folder_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
+    responses={
+        403: {"description": "Env-seeded folder cannot be deleted"},
+        404: {"description": "Folder not found"},
+        409: {"description": "Folder still has data"},
+    },
 )
 async def delete_folder(folder_id: str) -> None:
     """Admin: remove a runtime folder.
@@ -176,4 +189,3 @@ async def delete_folder(folder_id: str) -> None:
     )
     await store.record_activity(event)
     return None
-

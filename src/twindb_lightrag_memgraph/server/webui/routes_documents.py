@@ -44,7 +44,13 @@ async def list_documents(
     return {"items": items, "total": len(items)}
 
 
-@router.get("/documents/{doc_id}/metadata")
+@router.get(
+    "/documents/{doc_id}/metadata",
+    responses={
+        404: {"description": "Document not found"},
+        503: {"description": "LightRAG instance unavailable"},
+    },
+)
 async def get_document_metadata(doc_id: str) -> dict[str, Any]:
     from .. import webui_router as legacy
 
@@ -103,7 +109,14 @@ async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -
     return True
 
 
-@router.post("/documents/bulk-delete")
+@router.post(
+    "/documents/bulk-delete",
+    responses={
+        400: {"description": "Invalid bulk delete payload"},
+        413: {"description": "Bulk delete payload too large"},
+        503: {"description": "LightRAG instance unavailable"},
+    },
+)
 async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
     from .. import webui_router as legacy
 

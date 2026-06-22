@@ -165,7 +165,11 @@ async def create_api_key(
     return entry
 
 
-@router.delete("/{key_id}", response_model=ApiKeyPublic)
+@router.delete(
+    "/{key_id}",
+    response_model=ApiKeyPublic,
+    responses={404: {"description": "API key not found"}},
+)
 async def revoke_api_key(
     key_id: str,
     admin: Annotated[dict[str, Any], Depends(require_admin_user)],

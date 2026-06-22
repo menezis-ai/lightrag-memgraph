@@ -68,7 +68,14 @@ async def get_categories_template():
     )
 
 
-@router.post("/tags/categories/_import", response_model=AckResponse)
+@router.post(
+    "/tags/categories/_import",
+    response_model=AckResponse,
+    responses={
+        400: {"description": "Invalid categories payload"},
+        503: {"description": "Categories backend unavailable"},
+    },
+)
 async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
     """Mirror the uploaded JSON into the active folder's categories store."""
     backend = get_store().tags
@@ -201,7 +208,13 @@ async def _emit_bulk_retag_events(
         await get_store().record_activity(event)
 
 
-@router.post("/documents/_bulk-retag")
+@router.post(
+    "/documents/_bulk-retag",
+    responses={
+        400: {"description": "Invalid bulk retag payload"},
+        413: {"description": "Bulk retag payload too large"},
+    },
+)
 async def bulk_retag_documents(
     body: dict[str, Any],
 ) -> dict[str, Any]:
@@ -325,7 +338,12 @@ async def _emit_tag_audit(
         await store.push_notification(notification)
 
 
-@router.post("/tags", response_model=TagEntry, status_code=201)
+@router.post(
+    "/tags",
+    response_model=TagEntry,
+    status_code=201,
+    responses={409: {"description": "Tag already exists"}},
+)
 async def request_tag(body: TagRequestBody) -> dict[str, Any]:
     """Propose a new tag (tier='requested', status='pending-review')."""
     store = get_store()
@@ -373,7 +391,11 @@ async def request_tag(body: TagRequestBody) -> dict[str, Any]:
     return stored
 
 
-@router.post("/tags/{name}/approve", response_model=TagEntry)
+@router.post(
+    "/tags/{name}/approve",
+    response_model=TagEntry,
+    responses={404: {"description": "Tag not found"}},
+)
 async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
@@ -406,7 +428,11 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
     return stored
 
 
-@router.post("/tags/{name}/reject", response_model=TagEntry)
+@router.post(
+    "/tags/{name}/reject",
+    response_model=TagEntry,
+    responses={404: {"description": "Tag not found"}},
+)
 async def reject_tag(name: str, body: TagRejectBody) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
@@ -495,7 +521,15 @@ async def _cascade_tag_rename(store, legacy, renamed_from, new_name, actor) -> i
     return graph_affected if graph_affected is not None else seed_affected
 
 
-@router.patch("/tags/{name}", response_model=TagEntry)
+@router.patch(
+    "/tags/{name}",
+    response_model=TagEntry,
+    responses={
+        400: {"description": "Invalid tag edit"},
+        404: {"description": "Tag not found"},
+        409: {"description": "Tag rename conflict"},
+    },
+)
 async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
     from .. import webui_router as legacy
 
@@ -545,7 +579,11 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
     return stored
 
 
-@router.post("/tags/{name}/deprecate", response_model=TagEntry)
+@router.post(
+    "/tags/{name}/deprecate",
+    response_model=TagEntry,
+    responses={404: {"description": "Tag not found"}},
+)
 async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
@@ -577,7 +615,11 @@ async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
     return stored
 
 
-@router.post("/tags/{name}/synonyms", response_model=TagEntry)
+@router.post(
+    "/tags/{name}/synonyms",
+    response_model=TagEntry,
+    responses={404: {"description": "Tag not found"}},
+)
 async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
@@ -606,7 +648,14 @@ async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
     return stored
 
 
-@router.delete("/tags/{name}", response_model=AckResponse)
+@router.delete(
+    "/tags/{name}",
+    response_model=AckResponse,
+    responses={
+        404: {"description": "Tag not found"},
+        422: {"description": "Invalid tag deletion strategy"},
+    },
+)
 async def delete_tag(
     name: str, body: TagDeleteBody | None = None
 ) -> dict[str, bool]:

@@ -513,6 +513,7 @@ def build_native_shims_router(
     @router.get(
         "/documents/{doc_id}/chunks",
         dependencies=protected_deps,
+        responses={404: {"description": "Document not found"}},
     )
     async def list_document_chunks(
         request: Request,
@@ -531,6 +532,7 @@ def build_native_shims_router(
     @router.post(
         "/documents/{doc_id}/scan",
         dependencies=protected_deps,
+        responses={409: {"description": "Per-document scan unsupported"}},
     )
     async def scan_document(doc_id: str) -> None:
         """Reject unsupported per-doc re-scan requests.
@@ -555,6 +557,10 @@ def build_native_shims_router(
     @router.delete(
         "/documents/{doc_id}",
         dependencies=protected_deps,
+        responses={
+            404: {"description": "Document not found"},
+            500: {"description": "Document deletion failed"},
+        },
     )
     async def delete_document(
         request: Request,

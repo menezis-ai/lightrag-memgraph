@@ -465,7 +465,10 @@ router = APIRouter(
 router.include_router(documents_router)
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    responses={503: {"description": "LightRAG instance unavailable"}},
+)
 async def twin_health() -> dict[str, Any]:
     try:
         _get_rag()
@@ -535,7 +538,13 @@ async def logout() -> dict[str, Any]:
     return response
 
 
-@router.post("/documents/{doc_id}/approve")
+@router.post(
+    "/documents/{doc_id}/approve",
+    responses={
+        404: {"description": "Document not found"},
+        503: {"description": "LightRAG instance unavailable"},
+    },
+)
 async def approve_document(
     doc_id: str,
     body: dict[str, Any] | None = None,
@@ -590,7 +599,14 @@ async def approve_document(
     return {"doc_id": doc_id, "review": review}
 
 
-@router.post("/documents/{doc_id}/reject")
+@router.post(
+    "/documents/{doc_id}/reject",
+    responses={
+        400: {"description": "Missing rejection reason"},
+        404: {"description": "Document not found"},
+        503: {"description": "LightRAG instance unavailable"},
+    },
+)
 async def reject_document(
     doc_id: str,
     body: dict[str, Any],

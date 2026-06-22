@@ -169,6 +169,7 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         "/chunks/{chunk_id}/context",
         operation_id="get_chunk_context",
         summary="Neighbouring chunks around a given chunk",
+        responses={404: {"description": "Chunk or parent document not found"}},
     )
     async def get_chunk_context(
         chunk_id: str,
@@ -198,6 +199,7 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         "/chunks/{chunk_id}/document",
         operation_id="get_chunk_document",
         summary="All chunks of the parent document for a given chunk",
+        responses={404: {"description": "Chunk or parent document not found"}},
     )
     async def get_chunk_document(chunk_id: str) -> ChunkContextResponse:
         active_rag = current_rag()
@@ -216,6 +218,7 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         "/documents/{doc_id}/chunks",
         operation_id="get_document_chunks",
         summary="Fetch a range (or all) chunks from a document by doc_id",
+        responses={404: {"description": "Document chunk ordering not found"}},
     )
     async def get_document_chunks(
         doc_id: str,
