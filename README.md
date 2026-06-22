@@ -309,9 +309,9 @@ Twin overlay routes:
 
 ## How it works
 
-### 1. Registration (`__init__.py`)
+### 1. Registration (`patches/registry.py`, re-exported from `__init__.py`)
 
-`register()` patches three dicts in `lightrag.kg`:
+`register()` lives in `twindb_lightrag_memgraph.patches.registry`; `__init__.py` is a thin re-export shim that preserves the historical root import surface. It patches three dicts in `lightrag.kg`:
 
 | Dict | What it does | What we add |
 |------|-------------|-------------|
@@ -407,7 +407,7 @@ Tracks document processing state through the LightRAG pipeline.
 ```
 
 - Label: `DocStatus_{workspace}` (no namespace suffix -- doc status is workspace-global)
-- Indexes on `(id)`, `(status)`, `(file_path)`, `(track_id)`
+- Indexes on `(id)`, `(status)`, `(file_path)`, `(folder)`, `(track_id)`, `(updated_at)`, `(created_at)`, `(content_hash)`
 - Complex fields (`metadata`, `chunks_list`) are JSON-serialized strings
 - Unknown status values in the DB gracefully fall back to `PENDING` with a warning log
 
@@ -580,7 +580,8 @@ await close_driver()  # Force driver reset; next get_driver() creates a new one
 
 ```
 src/twindb_lightrag_memgraph/
-  __init__.py               register() -- monkey-patches lightrag.kg registry
+  __init__.py               Thin re-export shim (root import surface)
+  patches/registry.py       register() -- monkey-patches lightrag.kg registry
   _pool.py                  Shared Bolt driver singleton (event-loop aware)
   _constants.py             Validators, defaults, env var names
   _buffered_graph.py        Buffered batch write proxy
