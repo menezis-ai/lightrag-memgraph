@@ -41,7 +41,7 @@ The global directive §7 ("push to all remotes") does **not** apply here.
 
 `docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. The current open one is `docs/audits/lightrag-interactions/audit-2026-06-13.md`, which flags two priorities to be aware of when touching `/twin/api/query` or retrieval: (1) Twin sources are still reconstructed by a second vector search after `aquery()` returns, so they are not guaranteed to be the context LightRAG actually grounded on — migrating the nominal path to LightRAG's `aquery_llm()` + native references is the structural fix; (2) the WebUI `tag_filter` is accepted by both UI and backend but `QueryParam` in LightRAG 1.4.9.11 does not know the field, so the filter is a no-op at retrieval time. Read the relevant audit before claiming a fix in those areas.
 
-Other open audit areas under `docs/audits/`: `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
+Other open audit areas under `docs/audits/`: `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`, `sonarqube/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
 
 Three release/ops docs added for the 1.0.0 cut (current branch `production-readiness-p0-risk-accept-lightrag-cves`):
 - `docs/security/lightrag-1.4.9.11-risk-acceptance.md` — documented risk-acceptance for the LightRAG CVEs in the pinned `1.4.9.11`. Read before raising a CVE on that dependency.
@@ -53,8 +53,13 @@ Three release/ops docs added for the 1.0.0 cut (current branch `production-readi
 ### Install
 
 ```bash
-pip install -e ".[test]"
+pip install -e ".[test]"          # storage backends only (kv/vector/docstatus + tests/test_*.py at the top level)
+pip install -e ".[test-server]"   # adds server/ deps (fastapi, uvicorn, PyJWT, pypdf, …) for tests/test_server/
+pip install -e ".[test-intelligence]"  # adds intelligence/ deps (openai, pydantic-settings, respx) for tests/test_intelligence/
+pip install -e ".[all]" -e ".[test]"   # everything — what the local .venv carries
 ```
+
+**Extras matrix (`pyproject.toml`):** `[test]` ships `fastapi`+`httpx` but **not** `openai`/`pydantic-settings`. Since `pytest tests/` collects the `tests/test_intelligence/` and `tests/test_server/` trees, a bare `.[test]` install fails at *import* on those trees (e.g. `intelligence/config.py` needs `pydantic-settings`). For a full local run install the matching test extra (`[test-server]`, `[test-intelligence]`) or `[all]`. Runtime-only extras: `[server]`, `[intelligence]`, `[tracing]`.
 
 `uv.lock` is **not** present — use `uv` defaults if creating one (per global directive §4), but the project currently relies on `pip install -e`.
 

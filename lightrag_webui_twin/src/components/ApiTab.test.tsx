@@ -15,6 +15,7 @@ import {
   mockUnauthorized,
   requestBodyFor,
 } from './ApiTab';
+import { setActiveFolder, setSessionAuthToken } from '../api/client';
 import { API_VERSION, OPENAPI_GROUPS } from '../fixtures';
 
 function defaultProps() {
@@ -125,14 +126,54 @@ describe('ApiTab — endpoint expand + Try it out', () => {
         expect(resp!.textContent).toMatch(/200/);
       });
       expect(fetchSpy).toHaveBeenCalledWith(
-        'http://localhost/health',
+        '/health',
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({ Accept: 'application/json' }),
+          credentials: 'include',
         }),
       );
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+
+  it('Try it out reuses the app session token and active folder header', async () => {
+    setSessionAuthToken('session-token-123');
+    setActiveFolder('securetransport');
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [], total: 0 }), {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    try {
+      render(<ApiTab {...defaultProps()} />);
+      const row = screen.getByTestId('endpoint-GET-/documents');
+      await userEvent.click(within(row).getByRole('button'));
+      await userEvent.click(
+        within(row).getByRole('button', { name: 'Try it out' }),
+      );
+      await userEvent.click(within(row).getByRole('button', { name: /Execute/ }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/documents',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer session-token-123',
+            'X-Twin-Folder': 'securetransport',
+          }),
+          credentials: 'include',
+        }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      setSessionAuthToken(null);
+      setActiveFolder(null);
     }
   });
 

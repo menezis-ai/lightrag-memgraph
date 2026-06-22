@@ -11,13 +11,15 @@
  *
  * Behavior delta vs the proto:
  *   - `groups` are injected via props (no static window globals).
- *   - "Try it out" stays mock-only (deterministic responses), no real fetch.
+ *   - "Try it out" performs a real request through the same runtime URL,
+ *     bearer/session, cookie, and folder header helpers as the rest of the app.
  *   - Authorize dialog a11y via useModalA11y.
  */
 
 import { useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { buildApiHeaders, buildApiUrl } from '../api/client';
 import {
   METHOD_COLOR,
   type HttpMethod,
@@ -214,13 +216,14 @@ function EndpointRow({ ep, secured, token, baseUrl }: EndpointRowProps) {
     const start =
       typeof performance !== 'undefined' ? performance.now() : Date.now();
     try {
-      const headers: Record<string, string> = { Accept: 'application/json' };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      if (ep.m !== 'GET') headers['Content-Type'] = 'application/json';
-      const r = await fetch(baseUrl + ep.p, {
+      const r = await fetch(buildApiUrl(ep.p), {
         method: ep.m,
-        headers,
+        headers: buildApiHeaders(
+          { token: token || undefined },
+          { json: ep.m !== 'GET' },
+        ),
         body: ep.m !== 'GET' ? reqBody : undefined,
+        credentials: 'include',
       });
       const text = await r.text();
       const tookMs = Math.round(
