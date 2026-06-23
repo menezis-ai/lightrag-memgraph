@@ -92,7 +92,7 @@ class InMemoryActivityStore:
         self._events = copy.deepcopy(events if events is not None else webui_seed.ACTIVITY)
         self._now_ms = now_ms
 
-    async def list(
+    async def list(  # NOSONAR - async contract.
         self,
         *,
         kind: str | None = None,
@@ -108,7 +108,7 @@ class InMemoryActivityStore:
         ]
         return filtered[: _bounded_limit(limit)], self._now_ms
 
-    async def append(self, event: dict[str, Any]) -> dict[str, Any]:
+    async def append(self, event: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
         stored = copy.deepcopy(event)
         self._events.insert(0, stored)
         return copy.deepcopy(stored)

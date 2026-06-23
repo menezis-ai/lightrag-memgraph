@@ -481,10 +481,10 @@ def build_native_shims_router(
         return await login(body, response)
 
     @router.post("/logout", response_model=_OkResponse)
-    async def logout_shim(response: Response) -> dict[str, bool]:
+    def logout_shim(response: Response) -> dict[str, bool]:
         from .auth import logout
 
-        return await logout(response)
+        return logout(response)
 
     @router.get(
         "/documents",
@@ -534,7 +534,7 @@ def build_native_shims_router(
         dependencies=protected_deps,
         responses={409: {"description": "Per-document scan unsupported"}},
     )
-    async def scan_document(doc_id: str) -> None:
+    def scan_document(doc_id: str) -> None:
         """Reject unsupported per-doc re-scan requests.
 
         LightRAG only has a global ``POST /documents/scan`` (scans the input
@@ -588,7 +588,7 @@ def build_native_shims_router(
         return await _pipeline_status_impl(get_rag)
 
     @router.get("/openapi", dependencies=protected_deps)
-    async def webui_openapi() -> dict[str, Any]:
+    def webui_openapi() -> dict[str, Any]:
         """Twin-specific OpenAPI tour, not the full FastAPI spec.
 
         Distinct from ``/openapi.json`` (FastAPI default). Returns a static
@@ -640,7 +640,7 @@ def build_health_shim(get_rag) -> APIRouter:
     router = APIRouter(tags=["twin-shim"])
 
     @router.get("/health")
-    async def health() -> _SimpleHealth:
+    def health() -> _SimpleHealth:
         try:
             get_rag()
         except Exception:

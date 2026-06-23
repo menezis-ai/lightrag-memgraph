@@ -152,7 +152,7 @@ class FolderRouter:
             or data.get("default_workspace", fallback_folder),
         )
 
-    async def route(
+    async def route(  # NOSONAR - async contract.
         self,
         query: str,
         *,

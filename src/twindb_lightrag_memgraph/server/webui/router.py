@@ -469,7 +469,7 @@ router.include_router(documents_router)
     "/health",
     responses={503: {"description": "LightRAG instance unavailable"}},
 )
-async def twin_health() -> dict[str, Any]:
+def twin_health() -> dict[str, Any]:
     try:
         _get_rag()
         rag_captured = True
@@ -515,7 +515,7 @@ def _get_rag():
 
 
 @router.post("/auth/logout", response_model=AckResponse)
-async def logout() -> dict[str, Any]:
+def logout() -> dict[str, Any]:
     """Sign out the current operator.
 
     Under the current Traefik Basic Auth gate, sign-out is mostly a
@@ -662,7 +662,7 @@ async def reject_document(
 
 
 @router.get("/openapi", response_model=OpenApiEnvelope)
-async def get_openapi_groups() -> dict[str, Any]:
+def get_openapi_groups() -> dict[str, Any]:
     groups, version = get_store().openapi()
     return {"groups": groups, "version": version}
 

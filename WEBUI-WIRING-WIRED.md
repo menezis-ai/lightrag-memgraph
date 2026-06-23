@@ -1,63 +1,153 @@
-# WebUI Wiring — Wired
+# Twin KMS WebUI Wiring — Wired
 
-Historical as-built state captured on `stable/0.6.x` (HEAD `7302023` at split
-time). This file is retained for audit context. The live contract is now
-Folder-based; use [WEBUI-WIRING-PLAN.md](WEBUI-WIRING-PLAN.md) and the tests as
-the source of truth.
+This file is the current as-built inventory for the Twin KMS WebUI and backend
+overlay. It is not a backlog. Use [WEBUI-WIRING-PLAN.md](WEBUI-WIRING-PLAN.md)
+for the live contract and [WEBUI-WIRING-TO-WIRE.md](WEBUI-WIRING-TO-WIRE.md)
+for remaining work.
 
-## Frontend (`lightrag_webui_twin/`)
+Last aligned: 2026-06-23.
 
-- React 19 + TypeScript + Vite. The Forgejo WebUI jobs use Bun for lint/unit/build; the GitHub mirror uses npm.
-- Runtime config read from `window.__twinConfig` (server-injected) or e2e override: `apiBaseUrl`, `lightragBaseUrl`, `idpLogoutUrl`, `defaultFolderId`, `folders`, `maxFolders`.
-- Production builds hit the real backend; `VITE_FORCE_MSW=true` opts into MSW for the OVH standalone-demo path only.
-- `apiFetch` sends `X-Twin-Folder` on requests bound to the active Twin folder.
-- Visible copy uses "Folder" for Twin sub-scopes.
-- e2e Playwright suite covers documents, tags, retrieval, graph, activity, settings/auth guardrails, runtime folders, upload validation, async/a11y hardening.
+## Frontend
+
+- React 19, TypeScript, Vite.
+- Product-facing brand is Twin KMS. The shorter "Twin" remains valid for the
+  ecosystem, team, route prefix, and chatbot-facing offer.
+- The WebUI is served at `/webui` when `register(replace_ui=True)` is active.
+- Runtime config is read from `window.__twinConfig`, with e2e override support:
+  `apiBaseUrl`, `lightragBaseUrl`, `idpLogoutUrl`, `defaultFolderId`,
+  `folders`, `maxFolders`.
+- Production builds hit the real backend by default. `VITE_FORCE_MSW=true` is
+  an explicit demo/test override, not the production path.
+- `apiFetch` centralizes backend calls and sends `X-Twin-Folder` for
+  folder-bound API calls.
+- The operator journeys covered by Playwright include documents, upload, tags,
+  retrieval, graph, activity, settings, runtime folders, auth guardrails,
+  responsive topbar, modal accessibility, and real-backend API coverage.
 
 ## Twin Folders
 
-- Env-driven catalog:
-  - `TWIN_DEFAULT_FOLDER` (fallback `WORKSPACE`, then `default`).
-  - `TWIN_DEFAULT_FOLDER_LABEL`.
-  - `TWIN_FOLDERS_JSON` (admin/runtime catalog).
-  - `TWIN_MAX_FOLDERS` clamped to `1..5`.
-- Backend reads `X-Twin-Folder`, validates against the configured catalog, and binds the active folder via `ContextVar`.
-- Native document shims filter on `DocStatus.metadata.folder`.
-- Admin Folder CRUD (`POST/PATCH/DELETE /twin/api/folders`) gated by `admin:folders` gateway scope.
+- Environment-driven catalog:
+  - `TWIN_DEFAULT_FOLDER`
+  - `TWIN_DEFAULT_FOLDER_LABEL`
+  - `TWIN_FOLDERS_JSON`
+  - `TWIN_MAX_FOLDERS`
+- Backend parsing and request binding live in `server/folder.py` and
+  `server/folder_store.py`.
+- The browser sends the active Folder through `X-Twin-Folder`.
+- Folder catalog routes live under `/twin/api/folders`.
+- Admin Folder mutations require `admin:folders`.
+- Env-seeded Folders are protected from deletion through the API.
+- Runtime-added Folders persist only when a backing runtime store is configured.
+- Native document shims respect folder metadata so `/documents` does not leak
+  cross-Folder rows.
 
 ## Backend Overlay
 
-- `register(replace_ui=True, mount_server=True, shim_native_routes=True, webui_stores=..., security_baseline=True)` wires the React WebUI dist and Twin API surface into the host LightRAG app.
-- `server/webui_router.py` exposes `/twin/api/{tags, activity, notifications, documents, folders, graph, openapi, ...}`.
-- `server/native_shims.py` re-shapes LightRAG's native FastAPI surface (`/documents`, `/health`, `/pipeline_status`, `/documents/{id}/chunks`) to match the React port's contract — Twin = AI-readable surface, LightRAG gets translated.
-- `server/twin_query_routes.py` adds `POST /twin/api/query` (synchronous) and `POST /twin/api/query/stream` (token streaming) with advanced controls: `chunk_top_k`, `enable_rerank`, `user_prompt`, `history_turns`, `tag_filter`. Commits `524b2a8` + `a6ff23a`.
-- WebUI stores have in-memory and Memgraph variants:
-  - `webui_tagstore.py`
-  - `webui_activitystore.py`
-  - `webui_notificationstore.py`
-- Memgraph stores initialized per configured Twin folder when `webui_stores="memgraph"`. Fresh folders boot empty (no demo seed leak — see mock-kill F6).
+- `register(replace_ui=True, mount_server=True, shim_native_routes=True,
+  webui_stores=..., security_baseline=True)` wires the WebUI, overlay API,
+  native shims, and runtime install guardrails.
+- `server/webui/router.py` is the modular overlay router.
+- `server/webui_router.py` remains as a compatibility wrapper for older imports.
+- Overlay routes include:
+  - `/twin/api/health`
+  - `/twin/api/folders`
+  - `/twin/api/documents`
+  - `/twin/api/documents/{id}/metadata`
+  - `/twin/api/documents/_bulk-retag`
+  - `/twin/api/documents/bulk-delete`
+  - `/twin/api/documents/{id}/approve`
+  - `/twin/api/documents/{id}/reject`
+  - `/twin/api/tags`
+  - `/twin/api/tags/categories`
+  - `/twin/api/graph/entities`
+  - `/twin/api/graph/relations`
+  - `/twin/api/activity`
+  - `/twin/api/notifications`
+  - `/twin/api/thesaurus`
+  - `/twin/api/settings/api-keys`
+  - `/twin/api/quota`
+  - `/twin/api/openapi/groups`
+- WebUI stores have in-memory and Memgraph variants for tags, activity, and
+  notifications.
+- Memgraph WebUI stores are initialized per configured Twin Folder when
+  `webui_stores="memgraph"`.
+- Fresh Memgraph-backed folders boot clean; demo seed data is not exposed on a
+  real deployment.
 
-## Mock-kill audit remediation (`docs/audits/webui-fork/mock-kill-audit-2026-06-04.md`)
+## Native LightRAG Shims
 
-Commit `731f0d1` closes:
+`server/native_shims.py` adapts the native LightRAG FastAPI surface where the
+React WebUI needs stable behavior:
 
-- **F1** Settings → Space identity card reads runtime config (no more hardcoded `eu-west-3 · dc-paris` / fictional TTLs).
-- **F2** Settings → API tab fetches `/openapi.json` direct (ISO LightRAG by construction); "Try it out" performs a real `fetch`; the fictional `cib-kb.twin.internal` server selector is dropped.
-- **F3** Graph tab detail panel drops fixture lookups that returned empty for real Memgraph entities.
-- **F5** Boot WARN when `webui_stores="seed"` runs under an active IdP (production trap).
-- **F6** `WebuiStore.for_space(mode="memgraph")` so the default space doesn't expose demo `_documents` / `_graph_entities` on a real deploy.
-- F4 (RetrievalTab dead fixture fallback) shipped with `524b2a8`.
+- `/documents`
+- `/documents/scan`
+- `/documents/{id}/chunks`
+- `/health`
+- `/pipeline_status`
+- `/openapi.json`
+- `/logout`
 
-## Retrieval (real backend)
+The rule is translation, not takeover: native LightRAG behavior must remain
+reachable unless a shim is explicitly part of the Twin KMS WebUI contract.
+Route parity tests guard this boundary.
 
-- Streaming + advanced controls landed in `524b2a8` (`POST /twin/api/query/stream` via FastAPI `StreamingResponse`, frontend `useStreamQuery` consumes tokens).
-- `tag_filter` end-to-end in `a6ff23a`: UI captures tags → `App.tsx` maps to `{all: [...]}` → backend `TwinQueryBody.tag_filter` → LightRAG `QueryParam`.
-- Tag delete cascade fix in `7302023`: `affected_docs = (graph_affected or 0) + seed_affected` so a fresh-Memgraph CI run doesn't mask the in-memory seed cascade.
+## Query and Retrieval
 
-## Tests run
+- `POST /twin/api/query` returns a structured non-streaming answer.
+- `POST /twin/api/query/stream` streams answer events.
+- `POST /twin/api/query/data` wraps `LightRAG.aquery_data()`.
+- Advanced controls include `chunk_top_k`, `enable_rerank`, `user_prompt`,
+  `history_turns`, and Twin-specific filter plumbing where supported.
+- `tag_filter` is honored only where the backend can enforce it honestly:
+  `/twin/api/query/data`.
+- Routes that cannot enforce `tag_filter` reject it rather than pretending.
+- The API tab reflects that split so operator "Try it out" requests do not send
+  misleading filters to unsupported query routes.
 
-- `pytest tests/test_server/` — 392 passed.
-- `pytest tests/ --ignore=tests/test_bench.py` — 768 passed, 97 skipped (integration auto-skip without `MEMGRAPH_URI`).
-- `bun run typecheck` — OK.
-- `bun run test:run` — 396 passed.
-- Playwright `test:e2e` — runs against MSW dev mode + a `:real` lane against a configured backend (`REAL_BACKEND_URL`).
+## Auth and API Keys
+
+- Production fails closed unless an auth backend is configured:
+  `LIGHTRAG_API_KEY`, `LIGHTRAG_JWT_SECRET`, `TWIN_IDP_JWKS_URL`, or explicit
+  `TWIN_ALLOW_OPEN_ACCESS=1`.
+- `TWIN_IDP_JWKS_URL` activates IdP JWT validation.
+- The IdP path supports admin group mapping and `admin:folders` enforcement.
+- Generated API keys are minted through `/twin/api/settings/api-keys`.
+- `webui-e2e-keygen` proves a generated key can authenticate real API requests.
+- `POST /twin/api/auth/logout` exists as the Twin logout ack/future cookie hook.
+
+## CI and Test Coverage
+
+Forgejo is the main CI surface:
+
+- Python unit lanes cover supported Python and LightRAG combinations.
+- Integration lanes cover Memgraph-backed behavior.
+- Frontend quality/build uses the workflow's declared Node/Bun setup.
+- Playwright MSW e2e runs in a Playwright container.
+- Real-backend Playwright e2e starts Memgraph plus a real Twin backend.
+- Generated-key Playwright e2e starts an isolated real Twin backend and proves
+  the API-key minting flow.
+- Real-backend Playwright jobs use dynamically allocated host ports and pass the
+  resulting `REAL_BACKEND_URL` to later steps.
+
+Local validation commands that map to the contract:
+
+```bash
+uv run pytest tests/test_server/
+uv run pytest tests/ --ignore=tests/test_bench.py
+cd lightrag_webui_twin && npm run typecheck
+cd lightrag_webui_twin && npm run test:run
+cd lightrag_webui_twin && npm run test:e2e
+```
+
+## Guardrails Already in Place
+
+- Mock-kill remediation removed fixture fallbacks from production-facing
+  settings, API, graph, retrieval, and store initialization paths.
+- Route parity tests prevent the frontend from quietly depending on missing
+  backend routes.
+- Graph tests treat create/update/delete failures as backend errors, not fake
+  successes.
+- Folder tests protect the `X-Twin-Folder` contract across native shims and
+  overlay routes.
+- Security baseline blocks runtime package installation unless explicitly
+  disabled for development.
