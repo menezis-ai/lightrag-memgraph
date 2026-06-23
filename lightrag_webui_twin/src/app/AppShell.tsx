@@ -229,7 +229,7 @@ export function AppShell() {
   >(() => new Set());
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.dataset.theme = theme;
     writeUiPreference(THEME_STORAGE_KEY, theme);
   }, [theme]);
 

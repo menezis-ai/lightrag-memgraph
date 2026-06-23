@@ -30,6 +30,14 @@ interface UseDocumentActionsOptions {
 
 type UploadResponse = { status: string; message: string; track_id: string };
 type UploadResult = PromiseSettledResult<UploadResponse>;
+type TrackStatus = Awaited<ReturnType<typeof api.trackStatus>>;
+type PushToast = (toast: Omit<Toast, 'id'>) => void;
+const TERMINAL_TRACK_STATUSES = new Set([
+  'processed',
+  'PROCESSED',
+  'failed',
+  'FAILED',
+]);
 
 function summarizeUploadResults(results: readonly UploadResult[]) {
   const ok = results.filter((result) => result.status === 'fulfilled').length;
@@ -115,6 +123,101 @@ function recordUploadAudit(
         ]
       : [],
   );
+}
+
+function pushUploadSummaryToast(
+  results: readonly UploadResult[],
+  tags: readonly string[],
+  pushToast: PushToast,
+) {
+  const { ok, ko, dup } = summarizeUploadResults(results);
+  if (ko === 0) {
+    pushToast({
+      kind: 'done',
+      title: 'Sources queued for ingestion',
+      sub: `${ok} uploaded${dup > 0 ? ` (${dup} already present)` : ''}${
+        tags.length ? ' · initial tags will apply once docs land' : ''
+      }`,
+    });
+    return;
+  }
+  pushToast({
+    kind: 'error',
+    title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
+    sub: `${ok} ok · ${ko} ko${dup > 0 ? ` · ${dup} already present` : ''}`,
+  });
+}
+
+function trackStatusErrorMessage(trackId: string, err: unknown): string {
+  return err instanceof Error
+    ? `${trackId}: ${err.message}`
+    : `${trackId}: track_status unavailable`;
+}
+
+function processedDocIdsIfTerminal(status: TrackStatus): string[] | null {
+  const terminalDocs = status.documents.filter((doc) =>
+    TERMINAL_TRACK_STATUSES.has(doc.status),
+  );
+  if (terminalDocs.length === 0 || terminalDocs.length !== status.documents.length) {
+    return null;
+  }
+  return terminalDocs
+    .filter((doc) => doc.status.toLowerCase() === 'processed')
+    .map((doc) => doc.id);
+}
+
+function shouldRetryTrackStatus(
+  trackId: string,
+  err: unknown,
+  transientErrors: Map<string, number>,
+  pushToast: PushToast,
+): boolean {
+  if (err instanceof ApiError && err.status === 404) return true;
+  const nextFailures = (transientErrors.get(trackId) ?? 0) + 1;
+  transientErrors.set(trackId, nextFailures);
+  if (nextFailures < 3) return true;
+  pushToast({
+    kind: 'error',
+    title: 'Initial tag polling failed',
+    sub: trackStatusErrorMessage(trackId, err),
+  });
+  return false;
+}
+
+interface InitialTagPollOptions {
+  trackIds: readonly string[];
+  pollIntervalMs: number;
+  maxPolls: number;
+  pushToast: PushToast;
+}
+
+async function pollProcessedDocIds({
+  trackIds,
+  pollIntervalMs,
+  maxPolls,
+  pushToast,
+}: InitialTagPollOptions): Promise<Set<string>> {
+  const resolvedDocIds = new Set<string>();
+  const pending = new Set(trackIds);
+  const transientErrors = new Map<string, number>();
+  for (let i = 0; i < maxPolls && pending.size > 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    for (const trackId of Array.from(pending)) {
+      try {
+        const status = await api.trackStatus(trackId);
+        transientErrors.delete(trackId);
+        const processedDocIds = processedDocIdsIfTerminal(status);
+        if (!processedDocIds) continue;
+        processedDocIds.forEach((id) => resolvedDocIds.add(id));
+        pending.delete(trackId);
+      } catch (err) {
+        if (shouldRetryTrackStatus(trackId, err, transientErrors, pushToast))
+          continue;
+        pending.delete(trackId);
+      }
+    }
+  }
+  return resolvedDocIds;
 }
 
 export function useDocumentActions({
@@ -375,27 +478,7 @@ export function useDocumentActions({
       ),
     );
 
-    const { ok, ko, dup } = summarizeUploadResults(results);
-
-    if (ko === 0) {
-      pushToast({
-        kind: 'done',
-        title: 'Sources queued for ingestion',
-        sub: `${ok} uploaded${dup > 0 ? ` (${dup} already present)` : ''}${
-          action.tags.length
-            ? ' · initial tags will apply once docs land'
-            : ''
-        }`,
-      });
-    } else {
-      pushToast({
-        kind: 'error',
-        title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
-        sub: `${ok} ok · ${ko} ko${
-          dup > 0 ? ` · ${dup} already present` : ''
-        }`,
-      });
-    }
+    pushUploadSummaryToast(results, action.tags, pushToast);
 
     const uploadAuditWrites = recordUploadAudit(results, uploadInputs, currentActor);
     Promise.allSettled(uploadAuditWrites)
@@ -418,51 +501,12 @@ export function useDocumentActions({
     const e2ePoll = globalThis.window?.__TWIN_E2E_INITIAL_TAG_POLL;
     const pollIntervalMs = e2ePoll?.intervalMs ?? 2000;
     const maxPolls = e2ePoll?.maxPolls ?? 30;
-    const terminalStatuses = new Set([
-      'processed',
-      'PROCESSED',
-      'failed',
-      'FAILED',
-    ]);
-    const resolvedDocIds = new Set<string>();
-    const pending = new Set(trackIds);
-    const transientErrors = new Map<string, number>();
-    for (let i = 0; i < maxPolls && pending.size > 0; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      for (const trackId of Array.from(pending)) {
-        try {
-          const status = await api.trackStatus(trackId);
-          transientErrors.delete(trackId);
-          const terminalDocs = status.documents.filter((doc) =>
-            terminalStatuses.has(doc.status),
-          );
-          if (
-            terminalDocs.length > 0 &&
-            terminalDocs.length === status.documents.length
-          ) {
-            terminalDocs
-              .filter((doc) => doc.status.toLowerCase() === 'processed')
-              .forEach((doc) => resolvedDocIds.add(doc.id));
-            pending.delete(trackId);
-          }
-        } catch (err) {
-          if (err instanceof ApiError && err.status === 404) continue;
-          const nextFailures = (transientErrors.get(trackId) ?? 0) + 1;
-          transientErrors.set(trackId, nextFailures);
-          if (nextFailures >= 3) {
-            pending.delete(trackId);
-            pushToast({
-              kind: 'error',
-              title: 'Initial tag polling failed',
-              sub:
-                err instanceof Error
-                  ? `${trackId}: ${err.message}`
-                  : `${trackId}: track_status unavailable`,
-            });
-          }
-        }
-      }
-    }
+    const resolvedDocIds = await pollProcessedDocIds({
+      trackIds,
+      pollIntervalMs,
+      maxPolls,
+      pushToast,
+    });
     if (resolvedDocIds.size === 0) {
       if (trackIds.length > 0) {
         pushToast({

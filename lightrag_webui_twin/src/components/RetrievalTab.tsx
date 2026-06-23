@@ -46,6 +46,43 @@ const INITIAL_VISIBLE_SOURCES = 5;
 
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
 
+function ensureThread(
+  threads: readonly RetrievalThread[],
+  id: string,
+): readonly RetrievalThread[] {
+  if (threads.some((thread) => thread.id === id)) return threads;
+  return [
+    {
+      id,
+      title: 'New thread',
+      created: Date.now(),
+      updated: Date.now(),
+      messages: [],
+    },
+    ...threads,
+  ];
+}
+
+function updateThreadMessages(
+  thread: RetrievalThread,
+  id: string,
+  updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
+): RetrievalThread {
+  if (thread.id !== id) return thread;
+  const messages = updater(thread.messages);
+  const firstUser = messages.find((m) => m.role === 'user');
+  const title =
+    thread.messages.length === 0 && firstUser?.text
+      ? firstUser.text.slice(0, 64)
+      : thread.title;
+  return {
+    ...thread,
+    updated: Date.now(),
+    messages,
+    title,
+  };
+}
+
 export interface RetrievalTabProps {
   /** Real-backend callback. The returned `response` string is split into
    *  whitespace tokens and streamed via the existing animator. Sources are
@@ -269,36 +306,11 @@ export function RetrievalTab({
     id: string,
     updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
   ) => {
-    setThreads((ts) => {
-      // Thread deleted mid-flight: recreate it so the exchange is kept.
-      const arr = ts.find((t) => t.id === id)
-        ? ts
-        : [
-            {
-              id,
-              title: 'New thread',
-              created: Date.now(),
-              updated: Date.now(),
-              messages: [] as readonly ChatMessage[],
-            },
-            ...ts,
-          ];
-      return arr.map((t) => {
-        if (t.id !== id) return t;
-        const nextMsgs = updater(t.messages);
-        const firstUser = nextMsgs.find((m) => m.role === 'user');
-        const newTitle =
-          t.messages.length === 0 && firstUser?.text
-            ? firstUser.text.slice(0, 64)
-            : t.title;
-        return {
-          ...t,
-          updated: Date.now(),
-          messages: nextMsgs,
-          title: newTitle,
-        };
-      });
-    });
+    setThreads((ts) =>
+      ensureThread(ts, id).map((thread) =>
+        updateThreadMessages(thread, id, updater),
+      ),
+    );
   };
 
   const newThread = () => {

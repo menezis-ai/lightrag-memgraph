@@ -119,6 +119,9 @@ export function TagActionModal({
 
   const isDanger = action.kind === 'delete' || action.kind === 'reject';
   const submitLabel = SUBMIT_LABEL[action.kind]({ migrateStrategy });
+  const removeAlias = (alias: string) => {
+    setAliases((current) => current.filter((x) => x !== alias));
+  };
 
   const commit = () => {
     const payload: TagActionCommit = { kind: action.kind, tag };
@@ -264,9 +267,7 @@ export function TagActionModal({
                     <button
                       type="button"
                       aria-label={`Remove synonym ${a}`}
-                      onClick={() =>
-                        setAliases((current) => current.filter((x) => x !== a))
-                      }
+                      onClick={() => removeAlias(a)}
                     >
                       <Icon name="x" size={10} />
                     </button>

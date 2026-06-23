@@ -111,6 +111,122 @@ interface RetagModalBodyProps {
   onSubmit: (action: RetagAction) => void;
 }
 
+function retagApplyLabel(totalChanges: number, pendingRemoveCount: number) {
+  if (totalChanges === 0) return 'Apply tag';
+  if (pendingRemoveCount > 0 && pendingRemoveCount === totalChanges) {
+    return `Remove ${pendingRemoveCount} tag${pendingRemoveCount > 1 ? 's' : ''}`;
+  }
+  return totalChanges === 1 ? 'Apply tag' : `Apply ${totalChanges} changes`;
+}
+
+function RetagHeaderContext({
+  bulk,
+  targets,
+  primary,
+  totalChunks,
+}: Readonly<{
+  bulk: boolean;
+  targets: readonly Document[];
+  primary: Document;
+  totalChunks: number;
+}>) {
+  if (bulk) {
+    return (
+      <>
+        <div className="ctx">
+          <Icon name="tags" size={13} />
+          <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            Bulk · changes propagate to every selected source
+          </span>
+          <span className="sep">·</span>
+          <span className="vis-chip">
+            <Icon name="lock" size={11} />
+            {targets[0].folder} · {totalChunks.toLocaleString()} chunks total
+          </span>
+        </div>
+        <div className="bulk-target-strip">
+          {targets.slice(0, 4).map((doc) => (
+            <span key={doc.doc_id} className="bulk-target-chip" title={doc.file_path}>
+              <SourceIcon type={doc.type} size={11} />
+              <span className={doc.type !== 'file' ? 'mono' : ''}>
+                {doc.file_path}
+              </span>
+            </span>
+          ))}
+          {targets.length > 4 && (
+            <span className="bulk-target-more">+{targets.length - 4} more</span>
+          )}
+        </div>
+      </>
+    );
+  }
+  return (
+    <div className="ctx">
+      <SourceIcon type={primary.type} size={13} />
+      <span
+        style={{
+          fontFamily: primary.type !== 'file' ? 'var(--font-mono)' : 'inherit',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          maxWidth: 320,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {primary.file_path}
+      </span>
+      <span className="sep">·</span>
+      <span className="vis-chip">
+        <Icon name={primary.visibility === 'private' ? 'lock' : 'world'} size={11} />
+        {primary.folder} · {primary.visibility}
+      </span>
+    </div>
+  );
+}
+
+function RetagPreviewImpact({
+  isRemoving,
+  pendingAdd,
+  pendingRemove,
+  previewChunks,
+  previewDocs,
+}: Readonly<{
+  isRemoving: boolean;
+  pendingAdd: readonly string[];
+  pendingRemove: readonly string[];
+  previewChunks: number;
+  previewDocs: number;
+}>) {
+  const tag = isRemoving ? pendingRemove[0] : pendingAdd[0];
+  const verb = isRemoving ? 'Removing' : 'Adding';
+  return (
+    <div
+      className={isRemoving ? 'preview-impact removing' : 'preview-impact'}
+      data-testid="preview-impact"
+    >
+      <div className="head">
+        <Icon name="eye" size={14} /> Preview impact
+      </div>
+      <div className="stats">
+        <div className="stat">
+          <div className="num">{previewChunks}</div>
+          <div className="lbl">chunks</div>
+        </div>
+        <div className="stat">
+          <div className="num">{previewDocs}</div>
+          <div className="lbl">selected docs</div>
+        </div>
+      </div>
+      <div className="foot">
+        <Icon name="arrow-right" size={12} />
+        {verb} <span className="mini-chip">{tag}</span>{' '}
+        {isRemoving ? 'will update' : '· will update'}{' '}
+        {previewChunks.toLocaleString()} chunks across {previewDocs} selected doc
+        {previewDocs > 1 ? 's' : ''}
+      </div>
+    </div>
+  );
+}
+
 function RetagModalBody({
   modalRef,
   targets,
@@ -161,14 +277,7 @@ function RetagModalBody({
   const previewDocs = targets.length;
 
   const totalChanges = pendingAdd.length + pendingRemove.length;
-  const applyLabel =
-    totalChanges === 0
-      ? 'Apply tag'
-      : isRemoving
-        ? `Remove ${pendingRemove.length} tag${pendingRemove.length > 1 ? 's' : ''}`
-        : totalChanges === 1
-          ? 'Apply tag'
-          : `Apply ${totalChanges} changes`;
+  const applyLabel = retagApplyLabel(totalChanges, pendingRemove.length);
 
   const submit = () => {
     if (totalChanges === 0) return;
@@ -207,66 +316,12 @@ function RetagModalBody({
             <h2 id="retag-title">
               {bulk ? `Retag ${targets.length} sources` : 'Retag document'}
             </h2>
-            <div className="ctx">
-              {bulk ? (
-                <>
-                  <Icon name="tags" size={13} />
-                  <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                    Bulk · changes propagate to every selected source
-                  </span>
-                  <span className="sep">·</span>
-                  <span className="vis-chip">
-                    <Icon name="lock" size={11} />
-                    {targets[0].folder} · {totalChunks.toLocaleString()}{' '}
-                    chunks total
-                  </span>
-                </>
-              ) : (
-                <>
-                  <SourceIcon type={primary.type} size={13} />
-                  <span
-                    style={{
-                      fontFamily: primary.type !== 'file' ? 'var(--font-mono)' : 'inherit',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      maxWidth: 320,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {primary.file_path}
-                  </span>
-                  <span className="sep">·</span>
-                  <span className="vis-chip">
-                    <Icon
-                      name={primary.visibility === 'private' ? 'lock' : 'world'}
-                      size={11}
-                    />
-                    {primary.folder} · {primary.visibility}
-                  </span>
-                </>
-              )}
-            </div>
-            {bulk && (
-              <div className="bulk-target-strip">
-                {targets.slice(0, 4).map((d) => (
-                  <span
-                    key={d.doc_id}
-                    className="bulk-target-chip"
-                    title={d.file_path}
-                  >
-                    <SourceIcon type={d.type} size={11} />
-                    <span className={d.type !== 'file' ? 'mono' : ''}>
-                      {d.file_path}
-                    </span>
-                  </span>
-                ))}
-                {targets.length > 4 && (
-                  <span className="bulk-target-more">
-                    +{targets.length - 4} more
-                  </span>
-                )}
-              </div>
-            )}
+            <RetagHeaderContext
+              bulk={bulk}
+              targets={targets}
+              primary={primary}
+              totalChunks={totalChunks}
+            />
           </div>
           <button
             type="button"
@@ -406,40 +461,13 @@ function RetagModalBody({
           </div>
 
           {totalChanges > 0 && (
-            <div
-              className={isRemoving ? 'preview-impact removing' : 'preview-impact'}
-              data-testid="preview-impact"
-            >
-              <div className="head">
-                <Icon name="eye" size={14} /> Preview impact
-              </div>
-              <div className="stats">
-                <div className="stat">
-                  <div className="num">{previewChunks}</div>
-                  <div className="lbl">chunks</div>
-                </div>
-                <div className="stat">
-                  <div className="num">{previewDocs}</div>
-                  <div className="lbl">selected docs</div>
-                </div>
-              </div>
-              <div className="foot">
-                <Icon name="arrow-right" size={12} />
-                {isRemoving ? (
-                  <>
-                    Removing <span className="mini-chip">{pendingRemove[0]}</span>{' '}
-                    will update {previewChunks.toLocaleString()} chunks across{' '}
-                    {previewDocs} selected doc{previewDocs > 1 ? 's' : ''}
-                  </>
-                ) : (
-                  <>
-                    Adding <span className="mini-chip">{pendingAdd[0]}</span> ·
-                    will update {previewChunks.toLocaleString()} chunks across{' '}
-                    {previewDocs} selected doc{previewDocs > 1 ? 's' : ''}
-                  </>
-                )}
-              </div>
-            </div>
+            <RetagPreviewImpact
+              isRemoving={isRemoving}
+              pendingAdd={pendingAdd}
+              pendingRemove={pendingRemove}
+              previewChunks={previewChunks}
+              previewDocs={previewDocs}
+            />
           )}
         </div>
 

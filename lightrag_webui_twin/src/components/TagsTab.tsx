@@ -119,6 +119,17 @@ export function TagsTab({
   const [approvingTags, setApprovingTags] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const approveRequestedTag = (tag: TagEntry) => {
+    if (approvingTags.has(tag.tag)) return;
+    setApprovingTags((current) => new Set(current).add(tag.tag));
+    void Promise.resolve(onApprove?.({ tag })).finally(() => {
+      setApprovingTags((current) => {
+        const next = new Set(current);
+        next.delete(tag.tag);
+        return next;
+      });
+    });
+  };
 
   // ── Taxonomy import / domain editor / template download ─────────
   // Categories remain a folder-wide governance taxonomy. Admins can
@@ -503,17 +514,7 @@ export function TagsTab({
                       <button
                         className="primary-btn small"
                         disabled={approvingTags.has(t.tag)}
-                        onClick={() => {
-                          if (approvingTags.has(t.tag)) return;
-                          setApprovingTags((current) => new Set(current).add(t.tag));
-                          void Promise.resolve(onApprove?.({ tag: t })).finally(() => {
-                            setApprovingTags((current) => {
-                              const next = new Set(current);
-                              next.delete(t.tag);
-                              return next;
-                            });
-                          });
-                        }}
+                        onClick={() => approveRequestedTag(t)}
                       >
                         {approvingTags.has(t.tag) ? 'Approving…' : 'Approve'}
                       </button>

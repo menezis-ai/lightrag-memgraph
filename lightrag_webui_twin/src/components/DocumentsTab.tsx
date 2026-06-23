@@ -58,6 +58,331 @@ const STATUS_KEYS: readonly StatusFilterKey[] = [
 
 const STATUS_FILTERS = ['all', 'completed', 'processing', 'pending', 'failed'] as const;
 
+function documentMatchesSearchAndTags(
+  doc: Document,
+  search: string,
+  tagFilters: readonly string[],
+  sourceFilters: readonly string[],
+): boolean {
+  if (search && !doc.file_path.toLowerCase().includes(search.toLowerCase())) {
+    return false;
+  }
+  if (tagFilters.length && !tagFilters.every((tag) => doc.tags.includes(tag))) {
+    return false;
+  }
+  return sourceFilters.length === 0 || sourceFilters.includes(doc.file_path);
+}
+
+function statusCountsFor(
+  docs: readonly Document[],
+  statusCounts: Record<string, number> | null,
+): Record<StatusFilterKey, number> {
+  if (statusCounts) {
+    return {
+      all: Object.values(statusCounts).reduce((a, b) => a + b, 0),
+      completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
+      processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
+      pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
+      failed: statusCounts.failed ?? statusCounts.FAILED ?? 0,
+    };
+  }
+  const counts: Record<StatusFilterKey, number> = {
+    all: docs.length,
+    completed: 0,
+    processing: 0,
+    pending: 0,
+    failed: 0,
+  };
+  docs.forEach((doc) => {
+    counts[STATUS_TO_FILTER[doc.status]] += 1;
+  });
+  return counts;
+}
+
+function documentMatchesStatus(doc: Document, statusFilter: StatusFilterKey) {
+  return (
+    statusFilter === 'all' ||
+    doc.status === FILTER_TO_STATUS[statusFilter]
+  );
+}
+
+function pipelineHistoryMessages(
+  pipelineStatus: PipelineStatusResponse | null | undefined,
+): string[] {
+  const messages = [...(pipelineStatus?.history_messages ?? [])];
+  const latest = pipelineStatus?.latest_message;
+  if (latest && messages[messages.length - 1] !== latest) {
+    messages.push(latest);
+  }
+  return messages.slice(-80);
+}
+
+interface PipelineControlProps {
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  status: PipelineStatusResponse | null | undefined;
+  messages: readonly string[];
+  onToggle?: () => void;
+  onRefresh?: () => void;
+}
+
+function PipelineControl({
+  open,
+  loading,
+  error,
+  status,
+  messages,
+  onToggle,
+  onRefresh,
+}: Readonly<PipelineControlProps>) {
+  return (
+    <div className="pipeline-control">
+      <button
+        type="button"
+        className={`btn${open ? ' active' : ''}`}
+        title="Pipeline logs"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => onToggle?.()}
+      >
+        <Icon name="activity" size={14} />
+        Pipeline
+        <span
+          className={`pipeline-state-badge ${
+            status?.busy ? 'pipeline-state-busy' : 'pipeline-state-idle'
+          }`}
+          aria-label={`Pipeline ${status?.busy ? 'busy' : 'idle'}`}
+        >
+          {status?.busy ? 'BUSY' : 'IDLE'}
+        </span>
+      </button>
+      {open && (
+        <PipelinePopover
+          loading={loading}
+          error={error}
+          status={status}
+          messages={messages}
+          onClose={onToggle}
+          onRefresh={onRefresh}
+        />
+      )}
+    </div>
+  );
+}
+
+function PipelinePopover({
+  loading,
+  error,
+  status,
+  messages,
+  onClose,
+  onRefresh,
+}: Readonly<{
+  loading: boolean;
+  error: string | null;
+  status: PipelineStatusResponse | null | undefined;
+  messages: readonly string[];
+  onClose?: () => void;
+  onRefresh?: () => void;
+}>) {
+  const liveState = loading ? 'refreshing' : 'idle';
+  return (
+    <dialog open className="pipeline-popover" aria-label="Pipeline logs">
+      <div className="pp-header">
+        <div className="pp-title">
+          <Icon name="activity" size={14} />
+          Pipeline
+          <span className={`pp-state-badge ${status?.busy ? 'busy' : 'paused'}`}>
+            <span className="pp-state-dot" />
+            {status?.busy ? 'Busy' : 'Idle'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn small"
+          aria-label="Close pipeline logs"
+          onClick={() => onClose?.()}
+        >
+          <Icon name="x" size={13} />
+        </button>
+      </div>
+
+      <div className="pp-section">
+        <div className="pp-stats">
+          <div>
+            <span className="pp-stat-num">{status?.job_count ?? 0}</span>
+            <span className="pp-stat-lbl">Jobs</span>
+          </div>
+          <div>
+            <span className="pp-stat-num">{messages.length}</span>
+            <span className="pp-stat-lbl">Messages</span>
+          </div>
+          <div className="pp-job-name">
+            <span className="pp-stat-num">{status?.job_name ?? '—'}</span>
+            <span className="pp-stat-lbl">Current job</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="pp-section">
+        <h3>Latest</h3>
+        <PipelineLatest error={error} loading={loading} status={status} />
+      </div>
+
+      <div className="pp-section">
+        <h3>History</h3>
+        {messages.length > 0 ? (
+          <ol className="pp-log-list">
+            {messages.map((message, index) => (
+              <li key={`${index}-${message}`}>
+                <span className="pp-log-index">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <span className="pp-log-message">{message}</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="pp-empty">No history from backend.</p>
+        )}
+      </div>
+
+      <div className="pp-footer">
+        <span className="pp-footnote">
+          <span
+            className={`pp-live-pill ${
+              loading ? 'pp-live-pill--loading' : 'pp-live-pill--idle'
+            }`}
+            aria-label={`Pipeline live ${liveState}`}
+          >
+            <span className="pp-live-dot" />
+            LIVE
+          </span>
+        </span>
+        <button type="button" className="btn small" onClick={() => onRefresh?.()}>
+          <Icon name="refresh" size={13} />
+          Refresh
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
+function PipelineLatest({
+  error,
+  loading,
+  status,
+}: Readonly<{
+  error: string | null;
+  loading: boolean;
+  status: PipelineStatusResponse | null | undefined;
+}>) {
+  if (error) return <p className="pp-error">{error}</p>;
+  if (loading && !status) return <p className="pp-empty">Loading pipeline status…</p>;
+  if (status?.latest_message) {
+    return <p className="pp-latest">{status.latest_message}</p>;
+  }
+  return <p className="pp-empty">No pipeline message reported yet.</p>;
+}
+
+function RetryFailedButton({
+  failedCount,
+  ingestionDisabled,
+  onScanRetry,
+  onAddToast,
+}: Readonly<{
+  failedCount: number;
+  ingestionDisabled: boolean;
+  onScanRetry?: (failedCount: number) => void;
+  onAddToast: (title: string, sub?: string) => void;
+}>) {
+  const disabled = failedCount === 0 || ingestionDisabled;
+  const title = retryButtonTitle(failedCount, ingestionDisabled);
+  const retry = () => {
+    if (disabled) return;
+    if (onScanRetry) {
+      onScanRetry(failedCount);
+      return;
+    }
+    onAddToast('Re-processing failed sources', 'POST /documents/reprocess_failed');
+  };
+  return (
+    <button
+      type="button"
+      className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
+      disabled={disabled}
+      title={title}
+      onClick={retry}
+    >
+      <Icon name="refresh" size={14} />
+      Re-process failed sources
+      {failedCount > 0 && (
+        <span className="pipeline-badge" aria-label={`${failedCount} failed`}>
+          {failedCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function retryButtonTitle(failedCount: number, ingestionDisabled: boolean) {
+  if (ingestionDisabled) {
+    return 'Memgraph instance quota reached — free space before re-processing';
+  }
+  if (failedCount === 0) return 'No failed sources to re-process';
+  return `Re-process ${failedCount} failed source${
+    failedCount > 1 ? 's' : ''
+  } (POST /documents/reprocess_failed)`;
+}
+
+function BulkActionsBar({
+  selectedCount,
+  filteredCount,
+  bulkDeleteArmed,
+  onOpenBulk,
+  onBulkDelete,
+  onTriggerBulkDelete,
+  onClearSelection,
+}: Readonly<{
+  selectedCount: number;
+  filteredCount: number;
+  bulkDeleteArmed: boolean;
+  onOpenBulk: () => void;
+  onBulkDelete?: (docs: readonly Document[]) => void;
+  onTriggerBulkDelete: () => void;
+  onClearSelection: () => void;
+}>) {
+  return (
+    <section className="bulk-bar" aria-label="Bulk actions">
+      <span className="bulk-count">
+        <b>{selectedCount}</b> selected
+        <span className="bulk-of">of {filteredCount}</span>
+      </span>
+      <button type="button" className="bulk-action primary" onClick={onOpenBulk}>
+        <Icon name="tags" size={13} /> Retag {selectedCount} sources
+      </button>
+      {onBulkDelete && (
+        <button
+          type="button"
+          className="bulk-action danger"
+          onClick={onTriggerBulkDelete}
+          data-testid="docs-bulk-delete"
+          aria-label={`Delete ${selectedCount} sources`}
+        >
+          <Icon name="x" size={13} />{' '}
+          {bulkDeleteArmed
+            ? `Confirm delete ${selectedCount}`
+            : `Delete ${selectedCount}`}
+        </button>
+      )}
+      <button type="button" className="bulk-clear" onClick={onClearSelection}>
+        <Icon name="x" size={12} /> Clear selection
+      </button>
+    </section>
+  );
+}
+
 export interface DocumentsTabProps {
   docs: readonly Document[];
   tagCatalog: readonly TagEntry[];
@@ -183,56 +508,20 @@ export function DocumentsTab({
   };
 
   const searchAndTagFiltered = useMemo(() => {
-    return docs.filter((d) => {
-      if (
-        search &&
-        !d.file_path.toLowerCase().includes(search.toLowerCase())
-      )
-        return false;
-      if (tagFilters.length && !tagFilters.every((t) => d.tags.includes(t)))
-        return false;
-      if (
-        sourceFilters.length &&
-        !sourceFilters.includes(d.file_path)
-      )
-        return false;
-      return true;
-    });
+    return docs.filter((doc) =>
+      documentMatchesSearchAndTags(doc, search, tagFilters, sourceFilters),
+    );
   }, [docs, search, tagFilters, sourceFilters]);
 
   const counts = useMemo(() => {
-    if (statusCounts) {
-      return {
-        all: Object.values(statusCounts).reduce((a, b) => a + b, 0),
-        completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
-        processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
-        pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
-        failed: statusCounts.failed ?? statusCounts.FAILED ?? 0,
-      };
-    }
-    const c: Record<StatusFilterKey, number> = {
-      all: searchAndTagFiltered.length,
-      completed: 0,
-      processing: 0,
-      pending: 0,
-      failed: 0,
-    };
-    searchAndTagFiltered.forEach((d) => {
-      c[STATUS_TO_FILTER[d.status]]++;
-    });
-    return c;
+    return statusCountsFor(searchAndTagFiltered, statusCounts);
   }, [searchAndTagFiltered, statusCounts]);
   const failedCount = counts.failed;
 
   const filtered = useMemo(() => {
-    return searchAndTagFiltered.filter((d) => {
-      if (
-        statusFilter !== 'all' &&
-        d.status !== FILTER_TO_STATUS[statusFilter]
-      )
-        return false;
-      return true;
-    });
+    return searchAndTagFiltered.filter((doc) =>
+      documentMatchesStatus(doc, statusFilter),
+    );
   }, [searchAndTagFiltered, statusFilter]);
 
   const removeTagFilter = (t: string) =>
@@ -288,12 +577,7 @@ export function DocumentsTab({
   const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
   const openBulk = () => onOpenBulkRetag(selectedDocs);
   const pipelineMessages = useMemo(() => {
-    const messages = [...(pipelineStatus?.history_messages ?? [])];
-    const latest = pipelineStatus?.latest_message;
-    if (latest && messages[messages.length - 1] !== latest) {
-      messages.push(latest);
-    }
-    return messages.slice(-80);
+    return pipelineHistoryMessages(pipelineStatus);
   }, [pipelineStatus]);
   const triggerBulkDelete = () => {
     if (!onBulkDelete || selectedDocs.length === 0) return;
@@ -317,177 +601,25 @@ export function DocumentsTab({
       <div className="docs-header">
         <h1>Document management</h1>
         <div className="docs-header-actions">
-          <div className="pipeline-control">
-            <button
-              type="button"
-              className={`btn${pipelineOpen ? ' active' : ''}`}
-              title="Pipeline logs"
-              aria-expanded={pipelineOpen}
-              aria-haspopup="dialog"
-              onClick={() => onTogglePipeline?.()}
-            >
-              <Icon name="activity" size={14} />
-              Pipeline
-              <span
-                className={`pipeline-state-badge ${
-                  pipelineStatus?.busy ? 'pipeline-state-busy' : 'pipeline-state-idle'
-                }`}
-                aria-label={`Pipeline ${pipelineStatus?.busy ? 'busy' : 'idle'}`}
-              >
-                {pipelineStatus?.busy ? 'BUSY' : 'IDLE'}
-              </span>
-            </button>
-            {pipelineOpen && (
-              <dialog
-                open
-                className="pipeline-popover"
-                aria-label="Pipeline logs"
-              >
-                <div className="pp-header">
-                  <div className="pp-title">
-                    <Icon name="activity" size={14} />
-                    Pipeline
-                    <span
-                      className={`pp-state-badge ${
-                        pipelineStatus?.busy ? 'busy' : 'paused'
-                      }`}
-                    >
-                      <span className="pp-state-dot" />
-                      {pipelineStatus?.busy ? 'Busy' : 'Idle'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn small"
-                    aria-label="Close pipeline logs"
-                    onClick={() => onTogglePipeline?.()}
-                  >
-                    <Icon name="x" size={13} />
-                  </button>
-                </div>
-
-                <div className="pp-section">
-                  <div className="pp-stats">
-                    <div>
-                      <span className="pp-stat-num">
-                        {pipelineStatus?.job_count ?? 0}
-                      </span>
-                      <span className="pp-stat-lbl">Jobs</span>
-                    </div>
-                    <div>
-                      <span className="pp-stat-num">
-                        {pipelineMessages.length}
-                      </span>
-                      <span className="pp-stat-lbl">Messages</span>
-                    </div>
-                    <div className="pp-job-name">
-                      <span className="pp-stat-num">
-                        {pipelineStatus?.job_name ?? '—'}
-                      </span>
-                      <span className="pp-stat-lbl">Current job</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pp-section">
-                  <h3>Latest</h3>
-                  {pipelineError ? (
-                    <p className="pp-error">{pipelineError}</p>
-                  ) : pipelineLoading && !pipelineStatus ? (
-                    <p className="pp-empty">Loading pipeline status…</p>
-                  ) : pipelineStatus?.latest_message ? (
-                    <p className="pp-latest">{pipelineStatus.latest_message}</p>
-                  ) : (
-                    <p className="pp-empty">No pipeline message reported yet.</p>
-                  )}
-                </div>
-
-                <div className="pp-section">
-                  <h3>History</h3>
-                  {pipelineMessages.length > 0 ? (
-                    <ol className="pp-log-list">
-                      {pipelineMessages.map((message, index) => (
-                        <li key={`${index}-${message}`}>
-                          <span className="pp-log-index">
-                            {String(index + 1).padStart(2, '0')}
-                          </span>
-                          <span className="pp-log-message">{message}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  ) : (
-                    <p className="pp-empty">No history from backend.</p>
-                  )}
-                </div>
-
-                <div className="pp-footer">
-                  <span className="pp-footnote">
-                    <span
-                      className={`pp-live-pill ${
-                        pipelineLoading
-                          ? 'pp-live-pill--loading'
-                          : 'pp-live-pill--idle'
-                      }`}
-                      aria-label={`Pipeline live ${
-                        pipelineLoading ? 'refreshing' : 'idle'
-                      }`}
-                    >
-                      <span className="pp-live-dot" />
-                      LIVE
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() => onRefreshPipeline?.()}
-                  >
-                    <Icon name="refresh" size={13} />
-                    Refresh
-                  </button>
-                </div>
-              </dialog>
-            )}
-          </div>
+          <PipelineControl
+            open={pipelineOpen}
+            loading={pipelineLoading}
+            error={pipelineError}
+            status={pipelineStatus}
+            messages={pipelineMessages}
+            onToggle={onTogglePipeline}
+            onRefresh={onRefreshPipeline}
+          />
           {/* Audit C7: the only backend this action calls is
               ``POST /documents/reprocess_failed``. It stays enabled
               only when at least one source is failed and is labelled
               for that exact batch retry. */}
-          <button
-            type="button"
-            className={`btn${failedCount > 0 ? ' btn-retry' : ''}`}
-            disabled={failedCount === 0 || ingestionDisabled}
-            title={
-              ingestionDisabled
-                ? 'Memgraph instance quota reached — free space before re-processing'
-                : failedCount === 0
-                  ? 'No failed sources to re-process'
-                  : `Re-process ${failedCount} failed source${
-                      failedCount > 1 ? 's' : ''
-                    } (POST /documents/reprocess_failed)`
-            }
-            onClick={() => {
-              if (failedCount === 0 || ingestionDisabled) return;
-              if (onScanRetry) {
-                onScanRetry(failedCount);
-                return;
-              }
-              onAddToast(
-                'Re-processing failed sources',
-                'POST /documents/reprocess_failed',
-              );
-            }}
-          >
-            <Icon name="refresh" size={14} />
-            Re-process failed sources
-            {failedCount > 0 && (
-              <span
-                className="pipeline-badge"
-                aria-label={`${failedCount} failed`}
-              >
-                {failedCount}
-              </span>
-            )}
-          </button>
+          <RetryFailedButton
+            failedCount={failedCount}
+            ingestionDisabled={ingestionDisabled}
+            onScanRetry={onScanRetry}
+            onAddToast={onAddToast}
+          />
           <button
             type="button"
             className="btn primary"
@@ -651,38 +783,15 @@ export function DocumentsTab({
       </div>
 
       {selected.size > 0 && (
-        <section className="bulk-bar" aria-label="Bulk actions">
-          <span className="bulk-count">
-            <b>{selected.size}</b> selected
-            <span className="bulk-of">of {filtered.length}</span>
-          </span>
-          <button
-            type="button"
-            className="bulk-action primary"
-            onClick={openBulk}
-          >
-            <Icon name="tags" size={13} /> Retag {selected.size} sources
-          </button>
-          {onBulkDelete && (
-            <button
-              type="button"
-              className="bulk-action danger"
-              onClick={triggerBulkDelete}
-              data-testid="docs-bulk-delete"
-              aria-label={`Delete ${selected.size} sources`}
-            >
-              <Icon name="x" size={13} />{' '}
-              {bulkDeleteArmed ? `Confirm delete ${selected.size}` : `Delete ${selected.size}`}
-            </button>
-          )}
-          <button
-            type="button"
-            className="bulk-clear"
-            onClick={clearSelection}
-          >
-            <Icon name="x" size={12} /> Clear selection
-          </button>
-        </section>
+        <BulkActionsBar
+          selectedCount={selected.size}
+          filteredCount={filtered.length}
+          bulkDeleteArmed={bulkDeleteArmed}
+          onOpenBulk={openBulk}
+          onBulkDelete={onBulkDelete}
+          onTriggerBulkDelete={triggerBulkDelete}
+          onClearSelection={clearSelection}
+        />
       )}
 
       <div className="docs-table-wrap">

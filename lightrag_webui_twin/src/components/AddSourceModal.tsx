@@ -174,6 +174,84 @@ function fileUploadFromFile(file: File, rawFiles: Map<string, File>): FileUpload
   };
 }
 
+function advanceUploadProgress(file: FileUpload): FileUpload {
+  if (file.state !== 'uploading') return file;
+  const progress = Math.min(100, (file.progress ?? 0) + 4);
+  if (progress >= 100) {
+    return { ...file, state: 'uploaded', progress: 100 };
+  }
+  return {
+    ...file,
+    progress,
+    uploaded: (progress / 100) * file.size,
+  };
+}
+
+function uploadCounts(files: readonly FileUpload[], urlsCount: number) {
+  const readyFiles = files.filter((f) => f.state === 'uploaded').length;
+  const uploading = files.filter((f) => f.state === 'uploading').length;
+  const errors = files.filter((f) => f.state === 'error').length;
+  return {
+    uploading,
+    errors,
+    ready: readyFiles + urlsCount,
+  };
+}
+
+function UploadFormatTooltip({
+  show,
+  formatCategories,
+}: Readonly<{
+  show: boolean;
+  formatCategories: readonly FormatCategory[];
+}>) {
+  if (!show) return null;
+  return (
+    <div
+      className="tooltip"
+      role="tooltip"
+      style={{
+        left: '50%',
+        transform: 'translateX(-50%)',
+        top: 'calc(100% + 8px)',
+        textAlign: 'left',
+      }}
+    >
+      {formatCategories.map((c) => (
+        <div
+          key={c.cat}
+          className={c.future ? 'tooltip-row future' : 'tooltip-row'}
+        >
+          <span className="cat">{c.cat}</span>
+          <span className="fmts">{c.fmts}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UploadStatusText({
+  uploading,
+  errors,
+  ready,
+  fileCount,
+}: Readonly<{
+  uploading: number;
+  errors: number;
+  ready: number;
+  fileCount: number;
+}>) {
+  if (uploading > 0) return <>Uploading {uploading} of {fileCount} files…</>;
+  if (errors > 0) {
+    return (
+      <>
+        {errors} error{errors > 1 ? 's' : ''} · {ready} ready
+      </>
+    );
+  }
+  return ready > 0 ? <>{ready} ready to ingest</> : null;
+}
+
 export function AddSourceModal({
   open,
   tagCatalog,
@@ -219,20 +297,7 @@ export function AddSourceModal({
   useEffect(() => {
     if (!open) return;
     const tick = setInterval(() => {
-      setFiles((fs) =>
-        fs.map((f) => {
-          if (f.state !== 'uploading') return f;
-          const np = Math.min(100, (f.progress ?? 0) + 4);
-          if (np >= 100) {
-            return { ...f, state: 'uploaded', progress: 100 };
-          }
-          return {
-            ...f,
-            progress: np,
-            uploaded: (np / 100) * f.size,
-          };
-        }),
-      );
+      setFiles((fs) => fs.map(advanceUploadProgress));
     }, 320);
     return () => clearInterval(tick);
   }, [open]);
@@ -257,10 +322,7 @@ export function AddSourceModal({
   };
   const removeTag = (t: string) => setTags(tags.filter((x) => x !== t));
 
-  const readyFiles = files.filter((f) => f.state === 'uploaded').length;
-  const uploading = files.filter((f) => f.state === 'uploading').length;
-  const errors = files.filter((f) => f.state === 'error').length;
-  const ready = readyFiles + urls.length;
+  const { uploading, errors, ready } = uploadCounts(files, urls.length);
 
   const submit = () => {
     if (ready === 0) return;
@@ -352,28 +414,10 @@ export function AddSourceModal({
                 style={{ position: 'relative' }}
               >
                 <Icon name="info-circle" size={13} />
-                {showTooltip && (
-                  <div
-                    className="tooltip"
-                    role="tooltip"
-                    style={{
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      top: 'calc(100% + 8px)',
-                      textAlign: 'left',
-                    }}
-                  >
-                    {formatCategories.map((c) => (
-                      <div
-                        key={c.cat}
-                        className={c.future ? 'tooltip-row future' : 'tooltip-row'}
-                      >
-                        <span className="cat">{c.cat}</span>
-                        <span className="fmts">{c.fmts}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <UploadFormatTooltip
+                  show={showTooltip}
+                  formatCategories={formatCategories}
+                />
               </span>
               <span style={{ color: 'var(--color-text-tertiary)' }}>
                 {' '}· max 50 MB per file
@@ -539,12 +583,12 @@ export function AddSourceModal({
 
         <div className="modal-footer">
           <div className="status">
-            {uploading > 0 &&
-              `Uploading ${uploading} of ${files.length} files…`}
-            {uploading === 0 && errors > 0 &&
-              `${errors} error${errors > 1 ? 's' : ''} · ${ready} ready`}
-            {uploading === 0 && errors === 0 && ready > 0 &&
-              `${ready} ready to ingest`}
+            <UploadStatusText
+              uploading={uploading}
+              errors={errors}
+              ready={ready}
+              fileCount={files.length}
+            />
           </div>
           <div className="actions">
             <button
