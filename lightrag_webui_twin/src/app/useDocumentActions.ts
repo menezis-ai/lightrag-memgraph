@@ -100,12 +100,6 @@ function patchOptimisticUploadDocs(
     .filter((doc) => !failedIds.has(doc.doc_id));
 }
 
-function successfulTrackIds(results: readonly UploadResult[]): string[] {
-  return results.flatMap((result) =>
-    result.status === 'fulfilled' ? [result.value.track_id] : [],
-  );
-}
-
 function recordUploadAudit(
   results: readonly UploadResult[],
   uploadInputs: readonly UploadDocumentInput[],
@@ -123,6 +117,50 @@ function recordUploadAudit(
         ]
       : [],
   );
+}
+
+function uploadResultTrackIds(results: readonly UploadResult[]): string[] {
+  return results.flatMap((result) =>
+    result.status === 'fulfilled' ? [result.value.track_id] : [],
+  );
+}
+
+function buildOptimisticUploadState(
+  optimisticDocs: readonly Document[],
+  results: readonly UploadResult[],
+) {
+  const failedOptimisticIds = failedOptimisticUploadIds(optimisticDocs, results);
+  const acceptedByOptimisticId = acceptedUploadsByOptimisticId(
+    optimisticDocs,
+    results,
+  );
+  return {
+    failedOptimisticIds,
+    acceptedByOptimisticId,
+  };
+}
+
+function dispatchUploadAudit(
+  results: readonly UploadResult[],
+  uploadInputs: readonly UploadDocumentInput[],
+  actor: string,
+  activity: { refetch: () => unknown },
+) {
+  const uploadAuditWrites = recordUploadAudit(results, uploadInputs, actor);
+  Promise.allSettled(uploadAuditWrites)
+    .then(() => activity.refetch())
+    .catch(() => undefined);
+}
+
+function maybeApplyInitialTags(
+  results: readonly UploadResult[],
+  tags: readonly string[],
+  applyInitialTagsAfterIngestion: (trackIds: readonly string[], tags: readonly string[]) => Promise<void>,
+) {
+  if (!tags.length) return;
+  const trackIds = uploadResultTrackIds(results);
+  if (trackIds.length === 0) return;
+  void applyInitialTagsAfterIngestion(trackIds, tags);
 }
 
 function pushUploadSummaryToast(
@@ -480,14 +518,11 @@ export function useDocumentActions({
 
     const results: readonly UploadResult[] = await uploadDocs.mutateAsync(uploadInputs);
     setAddOpen(false);
-    const failedOptimisticIds = failedOptimisticUploadIds(
-      optimisticDocs,
-      results,
-    );
-    const acceptedByOptimisticId = acceptedUploadsByOptimisticId(
-      optimisticDocs,
-      results,
-    );
+
+    const {
+      failedOptimisticIds,
+      acceptedByOptimisticId,
+    } = buildOptimisticUploadState(optimisticDocs, results);
     const acceptedTrackIds = Array.from(acceptedByOptimisticId.values()).map(
       (result) => result.track_id,
     );
@@ -500,18 +535,8 @@ export function useDocumentActions({
     );
 
     pushUploadSummaryToast(results, action.tags, pushToast);
-
-    const uploadAuditWrites = recordUploadAudit(results, uploadInputs, currentActor);
-    Promise.allSettled(uploadAuditWrites)
-      .then(() => activity.refetch())
-      .catch(() => undefined);
-
-    if (action.tags.length > 0) {
-      const trackIds = successfulTrackIds(results);
-      if (trackIds.length > 0) {
-        void applyInitialTagsAfterIngestion(trackIds, action.tags);
-      }
-    }
+    dispatchUploadAudit(results, uploadInputs, currentActor, activity);
+    maybeApplyInitialTags(results, action.tags, applyInitialTagsAfterIngestion);
     void refreshDocumentsUntilUploadsLand(acceptedTrackIds);
   };
 

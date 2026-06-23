@@ -915,7 +915,7 @@ def _determine_stream_status(envelope, stripper) -> tuple[AnswerStatus, str | No
     return status, fatal_reason
 
 
-async def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
+def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
     """Body of ``POST /twin/api/query/stream`` (NDJSON tokens + sources event)."""
     try:
         rag = get_rag()
@@ -1026,7 +1026,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
         "/query/stream",
         responses={500: {"description": "Query backend error"}},
     )
-    async def query_stream_endpoint(
+    def query_stream_endpoint(
         body: TwinQueryBody, request: Request
     ) -> StreamingResponse:
         """Stream the LightRAG answer as NDJSON and emit a final sources event.
@@ -1068,7 +1068,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
-        return await _twin_query_stream(get_rag, body, request)
+        return _twin_query_stream(get_rag, body, request)
 
     return router
 

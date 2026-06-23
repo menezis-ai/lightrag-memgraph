@@ -160,48 +160,80 @@ function EntityRelationList({
   return (
     <ul className="kg-rel-list">
       {rels.map((rel) => {
-        const endpoint = nodes.find((node) =>
-          direction === 'outgoing'
-            ? node.id === rel.target
-            : node.id === rel.source,
-        );
+        const endpoint = relationEndpoint(direction, nodes, rel);
         if (!endpoint) return null;
         return (
-          <li key={rel.id}>
-            <button
-              type="button"
-              className="kg-rel-row"
-              onClick={() => onSelectRelation(rel.id)}
-              data-testid={`kg-rel-row-${rel.id}`}
-            >
-              {direction === 'outgoing' && <span className="kg-rel-arrow">→</span>}
-              {direction === 'outgoing' && (
-                <code className="kg-rel-label">{rel.label}</code>
-              )}
-              <span className="kg-rel-target">
-                <span
-                  className="kg-rel-swatch"
-                  style={{ background: colors[endpoint.type] }}
-                />
-                <span className="kg-rel-target-name">{endpoint.name}</span>
-              </span>
-              {direction === 'incoming' && (
-                <>
-                  <code className="kg-rel-label">{rel.label}</code>
-                  <span className="kg-rel-arrow">→</span>
-                </>
-              )}
-              <span
-                className="kg-rel-strength"
-                title={`strength ${rel.strength.toFixed(2)}`}
-              >
-                {Math.round(rel.strength * 100)}
-              </span>
-            </button>
-          </li>
+          <GraphRelationRow
+            key={rel.id}
+            rel={rel}
+            direction={direction}
+            endpoint={endpoint}
+            colors={colors}
+            onSelectRelation={onSelectRelation}
+          />
         );
       })}
     </ul>
+  );
+}
+
+interface GraphRelationRowProps {
+  rel: GraphRelation;
+  direction: 'outgoing' | 'incoming';
+  endpoint: GraphEntity;
+  colors: Record<GraphEntityType, string>;
+  onSelectRelation: (id: string) => void;
+}
+
+function relationEndpoint(
+  direction: 'outgoing' | 'incoming',
+  nodes: readonly GraphEntity[],
+  rel: GraphRelation,
+): GraphEntity | undefined {
+  const relationEndpointId = direction === 'outgoing' ? rel.target : rel.source;
+  return nodes.find((node) => node.id === relationEndpointId);
+}
+
+function GraphRelationRow({
+  rel,
+  direction,
+  endpoint,
+  colors,
+  onSelectRelation,
+}: Readonly<GraphRelationRowProps>) {
+  const relationLabel = <code className="kg-rel-label">{rel.label}</code>;
+
+  return (
+    <li>
+      <button
+        type="button"
+        className="kg-rel-row"
+        onClick={() => onSelectRelation(rel.id)}
+        data-testid={`kg-rel-row-${rel.id}`}
+      >
+        {direction === 'outgoing' && <span className="kg-rel-arrow">→</span>}
+        {direction === 'outgoing' && relationLabel}
+        <span className="kg-rel-target">
+          <span
+            className="kg-rel-swatch"
+            style={{ background: colors[endpoint.type] }}
+          />
+          <span className="kg-rel-target-name">{endpoint.name}</span>
+        </span>
+        {direction === 'incoming' && (
+          <>
+            {relationLabel}
+            <span className="kg-rel-arrow">→</span>
+          </>
+        )}
+        <span
+          className="kg-rel-strength"
+          title={`strength ${rel.strength.toFixed(2)}`}
+        >
+          {Math.round(rel.strength * 100)}
+        </span>
+      </button>
+    </li>
   );
 }
 

@@ -104,7 +104,7 @@ export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
   const out: AnswerPart[] = [];
   const parseInline = (text: string): InlineAnswerPart[] => {
     const parts: InlineAnswerPart[] = [];
-    const re = /\*\*([^*]+)\*\*|\{cite:(\d+)\}|\[\^?(\d+)\]|`([^`]+)`/g;
+    const re = /(?:\*\*([^*]+)\*\*|\{cite:(\d+)\}|\[\^?(\d+)\]|`([^`]+)`)/g;
     let last = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {

@@ -283,7 +283,9 @@ async def snapshot() -> dict[str, Any]:
     license_limit = _pick(indexed, _LICENSE_LIMIT_KEYS)
     billed: int | None = None
     if graph is not None:
-        billed = graph + (vector if (vectors_billed and vector is not None) else 0)
+        billed = graph
+        if vectors_billed and vector is not None:
+            billed += vector
     billed_pct = _pct(billed, license_limit)
 
     # Headline = the binding wall (closest to its cap) → the banner alerts

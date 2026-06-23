@@ -338,7 +338,11 @@ async def _consume_operator_key(token: str) -> str | None:
     try:
         task = asyncio.create_task(api_key_store.mark_used(workspace, key_id))
         _api_key_mark_used_tasks.add(task)
-        task.add_done_callback(_api_key_mark_used_tasks.discard)
+
+        def _cleanup_mark_used(done: asyncio.Task[Any]) -> None:
+            _api_key_mark_used_tasks.discard(done)
+
+        task.add_done_callback(_cleanup_mark_used)
     except Exception:  # noqa: BLE001
         logger.exception("[auth] mark_used schedule failed")
     return f"api_key:{key_id}"
