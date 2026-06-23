@@ -101,10 +101,11 @@ export function Topbar({
         aria-label="Open Documents"
         title="Open Documents"
       >
-        <div className="brand-mark">TR</div>
+        <div className="brand-mark">TK</div>
         <span className="brand-name">
           <span>Twin</span>
-          <span className="brand-accent">RAG</span>
+          {' '}
+          <span className="brand-accent">KMS</span>
         </span>
         <span className="brand-sep">|</span>
         <span className="brand-kb" title="TWIN_KB_DISPLAY_NAME (env)">

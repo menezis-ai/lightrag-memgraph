@@ -1,8 +1,8 @@
-# TwinRAG 1.0.0 Release Candidate Checklist
+# Twin KMS 1.0.0 Release Candidate Checklist
 
 Date: 2026-06-21
 
-Scope: close the TwinRAG 1.0.0 development train and prepare a production
+Scope: close the Twin KMS 1.0.0 development train and prepare a production
 release candidate from a clean checkout/image.
 
 ## Required Gates

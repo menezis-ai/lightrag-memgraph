@@ -34,7 +34,7 @@ logger = logging.getLogger("twin_rag_intelligence")
 
 class TwinRAGEngine:
     """
-    RAG Intelligence engine for TwinDB.
+    RAG intelligence engine for Twin KMS.
 
     Encapsulates the full pipeline:
     F05 (Intent) -> REASON (Coref + F03 Expansion) -> ACT (Search + F04 Rerank) -> OBSERVE (Synthesis)

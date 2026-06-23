@@ -990,7 +990,7 @@ def _patch_security_baseline() -> None:
 
 
 _RUNTIME_INSTALL_REFUSED_MSG = (
-    "Runtime pip install blocked by TwinRAG security baseline (pipmaster "
+    "Runtime pip install blocked by Twin KMS security baseline (pipmaster "
     "neutralized). All dependencies must be pinned in pyproject.toml and "
     "resolved at build time. Attempted: {package!r}. "
     "See audit Prisme G §1 (supply-chain integrity, DORA art. 9). "
@@ -1099,7 +1099,7 @@ def _disable_lightrag_dependency_autoinstall() -> None:
     def _noop():
         logger.warning(
             "twindb: %s.check_and_install_dependencies "
-            "was called but is a no-op under TwinRAG security baseline. "
+            "was called but is a no-op under Twin KMS security baseline. "
             "Verify uvicorn/tiktoken/fastapi are pinned in pyproject.toml.",
             LIGHTRAG_SERVER_MODULE,
         )
@@ -1531,7 +1531,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         "twindb: WebUI mount at /webui swapped → %s (with __TWIN_CONFIG_JSON__ substitution)",
         webui_dist,
     )
-    logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount /webui ready)")
+    logger.info("Chargement de Twin KMS UI réussie ✨💅 (mount /webui ready)")
 
 
 def _build_twin_static_files(webui_dist: str):
@@ -1579,7 +1579,7 @@ def _build_twin_static_files(webui_dist: str):
                 if not self._first_serve_logged:
                     self._first_serve_logged = True
                     logger.info(
-                        "Chargement de TwinRAG UI réussie ✨💅 "
+                        "Chargement de Twin KMS UI réussie ✨💅 "
                         "(first index.html served from %s)",
                         self._template_path,
                     )
@@ -1667,7 +1667,7 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = TWIN_UI_PREFIX) -> None:
         prefix,
         webui_dist,
     )
-    logger.info("Chargement de TwinRAG UI réussie ✨💅 (mount %s ready)", prefix)
+    logger.info("Chargement de Twin KMS UI réussie ✨💅 (mount %s ready)", prefix)
 
 
 def _kill_native_webui(app, twin_prefix: str = TWIN_UI_PREFIX) -> None:
@@ -1855,7 +1855,7 @@ async def _init_overlay_memgraph_stores(
             ",".join(folder.id for folder in catalog.folders),
         )
         logger.info(
-            "Chargement de TwinRAG backend Memgraph réussi "
+            "Chargement de Twin KMS backend Memgraph réussi "
             "(UI disponible sur /twin/, API disponible sur /twin/api)"
         )
     except Exception:

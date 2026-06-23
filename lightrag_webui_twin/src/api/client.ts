@@ -1,5 +1,5 @@
 /**
- * Thin typed fetch wrapper for the Twin RAG backend.
+ * Thin typed fetch wrapper for the Twin KMS backend.
  *
  * Runtime contract:
  *   globalThis.__twinConfig.apiBaseUrl      — Twin overlay base, e.g. /twin/api.

@@ -524,7 +524,7 @@ GRAPH_ENTITIES: list[dict[str, Any]] = [
     {"id": "e_memgraph", "name": "Memgraph", "type": "PRODUCT", "x": 470, "y": 480, "mentions": 156, "sources": 19, "summary": "Graph DB backing LightRAG entity/relation storage."},
     {"id": "e_mage", "name": "MAGE 3.8", "type": "PRODUCT", "x": 560, "y": 560, "mentions": 84, "sources": 7, "summary": "Memgraph Algorithm Extensions Engine — vector_search modules."},
     {"id": "e_cypher", "name": "Cypher", "type": "TECHNOLOGY", "x": 360, "y": 540, "mentions": 109, "sources": 12, "summary": "Graph query language used for pre-filter retrieval."},
-    {"id": "e_lightrag", "name": "LightRAG", "type": "PRODUCT", "x": 250, "y": 460, "mentions": 274, "sources": 28, "summary": "Open-source retrieval framework forked into Twin RAG."},
+    {"id": "e_lightrag", "name": "LightRAG", "type": "PRODUCT", "x": 250, "y": 460, "mentions": 274, "sources": 28, "summary": "Open-source retrieval framework forked into Twin KMS."},
     {"id": "e_swift", "name": "SWIFT", "type": "ORG", "x": 820, "y": 130, "mentions": 198, "sources": 17, "summary": "Society for Worldwide Interbank Financial Telecommunication."},
     {"id": "e_iso20022", "name": "ISO 20022", "type": "CONCEPT", "x": 880, "y": 230, "mentions": 142, "sources": 14, "summary": "XML messaging standard for financial transactions; SWIFT migration target."},
     {"id": "e_cft", "name": "CFT", "type": "PRODUCT", "x": 780, "y": 330, "mentions": 92, "sources": 11, "summary": "Cross File Transfer middleware — Axway product."},

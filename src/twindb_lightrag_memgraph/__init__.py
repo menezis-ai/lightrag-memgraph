@@ -41,7 +41,7 @@ def _sync_public_module_from_registry() -> None:
 
 
 def register(*args, **kwargs) -> None:
-    """Register TwinDB Memgraph patches through the split registry module."""
+    """Register Twin KMS Memgraph patches through the split registry module."""
     global _registered
     _sync_registry_from_public_module()
     _registry.register(*args, **kwargs)

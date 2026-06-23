@@ -16,7 +16,7 @@ The probe calls the truthful Twin query contract:
 
 ## Run
 
-Start a real TwinRAG server, then run:
+Start a real Twin KMS server, then run:
 
 ```bash
 python3 scripts/retrieval_tuning_probe.py \

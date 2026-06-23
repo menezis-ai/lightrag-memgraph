@@ -42,7 +42,7 @@ test.describe('Login screen', () => {
     page,
   }) => {
     await bootToLogin(page);
-    await expect(page.getByRole('heading', { name: 'TwinRAG' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Twin KMS' })).toBeVisible();
     await expect(page.getByTestId('login-submit')).toBeDisabled();
 
     await page.getByTestId('login-username').fill('claire.benoit');

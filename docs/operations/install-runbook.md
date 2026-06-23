@@ -148,12 +148,12 @@ sudo chown twinrag:twinrag /opt/twinrag/.env
 
 ### 3.3 — Création du wrapper de démarrage qui appelle `register()`
 
-Le script `register_and_serve.py` est le point d'entrée minimal qui active les flags TwinRAG **avant** de lancer LightRAG :
+Le script `register_and_serve.py` est le point d'entrée minimal qui active les flags Twin KMS **avant** de lancer LightRAG :
 
 ```bash
 sudo -u twinrag tee /opt/twinrag/register_and_serve.py > /dev/null <<'PY'
 #!/usr/bin/env python3
-"""Active TwinRAG extensions, puis délègue à lightrag.api.lightrag_server."""
+"""Active Twin KMS extensions, puis délègue à lightrag.api.lightrag_server."""
 import twindb_lightrag_memgraph
 
 twindb_lightrag_memgraph.register(
@@ -173,7 +173,7 @@ sudo chmod 755 /opt/twinrag/register_and_serve.py
 ```bash
 sudo tee /etc/systemd/system/twinrag.service > /dev/null <<'UNIT'
 [Unit]
-Description=TwinRAG (LightRAG + register patch)
+Description=Twin KMS (LightRAG + register patch)
 After=network.target
 
 [Service]
@@ -293,7 +293,7 @@ try:
     print("FAIL: pipmaster.install n'a PAS été bloqué")
     raise SystemExit(1)
 except RuntimeError as e:
-    if "TwinRAG security baseline" in str(e):
+    if "Twin KMS security baseline" in str(e):
         print("OK: pipmaster.install bloqué par la security baseline")
     else:
         print(f"FAIL: erreur inattendue: {e}")
@@ -332,7 +332,7 @@ sudo journalctl -u twinrag -n 30 --no-pager | grep -i "PATCH APPLIED SUCCESSFULL
 
 ### 5.3 — Surveillance Memgraph
 
-Voir le runbook Memgraph dédié — TwinRAG n'a pas de spécificité au-delà de la connectivité Bolt.
+Voir le runbook Memgraph dédié — Twin KMS n'a pas de spécificité au-delà de la connectivité Bolt.
 
 ### 5.4 — Métriques
 
@@ -397,7 +397,7 @@ Puis modifier `register_and_serve.py` pour supprimer l'import `twindb_lightrag_m
 
 ## §7 — Troubleshooting
 
-### 7.1 — `RuntimeError: Runtime pip install blocked by TwinRAG security baseline`
+### 7.1 — `RuntimeError: Runtime pip install blocked by Twin KMS security baseline`
 
 **Symptôme** : un boot du service échoue en relayant ce message.
 **Cause** : LightRAG natif (ou une lib appelée) tente un install runtime via `pipmaster`. La baseline a fait son travail.

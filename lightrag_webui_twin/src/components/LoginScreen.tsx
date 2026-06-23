@@ -32,9 +32,9 @@ export function LoginScreen({
     <main className="login-shell" data-testid="login-screen">
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-brand">
-          <div className="brand-mark">TR</div>
+          <div className="brand-mark">TK</div>
           <div>
-            <h1 id="login-title">TwinRAG</h1>
+            <h1 id="login-title">Twin KMS</h1>
             <p>Knowledge console</p>
           </div>
         </div>

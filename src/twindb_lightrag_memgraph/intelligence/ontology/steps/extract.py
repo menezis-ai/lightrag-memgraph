@@ -158,7 +158,7 @@ async def extract(
     Args:
         document: Document text content.
         doc_id: Document identifier.
-        config: TwinRAG configuration.
+        config: Twin KMS configuration.
         ws_config: Workspace ontology configuration.
         dsep_enabled: Whether to include DSEP constraints.
         pass_type: None for single-pass (default behavior),

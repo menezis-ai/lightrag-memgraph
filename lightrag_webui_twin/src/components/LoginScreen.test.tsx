@@ -18,10 +18,10 @@ describe('LoginScreen', () => {
     expect(onLogin).toHaveBeenCalledWith('twinadmin', 'secret');
   });
 
-  it('uses the TwinRAG product name in the login brand', () => {
+  it('uses the Twin KMS product name in the login brand', () => {
     render(<LoginScreen onLogin={vi.fn()} />);
     expect(
-      screen.getByRole('heading', { name: 'TwinRAG' }),
+      screen.getByRole('heading', { name: 'Twin KMS' }),
     ).toBeInTheDocument();
   });
 

@@ -1,4 +1,4 @@
-"""Explicit TwinRAG entrypoint for LightRAG container deployments.
+"""Explicit Twin KMS entrypoint for LightRAG container deployments.
 
 Do not rely on ``sitecustomize`` for production activation. Some launchers and
 ``python -m`` execution paths can import/execute the LightRAG server in a way

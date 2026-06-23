@@ -1,4 +1,4 @@
-# lightrag-memgraph
+# Twin KMS
 
 Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**.
 

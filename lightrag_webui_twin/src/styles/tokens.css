@@ -1,10 +1,10 @@
-/* Twin RAG design tokens — ported verbatim from the design proto (Desktop/UI/styles.css).
+/* Twin KMS design tokens — ported verbatim from the design proto (Desktop/UI/styles.css).
  * Kept as plain CSS variables (no compile step). Tailwind references them via tailwind.config.js.
  * Light mode defaults; [data-theme="dark"] overrides below.
  */
 
 :root {
-  /* Tier accent (default Twin RAG = blue) */
+  /* Tier accent (default Twin KMS = blue) */
   --twin-accent: #3871B4;
   --twin-accent-hover: #2D5A8E;
   --twin-accent-strong: #1B5BAE;

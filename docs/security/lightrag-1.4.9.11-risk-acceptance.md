@@ -31,7 +31,7 @@ pinned for this release train. Moving the pin now would reopen compatibility
 risk across the Memgraph storage patches, native route shims, query envelope
 projection, and WebUI route parity.
 
-The vulnerable upstream surface is authentication-related. The TwinRAG overlay
+The vulnerable upstream surface is authentication-related. The Twin KMS overlay
 has already added local controls around that area:
 
 - production mode fails closed when `TWIN_ENV=production` or

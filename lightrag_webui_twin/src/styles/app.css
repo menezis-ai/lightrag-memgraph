@@ -7,9 +7,9 @@
  * ============================================================ */
 
 /* ========================= legacy.css ========================= */
-/* ----- Twin RAG tokens ----- */
+/* ----- Twin KMS tokens ----- */
 :root {
-  /* Tier accent (default Twin RAG = blue) */
+  /* Tier accent (default Twin KMS = blue) */
   --twin-accent: #3871B4;
   --twin-accent-hover: #2D5A8E;
   --twin-accent-soft-bg: #E6EFF8;

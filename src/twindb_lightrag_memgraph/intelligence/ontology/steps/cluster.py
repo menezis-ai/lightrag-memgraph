@@ -74,7 +74,7 @@ async def cluster(
 
     Args:
         extraction: Result from the EXTRACT step.
-        config: TwinRAG configuration.
+        config: Twin KMS configuration.
 
     Returns:
         ClusterResult with domain clusters.

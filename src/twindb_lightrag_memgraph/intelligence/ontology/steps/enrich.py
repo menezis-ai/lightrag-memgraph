@@ -74,7 +74,7 @@ async def enrich(
 
     Args:
         cluster_result: Result from the CLUSTER step.
-        config: TwinRAG configuration.
+        config: Twin KMS configuration.
 
     Returns:
         EnrichmentResult with new relations.
