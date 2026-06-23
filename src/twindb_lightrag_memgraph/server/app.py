@@ -548,7 +548,7 @@ def _register_core_routes(
     """Register the auth-protected core routes (/health, /ready, /query, /insert)."""
 
     @app.get("/health", response_model=HealthResponse)
-    async def health():
+    def health():
         from twindb_lightrag_memgraph import __version__ as plugin_version
         from .tracing import is_tracing_enabled
 
@@ -755,7 +755,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     logger.info("Quota snapshot route mounted at %s/quota", TWIN_API_PREFIX)
 
     @app.get(TWIN_API_PREFIX + "/ops/metrics", dependencies=[Depends(require_auth)])
-    async def operational_metrics():
+    def operational_metrics():
         return metrics_snapshot()
 
     # -- Instance quota + operational middleware. Quota is registered first

@@ -150,10 +150,10 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     e,
                 )
 
-    async def finalize(self):
+    async def finalize(self):  # NOSONAR - async contract.
         pass  # Shared driver; closed globally via _pool.close_driver()
 
-    async def index_done_callback(self):
+    async def index_done_callback(self):  # NOSONAR - async contract.
         pass  # Memgraph persists automatically, no flush needed
 
     def _parse_meta_field(self, val: Any) -> Any:

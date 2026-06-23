@@ -576,7 +576,7 @@ async def auth_status(
 
 
 @auth_router.post("/login")
-async def login(body: LoginRequest, response: Response) -> LoginResponse:
+async def login(body: LoginRequest, response: Response) -> LoginResponse:  # NOSONAR - async contract.
     """Authenticate with username/password and receive a JWT token."""
     if not _jwt_secret:
         raise HTTPException(
@@ -616,6 +616,6 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
 
 
 @auth_router.post("/logout")
-async def logout(response: Response) -> dict[str, bool]:
+def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(_local_jwt_cookie_name, path="/")
     return {"ok": True}

@@ -48,9 +48,9 @@ class TagStore(Protocol):
 
     def list_tags(self) -> list[dict[str, Any]]: ...
     def list_categories(self) -> list[dict[str, Any]]: ...
-    async def get_tag(self, tag: str) -> dict[str, Any] | None: ...
-    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]: ...
-    async def delete_tag(self, tag: str) -> bool: ...
+    async def get_tag(self, tag: str) -> dict[str, Any] | None: ...  # NOSONAR - async contract.
+    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]: ...  # NOSONAR - async contract.
+    async def delete_tag(self, tag: str) -> bool: ...  # NOSONAR - async contract.
 
 
 # ---------------------------------------------------------------------------
@@ -77,13 +77,13 @@ class InMemoryTagStore:
     def list_categories(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._categories)
 
-    async def get_tag(self, tag: str) -> dict[str, Any] | None:
+    async def get_tag(self, tag: str) -> dict[str, Any] | None:  # NOSONAR - async contract.
         for entry in self._tags:
             if entry["tag"] == tag:
                 return copy.deepcopy(entry)
         return None
 
-    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]:
+    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
         name = entry["tag"]
         for i, existing in enumerate(self._tags):
             if existing["tag"] == name:
@@ -92,7 +92,7 @@ class InMemoryTagStore:
         self._tags.append(copy.deepcopy(entry))
         return copy.deepcopy(entry)
 
-    async def delete_tag(self, tag: str) -> bool:
+    async def delete_tag(self, tag: str) -> bool:  # NOSONAR - async contract.
         before = len(self._tags)
         self._tags = [t for t in self._tags if t["tag"] != tag]
         return len(self._tags) < before

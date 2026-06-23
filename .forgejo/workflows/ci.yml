@@ -239,7 +239,6 @@ jobs:
     runs-on: [self-hosted, high]
     env:
       MEMGRAPH_URI: bolt://memgraph:7687
-      REAL_BACKEND_URL: http://127.0.0.1:9621
       REAL_BACKEND_FOLDER: default
       REAL_BACKEND_AUTH_TOKEN: real-e2e-token
       VITE_AUTH_TOKEN: real-e2e-token
@@ -287,7 +286,7 @@ jobs:
           docker run -d \
             --name "$backend" \
             --network "$net" \
-            -p 127.0.0.1:9621:9621 \
+            -p 127.0.0.1::9621 \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
             -v "$PWD:/work" \
@@ -310,6 +309,13 @@ jobs:
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
             sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -c requirements/constraints-prod.txt -e ".[intelligence,server,test]" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+
+          backend_port="$(docker port "$backend" 9621/tcp | sed -n 's/^127\.0\.0\.1://p' | head -n 1)"
+          if [ -z "$backend_port" ]; then
+            docker port "$backend" || true
+            exit 1
+          fi
+          printf 'REAL_BACKEND_URL=http://127.0.0.1:%s\n' "$backend_port" >> "$GITHUB_ENV"
 
       - name: Wait for real backend
         run: |
@@ -411,14 +417,13 @@ jobs:
     # Same adversarial API-coverage protocol as webui-e2e-real, but every
     # request is authenticated with a key MINTED THROUGH the Settings -> API
     # keys endpoint (api_key_store), proving generated keys are real
-    # credentials. Separate runner + its own backend on port 9622 (distinct
-    # container/network names) so it can run beside webui-e2e-real without
-    # colliding. No fixture seed: the coverage is adversarial (unknown ids,
-    # malformed input, anonymous), so it needs no pre-seeded documents.
+    # credentials. Docker allocates a free host port for the backend so repeated
+    # runs on the same self-hosted runner cannot collide with stale listeners.
+    # No fixture seed: the coverage is adversarial (unknown ids, malformed
+    # input, anonymous), so it needs no pre-seeded documents.
     runs-on: [self-hosted, high]
     env:
       MEMGRAPH_URI: bolt://memgraph:7687
-      REAL_BACKEND_URL: http://127.0.0.1:9622
       REAL_BACKEND_FOLDER: default
       REAL_BACKEND_AUTH_TOKEN: real-e2e-token
       VITE_AUTH_TOKEN: real-e2e-token
@@ -463,7 +468,7 @@ jobs:
           docker run -d \
             --name "$backend" \
             --network "$net" \
-            -p 127.0.0.1:9622:9622 \
+            -p 127.0.0.1::9622 \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp \
             -v "$PWD:/work" \
@@ -486,6 +491,13 @@ jobs:
             -e TWIN_FOLDERS_JSON="$TWIN_FOLDERS_JSON" \
             python:3.12-bookworm \
             sh -lc 'python -m venv /tmp/venv && . /tmp/venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -c requirements/constraints-prod.txt -e ".[intelligence,server,test]" && python -c "import twindb_lightrag_memgraph; twindb_lightrag_memgraph.register(mount_server=True, shim_native_routes=True, webui_stores=\"memgraph\"); from lightrag.api.lightrag_server import main; main()"'
+
+          backend_port="$(docker port "$backend" 9622/tcp | sed -n 's/^127\.0\.0\.1://p' | head -n 1)"
+          if [ -z "$backend_port" ]; then
+            docker port "$backend" || true
+            exit 1
+          fi
+          printf 'REAL_BACKEND_URL=http://127.0.0.1:%s\n' "$backend_port" >> "$GITHUB_ENV"
 
       - name: Wait for real backend (keygen)
         run: |

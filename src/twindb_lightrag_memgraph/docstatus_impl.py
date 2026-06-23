@@ -153,10 +153,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             await self._backfill_missing_folders(session, label)
         logger.info(f"[MemgraphDocStatus:{self.workspace}] Indexes created on :{label}")
 
-    async def finalize(self):
+    async def finalize(self):  # NOSONAR - async contract.
         pass  # Shared driver; closed globally via _pool.close_driver()
 
-    async def index_done_callback(self):
+    async def index_done_callback(self):  # NOSONAR - async contract.
         pass  # Memgraph persists automatically, no flush needed
 
     # ── Serialization helpers ──────────────────────────────────────────

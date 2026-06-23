@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.get("/folders", response_model=list[Folder])
-async def list_folders() -> list[dict[str, Any]]:
+def list_folders() -> list[dict[str, Any]]:
     active = current_folder_id()
     return [
         folder.as_api(current=folder.id == active)

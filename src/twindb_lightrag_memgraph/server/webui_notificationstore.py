@@ -32,17 +32,17 @@ class InMemoryNotificationStore:
     def __init__(self, items: list[dict[str, Any]] | None = None) -> None:
         self._items = copy.deepcopy(items if items is not None else webui_seed.NOTIFICATIONS)
 
-    async def list(self) -> list[dict[str, Any]]:
+    async def list(self) -> list[dict[str, Any]]:  # NOSONAR - async contract.
         return copy.deepcopy(self._items)
 
-    async def mark_all_read(self) -> None:
+    async def mark_all_read(self) -> None:  # NOSONAR - async contract.
         for n in self._items:
             n["read"] = True
 
-    async def clear(self) -> None:
+    async def clear(self) -> None:  # NOSONAR - async contract.
         self._items.clear()
 
-    async def push(self, notification: dict[str, Any]) -> dict[str, Any]:
+    async def push(self, notification: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
         stored = copy.deepcopy(notification)
         # Newest-first: prepend.
         self._items.insert(0, stored)

@@ -1009,7 +1009,7 @@ def _refuse_runtime_install(*args, **kwargs):
     raise RuntimeError(_RUNTIME_INSTALL_REFUSED_MSG.format(package=pkg))
 
 
-async def _refuse_runtime_install_async(*args, **kwargs):
+async def _refuse_runtime_install_async(*args, **kwargs):  # NOSONAR - async contract.
     return _refuse_runtime_install(*args, **kwargs)
 
 
@@ -1510,7 +1510,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
         if fpath.is_file():
             captured = str(fpath)
 
-            async def _serve(path=captured):
+            def _serve(path=captured):
                 return FileResponse(path)
 
             app.get(f"/{fname}", include_in_schema=False)(_serve)
@@ -1522,7 +1522,7 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
     if msw_path.is_file():
         captured_msw = str(msw_path)
 
-        async def _serve_msw():
+        def _serve_msw():
             return FileResponse(captured_msw, media_type="application/javascript")
 
         app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
@@ -1648,7 +1648,7 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = TWIN_UI_PREFIX) -> None:
         if fpath.is_file():
             captured = str(fpath)
 
-            async def _serve(path=captured):
+            def _serve(path=captured):
                 return FileResponse(path)
 
             app.get(f"/{fname}", include_in_schema=False)(_serve)
@@ -1657,7 +1657,7 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = TWIN_UI_PREFIX) -> None:
     if msw_path.is_file():
         captured_msw = str(msw_path)
 
-        async def _serve_msw():
+        def _serve_msw():
             return FileResponse(captured_msw, media_type="application/javascript")
 
         app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
@@ -1698,7 +1698,7 @@ def _kill_native_webui(app, twin_prefix: str = TWIN_UI_PREFIX) -> None:
     removed = [r for r in app.router.routes if _is_dead(r)]
     app.router.routes[:] = [r for r in app.router.routes if not _is_dead(r)]
 
-    async def _to_twin(_request):
+    def _to_twin(_request):
         return RedirectResponse(url=target, status_code=307)
 
     # Head-insert so these win over any companion native registration.

@@ -62,10 +62,10 @@ class MemgraphKVStorage(BaseKVStorage):
                         "[MemgraphKV:%s] Index creation failed: %s", self.workspace, e
                     )
 
-    async def finalize(self):
+    async def finalize(self):  # NOSONAR - async contract.
         pass  # shared driver, closed globally
 
-    async def index_done_callback(self):
+    async def index_done_callback(self):  # NOSONAR - async contract.
         pass  # Memgraph persists automatically
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:

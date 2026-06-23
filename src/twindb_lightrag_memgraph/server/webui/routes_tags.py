@@ -54,7 +54,7 @@ _CATEGORIES_TEMPLATE: list[dict[str, Any]] = [
 
 
 @router.get("/tags/categories/template")
-async def get_categories_template():
+def get_categories_template():
     """Return the canonical template JSON that operators can save + edit."""
     from fastapi.responses import JSONResponse
 

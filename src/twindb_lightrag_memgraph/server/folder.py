@@ -143,7 +143,7 @@ def resolve_folder_for_request(request: Request) -> str:
     return base_folder
 
 
-async def bind_request_folder(request: Request):
+async def bind_request_folder(request: Request):  # NOSONAR - async contract.
     folder_id = resolve_folder_for_request(request)
     request.state.folder = folder_id
     token = _active_folder_id.set(folder_id)
