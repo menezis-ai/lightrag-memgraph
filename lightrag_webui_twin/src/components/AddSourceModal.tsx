@@ -184,7 +184,7 @@ export function AddSourceModal({
   onSubmit,
   submitting = false,
 }: Readonly<AddSourceModalProps>) {
-  const modalRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
   // While an upload is in flight, neutralise close so X / backdrop / Escape
   // can't dismiss the modal mid-upload (matches LightRAG's native UX).
   const guardedClose = submitting ? () => {} : onClose;
@@ -287,11 +287,11 @@ export function AddSourceModal({
       }}
       data-testid="addsource-backdrop"
     >
-      <div
+      <dialog
+        open
         ref={modalRef}
         className="modal"
         style={{ width: 480 }}
-        role="dialog"
         aria-modal="true"
         aria-labelledby="addsource-title"
         tabIndex={-1}
@@ -313,18 +313,23 @@ export function AddSourceModal({
         </div>
 
         <div className="modal-body">
-          <div
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            data-testid="addsource-file-input"
+            onChange={(e) => {
+              appendDroppedFiles(e.target.files);
+              // Reset so re-picking the same file re-fires change.
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
             className={drag ? 'dropzone drag' : 'dropzone'}
-            role="button"
-            tabIndex={0}
             aria-label="Drop files or click to browse"
             onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
             onDragOver={(e) => {
               e.preventDefault();
               setDrag(true);
@@ -336,18 +341,6 @@ export function AddSourceModal({
               appendDroppedFiles(e.dataTransfer.files);
             }}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              data-testid="addsource-file-input"
-              onChange={(e) => {
-                appendDroppedFiles(e.target.files);
-                // Reset so re-picking the same file re-fires change.
-                e.target.value = '';
-              }}
-            />
             <Icon name="cloud-upload" size={28} color="var(--color-text-secondary)" />
             <div className="title">Drop files here or click to browse</div>
             <div className="sub">
@@ -386,7 +379,7 @@ export function AddSourceModal({
                 {' '}· max 50 MB per file
               </span>
             </div>
-          </div>
+          </button>
 
           {files.length > 0 && (
             <div>
@@ -520,17 +513,15 @@ export function AddSourceModal({
               />
             </div>
             {tagInput && tagSugg.length > 0 && (
-              <div
+              <ul
                 className="autocomplete modal-autocomplete"
-                role="listbox"
                 style={{ marginTop: 4 }}
               >
                 {tagSugg.map((s, i) => (
-                  <div
+                  <li
                     key={s.tag}
                     className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
                     onMouseDown={() => addTag(s.tag)}
-                    role="option"
                     aria-selected={i === 0}
                     data-testid={`tag-sugg-${s.tag}`}
                   >
@@ -539,9 +530,9 @@ export function AddSourceModal({
                       <span className="badge">{s.category}</span>
                     </div>
                     <div className="def">{s.def}</div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         </div>
@@ -576,7 +567,7 @@ export function AddSourceModal({
             </button>
           </div>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

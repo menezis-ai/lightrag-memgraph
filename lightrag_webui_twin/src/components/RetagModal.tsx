@@ -54,7 +54,7 @@ export function RetagModal({
   onClose,
   onSubmit,
 }: Readonly<RetagModalProps>) {
-  const modalRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
 
   const targets = useMemo<readonly Document[]>(() => {
     if (docs && docs.length > 0) return docs;
@@ -101,7 +101,7 @@ export function RetagModal({
 }
 
 interface RetagModalBodyProps {
-  modalRef: RefObject<HTMLDivElement | null>;
+  modalRef: RefObject<HTMLDialogElement | null>;
   targets: readonly Document[];
   bulk: boolean;
   sharedTags: readonly string[];
@@ -193,11 +193,11 @@ function RetagModalBody({
       }}
       data-testid="retag-backdrop"
     >
-      <div
+      <dialog
+        open
         ref={modalRef}
         className="modal"
         style={{ width: 500 }}
-        role="dialog"
         aria-modal="true"
         aria-labelledby="retag-title"
         tabIndex={-1}
@@ -374,24 +374,19 @@ function RetagModalBody({
                 marginTop: 6,
               }}
             />
-            <div className="autocomplete modal-autocomplete" role="listbox">
+            <div className="autocomplete modal-autocomplete">
               <div className="autocomplete-header">
                 {sugg.length > 0
                   ? `${sugg.length} match${sugg.length > 1 ? 'es' : ''} in tags`
                   : 'No matches'}
               </div>
               {sugg.map((s, i) => (
-                <div
+                <button
+                  type="button"
                   key={s.tag}
                   className={`autocomplete-row${i === focusIdx ? ' focus' : ''}`}
                   onMouseEnter={() => setFocusIdx(i)}
                   onClick={() => addTag(s.tag)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    addTag(s.tag);
-                  }}
-                  role="option"
                   aria-selected={i === focusIdx}
                   tabIndex={-1}
                   data-testid={`sugg-${s.tag}`}
@@ -401,7 +396,7 @@ function RetagModalBody({
                     <span className="badge">{s.category}</span>
                   </div>
                   <div className="def">{s.def}</div>
-                </div>
+                </button>
               ))}
               <div className="autocomplete-footer">
                 <Icon name="info-circle" size={12} /> No match? Request a new
@@ -464,7 +459,7 @@ function RetagModalBody({
             </button>
           </div>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

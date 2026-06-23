@@ -89,7 +89,7 @@ export function TagActionModal({
   onClose,
   onCommit,
 }: Readonly<TagActionModalProps>) {
-  const modalRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
   useModalA11y({ open: true, onClose, ref: modalRef });
 
   const tag = action.tag ?? null;
@@ -173,10 +173,10 @@ export function TagActionModal({
       }}
       data-testid="tagaction-backdrop"
     >
-      <div
+      <dialog
+        open
         ref={modalRef}
         className="modal tag-action-modal"
-        role="dialog"
         aria-modal="true"
         aria-labelledby="tagaction-title"
         tabIndex={-1}
@@ -498,7 +498,7 @@ export function TagActionModal({
             {submitLabel}
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

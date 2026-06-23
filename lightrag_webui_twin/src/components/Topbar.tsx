@@ -316,7 +316,7 @@ function NotificationsPopover({
   const unread = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="notif-popover" role="dialog" aria-label="Notifications">
+    <dialog open className="notif-popover" aria-label="Notifications">
       <header className="notif-h">
         <span className="notif-title">Notifications</span>
         <span className="notif-count">
@@ -333,7 +333,10 @@ function NotificationsPopover({
             <button
               type="button"
               className="link-btn small"
-              onClick={onMarkAllRead}
+              onClick={() => {
+                onMarkAllRead?.();
+                onClose();
+              }}
             >
               Mark all read
             </button>
@@ -401,6 +404,6 @@ function NotificationsPopover({
           </button>
         )}
       </footer>
-    </div>
+    </dialog>
   );
 }

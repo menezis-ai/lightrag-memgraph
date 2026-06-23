@@ -81,7 +81,7 @@ export function ActivityTab({
   const [clearOpen, setClearOpen] = useState(false);
   const [clearConfirm, setClearConfirm] = useState('');
   const [initialNowMs] = useState(() => Date.now());
-  const clearModalRef = useRef<HTMLDivElement>(null);
+  const clearModalRef = useRef<HTMLDialogElement>(null);
   useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
   // Real polling: refetch from the backend on an interval. The previous
@@ -364,11 +364,11 @@ export function ActivityTab({
           }}
           data-testid="clear-modal-bg"
         >
-          <div
+          <dialog
+            open
             ref={clearModalRef}
             className="modal"
             style={{ width: 480 }}
-            role="dialog"
             aria-modal="true"
             aria-labelledby="clear-title"
             tabIndex={-1}
@@ -452,7 +452,7 @@ export function ActivityTab({
                 Purge expired events
               </button>
             </div>
-          </div>
+          </dialog>
         </div>
       )}
     </div>
@@ -531,20 +531,14 @@ function ActivityDetail({ e, onPushToast, onNavigate }: Readonly<ActivityDetailP
       <div className="detail-grid">
         <div className="kv">
           <span>Event ID</span>
-          <code
+          <button
+            type="button"
             className="copyable"
             onClick={copyId}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              copyId();
-            }}
-            role="button"
-            tabIndex={0}
             title="Copy"
           >
             {e.id} {copied ? '✓' : ''}
-          </code>
+          </button>
         </div>
         <div className="kv">
           <span>Timestamp</span>

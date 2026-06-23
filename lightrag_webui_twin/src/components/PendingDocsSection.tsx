@@ -414,9 +414,9 @@ function EditApproveModal({ doc, onClose, onSubmit }: Readonly<EditApproveModalP
       }}
       data-testid="pending-doc-edit-modal"
     >
-      <div
+      <dialog
+        open
         className="modal edit-approve-modal"
-        role="dialog"
         aria-modal="true"
         aria-label="Edit & approve document"
         style={{ width: 620 }}
@@ -515,7 +515,7 @@ function EditApproveModal({ doc, onClose, onSubmit }: Readonly<EditApproveModalP
             Approve with these edits
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }
@@ -546,9 +546,9 @@ function RejectModal({
       }}
       data-testid="pending-doc-reject-modal"
     >
-      <div
+      <dialog
+        open
         className="modal"
-        role="dialog"
         aria-modal="true"
         aria-label="Reject document"
         style={{ width: 480 }}
@@ -592,7 +592,7 @@ function RejectModal({
             {submitting ? 'Rejecting…' : 'Reject'}
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

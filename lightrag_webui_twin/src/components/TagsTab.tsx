@@ -429,28 +429,26 @@ export function TagsTab({
         </div>
       </div>
 
-      {importStatus.kind !== 'idle' && (
-        <div
+      {importStatus.kind === 'success' && (
+        <output
           className={
             'taxonomy-import-status taxonomy-import-status--' +
             importStatus.kind
           }
-          role={importStatus.kind === 'error' ? 'alert' : 'status'}
           data-testid="taxonomy-import-status"
         >
-          {importStatus.kind === 'success' && (
-            <>
-              <Icon name="circle-check" size={14} />{' '}
-              Categories imported · {importStatus.count} domain
-              {importStatus.count === 1 ? '' : 's'} applied.
-            </>
-          )}
-          {importStatus.kind === 'error' && (
-            <>
-              <Icon name="alert-triangle" size={14} />{' '}
-              {importStatus.message}
-            </>
-          )}
+          <Icon name="circle-check" size={14} />{' '}
+          Categories imported · {importStatus.count} domain
+          {importStatus.count === 1 ? '' : 's'} applied.
+        </output>
+      )}
+      {importStatus.kind === 'error' && (
+        <div
+          className="taxonomy-import-status taxonomy-import-status--error"
+          role="alert"
+          data-testid="taxonomy-import-status"
+        >
+          <Icon name="alert-triangle" size={14} /> {importStatus.message}
         </div>
       )}
 
@@ -766,9 +764,9 @@ function DomainEditorModal({
       }}
       data-testid="domain-editor-backdrop"
     >
-      <div
+      <dialog
+        open
         className="modal domain-editor-modal"
-        role="dialog"
         aria-modal="true"
         aria-label="Edit domains"
       >
@@ -833,7 +831,7 @@ function DomainEditorModal({
             <Icon name="plus" size={12} /> Add domain
           </button>
           {removedDomainsWithTags.length > 0 && (
-            <div className="impact-box warning" role="status">
+            <output className="impact-box warning">
               <Icon name="alert-triangle" size={14} />
               <span>
                 Removing{' '}
@@ -844,7 +842,7 @@ function DomainEditorModal({
                 ))}{' '}
                 will show those tags as uncategorized until they are edited.
               </span>
-            </div>
+            </output>
           )}
           {error && (
             <div className="impact-box danger" role="alert">
@@ -861,7 +859,7 @@ function DomainEditorModal({
             {isSaving ? 'Saving…' : 'Save domains'}
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

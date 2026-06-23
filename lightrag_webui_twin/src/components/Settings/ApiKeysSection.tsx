@@ -287,12 +287,14 @@ export function ApiKeysSection({
       {createOpen && (
         <div
           className="modal-backdrop api-key-modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="api-key-create-title"
           data-testid="settings-api-keys-create-backdrop"
         >
-          <div className="modal modal-small api-key-modal">
+          <dialog
+            open
+            className="modal modal-small api-key-modal"
+            aria-modal="true"
+            aria-labelledby="api-key-create-title"
+          >
             <div className="modal-header api-key-modal-header">
               <div>
                 <h2 id="api-key-create-title">Create API key</h2>
@@ -354,19 +356,21 @@ export function ApiKeysSection({
                 {createMutation.isPending ? 'Creating…' : 'Create'}
               </button>
             </div>
-          </div>
+          </dialog>
         </div>
       )}
 
       {revealed && (
         <div
           className="modal-backdrop api-key-modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="api-key-reveal-title"
           data-testid="settings-api-keys-reveal-backdrop"
         >
-          <div className="modal modal-small api-key-modal api-key-reveal-modal">
+          <dialog
+            open
+            className="modal modal-small api-key-modal api-key-reveal-modal"
+            aria-modal="true"
+            aria-labelledby="api-key-reveal-title"
+          >
             <div className="modal-header api-key-modal-header">
               <div>
                 <h2 id="api-key-reveal-title">
@@ -423,7 +427,7 @@ export function ApiKeysSection({
                 I've stored the key
               </button>
             </div>
-          </div>
+          </dialog>
         </div>
       )}
     </div>

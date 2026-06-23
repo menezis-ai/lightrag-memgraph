@@ -12,7 +12,8 @@ async function expectFocusInsideDialog(page: Page) {
   await expect
     .poll(() =>
       page.evaluate(
-        () => document.activeElement?.closest('[role="dialog"]') !== null,
+        () =>
+          document.activeElement?.closest('dialog,[role="dialog"]') !== null,
       ),
     )
     .toBe(true);
@@ -169,7 +170,7 @@ test.describe('Modal dialogs a11y contract', () => {
     await page.getByTestId('docs-row-delete-d1').click();
     await expect(page.getByTestId('doc-detail-panel')).toBeVisible();
     await page
-      .getByRole('dialog', { name: /Detail:/ })
+      .getByTestId('doc-detail-panel')
       .getByLabel('Close')
       .first()
       .click();

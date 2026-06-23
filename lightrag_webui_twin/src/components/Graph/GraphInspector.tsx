@@ -456,20 +456,13 @@ function EntityEditor({
                   const t = neighbors.nodes.find((n) => n.id === r.target);
                   if (!t) return null;
                   return (
-                    <li
-                      key={r.id}
-                      className="kg-rel-row"
-                      onClick={() => onSelectRelation(r.id)}
-                      onKeyDown={(ev) => {
-                        if (ev.key === 'Enter' || ev.key === ' ') {
-                          ev.preventDefault();
-                          onSelectRelation(r.id);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      data-testid={`kg-rel-row-${r.id}`}
-                    >
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        className="kg-rel-row"
+                        onClick={() => onSelectRelation(r.id)}
+                        data-testid={`kg-rel-row-${r.id}`}
+                      >
                       <span className="kg-rel-arrow">→</span>
                       <code className="kg-rel-label">{r.label}</code>
                       <span className="kg-rel-target">
@@ -485,6 +478,7 @@ function EntityEditor({
                       >
                         {Math.round(r.strength * 100)}
                       </span>
+                      </button>
                     </li>
                   );
                 })}
@@ -506,20 +500,13 @@ function EntityEditor({
                   const s = neighbors.nodes.find((n) => n.id === r.source);
                   if (!s) return null;
                   return (
-                    <li
-                      key={r.id}
-                      className="kg-rel-row"
-                      onClick={() => onSelectRelation(r.id)}
-                      onKeyDown={(ev) => {
-                        if (ev.key === 'Enter' || ev.key === ' ') {
-                          ev.preventDefault();
-                          onSelectRelation(r.id);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      data-testid={`kg-rel-row-${r.id}`}
-                    >
+                    <li key={r.id}>
+                      <button
+                        type="button"
+                        className="kg-rel-row"
+                        onClick={() => onSelectRelation(r.id)}
+                        data-testid={`kg-rel-row-${r.id}`}
+                      >
                       <span className="kg-rel-target">
                         <span
                           className="kg-rel-swatch"
@@ -535,6 +522,7 @@ function EntityEditor({
                       >
                         {Math.round(r.strength * 100)}
                       </span>
+                      </button>
                     </li>
                   );
                 })}
@@ -1006,14 +994,13 @@ export function TagAttrEditor({
       {suggestions.length > 0 && (
         <div
           className="autocomplete panel-autocomplete"
-          role="listbox"
           data-testid="kg-tag-suggestions"
           style={{ marginTop: 4 }}
         >
           {suggestions.map((s) => (
-            <div
+            <button
+              type="button"
               key={s}
-              role="option"
               aria-selected={false}
               className="autocomplete-row"
               data-testid={`kg-tag-sugg-${s}`}
@@ -1021,7 +1008,7 @@ export function TagAttrEditor({
               style={{ cursor: 'pointer' }}
             >
               <span style={{ fontSize: 12 }}>{s}</span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -1434,4 +1421,3 @@ function AddRelationForm({
     </form>
   );
 }
-

@@ -177,7 +177,7 @@ test.describe('Twin WebUI operator journeys', () => {
     // Focus the older (second-from-top) thread positionally — the
     // history-item testid is dynamic (`thread-th_<random>`), so we
     // do not hardcode an id.
-    const olderThread = page.locator('.history-item').nth(1);
+    const olderThread = page.locator('.history-item-main').nth(1);
     await olderThread.focus();
     await page.keyboard.press('Enter');
     await expect(olderThread).toHaveAttribute('aria-current', 'true');
@@ -260,7 +260,10 @@ test.describe('Twin WebUI operator journeys', () => {
   }) => {
     await page.getByTestId('docs-row-delete-d3').click();
     await expect(page.getByTestId('doc-detail-panel')).toBeVisible();
-    await expect(page.getByRole('dialog', { name: /Detail: huge-archive.zip/ })).toBeVisible();
+    await expect(page.getByTestId('doc-detail-panel')).toHaveAttribute(
+      'aria-label',
+      /Detail: huge-archive.zip/,
+    );
     await expect(page.getByTestId('doc-detail-chunks-empty')).toBeVisible();
 
     await page.getByTestId('doc-detail-tab-lineage').click();
@@ -889,7 +892,10 @@ test.describe('Twin WebUI operator journeys', () => {
 
   test('@doctrine @documents reprocess on a non-failed document tells the truth', async ({ page }) => {
     await page.getByTestId('docs-row-filename-d1').click();
-    await expect(page.getByRole('dialog', { name: /Detail: oracle-restart-procedure.pdf/ })).toBeVisible();
+    await expect(page.getByTestId('doc-detail-panel')).toHaveAttribute(
+      'aria-label',
+      /Detail: oracle-restart-procedure.pdf/,
+    );
     await page.getByTestId('doc-detail-reprocess').click();
     await expect(page.locator('.toast-viewport')).toContainText('Re-process not applicable');
     // Audit C7: the new wording for the success path is "Failed-
@@ -928,6 +934,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText('unread');
     await page.getByRole('button', { name: 'Mark all read' }).click();
     await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
+    await page.getByRole('button', { name: 'Notifications' }).click();
     await expect(page.getByRole('dialog', { name: 'Notifications' })).not.toContainText('unread');
     await page.getByRole('button', { name: 'Clear all' }).click();
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText(

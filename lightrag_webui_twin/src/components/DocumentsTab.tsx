@@ -338,9 +338,9 @@ export function DocumentsTab({
               </span>
             </button>
             {pipelineOpen && (
-              <div
+              <dialog
+                open
                 className="pipeline-popover"
-                role="dialog"
                 aria-label="Pipeline logs"
               >
                 <div className="pp-header">
@@ -445,7 +445,7 @@ export function DocumentsTab({
                     Refresh
                   </button>
                 </div>
-              </div>
+              </dialog>
             )}
           </div>
           {/* Audit C7: the only backend this action calls is
@@ -613,7 +613,6 @@ export function DocumentsTab({
                 <div
                   id={tagListboxId}
                   className="autocomplete floating-autocomplete"
-                  role="listbox"
                   aria-label="Tag suggestions"
                 >
                   {tagSuggestions.map((s, i) => (
@@ -623,7 +622,6 @@ export function DocumentsTab({
                       className={`autocomplete-row${
                         i === activeTagSuggestionIndex ? ' focus' : ''
                       }`}
-                      role="option"
                       aria-selected={i === activeTagSuggestionIndex}
                       onMouseEnter={() => setActiveTagSuggestionIndex(i)}
                       onMouseDown={(e) => e.preventDefault()}
@@ -653,7 +651,7 @@ export function DocumentsTab({
       </div>
 
       {selected.size > 0 && (
-        <div className="bulk-bar" role="region" aria-label="Bulk actions">
+        <section className="bulk-bar" aria-label="Bulk actions">
           <span className="bulk-count">
             <b>{selected.size}</b> selected
             <span className="bulk-of">of {filtered.length}</span>
@@ -684,7 +682,7 @@ export function DocumentsTab({
           >
             <Icon name="x" size={12} /> Clear selection
           </button>
-        </div>
+        </section>
       )}
 
       <div className="docs-table-wrap">

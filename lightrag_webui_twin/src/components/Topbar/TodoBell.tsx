@@ -79,9 +79,9 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
         )}
       </button>
       {open && (
-        <div
+        <dialog
+          open
           className="notif-popover"
-          role="dialog"
           aria-label="To-do list"
           style={{ width: 320 }}
         >
@@ -138,7 +138,7 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
               Open activity →
             </button>
           </footer>
-        </div>
+        </dialog>
       )}
     </div>
   );

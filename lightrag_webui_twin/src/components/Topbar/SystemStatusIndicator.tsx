@@ -130,7 +130,7 @@ export function SystemStatusIndicator({
         <span className="sys-pill-label">{meta.label}</span>
       </button>
       {open && (
-        <div className="sys-popover" role="dialog" aria-label="System status">
+        <dialog open className="sys-popover" aria-label="System status">
           <div className="sys-popover-h">
             <span className="sys-popover-title">
               <span className={`sys-dot sys-dot-${meta.dot}`} aria-hidden />
@@ -167,7 +167,7 @@ export function SystemStatusIndicator({
               </span>
             </li>
           </ul>
-        </div>
+        </dialog>
       )}
     </div>
   );

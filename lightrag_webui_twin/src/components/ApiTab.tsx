@@ -483,7 +483,7 @@ interface AuthorizeDialogProps {
 function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<AuthorizeDialogProps>) {
   const [val, setVal] = useState(token);
   const [revokeArmed, setRevokeArmed] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDialogElement>(null);
   useModalA11y({ open: true, onClose, ref });
   return (
     <div
@@ -496,9 +496,9 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<Authoriz
       }}
       data-testid="authorize-backdrop"
     >
-      <div
+      <dialog
+        open
         className="modal small"
-        role="dialog"
         aria-modal="true"
         aria-labelledby="auth-title"
         ref={ref}
@@ -595,7 +595,7 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<Authoriz
             Authorize
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

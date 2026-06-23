@@ -65,9 +65,9 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
       }}
       data-testid="read-source-modal"
     >
-      <div
+      <dialog
+        open
         className="modal read-source"
-        role="dialog"
         aria-modal="true"
         aria-label="Indexed chunks"
         style={{ width: 760, maxWidth: '94vw' }}
@@ -167,7 +167,7 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
             binary.
           </span>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

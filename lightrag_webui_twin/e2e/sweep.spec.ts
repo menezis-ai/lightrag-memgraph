@@ -125,7 +125,7 @@ test.describe('UI sweep', () => {
       .last()
       .click();
     await page
-      .getByRole('dialog', { name: /Detail:/ })
+      .getByTestId('doc-detail-panel')
       .getByLabel('Close')
       .first()
       .click();
@@ -153,7 +153,8 @@ test.describe('UI sweep', () => {
     await expect
       .poll(() =>
         page.evaluate(
-          () => document.activeElement?.closest('[role="dialog"]') !== null,
+          () =>
+            document.activeElement?.closest('dialog,[role="dialog"]') !== null,
         ),
       )
       .toBe(true);

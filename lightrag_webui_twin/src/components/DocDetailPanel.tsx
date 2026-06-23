@@ -71,8 +71,6 @@ export function DocDetailPanel({
   return (
     <aside
       className="doc-detail-panel"
-      role="dialog"
-      aria-modal="false"
       aria-label={`Detail: ${doc.file_path}`}
       data-testid="doc-detail-panel"
     >
@@ -176,9 +174,9 @@ export function DocDetailPanel({
           }}
           data-testid="doc-detail-raw-notice"
         >
-          <div
+          <dialog
+            open
             className="modal"
-            role="dialog"
             aria-modal="true"
             aria-label="View raw notice"
             style={{ width: 420 }}
@@ -210,7 +208,7 @@ export function DocDetailPanel({
                 Close
               </button>
             </div>
-          </div>
+          </dialog>
         </div>
       )}
     </aside>

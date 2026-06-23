@@ -527,30 +527,30 @@ export function RetrievalTab({
                 'history-item' +
                 (t.id === activeThreadId ? ' is-active' : '')
               }
-              role="button"
-              tabIndex={0}
-              onClick={() => setActiveThreadId(t.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setActiveThreadId(t.id);
-                }
-              }}
-              aria-current={t.id === activeThreadId ? 'true' : undefined}
-              aria-label={`Open conversation ${t.title}`}
-              data-testid={`thread-${t.id}`}
             >
-              <div className="history-item-title" title={t.title}>
-                {t.title}
-              </div>
-              <div className="history-item-meta">
-                <span>
-                  {t.messages.filter((m) => m.role === 'user').length} q ·{' '}
-                  {t.messages.filter((m) => m.role === 'assistant').length} a
+              <button
+                type="button"
+                className={
+                  'history-item-main' +
+                  (t.id === activeThreadId ? ' is-active' : '')
+                }
+                onClick={() => setActiveThreadId(t.id)}
+                aria-current={t.id === activeThreadId ? 'true' : undefined}
+                aria-label={`Open conversation ${t.title}`}
+                data-testid={`thread-${t.id}`}
+              >
+                <span className="history-item-title" title={t.title}>
+                  {t.title}
                 </span>
-                <span className="sep">·</span>
-                <span>{relTime(t.updated)}</span>
-              </div>
+                <span className="history-item-meta">
+                  <span>
+                    {t.messages.filter((m) => m.role === 'user').length} q ·{' '}
+                    {t.messages.filter((m) => m.role === 'assistant').length} a
+                  </span>
+                  <span className="sep">·</span>
+                  <span>{relTime(t.updated)}</span>
+                </span>
+              </button>
               <button
                 type="button"
                 className="history-del"
@@ -1181,11 +1181,10 @@ function FilterModeToggle({
   disabled,
 }: Readonly<FilterModeToggleProps>) {
   return (
-    <div
+    <fieldset
       className={`retrieval-filter-mode${disabled ? ' is-disabled' : ''}`}
-      role="group"
-      aria-label={label}
     >
+      <legend className="sr-only">{label}</legend>
       {(['any', 'all'] as const).map((mode) => (
         <button
           key={mode}
@@ -1197,6 +1196,6 @@ function FilterModeToggle({
           {mode === 'any' ? 'Any' : 'All'}
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }

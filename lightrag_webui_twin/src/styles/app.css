@@ -1034,6 +1034,10 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-radius: 6px;
   background: var(--color-background-primary);
 }
+.retrieval-filter-mode:where(fieldset) {
+  margin: 0;
+  min-inline-size: 0;
+}
 .retrieval-filter-mode button {
   border: 0;
   border-radius: 4px;
@@ -1099,6 +1103,21 @@ input:focus, textarea:focus, select:focus { outline: none; }
   max-height: 86vh;
   animation: pop-in 200ms ease;
   overflow: hidden;
+}
+dialog.modal,
+dialog.notif-popover,
+dialog.sys-popover,
+dialog.pipeline-popover {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+}
+.modal-backdrop > dialog.modal,
+.modal-bg > dialog.modal {
+  position: static;
+}
+dialog::backdrop {
+  background: transparent;
 }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop-in {
@@ -1180,6 +1199,11 @@ input:focus, textarea:focus, select:focus { outline: none; }
   text-align: center;
   cursor: pointer;
   transition: border-color 160ms, background 160ms;
+}
+.dropzone:where(button) {
+  width: 100%;
+  font: inherit;
+  color: inherit;
 }
 .dropzone:hover, .dropzone.drag {
   border-color: var(--twin-accent);
@@ -1372,6 +1396,13 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-bottom: 0.5px solid var(--color-border-tertiary);
   cursor: pointer;
   border-left: 2px solid transparent;
+}
+.autocomplete-row:where(button) {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 .autocomplete-row:last-child { border-bottom: none; }
 .autocomplete-row:hover, .autocomplete-row.focus {
@@ -2547,8 +2578,25 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--color-text-primary);
 }
 .kv code.copyable { cursor: pointer; }
+.kv button.copyable {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
 .kv code.copyable:hover { color: var(--twin-accent); }
+.kv button.copyable:hover { color: var(--twin-accent); }
 .kv code.copyable:focus-visible {
+  color: var(--twin-accent);
+  outline: 1px solid var(--twin-accent);
+  outline-offset: 2px;
+}
+.kv button.copyable:focus-visible {
   color: var(--twin-accent);
   outline: 1px solid var(--twin-accent);
   outline-offset: 2px;
@@ -3445,6 +3493,17 @@ input:focus, textarea:focus, select:focus { outline: none; }
   border-left: 2px solid transparent;
   transition: background 80ms;
 }
+.history-item-main {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .history-item:hover { background: var(--color-background-tertiary); }
 .history-item.is-active {
   background: color-mix(in oklab, var(--twin-accent) 8%, transparent);
@@ -3835,6 +3894,19 @@ input:focus, textarea:focus, select:focus { outline: none; }
   font-size: 11.5px;
   color: var(--color-text-secondary);
   min-height: 22px;
+}
+.kg-rel-list button.kg-rel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 .kg-rel-arrow {
   color: var(--color-text-tertiary);

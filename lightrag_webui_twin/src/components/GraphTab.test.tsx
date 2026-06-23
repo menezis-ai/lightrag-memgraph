@@ -366,7 +366,7 @@ describe('GraphTab — selection + detail', () => {
     // Outgoing RUNS_ON → click the relation row to open the relation editor.
     // The new EntityEditor doctrine: row click goes to relation editor first,
     // endpoint click selects the target entity.
-    const rhelRelRow = Array.from(document.querySelectorAll('[role="button"]')).find(
+    const rhelRelRow = Array.from(document.querySelectorAll('button.kg-rel-row')).find(
       (el) => el.textContent?.includes('RHEL 9') && el.className.includes('kg-rel-row'),
     );
     expect(rhelRelRow).toBeDefined();
@@ -708,7 +708,7 @@ describe('GraphTab — lifecycle: Delete relation', () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     // Open an outgoing relation row from the default-selected Oracle entity.
     const rhelRow = Array.from(
-      document.querySelectorAll('[role="button"]'),
+      document.querySelectorAll('button.kg-rel-row'),
     ).find(
       (el) =>
         el.textContent?.includes('RHEL 9') &&
