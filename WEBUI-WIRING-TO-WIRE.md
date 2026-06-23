@@ -1,70 +1,113 @@
-# WebUI Wiring — To Wire
+# Twin KMS WebUI Wiring — To Wire
 
-Historical backlog after the as-built state captured in
-[WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md). Use
-[WEBUI-WIRING-PLAN.md](WEBUI-WIRING-PLAN.md) for the current Folder-based
-contract.
+This is the active backlog for the WebUI/backend contract. The live state is in
+[WEBUI-WIRING-PLAN.md](WEBUI-WIRING-PLAN.md); the implemented inventory is in
+[WEBUI-WIRING-WIRED.md](WEBUI-WIRING-WIRED.md).
 
-## Priority 1 — Real MyAccess / IdP JWT enforcement
+## Priority 1 — Stabilize Real MyAccess / IdP Deployment
 
-**Status 2026-06-10**: code mechanic landed (palier 1 dormant + palier 2 active), JWKS wiring still pending Louis HORVAT (RBAC sign-off pending).
+The code path is present. Production wiring is not finished until it is proven
+against the real IdP, not only mocked JWKS tests.
 
-The two-tier posture flips on a single env var (`TWIN_IDP_JWKS_URL`):
+Current mechanics:
 
-- **Palier 1 — dormant**: `require_auth` refuses anonymous at boot (`ensure_auth_backend_configured` raises unless `LIGHTRAG_API_KEY` / `LIGHTRAG_JWT_SECRET` / `TWIN_IDP_JWKS_URL` / `TWIN_ALLOW_OPEN_ACCESS=1` is set). `require_admin_user` returns a placeholder with `idp_validated=False`. `resolve_folder_for_request` reproduces pure header+catalog binding.
-- **Palier 2 — active (auto, when `TWIN_IDP_JWKS_URL` is set)**: scope `admin:folders` enforced on folder CRUD. Folder header bound to the user's `twin_folders` claim (fallback default folder when the claim is empty, for the MyAccess rollout window).
+- `ensure_auth_backend_configured` fails closed in production unless an auth
+  backend is configured.
+- `TWIN_IDP_JWKS_URL` activates IdP JWT verification.
+- Missing, expired, malformed, or invalid-signature tokens return 401.
+- `admin:folders` is enforced for Folder mutations once IdP claims are active.
+- Folder access can be constrained by the user's `twin_folders` claim, with the
+  default-folder fallback kept for rollout.
+- API-key auth remains supported for CI, service use, and generated-key e2e.
 
-What's done:
+Remaining work:
 
-- ✅ Missing cookie/token → 401 (`require_idp_user` + boot fail-closed)
-- ✅ Expired token → 401 (existing `test_idp_jwt.py`)
-- ✅ Invalid signature → 401 (existing `test_idp_jwt.py`)
-- ✅ Valid user allowed on parent KB gets configured folders (`tests/test_server/test_folder_idp_binding.py`)
-- ✅ `changeme` default → loud `SECURITY:` warning (relaxed from unconditional refusal same day — LightRAG-parity product decision after the BNP crash-loop; warning becomes irrelevant once the IdP is wired).
-- ✅ No steward-managed API-key distribution.
+- Wire the real MyAccess JWKS URL, issuer, audience, cookie/header convention,
+  and group-to-scope mapping in deployment config.
+- Run an integration smoke against the real IdP path, not only PyJWK mocks.
+- Document the exact MyAccess claims consumed by Twin KMS in the install
+  runbook.
+- Decide whether the default-folder fallback remains after rollout or becomes a
+  hard deny when `twin_folders` is absent.
 
-What's left for BNP:
+## Priority 2 — Make Deployment Smoke Boring
 
-- Wire `TWIN_IDP_JWKS_URL` to the real MyAccess JWKS endpoint (Louis HORVAT).
-- Integration test against a real Keycloak/MyAccess (vs PyJWK mock) — ops/deployment, not core route code.
+The smoke tooling exists, but it still needs to become the normal post-deploy
+ritual.
 
-## Priority 2 — Deployment smoke
+Minimum smoke checklist:
 
-- Smoke checklist post-deploy:
-  - `/webui/` substitution worked (`__TWIN_CONFIG_JSON__` absent from served HTML).
-  - `apiBaseUrl` resolves to `/twin/api`.
-  - `/twin/api/folders` returns the env-injected catalog.
-  - `/twin/api/graph/entities` returns real Memgraph data.
-- Document the runbook commands in `docs/operations/install-runbook.md`.
+- `/webui/` serves the Twin KMS build and contains no unresolved
+  `__TWIN_CONFIG_JSON__` placeholder.
+- Runtime config resolves `apiBaseUrl` to `/twin/api`.
+- `/health` and `/twin/api/health` both answer as expected.
+- `/twin/api/folders` returns the env-injected catalog.
+- `/twin/api/settings/api-keys` is reachable for an authorized admin/operator.
+- `/twin/api/quota` returns a structured snapshot.
+- `/twin/api/graph/entities` returns real Memgraph-backed data or an honest
+  empty result, never fixture data.
+- Anonymous requests to protected Twin routes are rejected in production.
 
-## Priority 3 — Retention / sweep policy (DEFERRED BY POLICY)
+Remaining work:
 
-Not tech debt — explicit "do nothing silently" because the wrong default could violate BCE/DORA retention or wipe legal-hold evidence. Re-open when PO + compliance arbitrate the four axes in writing:
+- Keep `docs/operations/install-runbook.md` aligned with the smoke script.
+- Record the exact command set for OVH/twin-real and the Forgejo deployment
+  lane.
+- Add one small "known good deploy" evidence block per release candidate.
 
-- **TTL per store**: separate values for `WebuiTag`, `ActivityEvent`, `Notification`, audit logs.
-- **Sweep mechanism**: cron-style Cypher purge vs read-time predicate (Memgraph TTL primitives).
-- **Scope**: per-space vs global; sandbox vs primary behavior.
-- **BCE / DORA / legal-hold**: minimum-retention contracts + how a legal-hold flag suspends sweeping.
+## Priority 3 — Reduce CI Runner Surprise
 
-## Priority 4 — Performance frontend optimizations (local branch)
+The CI has the right coverage, but self-hosted Docker jobs must stay isolated.
 
-Local branch `feat/webui-perf-optimizations` (HEAD `d578ac3`) implements:
+Remaining work:
 
-- Lazy-load secondary tabs + modal bodies + Suspense boundaries in `App.tsx`.
-- `QueryGate` (`enabled` flag) on read hooks so inactive tabs don't poll.
-- `limit?: number` on `api.listActivity()` + bounded `/activity` reads (default 200, max 1000) in `webui_router`.
-- Scalar/indexed Memgraph fields on `WebuiActivity_{workspace}` (`kind`, `sev`, `actor_user`, `__created_at`).
+- Keep real-backend Playwright jobs on dynamically allocated host ports.
+- Ensure every Docker-backed lane removes containers and networks on failure.
+- Consider a lightweight preflight that prints any leftover `twin-ci-*`
+  containers before starting real-backend lanes.
+- Keep npm/Bun usage explicit: Bun for runner-local frontend quality/build where
+  declared, npm inside Playwright containers.
+- Avoid adding fixed host ports to future jobs unless the runner pool guarantees
+  isolation.
 
-Bundle: entry JS `473.67 → 278.85 kB raw`, gzip `134.55 → 85.97 kB`. Tests green (392 pytest + 396 vitest + typecheck).
+## Priority 4 — Performance and Polling Cleanup
 
-To do: push the branch, open the PR, merge.
+There is known useful work from the historical perf branch, but it should be
+rebased and reviewed against the current Twin KMS code before merge.
+
+Candidate items:
+
+- Lazy-load secondary tabs and modal bodies.
+- Gate inactive tab queries with `enabled` flags.
+- Bound activity reads with an explicit `limit`, default, and max.
+- Add or verify scalar/indexed Memgraph fields for high-volume WebUI stores.
+
+Acceptance criteria:
+
+- Typecheck, unit tests, and e2e still pass.
+- The initial WebUI bundle meaningfully shrinks or the runtime polling load
+  measurably drops.
+- No query becomes stale in normal operator navigation.
+
+## Priority 5 — Retention / Sweep Policy
+
+Deferred by policy. Do not implement a silent default.
+
+Required decisions:
+
+- TTL per store: tags, activity, notifications, audit logs.
+- Sweep mechanism: scheduled Cypher purge, read-time filtering, or external
+  retention tooling.
+- Scope: per Folder, per KB, sandbox-only, or global.
+- BCE/DORA/legal-hold behavior, including how legal hold suspends deletion.
 
 ## PO-Gated / Do Not Start Without Confirmation
 
-- **BNP MIP classification + ingestion hook.** Existing `classification.py` + `_classification_hook.py` modules remain opt-in through `register(classify=True)` or `TWIN_MIP_LABEL_MAP`. The default policy accepts files with no exploitable classification signal, rejects mapped labels above the ceiling, and rejects detected-but-unmapped labels as `UNKNOWN`. There is still no `/twin/api/classification/_self_check` endpoint and no Memgraph e2e coverage for this compliance path.
-- Source-document lifecycle doctrine (the §1.5/§5.5 runbook formalisation prepared on a parallel branch — not landed yet).
-- Auto-approve future source modifications.
-- Provider configure panels in Settings.
-- Role-perspective simulator (RBAC simulation in UI).
+- BNP MIP classification and ingestion hook. Existing modules remain opt-in via
+  `register(classify=True)` or `TWIN_MIP_LABEL_MAP`.
+- Any durable raw-document storage, source download route, or full-document
+  preview for sensitive material.
+- Provider configuration panels in Settings.
+- Role-perspective simulator for RBAC.
 - Member invite/delete UI.
-- Any durable raw-document storage or full-document preview for sensitive material.
+- Automatic approval of future source modifications.
