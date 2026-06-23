@@ -7,14 +7,12 @@
  *   GET  /threads                  -> RetrievalThread[]
  *   POST /threads / DELETE /threads/{id}
  *
- * The streamed response is a flat array of `AnswerToken`s (strings), with
+ * The streamed response is a flat array of strings, with
  * inline citation markers `{cite:N}` and backtick `code` spans. The client
  * parses them into AnswerParts for rendering.
  */
 
 import type { SourceType } from '../components/Icon';
-
-export type AnswerToken = string;
 
 export type InlineAnswerPart =
   | { type: 'text'; value: string }
@@ -58,7 +56,7 @@ export interface ChatMessage {
   /** User messages carry a plain `text`. */
   text?: string;
   /** Assistant messages carry parsed-up tokens + sources. */
-  tokens?: readonly AnswerToken[];
+  tokens?: readonly string[];
   sources?: readonly RetrievalSource[];
   /** Assistant-only: propagated from the backend answer_status flag. */
   answerStatus?: AnswerStatus;
@@ -102,7 +100,7 @@ function stripTrailingReferencesSection(text: string): string {
  * `{cite:N}` (proto/fixture format) or `[N]` (LightRAG prompt output)
  * citation markers, plus backtick-code spans.
  */
-export function parseAnswer(tokens: readonly AnswerToken[]): AnswerPart[] {
+export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
   const out: AnswerPart[] = [];
   const parseInline = (text: string): InlineAnswerPart[] => {
     const parts: InlineAnswerPart[] = [];

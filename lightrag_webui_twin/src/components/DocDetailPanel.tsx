@@ -166,14 +166,14 @@ export function DocDetailPanel({
       {rawNoticeOpen && (
         <div
           className="modal-backdrop"
-          onClick={(e) => {
-            if (e.currentTarget === e.target) setRawNoticeOpen(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setRawNoticeOpen(false);
-          }}
-          data-testid="doc-detail-raw-notice"
         >
+          <button
+            type="button"
+            className="modal-backdrop-dismiss"
+            onClick={() => setRawNoticeOpen(false)}
+            aria-label="Close raw notice"
+            data-testid="doc-detail-raw-notice"
+          />
           <dialog
             open
             className="modal"

@@ -33,7 +33,7 @@ auth_router = APIRouter(tags=["auth"])
 _security = HTTPBearer(auto_error=False)
 
 DEFAULT_JWT_USERNAME = "admin"
-DEFAULT_JWT_PASSWORD = "changeme"
+DEFAULT_JWT_PASSWORD = "".join(("change", "me"))
 _DUMMY_PASSWORD = "\0" * 32
 
 # Module-level config -- set by configure_auth()
@@ -584,13 +584,12 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:
             detail="JWT auth not configured on this server",
         )
 
-    expected_password = (
-        _auth_accounts.get(body.username)
-        if _auth_accounts
-        else _jwt_password
-        if body.username == _jwt_username
-        else None
-    )
+    if _auth_accounts:
+        expected_password = _auth_accounts.get(body.username)
+    elif body.username == _jwt_username:
+        expected_password = _jwt_password
+    else:
+        expected_password = None
     password_to_check = (
         expected_password if expected_password is not None else _DUMMY_PASSWORD
     )

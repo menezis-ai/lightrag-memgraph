@@ -168,14 +168,14 @@ export function TagActionModal({
   return (
     <div
       className="modal-bg"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-      data-testid="tagaction-backdrop"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close tag action dialog"
+        data-testid="tagaction-backdrop"
+      />
       <dialog
         open
         ref={modalRef}
@@ -258,7 +258,7 @@ export function TagActionModal({
 
           {action.kind === 'synonyms' && tag && (
             <>
-              <label className="field-label">Current synonyms</label>
+              <span className="field-label">Current synonyms</span>
               <div className="alias-chips">
                 {aliases.length === 0 && <span className="muted">No synonyms.</span>}
                 {aliases.map((a) => (
@@ -333,6 +333,7 @@ export function TagActionModal({
                   <input
                     type="radio"
                     name="migrate-strategy"
+                    aria-label="Migrate to another tag"
                     checked={migrateStrategy === 'migrate'}
                     onChange={() => setMigrateStrategy('migrate')}
                   />
@@ -364,6 +365,7 @@ export function TagActionModal({
                   <input
                     type="radio"
                     name="migrate-strategy"
+                    aria-label="Untag and delete"
                     checked={migrateStrategy === 'untag'}
                     onChange={() => setMigrateStrategy('untag')}
                   />

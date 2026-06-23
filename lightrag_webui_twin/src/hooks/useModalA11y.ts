@@ -87,11 +87,9 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
             e.preventDefault();
             current[current.length - 1].focus();
           }
-        } else {
-          if (idx === current.length - 1 || idx === -1) {
-            e.preventDefault();
-            current[0].focus();
-          }
+        } else if (idx === current.length - 1 || idx === -1) {
+          e.preventDefault();
+          current[0].focus();
         }
       }
     };

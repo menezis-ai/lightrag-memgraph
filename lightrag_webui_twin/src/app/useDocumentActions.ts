@@ -131,21 +131,49 @@ function pushUploadSummaryToast(
   pushToast: PushToast,
 ) {
   const { ok, ko, dup } = summarizeUploadResults(results);
+  const duplicateSuffix = dup > 0 ? ` (${dup} already present)` : '';
+  const initialTagsSuffix = tags.length
+    ? ' · initial tags will apply once docs land'
+    : '';
   if (ko === 0) {
     pushToast({
       kind: 'done',
       title: 'Sources queued for ingestion',
-      sub: `${ok} uploaded${dup > 0 ? ` (${dup} already present)` : ''}${
-        tags.length ? ' · initial tags will apply once docs land' : ''
-      }`,
+      sub: `${ok} uploaded${duplicateSuffix}${initialTagsSuffix}`,
     });
     return;
   }
+  const duplicateErrorSuffix = dup > 0 ? ` · ${dup} already present` : '';
   pushToast({
     kind: 'error',
     title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
-    sub: `${ok} ok · ${ko} ko${dup > 0 ? ` · ${dup} already present` : ''}`,
+    sub: `${ok} ok · ${ko} ko${duplicateErrorSuffix}`,
   });
+}
+
+function sourceCountLabel(count: number): string {
+  return `${count} source${count === 1 ? '' : 's'}`;
+}
+
+function retagTitleSuffix(
+  action: RetagAction,
+  verb: string,
+  updated: number,
+  failedCount: number,
+): string {
+  if (!action.bulk) return verb;
+  const skippedSuffix = failedCount > 0 ? ` · ${failedCount} skipped` : '';
+  return `${verb} to ${sourceCountLabel(updated)}${skippedSuffix}`;
+}
+
+function retagErrorMessage(err: unknown, targetCount: number): string {
+  if (err instanceof Error) return err.message;
+  return `Could not persist tags on ${sourceCountLabel(targetCount)}`;
+}
+
+function undoTitleSuffix(updated: number, failedCount: number): string {
+  const skippedSuffix = failedCount > 0 ? ` · ${failedCount} skipped` : '';
+  return `${sourceCountLabel(updated)}${skippedSuffix}`;
 }
 
 function trackStatusErrorMessage(trackId: string, err: unknown): string {
@@ -283,11 +311,12 @@ export function useDocumentActions({
         kind: 'done',
         title: 'Tag',
         tagname: sample,
-        titleSuffix: action.bulk
-          ? `${verb} to ${result.updated} source${result.updated === 1 ? '' : 's'}${
-              failedCount > 0 ? ` · ${failedCount} skipped` : ''
-            }`
-          : verb,
+        titleSuffix: retagTitleSuffix(
+          action,
+          verb,
+          result.updated,
+          failedCount,
+        ),
         sub: action.primary.file_path,
         undo: {
           targets: action.targets.map((target) => target.doc_id),
@@ -299,12 +328,7 @@ export function useDocumentActions({
       pushToast({
         kind: 'error',
         title: 'Tag mutation failed',
-        sub:
-          err instanceof Error
-            ? err.message
-            : `Could not persist tags on ${action.targets.length} document${
-                action.targets.length === 1 ? '' : 's'
-              }`,
+        sub: retagErrorMessage(err, action.targets.length),
       });
     }
   };
@@ -325,10 +349,7 @@ export function useDocumentActions({
         kind: 'done',
         title: 'Undo applied',
         tagname: toast.tagname,
-        titleSuffix:
-          result.failed.length > 0
-            ? `${result.updated} source${result.updated === 1 ? '' : 's'} · ${result.failed.length} skipped`
-            : `${result.updated} source${result.updated === 1 ? '' : 's'}`,
+        titleSuffix: undoTitleSuffix(result.updated, result.failed.length),
         sub: toast.sub,
       });
     } catch (err) {

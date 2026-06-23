@@ -7,12 +7,11 @@
  */
 
 import type {
-  AnswerToken,
   RetrievalSource,
   RetrievalThread,
 } from '../types/retrieval';
 
-export const ANSWER_TOKENS_FIXTURE: readonly AnswerToken[] = [
+export const ANSWER_TOKENS_FIXTURE: readonly string[] = [
   'To restart Oracle on RHEL 9 in a CIB production setup, follow the documented runbook ',
   '{cite:1} ',
   'which mandates first stopping listeners and pending RMAN jobs before issuing a graceful ',

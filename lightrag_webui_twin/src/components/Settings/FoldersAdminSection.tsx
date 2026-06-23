@@ -34,6 +34,12 @@ import type { Folder } from '../../types/topbar';
 const FOLDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const MAX_FOLDERS = 5;
 
+function folderDeleteLabel(pendingDelete: boolean, armedDelete: boolean): string {
+  if (pendingDelete) return 'Deleting…';
+  if (armedDelete) return 'Click again';
+  return 'Delete';
+}
+
 export interface FoldersAdminSectionProps {
   user?: AuthenticatedUser | null;
   onToast?: (toast: Omit<Toast, 'id'>) => void;
@@ -445,11 +451,7 @@ function FolderRow({
                   name={armedDelete ? 'alert-triangle' : 'trash'}
                   size={11}
                 />{' '}
-                {pendingDelete
-                  ? 'Deleting…'
-                  : armedDelete
-                    ? 'Click again'
-                    : 'Delete'}
+                {folderDeleteLabel(pendingDelete, armedDelete)}
               </button>
             </>
           )}

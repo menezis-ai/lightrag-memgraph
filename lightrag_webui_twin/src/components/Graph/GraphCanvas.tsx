@@ -14,11 +14,23 @@ interface GraphCanvasProps {
   pan: { x: number; y: number };
   zoom: number;
   colors: Record<GraphEntityType, string>;
-  onMouseDown: MouseEventHandler<HTMLDivElement>;
+  onMouseDown: MouseEventHandler<SVGSVGElement>;
   onSelectEntity: (id: string) => void;
   onHoverEntity: (id: string | null) => void;
   onZoomChange: Dispatch<SetStateAction<number>>;
   onClearFilters: () => void;
+}
+
+function edgeStrokeWidth(isHighlighted: boolean, isStrong: boolean): number {
+  if (isHighlighted) return 1.6;
+  if (isStrong) return 1.1;
+  return 0.7;
+}
+
+function edgeStrokeOpacity(isHighlighted: boolean, isDimmed: boolean): number {
+  if (isHighlighted) return 0.9;
+  if (isDimmed) return 0.08;
+  return 0.32;
 }
 
 export function GraphCanvas({
@@ -42,14 +54,15 @@ export function GraphCanvas({
     <div
           ref={canvasRef}
           className="kg-canvas"
-          onMouseDown={onMouseDown}
           data-testid="kg-canvas"
           style={{ touchAction: 'none', overscrollBehavior: 'none' }}
         >
           <svg
+            onMouseDown={onMouseDown}
             viewBox="0 0 1000 680"
             preserveAspectRatio="xMidYMid meet"
             className="kg-svg"
+            aria-label="Knowledge graph canvas"
           >
             <defs>
               <marker
@@ -82,8 +95,9 @@ export function GraphCanvas({
                 const t = entities.find((e) => e.id === r.target);
                 if (!s || !t) return null;
                 const hi =
-                  selected && (r.source === selected.id || r.target === selected.id);
-                const dim = selected && !hi;
+                  selected !== null &&
+                  (r.source === selected.id || r.target === selected.id);
+                const dim = selected !== null && !hi;
                 const strong = r.strength >= 0.75;
                 const dx = t.x - s.x;
                 const dy = t.y - s.y;
@@ -105,8 +119,8 @@ export function GraphCanvas({
                       x2={x2}
                       y2={y2}
                       stroke={hi ? 'var(--twin-accent)' : 'currentColor'}
-                      strokeWidth={hi ? 1.6 : strong ? 1.1 : 0.7}
-                      strokeOpacity={hi ? 0.9 : dim ? 0.08 : 0.32}
+                      strokeWidth={edgeStrokeWidth(hi, strong)}
+                      strokeOpacity={edgeStrokeOpacity(hi, dim)}
                       markerEnd={hi ? 'url(#kg-arrow-hi)' : 'url(#kg-arrow)'}
                     />
                     {hi && (

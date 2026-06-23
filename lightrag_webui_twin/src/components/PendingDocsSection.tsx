@@ -406,14 +406,14 @@ function EditApproveModal({ doc, onClose, onSubmit }: Readonly<EditApproveModalP
   return (
     <div
       className="modal-backdrop"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-      data-testid="pending-doc-edit-modal"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close edit approval dialog"
+        data-testid="pending-doc-edit-modal"
+      />
       <dialog
         open
         className="modal edit-approve-modal"
@@ -538,14 +538,14 @@ function RejectModal({
   return (
     <div
       className="modal-backdrop"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-      data-testid="pending-doc-reject-modal"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close rejection dialog"
+        data-testid="pending-doc-reject-modal"
+      />
       <dialog
         open
         className="modal"

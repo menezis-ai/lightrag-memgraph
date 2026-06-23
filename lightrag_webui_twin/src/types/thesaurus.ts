@@ -6,10 +6,8 @@
  * tooltip definition.
  */
 
-export type ThesaurusCategory = string;
-
 export interface ThesaurusEntry {
   tag: string;
-  category: ThesaurusCategory;
+  category: string;
   def: string;
 }

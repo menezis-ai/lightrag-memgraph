@@ -665,11 +665,12 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     _auth_backend_configured = bool(
         settings.api_key or _resolved_jwt_secret or _idp_cfg is not None
     )
-    _auth_mode_label = (
-        "idp"
-        if _idp_cfg is not None
-        else ("legacy" if _auth_backend_configured else "open")
-    )
+    if _idp_cfg is not None:
+        _auth_mode_label = "idp"
+    elif _auth_backend_configured:
+        _auth_mode_label = "legacy"
+    else:
+        _auth_mode_label = "open"
     app.include_router(auth_router)
 
     # -- Core routes (auth-protected) --

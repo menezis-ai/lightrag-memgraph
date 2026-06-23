@@ -43,7 +43,7 @@ export function ClassPill({ cls, docId }: Readonly<ClassPillProps>) {
     <span
       className={klass}
       title={`${label}${setDate}`}
-      tabIndex={0}
+      role="img"
       aria-label={`Classification: ${label}`}
       data-testid={docId ? `class-pill-${docId}` : 'class-pill'}
       data-class-id={id}

@@ -43,6 +43,11 @@ export interface TopbarProps {
   tabs?: readonly Tab[];
 }
 
+function notificationsButtonLabel(unreadCount: number): string {
+  if (unreadCount === 0) return 'Notifications';
+  return `Notifications, ${unreadCount} unread`;
+}
+
 export function Topbar({
   tab,
   onTab,
@@ -154,7 +159,7 @@ export function Topbar({
           <button
             type="button"
             className="icon-btn"
-            aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
+            aria-label={notificationsButtonLabel(unreadCount)}
             aria-expanded={notifOpen}
             onClick={() => {
               setNotifOpen((o) => !o);

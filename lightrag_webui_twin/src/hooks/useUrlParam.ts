@@ -114,7 +114,7 @@ export function useUrlArrayParam(
         .split(',')
         .map((x) => x.trim())
         .filter(Boolean),
-    serialize: (arr) => (arr && arr.length ? arr.join(',') : ''),
+    serialize: (arr) => (arr?.length ? arr.join(',') : ''),
     validate: (v) => Array.isArray(v),
   });
 }

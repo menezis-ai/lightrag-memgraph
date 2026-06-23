@@ -589,7 +589,7 @@ async def approve_document(
         actor=actor,
         target_label=doc.get("file_path") or doc_id,
         summary=(
-            f"approved by {actor}" + (f" with edits" if edits else "")
+            f"approved by {actor}" + (" with edits" if edits else "")
         ),
         meta={"doc_id": doc_id, "edits": edits},
         target_type="document",

@@ -210,7 +210,9 @@ export function FilterPicker({
     const q = query.toLowerCase().trim();
     const a = fmt(o).toLowerCase().indexOf(q);
     const b = o.toLowerCase().indexOf(q);
-    return a >= 0 ? a : b >= 0 ? b : 999;
+    if (a >= 0) return a;
+    if (b >= 0) return b;
+    return 999;
   };
   const results = (
     query
@@ -317,4 +319,3 @@ export function FilterPicker({
     </div>
   );
 }
-

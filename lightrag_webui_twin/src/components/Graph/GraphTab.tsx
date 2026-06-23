@@ -234,7 +234,7 @@ export function GraphTab({
     }
   };
 
-  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const onMouseDown = (e: React.MouseEvent<Element>) => {
     dragRef.current = {
       x: e.clientX,
       y: e.clientY,

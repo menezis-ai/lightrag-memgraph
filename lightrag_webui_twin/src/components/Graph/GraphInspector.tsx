@@ -229,6 +229,7 @@ function GraphDeleteConfirm({
     }
     onConfirm();
   };
+  const buttonLabel = deleteConfirmLabel(pending, armed, noun);
   return (
     <div
       className="kg-detail-section kg-lifecycle"
@@ -251,7 +252,7 @@ function GraphDeleteConfirm({
         }
       >
         <Icon name={armed ? 'alert-triangle' : 'trash'} size={11} />{' '}
-        {pending ? `Deleting…` : armed ? 'Click again to confirm' : `Delete ${noun}`}
+        {buttonLabel}
       </button>
       {armed && (
         <button
@@ -265,6 +266,16 @@ function GraphDeleteConfirm({
       )}
     </div>
   );
+}
+
+function deleteConfirmLabel(
+  pending: boolean,
+  armed: boolean,
+  noun: 'entity' | 'relation',
+): string {
+  if (pending) return 'Deleting…';
+  if (armed) return 'Click again to confirm';
+  return `Delete ${noun}`;
 }
 
 function EntityHeader({
@@ -403,6 +414,7 @@ function EntityTagsSection({
   tagCatalog: readonly string[];
   onChange: (tags: string[]) => void;
 }>) {
+  const tagBody = renderEntityTagsBody(editing, tags, tagCatalog, onChange);
   return (
     <div className="kg-detail-section">
       <div className="section-label">
@@ -410,21 +422,118 @@ function EntityTagsSection({
           Tags {editing ? <em>— edit</em> : <em>— node attributes</em>}
         </span>
       </div>
-      {editing ? (
-        <TagAttrEditor tags={tags} tagCatalog={tagCatalog} onChange={onChange} />
-      ) : tags.length > 0 ? (
-        <div className="tag-chips">
-          {tags.map((tag) => (
-            <span key={tag} className="tag-chip">
-              {tag}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <div className="muted-sm">No tags.</div>
-      )}
+      {tagBody}
     </div>
   );
+}
+
+function renderEntityTagsBody(
+  editing: boolean,
+  tags: readonly string[],
+  tagCatalog: readonly string[],
+  onChange: (tags: string[]) => void,
+) {
+  if (editing) {
+    return (
+      <TagAttrEditor tags={tags} tagCatalog={tagCatalog} onChange={onChange} />
+    );
+  }
+  if (tags.length === 0) return <div className="muted-sm">No tags.</div>;
+  return (
+    <div className="tag-chips">
+      {tags.map((tag) => (
+        <span key={tag} className="tag-chip">
+          {tag}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PropertyEmptyState({
+  onStartEdit,
+}: Readonly<{ onStartEdit: () => void }>) {
+  return (
+    <div className="muted-sm">
+      No custom properties.{' '}
+      <button className="kg-inline-add" onClick={onStartEdit} type="button">
+        + Add some
+      </button>
+    </div>
+  );
+}
+
+function PropertyList({
+  propEntries,
+}: Readonly<{ propEntries: readonly [string, unknown][] }>) {
+  return (
+    <dl className="kg-prop-list">
+      {propEntries.map(([key, value]) => (
+        <div key={key} className="kg-prop-row">
+          <dt>{key}</dt>
+          <dd>{String(value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function renderEntityPropertiesBody({
+  editing,
+  properties,
+  propEntries,
+  suggestions,
+  onChange,
+  onStartEdit,
+}: Readonly<{
+  editing: boolean;
+  properties: Record<string, string>;
+  propEntries: readonly [string, unknown][];
+  suggestions: readonly string[];
+  onChange: (properties: Record<string, string>) => void;
+  onStartEdit: () => void;
+}>) {
+  if (editing) {
+    return (
+      <PropEditor
+        properties={properties}
+        suggestions={suggestions}
+        onChange={onChange}
+      />
+    );
+  }
+  if (propEntries.length === 0) {
+    return <PropertyEmptyState onStartEdit={onStartEdit} />;
+  }
+  return <PropertyList propEntries={propEntries} />;
+}
+
+function renderRelationPropertiesBody({
+  editing,
+  draft,
+  propEntries,
+  onDraftPropertiesChange,
+  onStartEdit,
+}: Readonly<{
+  editing: boolean;
+  draft: RelationDraft | null;
+  propEntries: readonly [string, unknown][];
+  onDraftPropertiesChange: (properties: Record<string, string>) => void;
+  onStartEdit: () => void;
+}>) {
+  if (editing && draft) {
+    return (
+      <PropEditor
+        properties={draft.properties}
+        suggestions={[]}
+        onChange={onDraftPropertiesChange}
+      />
+    );
+  }
+  if (propEntries.length === 0) {
+    return <PropertyEmptyState onStartEdit={onStartEdit} />;
+  }
+  return <PropertyList propEntries={propEntries} />;
 }
 
 function EntityPropertiesSection({
@@ -442,6 +551,14 @@ function EntityPropertiesSection({
   onChange: (properties: Record<string, string>) => void;
   onStartEdit: () => void;
 }>) {
+  const propertyBody = renderEntityPropertiesBody({
+    editing,
+    properties,
+    propEntries,
+    suggestions,
+    onChange,
+    onStartEdit,
+  });
   return (
     <div className="kg-detail-section">
       <div className="section-label">
@@ -453,29 +570,7 @@ function EntityPropertiesSection({
           <span className="kg-prop-count">{propEntries.length}</span>
         )}
       </div>
-      {editing ? (
-        <PropEditor
-          properties={properties}
-          suggestions={suggestions}
-          onChange={onChange}
-        />
-      ) : propEntries.length === 0 ? (
-        <div className="muted-sm">
-          No custom properties.{' '}
-          <button className="kg-inline-add" onClick={onStartEdit} type="button">
-            + Add some
-          </button>
-        </div>
-      ) : (
-        <dl className="kg-prop-list">
-          {propEntries.map(([key, value]) => (
-            <div key={key} className="kg-prop-row">
-              <dt>{key}</dt>
-              <dd>{String(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      {propertyBody}
     </div>
   );
 }
@@ -780,6 +875,14 @@ function RelationEditor({
   };
 
   const propEntries = Object.entries(rel.properties ?? {});
+  const relationPropertiesBody = renderRelationPropertiesBody({
+    editing,
+    draft,
+    propEntries,
+    onDraftPropertiesChange: (properties) =>
+      setDraft((d) => (d ? { ...d, properties } : d)),
+    onStartEdit: startEdit,
+  });
 
   return (
     <>
@@ -906,35 +1009,7 @@ function RelationEditor({
             <span className="kg-prop-count">{propEntries.length}</span>
           )}
         </div>
-        {editing && draft ? (
-          <PropEditor
-            properties={draft.properties}
-            suggestions={[]}
-            onChange={(properties) =>
-              setDraft((d) => (d ? { ...d, properties } : d))
-            }
-          />
-        ) : propEntries.length === 0 ? (
-          <div className="muted-sm">
-            No custom properties.{' '}
-            <button
-              className="kg-inline-add"
-              onClick={startEdit}
-              type="button"
-            >
-              + Add some
-            </button>
-          </div>
-        ) : (
-          <dl className="kg-prop-list">
-            {propEntries.map(([k, v]) => (
-              <div key={k} className="kg-prop-row">
-                <dt>{k}</dt>
-                <dd>{String(v)}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
+        {relationPropertiesBody}
       </div>
 
       {editing && (
@@ -1076,7 +1151,6 @@ export function TagAttrEditor({
             <button
               type="button"
               key={s}
-              aria-selected={false}
               className="autocomplete-row"
               data-testid={`kg-tag-sugg-${s}`}
               onMouseDown={() => add(s)}

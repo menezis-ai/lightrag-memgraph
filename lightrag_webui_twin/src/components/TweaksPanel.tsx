@@ -126,7 +126,7 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Reado
     return () => ro.disconnect();
   }, [open, clampToViewport]);
 
-  const onDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+  const onDragStart = (e: React.MouseEvent<HTMLElement>) => {
     const panel = panelRef.current;
     if (!panel) return;
     const r = panel.getBoundingClientRect();
@@ -151,6 +151,16 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Reado
     globalThis.addEventListener('mouseup', up);
   };
 
+  const nudgePanel = (dx: number, dy: number) => {
+    offsetRef.current = {
+      x: offsetRef.current.x + dx,
+      y: offsetRef.current.y + dy,
+    };
+    setOffset(offsetRef.current);
+    clampToViewport();
+    writePosition(offsetRef.current);
+  };
+
   if (!open) return null;
   return (
     <div
@@ -159,8 +169,24 @@ export function TweaksPanel({ open, onClose, title = 'Tweaks', children }: Reado
       data-testid="twk-panel"
       style={{ right: offset.x, bottom: offset.y }}
     >
-      <div className="twk-hd" onMouseDown={onDragStart} data-testid="twk-hd">
-        <b>{title}</b>
+      <div
+        className="twk-hd"
+        data-testid="twk-hd"
+      >
+        <button
+          type="button"
+          className="twk-drag-handle"
+          onMouseDown={onDragStart}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') nudgePanel(8, 0);
+            if (event.key === 'ArrowRight') nudgePanel(-8, 0);
+            if (event.key === 'ArrowUp') nudgePanel(0, 8);
+            if (event.key === 'ArrowDown') nudgePanel(0, -8);
+          }}
+          aria-label="Move tweaks panel"
+        >
+          <b>{title}</b>
+        </button>
         <button
           className="twk-x"
           aria-label="Close tweaks"
@@ -564,7 +590,7 @@ export function TweakColor({ label, value, options, onChange }: Readonly<TweakCo
   return (
     <TweakRow label={label}>
       <div className="twk-chips" role="radiogroup" aria-label={label}>
-        {options.map((o, i) => {
+        {options.map((o) => {
           const colors = Array.isArray(o) ? o : [o as string];
           const hero = colors[0];
           const rest = colors.slice(1);
@@ -572,7 +598,7 @@ export function TweakColor({ label, value, options, onChange }: Readonly<TweakCo
           const on = key(o) === cur;
           return (
             <button
-              key={i}
+              key={key(o)}
               type="button"
               className="twk-chip"
               role="radio"
@@ -585,8 +611,8 @@ export function TweakColor({ label, value, options, onChange }: Readonly<TweakCo
             >
               {sup.length > 0 && (
                 <span>
-                  {sup.map((c, j) => (
-                    <i key={j} style={{ background: c }} />
+                  {sup.map((c) => (
+                    <i key={c} style={{ background: c }} />
                   ))}
                 </span>
               )}

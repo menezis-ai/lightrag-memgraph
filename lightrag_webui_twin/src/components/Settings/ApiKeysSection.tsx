@@ -385,7 +385,7 @@ export function ApiKeysSection({
                 now and store it somewhere safe.
               </p>
               <div className="api-key-reveal-field">
-                <label className="field-label">Name</label>
+                <span className="field-label">Name</span>
                 <div
                   className="api-key-reveal-name"
                   data-testid="settings-api-keys-reveal-name"
@@ -394,7 +394,7 @@ export function ApiKeysSection({
                 </div>
               </div>
               <div className="api-key-reveal-field">
-                <label className="field-label">Full value</label>
+                <span className="field-label">Full value</span>
                 <div
                   className="mono settings-api-keys-reveal-value"
                   data-testid="settings-api-keys-reveal-value"

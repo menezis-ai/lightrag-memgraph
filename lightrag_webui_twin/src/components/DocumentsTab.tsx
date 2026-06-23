@@ -256,7 +256,7 @@ function PipelinePopover({
             }`}
             aria-label={`Pipeline live ${liveState}`}
           >
-            <span className="pp-live-dot" />
+            <span className="pp-live-dot" />{' '}
             LIVE
           </span>
         </span>
@@ -356,7 +356,7 @@ function BulkActionsBar({
   return (
     <section className="bulk-bar" aria-label="Bulk actions">
       <span className="bulk-count">
-        <b>{selectedCount}</b> selected
+        <b>{selectedCount}</b> selected{' '}
         <span className="bulk-of">of {filteredCount}</span>
       </span>
       <button type="button" className="bulk-action primary" onClick={onOpenBulk}>
@@ -739,7 +739,6 @@ export function DocumentsTab({
                 aria-label="Add tag filter"
                 aria-autocomplete="list"
                 aria-controls={tagListboxId}
-                aria-expanded={tagSuggestions.length > 0}
               />
               {tagSuggestions.length > 0 && (
                 <div
@@ -754,7 +753,6 @@ export function DocumentsTab({
                       className={`autocomplete-row${
                         i === activeTagSuggestionIndex ? ' focus' : ''
                       }`}
-                      aria-selected={i === activeTagSuggestionIndex}
                       onMouseEnter={() => setActiveTagSuggestionIndex(i)}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => addTagFilter(s.tag)}

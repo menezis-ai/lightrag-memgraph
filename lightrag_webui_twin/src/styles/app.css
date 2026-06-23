@@ -1114,7 +1114,16 @@ dialog.pipeline-popover {
 }
 .modal-backdrop > dialog.modal,
 .modal-bg > dialog.modal {
-  position: static;
+  position: relative;
+  z-index: 1;
+}
+.modal-backdrop-dismiss {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
 }
 dialog::backdrop {
   background: transparent;
@@ -1217,7 +1226,24 @@ dialog::backdrop {
   display: inline-flex; align-items: center; gap: 4px;
   justify-content: center;
 }
-.dropzone .sub .info { color: var(--twin-accent); cursor: help; }
+.dropzone-info-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}
+.dropzone-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--twin-accent);
+  cursor: help;
+  font: inherit;
+  font-size: 11px;
+}
 
 .tooltip {
   position: absolute;
@@ -6918,18 +6944,6 @@ dialog::backdrop {
   box-sizing: border-box;
 }
 
-/* AddSourceModal dropzone — the proto'\''s `.dropzone` transitions border
- * and background over 160ms on hover. The format-info tooltip is
- * absolutely positioned below the info icon, extending past the dropzone'\''s
- * bottom edge. When the mouse moves from the info icon down into the
- * tooltip, it crosses the dropzone boundary, flipping `.dropzone:hover`
- * off and replaying the transition. Result: visible "tremblement" of the
- * dropzone border + background. Kill the transition so the hover state
- * still applies but the toggle is instant. */
-.dropzone:where(*) {
-  transition: none;
-}
-
 /* ========================= polish.css ========================= */
 /* Polish layer — styles for components added during the React port sprint
  * (Settings, PendingDocs, Onboarding, DocDetailPanel, Topbar additions).
@@ -8154,8 +8168,18 @@ dialog::backdrop {
 }
 .twk-hd {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; cursor: grab; user-select: none;
+  padding: 10px 12px; user-select: none;
   border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+.twk-drag-handle {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: grab;
 }
 .twk-hd b { font-size: 12px; font-weight: 600; letter-spacing: 0.2px; }
 .twk-x { border: 0; background: transparent; cursor: pointer; color: var(--color-text-tertiary); font-size: 13px; line-height: 1; padding: 2px 4px; }

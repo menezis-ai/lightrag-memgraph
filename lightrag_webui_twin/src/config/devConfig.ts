@@ -75,12 +75,9 @@ export function resolveRuntimeConfig(
   source: TwinRuntimeConfig | string | undefined,
   isDev: boolean,
 ): TwinRuntimeConfig {
-  if (
-    isDev &&
-    typeof globalThis.window !== 'undefined' &&
-    globalThis.window.__twinE2eRuntimeConfig
-  ) {
-    return globalThis.window.__twinE2eRuntimeConfig;
+  const e2eRuntimeConfig = globalThis.window?.__twinE2eRuntimeConfig;
+  if (isDev && e2eRuntimeConfig) {
+    return e2eRuntimeConfig;
   }
   if (!source || source === PLACEHOLDER) {
     if (isDev) return DEV_CONFIG;

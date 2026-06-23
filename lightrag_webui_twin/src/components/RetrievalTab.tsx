@@ -32,7 +32,6 @@ import {
   type AnswerPart,
   type InlineAnswerPart,
   type AnswerStatus,
-  type AnswerToken,
   type ChatMessage,
   type QueryMode,
   type RetrievalSource,
@@ -159,6 +158,46 @@ const DEFAULT_SUGGESTIONS = [
   'Find operational procedures by tag',
 ];
 
+function withOccurrenceKeys<T>(
+  items: readonly T[],
+  baseKeyFor: (item: T) => string,
+): { item: T; key: string }[] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const baseKey = baseKeyFor(item);
+    const occurrence = seen.get(baseKey) ?? 0;
+    seen.set(baseKey, occurrence + 1);
+    return { item, key: `${baseKey}:${occurrence}` };
+  });
+}
+
+function chatMessageKeyBase(message: ChatMessage): string {
+  if (message.role === 'user') return `user:${message.text}`;
+  const answer = (message.tokens ?? []).join('');
+  const sourceKey = (message.sources ?? []).map((source) => source.n).join(',');
+  return `assistant:${answer}:${sourceKey}`;
+}
+
+function inlineAnswerPartKeyBase(part: InlineAnswerPart): string {
+  if (part.type === 'cite') return `cite:${part.value}`;
+  return `${part.type}:${part.value}`;
+}
+
+function answerPartKeyBase(part: AnswerPart): string {
+  if (part.type === 'lineBreak') return 'lineBreak';
+  if (part.type === 'heading') {
+    return `heading:${part.level}:${part.children
+      .map(inlineAnswerPartKeyBase)
+      .join('|')}`;
+  }
+  if (part.type === 'listItem') {
+    return `list:${part.ordered}:${part.children
+      .map(inlineAnswerPartKeyBase)
+      .join('|')}`;
+  }
+  return inlineAnswerPartKeyBase(part);
+}
+
 function splitThinkBlocks(text: string): { visible: string; thoughts: readonly string[] } {
   const thoughts: string[] = [];
   const visible = text
@@ -227,7 +266,7 @@ export function RetrievalTab({
   );
   const [streaming, setStreaming] = useState(false);
   const [streamingThreadId, setStreamingThreadId] = useState<string | null>(null);
-  const [streamedTokens, setStreamedTokens] = useState<readonly AnswerToken[]>([]);
+  const [streamedTokens, setStreamedTokens] = useState<readonly string[]>([]);
   const [highlightSrc, setHighlightSrc] = useState<number | null>(null);
 
   const [queryMode, setQueryMode] = useUrlParam<QueryMode>('mode', 'mix', {
@@ -343,7 +382,7 @@ export function RetrievalTab({
 
   const streamTokens = (
     threadId: string,
-    tokens: readonly AnswerToken[],
+    tokens: readonly string[],
     sources: readonly RetrievalSource[],
     answerStatus: AnswerStatus = 'grounded',
     requestedTopK?: number,
@@ -430,7 +469,7 @@ export function RetrievalTab({
     setStreaming(true);
 
     if (onStreamQuery) {
-      const streamed: AnswerToken[] = [];
+      const streamed: string[] = [];
       onStreamQuery(activeParams(q, conversationHistory), (chunk) => {
         streamed.push(chunk);
         setStreamedTokens([...streamed]);
@@ -613,10 +652,10 @@ export function RetrievalTab({
               </div>
             </div>
           )}
-          {convo.map((m, i) => (
+          {withOccurrenceKeys(convo, chatMessageKeyBase).map(({ item, key }) => (
             <Turn
-              key={i}
-              msg={m}
+              key={key}
+              msg={item}
               highlightSrc={highlightSrc}
               onCiteHover={onCiteHover}
               onCiteLeave={onCiteLeave}
@@ -676,8 +715,11 @@ export function RetrievalTab({
         </div>
 
         <div className="field">
-          <label className="field-label">Query mode</label>
+          <label className="field-label" htmlFor="retrieval-query-mode">
+            Query mode
+          </label>
           <select
+            id="retrieval-query-mode"
             aria-label="Query mode"
             value={queryMode}
             onChange={(e) => setQueryMode(e.target.value as QueryMode)}
@@ -691,7 +733,7 @@ export function RetrievalTab({
         </div>
 
         <div className="field retrieval-filter-field">
-          <label className="field-label">Source tag filters</label>
+          <span className="field-label">Source tag filters</span>
           <RetrievalFilterPicker
             label="Retrieval tag filter"
             options={tagOptions}
@@ -708,7 +750,7 @@ export function RetrievalTab({
         </div>
 
         <div className="field retrieval-filter-field">
-          <label className="field-label">Source document filters</label>
+          <span className="field-label">Source document filters</span>
           <RetrievalFilterPicker
             label="Retrieval document filter"
             options={docOptions}
@@ -726,8 +768,11 @@ export function RetrievalTab({
         </div>
 
         <div className="field">
-          <label className="field-label">Top K results</label>
+          <label className="field-label" htmlFor="retrieval-top-k">
+            Top K results
+          </label>
           <input
+            id="retrieval-top-k"
             type="number"
             aria-label="Top K"
             value={topK}
@@ -735,8 +780,11 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">Chunk top K</label>
+          <label className="field-label" htmlFor="retrieval-chunk-top-k">
+            Chunk top K
+          </label>
           <input
+            id="retrieval-chunk-top-k"
             type="number"
             aria-label="Chunk top K"
             value={chunkTopK}
@@ -744,8 +792,11 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">Max tokens · text unit</label>
+          <label className="field-label" htmlFor="retrieval-max-tokens">
+            Max tokens · text unit
+          </label>
           <input
+            id="retrieval-max-tokens"
             type="number"
             aria-label="Max tokens"
             value={maxTok}
@@ -753,8 +804,11 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">Minimum source score</label>
+          <label className="field-label" htmlFor="retrieval-min-score">
+            Minimum source score
+          </label>
           <input
+            id="retrieval-min-score"
             type="number"
             min={0}
             max={1}
@@ -768,8 +822,11 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">History turns</label>
+          <label className="field-label" htmlFor="retrieval-history-turns">
+            History turns
+          </label>
           <input
+            id="retrieval-history-turns"
             type="number"
             aria-label="History turns"
             value={history}
@@ -777,8 +834,11 @@ export function RetrievalTab({
           />
         </div>
         <div className="field">
-          <label className="field-label">System prompt</label>
+          <label className="field-label" htmlFor="retrieval-system-prompt">
+            System prompt
+          </label>
           <textarea
+            id="retrieval-system-prompt"
             aria-label="System prompt"
             value={userPrompt}
             onChange={(e) => setUserPrompt(e.target.value)}
@@ -800,7 +860,7 @@ export function RetrievalTab({
             tabIndex={0}
             aria-checked={enableRerank}
             aria-label="Enable rerank"
-          />
+          />{' '}
           Enable rerank
         </div>
         <div className="toggle">
@@ -817,7 +877,7 @@ export function RetrievalTab({
             tabIndex={0}
             aria-checked={onlyCtx}
             aria-label="Only need context"
-          />
+          />{' '}
           Only need context
         </div>
         <div className="toggle">
@@ -834,7 +894,7 @@ export function RetrievalTab({
             tabIndex={0}
             aria-checked={onlyPrompt}
             aria-label="Only need prompt"
-          />
+          />{' '}
           Only need prompt
         </div>
 
@@ -937,13 +997,13 @@ function Turn({
   ).length;
 
   const renderInlineParts = (inlineParts: readonly InlineAnswerPart[]) =>
-    inlineParts.map((p, i) => {
-      if (p.type === 'text') return <span key={i}>{p.value}</span>;
-      if (p.type === 'bold') return <strong key={i}>{p.value}</strong>;
-      if (p.type === 'code') return <code key={i}>{p.value}</code>;
+    withOccurrenceKeys(inlineParts, inlineAnswerPartKeyBase).map(({ item: p, key }) => {
+      if (p.type === 'text') return <span key={key}>{p.value}</span>;
+      if (p.type === 'bold') return <strong key={key}>{p.value}</strong>;
+      if (p.type === 'code') return <code key={key}>{p.value}</code>;
       return (
         <button
-          key={i}
+          key={key}
           type="button"
           className="citation"
           onMouseEnter={() => onCiteHover(p.value)}
@@ -960,12 +1020,12 @@ function Turn({
   return (
     <div className="msg-assistant">
       <div className="msg-text">
-        {parts.map((p, i) => {
-          if (p.type === 'lineBreak') return <br key={i} />;
+        {withOccurrenceKeys(parts, answerPartKeyBase).map(({ item: p, key }) => {
+          if (p.type === 'lineBreak') return <br key={key} />;
           if (p.type === 'heading') {
             const Tag = `h${p.level}` as 'h1' | 'h2' | 'h3';
             return (
-              <Tag key={i} className={`answer-heading answer-heading-${p.level}`}>
+              <Tag key={key} className={`answer-heading answer-heading-${p.level}`}>
                 {renderInlineParts(p.children)}
               </Tag>
             );
@@ -973,7 +1033,7 @@ function Turn({
           if (p.type === 'listItem') {
             return (
               <div
-                key={i}
+                key={key}
                 className={`answer-list-item${p.ordered ? ' ordered' : ''}`}
               >
                 <span className="answer-list-marker">

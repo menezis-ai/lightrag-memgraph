@@ -200,7 +200,8 @@ async def _read_storage_info() -> dict[str, int]:
             result = await session.run("SHOW STORAGE INFO")
             rows = await result.data()
             await result.consume()
-    except Exception:  # noqa: BLE001 — fail-open, never propagate
+    except Exception:  # noqa: BLE001
+        # Fail-open, never propagate quota guard failures.
         logger.exception("[quota] SHOW STORAGE INFO failed; guard inactive")
         return {}
     return _index_rows(rows)

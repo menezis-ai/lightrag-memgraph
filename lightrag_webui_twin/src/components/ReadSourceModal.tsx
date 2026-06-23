@@ -57,14 +57,14 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
   return (
     <div
       className="modal-backdrop"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-      data-testid="read-source-modal"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close source preview"
+        data-testid="read-source-modal"
+      />
       <dialog
         open
         className="modal read-source"

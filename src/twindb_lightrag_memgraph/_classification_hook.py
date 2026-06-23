@@ -362,12 +362,18 @@ async def _reinsert_accepted(
     accepted_ids = (
         [explicit_ids[idx] for idx in accepted_indices] if ids is not None else None
     )
+    if isinstance(ids, list):
+        accepted_ids_arg = accepted_ids
+    elif accepted_ids:
+        accepted_ids_arg = accepted_ids[0]
+    else:
+        accepted_ids_arg = None
     result_track_id = await original_ainsert(
         self,
         accepted_inputs if isinstance(input, list) else accepted_inputs[0],
         split_by_character,
         split_by_character_only,
-        accepted_ids if isinstance(ids, list) else (accepted_ids[0] if accepted_ids else None),
+        accepted_ids_arg,
         accepted_paths if isinstance(file_paths, list) else accepted_paths[0],
         resolved_track_id,
     )

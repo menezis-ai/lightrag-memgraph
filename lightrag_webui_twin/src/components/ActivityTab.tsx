@@ -50,6 +50,12 @@ export interface ActivityTabProps {
 
 const RANGE_IDS = ACTIVITY_RANGES.map((r) => r.id);
 
+function kindPillStateClass(explicit: boolean, active: boolean): string {
+  if (explicit) return 'is-explicit';
+  if (active) return 'is-dim';
+  return 'is-off';
+}
+
 export function ActivityTab({
   events,
   nowMs,
@@ -66,7 +72,7 @@ export function ActivityTab({
   });
   const [kinds, setKinds] = useUrlParam<Set<string>>('kind', new Set<string>(), {
     parse: (s) => new Set(s.split(',').filter(Boolean)),
-    serialize: (set) => (set && set.size ? [...set].join(',') : ''),
+    serialize: (set) => (set?.size ? [...set].join(',') : ''),
     validate: (v) => v instanceof Set,
   });
   const [sev, setSev] = useUrlParam<'any' | ActivitySeverity>('sev', 'any', {
@@ -206,10 +212,7 @@ export function ActivityTab({
                 return (
                   <button
                     key={k}
-                    className={
-                      'kind-pill ' +
-                      (explicit ? 'is-explicit' : active ? 'is-dim' : 'is-off')
-                    }
+                    className={'kind-pill ' + kindPillStateClass(explicit, active)}
                     onClick={() => toggleKind(k)}
                     title={m.label}
                     aria-pressed={explicit}
@@ -356,14 +359,14 @@ export function ActivityTab({
       {clearOpen && (
         <div
           className="modal-bg"
-          onClick={(e) => {
-            if (e.currentTarget === e.target) setClearOpen(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setClearOpen(false);
-          }}
-          data-testid="clear-modal-bg"
         >
+          <button
+            type="button"
+            className="modal-backdrop-dismiss"
+            onClick={() => setClearOpen(false)}
+            aria-label="Close clear activity dialog"
+            data-testid="clear-modal-bg"
+          />
           <dialog
             open
             ref={clearModalRef}

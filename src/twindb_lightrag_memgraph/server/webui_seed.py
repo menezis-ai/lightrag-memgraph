@@ -172,18 +172,17 @@ def _tag(
     category: str,
     status: str,
     def_: str,
-    *,
-    aliases: list[str] | None = None,
-    deprecates: list[str] | None = None,
-    sources_count: int = 0,
-    chunks_count: int = 0,
-    query_freq_30d: int = 0,
-    created: dict[str, str] | None = None,
-    last_edit: dict[str, str] | None = None,
-    related: list[dict[str, Any]] | None = None,
-    examples: list[str] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
+    aliases = extra.pop("aliases", None)
+    deprecates = extra.pop("deprecates", None)
+    sources_count = extra.pop("sources_count", 0)
+    chunks_count = extra.pop("chunks_count", 0)
+    query_freq_30d = extra.pop("query_freq_30d", 0)
+    created = extra.pop("created", None)
+    last_edit = extra.pop("last_edit", None)
+    related = extra.pop("related", None)
+    examples = extra.pop("examples", None)
     out: dict[str, Any] = {
         "tag": tag,
         "tier": tier,

@@ -488,14 +488,14 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<Authoriz
   return (
     <div
       className="modal-backdrop"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-      data-testid="authorize-backdrop"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close authorize dialog"
+        data-testid="authorize-backdrop"
+      />
       <dialog
         open
         className="modal small"

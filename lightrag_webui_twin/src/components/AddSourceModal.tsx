@@ -98,6 +98,10 @@ function displayUploadedOverTotal(f: FileUpload): string {
   return `${(f.uploaded ?? 0).toFixed(1)} / ${f.size} MB`;
 }
 
+function addSourceButtonLabel(ready: number): string {
+  return `Add ${ready} source${ready === 1 ? '' : 's'}`;
+}
+
 export type LinkedSourceType = 'confluence' | 'sharepoint' | 'url';
 
 export interface LinkedSource {
@@ -341,14 +345,14 @@ export function AddSourceModal({
   return (
     <div
       className="modal-backdrop"
-      onClick={(e) => {
-        if (e.currentTarget === e.target) guardedClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') guardedClose();
-      }}
-      data-testid="addsource-backdrop"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={guardedClose}
+        aria-label="Close add source dialog"
+        data-testid="addsource-backdrop"
+      />
       <dialog
         open
         ref={modalRef}
@@ -406,24 +410,30 @@ export function AddSourceModal({
             <Icon name="cloud-upload" size={28} color="var(--color-text-secondary)" />
             <div className="title">Drop files here or click to browse</div>
             <div className="sub">
-              PDF, DOCX, MD, TXT and 35+ formats
-              <span
-                className="info"
-                onMouseEnter={() => setShowTooltip(true)}
-                onMouseLeave={() => setShowTooltip(false)}
-                style={{ position: 'relative' }}
-              >
-                <Icon name="info-circle" size={13} />
-                <UploadFormatTooltip
-                  show={showTooltip}
-                  formatCategories={formatCategories}
-                />
-              </span>
+              <span>PDF, DOCX, MD, TXT and 35+ formats</span>
               <span style={{ color: 'var(--color-text-tertiary)' }}>
-                {' '}· max 50 MB per file
+                · max 50 MB per file
               </span>
             </div>
           </button>
+          <div className="dropzone-info-row">
+            <button
+              type="button"
+              className="dropzone-info"
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+              onFocus={() => setShowTooltip(true)}
+              onBlur={() => setShowTooltip(false)}
+              aria-label="Show supported formats"
+            >
+              <Icon name="info-circle" size={13} />
+              <span>Supported formats</span>
+              <UploadFormatTooltip
+                show={showTooltip}
+                formatCategories={formatCategories}
+              />
+            </button>
+          </div>
 
           {files.length > 0 && (
             <div>
@@ -541,7 +551,7 @@ export function AddSourceModal({
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDownCapture={(e) => {
-                  if (e.key === 'Escape') {
+                  if (e.key === 'Escape' && tagInput) {
                     e.stopPropagation();
                     setTagInput('');
                   }
@@ -557,16 +567,16 @@ export function AddSourceModal({
               />
             </div>
             {tagInput && tagSugg.length > 0 && (
-              <ul
+              <div
                 className="autocomplete modal-autocomplete"
                 style={{ marginTop: 4 }}
               >
                 {tagSugg.map((s, i) => (
-                  <li
+                  <button
+                    type="button"
                     key={s.tag}
                     className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
                     onMouseDown={() => addTag(s.tag)}
-                    aria-selected={i === 0}
                     data-testid={`tag-sugg-${s.tag}`}
                   >
                     <div className="row1">
@@ -574,9 +584,9 @@ export function AddSourceModal({
                       <span className="badge">{s.category}</span>
                     </div>
                     <div className="def">{s.def}</div>
-                  </li>
+                  </button>
                 ))}
-              </ul>
+              </div>
             )}
           </div>
         </div>
@@ -605,9 +615,7 @@ export function AddSourceModal({
               disabled={ready === 0 || submitting}
               onClick={submit}
             >
-              {submitting
-                ? 'Uploading…'
-                : `Add ${ready} source${ready === 1 ? '' : 's'}`}
+              {submitting ? 'Uploading…' : addSourceButtonLabel(ready)}
             </button>
           </div>
         </div>

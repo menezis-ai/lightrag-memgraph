@@ -28,6 +28,11 @@ const ACTIONABLE_KINDS = new Set<Notification['kind']>([
   'pipeline-warning',
 ]);
 
+function todoBellLabel(todoCount: number): string {
+  if (todoCount === 0) return 'To-do';
+  return `To-do, ${todoCount} pending`;
+}
+
 export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellProps>) {
   const { data: notifications = [] } = useQuery({
     queryKey: ['todo-bell-notifications'] as const,
@@ -56,7 +61,7 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
       <button
         type="button"
         className="icon-btn"
-        aria-label={`To-do${todoCount ? `, ${todoCount} pending` : ''}`}
+        aria-label={todoBellLabel(todoCount)}
         aria-expanded={open}
         data-testid="topbar-todo-bell"
         onClick={() => setOpen((o) => !o)}

@@ -14,7 +14,7 @@
  *     translates it to a toast payload.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { type ReactNode, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { TagActionModal, type TagActionCommit } from './TagActionModal';
@@ -91,6 +91,14 @@ function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
     }
   }
   return null;
+}
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && typeof err.body === 'object' && err.body) {
+    return (err.body as { detail?: string }).detail ?? err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
 
 export function TagsTab({
@@ -208,12 +216,7 @@ export function TagsTab({
       setImportStatus({ kind: 'success', count: payload.length });
       setDomainEditorOpen(false);
     } catch (err) {
-      const message =
-        err instanceof ApiError && typeof err.body === 'object' && err.body
-          ? (err.body as { detail?: string }).detail ?? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Domain update failed.';
+      const message = apiErrorMessage(err, 'Domain update failed.');
       setDomainError(message);
       setImportStatus({ kind: 'error', message });
     }
@@ -231,7 +234,7 @@ export function TagsTab({
       a.download = 'twin-categories.template.json';
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
+      a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
       setImportStatus({
@@ -274,12 +277,7 @@ export function TagsTab({
       );
       setImportStatus({ kind: 'success', count: parsed.length });
     } catch (err) {
-      const message =
-        err instanceof ApiError && typeof err.body === 'object' && err.body
-          ? (err.body as { detail?: string }).detail ?? err.message
-          : err instanceof Error
-            ? err.message
-            : 'Import failed.';
+      const message = apiErrorMessage(err, 'Import failed.');
       setImportStatus({ kind: 'error', message });
     }
   };
@@ -354,6 +352,76 @@ export function TagsTab({
         .slice(0, 4),
     [tags],
   );
+
+  let tagsGridContent: ReactNode;
+  if (filtered.length > 0) {
+    tagsGridContent = (
+      <div className="tags-grid">
+        {filtered.map((t) => {
+          const cat = categories.find((c) => c.id === t.category);
+          return (
+            <button
+              key={t.tag}
+              className={'tag-card ' + (selectedTag === t.tag ? 'is-selected' : '')}
+              onClick={() => setSelectedTag(t.tag)}
+              data-testid={`tag-card-${t.tag}`}
+            >
+              <div className="tag-card-h">
+                <code className="tag-card-name">{t.tag}</code>
+                {cat && (
+                  <span
+                    className="domain-badge"
+                    style={{ borderColor: cat.color, color: cat.color }}
+                  >
+                    {cat.label}
+                  </span>
+                )}
+              </div>
+              <div className="tag-card-def">{t.def}</div>
+              {t.aliases.length > 0 && (
+                <div className="tag-card-aliases">
+                  <span className="al-label">syn:</span>
+                  {t.aliases.map((a) => (
+                    <code key={a}>{a}</code>
+                  ))}
+                </div>
+              )}
+              <div className="tag-card-footer">
+                <span>
+                  <b>{t.sources_count}</b> docs
+                </span>
+                <span className="dot-sep">·</span>
+                <span>{t.query_freq_30d}/30d</span>
+                <span className="spacer" />
+                <StatusBadge status={t.status} />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  } else if (totalActive === 0) {
+    tagsGridContent = (
+      <TagsEmptyZero
+        canSuggest={canSuggest}
+        onRequest={() => setModal({ kind: 'request' })}
+      />
+    );
+  } else {
+    tagsGridContent = (
+      <TagsEmptyFiltered
+        q={q}
+        selectedCat={selectedCat}
+        selectedStatus={selectedStatus}
+        categories={categories}
+        suggestions={suggestions}
+        canSuggest={canSuggest}
+        onClear={clearFilters}
+        onPickTag={(name) => setSelectedTag(name)}
+        onRequest={() => setModal({ kind: 'request' })}
+      />
+    );
+  }
 
   return (
     <div className="tags-screen">
@@ -619,72 +687,7 @@ export function TagsTab({
           </button>
         </aside>
 
-        <main className="tags-grid-wrap">
-          {filtered.length > 0 ? (
-            <div className="tags-grid">
-              {filtered.map((t) => {
-                const cat = categories.find((c) => c.id === t.category);
-                return (
-                  <button
-                    key={t.tag}
-                    className={
-                      'tag-card ' + (selectedTag === t.tag ? 'is-selected' : '')
-                    }
-                    onClick={() => setSelectedTag(t.tag)}
-                    data-testid={`tag-card-${t.tag}`}
-                  >
-                    <div className="tag-card-h">
-                      <code className="tag-card-name">{t.tag}</code>
-                      {cat && (
-                        <span
-                          className="domain-badge"
-                          style={{ borderColor: cat.color, color: cat.color }}
-                        >
-                          {cat.label}
-                        </span>
-                      )}
-                    </div>
-                    <div className="tag-card-def">{t.def}</div>
-                    {t.aliases.length > 0 && (
-                      <div className="tag-card-aliases">
-                        <span className="al-label">syn:</span>
-                        {t.aliases.map((a) => (
-                          <code key={a}>{a}</code>
-                        ))}
-                      </div>
-                    )}
-                    <div className="tag-card-footer">
-                      <span>
-                        <b>{t.sources_count}</b> docs
-                      </span>
-                      <span className="dot-sep">·</span>
-                      <span>{t.query_freq_30d}/30d</span>
-                      <span className="spacer" />
-                      <StatusBadge status={t.status} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : totalActive === 0 ? (
-            <TagsEmptyZero
-              canSuggest={canSuggest}
-              onRequest={() => setModal({ kind: 'request' })}
-            />
-          ) : (
-            <TagsEmptyFiltered
-              q={q}
-              selectedCat={selectedCat}
-              selectedStatus={selectedStatus}
-              categories={categories}
-              suggestions={suggestions}
-              canSuggest={canSuggest}
-              onClear={clearFilters}
-              onPickTag={(name) => setSelectedTag(name)}
-              onRequest={() => setModal({ kind: 'request' })}
-            />
-          )}
-        </main>
+        <main className="tags-grid-wrap">{tagsGridContent}</main>
 
         <TagDetailPanel
           t={detail}
@@ -760,11 +763,14 @@ function DomainEditorModal({
   return (
     <div
       className="modal-bg"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      data-testid="domain-editor-backdrop"
     >
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        onClick={onClose}
+        aria-label="Close domain editor"
+        data-testid="domain-editor-backdrop"
+      />
       <dialog
         open
         className="modal domain-editor-modal"
