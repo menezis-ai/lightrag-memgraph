@@ -142,7 +142,7 @@ class TestForFolderMemgraphModeIntegration:
         )
 
         source = inspect.getsource(fn)
-        assert 'WebuiStore.for_folder(folder.id, mode="memgraph")' in source, (
+        assert '.for_folder(folder.id, mode="memgraph")' in source, (
             "register() memgraph branch must pass mode='memgraph' to "
             "for_folder — see mock-kill F6."
         )

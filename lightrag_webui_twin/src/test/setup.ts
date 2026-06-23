@@ -22,7 +22,7 @@ function makeStorage(): Storage {
 }
 
 function installStorage(name: 'localStorage' | 'sessionStorage'): void {
-  if (typeof globalThis.window === 'undefined') return;
+  if (globalThis.window === undefined) return;
   const storage = makeStorage();
   for (const target of [globalThis.window, globalThis]) {
     const descriptor = Object.getOwnPropertyDescriptor(target, name);

@@ -100,7 +100,7 @@ export function isStructured(
  * `'UNCLASSIFIED'` when no classification is present. Use this when you need
  * a single string for display or comparison.
  */
-export function getClassId(cls: ClassificationValue): ClassId | string {
+export function getClassId(cls: ClassificationValue): string {
   if (cls === undefined || cls === null) return 'UNCLASSIFIED';
   if (typeof cls === 'string') return cls;
   return cls.class_id ?? 'UNCLASSIFIED';

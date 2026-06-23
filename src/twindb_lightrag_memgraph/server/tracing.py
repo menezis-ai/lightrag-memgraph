@@ -65,7 +65,7 @@ def metrics_snapshot() -> dict[str, int]:
 
 def reset_metrics() -> None:
     """Reset operational counters. Intended for tests."""
-    for name in list(_METRIC_COUNTERS):
+    for name in _METRIC_COUNTERS:
         _METRIC_COUNTERS[name] = 0
 
 

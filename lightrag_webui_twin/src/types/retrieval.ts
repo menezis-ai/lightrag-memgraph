@@ -114,7 +114,7 @@ export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
       if (m[1]) {
         parts.push({ type: 'bold', value: m[1] });
       } else if (m[2] || m[3]) {
-        parts.push({ type: 'cite', value: parseInt(m[2] || m[3], 10) });
+        parts.push({ type: 'cite', value: Number.parseInt(m[2] || m[3], 10) });
       } else if (m[4]) {
         parts.push({ type: 'code', value: m[4] });
       }

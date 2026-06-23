@@ -5,7 +5,7 @@ export const PINNED_STORAGE_KEY = 'twin.kg.pinned.v1';
 export const tagsOf = (entity: GraphEntity): readonly string[] => entity.tags ?? [];
 
 export const readPinnedEntityIds = (): readonly string[] => {
-  if (typeof globalThis.window === 'undefined') return [];
+  if (globalThis.window === undefined) return [];
   try {
     const parsed = JSON.parse(
       globalThis.localStorage.getItem(PINNED_STORAGE_KEY) ?? '[]',

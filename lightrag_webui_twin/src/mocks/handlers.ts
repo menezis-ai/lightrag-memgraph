@@ -91,7 +91,7 @@ function trackStatusResponse(trackId: string, docId: string | undefined) {
 }
 
 function e2eStorage(): Storage | null {
-  if (typeof globalThis.window === 'undefined') return null;
+  if (globalThis.window === undefined) return null;
   try {
     return globalThis.sessionStorage;
   } catch {
@@ -310,10 +310,10 @@ export function setMockQuotaState(patch: Partial<MockQuotaState>): void {
     patch.used_pct === undefined &&
     quotaState.limit_bytes
   ) {
-    quotaState.used_pct =
-      quotaState.used_bytes !== null
-        ? quotaState.used_bytes / quotaState.limit_bytes
-        : null;
+      quotaState.used_pct =
+      quotaState.used_bytes === null
+        ? null
+        : quotaState.used_bytes / quotaState.limit_bytes;
   }
 }
 function nextApiKeyId(): string {
@@ -407,11 +407,12 @@ function recordTwinFolderRequest(request: Request): void {
 }
 
 export function mockCurrentScopes(): readonly string[] | null {
-  if (typeof globalThis.window === 'undefined') return null;
+  if (globalThis.window === undefined) return null;
+  const twinConfig = globalThis.window.__twinConfig;
   const config =
     globalThis.window.__twinE2eRuntimeConfig ??
-    (typeof globalThis.window.__twinConfig === 'object'
-      ? globalThis.window.__twinConfig
+    (twinConfig !== undefined && twinConfig !== null && typeof twinConfig === 'object'
+      ? twinConfig
       : undefined);
   return config?.debugUser?.gateway_scopes ?? null;
 }
@@ -934,7 +935,7 @@ export const handlers = [
       );
     }
     uploadSeq += 1;
-    const trackId = `track_${name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
+    const trackId = `track_${name.replaceAll(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
     const docId = `uploaded_${uploadSeq}`;
     uploadedTrackDocs.set(trackId, docId);
     const text =
@@ -1465,7 +1466,7 @@ export const handlers = [
       const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
       const updated = updateDoc(id, {
-        ...(body.edits ?? {}),
+        ...body.edits,
         status: 'PROCESSED',
         review: { ...doc.review!, state: 'approved' as const },
       });
@@ -1733,7 +1734,7 @@ export const handlers = [
       id,
       source: body.source,
       target: body.target,
-      label: body.label.toUpperCase().replace(/\s+/g, '_'),
+      label: body.label.toUpperCase().replaceAll(/\s+/g, '_'),
       strength: body.strength ?? 0.5,
     };
     graphRelationState = [...graphRelationState, relation];

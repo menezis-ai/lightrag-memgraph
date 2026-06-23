@@ -196,10 +196,10 @@ export function FilterPicker({
     opt = opt.toLowerCase();
     q = q.toLowerCase().trim();
     if (!q) return true;
-    if (opt.indexOf(q) >= 0) return true;
+    if (opt.includes(q)) return true;
     let i = 0;
-    for (let k = 0; k < opt.length; k++) {
-      if (opt[k] === q[i]) i++;
+    for (const char of opt) {
+      if (char === q[i]) i++;
       if (i >= q.length) return true;
     }
     return false;

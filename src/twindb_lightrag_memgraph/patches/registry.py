@@ -1023,7 +1023,7 @@ def _block_pipmaster_classes(pm) -> None:
         if cls is None:
             continue
         is_async_cls = cls_name == "AsyncPackageManager"
-        for method_name in list(cls.__dict__):
+        for method_name in cls.__dict__:
             if not (method_name.startswith("install") or method_name.startswith("ensure")):
                 continue
             replacement = (
@@ -1804,7 +1804,7 @@ async def _overlay_instance_quota_middleware(request, call_next):
 
 
 async def _init_overlay_memgraph_stores(
-    webui_categories_config, WebuiStore, set_store
+    webui_categories_config, webui_store, set_store
 ) -> None:
     """Swap the Twin overlay stores to per-folder Memgraph backends at startup.
 
@@ -1844,7 +1844,7 @@ async def _init_overlay_memgraph_stores(
             notif_store = MemgraphNotificationStore(workspace=folder.id)
             await notif_store.initialize()
 
-            store = WebuiStore.for_folder(folder.id, mode="memgraph")
+            store = webui_store.for_folder(folder.id, mode="memgraph")
             store._tag_backend = tag_store
             store._activity_backend = activity_store
             store._notification_backend = notif_store

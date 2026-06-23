@@ -138,9 +138,7 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   send: (
-    <>
-      <path d="M10 14l11 -11M21 3l-6.5 18a.55 .55 0 0 1 -1 0L10 14L3 10.5a.55 .55 0 0 1 0 -1L21 3" />
-    </>
+    <path d="M10 14l11 -11M21 3l-6.5 18a.55 .55 0 0 1 -1 0L10 14L3 10.5a.55 .55 0 0 1 0 -1L21 3" />
   ),
   'message-circle': (
     <>
@@ -239,7 +237,7 @@ const SOURCE_ICON_MAP: Record<SourceType, IconName> = {
 };
 
 export interface SourceIconProps {
-  type: SourceType | string;
+  type: SourceType | (string & {});
   size?: number;
 }
 

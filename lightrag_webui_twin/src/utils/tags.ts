@@ -18,7 +18,7 @@ function rankTag(tag: TagEntry, query: string): number {
   const def = tag.def.toLowerCase();
   if (name === query) return 0;
   if (name.startsWith(query)) return 1;
-  if (aliases.some((alias) => alias === query)) return 2;
+  if (aliases.includes(query)) return 2;
   if (aliases.some((alias) => alias.startsWith(query))) return 3;
   if (name.includes(query)) return 4;
   if (aliases.some((alias) => alias.includes(query))) return 5;

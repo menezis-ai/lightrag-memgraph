@@ -91,7 +91,7 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
           </button>
         </div>
         <div className="rs-sub">
-          <code className={doc.type !== 'file' ? 'mono' : ''}>
+          <code className={doc.type === 'file' ? '' : 'mono'}>
             {doc.file_path}
           </code>
           <span className="dot-sep">·</span>

@@ -62,7 +62,7 @@ const DOMAIN_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const DOMAIN_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 function normalizeDomainId(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, '-');
+  return value.trim().toLowerCase().replaceAll(/\s+/g, '-');
 }
 
 function draftFromCategories(categories: readonly TagCategory[]): DomainDraft[] {
@@ -975,13 +975,13 @@ function TagsEmptyFiltered({
   onRequest,
 }: Readonly<TagsEmptyFilteredProps>) {
   const catLabel =
-    selectedCat !== 'all' ? categories.find((c) => c.id === selectedCat) : null;
+    selectedCat === 'all' ? null : categories.find((c) => c.id === selectedCat);
   const active = [
     q.trim() ? { key: 'q', label: `search: "${q.trim()}"` } : null,
     catLabel ? { key: 'cat', label: `category: ${catLabel.label}` } : null,
-    selectedStatus !== 'all'
-      ? { key: 'status', label: `status: ${selectedStatus}` }
-      : null,
+    selectedStatus === 'all'
+      ? null
+      : { key: 'status', label: `status: ${selectedStatus}` },
   ].filter(Boolean) as { key: string; label: string }[];
 
   return (
@@ -1006,7 +1006,7 @@ function TagsEmptyFiltered({
         {canSuggest && q.trim() && (
           <button className="ghost-btn" onClick={onRequest}>
             <Icon name="plus" size={12} /> Request{' '}
-            <code>{q.trim().toLowerCase().replace(/\s+/g, '-')}</code> as new tag
+            <code>{q.trim().toLowerCase().replaceAll(/\s+/g, '-')}</code> as new tag
           </button>
         )}
       </div>

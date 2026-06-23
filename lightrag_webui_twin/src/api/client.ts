@@ -32,7 +32,7 @@ export function getActiveFolder(): string | null {
 }
 
 function readStoredAuthToken(): string {
-  if (typeof globalThis.window === 'undefined') return '';
+  if (globalThis.window === undefined) return '';
   try {
     return globalThis.sessionStorage.getItem(SESSION_AUTH_TOKEN_KEY) ?? '';
   } catch {
@@ -42,7 +42,7 @@ function readStoredAuthToken(): string {
 
 export function setSessionAuthToken(token: string | null): void {
   sessionAuthToken = token;
-  if (typeof globalThis.window === 'undefined') return;
+  if (globalThis.window === undefined) return;
   try {
     if (token) {
       globalThis.sessionStorage.setItem(SESSION_AUTH_TOKEN_KEY, token);
@@ -120,9 +120,9 @@ export interface ApiRequestInit {
 
 export function getTwinRuntimeConfig() {
   const raw =
-    typeof globalThis.window !== 'undefined'
-      ? globalThis.window.__twinConfig
-      : undefined;
+    globalThis.window === undefined
+      ? undefined
+      : globalThis.window.__twinConfig;
   return resolveRuntimeConfig(raw, Boolean(import.meta.env.DEV));
 }
 
@@ -131,7 +131,7 @@ function isAbsoluteUrl(value: string): boolean {
 }
 
 function trimSlashes(value: string): string {
-  return value.replace(/^\/+|\/+$/g, '');
+  return value.replaceAll(/^\/+|\/+$/g, '');
 }
 
 function joinUrl(base: string, path: string): string {
@@ -221,7 +221,7 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
   const res = await fetch(buildApiUrl(path, init.query), {
     method,
     headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
     signal: init.signal,
     credentials: 'include',
   });

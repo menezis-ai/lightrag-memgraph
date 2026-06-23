@@ -200,7 +200,7 @@ function AddFolderForm({
   const canSubmit =
     idValid && !duplicate && trimmedLabel.length > 0 && !pending;
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = (e?: React.SyntheticEvent<HTMLFormElement>) => {
     e?.preventDefault();
     if (!canSubmit) return;
     onSubmit({
@@ -478,5 +478,6 @@ function errorToMessage(err: unknown): string | null {
     return detail || err.message;
   }
   if (err instanceof Error) return err.message;
-  return String(err);
+  if (typeof err === 'string') return err;
+  return 'Unexpected folder operation error';
 }

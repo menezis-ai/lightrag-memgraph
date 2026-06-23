@@ -622,7 +622,7 @@ function EntityEditor({
       type: entity.type,
       summary: entity.summary || '',
       tags: [...(entity.tags ?? [])],
-      properties: { ...(entity.properties ?? {}) },
+      properties: { ...entity.properties },
     });
     setEditing(true);
   };
@@ -853,7 +853,7 @@ function RelationEditor({
     setDraft({
       label: rel.label,
       strength: rel.strength,
-      properties: { ...(rel.properties ?? {}) },
+      properties: { ...rel.properties },
     });
     setEditing(true);
   };
@@ -863,7 +863,7 @@ function RelationEditor({
   };
   const commit = () => {
     if (!draft) return;
-    const cleaned = draft.label.trim().toUpperCase().replace(/\s+/g, '_');
+    const cleaned = draft.label.trim().toUpperCase().replaceAll(/\s+/g, '_');
     const patch: GraphRelationPatch = {
       label: cleaned || rel.label,
       strength: Math.max(0, Math.min(1, draft.strength)),
@@ -978,7 +978,7 @@ function RelationEditor({
               value={draft.strength}
               onChange={(e) =>
                 setDraft((d) =>
-                  d ? { ...d, strength: parseFloat(e.target.value) } : d,
+                  d ? { ...d, strength: Number.parseFloat(e.target.value) } : d,
                 )
               }
               aria-label="Relation strength"
@@ -1073,7 +1073,7 @@ export function TagAttrEditor({
 }>) {
   const [v, setV] = useState('');
   const [focused, setFocused] = useState(false);
-  const normalized = v.trim().toLowerCase().replace(/\s+/g, '-');
+  const normalized = v.trim().toLowerCase().replaceAll(/\s+/g, '-');
   const catalogSet = useMemo(
     () => new Set(tagCatalog.map((t) => t.toLowerCase())),
     [tagCatalog],
@@ -1091,7 +1091,7 @@ export function TagAttrEditor({
   }, [tagCatalog, tags, normalized, bindingActive, focused]);
   const isKnown = !bindingActive || catalogSet.has(normalized);
   const add = (value?: string) => {
-    const t = (value ?? normalized).trim().toLowerCase().replace(/\s+/g, '-');
+    const t = (value ?? normalized).trim().toLowerCase().replaceAll(/\s+/g, '-');
     if (!t || tags.includes(t)) return;
     if (bindingActive && !catalogSet.has(t)) return;
     onChange([...tags, t]);
@@ -1318,7 +1318,7 @@ export function AddEntityForm({
   const duplicate = trimmed.length > 0 && existingNames.includes(trimmed);
   const canSubmit = trimmed.length > 0 && !duplicate && !pending;
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = (e?: React.SyntheticEvent<HTMLFormElement>) => {
     e?.preventDefault();
     if (!canSubmit) return;
     onSubmit({
@@ -1454,14 +1454,14 @@ function AddRelationForm({
   const [label, setLabel] = useState('');
   const [strength, setStrength] = useState(0.7);
 
-  const trimmedLabel = label.trim().toUpperCase().replace(/\s+/g, '_');
+  const trimmedLabel = label.trim().toUpperCase().replaceAll(/\s+/g, '_');
   const duplicate =
     targetId !== '' &&
     relations.some((r) => r.source === source.id && r.target === targetId);
   const canSubmit =
     targetId !== '' && trimmedLabel.length > 0 && !duplicate && !pending;
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = (e?: React.SyntheticEvent<HTMLFormElement>) => {
     e?.preventDefault();
     if (!canSubmit) return;
     onSubmit({
@@ -1533,7 +1533,7 @@ function AddRelationForm({
           max="1"
           step="0.01"
           value={strength}
-          onChange={(e) => setStrength(parseFloat(e.target.value))}
+          onChange={(e) => setStrength(Number.parseFloat(e.target.value))}
           aria-label="New relation strength"
           data-testid="kg-add-rel-strength"
         />

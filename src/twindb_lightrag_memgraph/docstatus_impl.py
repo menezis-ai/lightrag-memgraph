@@ -262,19 +262,19 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             )
             status = DocStatus.PENDING
 
-        kwargs = dict(
-            content_summary=props.get("content_summary", ""),
-            content_length=props.get("content_length", 0),
-            file_path=props.get("file_path", ""),
-            status=status,
-            created_at=props.get("created_at", ""),
-            updated_at=props.get("updated_at", ""),
-            track_id=props.get("track_id"),
-            chunks_count=props.get("chunks_count"),
-            chunks_list=chunks_list,
-            error_msg=props.get("error_msg"),
-            metadata=metadata or {},
-        )
+        kwargs = {
+            "content_summary": props.get("content_summary", ""),
+            "content_length": props.get("content_length", 0),
+            "file_path": props.get("file_path", ""),
+            "status": status,
+            "created_at": props.get("created_at", ""),
+            "updated_at": props.get("updated_at", ""),
+            "track_id": props.get("track_id"),
+            "chunks_count": props.get("chunks_count"),
+            "chunks_list": chunks_list,
+            "error_msg": props.get("error_msg"),
+            "metadata": metadata or {},
+        }
         if MemgraphDocStatusStorage._doc_status_supports("folder"):
             kwargs["folder"] = MemgraphDocStatusStorage._folder_for_read_props(props)
         if hasattr(DocProcessingStatus, "multimodal_processed"):

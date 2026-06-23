@@ -230,6 +230,9 @@ Pipeline: `F05 Intent → REASON (coref + F03 expansion) → ACT (search + F04 r
 - `prompts/` — Prompt templates loaded via `.format()`. **JSON braces inside prompts must be escaped `{{` `}}`** (project memory).
 - `routing/routing_rules.json` — Embedded default for the workspace router.
 - `thesaurus/it_ops_thesaurus.json` — Term expansion source for IT Ops domain.
+- `models/schemas.py` — Pydantic models for every data structure in the intelligence package (`IntentType`, `IntentResult`, `Citation`, `QueryTrace`, `QueryResult`, `FeedbackEntry`, …). Typed contracts passed across the ReAct phases.
+- `json_utils.py` — Tolerant JSON helpers for LLM responses (`load_json_object` with fenced-```json``` fallback, `clamp_float`, `coerce_str`). Use these instead of bare `json.loads` on model output.
+- `prompt_security.py` — Prompt-boundary guard. `neutralize_reserved_tags()` stops untrusted user/document text from closing or forging the `<UNTRUSTED_*>` / `<USER_QUESTION>` prompt delimiter tags. Apply to untrusted text spliced into prompts.
 
 LLM call pattern (project memory): `AsyncOpenAI(api_key=..., base_url=...)` with `response_format={"type": "json_object"}`. Patch target for tests is the **exact module import path** (e.g., `twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI`), not the original `openai.AsyncOpenAI`.
 

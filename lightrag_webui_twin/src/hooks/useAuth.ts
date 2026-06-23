@@ -48,7 +48,7 @@ let cachedConfig: TwinRuntimeConfig | null = null;
 const TWIN_BROWSER_STORAGE_PREFIXES = ['twin-rag.'] as const;
 
 export function clearTwinBrowserState(): void {
-  if (typeof globalThis.window === 'undefined') return;
+  if (globalThis.window === undefined) return;
   for (let i = globalThis.localStorage.length - 1; i >= 0; i -= 1) {
     const key = globalThis.localStorage.key(i);
     if (!key) continue;
@@ -93,9 +93,9 @@ function localUser(username: string | null | undefined, config: TwinRuntimeConfi
 function getRuntimeConfig(): TwinRuntimeConfig {
   if (cachedConfig) return cachedConfig;
   const raw =
-    typeof globalThis.window !== 'undefined'
-      ? globalThis.window.__twinConfig
-      : undefined;
+    globalThis.window === undefined
+      ? undefined
+      : globalThis.window.__twinConfig;
   cachedConfig = resolveRuntimeConfig(raw, getDevFlag());
   return cachedConfig;
 }
@@ -257,7 +257,7 @@ export function useAuth(): UseAuthResult {
     setSessionAuthToken(null);
     queryClient.clear();
     clearTwinBrowserState();
-    if (typeof globalThis.window !== 'undefined') {
+    if (globalThis.window !== undefined) {
       if (
         (globalThis.window as Window & { __TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION?: boolean })
           .__TWIN_E2E_BLOCK_SIGNOUT_NAVIGATION

@@ -44,7 +44,7 @@ export interface ActivityActor {
 }
 
 export interface ActivityTarget {
-  type: ActivityTargetType | string;
+  type: ActivityTargetType | (string & {});
   label: string;
   id?: string;
 }
@@ -155,7 +155,7 @@ export function resolveKindMeta(kind: string): ActivityKindMeta {
   const known = ACTIVITY_KIND_META[kind as ActivityKind];
   if (known) return known;
   const label = kind
-    ? kind.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())
+    ? kind.replaceAll(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())
     : 'Activity';
   return { label, icon: 'activity', color: 'var(--color-text-secondary)' };
 }

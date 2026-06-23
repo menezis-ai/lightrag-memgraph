@@ -61,7 +61,7 @@ export function parseOpenApiSpec(spec: unknown): ParsedOpenApi {
   for (const [path, methods] of Object.entries(raw.paths ?? {})) {
     if (!methods || typeof methods !== 'object') continue;
     for (const method of HTTP_METHODS) {
-      const op = (methods as Record<string, unknown>)[method.toLowerCase()];
+      const op = methods[method.toLowerCase()];
       if (!op || typeof op !== 'object') continue;
       const operation = op as RawOperation;
       const tag = operation.tags?.[0] ?? 'default';

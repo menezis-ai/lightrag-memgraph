@@ -201,12 +201,12 @@ function answerPartKeyBase(part: AnswerPart): string {
 function splitThinkBlocks(text: string): { visible: string; thoughts: readonly string[] } {
   const thoughts: string[] = [];
   const visible = text
-    .replace(/<think\b[^>]*>([\s\S]*?)(?:<\/think>|$)/gi, (_match, thought) => {
+    .replaceAll(/<think\b[^>]*>([\s\S]*?)(?:<\/think>|$)/gi, (_match, thought) => {
       const trimmed = String(thought ?? '').trim();
       if (trimmed) thoughts.push(trimmed);
       return '';
     })
-    .replace(/<\/think>/gi, '')
+    .replaceAll(/<\/think>/gi, '')
     .trimStart();
   return { visible, thoughts };
 }
@@ -270,7 +270,7 @@ export function RetrievalTab({
   const [highlightSrc, setHighlightSrc] = useState<number | null>(null);
 
   const [queryMode, setQueryMode] = useUrlParam<QueryMode>('mode', 'mix', {
-    validate: (v) => QUERY_MODES.includes(v as QueryMode),
+    validate: (v) => QUERY_MODES.includes(v),
   });
   const [topK, setTopK] = useUrlNumberParam('topk', 20);
   const [chunkTopK, setChunkTopK] = useUrlNumberParam('chunktopk', 20);
@@ -323,7 +323,7 @@ export function RetrievalTab({
   // "question in one thread, answer in a fresh New thread" split (the
   // closure still saw the pre-send null/stale id).
   const ensureActiveThread = (): string => {
-    if (activeThreadId && threads.find((t) => t.id === activeThreadId)) {
+    if (activeThreadId && threads.some((t) => t.id === activeThreadId)) {
       return activeThreadId;
     }
     const id = makeThreadId();
@@ -776,7 +776,7 @@ export function RetrievalTab({
             type="number"
             aria-label="Top K"
             value={topK}
-            onChange={(e) => setTopK(parseInt(e.target.value || '0', 10))}
+            onChange={(e) => setTopK(Number.parseInt(e.target.value || '0', 10))}
           />
         </div>
         <div className="field">
@@ -788,7 +788,7 @@ export function RetrievalTab({
             type="number"
             aria-label="Chunk top K"
             value={chunkTopK}
-            onChange={(e) => setChunkTopK(parseInt(e.target.value || '0', 10))}
+            onChange={(e) => setChunkTopK(Number.parseInt(e.target.value || '0', 10))}
           />
         </div>
         <div className="field">
@@ -800,7 +800,7 @@ export function RetrievalTab({
             type="number"
             aria-label="Max tokens"
             value={maxTok}
-            onChange={(e) => setMaxTok(parseInt(e.target.value || '0', 10))}
+            onChange={(e) => setMaxTok(Number.parseInt(e.target.value || '0', 10))}
           />
         </div>
         <div className="field">
@@ -830,7 +830,7 @@ export function RetrievalTab({
             type="number"
             aria-label="History turns"
             value={history}
-            onChange={(e) => setHistory(parseInt(e.target.value || '0', 10))}
+            onChange={(e) => setHistory(Number.parseInt(e.target.value || '0', 10))}
           />
         </div>
         <div className="field">
@@ -1023,11 +1023,25 @@ function Turn({
         {withOccurrenceKeys(parts, answerPartKeyBase).map(({ item: p, key }) => {
           if (p.type === 'lineBreak') return <br key={key} />;
           if (p.type === 'heading') {
-            const Tag = `h${p.level}` as 'h1' | 'h2' | 'h3';
+            const children = renderInlineParts(p.children);
+            if (p.level === 1) {
+              return (
+                <h1 key={key} className="answer-heading answer-heading-1">
+                  {children}
+                </h1>
+              );
+            }
+            if (p.level === 2) {
+              return (
+                <h2 key={key} className="answer-heading answer-heading-2">
+                  {children}
+                </h2>
+              );
+            }
             return (
-              <Tag key={key} className={`answer-heading answer-heading-${p.level}`}>
-                {renderInlineParts(p.children)}
-              </Tag>
+              <h3 key={key} className="answer-heading answer-heading-3">
+                {children}
+              </h3>
             );
           }
           if (p.type === 'listItem') {
@@ -1122,7 +1136,7 @@ function Turn({
                   <span className="src-pill">{s.n}</span>
                   <SourceIcon type={s.type} size={13} />
                   <span
-                    className={s.type !== 'file' ? 'src-name mono' : 'src-name'}
+                    className={s.type === 'file' ? 'src-name' : 'src-name mono'}
                   >
                     {s.name}
                   </span>
@@ -1177,7 +1191,7 @@ function RetrievalFilterPicker({
     selected.forEach((value) => values.add(value));
     return Array.from(values).sort((a, b) => format(a).localeCompare(format(b)));
   }, [format, options, selected]);
-  const datalistId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-options`;
+  const datalistId = `${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}-options`;
 
   const addValue = (raw: string) => {
     const value = raw.trim();

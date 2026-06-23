@@ -111,7 +111,7 @@ function pipelineHistoryMessages(
 ): string[] {
   const messages = [...(pipelineStatus?.history_messages ?? [])];
   const latest = pipelineStatus?.latest_message;
-  if (latest && messages[messages.length - 1] !== latest) {
+  if (latest && messages.at(-1) !== latest) {
     messages.push(latest);
   }
   return messages.slice(-80);
@@ -399,7 +399,6 @@ export interface DocumentsTabProps {
   onRefreshPipeline?: () => void;
   /** Open the document detail panel with chunks, lineage, audit and delete actions. */
   onOpenDetail?: (doc: Document) => void;
-  /** @deprecated Use onOpenDetail. Kept for older callers/tests. */
   onDeleteDoc?: (doc: Document) => void;
   /** Bulk delete the selected documents (cascade), per #149. */
   onBulkDelete?: (docs: readonly Document[]) => void;
@@ -849,7 +848,7 @@ export function DocumentsTab({
           <div className="docs-pagination" data-testid="docs-pagination">
             <span className="docs-pagination-label">
               Page {currentPage}
-              {totalCount != null ? ` · ${totalCount.toLocaleString()} total` : ''}
+              {totalCount == null ? '' : ` · ${totalCount.toLocaleString()} total`}
             </span>
             <button
               type="button"
@@ -864,7 +863,7 @@ export function DocumentsTab({
               type="button"
               className="ghost-btn"
               onClick={onNextPage}
-              disabled={!hasNextPage || isPageFetching}
+              disabled={hasNextPage ? isPageFetching : true}
               data-testid="docs-page-next"
             >
               {isPageFetching ? 'Loading...' : 'Next'}
@@ -928,7 +927,7 @@ function DocRow({
         {canOpenDetail ? (
           <button
             type="button"
-            className={`source-name source-name-button${doc.type !== 'file' ? ' mono' : ''}`}
+            className={`source-name source-name-button${doc.type === 'file' ? '' : ' mono'}`}
             title={doc.file_path}
             onClick={(e) => {
               e.stopPropagation();
@@ -943,7 +942,7 @@ function DocRow({
           </button>
         ) : (
           <span
-            className={`source-name${doc.type !== 'file' ? ' mono' : ''}`}
+            className={`source-name${doc.type === 'file' ? '' : ' mono'}`}
             title={doc.file_path}
           >
             {doc.file_path}

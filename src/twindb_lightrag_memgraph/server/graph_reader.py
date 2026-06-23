@@ -221,7 +221,7 @@ def _json_list(value: Any) -> list[str]:
         return []
     try:
         parsed = json.loads(str(value))
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return []
     if not isinstance(parsed, list):
         return []
@@ -233,7 +233,7 @@ def _json_str_dict(value: Any) -> dict[str, str]:
         return {}
     try:
         parsed = json.loads(str(value))
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return {}
     if not isinstance(parsed, dict):
         return {}
@@ -989,7 +989,7 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     # trying to write to a vanished node.
     stale_ids = [
         rid
-        for rid, (ws, src, tgt) in list(_RELATION_ENDPOINT_CACHE.items())
+        for rid, (ws, src, tgt) in _RELATION_ENDPOINT_CACHE.items()
         if ws == workspace and (src == entity_id or tgt == entity_id)
     ]
     for rid in stale_ids:

@@ -91,7 +91,7 @@ export function AppShell() {
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [settingsSection, setSettingsSection] =
     useState<SettingsSectionKey>('profile');
-  const [folder, setFolderState] = useState(() => {
+  const [folder, setFolder] = useState(() => {
     const initial = getInitialFolderId();
     setActiveFolder(initial);
     return initial;
@@ -300,7 +300,7 @@ export function AppShell() {
     setDetailChunkId,
     setDetailDoc,
     setDetailRequest,
-    setFolderState,
+    setFolderState: setFolder,
     setReadNotificationIds,
     setReadSourceDoc,
     setRetagBulk,
@@ -353,7 +353,7 @@ export function AppShell() {
   }, [detailRequest, docList, tab]);
   const activeDetailDoc = detailDoc ?? requestedDetailDoc;
   const activeDetailChunkId =
-    detailDoc !== null ? detailChunkId : (detailRequest?.chunk ?? null);
+    detailDoc === null ? (detailRequest?.chunk ?? null) : detailChunkId;
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come

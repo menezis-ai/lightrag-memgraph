@@ -31,7 +31,7 @@ import { mapCreateEntityError } from '../../api/errors';
 import { useQueryClient } from '@tanstack/react-query';
 import { GraphCanvas } from './GraphCanvas';
 import { GraphFilters } from './GraphFilters';
-import { AddEntityForm, GraphDetailPanel, TagAttrEditor } from './GraphInspector';
+import { AddEntityForm, GraphDetailPanel } from './GraphInspector';
 import { TYPE_KEYS } from './graphLayout';
 import { PINNED_STORAGE_KEY, readPinnedEntityIds, tagsOf } from './graphSelection';
 import type { GraphTabProps } from './graphTypes';
@@ -192,9 +192,9 @@ export function GraphTab({
   // refetch dropped it) must surface the empty inspector — falling
   // back to entities[0] hides the cascade and makes deletes look like
   // no-ops.
-  const selected = !selectedId
-    ? (entities[0] ?? null)
-    : (entities.find((e) => e.id === selectedId) ?? null);
+  const selected = selectedId
+    ? (entities.find((e) => e.id === selectedId) ?? null)
+    : (entities[0] ?? null);
   const neighbors = useMemo(() => {
     if (!selected) return { rels: [] as GraphRelation[], nodes: [] as GraphEntity[] };
     const rels = relations.filter(
@@ -475,5 +475,5 @@ export function GraphTab({
   );
 }
 
-export { TagAttrEditor };
-export type { GraphTabProps };
+export { TagAttrEditor } from './GraphInspector';
+export type { GraphTabProps } from './graphTypes';

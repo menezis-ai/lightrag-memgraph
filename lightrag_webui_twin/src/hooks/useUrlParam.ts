@@ -134,7 +134,7 @@ export function useUrlNumberParam(
 
   return useUrlParam<number>(key, defaultValue, {
     parse,
-    serialize: (n) => String(n),
+    serialize: String,
     validate: (v) => typeof v === 'number' && Number.isFinite(v),
   });
 }

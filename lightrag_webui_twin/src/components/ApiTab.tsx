@@ -213,24 +213,20 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
   const execute = async () => {
     setRunning(true);
     setResp(null);
-    const start =
-      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const start = nowForTiming();
+    const methodAllowsBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(ep.m);
     try {
       const r = await fetch(buildApiUrl(ep.p), {
         method: ep.m,
         headers: buildApiHeaders(
           { token: token || undefined },
-          { json: ep.m !== 'GET' },
+          { json: methodAllowsBody },
         ),
-        body: ep.m !== 'GET' ? reqBody : undefined,
+        body: methodAllowsBody ? reqBody : undefined,
         credentials: 'include',
       });
       const text = await r.text();
-      const tookMs = Math.round(
-        (typeof performance !== 'undefined'
-          ? performance.now()
-          : Date.now()) - start,
-      );
+      const tookMs = Math.round(nowForTiming() - start);
       setResp({
         status: r.status,
         statusText: r.statusText || (r.ok ? 'OK' : 'Error'),
@@ -238,11 +234,7 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
         body: tryPrettyJson(text),
       });
     } catch (err) {
-      const tookMs = Math.round(
-        (typeof performance !== 'undefined'
-          ? performance.now()
-          : Date.now()) - start,
-      );
+      const tookMs = Math.round(nowForTiming() - start);
       setResp({
         status: 0,
         statusText: 'Network error',
@@ -665,10 +657,18 @@ export function curlFor(
   lines.push("  -H 'Accept: application/json' \\");
   if (ep.m !== 'GET') lines.push("  -H 'Content-Type: application/json' \\");
   if (token) lines.push(`  -H 'Authorization: Bearer ${token.slice(0, 6)}…' \\`);
-  if (ep.m !== 'GET')
-    lines.push(`  -d '${(body || '').replace(/\n\s*/g, ' ')}'`);
-  else lines[lines.length - 1] = lines[lines.length - 1].replace(/ \\$/, '');
+  if (ep.m === 'GET') {
+    lines[lines.length - 1] = lines.at(-1)?.replace(/ \\$/, '') ?? '';
+  } else {
+    lines.push(`  -d '${(body || '').replaceAll(/\n\s*/g, ' ')}'`);
+  }
   return lines.join('\n');
+}
+
+function nowForTiming(): number {
+  return globalThis.performance === undefined
+    ? Date.now()
+    : globalThis.performance.now();
 }
 
 /** Best-effort prettify of a response body. Returns the raw string if

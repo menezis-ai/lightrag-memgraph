@@ -68,7 +68,7 @@ DEFAULT_CONNECTION_ACQUIRE_TIMEOUT = 5.0  # seconds — fail fast, don't hang
 MEMGRAPH_READ_POOL_SIZE_ENV = "MEMGRAPH_READ_POOL_SIZE"
 DEFAULT_READ_POOL_SIZE = 20
 
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+_SAFE_IDENTIFIER_RE = re.compile(r"^\w+$", re.ASCII)
 _active_storage_folder: ContextVar[str | None] = ContextVar(
     "twin_active_storage_folder",
     default=None,

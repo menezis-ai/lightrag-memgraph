@@ -76,7 +76,7 @@ export function useTweaks<T extends Record<string, unknown>>(
     (keyOrPatch: keyof T | Partial<T>, val?: T[keyof T]) => {
       const edits =
         typeof keyOrPatch === 'object' && keyOrPatch !== null
-          ? (keyOrPatch as Partial<T>)
+          ? keyOrPatch
           : ({ [keyOrPatch as string]: val } as Partial<T>);
       setValues((prev) => ({ ...prev, ...edits }));
     },
@@ -335,7 +335,7 @@ export function TweakRadio<V extends string | number = string>({
   const opts = options.map((o) =>
     typeof o === 'object' && o !== null && 'value' in o
       ? (o as { value: V; label: string })
-      : { value: o as V, label: String(o) },
+      : { value: o, label: String(o) },
   );
   const idx = Math.max(
     0,
@@ -420,7 +420,7 @@ export function TweakSelect<V extends string | number = string>({
     if (match === undefined) return s as unknown as V;
     return typeof match === 'object' && match !== null && 'value' in match
       ? match.value
-      : (match as V);
+      : match;
   };
   return (
     <TweakRow label={label}>
@@ -536,8 +536,8 @@ export function TweakNumber({
 // only (#rgb / #rrggbb); other color spaces fall through to "light".
 function isLight(hex: string): boolean {
   const h = String(hex).replace('#', '');
-  const x = h.length === 3 ? h.replace(/./g, (c) => c + c) : h.padEnd(6, '0');
-  const n = parseInt(x.slice(0, 6), 16);
+  const x = h.length === 3 ? h.replaceAll(/./g, (c) => c + c) : h.padEnd(6, '0');
+  const n = Number.parseInt(x.slice(0, 6), 16);
   if (Number.isNaN(n)) return true;
   const r = (n >> 16) & 255;
   const g = (n >> 8) & 255;

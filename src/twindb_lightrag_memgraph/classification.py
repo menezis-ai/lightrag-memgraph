@@ -465,7 +465,7 @@ def _result_from_msip_fields(
         method=fields.get("Method"),
         source_format=source_format,
         reason=reason,
-        meta={k: v for k, v in fields.items()},
+        meta=dict(fields.items()),
     )
 
 

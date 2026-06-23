@@ -75,5 +75,3 @@ declare global {
     __twinE2eRuntimeConfig?: TwinRuntimeConfig;
   }
 }
-
-export {};

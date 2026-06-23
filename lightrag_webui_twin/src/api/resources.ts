@@ -196,7 +196,7 @@ const ALLOWED_DOC_STATUS = new Set([
   'FAILED',
 ]);
 function normalizeDocumentStatus(raw: unknown): Document['status'] {
-  const s = String(raw ?? '').toUpperCase();
+  const s = typeof raw === 'string' ? raw.toUpperCase() : '';
   return (
     ALLOWED_DOC_STATUS.has(s) ? s : 'PENDING'
   ) as Document['status'];

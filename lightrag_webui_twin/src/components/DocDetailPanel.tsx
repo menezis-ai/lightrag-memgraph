@@ -77,7 +77,7 @@ export function DocDetailPanel({
       <header className="doc-detail-header">
         <div className="doc-detail-title">
           <SourceIcon type={doc.type} size={14} />
-          <strong className={doc.type !== 'file' ? 'mono' : ''}>
+          <strong className={doc.type === 'file' ? '' : 'mono'}>
             {doc.file_path}
           </strong>
         </div>
@@ -339,7 +339,11 @@ function LineageTab({ doc, nowMs }: Readonly<LineageTabProps>) {
         <dt>Folder</dt>
         <dd className="mono">{doc.folder}</dd>
         <dt>Uploader</dt>
-        <dd>{String(doc.metadata?.uploader ?? 'unknown')}</dd>
+        <dd>
+          {typeof doc.metadata?.uploader === 'string'
+            ? doc.metadata.uploader
+            : 'unknown'}
+        </dd>
         <dt>Created</dt>
         <dd>{relativeTime(doc.created_at, nowMs)}</dd>
         <dt>Updated</dt>

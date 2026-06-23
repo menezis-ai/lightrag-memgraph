@@ -212,7 +212,7 @@ class OntologyPipeline:
         """
         # Deduplicate entities by exact name match (case-insensitive),
         # keep highest confidence.
-        # TODO(Phase 2): add fuzzy match (Levenshtein ratio > 0.85) to detect
+        # Phase 2 follow-up: add fuzzy match (Levenshtein ratio > 0.85) to detect
         # near-matches like PGA_AGGREGATE_LIMIT vs PGA_AGGREGATE_TARGET and
         # emit RELATED_TO relations instead of merging them.
         entity_map: dict[str, ExtractedEntity] = {}

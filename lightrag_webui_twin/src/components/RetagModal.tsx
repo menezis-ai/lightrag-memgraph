@@ -153,7 +153,7 @@ function RetagHeaderContext({
           {targets.slice(0, 4).map((doc) => (
             <span key={doc.doc_id} className="bulk-target-chip" title={doc.file_path}>
               <SourceIcon type={doc.type} size={11} />
-              <span className={doc.type !== 'file' ? 'mono' : ''}>
+              <span className={doc.type === 'file' ? '' : 'mono'}>
                 {doc.file_path}
               </span>
             </span>
@@ -170,7 +170,7 @@ function RetagHeaderContext({
       <SourceIcon type={primary.type} size={13} />
       <span
         style={{
-          fontFamily: primary.type !== 'file' ? 'var(--font-mono)' : 'inherit',
+          fontFamily: primary.type === 'file' ? 'inherit' : 'var(--font-mono)',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           maxWidth: 320,

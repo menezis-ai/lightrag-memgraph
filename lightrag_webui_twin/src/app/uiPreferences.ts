@@ -5,7 +5,7 @@ export const THEME_STORAGE_KEY = 'twin.ui.theme.v1';
 export const FOLDER_STORAGE_KEY = 'twin.ui.folder.v1';
 
 export function readUiPreference(key: string): string | null {
-  if (typeof globalThis.window === 'undefined') return null;
+  if (globalThis.window === undefined) return null;
   try {
     return globalThis.localStorage.getItem(key);
   } catch {
@@ -14,7 +14,7 @@ export function readUiPreference(key: string): string | null {
 }
 
 export function writeUiPreference(key: string, value: string): void {
-  if (typeof globalThis.window === 'undefined') return;
+  if (globalThis.window === undefined) return;
   try {
     globalThis.localStorage.setItem(key, value);
   } catch {

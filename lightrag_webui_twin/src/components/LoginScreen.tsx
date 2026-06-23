@@ -17,7 +17,7 @@ export function LoginScreen({
   const [pending, setPending] = useState(false);
   const canSubmit = username.trim().length > 0 && password.length > 0 && !pending;
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canSubmit) return;
     setPending(true);

@@ -77,9 +77,7 @@ export function ActivityTab({
   });
   const [sev, setSev] = useUrlParam<'any' | ActivitySeverity>('sev', 'any', {
     validate: (v) =>
-      (['any', 'info', 'warning', 'error', 'critical'] as const).includes(
-        v as 'any' | ActivitySeverity,
-      ),
+      ['any', 'info', 'warning', 'error', 'critical'].includes(v),
   });
   const [q, setQ] = useUrlParam<string>('q', '');
   const [actor, setActor] = useUrlParam<string>('actor', 'any');
@@ -636,8 +634,15 @@ export function exportActivityCsv(
 ): void {
   const esc = (v: unknown): string => {
     if (v === null || v === undefined) return '';
-    const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    let s: string;
+    if (typeof v === 'string') {
+      s = v;
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      s = v.toString();
+    } else {
+      s = JSON.stringify(v) ?? '';
+    }
+    return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
   };
   const cols = [
     'id',

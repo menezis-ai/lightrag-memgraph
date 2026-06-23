@@ -44,7 +44,10 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
   useEffect(() => {
     if (!open || !ref.current) return;
     const node = ref.current;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
 
     const focusable = (): HTMLElement[] =>
       Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
@@ -60,12 +63,12 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
       node;
 
     let focusTimer: ReturnType<typeof setTimeout> | null = null;
-    if (typeof (first as HTMLElement).focus === 'function') {
+    if (typeof first.focus === 'function') {
       // Defer to let layout settle (modal mount animation, etc.)
       focusTimer = setTimeout(() => {
         const active = document.activeElement;
         if (active instanceof HTMLElement && node.contains(active)) return;
-        (first as HTMLElement).focus();
+        first.focus();
       }, 30);
     }
 
@@ -81,11 +84,15 @@ export function useModalA11y({ open, onClose, ref }: UseModalA11yOptions): void 
           e.preventDefault();
           return;
         }
-        const idx = current.indexOf(document.activeElement as HTMLElement);
+        const active =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        const idx = active ? current.indexOf(active) : -1;
         if (e.shiftKey) {
           if (idx <= 0) {
             e.preventDefault();
-            current[current.length - 1].focus();
+            current.at(-1)?.focus();
           }
         } else if (idx === current.length - 1 || idx === -1) {
           e.preventDefault();
