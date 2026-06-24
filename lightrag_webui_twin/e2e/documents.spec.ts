@@ -190,3 +190,44 @@ test.describe('Documents RC-2 filters and counters', () => {
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 });
+
+test.describe('Documents classification badge (MIP)', () => {
+  test.beforeEach(async ({ page }) => {
+    await boot(page);
+  });
+
+  test('@documents @doctrine @classification C2 shield renders for classified docs and is silent otherwise', async ({
+    page,
+  }) => {
+    // d1 carries a STRUCTURED MIP classification (class_id "C2",
+    // class_name "C2 Confidentiel") → the read-only ClassPill shield renders.
+    // C2 maps to the "internal" tone, so getMipDisplayName() shows "Internal"
+    // and the aria-label combines it with the raw class name.
+    const classifiedRow = page.getByTestId('docs-row-d1');
+    await expect(classifiedRow).toBeVisible();
+
+    // Scope the pill query to the row — class-pill aria-labels would collide
+    // across rows if queried page-wide.
+    const pill = classifiedRow.getByTestId('class-pill-d1');
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveAttribute(
+      'aria-label',
+      'Classification: Internal · C2 Confidentiel',
+    );
+    await expect(pill).toHaveAttribute('data-class-id', 'C2');
+    await expect(pill).toHaveAttribute('data-class-tone', 'internal');
+    // The visible label text is the display name only ("Internal").
+    await expect(pill.locator('.class-pill-label')).toHaveText('Internal');
+
+    // d5 carries a LEGACY string classification ("restricted"), which is NOT
+    // a structured payload → the pill is silent (renders nothing).
+    const legacyRow = page.getByTestId('docs-row-d5');
+    await expect(legacyRow).toBeVisible();
+    await expect(legacyRow.getByTestId('class-pill-d5')).toHaveCount(0);
+
+    // d3 has no classification at all → also silent (pure-absence case).
+    const unclassifiedRow = page.getByTestId('docs-row-d3');
+    await expect(unclassifiedRow).toBeVisible();
+    await expect(unclassifiedRow.getByTestId('class-pill-d3')).toHaveCount(0);
+  });
+});

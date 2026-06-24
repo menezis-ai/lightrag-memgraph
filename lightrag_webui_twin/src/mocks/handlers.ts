@@ -36,6 +36,15 @@ import type { TagCategory, TagEntry } from '../types/tag';
 const ANY = '*';
 const TWIN = '/twin/api';
 
+/** BNP MIP C-code → business name. Mirrors the backend's operator-set
+ *  classification payload so e2e/unit tests can assert the wiring end to end. */
+const MIP_CLASS_NAMES: Readonly<Record<string, string>> = {
+  C1: 'Public',
+  C2: 'Internal',
+  C3: 'Confidential',
+  C4: 'Secret',
+};
+
 const E2E_DOCUMENTS_STORAGE_KEY = 'twin.e2e.documentsState.v1';
 const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
 const E2E_TAGS_STORAGE_KEY = 'twin.e2e.tagsState.v1';
@@ -43,6 +52,9 @@ const E2E_NOTIFICATIONS_STORAGE_KEY = 'twin.e2e.notificationsState.v1';
 const E2E_ACTIVITY_STORAGE_KEY = 'twin.e2e.activityState.v1';
 const E2E_SCENARIO_STORAGE_KEY = 'twin.e2e.scenario.v1';
 const E2E_AUTH_USER_STORAGE_KEY = 'twin.e2e.localAuthUser.v1';
+const E2E_GRAPH_ENTITIES_STORAGE_KEY = 'twin.e2e.graphEntitiesState.v1';
+const E2E_GRAPH_RELATIONS_STORAGE_KEY = 'twin.e2e.graphRelationsState.v1';
+const E2E_API_KEYS_STORAGE_KEY = 'twin.e2e.apiKeysState.v1';
 
 function cloneDocuments(docs: readonly Document[]): Document[] {
   return docs.map((doc) => ({
@@ -180,6 +192,38 @@ function persistActivityState(): void {
   persistState(E2E_ACTIVITY_STORAGE_KEY, activityState);
 }
 
+function cloneGraphEntities(items: readonly GraphEntity[]): GraphEntity[] {
+  return items.map((e) => ({
+    ...e,
+    tags: e.tags ? [...e.tags] : [],
+    // Persisted entities already carry source_docs; fixtures get them
+    // injected from the GRAPH_ENTITY_DOCS map.
+    source_docs: e.source_docs
+      ? [...e.source_docs]
+      : [...(GRAPH_ENTITY_DOCS[e.id] ?? [])],
+    properties: e.properties ? { ...e.properties } : {},
+  }));
+}
+
+function cloneGraphRelations(items: readonly GraphRelation[]): GraphRelation[] {
+  return items.map((r) => ({
+    ...r,
+    properties: r.properties ? { ...r.properties } : {},
+  }));
+}
+
+/**
+ * Graph mutations (rename/retype/tag, create, delete, doc-cascade) must
+ * survive a page reload exactly like the documents/tags stores do — the real
+ * backend writes them to Memgraph (durable, `SET n += $props`). Without this,
+ * the graph mock alone re-seeded from fixtures on every reload, so the most
+ * critical surface could never be tested for mutation persistence.
+ */
+function persistGraphState(): void {
+  persistState(E2E_GRAPH_ENTITIES_STORAGE_KEY, graphEntityState);
+  persistState(E2E_GRAPH_RELATIONS_STORAGE_KEY, graphRelationState);
+}
+
 /**
  * Mutable document store. Initialized from DOCUMENT_FIXTURES at module load,
  * then mutated by approve / reject / delete handlers so the UI sees state
@@ -205,16 +249,16 @@ let activityState: ActivityEvent[] = loadState(
   ACTIVITY_FIXTURES,
   cloneActivity,
 );
-let graphEntityState: GraphEntity[] = GRAPH_ENTITY_FIXTURES.map((e) => ({
-  ...e,
-  tags: e.tags ? [...e.tags] : [],
-  source_docs: [...(GRAPH_ENTITY_DOCS[e.id] ?? [])],
-  properties: e.properties ? { ...e.properties } : {},
-}));
-let graphRelationState: GraphRelation[] = GRAPH_RELATION_FIXTURES.map((r) => ({
-  ...r,
-  properties: r.properties ? { ...r.properties } : {},
-}));
+let graphEntityState: GraphEntity[] = loadState(
+  E2E_GRAPH_ENTITIES_STORAGE_KEY,
+  GRAPH_ENTITY_FIXTURES,
+  cloneGraphEntities,
+);
+let graphRelationState: GraphRelation[] = loadState(
+  E2E_GRAPH_RELATIONS_STORAGE_KEY,
+  GRAPH_RELATION_FIXTURES,
+  cloneGraphRelations,
+);
 
 /**
  * Mirror the real backend cascade: an entity sourced *only* by docs in
@@ -244,6 +288,7 @@ function cascadeDocsFromGraph(deletedDocIds: Set<string>): void {
   graphRelationState = graphRelationState.filter(
     (r) => !orphanEntityIds.has(r.source) && !orphanEntityIds.has(r.target),
   );
+  persistGraphState();
 }
 
 let uploadSeq = 0;
@@ -274,8 +319,18 @@ interface ApiKeyMockEntry {
   last_used_at: number | null;
   revoked_at: number | null;
 }
-let apiKeyState: ApiKeyMockEntry[] = [];
-let apiKeyCounter = 0;
+// API keys persist across reload like the real (Memgraph-backed, durable)
+// api_key_store: a revoked key stays revoked in the audit trail.
+let apiKeyState: ApiKeyMockEntry[] = loadState<ApiKeyMockEntry>(
+  E2E_API_KEYS_STORAGE_KEY,
+  [],
+  (items) => items.map((e) => ({ ...e })),
+);
+let apiKeyCounter = apiKeyState.length;
+
+function persistApiKeyState(): void {
+  persistState(E2E_API_KEYS_STORAGE_KEY, apiKeyState);
+}
 
 // Instance storage quota — in-memory snapshot tests inject via the
 // scenario knob ``setMockQuotaState`` exported below. Defaults: the
@@ -435,6 +490,9 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_ACTIVITY_STORAGE_KEY);
   storage?.removeItem(E2E_SCENARIO_STORAGE_KEY);
   storage?.removeItem(E2E_AUTH_USER_STORAGE_KEY);
+  storage?.removeItem(E2E_GRAPH_ENTITIES_STORAGE_KEY);
+  storage?.removeItem(E2E_GRAPH_RELATIONS_STORAGE_KEY);
+  storage?.removeItem(E2E_API_KEYS_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
   categoryState = cloneTagCategories(TAG_CATEGORY_FIXTURES);
   tagState = cloneTags(TAG_FIXTURES);
@@ -443,16 +501,8 @@ export function resetDocumentsState(): void {
   apiKeyState = [];
   apiKeyCounter = 0;
   quotaState = defaultQuotaState();
-  graphEntityState = GRAPH_ENTITY_FIXTURES.map((e) => ({
-    ...e,
-    tags: e.tags ? [...e.tags] : [],
-    source_docs: [...(GRAPH_ENTITY_DOCS[e.id] ?? [])],
-    properties: e.properties ? { ...e.properties } : {},
-  }));
-  graphRelationState = GRAPH_RELATION_FIXTURES.map((r) => ({
-    ...r,
-    properties: r.properties ? { ...r.properties } : {},
-  }));
+  graphEntityState = cloneGraphEntities(GRAPH_ENTITY_FIXTURES);
+  graphRelationState = cloneGraphRelations(GRAPH_RELATION_FIXTURES);
   uploadedTrackDocs.clear();
   uploadedDocText.clear();
   uploadSeq = 0;
@@ -928,6 +978,21 @@ export const handlers = [
       file instanceof File && file.name
         ? file.name
         : `uploaded-${Date.now()}.txt`;
+    // Operator MIP classification rides as an HTTP header. Mirror the real
+    // backend: when present, the operator value lands on the doc as a
+    // structured classification payload (source_format 'operator').
+    const operatorClass = request.headers.get('X-Twin-Classification');
+    const classificationMeta =
+      operatorClass && operatorClass in MIP_CLASS_NAMES
+        ? {
+            classification: {
+              class_id: operatorClass,
+              class_name: MIP_CLASS_NAMES[operatorClass],
+              source_format: 'operator',
+              reason: 'operator-set',
+            },
+          }
+        : {};
     if (e2eScenario.uploadFailureNames?.includes(name)) {
       return HttpResponse.json(
         { detail: `${name} upload failed by e2e scenario` },
@@ -958,6 +1023,7 @@ export const handlers = [
         metadata: {
           mime: file instanceof File ? file.type : 'text/plain',
           uploader: 'e2e',
+          ...classificationMeta,
         },
         type: 'file',
         tags: [],
@@ -1225,6 +1291,7 @@ export const handlers = [
       revoked_at: null,
     };
     apiKeyState = [entry, ...apiKeyState];
+    persistApiKeyState();
     return HttpResponse.json(entry, { status: 201 });
   }),
   http.delete(`${ANY}${TWIN}/settings/api-keys/:id`, ({ params }) => {
@@ -1239,6 +1306,7 @@ export const handlers = [
     const current = apiKeyState[idx];
     if (current.revoked_at === null) {
       apiKeyState[idx] = { ...current, revoked_at: Date.now() };
+      persistApiKeyState();
     }
     return HttpResponse.json(publicApiKey(apiKeyState[idx]));
   }),
@@ -1586,6 +1654,7 @@ export const handlers = [
       next,
       ...graphEntityState.slice(idx + 1),
     ];
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_entity_${id}_${Date.now()}`,
@@ -1617,6 +1686,7 @@ export const handlers = [
       next,
       ...graphRelationState.slice(idx + 1),
     ];
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_relation_${id}_${Date.now()}`,
@@ -1663,6 +1733,7 @@ export const handlers = [
       tags: body.tags,
     };
     graphEntityState = [...graphEntityState, entity];
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_entity_${id}_${Date.now()}`,
@@ -1695,6 +1766,7 @@ export const handlers = [
     graphRelationState = graphRelationState.filter(
       (r) => r.source !== id && r.target !== id,
     );
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_entity_${id}_${Date.now()}`,
@@ -1738,6 +1810,7 @@ export const handlers = [
       strength: body.strength ?? 0.5,
     };
     graphRelationState = [...graphRelationState, relation];
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_relation_${id}_${Date.now()}`,
@@ -1765,6 +1838,7 @@ export const handlers = [
     }
     const removed = graphRelationState[idx];
     graphRelationState = graphRelationState.filter((r) => r.id !== id);
+    persistGraphState();
     activityState = [
       {
         id: `evt_graph_relation_${id}_${Date.now()}`,

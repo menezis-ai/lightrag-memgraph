@@ -109,6 +109,55 @@ test.describe('Knowledge Graph entity and relation lifecycle', () => {
     );
   });
 
+  test('@graph @crud @rc1 rename, retype and tag an entity — persists after reload', async ({
+    page,
+  }) => {
+    // Contract: a graph mutation survives a reload. The real backend writes it
+    // to Memgraph (`SET n += $props`); the MSW mock mirrors that via
+    // sessionStorage (persistGraphState). Re-selection after reload uses the
+    // STABLE id testid (kg-node-e_cypher), never the renamed label.
+    await page.getByTestId('kg-node-e_cypher').click();
+    const detail = page.getByTestId('kg-detail-entity');
+    await expect(detail).toContainText('Cypher');
+
+    await page.getByTestId('kg-entity-edit').click();
+    const nameInput = page.getByLabel('Entity name');
+    await expect(nameInput).toBeVisible();
+    await page.waitForTimeout(80);
+    await nameInput.click();
+    await nameInput.fill('');
+    await nameInput.fill('Cypher Query Language');
+    await page.getByLabel('Entity type').selectOption('PRODUCT');
+
+    const tagInput = page.getByLabel('Add node tag');
+    await tagInput.click();
+    await tagInput.fill('memgraph');
+    await detail.getByTestId('kg-tag-sugg-memgraph').click();
+    await expect(detail.getByLabel('Remove memgraph')).toBeVisible();
+
+    await page.getByTestId('kg-entity-save').click();
+    await expect(
+      detail.getByRole('heading', { name: 'Cypher Query Language' }),
+    ).toBeVisible();
+    await expect(detail).toContainText('Product');
+    await expect(detail.getByText('memgraph', { exact: true })).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByRole('button', { name: 'Documents', exact: true }),
+    ).toBeVisible();
+    await openTab(page, 'Graph');
+    await expect(page.getByTestId('kg-canvas')).toBeVisible();
+    await page.getByTestId('kg-node-e_cypher').click();
+
+    const reloaded = page.getByTestId('kg-detail-entity');
+    await expect(
+      reloaded.getByRole('heading', { name: 'Cypher Query Language' }),
+    ).toBeVisible();
+    await expect(reloaded).toContainText('Product');
+    await expect(reloaded.getByText('memgraph', { exact: true })).toBeVisible();
+  });
+
   test('@graph @crud delete entity is double-armed and cancellable', async ({
     page,
   }) => {

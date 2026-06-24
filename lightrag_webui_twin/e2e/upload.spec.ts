@@ -7,6 +7,37 @@ test.describe('Add source validation', () => {
     await boot(page);
   });
 
+  test('@documents @upload @classification operator MIP class travels on the upload request', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await page.getByTestId('addsource-file-input').setInputFiles([
+      {
+        name: 'cft-faq.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# CFT FAQ'),
+      },
+    ]);
+    await expect(page.getByText('cft-faq.md')).toBeVisible();
+    // A .md carries no embedded MIP label — the operator sets the class here.
+    await page
+      .getByTestId('addsource-classification-cft-faq.md')
+      .selectOption('C2');
+
+    const submit = page.getByRole('button', { name: 'Add 1 source' });
+    await expect(submit).toBeEnabled({ timeout: 15000 });
+
+    const [request] = await Promise.all([
+      page.waitForRequest(
+        (r) => r.url().includes('/documents/upload') && r.method() === 'POST',
+      ),
+      submit.click(),
+    ]);
+    // The operator choice is carried as the X-Twin-Classification header the
+    // backend ingestion middleware reads (server-side floor policy applies).
+    expect(request.headers()['x-twin-classification']).toBe('C2');
+  });
+
   test('@documents @upload @rc3 browse opens the native file chooser', async ({
     page,
   }) => {
