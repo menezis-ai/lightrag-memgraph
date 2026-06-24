@@ -126,7 +126,15 @@ def _require_known_folder(folder_id: str) -> str:
 
 @router.get(
     "/documents/{doc_id}/folders",
+    # Admin-gated (architect review P2): the full membership list is a
+    # cloisonnement surface. Active-folder visibility alone is not enough — a
+    # caller scoped to one folder must not learn the doc's OTHER folders. Until
+    # per-user scope filtering is wired through MyAccess/SSO (which owns RBAC),
+    # gate it like the mutations rather than leak cross-folder membership.
+    dependencies=[Depends(require_admin_user)],
     responses={
+        401: {"description": "Unauthenticated"},
+        403: {"description": "Not an admin"},
         404: {"description": "Document not found / not visible in active folder"},
         503: {"description": "LightRAG instance unavailable"},
     },
@@ -134,10 +142,8 @@ def _require_known_folder(folder_id: str) -> str:
 async def list_document_folders(doc_id: str) -> dict[str, Any]:
     from .. import webui_router as legacy
 
-    # Cloisonnement (architect review P1): only a caller who can already see the
-    # doc in their ACTIVE folder may enumerate its memberships. Otherwise a known
-    # doc_id would leak existence + cross-folder membership. _get_doc_for_active_
-    # folder 404s when the doc is absent or not a member of the active folder.
+    # Even gated, keep the active-folder visibility check so a missing/unrelated
+    # id 404s rather than confirming existence.
     await legacy._get_doc_for_active_folder(doc_id)
     rag = legacy._get_rag()
     folders = await rag.doc_status.get_folders_for_doc(doc_id)
