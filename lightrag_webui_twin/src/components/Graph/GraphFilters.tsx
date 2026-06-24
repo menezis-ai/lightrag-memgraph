@@ -75,6 +75,7 @@ export function GraphFilters({
             selected={tagFilter}
             onChange={setTagFilter}
             placeholder="Search tags…"
+            listboxId="kg-tag-filter-suggestions"
           />
           <FilterMatchMode
             label="Tag filter mode"
@@ -89,6 +90,7 @@ export function GraphFilters({
             onChange={setDocFilter}
             placeholder="Search documents…"
             format={(id) => docLabels?.[id] ?? id}
+            listboxId="kg-doc-filter-suggestions"
           />
           <FilterMatchMode
             label="Document filter mode"
@@ -166,6 +168,7 @@ interface FilterPickerProps {
   onChange: (next: string[]) => void;
   placeholder: string;
   format?: (x: string) => string;
+  listboxId?: string;
 }
 
 export function FilterPicker({
@@ -175,12 +178,16 @@ export function FilterPicker({
   onChange,
   placeholder,
   format,
+  listboxId,
 }: Readonly<FilterPickerProps>) {
   const fmt = format ?? ((x: string) => x);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const listId =
+    listboxId ??
+    `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-filter-suggestions`;
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -221,6 +228,8 @@ export function FilterPicker({
           .sort((a, b) => rank(a) - rank(b) || fmt(a).length - fmt(b).length)
       : avail
   ).slice(0, 8);
+  const activeOption = results[Math.min(focus, Math.max(results.length - 1, 0))];
+  const activeOptionId = activeOption ? `${listId}-option-${focus}` : undefined;
 
   const add = (o: string) => {
     onChange(selected.concat([o]));
@@ -245,41 +254,52 @@ export function FilterPicker({
       </div>
       {/* Search input FIRST (per 2026-05-31 user request — inverse of prototype) */}
       <div className="kg-picker">
-        <input
-          className="kg-picker-input"
-          value={query}
-          placeholder={placeholder}
-          aria-label={label}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-            setFocus(0);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              setFocus((f) => Math.min(results.length - 1, f + 1));
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              setFocus((f) => Math.max(0, f - 1));
-            } else if (e.key === 'Enter' && results[focus]) {
-              e.preventDefault();
-              add(results[focus]);
-            } else if (e.key === 'Escape') {
-              setOpen(false);
-            }
-          }}
-        />
+          <input
+            className="kg-picker-input"
+            value={query}
+            placeholder={placeholder}
+            aria-label={label}
+            aria-autocomplete="list"
+            aria-expanded={open && results.length > 0}
+            aria-controls={listId}
+            aria-activedescendant={activeOptionId}
+            onFocus={() => setOpen(true)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+              setFocus(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (results.length === 0) return;
+                setFocus((f) => (f + 1) % results.length);
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (results.length === 0) return;
+                setFocus((f) => (f - 1 + results.length) % results.length);
+              } else if (e.key === 'Enter' && activeOption) {
+                e.preventDefault();
+                add(activeOption);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setOpen(false);
+              }
+            }}
+          />
         {open && results.length > 0 && (
-          <div className="kg-picker-menu">
+          <div id={listId} role="listbox" aria-label={`${label} suggestions`} className="kg-picker-menu">
             {results.map((o, i) => (
               <button
                 key={o}
                 type="button"
+                id={`${listId}-option-${i}`}
+                role="option"
+                aria-selected={i === focus}
                 className={`kg-picker-opt${i === focus ? ' focus' : ''}`}
                 onMouseEnter={() => setFocus(i)}
-                onMouseDown={() => add(o)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => add(o)}
                 title={o}
                 data-testid={`kg-pick-${o}`}
               >

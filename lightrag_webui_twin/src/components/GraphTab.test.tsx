@@ -451,6 +451,28 @@ describe('GraphTab — selection + detail', () => {
     expect(screen.getByTestId('kg-tag-suggestions')).toHaveTextContent('oracle');
   });
 
+  it('keyboard-selects a tag filter suggestion in graph rail', async () => {
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        tagCatalog={['oracle', 'production', 'rman']}
+      />,
+    );
+
+    const filterInput = screen.getByLabelText('Filter by tag');
+    await userEvent.click(filterInput);
+    expect(
+      await screen.findByRole('listbox', { name: 'Filter by tag suggestions' }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+
+    expect(String(filterInput.getAttribute('aria-activedescendant'))).toMatch(
+      /^kg-tag-filter-suggestions-option-\d+$/,
+    );
+
+    expect(document.querySelector('[data-testid^="kg-picked-"]')).not.toBeNull();
+  });
+
   it('suggests existing entity property keys when adding metadata', async () => {
     renderWithClient(
       <GraphTab

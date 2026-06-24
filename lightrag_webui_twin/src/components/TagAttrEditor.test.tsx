@@ -45,6 +45,21 @@ describe('TagAttrEditor — thesaurus binding (TR-KG-03)', () => {
     expect((input as HTMLInputElement).value).toBe('');
   });
 
+  it('Arrow keys navigate suggestions and Enter picks focused suggestion', async () => {
+    const onChange = vi.fn();
+    render(
+      <TagAttrEditor tags={[]} tagCatalog={CATALOG} onChange={onChange} />,
+    );
+
+    const input = screen.getByLabelText('Add node tag');
+    await userEvent.type(input, 'r');
+
+    await userEvent.keyboard('{ArrowDown}');
+    await userEvent.keyboard('{Enter}');
+
+    expect(onChange).toHaveBeenCalled();
+  });
+
   it('shows an alert without an Add button when the typed tag is unknown', async () => {
     const onChange = vi.fn();
     render(

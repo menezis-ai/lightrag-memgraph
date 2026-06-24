@@ -1111,6 +1111,7 @@ export function TagAttrEditor({
     [tagCatalog],
   );
   const bindingActive = tagCatalog.length > 0;
+  const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
   const suggestions = useMemo(() => {
     if (!bindingActive || (!focused && !normalized)) return [];
     return tagCatalog
@@ -1122,6 +1123,18 @@ export function TagAttrEditor({
       .slice(0, 6);
   }, [tagCatalog, tags, normalized, bindingActive, focused]);
   const isKnown = !bindingActive || catalogSet.has(normalized);
+  const activeSuggestion =
+    suggestions.length === 0
+      ? undefined
+      : suggestions[Math.min(tagSuggestionIndex, suggestions.length - 1)];
+  const suggestionListId = 'kg-tag-suggestions';
+
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset of the highlighted tag-suggestion index when the filter query / focus changes. */
+  useEffect(() => {
+    setTagSuggestionIndex(0);
+  }, [normalized, focused, bindingActive]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const add = (value?: string) => {
     const t = (value ?? normalized).trim().toLowerCase().replaceAll(/\s+/g, '-');
     if (!t || tags.includes(t)) return;
@@ -1152,14 +1165,45 @@ export function TagAttrEditor({
           onChange={(e) => setV(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => globalThis.setTimeout(() => setFocused(false), 120)}
+          onKeyDownCapture={(e) => {
+            if (e.key === 'Escape' && v) {
+              e.stopPropagation();
+              setV('');
+              setTagSuggestionIndex(0);
+            }
+          }}
           onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              if (suggestions.length === 0) return;
+              e.preventDefault();
+              setTagSuggestionIndex((idx) => (idx + 1) % suggestions.length);
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              if (suggestions.length === 0) return;
+              e.preventDefault();
+              setTagSuggestionIndex(
+                (idx) => (idx - 1 + suggestions.length) % suggestions.length,
+              );
+              return;
+            }
             if (e.key === 'Enter') {
               e.preventDefault();
+              if (activeSuggestion) {
+                add(activeSuggestion);
+                return;
+              }
               add();
             }
           }}
           placeholder="Add tag…"
           aria-label="Add node tag"
+          aria-autocomplete="list"
+          aria-expanded={suggestions.length > 0}
+          aria-controls={suggestionListId}
+          aria-activedescendant={
+            activeSuggestion ? `kg-tag-sugg-${activeSuggestion}` : undefined
+          }
         />
       </div>
       {bindingActive && normalized && !isKnown && (
@@ -1175,17 +1219,27 @@ export function TagAttrEditor({
       )}
       {suggestions.length > 0 && (
         <div
+          id={suggestionListId}
+          role="listbox"
+          aria-label="Tag suggestions"
           className="autocomplete panel-autocomplete"
           data-testid="kg-tag-suggestions"
           style={{ marginTop: 4 }}
         >
-          {suggestions.map((s) => (
+          {suggestions.map((s, idx) => (
             <button
               type="button"
               key={s}
-              className="autocomplete-row"
+              id={`kg-tag-sugg-${s}`}
+              role="option"
+              aria-selected={idx === tagSuggestionIndex}
+              className={`autocomplete-row${
+                idx === tagSuggestionIndex ? ' focus' : ''
+              }`}
+              onMouseEnter={() => setTagSuggestionIndex(idx)}
+              onMouseDown={(e) => e.preventDefault()}
               data-testid={`kg-tag-sugg-${s}`}
-              onMouseDown={() => add(s)}
+              onClick={() => add(s)}
               style={{ cursor: 'pointer' }}
             >
               <span style={{ fontSize: 12 }}>{s}</span>

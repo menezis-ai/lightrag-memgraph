@@ -545,6 +545,9 @@ export function DocumentsTab({
       Math.min(activeTagSuggestionIndex, Math.max(tagSuggestions.length - 1, 0))
     ];
   const tagListboxId = 'documents-tag-suggestions';
+  const activeTagSuggestionId = activeTagSuggestion
+    ? `${tagListboxId}-option-${activeTagSuggestionIndex}`
+    : undefined;
 
   const clickTagOnRow = (e: React.MouseEvent, tag: string) => {
     e.stopPropagation();
@@ -730,6 +733,7 @@ export function DocumentsTab({
                     addTagFilter(activeTagSuggestion.tag);
                   }
                   if (e.key === 'Escape') {
+                    e.preventDefault();
                     setTagAddOpen(false);
                     setActiveTagSuggestionIndex(0);
                   }
@@ -738,17 +742,23 @@ export function DocumentsTab({
                 aria-label="Add tag filter"
                 aria-autocomplete="list"
                 aria-controls={tagListboxId}
+                aria-expanded={tagSuggestions.length > 0}
+                aria-activedescendant={activeTagSuggestionId}
               />
               {tagSuggestions.length > 0 && (
                 <div
                   id={tagListboxId}
-                  className="autocomplete floating-autocomplete"
+                  role="listbox"
                   aria-label="Tag suggestions"
+                  className="autocomplete floating-autocomplete"
                 >
                   {tagSuggestions.map((s, i) => (
                     <button
                       type="button"
                       key={s.tag}
+                      id={`${tagListboxId}-option-${i}`}
+                      role="option"
+                      aria-selected={i === activeTagSuggestionIndex}
                       className={`autocomplete-row${
                         i === activeTagSuggestionIndex ? ' focus' : ''
                       }`}

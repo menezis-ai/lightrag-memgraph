@@ -247,6 +247,7 @@ function RetagModalBody({
   const [pendingRemove, setPendingRemove] = useState<readonly string[]>([]);
   const [input, setInput] = useState('');
   const [focusIdx, setFocusIdx] = useState(0);
+  const suggestionListId = 'retag-tag-suggestions';
 
   const sugg = useMemo(() => {
     const all = tagCatalog.filter(
@@ -258,6 +259,10 @@ function RetagModalBody({
       .sort(tagSuggestionComparator(input))
       .slice(0, 5);
   }, [input, current, pendingAdd, tagCatalog]);
+  const activeTagSuggestion = sugg[Math.min(focusIdx, Math.max(sugg.length - 1, 0))];
+  const activeTagSuggestionId = activeTagSuggestion
+    ? `${suggestionListId}-option-${focusIdx}`
+    : undefined;
 
   const primary = targets[0];
 
@@ -412,17 +417,24 @@ function RetagModalBody({
               }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
+                  if (sugg.length === 0) return;
                   e.preventDefault();
-                  setFocusIdx(Math.min(sugg.length - 1, focusIdx + 1));
+                  setFocusIdx((idx) => (idx + 1) % sugg.length);
                 } else if (e.key === 'ArrowUp') {
+                  if (sugg.length === 0) return;
                   e.preventDefault();
-                  setFocusIdx(Math.max(0, focusIdx - 1));
-                } else if (e.key === 'Enter' && sugg[focusIdx]) {
-                  addTag(sugg[focusIdx].tag);
+                  setFocusIdx((idx) => (idx - 1 + sugg.length) % sugg.length);
+                } else if (e.key === 'Enter' && activeTagSuggestion) {
+                  e.preventDefault();
+                  addTag(activeTagSuggestion.tag);
                 }
               }}
               placeholder="Start typing — autocomplete from tags"
               aria-label="Tag input"
+              aria-autocomplete="list"
+              aria-expanded={sugg.length > 0}
+              aria-controls={suggestionListId}
+              aria-activedescendant={activeTagSuggestionId}
               style={{
                 width: '100%',
                 padding: '8px 10px',
@@ -438,23 +450,36 @@ function RetagModalBody({
               <div className="autocomplete-header">
                 {suggestionHeaderLabel(sugg.length)}
               </div>
-              {sugg.map((s, i) => (
-                <button
-                  type="button"
-                  key={s.tag}
-                  className={`autocomplete-row${i === focusIdx ? ' focus' : ''}`}
-                  onMouseEnter={() => setFocusIdx(i)}
-                  onClick={() => addTag(s.tag)}
-                  tabIndex={-1}
-                  data-testid={`sugg-${s.tag}`}
+              {sugg.length > 0 && (
+                <div
+                  id={suggestionListId}
+                  role="listbox"
+                  aria-label="Tag suggestions"
+                  className="autocomplete-list"
                 >
-                  <div className="row1">
-                    <span>{s.tag}</span>
-                    <span className="badge">{s.category}</span>
-                  </div>
-                  <div className="def">{s.def}</div>
-                </button>
-              ))}
+                  {sugg.map((s, i) => (
+                    <button
+                      type="button"
+                      key={s.tag}
+                      id={`${suggestionListId}-option-${i}`}
+                      role="option"
+                      aria-selected={i === focusIdx}
+                      className={`autocomplete-row${i === focusIdx ? ' focus' : ''}`}
+                      onMouseEnter={() => setFocusIdx(i)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => addTag(s.tag)}
+                      tabIndex={-1}
+                      data-testid={`sugg-${s.tag}`}
+                    >
+                      <div className="row1">
+                        <span>{s.tag}</span>
+                        <span className="badge">{s.category}</span>
+                      </div>
+                      <div className="def">{s.def}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="autocomplete-footer">
                 <Icon name="info-circle" size={12} /> No match? Request a new
                 tag in the Tags tab.

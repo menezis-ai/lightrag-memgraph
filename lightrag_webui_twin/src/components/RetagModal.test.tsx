@@ -174,6 +174,26 @@ describe('RetagModal — autocomplete & interactions', () => {
     expect(sugRows.some((r) => r.textContent?.includes('oracle'))).toBe(true);
   });
 
+  it('navigates suggestions with arrow keys and adds focused suggestion on Enter', async () => {
+    render(
+      <RetagModal
+        open
+        doc={makeDoc({ tags: [] })}
+        tagCatalog={TAG_FIXTURES}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    const input = screen.getByLabelText('Tag input');
+    input.focus();
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+
+    expect(input.getAttribute('aria-activedescendant')).toMatch(
+      /^retag-tag-suggestions-option-\d+$/,
+    );
+    expect(screen.getByRole('button', { name: 'Remove oracle' })).toBeInTheDocument();
+  });
+
   it('uses the canonical tag catalog, not a separate thesaurus source', async () => {
     render(
       <RetagModal

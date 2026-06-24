@@ -195,6 +195,22 @@ describe('DocumentsTab — filters', () => {
     ).toBeInTheDocument();
   });
 
+  it('navigates Add-tag suggestions with arrow keys and Enter', async () => {
+    renderTab(<DocumentsTab {...defaultProps()} />);
+    await userEvent.click(screen.getByRole('button', { name: '+ Add tag' }));
+
+    const input = screen.getByLabelText('Add tag filter');
+    expect(screen.getByRole('listbox', { name: 'Tag suggestions' })).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-controls', 'documents-tag-suggestions');
+
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+
+    expect(
+      String(input.getAttribute('aria-activedescendant')),
+    ).toMatch(/^documents-tag-suggestions-option-\d+$/);
+    expect(screen.getAllByRole('button', { name: /^Remove (?!source)/ })).toHaveLength(1);
+  });
+
   it('status and tag filters are URL backed', async () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
 
