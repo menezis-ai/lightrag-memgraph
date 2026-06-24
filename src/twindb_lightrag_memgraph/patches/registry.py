@@ -1184,6 +1184,94 @@ def _patch_capture_rag() -> None:
     dr._twindb_capture_rag_patched = True
 
 
+def _patch_upload_duplicate_lookup() -> None:
+    """Cache LightRAG's upload duplicate-filename lookup, O(n) → O(1).
+
+    The upstream ``find_existing_file_by_file_path`` ``iterdir()``-scans the
+    whole input dir on every upload to detect a duplicate basename — O(n) and a
+    real bottleneck once many documents are present. Replace it with an
+    mtime-keyed canonical-name index.
+
+    **Called at server-boot (from the create_app wrapper), NOT at register-time**
+    — importing ``lightrag.api.routers.document_routes`` runs LightRAG's
+    argv-based config init (a module-level ``AuthHandler``), which aborts when
+    ``register()`` is imported outside a server launch (e.g. by a test under
+    pytest's argv). By the time the wrapped ``create_app`` runs, the native
+    ``create_app`` has already imported document_routes with the server's argv,
+    so the import here is a cached, safe no-op.
+    """
+    import threading
+    from pathlib import Path
+
+    import lightrag.api.routers.document_routes as dr
+
+    if getattr(dr, "_twindb_upload_lookup_cached", False):
+        return
+
+    _input_dir_index: dict[str, tuple[int, dict[str, str]]] = {}
+    _input_dir_index_lock = threading.Lock()
+
+    def _build_input_dir_index(input_dir) -> dict[str, str]:
+        try:
+            stamp = input_dir.stat().st_mtime_ns
+        except FileNotFoundError:
+            return {}
+        key = str(input_dir)
+        cached = _input_dir_index.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+
+        mapping: dict[str, str] = {}
+        try:
+            for entry in input_dir.iterdir():
+                if not entry.is_file():
+                    continue
+                candidate = dr.normalize_file_path(entry.name)
+                if candidate and candidate not in mapping:
+                    mapping[candidate] = str(entry)
+        except FileNotFoundError:
+            mapping = {}
+        _input_dir_index[key] = (stamp, mapping)
+        return mapping
+
+    def _find_existing_file_by_file_path_cached(input_dir, file_path) -> Path | None:
+        if not file_path or file_path == dr.UNKNOWN_FILE_SOURCE:
+            return None
+
+        # Behavioural parity with upstream: it compares
+        # ``normalize_file_path(candidate.name) == file_path`` against the RAW
+        # ``file_path``. The index is keyed on normalized on-disk names, so it
+        # is looked up by the raw ``file_path`` — NOT a re-normalized one, or a
+        # non-canonical/whitespace ``file_path`` would match here where upstream
+        # returns None.
+        with _input_dir_index_lock:
+            mapping = _build_input_dir_index(input_dir)
+
+        existing = mapping.get(file_path)
+        if not existing:
+            return None
+
+        existing_path = Path(existing)
+        if existing_path.is_file():
+            return existing_path
+
+        # Cache may be stale if the file disappeared or moved after mtime
+        # sampling; refresh once and retry.
+        with _input_dir_index_lock:
+            mapping = _build_input_dir_index(input_dir)
+        existing = mapping.get(file_path)
+        if not existing:
+            return None
+        existing_path = Path(existing)
+        return existing_path if existing_path.is_file() else None
+
+    _build_input_dir_index.__name__ = "_build_input_dir_index"
+    dr._twindb_build_input_dir_index = _build_input_dir_index
+    dr.find_existing_file_by_file_path = _find_existing_file_by_file_path_cached
+    dr._twindb_upload_lookup_cached = True
+    logger.info("twindb: patched document_routes.find_existing_file_by_file_path")
+
+
 def _patch_lightrag_server_create_app(
     webui_dist: str | None = None,
     twin_api_prefix: str | None = None,
@@ -1222,6 +1310,10 @@ def _patch_lightrag_server_create_app(
 
     def wrapped_create_app(args):
         app = orig_create_app(args)
+        # Server-runtime perf patch: document_routes is now imported (with the
+        # server's argv), so the upload duplicate-lookup cache is safe to apply
+        # here. It is a pure optimization, independent of the Twin overlay flags.
+        _patch_upload_duplicate_lookup()
         if shim_native_routes or twin_api_prefix is not None:
             _install_storage_folder_capture(app)
         if shim_native_routes:
