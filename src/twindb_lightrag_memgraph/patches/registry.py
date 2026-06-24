@@ -1205,6 +1205,17 @@ def _patch_upload_duplicate_lookup() -> None:
 
     import lightrag.api.routers.document_routes as dr
 
+    # The optimized helper only exists in newer LightRAG. On the BNP-pinned
+    # 1.4.9.11 it is absent (that build's upload dedup uses a different path),
+    # so there is nothing to patch — skip gracefully. NOTE: this means the
+    # cache is a no-op on 1.4.9.11; it only kicks in on 1.4.11+.
+    if not hasattr(dr, "find_existing_file_by_file_path"):
+        logger.debug(
+            "twindb: find_existing_file_by_file_path absent in this LightRAG "
+            "build — upload-lookup cache not applicable"
+        )
+        return
+
     if getattr(dr, "_twindb_upload_lookup_cached", False):
         return
 

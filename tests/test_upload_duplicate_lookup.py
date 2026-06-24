@@ -44,6 +44,12 @@ def patched():
         )
 
         dr = _dr
+        if not hasattr(dr, "find_existing_file_by_file_path"):
+            pytest.skip(
+                "LightRAG build lacks find_existing_file_by_file_path "
+                "(e.g. the BNP-pinned 1.4.9.11) — upload-lookup cache is a "
+                "no-op there, nothing to exercise"
+            )
         original = dr.find_existing_file_by_file_path
         had_flag = getattr(dr, "_twindb_upload_lookup_cached", False)
         dr._twindb_upload_lookup_cached = False  # force (re)patch
