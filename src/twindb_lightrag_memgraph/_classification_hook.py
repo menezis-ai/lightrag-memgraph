@@ -45,8 +45,10 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from ._constants import get_active_operator_classification
 from .classification import (
     ClassificationResult,
+    apply_operator_classification,
     detect_classification,
     is_above,
     load_label_map,
@@ -131,6 +133,13 @@ def classify_for_ingestion(
             source_format="unknown",
             reason=f"extraction-failed: {exc.__class__.__name__}",
         )
+
+    # An operator-selected class (upload UI -> X-Twin-Classification header,
+    # bound into the ingestion context) can raise the classification or set one
+    # when nothing was detected. The embedded label stays a floor — operators
+    # can never downgrade below it (PO decision 2026-06-24). When the operator
+    # made no choice this is a no-op and auto-detection alone stands.
+    result = apply_operator_classification(result, get_active_operator_classification())
 
     payload = result.as_dict()
 

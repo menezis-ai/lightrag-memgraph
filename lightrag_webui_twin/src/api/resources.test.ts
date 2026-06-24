@@ -139,11 +139,17 @@ describe('listDocumentChunks', () => {
 });
 
 describe('uploadDocument', () => {
-  it('sends only the file field accepted by the native upload route', async () => {
+  /** Capture both the multipart body and the request headers of the upload. */
+  function mockUploadOnce(): {
+    bodies: FormData[];
+    headers: Headers[];
+  } {
     const bodies: FormData[] = [];
+    const headers: Headers[] = [];
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
       async (_url: string | URL | Request, init?: RequestInit) => {
         if (init?.body instanceof FormData) bodies.push(init.body);
+        headers.push(new Headers(init?.headers));
         return new Response(
           JSON.stringify({
             status: 'success',
@@ -157,12 +163,31 @@ describe('uploadDocument', () => {
         );
       },
     );
+    return { bodies, headers };
+  }
+
+  it('does not send the X-Twin-Classification header by default', async () => {
+    const { bodies, headers } = mockUploadOnce();
 
     await api.uploadDocument(new File(['payload'], 'plain.md'));
 
-    const body = bodies[0];
-    expect((body.get('file') as File | null)?.name).toBe('plain.md');
-    expect(body.has('classification')).toBe(false);
-    expect(body.has('rag_engine')).toBe(false);
+    expect((bodies[0].get('file') as File | null)?.name).toBe('plain.md');
+    // Classification is a header, never a multipart field.
+    expect(bodies[0].has('classification')).toBe(false);
+    expect(bodies[0].has('rag_engine')).toBe(false);
+    expect(headers[0].has('X-Twin-Classification')).toBe(false);
+  });
+
+  it('sends the operator classification as the X-Twin-Classification header', async () => {
+    const { bodies, headers } = mockUploadOnce();
+
+    await api.uploadDocument(new File(['payload'], 'classified.md'), {
+      classification: 'C3',
+    });
+
+    expect((bodies[0].get('file') as File | null)?.name).toBe('classified.md');
+    // Still a header, not a multipart field.
+    expect(bodies[0].has('classification')).toBe(false);
+    expect(headers[0].get('X-Twin-Classification')).toBe('C3');
   });
 });

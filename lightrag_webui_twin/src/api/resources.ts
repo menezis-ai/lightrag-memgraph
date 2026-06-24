@@ -64,12 +64,22 @@ export interface DocumentChunk {
   text: string;
 }
 
+/**
+ * Operator-set MIP sensitivity classification (C1..C4). The backend treats
+ * this as a floor-raising value: it can only raise the document's
+ * classification above any embedded label, never lower it. Empty = "no MIP"
+ * (let the embedded label / backend default decide).
+ */
+export type UploadClassification = 'C1' | 'C2' | 'C3' | 'C4';
+
 export interface UploadDocumentOptions {
   signal?: AbortSignal;
+  classification?: UploadClassification;
 }
 
 export interface UploadDocumentInput {
   file: File;
+  classification?: UploadClassification;
 }
 
 interface RawDocumentChunk {
@@ -286,7 +296,15 @@ export const lightragApi = {
     formData.append('file', file);
     const res = await fetch(buildApiUrl('/documents/upload'), {
       method: 'POST',
-      headers: buildApiHeaders(),
+      // Operator classification rides as an HTTP header (X-Twin-Classification),
+      // NOT a multipart field — the backend reads it per-upload and applies it
+      // as a floor-raising value. Omitted entirely when unset.
+      headers: {
+        ...buildApiHeaders(),
+        ...(init?.classification
+          ? { 'X-Twin-Classification': init.classification }
+          : {}),
+      },
       body: formData,
       signal: init?.signal,
       credentials: 'include',

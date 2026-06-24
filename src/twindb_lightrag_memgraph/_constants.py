@@ -73,6 +73,10 @@ _active_storage_folder: ContextVar[str | None] = ContextVar(
     "twin_active_storage_folder",
     default=None,
 )
+_active_operator_classification: ContextVar[str | None] = ContextVar(
+    "twin_active_operator_classification",
+    default=None,
+)
 
 
 def validate_identifier(value: str, name: str = "identifier") -> str:
@@ -152,3 +156,38 @@ def storage_folder_context(folder: str | None) -> Iterator[None]:
         yield
     finally:
         _active_storage_folder.reset(token)
+
+
+def get_active_operator_classification() -> str | None:
+    """Operator-selected MIP class captured for the current ingestion context.
+
+    Set from the ``X-Twin-Classification`` upload header. ``None`` means the
+    operator made no explicit choice ("no MIP"), so auto-detection alone
+    decides. The combination policy (embedded label is a floor — operator can
+    raise, never downgrade) lives in
+    :func:`classification.apply_operator_classification`.
+    """
+    return _active_operator_classification.get()
+
+
+@contextmanager
+def operator_classification_context(class_id: str | None) -> Iterator[None]:
+    """Temporarily bind an operator-selected MIP classification for ingestion.
+
+    Lives in the storage constants module (not ``server``) so the
+    classification hook can read it without importing FastAPI. The raw value is
+    validated for safe characters here; ladder membership and the floor policy
+    are resolved later in ``classification.apply_operator_classification``.
+    An unsafe/garbage value is dropped (treated as "no operator choice").
+    """
+    cleaned: str | None = None
+    if class_id:
+        try:
+            cleaned = validate_identifier(class_id, "classification")
+        except ValueError:
+            cleaned = None
+    token = _active_operator_classification.set(cleaned)
+    try:
+        yield
+    finally:
+        _active_operator_classification.reset(token)

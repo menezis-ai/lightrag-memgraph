@@ -542,6 +542,7 @@ describe('onAddSourceSubmit — no files (URL-only) path', () => {
     const action: AddSourceAction = {
       files: [],
       rawFiles: [],
+      fileOptions: [],
       urls: [],
       tags: [],
       readyCount: 3,
@@ -562,6 +563,7 @@ describe('onAddSourceSubmit — no files (URL-only) path', () => {
       await result.current.onAddSourceSubmit({
         files: [],
         rawFiles: [],
+        fileOptions: [],
         urls: [],
         tags: [],
         readyCount: 1,
@@ -579,6 +581,7 @@ describe('onAddSourceSubmit — file upload path', () => {
     return {
       files: [],
       rawFiles: [new File(['hi'], 'a.txt', { type: 'text/plain' })],
+      fileOptions: [],
       urls: [],
       tags,
       readyCount: 1,
@@ -644,6 +647,7 @@ describe('onAddSourceSubmit — file upload path', () => {
           new File(['a'], 'a.txt', { type: 'text/plain' }),
           new File(['b'], 'b.txt', { type: 'text/plain' }),
         ],
+        fileOptions: [],
         urls: [],
         tags: [],
         readyCount: 2,
@@ -711,6 +715,7 @@ describe('onAddSourceSubmit — file upload path', () => {
           new File(['a'], 'a.txt', { type: 'text/plain' }),
           new File(['b'], 'b.txt', { type: 'text/plain' }),
         ],
+        fileOptions: [],
         urls: [],
         tags: [],
         readyCount: 2,
@@ -787,6 +792,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
     return {
       files: [],
       rawFiles: [new File(['hi'], 'a.txt', { type: 'text/plain' })],
+      fileOptions: [],
       urls: [],
       tags: ['oracle'],
       readyCount: 1,
@@ -1015,6 +1021,7 @@ describe('refreshDocumentsUntilUploadsLand (via successful upload)', () => {
       submit = result.current.onAddSourceSubmit({
         files: [],
         rawFiles: [new File(['x'], 'a.txt')],
+        fileOptions: [],
         urls: [],
         tags: [],
         readyCount: 1,

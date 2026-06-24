@@ -63,7 +63,7 @@ import logging
 import os
 import re
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 from xml.etree import ElementTree as ET
@@ -526,3 +526,66 @@ def is_above(
     if normalized_threshold not in ladder:
         raise ValueError(f"threshold {threshold!r} not in ladder {ladder!r}")
     return ladder.index(normalized_class) > ladder.index(normalized_threshold)
+
+
+def apply_operator_classification(
+    detected: ClassificationResult,
+    operator_class: str | None,
+    *,
+    ladder: tuple[str, ...] = _DEFAULT_CLASS_LADDER,
+) -> ClassificationResult:
+    """Combine an operator-selected class with the auto-detected result.
+
+    Policy (compliance-safe, PO decision 2026-06-24): the embedded/detected
+    label is a **floor**. The operator can RAISE the classification, or set one
+    when nothing was detected (e.g. a ``.md`` with no embedded MIP label), but
+    can NEVER downgrade below a detected label. An operator attempt to downgrade
+    is recorded in ``meta['operator_requested']`` for the audit trail without
+    changing the resolved class.
+
+    ``operator_class`` accepts either the C1-C4 ladder ids or the business names
+    (``Public`` … ``Secret``); both normalise through ``_CLASS_ALIASES``. A
+    falsy or unrecognised value leaves the detected result untouched.
+    """
+    if not operator_class:
+        return detected
+    op_norm = _normalize_class_id(operator_class)
+    if op_norm is None or op_norm not in ladder:
+        # Operator value not in the known ladder — ignore, keep auto-detection.
+        return detected
+
+    det_norm = _normalize_class_id(detected.class_id)
+
+    # Nothing solid auto-detected (no embedded label) -> operator is the only
+    # signal and becomes authoritative.
+    if det_norm is None:
+        return ClassificationResult(
+            class_id=op_norm,
+            class_name=op_norm,
+            source_format="operator",
+            reason="operator-set",
+            meta={**detected.meta, "detected_reason": detected.reason},
+        )
+
+    # A label was detected but does not resolve into the ladder (UNKNOWN /
+    # fail-closed): never let the operator downgrade an unrecognised-but-present
+    # label. Keep it, note the attempted choice.
+    if det_norm not in ladder:
+        return replace(detected, meta={**detected.meta, "operator_requested": op_norm})
+
+    # Both resolve into the ladder: floor protection -> keep the higher class.
+    if ladder.index(op_norm) > ladder.index(det_norm):
+        return ClassificationResult(
+            class_id=op_norm,
+            class_name=op_norm,
+            label_guid=detected.label_guid,
+            raw_name=detected.raw_name,
+            set_date=detected.set_date,
+            method=detected.method,
+            source_format="operator",
+            reason="operator-raised",
+            meta={**detected.meta, "detected_class_id": detected.class_id},
+        )
+
+    # Operator chose an equal/lower class -> the detected label is the floor.
+    return replace(detected, meta={**detected.meta, "operator_requested": op_norm})

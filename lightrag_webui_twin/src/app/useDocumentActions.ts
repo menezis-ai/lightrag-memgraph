@@ -504,7 +504,15 @@ export function useDocumentActions({
     }
 
     const uploadInputs: readonly UploadDocumentInput[] = action.rawFiles.map(
-      (file) => ({ file }),
+      (file, index) => {
+        const opts = action.fileOptions[index];
+        return {
+          file,
+          ...(opts?.classification
+            ? { classification: opts.classification }
+            : {}),
+        };
+      },
     );
 
     const optimisticDocs = makeOptimisticUploadDocs(uploadInputs, action.tags);

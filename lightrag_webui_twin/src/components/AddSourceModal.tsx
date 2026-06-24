@@ -61,6 +61,22 @@ const SUPPORTED_MIME_TYPES = new Set([
 
 export type FileUploadState = 'uploading' | 'uploaded' | 'error';
 
+/**
+ * Operator-set MIP sensitivity classification (BNP C1..C4). Empty selection
+ * means "no MIP" — the backend keeps any embedded label / its default. The
+ * backend treats a set value as a floor-raiser (can raise above the embedded
+ * label, never lower it). The C-code → business-name map: C1=Public,
+ * C2=Internal, C3=Confidential, C4=Secret.
+ */
+export type UploadClassification = 'C1' | 'C2' | 'C3' | 'C4';
+
+/** Per-file upload options. Classification-only — the LightRAG/RAG1.5 engine
+ *  toggle is NOT exposed (RAG 1.5 connector isn't live). */
+export interface FileUploadOptions {
+  name: string;
+  classification?: UploadClassification;
+}
+
 export interface FileUpload {
   name: string;
   /** Megabytes (1 decimal place). Retained for backwards compat with
@@ -74,6 +90,7 @@ export interface FileUpload {
   progress?: number;
   uploaded?: number;
   error?: string;
+  classification?: UploadClassification;
 }
 
 /** Format a byte count as "B / KB / MB" depending on magnitude. */
@@ -102,6 +119,22 @@ function addSourceButtonLabel(ready: number): string {
   return `Add ${ready} source${ready === 1 ? '' : 's'}`;
 }
 
+function fileClassification(f: FileUpload): UploadClassification | '' {
+  return f.classification ?? '';
+}
+
+/** C-code → operator-facing option label. Business names per the BNP MIP
+ *  taxonomy (C1=Public … C4=Secret). */
+const CLASSIFICATION_OPTIONS: readonly {
+  value: UploadClassification;
+  label: string;
+}[] = [
+  { value: 'C1', label: 'C1 · Public' },
+  { value: 'C2', label: 'C2 · Internal' },
+  { value: 'C3', label: 'C3 · Confidential' },
+  { value: 'C4', label: 'C4 · Secret' },
+];
+
 export type LinkedSourceType = 'confluence' | 'sharepoint' | 'url';
 
 export interface LinkedSource {
@@ -118,6 +151,9 @@ export interface AddSourceAction {
    * exercise UI flows (initialFiles paths).
   */
   rawFiles: readonly File[];
+  /** Per-file options (classification-only), aligned with `rawFiles` order —
+   *  both are derived from the `uploaded`-state files in the same sequence. */
+  fileOptions: readonly FileUploadOptions[];
   urls: readonly LinkedSource[];
   tags: readonly string[];
   /** Files in `uploaded` state + all URLs. Mirrors the proto's `ready` count. */
@@ -266,6 +302,7 @@ export function AddSourceModal({
   onSubmit,
   submitting = false,
 }: Readonly<AddSourceModalProps>) {
+  const tagSuggListId = 'addsource-tag-suggestions';
   const modalRef = useRef<HTMLDialogElement>(null);
   // While an upload is in flight, neutralise close so X / backdrop / Escape
   // can't dismiss the modal mid-upload (matches LightRAG's native UX).
@@ -296,6 +333,7 @@ export function AddSourceModal({
   const [tagInput, setTagInput] = useState('');
   const [drag, setDrag] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
 
   // Animate the uploading file's progress (4%/tick @ 320ms — same as proto).
   useEffect(() => {
@@ -313,6 +351,11 @@ export function AddSourceModal({
       .sort(tagSuggestionComparator(tagInput))
       .slice(0, 4);
   }, [tagCatalog, tags, tagInput]);
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset of the highlighted tag-suggestion index when the filter query changes. */
+  useEffect(() => {
+    setTagSuggestionIndex(0);
+  }, [tagInput]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!open) return null;
 
@@ -320,11 +363,24 @@ export function AddSourceModal({
     rawFilesRef.current.delete(n);
     setFiles(files.filter((f) => f.name !== n));
   };
+  const updateFileOptions = (name: string, patch: Partial<FileUploadOptions>) => {
+    setFiles((current) =>
+      current.map((f) => (f.name === name ? { ...f, ...patch } : f)),
+    );
+  };
   const addTag = (t: string) => {
     if (t && !tags.includes(t)) setTags([...tags, t]);
     setTagInput('');
+    setTagSuggestionIndex(0);
   };
   const removeTag = (t: string) => setTags(tags.filter((x) => x !== t));
+  const activeTagSuggestion =
+    tagSugg.length === 0
+      ? undefined
+      : tagSugg[Math.min(tagSuggestionIndex, tagSugg.length - 1)];
+  const activeTagSuggestionId = activeTagSuggestion
+    ? `addsource-tag-suggestion-${activeTagSuggestion.tag}`
+    : undefined;
 
   const { uploading, errors, ready } = uploadCounts(files, urls.length);
 
@@ -332,11 +388,19 @@ export function AddSourceModal({
     if (ready === 0) return;
     // Collect raw File objects in the same order as `files` so callers
     // (host App) can correlate progress feedback per file.
-    const rawFiles = files
-      .filter((f) => f.state === 'uploaded')
+    const uploadedFiles = files.filter((f) => f.state === 'uploaded');
+    const rawFiles = uploadedFiles
       .map((f) => rawFilesRef.current.get(f.name))
       .filter((f): f is File => f !== undefined);
-    onSubmit({ files, rawFiles, urls, tags, readyCount: ready });
+    // Per-file options aligned with `uploadedFiles` order — classification-only.
+    const fileOptions = uploadedFiles.map((f) => {
+      const classification = fileClassification(f);
+      return {
+        name: f.name,
+        ...(classification ? { classification } : {}),
+      };
+    });
+    onSubmit({ files, rawFiles, fileOptions, urls, tags, readyCount: ready });
     // Do NOT close here: the host keeps the modal open during the upload
     // (submitting=true) and closes it when the mutation settles, so the
     // operator sees progress and can't dismiss an in-flight upload.
@@ -482,6 +546,35 @@ export function AddSourceModal({
                         </div>
                       )}
                     </div>
+                    {f.state !== 'error' && (
+                      <label
+                        className="file-classification-label"
+                        title="MIP classification (operator value raises the embedded label, never lowers it)"
+                      >
+                        <span>C</span>
+                        <select
+                          className="file-classification-control"
+                          value={fileClassification(f)}
+                          onChange={(e) =>
+                            updateFileOptions(f.name, {
+                              classification:
+                                e.target.value === ''
+                                  ? undefined
+                                  : (e.target.value as UploadClassification),
+                            })
+                          }
+                          aria-label={`Classification for ${f.name}`}
+                          data-testid={`addsource-classification-${f.name}`}
+                        >
+                          <option value="">no MIP</option>
+                          {CLASSIFICATION_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {f.state === 'uploaded' && (
                       <Icon name="circle-check" size={16} className="ok" />
                     )}
@@ -549,25 +642,51 @@ export function AddSourceModal({
               ))}
               <input
                 value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
+                onChange={(e) => {
+                  setTagInput(e.target.value);
+                  setTagSuggestionIndex(0);
+                }}
                 onKeyDownCapture={(e) => {
                   if (e.key === 'Escape' && tagInput) {
                     e.stopPropagation();
                     setTagInput('');
+                    setTagSuggestionIndex(0);
                   }
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && tagSugg[0]) {
-                    addTag(tagSugg[0].tag);
+                  if (e.key === 'ArrowDown') {
+                    if (tagSugg.length === 0) return;
+                    e.preventDefault();
+                    setTagSuggestionIndex((idx) => (idx + 1) % tagSugg.length);
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    if (tagSugg.length === 0) return;
+                    e.preventDefault();
+                    setTagSuggestionIndex(
+                      (idx) => (idx - 1 + tagSugg.length) % tagSugg.length,
+                    );
+                    return;
+                  }
+                  if (e.key === 'Enter' && activeTagSuggestion) {
+                    e.preventDefault();
+                    addTag(activeTagSuggestion.tag);
                   }
                 }}
                 placeholder={tags.length ? '' : 'Search tags…'}
                 aria-label="Tag input"
+                aria-autocomplete="list"
+                aria-expanded={tagSugg.length > 0}
+                aria-controls={tagSuggListId}
+                aria-activedescendant={activeTagSuggestionId}
                 style={{ fontSize: 12 }}
               />
             </div>
             {tagInput && tagSugg.length > 0 && (
               <div
+                id={tagSuggListId}
+                role="listbox"
+                aria-label="Tag suggestions"
                 className="autocomplete modal-autocomplete"
                 style={{ marginTop: 4 }}
               >
@@ -575,8 +694,15 @@ export function AddSourceModal({
                   <button
                     type="button"
                     key={s.tag}
-                    className={`autocomplete-row${i === 0 ? ' focus' : ''}`}
-                    onMouseDown={() => addTag(s.tag)}
+                    id={`addsource-tag-suggestion-${s.tag}`}
+                    role="option"
+                    aria-selected={i === tagSuggestionIndex}
+                    className={`autocomplete-row${
+                      i === tagSuggestionIndex ? ' focus' : ''
+                    }`}
+                    onMouseEnter={() => setTagSuggestionIndex(i)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => addTag(s.tag)}
                     data-testid={`tag-sugg-${s.tag}`}
                   >
                     <div className="row1">

@@ -116,14 +116,34 @@ describe('AddSourceModal — Linked sources (Coming soon)', () => {
 });
 
 describe('AddSourceModal — files', () => {
-  it('does not render per-file options unsupported by native upload', () => {
+  it('renders the per-file MIP classification select (no MIP by default), and no engine toggle', () => {
     render(
       <AddSourceModal {...defaultProps()} initialFiles={[sampleUploaded]} />,
     );
 
+    const select = screen.getByLabelText(
+      'Classification for oracle-config-guide.pdf',
+    );
+    expect(select).toBeInTheDocument();
+    // Default = "no MIP" (empty value).
+    expect(select).toHaveValue('');
     expect(
-      screen.queryByLabelText('Classification for oracle-config-guide.pdf'),
-    ).not.toBeInTheDocument();
+      screen.getByTestId('addsource-classification-oracle-config-guide.pdf'),
+    ).toBe(select);
+    // C1..C4 options present with business-name labels.
+    expect(
+      screen.getByRole('option', { name: 'C1 · Public' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: 'C2 · Internal' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: 'C3 · Confidential' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: 'C4 · Secret' }),
+    ).toBeInTheDocument();
+    // The LightRAG/RAG1.5 engine toggle is NOT restored.
     expect(screen.queryByText('RAG 1.5')).not.toBeInTheDocument();
   });
 
@@ -199,6 +219,31 @@ describe('AddSourceModal — tag autocomplete', () => {
     });
   });
 
+  it('Arrow keys navigate tag suggestions and Enter picks the focused item', async () => {
+    render(<AddSourceModal {...defaultProps()} />);
+    const input = screen.getByLabelText('Tag input');
+    input.focus();
+    await userEvent.type(input, 'r');
+
+    await waitFor(() => {
+      const options = screen.getAllByRole('option');
+      expect(options.length).toBeGreaterThan(1);
+    });
+    const options = screen.getAllByRole('option');
+    const targetTag = options[1].getAttribute('data-testid')?.replace('tag-sugg-', '');
+    if (!targetTag) {
+      throw new Error('Expected a second tag suggestion option with test id');
+    }
+
+    await userEvent.keyboard('{ArrowDown}');
+    expect(options[1]).toHaveClass('autocomplete-row focus');
+
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(screen.getByText(targetTag)).toBeInTheDocument();
+    });
+  });
+
   it('Escape in tag input clears autocomplete without closing the modal', async () => {
     const p = defaultProps();
     render(<AddSourceModal {...p} />);
@@ -244,6 +289,9 @@ describe('AddSourceModal — submit & close', () => {
     expect(action.files).toHaveLength(1);
     expect(action.urls).toHaveLength(1);
     expect(action.tags).toEqual([]);
+    // fileOptions is emitted (classification-only), aligned with uploaded files.
+    // No classification selected → name only, no classification key.
+    expect(action.fileOptions).toEqual([{ name: 'oracle-config-guide.pdf' }]);
     // submit no longer self-closes — the host keeps the modal open during the
     // upload and closes it when the mutation settles.
     expect(p.onClose).not.toHaveBeenCalled();
@@ -271,14 +319,22 @@ describe('AddSourceModal — submit & close', () => {
     expect(p.onClose).not.toHaveBeenCalled();
   });
 
-  it('does not render unsupported per-file upload options', () => {
+  it('flows the selected per-file MIP classification into the emitted fileOptions', async () => {
     const p = defaultProps();
     render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
 
-    expect(
-      screen.queryByLabelText('Classification for oracle-config-guide.pdf'),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText('RAG 1.5')).not.toBeInTheDocument();
+    await userEvent.selectOptions(
+      screen.getByLabelText('Classification for oracle-config-guide.pdf'),
+      'C3',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
+
+    expect(p.onSubmit.mock.calls[0][0].fileOptions).toEqual([
+      {
+        name: 'oracle-config-guide.pdf',
+        classification: 'C3',
+      },
+    ]);
   });
 });
 

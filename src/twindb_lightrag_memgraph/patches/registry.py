@@ -1275,20 +1275,34 @@ def _patch_background_tasks_folder_context() -> None:
     orig_add_task = BackgroundTasks.add_task
 
     def add_task_with_folder(self, func, *args, **kwargs):
-        from .._constants import get_active_storage_folder, storage_folder_context
+        import contextlib
+
+        from .._constants import (
+            get_active_operator_classification,
+            get_active_storage_folder,
+            operator_classification_context,
+            storage_folder_context,
+        )
 
         captured_folder = get_active_storage_folder()
-        if not captured_folder:
+        captured_class = get_active_operator_classification()
+        if not captured_folder and not captured_class:
             return orig_add_task(self, func, *args, **kwargs)
 
-        async def _run_with_folder(*task_args, **task_kwargs):
-            with storage_folder_context(captured_folder):
+        async def _run_with_context(*task_args, **task_kwargs):
+            with contextlib.ExitStack() as stack:
+                if captured_folder:
+                    stack.enter_context(storage_folder_context(captured_folder))
+                if captured_class:
+                    stack.enter_context(
+                        operator_classification_context(captured_class)
+                    )
                 result = func(*task_args, **task_kwargs)
                 if inspect.isawaitable(result):
                     return await result
                 return result
 
-        return orig_add_task(self, _run_with_folder, *args, **kwargs)
+        return orig_add_task(self, _run_with_context, *args, **kwargs)
 
     add_task_with_folder.__wrapped__ = orig_add_task
     BackgroundTasks.add_task = add_task_with_folder
@@ -1318,7 +1332,10 @@ def _install_storage_folder_capture(app) -> None:
         from fastapi import HTTPException
         from fastapi.responses import JSONResponse
 
-        from .._constants import storage_folder_context
+        from .._constants import (
+            operator_classification_context,
+            storage_folder_context,
+        )
         from ..server.folder import resolve_folder_for_request
 
         try:
@@ -1326,7 +1343,13 @@ def _install_storage_folder_capture(app) -> None:
         except HTTPException as exc:
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-        with storage_folder_context(folder):
+        # Operator-selected MIP class from the upload UI. Bound alongside the
+        # folder so the pre-ingestion classification hook can read it across the
+        # BackgroundTasks boundary (see _patch_background_tasks_folder_context).
+        operator_class = request.headers.get("X-Twin-Classification")
+        with storage_folder_context(folder), operator_classification_context(
+            operator_class
+        ):
             return await call_next(request)
 
     app._twindb_storage_folder_capture_installed = True
