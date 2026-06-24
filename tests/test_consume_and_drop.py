@@ -264,8 +264,9 @@ class TestDocStatusConsumeOnWrite:
         ):
             await ds_store.initialize()
         # 8 CREATE INDEX calls: id, status, file_path, folder, track_id,
-        # updated_at, created_at, content_hash + 1 legacy folder backfill read.
-        assert tracker.count == 9, f"Expected 9 consume() calls, got {tracker.count}"
+        # updated_at, created_at, content_hash + 1 legacy folder backfill + 1
+        # MEMBER_OF membership backfill.
+        assert tracker.count == 10, f"Expected 10 consume() calls, got {tracker.count}"
 
     async def test_drop_propagates_exception(self, ds_store):
         with (

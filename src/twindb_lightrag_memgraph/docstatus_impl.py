@@ -42,6 +42,16 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     def _label(self) -> str:
         return f"DocStatus_{self.workspace}"
 
+    def _folder_label(self) -> str:
+        """Cypher label for (:Folder) membership nodes, workspace-scoped.
+
+        Folders are a *logical* cloisonnement: a document is `MEMBER_OF` one or
+        more folders, stored once. The label is workspace-scoped like the doc
+        labels so the membership graph lives in the same physical namespace.
+        See FOLDER-MEMBERSHIP-REFACTOR.md.
+        """
+        return f"Folder_{self.workspace}"
+
     @staticmethod
     def _status_value(status: DocStatus | str) -> str:
         return status.value if hasattr(status, "value") else str(status)
@@ -151,7 +161,27 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                             e,
                         )
             await self._backfill_missing_folders(session, label)
+            await self._backfill_membership(session, label)
         logger.info(f"[MemgraphDocStatus:{self.workspace}] Indexes created on :{label}")
+
+    async def _backfill_membership(self, session, label: str) -> None:
+        """Create `MEMBER_OF` edges for legacy nodes that only carry the
+        single-valued ``folder`` property, so membership-based reads see them.
+
+        Idempotent (MERGE) and re-runnable on every boot. This is what lets the
+        reads be membership-authoritative without a separate migration step.
+        """
+        flabel = self._folder_label()
+        result = await session.run(
+            f"""
+            MATCH (n:`{label}`)
+            WHERE n.folder IS NOT NULL
+              AND NOT EXISTS((n)-[:MEMBER_OF]->(:`{flabel}`))
+            MERGE (f:`{flabel}` {{id: n.folder}})
+            MERGE (n)-[:MEMBER_OF]->(f)
+            """
+        )
+        await result.consume()
 
     async def finalize(self):  # NOSONAR - async contract.
         pass  # Shared driver; closed globally via _pool.close_driver()
@@ -380,6 +410,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                         props[k] = v.value
             entries.append({"id": doc_id, "props": props, "folder": folder})
 
+        folder_label = self._folder_label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 result = await session.run(
@@ -387,9 +418,15 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
                     SET n += e.props
-                    WITH n, e
-                    WHERE n.folder IS NULL
-                    SET n.folder = coalesce(e.folder, $default_folder)
+                    WITH n, coalesce(e.folder, $default_folder) AS fid
+                    // Dual-write the legacy single-valued property (migration
+                    // safety net) only on first insert.
+                    FOREACH (_ IN CASE WHEN n.folder IS NULL THEN [1] ELSE [] END |
+                        SET n.folder = fid)
+                    // The membership relation is the new source of truth: a doc
+                    // is MEMBER_OF one or more folders, stored once.
+                    MERGE (f:`{folder_label}` {{id: fid}})
+                    MERGE (n)-[:MEMBER_OF]->(f)
                     """,
                     entries=entries,
                     default_folder=default_twin_folder(),
@@ -410,6 +447,92 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 )
                 await result.consume()
 
+    # ── Folder membership (many-to-many; data stored once) ─────────────
+    # A document is MEMBER_OF one or more folders. See
+    # FOLDER-MEMBERSHIP-REFACTOR.md. These back the explicit membership
+    # endpoints and the ref-counted delete.
+
+    async def add_to_folder(self, doc_id: str, folder: str) -> bool:
+        """Add an existing document to a folder. Idempotent; no content copy.
+
+        Returns True if the document exists (membership ensured), False if no
+        such doc_id.
+        """
+        label = self._label()
+        flabel = self._folder_label()
+        fid = validate_identifier(folder, "folder")
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}` {{id: $doc_id}})
+                    MERGE (f:`{flabel}` {{id: $fid}})
+                    MERGE (n)-[:MEMBER_OF]->(f)
+                    RETURN n.id AS id
+                    """,
+                    doc_id=doc_id,
+                    fid=fid,
+                )
+                record = await result.single()
+                await result.consume()
+                return record is not None
+
+    async def remove_from_folder(self, doc_id: str, folder: str) -> int | None:
+        """Remove a doc from a folder (delete the membership edge only).
+
+        Returns the number of REMAINING memberships (ref-count) so the caller
+        can physically delete only when it reaches 0. Returns None if the doc
+        does not exist.
+        """
+        label = self._label()
+        flabel = self._folder_label()
+        fid = validate_identifier(folder, "folder")
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}` {{id: $doc_id}})
+                    OPTIONAL MATCH (n)-[r:MEMBER_OF]->(:`{flabel}` {{id: $fid}})
+                    DELETE r
+                    WITH n
+                    OPTIONAL MATCH (n)-[rem:MEMBER_OF]->()
+                    // n.id is a grouping key: zero input rows (doc not found)
+                    // → zero output rows → None. Without it, count() would
+                    // return a single 0-row and mask a missing document.
+                    RETURN n.id AS id, count(rem) AS remaining
+                    """,
+                    doc_id=doc_id,
+                    fid=fid,
+                )
+                record = await result.single()
+                await result.consume()
+                return record["remaining"] if record else None
+
+    async def get_folders_for_doc(self, doc_id: str) -> list[str] | None:
+        """List the folders a document is a member of (ordered).
+
+        Returns ``None`` when the document does not exist, vs ``[]`` for an
+        existing document with no membership — so callers can 404 a bad id
+        rather than silently masking it. The ``n.id`` grouping key makes the
+        aggregation yield zero rows (not a single empty one) for a missing doc.
+        """
+        label = self._label()
+        flabel = self._folder_label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:`{label}` {{id: $doc_id}})
+                OPTIONAL MATCH (n)-[:MEMBER_OF]->(f:`{flabel}`)
+                RETURN n.id AS id, collect(f.id) AS fids
+                """,
+                doc_id=doc_id,
+            )
+            record = await result.single()
+            await result.consume()
+            if record is None:
+                return None
+            return sorted(record["fids"])
+
     async def is_empty(self) -> bool:
         label = self._label()
         async with _pool.get_read_session() as session:
@@ -424,10 +547,16 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     async def get_status_counts(self, folder: str | None = None) -> dict[str, int]:
         label = self._label()
+        flabel = self._folder_label()
         where_clause = ""
         params: dict[str, Any] = {}
         if folder:
-            where_clause = "WHERE n.folder = $folder"
+            # Membership is the source of truth (initialize() backfills it from
+            # the legacy property for old nodes, so this is safe). The single
+            # `folder` property is kept written for rollback only, never read.
+            where_clause = (
+                f"WHERE EXISTS((n)-[:MEMBER_OF]->(:`{flabel}` {{id: $folder}}))"
+            )
             params["folder"] = validate_identifier(folder, "folder")
         async with _pool.get_read_session() as session:
             result = await session.run(
@@ -529,7 +658,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             filters.append("n.status IN $statuses")
             params["statuses"] = list(status_values)
         if folder:
-            filters.append("n.folder = $folder")
+            # Membership is authoritative (backfilled at initialize); the legacy
+            # `folder` property is written for rollback only, never read.
+            flabel = self._folder_label()
+            filters.append(
+                f"EXISTS((n)-[:MEMBER_OF]->(:`{flabel}` {{id: $folder}}))"
+            )
             params["folder"] = validate_identifier(folder, "folder")
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 

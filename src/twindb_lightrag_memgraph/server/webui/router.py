@@ -102,7 +102,20 @@ async def _get_doc_for_active_folder(doc_id: str) -> dict[str, Any]:
     if raw is None:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     doc = _status_to_dict(raw)
-    if not _doc_matches_active_folder(doc):
+    # Membership is authoritative: a doc shared into the active folder is
+    # accessible there even if its legacy single `folder` property names another
+    # one. The legacy property is consulted ONLY when the backend has no
+    # membership method at all — never for an existing doc that returns an empty
+    # membership list, because that orphan state is exactly what the refactor
+    # makes meaningful (it must NOT be silently visible via the stale property).
+    in_folder: bool
+    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
+    if get_folders is None:
+        in_folder = _doc_matches_active_folder(doc)
+    else:
+        folders = await get_folders(doc_id)  # doc exists → a list, never None
+        in_folder = current_folder_id() in (folders or [])
+    if not in_folder:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     return doc
 
