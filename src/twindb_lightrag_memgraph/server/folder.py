@@ -157,9 +157,22 @@ def current_folder_id() -> str:
     return _active_folder_id.get() or load_folder_catalog().default_folder_id
 
 
+def active_folder_id() -> str | None:
+    """The folder bound for THIS request, or ``None`` when unbound.
+
+    Unlike :func:`current_folder_id` (which falls back to the catalog default),
+    this returns ``None`` off the Twin routes / when no request folder is bound,
+    so storage and graph reads can apply the legacy *global* behaviour outside a
+    folder-scoped request (compat). On a Twin WebUI route ``bind_request_folder``
+    has set it to the resolved folder (the header value or the catalog default).
+    """
+    return _active_folder_id.get()
+
+
 __all__ = [
     "TwinFolder",
     "TwinFolderCatalog",
+    "active_folder_id",
     "bind_request_folder",
     "build_runtime_folder_config",
     "current_folder_id",

@@ -115,9 +115,12 @@ def _graph_seed_fallback_allowed() -> bool:
 async def _native_graph(label: str, max_nodes: int, max_depth: int):
     """Run LightRAG's native focus+context selection once.
 
-    Returns ``(entities, relations)`` or ``([], [])`` when the host RAG is
-    absent/failed. ``_get_rag`` is resolved through the legacy shim at runtime
-    so existing monkeypatches of ``server.webui_router._get_rag`` keep working.
+    Returns ``(entities, relations)`` when the native graph ran (possibly an
+    empty, folder-scoped result), or ``None`` when it is **unavailable** (host
+    RAG absent / ``get_knowledge_graph`` failed) — the only case eligible for the
+    demo seed fallback. ``_get_rag`` is resolved through the legacy shim at
+    runtime so existing monkeypatches of ``server.webui_router._get_rag`` keep
+    working.
     """
     from .. import graph_reader
     from .. import webui_router as legacy
@@ -126,10 +129,16 @@ async def _native_graph(label: str, max_nodes: int, max_depth: int):
     try:
         rag = legacy._get_rag()
     except Exception:
-        return [], []
+        return None
     return await graph_reader.read_graph_native(
         rag, ws, node_label=label, max_nodes=max_nodes, max_depth=max_depth
     )
+
+
+def _seed_or_empty_entities() -> list[dict[str, Any]]:
+    if not _graph_seed_fallback_allowed():
+        return []
+    return get_store().list_graph_entities()
 
 
 @router.get("/graph/entities", response_model=list[GraphEntity])
@@ -139,12 +148,20 @@ async def list_graph_entities(
     max_depth: int = 3,
 ) -> list[dict[str, Any]]:
     """Live Memgraph entities via LightRAG's native focus+context selection."""
-    entities, _ = await _native_graph(label, max_nodes, max_depth)
+    from ..folder import active_folder_id
+
+    result = await _native_graph(label, max_nodes, max_depth)
+    if result is None:
+        # Native graph unavailable (no rag / call failed) → demo seed eligible.
+        return _seed_or_empty_entities()
+    entities, _ = result
     if entities:
         return entities
-    if not _graph_seed_fallback_allowed():
+    # Native ran but empty. With a folder bound this is a legitimately empty
+    # folder — NEVER fall back to the unscoped seed graph (cross-folder leak).
+    if active_folder_id() is not None:
         return []
-    return get_store().list_graph_entities()
+    return _seed_or_empty_entities()
 
 
 @router.get("/graph/relations", response_model=list[GraphRelation])
@@ -154,9 +171,18 @@ async def list_graph_relations(
     max_depth: int = 3,
 ) -> list[dict[str, Any]]:
     """Relations for the same native subgraph as ``/graph/entities``."""
-    entities, relations = await _native_graph(label, max_nodes, max_depth)
+    from ..folder import active_folder_id
+
+    result = await _native_graph(label, max_nodes, max_depth)
+    if result is None:
+        if not _graph_seed_fallback_allowed():
+            return []
+        return get_store().list_graph_relations()
+    entities, relations = result
     if entities:
         return relations
+    if active_folder_id() is not None:
+        return []
     if not _graph_seed_fallback_allowed():
         return []
     return get_store().list_graph_relations()
@@ -164,7 +190,8 @@ async def list_graph_relations(
 
 @router.get("/graph/search")
 async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
-    """Server-side fuzzy entity-label search using native ``search_labels``."""
+    """Entity-label search — folder-scoped when a Twin folder is bound so the
+    search box never reveals out-of-folder labels."""
     from .. import graph_reader
     from .. import webui_router as legacy
 
@@ -172,7 +199,9 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
         rag = legacy._get_rag()
     except Exception:
         return []
-    return await graph_reader.search_graph_labels(rag, q, limit=limit)
+    return await graph_reader.search_graph_labels(
+        rag, q, workspace=_graph_memgraph_label(), limit=limit
+    )
 
 
 @router.patch(

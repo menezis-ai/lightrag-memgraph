@@ -36,6 +36,11 @@ from .._pool import acquire_write_slot, get_read_session, get_session
 
 logger = logging.getLogger(__name__)
 
+try:  # version-skew guard (see feedback_lightrag_version_skew)
+    from lightrag.constants import GRAPH_FIELD_SEP as _GRAPH_FIELD_SEP
+except Exception:  # pragma: no cover - defensive
+    _GRAPH_FIELD_SEP = "<SEP>"
+
 
 # ----------------------------------------------------------------------
 # Exceptions raised by the write helpers (M12 batch 3 contract)
@@ -247,7 +252,8 @@ def _json_str_dict(value: Any) -> dict[str, str]:
 def _node_record_to_entity(
     record: dict[str, Any],
     chunk_to_doc: dict[str, str] | None = None,
-) -> dict[str, Any]:
+    member_docs: set[str] | None = None,
+) -> dict[str, Any] | None:
     """Project a Cypher entity row into the WebUI ``GraphEntity`` shape.
 
     ``mentions`` is the count of distinct chunks the entity appears in
@@ -258,6 +264,12 @@ def _node_record_to_entity(
     can be resolved (orphan chunks, fresh KB, lookup failure) sources
     falls back to mentions so the badge never reads 0 with non-empty
     source_id.
+
+    **Folder cloisonnement** (``member_docs`` not None): the entity is visible
+    only if ≥1 source chunk belongs to a member doc; ``mentions`` / ``sources`` /
+    ``source_docs`` are scoped to member chunks/docs. Returns ``None`` when the
+    entity has no member source (caller drops it). ``member_docs`` None → legacy
+    global behaviour (no scoping).
     """
     entity_id = record.get("entity_id") or ""
     raw_type = record.get("entity_type") or ""
@@ -271,16 +283,34 @@ def _node_record_to_entity(
         .strip()
     )
     source_id = record.get("source_id") or ""
-    chunks = {
+    all_chunks = {
         c.strip() for c in str(source_id).replace("<SEP>", ",").split(",") if c.strip()
     }
-    mentions = len(chunks)
-    resolved_docs: set[str] = set()
-    if chunk_to_doc:
-        resolved_docs = {chunk_to_doc[c] for c in chunks if c in chunk_to_doc}
-        sources = len(resolved_docs) if resolved_docs else mentions
+    mixed = False
+    if member_docs is not None:
+        # Folder-scoped: keep only chunks whose parent doc is a member.
+        cd = chunk_to_doc or {}
+        member_chunks = {c for c in all_chunks if cd.get(c) in member_docs}
+        resolved_docs = {cd[c] for c in member_chunks}
+        if not resolved_docs:
+            return None  # not visible in this folder
+        mentions = len(member_chunks)
+        sources = len(resolved_docs)
+        # Mixed = visible but some source chunk is non-member/unresolvable.
+        mixed = len(member_chunks) < len(all_chunks)
     else:
-        sources = mentions
+        mentions = len(all_chunks)
+        resolved_docs = set()
+        if chunk_to_doc:
+            resolved_docs = {chunk_to_doc[c] for c in all_chunks if c in chunk_to_doc}
+            sources = len(resolved_docs) if resolved_docs else mentions
+        else:
+            sources = mentions
+    if mixed:
+        # The description LightRAG blended across all source docs may carry
+        # non-member text; the graph tab is a direct exposure surface → mask it.
+        # The node + folder-scoped source_docs stay visible.
+        summary = _MASKED_ENTITY_SUMMARY
     x, y = layout_position(str(entity_id), mapped_type)
     return {
         "id": _entity_id_to_node_id(str(entity_id)),
@@ -351,6 +381,171 @@ async def _load_chunk_to_doc_index(workspace: str) -> dict[str, str]:
     return chunk_to_doc
 
 
+async def _load_member_docs(workspace: str, folder: str) -> set[str]:
+    """Doc ids ``MEMBER_OF`` *folder* (folder cloisonnement of the graph view).
+
+    On any failure returns an empty set → **fail-closed**: an empty member set
+    hides every entity/relation (none can prove a member source doc) rather than
+    leaking the global graph. The failure is logged loudly. Mirrors the storage
+    cloisonnement posture (batch 2).
+    """
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (d:`DocStatus_{label}`)"
+        f"-[:MEMBER_OF]->(:`Folder_{label}` {{id: $folder}}) "
+        "RETURN collect(d.id) AS ids"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            record = await result.single()
+            await result.consume()
+        if record and record["ids"]:
+            return {str(d) for d in record["ids"]}
+        return set()
+    except Exception:
+        logger.exception(
+            "graph_reader: member-docs load failed (ws=%s, folder=%s) — "
+            "fail-closed (empty)",
+            workspace,
+            folder,
+        )
+        return set()
+
+
+async def _active_member_docs(workspace: str) -> set[str] | None:
+    """Member-doc set for the request's active folder, or ``None`` (global).
+
+    ``None`` when no request folder is bound (off the Twin routes / unscoped
+    callers) → the graph reads keep their legacy global behaviour. On a Twin
+    WebUI route ``bind_request_folder`` has bound a folder, so the graph is
+    scoped to that folder's membership.
+    """
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        return None
+    return await _load_member_docs(workspace, folder)
+
+
+async def _load_member_chunks(workspace: str, folder: str) -> set[str]:
+    """Chunk ids owned by docs ``MEMBER_OF`` *folder* (for Cypher pushdown).
+
+    Read from each member doc's ``chunks_list``. Used to push the membership
+    predicate **before** the ``LIMIT`` in the flat graph reads / label search, so
+    a folder isn't starved by a global LIMIT that lands mostly on non-member
+    nodes. Fail-closed (empty) on error — never leak a global result set.
+    """
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (d:`DocStatus_{label}`)"
+        f"-[:MEMBER_OF]->(:`Folder_{label}` {{id: $folder}}) "
+        "WHERE d.chunks_list IS NOT NULL "
+        "RETURN d.chunks_list AS chunks_list"
+    )
+    member_chunks: set[str] = set()
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            async for record in result:
+                raw = record.get("chunks_list")
+                try:
+                    ids = json.loads(raw) if isinstance(raw, str) else raw
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(ids, list):
+                    member_chunks.update(c for c in ids if isinstance(c, str) and c)
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: member-chunks load failed (ws=%s, folder=%s) — "
+            "fail-closed (empty)",
+            workspace,
+            folder,
+        )
+        return set()
+    return member_chunks
+
+
+async def _active_member_chunks(workspace: str) -> set[str] | None:
+    """Member chunk-id set for the active folder, or ``None`` (global/unscoped)."""
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        return None
+    return await _load_member_chunks(workspace, folder)
+
+
+def _membership_predicate(var: str) -> str:
+    """Cypher WHERE-fragment: graph node/edge ``var`` has ≥1 member source chunk
+    (params ``$sep`` + ``$mchunks``). Pushed before ``LIMIT`` so the cap lands on
+    in-folder records."""
+    return (
+        f"any(_cid IN split(coalesce({var}.source_id, ''), $sep) "
+        f"WHERE _cid IN $mchunks)"
+    )
+
+
+# When only PART of a record's source chunks are in-folder, the text fields
+# LightRAG aggregated across all source docs (entity description, relation
+# keywords/label, operator props) can encode non-member content. The graph tab
+# is a direct exposure surface, so a *mixed* record stays structurally visible
+# (node/edge + scoped source_docs) but its non-decomposable text payload is
+# neutralised — un-blending would require per-folder re-extraction.
+_MASKED_ENTITY_SUMMARY = "[description hidden: mixed-folder provenance]"
+_MIXED_RELATION_LABEL = "MIXED_PROVENANCE"
+
+# read_graph_native delegates node SELECTION to LightRAG's get_knowledge_graph,
+# which ranks nodes GLOBALLY (by degree) — it cannot be told about folders. When
+# a folder is bound we therefore over-fetch candidates and filter to member ones
+# in Python, then truncate to the requested cap, so a folder whose nodes sort
+# after max_nodes globally isn't starved. Residual: a folder that is a very thin
+# slice of a huge KB can still under-return (documented, bounded — no escalation
+# loop). Mirrors the batch-2 retrieval over-fetch posture.
+_GRAPH_NATIVE_OVERFETCH_FACTOR = 4
+_GRAPH_NATIVE_OVERFETCH_CAP = 8000
+
+
+def _native_overfetch(max_nodes: int) -> int:
+    return min(max(max_nodes, max_nodes * _GRAPH_NATIVE_OVERFETCH_FACTOR),
+               _GRAPH_NATIVE_OVERFETCH_CAP)
+
+
+def _resolve_source_docs(
+    source_id: Any,
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+) -> tuple[set[str], bool, bool]:
+    """Resolve a ``source_id`` chunk list to its parent docs, folder-scoped.
+
+    Returns ``(docs, in_folder, mixed)``:
+
+    - ``docs`` = parent doc ids the chunks resolve to (via ``chunk_to_doc``),
+      intersected with ``member_docs`` when a folder is active.
+    - ``in_folder`` = visible in the active folder: ``True`` always when no folder
+      is active (global), else ``True`` iff ≥1 source chunk belongs to a member.
+    - ``mixed`` = visible but NOT pure: at least one source chunk is non-member
+      or unresolvable (so the aggregated text payload may leak non-member
+      content). Always ``False`` when no folder is active.
+    """
+    chunks = {
+        c.strip()
+        for c in str(source_id or "").replace("<SEP>", ",").split(",")
+        if c.strip()
+    }
+    cd = chunk_to_doc or {}
+    resolved = {cd[c] for c in chunks if c in cd}
+    if member_docs is None:
+        return resolved, True, False
+    member_chunks = {c for c in chunks if cd.get(c) in member_docs}
+    scoped = {cd[c] for c in member_chunks}
+    in_folder = bool(scoped)
+    mixed = in_folder and len(member_chunks) < len(chunks)
+    return scoped, in_folder, mixed
+
+
 # In-process cache of relation_id → (workspace, src, tgt). Populated on
 # every `read_graph_relations` call so the PATCH route can reverse the
 # hash back to a Cypher MATCH. Eviction is intentionally lazy — for a
@@ -382,13 +577,34 @@ def _relation_id_from_endpoints(src: str, tgt: str) -> str:
     return f"kr_{h}"
 
 
-def _edge_record_to_relation(record: dict[str, Any], index: int) -> dict[str, Any]:
+def _edge_record_to_relation(
+    record: dict[str, Any],
+    index: int,
+    chunk_to_doc: dict[str, str] | None = None,
+    member_docs: set[str] | None = None,
+) -> dict[str, Any] | None:
     """Project a Cypher edge row into the WebUI ``GraphRelation`` shape.
 
     ``index`` is accepted for backwards compatibility but ignored; the
     relation id is now derived from the endpoint pair.
+
+    **Folder cloisonnement** (``member_docs`` not None): the relation is visible
+    only if ≥1 of its *own* source chunks (``record["chunk_source_id"]`` — the
+    relationship's ``source_id`` provenance, NOT the endpoint ids) belongs to a
+    member doc. Returns ``None`` when scoped out (caller drops it). On a *mixed*
+    relation (some source chunk non-member) the edge stays visible but its
+    blended text payload (``label`` from keywords, operator ``properties``) is
+    neutralised. This is on top of the endpoint-visibility filter the callers
+    already apply. ``None`` → legacy global behaviour.
     """
     del index  # ignored — id is endpoint-derived
+    mixed = False
+    if member_docs is not None:
+        _docs, in_folder, mixed = _resolve_source_docs(
+            record.get("chunk_source_id"), chunk_to_doc, member_docs
+        )
+        if not in_folder:
+            return None
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
     keywords = record.get("keywords") or ""
@@ -402,13 +618,19 @@ def _edge_record_to_relation(record: dict[str, Any], index: int) -> dict[str, An
     if strength > 1.0:
         strength = min(1.0, strength / 10.0)
     label = str(keywords).strip().upper().replace(" ", "_") or "RELATED_TO"
+    properties = _json_str_dict(record.get("twin_props_json"))
+    if mixed:
+        # Mixed-folder provenance → mask the blended text payload (label from
+        # LightRAG keywords, operator props). Endpoints + strength stay.
+        label = _MIXED_RELATION_LABEL
+        properties = {}
     return {
         "id": _relation_id_from_endpoints(str(src), str(tgt)),
         "source": _entity_id_to_node_id(str(src)),
         "target": _entity_id_to_node_id(str(tgt)),
         "label": label,
         "strength": round(strength, 3),
-        "properties": _json_str_dict(record.get("twin_props_json")),
+        "properties": properties,
     }
 
 
@@ -424,17 +646,27 @@ async def read_graph_entities(
     if the read fails — callers fall back to the seed in that case.
     """
     label = _sanitize_workspace(workspace)
+    # Push the folder-membership predicate BEFORE the LIMIT so the cap lands on
+    # in-folder entities (a global LIMIT could otherwise starve a folder whose
+    # nodes sort after $max_nodes globally). None → unscoped (legacy global).
+    member_chunks = await _active_member_chunks(workspace)
+    where = f"WHERE {_membership_predicate('n')} " if member_chunks is not None else ""
     query = (
         f"MATCH (n:`{label}`) "
+        f"{where}"
         "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
         "n.description AS description, n.source_id AS source_id, "
         "n.display_name AS display_name, n.twin_tags_json AS twin_tags_json, "
         "n.twin_props_json AS twin_props_json "
         "LIMIT $max_nodes"
     )
+    params: dict[str, Any] = {"max_nodes": max_nodes}
+    if member_chunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = list(member_chunks)
     try:
         async with get_read_session() as session:
-            result = await session.run(query, max_nodes=max_nodes)
+            result = await session.run(query, **params)
             rows = []
             async for record in result:
                 rows.append(
@@ -450,11 +682,15 @@ async def read_graph_entities(
                 )
             await result.consume()
         chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-        return [
-            _node_record_to_entity(row, chunk_to_doc)
-            for row in rows
-            if row.get("entity_id")
-        ]
+        member_docs = await _active_member_docs(workspace)
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if not row.get("entity_id"):
+                continue
+            entity = _node_record_to_entity(row, chunk_to_doc, member_docs)
+            if entity is not None:
+                out.append(entity)
+        return out
     except Exception:
         logger.exception(
             "graph_reader: failed to read entities for workspace=%s", workspace
@@ -464,7 +700,8 @@ async def read_graph_entities(
 
 def _native_node_to_entity(
     node: Any,
-    chunk_to_doc: dict[str, dict[str, str]],
+    chunk_to_doc: dict[str, str],
+    member_docs: set[str] | None = None,
 ) -> dict[str, Any] | None:
     props = getattr(node, "properties", None) or {}
     entity_id = props.get("entity_id") or getattr(node, "id", None)
@@ -479,10 +716,15 @@ def _native_node_to_entity(
         "twin_tags_json": props.get("twin_tags_json"),
         "twin_props_json": props.get("twin_props_json"),
     }
-    return _node_record_to_entity(row, chunk_to_doc)
+    return _node_record_to_entity(row, chunk_to_doc, member_docs)
 
 
-def _native_edge_to_relation(edge: Any, index: int) -> dict[str, Any] | None:
+def _native_edge_to_relation(
+    edge: Any,
+    index: int,
+    chunk_to_doc: dict[str, str] | None = None,
+    member_docs: set[str] | None = None,
+) -> dict[str, Any] | None:
     src = getattr(edge, "source", None)
     tgt = getattr(edge, "target", None)
     if not src or not tgt:
@@ -491,11 +733,14 @@ def _native_edge_to_relation(edge: Any, index: int) -> dict[str, Any] | None:
     row = {
         "source_id": src,
         "target_id": tgt,
+        # The relationship's OWN chunk provenance (distinct from the endpoint
+        # entity ids above) — drives folder-scoping of the relation.
+        "chunk_source_id": eprops.get("source_id"),
         "keywords": eprops.get("keywords"),
         "weight": eprops.get("weight"),
         "twin_props_json": eprops.get("twin_props_json"),
     }
-    return _edge_record_to_relation(row, index)
+    return _edge_record_to_relation(row, index, chunk_to_doc, member_docs)
 
 
 async def read_graph_native(
@@ -505,7 +750,7 @@ async def read_graph_native(
     node_label: str = "*",
     max_depth: int = 3,
     max_nodes: int = 1000,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
     """Build the WebUI graph by delegating node/edge SELECTION to LightRAG's
     native ``rag.get_knowledge_graph`` instead of a flat ``LIMIT`` scan.
 
@@ -519,14 +764,26 @@ async def read_graph_native(
 
     We keep the Twin ``GraphEntity``/``GraphRelation`` contract by mapping the
     returned ``KnowledgeGraph`` nodes/edges through the same projectors used by
-    the legacy reader. Returns ``([], [])`` on any failure so callers fall back
-    to the seed / empty per the audit-C5 gate.
+    the legacy reader.
+
+    Returns ``None`` when the native graph is **unavailable** (``get_knowledge_
+    graph`` failed) so the caller can fall back to the demo seed; returns a
+    ``(entities, relations)`` tuple — **possibly empty** — when it ran. A
+    folder-scoped empty result is a legitimately empty folder, NOT "unavailable":
+    the caller must NOT seed-fallback on it (that would leak the unscoped seed
+    graph into a folder view).
     """
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    # Over-fetch candidates when scoping so the post-filter result still fills the
+    # cap (get_knowledge_graph ranks globally, can't be folder-told).
+    fetch_nodes = _native_overfetch(max_nodes) if folder else max_nodes
     try:
         kg = await rag.get_knowledge_graph(
             node_label=node_label,
             max_depth=max_depth,
-            max_nodes=max_nodes,
+            max_nodes=fetch_nodes,
         )
     except Exception:
         logger.exception(
@@ -535,20 +792,23 @@ async def read_graph_native(
             node_label,
             workspace,
         )
-        return [], []
+        return None
 
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+    member_docs = await _load_member_docs(workspace, folder) if folder else None
 
     entities: list[dict[str, Any]] = []
     for node in getattr(kg, "nodes", []) or []:
-        entity = _native_node_to_entity(node, chunk_to_doc)
+        entity = _native_node_to_entity(node, chunk_to_doc, member_docs)
         if entity is not None:
             entities.append(entity)
+            if len(entities) >= max_nodes:
+                break  # truncate to the requested cap after membership filtering
 
     valid_ids = {e["id"] for e in entities}
     relations: list[dict[str, Any]] = []
     for i, edge in enumerate(getattr(kg, "edges", []) or []):
-        rel = _native_edge_to_relation(edge, i)
+        rel = _native_edge_to_relation(edge, i, chunk_to_doc, member_docs)
         if rel is None:
             continue
         if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
@@ -559,10 +819,63 @@ async def read_graph_native(
     return entities, relations
 
 
-async def search_graph_labels(rag: Any, q: str, *, limit: int = 50) -> list[str]:
-    """Server-side fuzzy entity-label search (delegates to LightRAG's native
-    ``search_labels``) so the Graph search box reaches the whole KB, not just
-    the loaded subgraph."""
+async def _search_labels_scoped(
+    workspace: str, q: str, member_chunks: set[str], limit: int
+) -> list[str]:
+    """Folder-aware entity-label search: substring match constrained to entities
+    with ≥1 member source chunk. Loses the native fuzzy ranking but never reveals
+    out-of-folder labels (the search box is an exposure surface)."""
+    if not member_chunks:
+        return []  # fail-closed: empty folder reveals nothing
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (n:`{label}`) "
+        "WHERE toLower(n.entity_id) CONTAINS toLower($q) "
+        f"AND {_membership_predicate('n')} "
+        "RETURN DISTINCT n.entity_id AS eid LIMIT $limit"
+    )
+    out: list[str] = []
+    try:
+        async with get_read_session() as session:
+            result = await session.run(
+                query,
+                q=q,
+                sep=_GRAPH_FIELD_SEP,
+                mchunks=list(member_chunks),
+                limit=limit,
+            )
+            async for record in result:
+                eid = record.get("eid")
+                if eid:
+                    out.append(str(eid))
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: scoped label search failed (ws=%s, q=%r) — "
+            "fail-closed (empty)",
+            workspace,
+            q,
+        )
+        return []
+    return out
+
+
+async def search_graph_labels(
+    rag: Any, q: str, *, workspace: str | None = None, limit: int = 50
+) -> list[str]:
+    """Server-side entity-label search for the Graph search box.
+
+    Folder-scoped when a Twin folder is bound (``workspace`` given + active
+    folder): a substring match constrained to in-folder entities, so the search
+    box can NOT reveal out-of-folder labels by autocompletion. Off a folder
+    (``workspace`` None / unbound) it delegates to LightRAG's native fuzzy
+    ``search_labels`` over the whole KB (legacy global behaviour).
+    """
+    member_chunks = (
+        await _active_member_chunks(workspace) if workspace else None
+    )
+    if member_chunks is not None:
+        return await _search_labels_scoped(workspace, q, member_chunks, limit)
     try:
         graph = rag.chunk_entity_relation_graph
         return list(await graph.search_labels(q, limit))
@@ -586,16 +899,26 @@ async def read_graph_relations(
     the truncated node list.
     """
     label = _sanitize_workspace(workspace)
+    # Membership predicate on the relationship's own source chunks, BEFORE the
+    # LIMIT (same rationale as read_graph_entities). None → unscoped global.
+    member_chunks = await _active_member_chunks(workspace)
+    where = f"WHERE {_membership_predicate('r')} " if member_chunks is not None else ""
     query = (
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
+        f"{where}"
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
         "r.keywords AS keywords, r.weight AS weight, "
+        "r.source_id AS chunk_source_id, "
         "r.twin_props_json AS twin_props_json "
         "LIMIT $max_edges"
     )
+    params: dict[str, Any] = {"max_edges": max_edges}
+    if member_chunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = list(member_chunks)
     try:
         async with get_read_session() as session:
-            result = await session.run(query, max_edges=max_edges)
+            result = await session.run(query, **params)
             rows = []
             async for record in result:
                 rows.append(
@@ -604,16 +927,21 @@ async def read_graph_relations(
                         "target_id": record["target_id"],
                         "keywords": record["keywords"],
                         "weight": record["weight"],
+                        "chunk_source_id": record["chunk_source_id"],
                         "twin_props_json": record["twin_props_json"],
                     }
                 )
             await result.consume()
+        chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+        member_docs = await _active_member_docs(workspace)
         valid = set(valid_node_ids) if valid_node_ids is not None else None
         out: list[dict[str, Any]] = []
         for i, row in enumerate(rows):
             if not row.get("source_id") or not row.get("target_id"):
                 continue
-            rel = _edge_record_to_relation(row, i)
+            rel = _edge_record_to_relation(row, i, chunk_to_doc, member_docs)
+            if rel is None:
+                continue  # scoped out of the active folder
             if valid is not None and (
                 rel["source"] not in valid or rel["target"] not in valid
             ):

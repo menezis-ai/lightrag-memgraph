@@ -749,7 +749,7 @@ class TestGraphNativeDelegation:
     async def test_search_delegates_to_native_search_labels(
         self, monkeypatch, client
     ):
-        async def fake_search(rag, q, *, limit=50):
+        async def fake_search(rag, q, *, workspace=None, limit=50):
             assert q == "schizo"
             return ["Schizophrenia", "Schizoaffective Disorder"]
 
