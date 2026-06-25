@@ -17,9 +17,12 @@ Usage:
     )
 """
 
+import inspect
 import logging
 from contextlib import asynccontextmanager
+from functools import partial
 from importlib.metadata import version as _pkg_version
+from pathlib import Path
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -504,6 +507,19 @@ def _twin_in_folder(var: str) -> str:
     )
 
 
+def _degree_expr(mchunks) -> str:
+    """Cypher aggregate for a node's degree over relationship ``r``.
+
+    Plain ``count(r)`` when no folder is bound; folder-scoped (counts only
+    in-folder edges) when ``mchunks`` carries the active folder's member set."""
+    if mchunks is None:
+        return "count(r)"
+    return (
+        f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
+        f"THEN r END)"
+    )
+
+
 async def _twin_member_chunks(self):
     """Member chunk ids for the active folder, or ``None`` when none is bound.
 
@@ -577,14 +593,7 @@ async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, in
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
     mchunks = await _twin_member_chunks(self)
-    if mchunks is not None:
-        # Folder-scoped degree: count only relationships in the active folder.
-        degree_expr = (
-            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
-            f"THEN r END)"
-        )
-    else:
-        degree_expr = "count(r)"
+    degree_expr = _degree_expr(mchunks)
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
@@ -723,13 +732,7 @@ async def _patched_get_nodes_with_degrees_batch(
     ws = self._get_workspace_label()
     mchunks = await _twin_member_chunks(self)
     where = f"WHERE {_twin_in_folder('n')} " if mchunks is not None else ""
-    if mchunks is not None:
-        degree_expr = (
-            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
-            f"THEN r END)"
-        )
-    else:
-        degree_expr = "count(r)"
+    degree_expr = _degree_expr(mchunks)
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
@@ -777,13 +780,7 @@ async def _patched_get_edges_with_degrees_batch(
     ws = self._get_workspace_label()
     mchunks = await _twin_member_chunks(self)
     edge_where = f"WHERE {_twin_in_folder('r')} " if mchunks is not None else ""
-    if mchunks is not None:
-        degree_expr = (
-            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
-            f"THEN r END)"
-        )
-    else:
-        degree_expr = "count(r)"
+    degree_expr = _degree_expr(mchunks)
 
     edge_query = (
         f"UNWIND $pairs AS pair "
@@ -1321,6 +1318,63 @@ def _patch_capture_rag() -> None:
     dr._twindb_capture_rag_patched = True
 
 
+def _build_input_dir_index(dr, index, input_dir) -> dict[str, str]:
+    """mtime-keyed canonical-name → on-disk-path index for ``input_dir``.
+
+    ``index`` is the per-patch cache (``{key: (mtime_ns, mapping)}``); a stamp
+    match returns the cached mapping, otherwise the dir is re-scanned once."""
+    try:
+        stamp = input_dir.stat().st_mtime_ns
+    except FileNotFoundError:
+        return {}
+    key = str(input_dir)
+    cached = index.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+
+    mapping: dict[str, str] = {}
+    try:
+        for entry in input_dir.iterdir():
+            if entry.is_file():
+                candidate = dr.normalize_file_path(entry.name)
+                if candidate and candidate not in mapping:
+                    mapping[candidate] = str(entry)
+    except FileNotFoundError:
+        mapping = {}
+    index[key] = (stamp, mapping)
+    return mapping
+
+
+def _resolve_indexed_path(mapping, file_path) -> Path | None:
+    """Return the on-disk ``Path`` for ``file_path`` iff it still exists."""
+    existing = mapping.get(file_path)
+    if not existing:
+        return None
+    existing_path = Path(existing)
+    return existing_path if existing_path.is_file() else None
+
+
+def _find_existing_file_cached(dr, index, lock, input_dir, file_path) -> Path | None:
+    """Cached parity-replacement for ``find_existing_file_by_file_path``.
+
+    Behavioural parity with upstream: it compares ``normalize_file_path(name)``
+    against the RAW ``file_path``. The index is keyed on normalized on-disk
+    names, so it is looked up by the raw ``file_path`` — NOT a re-normalized
+    one, or a non-canonical/whitespace ``file_path`` would match where upstream
+    returns ``None``. A stale hit (file moved/removed after mtime sampling)
+    refreshes the index once and retries."""
+    if not file_path or file_path == dr.UNKNOWN_FILE_SOURCE:
+        return None
+    with lock:
+        mapping = _build_input_dir_index(dr, index, input_dir)
+    resolved = _resolve_indexed_path(mapping, file_path)
+    if resolved is not None or mapping.get(file_path) is None:
+        return resolved
+    with lock:
+        mapping = _build_input_dir_index(dr, index, input_dir)
+    return _resolve_indexed_path(mapping, file_path)
+
+
 def _patch_upload_duplicate_lookup() -> None:
     """Cache LightRAG's upload duplicate-filename lookup, O(n) → O(1).
 
@@ -1338,7 +1392,6 @@ def _patch_upload_duplicate_lookup() -> None:
     so the import here is a cached, safe no-op.
     """
     import threading
-    from pathlib import Path
 
     import lightrag.api.routers.document_routes as dr
 
@@ -1359,63 +1412,12 @@ def _patch_upload_duplicate_lookup() -> None:
     _input_dir_index: dict[str, tuple[int, dict[str, str]]] = {}
     _input_dir_index_lock = threading.Lock()
 
-    def _build_input_dir_index(input_dir) -> dict[str, str]:
-        try:
-            stamp = input_dir.stat().st_mtime_ns
-        except FileNotFoundError:
-            return {}
-        key = str(input_dir)
-        cached = _input_dir_index.get(key)
-        if cached is not None and cached[0] == stamp:
-            return cached[1]
-
-        mapping: dict[str, str] = {}
-        try:
-            for entry in input_dir.iterdir():
-                if not entry.is_file():
-                    continue
-                candidate = dr.normalize_file_path(entry.name)
-                if candidate and candidate not in mapping:
-                    mapping[candidate] = str(entry)
-        except FileNotFoundError:
-            mapping = {}
-        _input_dir_index[key] = (stamp, mapping)
-        return mapping
-
-    def _find_existing_file_by_file_path_cached(input_dir, file_path) -> Path | None:
-        if not file_path or file_path == dr.UNKNOWN_FILE_SOURCE:
-            return None
-
-        # Behavioural parity with upstream: it compares
-        # ``normalize_file_path(candidate.name) == file_path`` against the RAW
-        # ``file_path``. The index is keyed on normalized on-disk names, so it
-        # is looked up by the raw ``file_path`` — NOT a re-normalized one, or a
-        # non-canonical/whitespace ``file_path`` would match here where upstream
-        # returns None.
-        with _input_dir_index_lock:
-            mapping = _build_input_dir_index(input_dir)
-
-        existing = mapping.get(file_path)
-        if not existing:
-            return None
-
-        existing_path = Path(existing)
-        if existing_path.is_file():
-            return existing_path
-
-        # Cache may be stale if the file disappeared or moved after mtime
-        # sampling; refresh once and retry.
-        with _input_dir_index_lock:
-            mapping = _build_input_dir_index(input_dir)
-        existing = mapping.get(file_path)
-        if not existing:
-            return None
-        existing_path = Path(existing)
-        return existing_path if existing_path.is_file() else None
-
-    _build_input_dir_index.__name__ = "_build_input_dir_index"
-    dr._twindb_build_input_dir_index = _build_input_dir_index
-    dr.find_existing_file_by_file_path = _find_existing_file_by_file_path_cached
+    dr._twindb_build_input_dir_index = partial(
+        _build_input_dir_index, dr, _input_dir_index
+    )
+    dr.find_existing_file_by_file_path = partial(
+        _find_existing_file_cached, dr, _input_dir_index, _input_dir_index_lock
+    )
     dr._twindb_upload_lookup_cached = True
     logger.info("twindb: patched document_routes.find_existing_file_by_file_path")
 
@@ -1496,6 +1498,50 @@ def _patch_lightrag_server_create_app(
     )
 
 
+def _capture_storage_contexts():
+    """Snapshot the active (folder, duplicate-share-folder, classification)."""
+    from .._constants import (
+        get_active_duplicate_share_folder,
+        get_active_operator_classification,
+        get_active_storage_folder,
+    )
+
+    return (
+        get_active_storage_folder(),
+        get_active_duplicate_share_folder(),
+        get_active_operator_classification(),
+    )
+
+
+def _enter_storage_contexts(stack, captured) -> None:
+    """Re-enter the captured contexts on ``stack`` (skipping empty ones)."""
+    from .._constants import (
+        duplicate_share_folder_context,
+        operator_classification_context,
+        storage_folder_context,
+    )
+
+    folder, duplicate_share_folder, classification = captured
+    if folder:
+        stack.enter_context(storage_folder_context(folder))
+    if duplicate_share_folder:
+        stack.enter_context(duplicate_share_folder_context(duplicate_share_folder))
+    if classification:
+        stack.enter_context(operator_classification_context(classification))
+
+
+async def _run_in_storage_contexts(func, captured, task_args, task_kwargs):
+    """Run ``func`` (sync or async) with ``captured`` contexts re-applied."""
+    import contextlib
+
+    with contextlib.ExitStack() as stack:
+        _enter_storage_contexts(stack, captured)
+        result = func(*task_args, **task_kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+
 def _patch_background_tasks_folder_context() -> None:
     """Wrap Starlette background tasks with the current storage folder.
 
@@ -1505,8 +1551,6 @@ def _patch_background_tasks_folder_context() -> None:
     patch captures the folder at ``add_task`` time and re-applies it inside the
     actual callback.
     """
-    import inspect
-
     from starlette.background import BackgroundTasks
 
     if getattr(BackgroundTasks, "_twindb_folder_context_patched", False):
@@ -1515,39 +1559,14 @@ def _patch_background_tasks_folder_context() -> None:
     orig_add_task = BackgroundTasks.add_task
 
     def add_task_with_folder(self, func, *args, **kwargs):
-        import contextlib
-
-        from .._constants import (
-            duplicate_share_folder_context,
-            get_active_duplicate_share_folder,
-            get_active_operator_classification,
-            get_active_storage_folder,
-            operator_classification_context,
-            storage_folder_context,
-        )
-
-        captured_folder = get_active_storage_folder()
-        captured_duplicate_share_folder = get_active_duplicate_share_folder()
-        captured_class = get_active_operator_classification()
-        if not captured_folder and not captured_duplicate_share_folder and not captured_class:
+        captured = _capture_storage_contexts()
+        if not any(captured):
             return orig_add_task(self, func, *args, **kwargs)
 
         async def _run_with_context(*task_args, **task_kwargs):
-            with contextlib.ExitStack() as stack:
-                if captured_folder:
-                    stack.enter_context(storage_folder_context(captured_folder))
-                if captured_duplicate_share_folder:
-                    stack.enter_context(
-                        duplicate_share_folder_context(captured_duplicate_share_folder)
-                    )
-                if captured_class:
-                    stack.enter_context(
-                        operator_classification_context(captured_class)
-                    )
-                result = func(*task_args, **task_kwargs)
-                if inspect.isawaitable(result):
-                    return await result
-                return result
+            return await _run_in_storage_contexts(
+                func, captured, task_args, task_kwargs
+            )
 
         return orig_add_task(self, _run_with_context, *args, **kwargs)
 

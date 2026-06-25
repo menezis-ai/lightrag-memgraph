@@ -65,7 +65,7 @@ import re
 import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 from xml.etree import ElementTree as ET
 
 log = logging.getLogger("twin.classification")
@@ -571,7 +571,10 @@ def apply_operator_classification(
     # fail-closed): never let the operator downgrade an unrecognised-but-present
     # label. Keep it, note the attempted choice.
     if det_norm not in ladder:
-        return replace(detected, meta={**detected.meta, "operator_requested": op_norm})
+        return cast(
+            ClassificationResult,
+            replace(detected, meta={**detected.meta, "operator_requested": op_norm}),
+        )
 
     # Both resolve into the ladder: floor protection -> keep the higher class.
     if ladder.index(op_norm) > ladder.index(det_norm):
@@ -588,4 +591,7 @@ def apply_operator_classification(
         )
 
     # Operator chose an equal/lower class -> the detected label is the floor.
-    return replace(detected, meta={**detected.meta, "operator_requested": op_norm})
+    return cast(
+        ClassificationResult,
+        replace(detected, meta={**detected.meta, "operator_requested": op_norm}),
+    )

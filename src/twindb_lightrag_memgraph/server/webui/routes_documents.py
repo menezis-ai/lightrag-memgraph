@@ -197,6 +197,7 @@ async def add_document_to_folder(doc_id: str, body: dict[str, Any]) -> dict[str,
     # Admin-gated interim authorization — see add_document_to_folder.
     dependencies=[Depends(require_admin_user)],
     responses={
+        400: {"description": "Invalid folder_id"},
         401: {"description": "Unauthenticated"},
         403: {"description": "Not an admin"},
         404: {"description": "Document or folder not found"},
@@ -290,6 +291,33 @@ def _parse_bulk_delete_body(body: dict[str, Any]) -> tuple[list[Any], str]:
     return doc_ids, str(body.get("actor") or "system")
 
 
+async def _apply_membership_delete(
+    legacy: Any, rag: Any, doc_id: str, active: str
+) -> bool | None:
+    """Un-share ``doc_id`` from ``active``; physically delete on last membership.
+
+    Returns ``True`` when the node was physically deleted, ``False`` when it was
+    only removed from the active folder, or ``None`` when the delete must be
+    skipped (doc not in the active folder, or any backend error). The physical
+    delete runs while the membership edge still exists (ordering guard)."""
+    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
+    try:
+        if get_folders is None:
+            await legacy._delete_doc_from_rag(rag, doc_id)
+            return True
+        async with _membership_lock(doc_id):
+            folders = await get_folders(doc_id)
+            if folders is None or active not in folders:
+                return None
+            if folders == [active]:
+                await legacy._delete_doc_from_rag(rag, doc_id)
+                return True
+            await rag.doc_status.remove_from_folder(doc_id, active)
+            return False
+    except Exception:
+        return None
+
+
 async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -> bool:
     """Delete a doc from the bulk-delete surface, ref-counted (architect P1).
 
@@ -310,25 +338,8 @@ async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -
     except Exception:
         return False
 
-    physically_deleted = False
-    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
-    try:
-        if get_folders is None:
-            await legacy._delete_doc_from_rag(rag, doc_id)
-            physically_deleted = True
-        else:
-            async with _membership_lock(doc_id):
-                folders = await get_folders(doc_id)
-                if folders is None or active not in folders:
-                    return False
-                if folders == [active]:
-                    # Last membership → physical delete (edge intact until it
-                    # succeeds, per the ordering guard).
-                    await legacy._delete_doc_from_rag(rag, doc_id)
-                    physically_deleted = True
-                else:
-                    await rag.doc_status.remove_from_folder(doc_id, active)
-    except Exception:
+    physically_deleted = await _apply_membership_delete(legacy, rag, doc_id, active)
+    if physically_deleted is None:
         return False
 
     event = _make_event(

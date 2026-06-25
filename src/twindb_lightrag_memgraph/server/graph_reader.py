@@ -249,6 +249,33 @@ def _json_str_dict(value: Any) -> dict[str, str]:
     }
 
 
+def _resolve_entity_scope(
+    all_chunks: set[str],
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+) -> tuple[int, int, set[str], bool] | None:
+    """Compute ``(mentions, sources, resolved_docs, mixed)`` for an entity.
+
+    Folder-scoped (``member_docs`` not None) keeps only member chunks/docs and
+    returns ``None`` when none survive (caller drops the entity); ``mixed`` is
+    True when it stays visible but some source chunk is non-member/unresolvable.
+    Global mode (``member_docs`` None) resolves docs when ``chunk_to_doc`` is
+    available, else falls back to ``sources = mentions``."""
+    if member_docs is not None:
+        cd = chunk_to_doc or {}
+        member_chunks = {c for c in all_chunks if cd.get(c) in member_docs}
+        resolved_docs = {cd[c] for c in member_chunks}
+        if not resolved_docs:
+            return None
+        mixed = len(member_chunks) < len(all_chunks)
+        return len(member_chunks), len(resolved_docs), resolved_docs, mixed
+    if chunk_to_doc:
+        resolved_docs = {chunk_to_doc[c] for c in all_chunks if c in chunk_to_doc}
+        sources = len(resolved_docs) if resolved_docs else len(all_chunks)
+        return len(all_chunks), sources, resolved_docs, False
+    return len(all_chunks), len(all_chunks), set(), False
+
+
 def _node_record_to_entity(
     record: dict[str, Any],
     chunk_to_doc: dict[str, str] | None = None,
@@ -279,33 +306,19 @@ def _node_record_to_entity(
     # so the WebUI summary reads cleanly instead of leaking the marker.
     summary = (
         (record.get("description") or "")
-        .replace("<SEP>", " · ")
+        .replace(_GRAPH_FIELD_SEP, " · ")
         .strip()
     )
     source_id = record.get("source_id") or ""
     all_chunks = {
-        c.strip() for c in str(source_id).replace("<SEP>", ",").split(",") if c.strip()
+        c.strip()
+        for c in str(source_id).replace(_GRAPH_FIELD_SEP, ",").split(",")
+        if c.strip()
     }
-    mixed = False
-    if member_docs is not None:
-        # Folder-scoped: keep only chunks whose parent doc is a member.
-        cd = chunk_to_doc or {}
-        member_chunks = {c for c in all_chunks if cd.get(c) in member_docs}
-        resolved_docs = {cd[c] for c in member_chunks}
-        if not resolved_docs:
-            return None  # not visible in this folder
-        mentions = len(member_chunks)
-        sources = len(resolved_docs)
-        # Mixed = visible but some source chunk is non-member/unresolvable.
-        mixed = len(member_chunks) < len(all_chunks)
-    else:
-        mentions = len(all_chunks)
-        resolved_docs = set()
-        if chunk_to_doc:
-            resolved_docs = {chunk_to_doc[c] for c in all_chunks if c in chunk_to_doc}
-            sources = len(resolved_docs) if resolved_docs else mentions
-        else:
-            sources = mentions
+    scope = _resolve_entity_scope(all_chunks, chunk_to_doc, member_docs)
+    if scope is None:
+        return None  # not visible in this folder
+    mentions, sources, resolved_docs, mixed = scope
     if mixed:
         # The description LightRAG blended across all source docs may carry
         # non-member text; the graph tab is a direct exposure surface → mask it.
@@ -532,7 +545,7 @@ def _resolve_source_docs(
     """
     chunks = {
         c.strip()
-        for c in str(source_id or "").replace("<SEP>", ",").split(",")
+        for c in str(source_id or "").replace(_GRAPH_FIELD_SEP, ",").split(",")
         if c.strip()
     }
     cd = chunk_to_doc or {}
@@ -743,6 +756,35 @@ def _native_edge_to_relation(
     return _edge_record_to_relation(row, index, chunk_to_doc, member_docs)
 
 
+def _build_native_entities(kg, chunk_to_doc, member_docs, max_nodes) -> list[dict]:
+    """Project native KG nodes to entities, capped after membership filtering."""
+    entities: list[dict[str, Any]] = []
+    for node in getattr(kg, "nodes", []) or []:
+        entity = _native_node_to_entity(node, chunk_to_doc, member_docs)
+        if entity is not None:
+            entities.append(entity)
+            if len(entities) >= max_nodes:
+                break  # truncate to the requested cap after membership filtering
+    return entities
+
+
+def _build_native_relations(
+    kg, workspace, valid_ids, chunk_to_doc, member_docs
+) -> list[dict]:
+    """Project native KG edges to relations, dropping any whose endpoints did
+    not survive entity membership filtering."""
+    relations: list[dict[str, Any]] = []
+    for i, edge in enumerate(getattr(kg, "edges", []) or []):
+        rel = _native_edge_to_relation(edge, i, chunk_to_doc, member_docs)
+        if rel is None:
+            continue
+        if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
+            continue
+        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
+        relations.append(rel)
+    return relations
+
+
 async def read_graph_native(
     rag: Any,
     workspace: str,
@@ -797,25 +839,11 @@ async def read_graph_native(
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder) if folder else None
 
-    entities: list[dict[str, Any]] = []
-    for node in getattr(kg, "nodes", []) or []:
-        entity = _native_node_to_entity(node, chunk_to_doc, member_docs)
-        if entity is not None:
-            entities.append(entity)
-            if len(entities) >= max_nodes:
-                break  # truncate to the requested cap after membership filtering
-
+    entities = _build_native_entities(kg, chunk_to_doc, member_docs, max_nodes)
     valid_ids = {e["id"] for e in entities}
-    relations: list[dict[str, Any]] = []
-    for i, edge in enumerate(getattr(kg, "edges", []) or []):
-        rel = _native_edge_to_relation(edge, i, chunk_to_doc, member_docs)
-        if rel is None:
-            continue
-        if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
-            continue
-        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
-        relations.append(rel)
-
+    relations = _build_native_relations(
+        kg, workspace, valid_ids, chunk_to_doc, member_docs
+    )
     return entities, relations
 
 

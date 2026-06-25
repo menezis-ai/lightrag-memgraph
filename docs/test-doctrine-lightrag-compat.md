@@ -46,8 +46,8 @@ These tests are the templates to follow for new extensions:
 
 `.forgejo/workflows/ci.yml` runs:
 
-- **unit-tests**: LightRAG `1.4.9` / `1.4.9.11` / `1.4.11` / `1.4.12` × Python 3.10–3.13
-- **integration-tests**: same LightRAG matrix × Memgraph `3.7.2` / `3.8.0` / `latest`
+- **unit-tests**: LightRAG `1.4.9.11` / `1.4.11` / `1.4.12` × Python 3.10–3.13
+- **integration-tests**: same LightRAG matrix × Memgraph `3.9.0` / `3.10.1`
 
 This catches LightRAG version drift, but it does **not** prove that a given Twin extension preserves base behavior — it only proves that the patched system works on the matrix.
 

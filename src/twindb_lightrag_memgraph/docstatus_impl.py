@@ -408,27 +408,80 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             await result.consume()
             return missing
 
+    def _serialize_upsert_props(
+        self, doc_id: str, doc_data: Any, now: str
+    ) -> tuple[dict[str, Any], str | None]:
+        """Serialize one upsert record into ``(props, folder)``.
+
+        Pops the transient ``folder`` key out of ``props`` (it drives the
+        MEMBER_OF relation, not a node property) and JSON/Enum-encodes plain
+        dict payloads. ``DocProcessingStatus`` instances are already encoded by
+        ``_serialize_status``."""
+        if isinstance(doc_data, DocProcessingStatus):
+            props = self._serialize_status(doc_id, doc_data)
+            folder = props.get("folder")
+            props.pop("folder", None)
+            return props, folder
+        props = {"id": doc_id, **doc_data}
+        props.setdefault("updated_at", now)
+        props.setdefault("created_at", now)
+        folder = self._resolve_folder_for_props(props, props.get("metadata"))
+        props.pop("folder", None)
+        for k, v in props.items():
+            if isinstance(v, (dict, list)):
+                props[k] = json.dumps(v, default=str)
+            elif hasattr(v, "value"):  # Enum
+                props[k] = v.value
+        return props, folder
+
+    async def _run_upsert_writes(
+        self,
+        session,
+        label: str,
+        folder_label: str,
+        entries: list[dict],
+        duplicate_memberships: list[dict[str, str]],
+    ) -> None:
+        """Persist new/updated docs and duplicate-share memberships."""
+        if entries:
+            result = await session.run(
+                f"""
+                UNWIND $entries AS e
+                MERGE (n:`{label}` {{id: e.id}})
+                SET n += e.props
+                WITH n, coalesce(e.folder, $default_folder) AS fid
+                // Dual-write the legacy single-valued property (migration
+                // safety net) only on first insert.
+                FOREACH (_ IN CASE WHEN n.folder IS NULL THEN [1] ELSE [] END |
+                    SET n.folder = fid)
+                // The membership relation is the new source of truth: a doc
+                // is MEMBER_OF one or more folders, stored once.
+                MERGE (f:`{folder_label}` {{id: fid}})
+                MERGE (n)-[:MEMBER_OF]->(f)
+                """,
+                entries=entries,
+                default_folder=default_twin_folder(),
+            )
+            await result.consume()
+        if duplicate_memberships:
+            result = await session.run(
+                f"""
+                UNWIND $memberships AS m
+                MATCH (n:`{label}` {{id: m.doc_id}})
+                MERGE (f:`{folder_label}` {{id: m.folder}})
+                MERGE (n)-[:MEMBER_OF]->(f)
+                """,
+                memberships=duplicate_memberships,
+            )
+            await result.consume()
+
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         label = self._label()
         now = datetime.now(timezone.utc).isoformat()
         entries = []
         duplicate_memberships: list[dict[str, str]] = []
         for doc_id, doc_data in data.items():
-            if isinstance(doc_data, DocProcessingStatus):
-                props = self._serialize_status(doc_id, doc_data)
-                folder = props.get("folder")
-                props.pop("folder", None)
-            else:
-                props = {"id": doc_id, **doc_data}
-                props.setdefault("updated_at", now)
-                props.setdefault("created_at", now)
-                folder = self._resolve_folder_for_props(props, props.get("metadata"))
-                props.pop("folder", None)
-                for k, v in props.items():
-                    if isinstance(v, (dict, list)):
-                        props[k] = json.dumps(v, default=str)
-                    elif hasattr(v, "value"):  # Enum
-                        props[k] = v.value
+            props, folder = self._serialize_upsert_props(doc_id, doc_data, now)
             original_doc_id = self._duplicate_original_doc_id(props)
             if original_doc_id and folder:
                 duplicate_memberships.append(
@@ -451,37 +504,9 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         folder_label = self._folder_label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                if entries:
-                    result = await session.run(
-                        f"""
-                        UNWIND $entries AS e
-                        MERGE (n:`{label}` {{id: e.id}})
-                        SET n += e.props
-                        WITH n, coalesce(e.folder, $default_folder) AS fid
-                        // Dual-write the legacy single-valued property (migration
-                        // safety net) only on first insert.
-                        FOREACH (_ IN CASE WHEN n.folder IS NULL THEN [1] ELSE [] END |
-                            SET n.folder = fid)
-                        // The membership relation is the new source of truth: a doc
-                        // is MEMBER_OF one or more folders, stored once.
-                        MERGE (f:`{folder_label}` {{id: fid}})
-                        MERGE (n)-[:MEMBER_OF]->(f)
-                        """,
-                        entries=entries,
-                        default_folder=default_twin_folder(),
-                    )
-                    await result.consume()
-                if duplicate_memberships:
-                    result = await session.run(
-                        f"""
-                        UNWIND $memberships AS m
-                        MATCH (n:`{label}` {{id: m.doc_id}})
-                        MERGE (f:`{folder_label}` {{id: m.folder}})
-                        MERGE (n)-[:MEMBER_OF]->(f)
-                        """,
-                        memberships=duplicate_memberships,
-                    )
-                    await result.consume()
+                await self._run_upsert_writes(
+                    session, label, folder_label, entries, duplicate_memberships
+                )
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
