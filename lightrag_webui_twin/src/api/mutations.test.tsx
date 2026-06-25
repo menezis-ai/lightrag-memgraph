@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { setActiveFolder } from './client';
 import {
   useApproveTag,
   useBulkDeleteDocuments,
@@ -52,10 +53,12 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   fetchMock = vi.fn();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
+  setActiveFolder(null);
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  setActiveFolder(null);
 });
 
 describe('useRequestTag', () => {
@@ -208,7 +211,8 @@ describe('useBulkDeleteDocuments', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    client.setQueryData(['documents'], {
+    const documentsKey = ['documents', 'default', {}];
+    client.setQueryData(documentsKey, {
       items: [
         { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
         { doc_id: 'doc-b', status: 'PROCESSED', file_path: 'b.pdf' },
@@ -233,7 +237,7 @@ describe('useBulkDeleteDocuments', () => {
     await waitFor(() => {
       const data = client.getQueryData<{
         items: Array<{ doc_id: string; _deleting?: boolean }>;
-      }>(['documents']);
+      }>(documentsKey);
       const flags = Object.fromEntries(
         (data?.items ?? []).map((d) => [
           d.doc_id,
@@ -282,7 +286,8 @@ describe('useBulkDeleteDocuments', () => {
     const initialItems = [
       { doc_id: 'doc-a', status: 'PROCESSED', file_path: 'a.pdf' },
     ];
-    client.setQueryData(['documents'], { items: initialItems });
+    const documentsKey = ['documents', 'default', {}];
+    client.setQueryData(documentsKey, { items: initialItems });
     const { result } = renderHook(() => useBulkDeleteDocuments(), {
       wrapper: wrapperForClient(client),
     });
@@ -292,7 +297,7 @@ describe('useBulkDeleteDocuments', () => {
         .catch(() => undefined);
     });
     const data = client.getQueryData<{ items: Array<{ _deleting?: boolean }> }>(
-      ['documents'],
+      documentsKey,
     );
     expect(data?.items[0]._deleting).toBeUndefined();
   });
