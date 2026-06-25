@@ -23,7 +23,7 @@ Each axis has already produced at least one regression. They are the contract su
 
 TanStack Query cache keys must:
 
-- Refetch when the active **folder** changes, even though the graph is currently backed by one LightRAG/Memgraph workspace for the deployed KB.
+- Refetch when the active **folder** changes. The graph is stored in one LightRAG/Memgraph workspace for the deployed KB, but graph reads are folder-scoped through document membership.
 - Survive **cascade deletes** — when a doc is deleted, the graph nodes/edges tied to it disappear; the cache must invalidate the right entries without orphaning others.
 
 Regression class fixed by: `505b5a1 fix(delete): cascade graph cache + DELETING UI overlay + status normalize`.
@@ -34,9 +34,9 @@ Regression class fixed by: `505b5a1 fix(delete): cascade graph cache + DELETING 
 
 ### 3. Folder binding
 
-The Twin request contract is `X-Twin-Folder`. The graph currently remains scoped to the single LightRAG/Memgraph workspace configured for the deployed KB (`MEMGRAPH_WORKSPACE` / `WORKSPACE`), while folders drive operator UX and document filtering. Do not invent a per-folder graph label until LightRAG storage isolation actually exists.
+The Twin request contract is `X-Twin-Folder`. The graph remains stored under the single LightRAG/Memgraph workspace configured for the deployed KB (`MEMGRAPH_WORKSPACE` / `WORKSPACE`), but graph reads are folder-scoped by membership: a graph entity/relation is visible only when at least one `source_docs` chunk belongs to a document `MEMBER_OF` the active folder. Do not invent a per-folder graph label until LightRAG storage isolation actually exists.
 
-**Test the negative case explicitly:** unknown or unauthorized folders must be rejected at the API boundary, and switching folders must not reuse stale graph cache state. Once per-folder graph labels land, add the stronger isolation test: querying folder A returns zero nodes from folder B.
+**Test the negative case explicitly:** unknown or unauthorized folders must be rejected at the API boundary, switching folders must not reuse stale graph cache state, and querying folder A must return zero nodes/edges sourced only from folder B. A physically isolated folder tier would be a separate storage model, not an extension of the current membership relation.
 
 ### 4. `source_docs`
 
@@ -76,6 +76,6 @@ Cypher → API response shape → cache state → UI invalidation
 
 ## Related
 
-- `CLAUDE.md` § "Folders" and "Vrai Graph" — folder is the operator-facing contract; LightRAG `workspace` remains the storage namespace.
+- `CLAUDE.md` § "Folders", "Folder membership model", and "Vrai Graph" — LightRAG `workspace` remains the physical storage namespace; Twin `folder` is the logical membership relation used for read cloisonnement.
 - `WEBUI-WIRING-PLAN.md` — graph read/mutation status.
 - `docs/test-doctrine-lightrag-compat.md` — the sibling doctrine on regression discipline.
