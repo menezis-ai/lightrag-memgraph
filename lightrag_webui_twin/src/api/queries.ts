@@ -45,6 +45,10 @@ function graphRelationsKey(folder = getActiveFolder() ?? 'default') {
   return ['graph-relations', folder] as const;
 }
 
+function documentsScopeKey(folder = getActiveFolder() ?? 'default') {
+  return ['documents', folder] as const;
+}
+
 function normalizeUploadInput(item: UploadBatchItem): UploadDocumentInput {
   return item instanceof File ? { file: item } : item;
 }
@@ -661,8 +665,9 @@ function flagDocsAsDeleting(
   ids: readonly string[],
 ): { previous: ReadonlyArray<[unknown, unknown]> } {
   const idSet = new Set(ids);
-  const previous = qc.getQueriesData<DocsEnvelope>({ queryKey: ['documents'] });
-  qc.setQueriesData<DocsEnvelope>({ queryKey: ['documents'] }, (old) =>
+  const key = documentsScopeKey();
+  const previous = qc.getQueriesData<DocsEnvelope>({ queryKey: key });
+  qc.setQueriesData<DocsEnvelope>({ queryKey: key }, (old) =>
     mapDocumentsEnvelope(old, (items) =>
       items.map((d) => (idSet.has(d.doc_id) ? { ...d, _deleting: true } : d)),
     ),
@@ -686,7 +691,7 @@ export function useDeleteDocument() {
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(docId),
     onMutate: async (docId) => {
-      await qc.cancelQueries({ queryKey: ['documents'] });
+      await qc.cancelQueries({ queryKey: documentsScopeKey() });
       return flagDocsAsDeleting(qc, [docId]);
     },
     onError: (_err, _docId, ctx) => {
@@ -704,7 +709,7 @@ export function useBulkDeleteDocuments() {
     mutationFn: (body: Parameters<typeof api.bulkDeleteDocuments>[0]) =>
       api.bulkDeleteDocuments(body),
     onMutate: async (body) => {
-      await qc.cancelQueries({ queryKey: ['documents'] });
+      await qc.cancelQueries({ queryKey: documentsScopeKey() });
       return flagDocsAsDeleting(qc, body.doc_ids);
     },
     onError: (_err, _body, ctx) => {
@@ -774,11 +779,12 @@ export function useBulkRetagDocuments() {
     mutationFn: (body: Parameters<typeof api.bulkRetagDocuments>[0]) =>
       api.bulkRetagDocuments(body),
     onMutate: async (body) => {
-      await qc.cancelQueries({ queryKey: ['documents'] });
+      const key = documentsScopeKey();
+      await qc.cancelQueries({ queryKey: key });
       const previousDocuments = qc.getQueriesData<DocsEnvelope>({
-        queryKey: ['documents'],
+        queryKey: key,
       });
-      qc.setQueriesData<DocsEnvelope>({ queryKey: ['documents'] }, (old) =>
+      qc.setQueriesData<DocsEnvelope>({ queryKey: key }, (old) =>
         mapDocumentsEnvelope(old, (items) =>
           applyDocumentTags(items, body.targets, body.adds, body.removes),
         ),

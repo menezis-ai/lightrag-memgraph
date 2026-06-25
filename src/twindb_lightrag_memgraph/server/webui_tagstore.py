@@ -28,7 +28,7 @@ import logging
 from typing import Any, Protocol
 
 from .. import _pool
-from .._constants import validate_identifier
+from .._constants import resolve_workspace, validate_identifier
 from . import webui_seed
 
 logger = logging.getLogger(__name__)
@@ -401,7 +401,10 @@ class MemgraphTagStore:
         the edges without rewriting every tag JSON blob, so derive the usage
         counters from the graph at read time.
         """
-        doc_label = f"DocStatus_{self._workspace}"
+        doc_workspace = resolve_workspace()
+        doc_label = f"DocStatus_{doc_workspace}"
+        folder_label = f"Folder_{doc_workspace}"
+        folder = self._workspace
         async with _pool.get_read_session() as session:
             result = await session.run(
                 f"""
@@ -418,11 +421,13 @@ class MemgraphTagStore:
             usage_result = await session.run(
                 f"""
                 MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(t:`{self._tag_label}`)
+                WHERE EXISTS((d)-[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}}))
                 RETURN
                   t.id AS id,
                   count(DISTINCT d) AS sources_count,
                   sum(coalesce(d.chunks_count, 0)) AS chunks_count
-                """
+                """,
+                folder=folder,
             )
             usage_rows = await usage_result.data()
             await usage_result.consume()

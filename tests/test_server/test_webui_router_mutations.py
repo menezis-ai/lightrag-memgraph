@@ -97,6 +97,11 @@ class _FakeReadSession:
         )
 
 
+class _NoMemberReadSession:
+    async def run(self, _query: str, **_params):
+        return _FakeResult([])
+
+
 class _FakeTx:
     async def run(self, _query: str, **_params):
         return _FakeResult([])
@@ -152,6 +157,32 @@ class TestBulkRetag:
 
         assert r.status_code == 200
         assert r.json() == {"updated": 1, "failed": []}
+
+    async def test_reports_existing_cross_folder_doc_as_failed(
+        self, monkeypatch, client
+    ):
+        from twindb_lightrag_memgraph import _pool
+
+        read_session = _NoMemberReadSession()
+
+        @asynccontextmanager
+        async def fake_read_session():
+            yield read_session
+
+        monkeypatch.setattr(_pool, "get_read_session", fake_read_session)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-in-other-folder"],
+                "adds": ["folder-local-tag"],
+                "removes": [],
+                "actor": "claire.benoit",
+            },
+        )
+
+        assert r.status_code == 200
+        assert r.json() == {"updated": 0, "failed": ["doc-in-other-folder"]}
 
 
 # ---------------------------------------------------------------------------

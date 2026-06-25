@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from twindb_lightrag_memgraph.server import webui_seed
@@ -62,12 +60,17 @@ def _ws():
 
 
 async def _cleanup(workspace: str) -> None:
-    """Drop the two labels for the test workspace."""
+    """Drop tag + membership labels for the test workspace."""
     from twindb_lightrag_memgraph import _pool
 
     async with _pool.acquire_write_slot():
         async with _pool.get_session() as session:
-            for label in (f"WebuiTag_{workspace}", f"WebuiTagCategory_{workspace}"):
+            for label in (
+                f"WebuiTag_{workspace}",
+                f"WebuiTagCategory_{workspace}",
+                f"DocStatus_{workspace}",
+                f"Folder_{workspace}",
+            ):
                 result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
                 await result.consume()
 
@@ -109,6 +112,53 @@ class TestMemgraphTagStore:
             store = await make_memgraph_store(workspace=_ws)
             tags = await store.list_tags()
             assert len(tags) == len(webui_seed.TAGS)
+        finally:
+            await _cleanup(_ws)
+
+    async def test_usage_counts_only_member_docs(self, _ws, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_WORKSPACE", _ws)
+        try:
+            from twindb_lightrag_memgraph import _pool
+
+            store = MemgraphTagStore(workspace=_ws)
+            await store.initialize()
+            await store.upsert_tag(
+                {
+                    "tag": "scoped",
+                    "tier": 3,
+                    "category": "infra",
+                    "status": "active",
+                    "def": "folder-scoped tag",
+                    "aliases": [],
+                    "deprecates": [],
+                    "sources_count": 0,
+                    "chunks_count": 0,
+                    "query_freq_30d": 0,
+                    "created": {"by": "test", "at": "2026-01-01"},
+                    "last_edit": {"by": "test", "at": "2026-01-01"},
+                    "related": [],
+                    "examples": [],
+                }
+            )
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    CREATE (member:`DocStatus_{_ws}` {{id: 'member', chunks_count: 2}})
+                    CREATE (other:`DocStatus_{_ws}` {{id: 'other', chunks_count: 5}})
+                    CREATE (folder:`Folder_{_ws}` {{id: $folder}})
+                    WITH member, other, folder
+                    MATCH (tag:`WebuiTag_{_ws}` {{id: 'scoped'}})
+                    MERGE (member)-[:MEMBER_OF]->(folder)
+                    MERGE (member)-[:TAGGED_WITH]->(tag)
+                    MERGE (other)-[:TAGGED_WITH]->(tag)
+                    """,
+                    folder=_ws,
+                )
+                await result.consume()
+
+            scoped = next(t for t in await store.list_tags() if t["tag"] == "scoped")
+            assert scoped["sources_count"] == 1
+            assert scoped["chunks_count"] == 2
         finally:
             await _cleanup(_ws)
 

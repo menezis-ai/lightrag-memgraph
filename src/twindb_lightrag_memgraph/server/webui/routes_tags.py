@@ -232,6 +232,7 @@ async def bulk_retag_documents(
     workspace = resolve_workspace()
     folder = current_folder_id()
     doc_label = f"DocStatus_{workspace}"
+    folder_label = f"Folder_{workspace}"
     tag_label = f"WebuiTag_{folder}"
     now = _utcnow_iso()
 
@@ -271,9 +272,11 @@ async def bulk_retag_documents(
             f"""
             UNWIND $ids AS id
             MATCH (n:`{doc_label}` {{id: id}})
+            WHERE EXISTS((n)-[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}}))
             RETURN n.id AS id, n.file_path AS file_path
             """,
             ids=targets,
+            folder=folder,
         )
         existing: dict[str, str | None] = {}
         async for record in result:

@@ -655,6 +655,42 @@ describe('useBulkRetagDocuments', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/documents/_bulk-retag');
   });
 
+  it('does not optimistically retag the same doc id in another folder cache', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ updated: 1, failed: [] }));
+    setActiveFolder('default');
+    const client = newClient();
+    client.setQueryData(['documents', 'default', {}], {
+      items: [
+        { doc_id: 'shared-doc', status: 'PROCESSED', file_path: 'a.pdf', tags: ['a'] },
+      ],
+      total: 1,
+    });
+    client.setQueryData(['documents', 'sandbox', {}], {
+      items: [
+        { doc_id: 'shared-doc', status: 'PROCESSED', file_path: 'a.pdf', tags: ['b'] },
+      ],
+      total: 1,
+    });
+    const { result } = renderHook(() => useBulkRetagDocuments(), {
+      wrapper: wrapperForClient(client),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({
+        targets: ['shared-doc'],
+        adds: ['folder-a-tag'],
+        removes: ['a'],
+      });
+    });
+    const defaultData = client.getQueryData<{
+      items: Array<{ tags: string[] }>;
+    }>(['documents', 'default', {}]);
+    const sandboxData = client.getQueryData<{
+      items: Array<{ tags: string[] }>;
+    }>(['documents', 'sandbox', {}]);
+    expect(defaultData?.items[0].tags).toEqual(['folder-a-tag']);
+    expect(sandboxData?.items[0].tags).toEqual(['b']);
+  });
+
   it('rolls back the optimistic tags on error', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'boom' }, 500));
     const client = newClient();

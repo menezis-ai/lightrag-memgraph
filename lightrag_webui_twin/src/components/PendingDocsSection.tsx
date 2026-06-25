@@ -27,6 +27,7 @@
 
 import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { getActiveFolder } from '../api/client';
 import { api } from '../api/resources';
 import { Icon, SourceIcon } from './Icon';
 import { ClassPill } from './ClassPill';
@@ -98,9 +99,10 @@ export function PendingDocsSection({
     state: 'approved' | 'rejected',
     edits?: Partial<Document>,
   ) => {
+    const folder = getActiveFolder() ?? 'default';
     type DocsEnvelope = ListEnvelope<Document>;
     queryClient.setQueriesData<DocsEnvelope | undefined>(
-      { queryKey: ['documents'] },
+      { queryKey: ['documents', folder] },
       (old) => {
         if (!old?.items) return old;
         return {
@@ -125,11 +127,12 @@ export function PendingDocsSection({
       update?: boolean;
     }) => api.approveDocument(doc.doc_id, { actor, edits }),
     onMutate: async (variables) => {
-      await queryClient.cancelQueries({ queryKey: ['documents'] });
+      const folder = getActiveFolder() ?? 'default';
+      await queryClient.cancelQueries({ queryKey: ['documents', folder] });
       const previousDocuments = queryClient.getQueriesData<{
         items: readonly Document[];
         [key: string]: unknown;
-      }>({ queryKey: ['documents'] });
+      }>({ queryKey: ['documents', folder] });
       updateDocumentReview(variables.doc.doc_id, 'approved', variables.edits);
       restoreFocusAfterRemovedAction();
       return { previousDocuments };
@@ -165,11 +168,12 @@ export function PendingDocsSection({
     mutationFn: ({ doc, reason }: { doc: Document; reason: string }) =>
       api.rejectDocument(doc.doc_id, { reason, actor }),
     onMutate: async (variables) => {
-      await queryClient.cancelQueries({ queryKey: ['documents'] });
+      const folder = getActiveFolder() ?? 'default';
+      await queryClient.cancelQueries({ queryKey: ['documents', folder] });
       const previousDocuments = queryClient.getQueriesData<{
         items: readonly Document[];
         [key: string]: unknown;
-      }>({ queryKey: ['documents'] });
+      }>({ queryKey: ['documents', folder] });
       updateDocumentReview(variables.doc.doc_id, 'rejected');
       restoreFocusAfterRemovedAction();
       return { previousDocuments };
