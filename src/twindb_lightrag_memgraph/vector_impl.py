@@ -18,6 +18,7 @@ Query:
 """
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,44 @@ from lightrag.base import BaseVectorStorage
 from lightrag.utils import logger
 
 from . import _pool
-from ._constants import VECTOR_INDEX_CAPACITY, resolve_workspace, validate_identifier
+from ._constants import (
+    VECTOR_INDEX_CAPACITY,
+    get_active_storage_folder,
+    resolve_workspace,
+    validate_identifier,
+)
+
+# Chunk-id separator LightRAG joins ``source_id`` with on entity/relation vdb
+# records. Imported with a fallback so the storage layer never hard-fails on a
+# LightRAG build whose constants module moved the symbol (version-skew guard,
+# per feedback_lightrag_version_skew).
+try:  # pragma: no cover - exercised implicitly by the import
+    from lightrag.constants import GRAPH_FIELD_SEP
+except Exception:  # pragma: no cover - defensive
+    GRAPH_FIELD_SEP = "<SEP>"
+
+# Folder-scoped retrieval over-fetches before the membership inner-join so that
+# dropping non-member candidates still leaves ~top_k members. A folder that is a
+# very thin slice of a large corpus can still under-return — a documented
+# limitation of the cheap single-pass approach (no escalation loop).
+_FOLDER_SCOPE_OVERFETCH_ENV = "TWIN_QUERY_FOLDER_SCOPE_OVERFETCH"
+_FOLDER_SCOPE_OVERFETCH_DEFAULT = 4
+_FOLDER_SCOPE_OVERFETCH_CAP = 500
+
+
+def _folder_scope_overfetch(top_k: int) -> int:
+    """top_k multiplied by the configured over-fetch factor, capped."""
+    try:
+        factor = int(
+            os.environ.get(
+                _FOLDER_SCOPE_OVERFETCH_ENV, str(_FOLDER_SCOPE_OVERFETCH_DEFAULT)
+            )
+        )
+    except (TypeError, ValueError):
+        factor = _FOLDER_SCOPE_OVERFETCH_DEFAULT
+    if factor < 1:
+        factor = 1
+    return min(max(top_k, top_k * factor), _FOLDER_SCOPE_OVERFETCH_CAP)
 
 
 @dataclass
@@ -184,6 +222,101 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             entry[field_name] = self._parse_meta_field(val) if val is not None else None
         return entry
 
+    def _build_search_cypher(
+        self, top_k: int, folder: str | None
+    ) -> tuple[str, dict[str, Any]]:
+        """Build the vector-search Cypher + params for this query.
+
+        When ``folder`` is None the query is the historical, un-scoped search —
+        **byte-for-byte the legacy behaviour**, so the native LightRAG path and
+        any non-folder caller are unchanged (strict compat).
+
+        When a folder is active the search is constrained to records whose
+        document is ``MEMBER_OF`` that folder, so no cross-folder context can
+        enter the retrieval result (and therefore the prompt). The constraint is
+        an *inner-join* MATCH — chunk→doc is a property equality (``full_doc_id``)
+        in LightRAG, not a graph edge, so it cannot be a pattern predicate /
+        ``EXISTS`` subquery (the latter is also poorly supported on Memgraph).
+
+        Two membership join shapes, detected from ``meta_fields`` (robust — no
+        namespace-string hardcoding):
+
+        - **chunks** (``full_doc_id`` ∈ meta_fields): direct join
+          ``chunk.full_doc_id → DocStatus → MEMBER_OF folder``. Fully scoped.
+        - **entities / relationships** (``source_id`` ∈ meta_fields): ``source_id``
+          is a ``GRAPH_FIELD_SEP``-joined list of *chunk ids*. The record is kept
+          if **any** source chunk belongs to a member document. **This scopes the
+          *selection*, not the payload**: a kept entity/relation ``content`` /
+          description is aggregated by LightRAG across *all* its source docs at
+          extraction time, so a kept record's description may still encode text
+          from non-member docs. Un-blending would require per-folder
+          re-extraction — out of scope. Known residual (batch-2 acceptance).
+        """
+        index_name = self._index_name()
+        if not folder:
+            cypher = f"""
+                CALL vector_search.search("{index_name}", $top_k, $embedding)
+                YIELD node, similarity
+                WITH node, similarity
+                WHERE similarity >= $threshold
+                RETURN node.id AS id, similarity, properties(node) AS props
+                """
+            return cypher, {
+                "embedding": None,  # filled by caller
+                "top_k": top_k,
+                "threshold": self.cosine_better_than_threshold,
+            }
+
+        ws = self.workspace
+        doc_label = f"DocStatus_{ws}"
+        folder_label = f"Folder_{ws}"
+        overfetch = _folder_scope_overfetch(top_k)
+        params: dict[str, Any] = {
+            "embedding": None,  # filled by caller
+            "top_k": top_k,
+            "overfetch": overfetch,
+            "threshold": self.cosine_better_than_threshold,
+            "folder": folder,
+        }
+
+        if "full_doc_id" in self.meta_fields:
+            join = f"""
+                MATCH (d:`{doc_label}` {{id: node.full_doc_id}})
+                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})
+                WITH DISTINCT node, similarity
+                """
+        elif "source_id" in self.meta_fields:
+            chunk_label = f"Vec_{ws}_chunks"
+            params["sep"] = GRAPH_FIELD_SEP
+            join = f"""
+                WITH node, similarity,
+                     split(coalesce(node.source_id, ''), $sep) AS cids
+                UNWIND cids AS cid
+                MATCH (c:`{chunk_label}` {{id: cid}})
+                MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
+                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})
+                WITH DISTINCT node, similarity
+                """
+        else:
+            # Unknown vdb category WITH an active folder: we cannot prove
+            # membership, so we MUST NOT silently fall back to the global search
+            # (that would leak cross-folder context the moment a future LightRAG
+            # build or a custom store introduces a vdb shape we don't recognise).
+            # Fail closed — signal the caller to return no results — and log loud.
+            return None, params
+
+        cypher = f"""
+            CALL vector_search.search("{index_name}", $overfetch, $embedding)
+            YIELD node, similarity
+            WITH node, similarity
+            WHERE similarity >= $threshold
+            {join}
+            RETURN node.id AS id, similarity, properties(node) AS props
+            ORDER BY similarity DESC
+            LIMIT $top_k
+            """
+        return cypher, params
+
     async def query(
         self,
         query: str,
@@ -199,20 +332,26 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             )
 
         index_name = self._index_name()
+        folder = get_active_storage_folder()
+        cypher, params = self._build_search_cypher(top_k, folder)
+        if cypher is None:
+            # Fail-closed: active folder but an unrecognised vdb category. Never
+            # leak a global result set into a folder-scoped retrieval.
+            logger.error(
+                "[MemgraphVec:%s/%s] folder=%s active but vdb category is "
+                "unknown (meta_fields=%s) — returning empty (fail-closed) "
+                "rather than leaking a global result set.",
+                self.workspace,
+                self.namespace,
+                folder,
+                sorted(self.meta_fields),
+            )
+            return []
+        params["embedding"] = query_embedding
+
         async with _pool.get_read_session() as session:
             try:
-                result = await session.run(
-                    f"""
-                    CALL vector_search.search("{index_name}", $top_k, $embedding)
-                    YIELD node, similarity
-                    WITH node, similarity
-                    WHERE similarity >= $threshold
-                    RETURN node.id AS id, similarity, properties(node) AS props
-                    """,
-                    embedding=query_embedding,
-                    top_k=top_k,
-                    threshold=self.cosine_better_than_threshold,
-                )
+                result = await session.run(cypher, **params)
                 results = [self._record_to_entry(record) async for record in result]
                 await result.consume()
             except Exception as e:
@@ -236,23 +375,12 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                         create_err,
                     )
                     return []
-                result = await session.run(
-                    f"""
-                    CALL vector_search.search("{index_name}", $top_k, $embedding)
-                    YIELD node, similarity
-                    WITH node, similarity
-                    WHERE similarity >= $threshold
-                    RETURN node.id AS id, similarity, properties(node) AS props
-                    """,
-                    embedding=query_embedding,
-                    top_k=top_k,
-                    threshold=self.cosine_better_than_threshold,
-                )
+                result = await session.run(cypher, **params)
                 results = [self._record_to_entry(record) async for record in result]
                 await result.consume()
             logger.debug(
                 "[MemgraphVec:%s/%s] query(%r) → %d results (index=%s, "
-                "threshold=%.2f, top_k=%d)",
+                "threshold=%.2f, top_k=%d, folder=%s)",
                 self.workspace,
                 self.namespace,
                 query[:50],
@@ -260,6 +388,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 index_name,
                 self.cosine_better_than_threshold,
                 top_k,
+                folder or "-",
             )
             return results
 

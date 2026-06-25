@@ -462,22 +462,103 @@ async def _patched_initialize(self):
             raise
 
 
+try:  # version-skew guard, see feedback_lightrag_version_skew
+    from lightrag.constants import GRAPH_FIELD_SEP as _GRAPH_FIELD_SEP
+except Exception:  # pragma: no cover - defensive
+    _GRAPH_FIELD_SEP = "<SEP>"
+
+
+# ── Folder cloisonnement for KG graph reads (batch 2) ─────────────────────
+#
+# Scoping the entity/relationship *vector* selection (vector_impl.query) is not
+# enough: after selection LightRAG re-expands the graph via the batch methods
+# below, which would otherwise reach edges / neighbours / descriptions from any
+# folder. To make "no cross-folder context enters the prompt" true for the KG
+# modes (hybrid/local/global), every graph READ issued under an active
+# storage_folder_context is constrained to nodes/edges whose ``source_id`` has
+# at least one chunk belonging to a document MEMBER_OF the active folder.
+#
+# Membership decision (per product owner): a node/edge is in-folder iff ≥1 of
+# its source chunks is a member chunk; degrees are SCOPED to in-folder edges (a
+# global-graph degree would itself leak structure across folders). With no
+# active folder the queries are byte-for-byte the legacy ones (ingestion / merge
+# never bind a folder, so the native path is unchanged).
+#
+# PERF ACCEPTANCE (batch 2, documented trade-off): membership is materialised as
+# a flat list of member chunk ids (``_twin_member_chunks``) passed to each graph
+# read as the ``$mchunks`` Bolt param and matched with ``_cid IN $mchunks``. On a
+# very large folder this list can be big and is recomputed once per graph method
+# call (~3 calls/query on the fused KG path). This is a perf cost, NOT a
+# cloisonnement leak. Kept simple deliberately. Follow-up optimisations if it
+# bites: (a) push the membership join inline into each Cypher (no param list —
+# non-trivial for the degree aggregations), or (b) cache the member set once per
+# query context. Not done now to keep the batch reviewable.
+
+
+def _twin_in_folder(var: str) -> str:
+    """WHERE-fragment: graph node/edge ``var`` is in the active folder iff one of
+    its ``source_id`` chunks is a member chunk (params ``$sep`` + ``$mchunks``)."""
+    return (
+        f"any(_cid IN split(coalesce({var}.source_id, ''), $sep) "
+        f"WHERE _cid IN $mchunks)"
+    )
+
+
+async def _twin_member_chunks(self):
+    """Member chunk ids for the active folder, or ``None`` when none is bound.
+
+    The set is built from the *storage*-workspace labels (``Vec_/DocStatus_/
+    Folder_``, created via ``resolve_workspace()``), not the graph node label
+    (``_get_workspace_label()``). In a correctly configured single instance the
+    two coincide; on divergence the join yields an empty set → over-restrictive
+    (drops KG context), never a cross-folder leak.
+    """
+    from .._constants import get_active_storage_folder, resolve_workspace
+
+    folder = get_active_storage_folder()
+    if not folder:
+        return None
+    wss = resolve_workspace()
+    query = (
+        f"MATCH (c:`Vec_{wss}_chunks`) "
+        f"MATCH (d:`DocStatus_{wss}` {{id: c.full_doc_id}})"
+        f"-[:MEMBER_OF]->(:`Folder_{wss}` {{id: $folder}}) "
+        f"RETURN collect(c.id) AS cids"
+    )
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, folder=folder)
+        rec = await records.single()
+        await records.consume()
+    if rec and rec["cids"] is not None:
+        return list(rec["cids"])
+    return []
+
+
 async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
     if not node_ids:
         return {}
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    where = f"WHERE {_twin_in_folder('n')} " if mchunks is not None else ""
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"{where}"
         f"RETURN eid, n"
     )
+    params = {"ids": node_ids}
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
     result = {}
     async with self._driver.session(
         database=self._DATABASE, default_access_mode="READ"
     ) as session:
-        records = await session.run(query, ids=node_ids)
+        records = await session.run(query, **params)
         async for record in records:
             node_dict = dict(record["n"])
             if "labels" in node_dict:
@@ -495,17 +576,30 @@ async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, in
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    if mchunks is not None:
+        # Folder-scoped degree: count only relationships in the active folder.
+        degree_expr = (
+            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
+            f"THEN r END)"
+        )
+    else:
+        degree_expr = "count(r)"
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
         f"OPTIONAL MATCH (n)-[r]-() "
-        f"RETURN eid, count(r) AS degree"
+        f"RETURN eid, {degree_expr} AS degree"
     )
+    params = {"ids": node_ids}
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
     result = {}
     async with self._driver.session(
         database=self._DATABASE, default_access_mode="READ"
     ) as session:
-        records = await session.run(query, ids=node_ids)
+        records = await session.run(query, **params)
         async for record in records:
             result[record["eid"]] = record["degree"]
         await records.consume()
@@ -524,11 +618,14 @@ async def _patched_get_edges_batch(
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    where = f"WHERE {_twin_in_folder('r')} " if mchunks is not None else ""
     query = (
         f"UNWIND $pairs AS pair "
         f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
         f"-[r]-"
         f"(t:`{ws}` {{entity_id: pair.tgt}}) "
+        f"{where}"
         f"WITH pair, collect(properties(r))[0] AS props "
         f"RETURN pair.src AS src, pair.tgt AS tgt, props"
     )
@@ -538,13 +635,15 @@ async def _patched_get_edges_batch(
         "description": None,
         "keywords": None,
     }
+    params = {"pairs": [{"src": p["src"], "tgt": p["tgt"]} for p in pairs]}
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
     result = {}
     async with self._driver.session(
         database=self._DATABASE, default_access_mode="READ"
     ) as session:
-        records = await session.run(
-            query, pairs=[{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
-        )
+        records = await session.run(query, **params)
         async for record in records:
             edge_props = dict(record["props"]) if record["props"] else {}
             for key, default_value in _defaults.items():
@@ -577,19 +676,26 @@ async def _patched_get_nodes_edges_batch(
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    # Only in-folder edges survive → neighbours are reached only via them.
+    extra = f"AND {_twin_in_folder('r')} " if mchunks is not None else ""
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
         f"OPTIONAL MATCH (n)-[r]-(connected:`{ws}`) "
-        f"WHERE connected.entity_id IS NOT NULL "
+        f"WHERE connected.entity_id IS NOT NULL {extra}"
         f"RETURN eid, "
         f"collect([n.entity_id, connected.entity_id]) AS edges"
     )
+    params = {"ids": node_ids}
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
     result = {}
     async with self._driver.session(
         database=self._DATABASE, default_access_mode="READ"
     ) as session:
-        records = await session.run(query, ids=node_ids)
+        records = await session.run(query, **params)
         async for record in records:
             raw_edges = record["edges"]
             edges = [
@@ -615,18 +721,32 @@ async def _patched_get_nodes_with_degrees_batch(
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    where = f"WHERE {_twin_in_folder('n')} " if mchunks is not None else ""
+    if mchunks is not None:
+        degree_expr = (
+            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
+            f"THEN r END)"
+        )
+    else:
+        degree_expr = "count(r)"
     query = (
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
+        f"{where}"
         f"OPTIONAL MATCH (n)-[r]-() "
-        f"RETURN eid, n, count(r) AS degree"
+        f"RETURN eid, n, {degree_expr} AS degree"
     )
+    params = {"ids": node_ids}
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
     nodes = {}
     degrees = {}
     async with self._driver.session(
         database=self._DATABASE, default_access_mode="READ"
     ) as session:
-        records = await session.run(query, ids=node_ids)
+        records = await session.run(query, **params)
         async for record in records:
             node_dict = dict(record["n"])
             if "labels" in node_dict:
@@ -655,12 +775,22 @@ async def _patched_get_edges_with_degrees_batch(
     if self._driver is None:
         raise RuntimeError(_NOT_INITIALIZED_MSG)
     ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    edge_where = f"WHERE {_twin_in_folder('r')} " if mchunks is not None else ""
+    if mchunks is not None:
+        degree_expr = (
+            f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
+            f"THEN r END)"
+        )
+    else:
+        degree_expr = "count(r)"
 
     edge_query = (
         f"UNWIND $pairs AS pair "
         f"MATCH (s:`{ws}` {{entity_id: pair.src}})"
         f"-[r]-"
         f"(t:`{ws}` {{entity_id: pair.tgt}}) "
+        f"{edge_where}"
         f"WITH pair, collect(properties(r))[0] AS props "
         f"RETURN pair.src AS src, pair.tgt AS tgt, props"
     )
@@ -670,7 +800,7 @@ async def _patched_get_edges_with_degrees_batch(
         f"UNWIND $ids AS eid "
         f"MATCH (n:`{ws}` {{entity_id: eid}}) "
         f"OPTIONAL MATCH (n)-[r]-() "
-        f"RETURN eid, count(r) AS degree"
+        f"RETURN eid, {degree_expr} AS degree"
     )
 
     _defaults = {
@@ -687,7 +817,14 @@ async def _patched_get_edges_with_degrees_batch(
     ) as session:
         # Pipeline both queries in the same session
         pair_params = [{"src": p["src"], "tgt": p["tgt"]} for p in pairs]
-        edge_records = await session.run(edge_query, pairs=pair_params)
+        edge_run_params = {"pairs": pair_params}
+        deg_run_params = {"ids": unique_ids}
+        if mchunks is not None:
+            edge_run_params["sep"] = _GRAPH_FIELD_SEP
+            edge_run_params["mchunks"] = mchunks
+            deg_run_params["sep"] = _GRAPH_FIELD_SEP
+            deg_run_params["mchunks"] = mchunks
+        edge_records = await session.run(edge_query, **edge_run_params)
         async for record in edge_records:
             key = (record["src"], record["tgt"])
             edge_props = dict(record["props"]) if record["props"] else {}
@@ -697,7 +834,7 @@ async def _patched_get_edges_with_degrees_batch(
             edge_data[key] = edge_props
         await edge_records.consume()
 
-        deg_records = await session.run(degree_query, ids=unique_ids)
+        deg_records = await session.run(degree_query, **deg_run_params)
         async for record in deg_records:
             node_degrees[record["eid"]] = record["degree"]
         await deg_records.consume()

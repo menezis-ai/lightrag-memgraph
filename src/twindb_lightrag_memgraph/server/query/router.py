@@ -49,6 +49,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from ..._constants import storage_folder_context
 from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
@@ -746,7 +747,11 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # (this branch never claimed grounded sources to begin with).
     if body.only_need_context or body.only_need_prompt:
         try:
-            answer_raw = await rag.aquery(body.query, param=param)
+            # Folder-scoped retrieval: the storage layer constrains candidate
+            # chunks/entities/relations to docs MEMBER_OF the active folder, so
+            # no cross-folder context can enter the returned body.
+            with storage_folder_context(folder):
+                answer_raw = await rag.aquery(body.query, param=param)
         except Exception as exc:
             logger.exception("twin_query: aquery failed")
             raise HTTPException(500, f"Query failed: {exc}") from exc
@@ -765,7 +770,11 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     #     call. The sources panel is built from data.references — the chunks
     #     LightRAG actually used. No second vector retrieval (audit C3).
     try:
-        envelope = await rag.aquery_llm(body.query, param=param)
+        # Folder-scoped grounding: every vector retrieval LightRAG issues inside
+        # aquery_llm (chunks + entity/relation vdb) is filtered to the active
+        # folder's membership at the storage layer (batch-2 cloisonnement).
+        with storage_folder_context(folder):
+            envelope = await rag.aquery_llm(body.query, param=param)
     except Exception as exc:
         logger.exception("twin_query: aquery_llm failed")
         raise HTTPException(500, f"Query failed: {exc}") from exc
@@ -786,7 +795,11 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
             "answer_status": answer_status,
         }
 
-    sources = await _build_envelope_sources(rag, body, folder, envelope)
+    # Keep the sources panel consistent with the grounded answer: the legacy
+    # fallback inside _build_envelope_sources re-issues a chunks_vdb retrieval,
+    # which must also be folder-scoped.
+    with storage_folder_context(folder):
+        sources = await _build_envelope_sources(rag, body, folder, envelope)
     await _record_retrieval_activity(
         body, request, sources_count=len(sources), stream=False
     )
@@ -817,7 +830,10 @@ async def _twin_query_data(
 
     param = _make_query_param(QueryParam, _query_param_kwargs(body))
     try:
-        result = await rag.aquery_data(body.query, param=param)
+        # Folder-scoped retrieval (see _twin_query): the structured data path
+        # grounds on the same vdb queries, so it must be scoped identically.
+        with storage_folder_context(folder):
+            result = await rag.aquery_data(body.query, param=param)
     except Exception as exc:
         logger.exception("twin_query: aquery_data failed")
         raise HTTPException(500, f"Query data failed: {exc}") from exc
@@ -934,7 +950,12 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             param = _make_query_param(
                 QueryParam, _query_param_kwargs(body, stream=True)
             )
-            envelope = await rag.aquery_llm(body.query, param=param)
+            # Folder-scoped grounding inside the generator (it runs after the
+            # handler returns, so the ContextVar must be bound here, not at the
+            # route boundary). Retrieval completes inside aquery_llm before the
+            # envelope is returned; token streaming below touches no vdb.
+            with storage_folder_context(folder):
+                envelope = await rag.aquery_llm(body.query, param=param)
             async for line in _emit_answer_tokens(envelope, stripper):
                 yield line
         except Exception as exc:
@@ -977,7 +998,8 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
-        sources = await _build_envelope_sources(rag, body, folder, envelope)
+        with storage_folder_context(folder):
+            sources = await _build_envelope_sources(rag, body, folder, envelope)
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=True
         )
