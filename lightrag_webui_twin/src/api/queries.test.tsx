@@ -30,8 +30,10 @@ import {
   useCreateGraphRelation,
   useDeleteDocument,
   useDeleteFolder,
+  useDocumentFolders,
   useDeleteGraphEntity,
   useDeleteGraphRelation,
+  useAddDocumentToFolder,
   useDocuments,
   useFolders,
   useGraphEntities,
@@ -43,6 +45,7 @@ import {
   useOpenApi,
   usePipelineStatus,
   useRevokeApiKey,
+  useRemoveDocumentFromFolder,
   useTagCategories,
   useTags,
   useThesaurus,
@@ -260,6 +263,55 @@ describe('folder mutations', () => {
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/folders/f1');
+    expect((init as RequestInit).method).toBe('DELETE');
+  });
+});
+
+describe('document folder membership hooks', () => {
+  it('useDocumentFolders fetches memberships for a document', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ doc_id: 'd1', folders: ['default'] }));
+    const { result } = renderHook(() => useDocumentFolders('d1'), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/documents/d1/folders');
+    expect(result.current.data?.folders).toEqual(['default']);
+  });
+
+  it('useAddDocumentToFolder POSTs the target folder', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ doc_id: 'd1', folders: ['default', 'ops'] }));
+    const { result } = renderHook(() => useAddDocumentToFolder(), {
+      wrapper: wrapper(),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ docId: 'd1', folderId: 'ops' });
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/documents/d1/folders');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      folder_id: 'ops',
+    });
+  });
+
+  it('useRemoveDocumentFromFolder DELETEs the selected folder', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        doc_id: 'd1',
+        removed_folder: 'default',
+        physically_deleted: true,
+        remaining_folders: [],
+      }),
+    );
+    const { result } = renderHook(() => useRemoveDocumentFromFolder(), {
+      wrapper: wrapper(),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ docId: 'd1', folderId: 'default' });
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/documents/d1/folders/default');
     expect((init as RequestInit).method).toBe('DELETE');
   });
 });

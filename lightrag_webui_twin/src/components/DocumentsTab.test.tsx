@@ -21,6 +21,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DocumentsTab } from './DocumentsTab';
 import {
   DOCUMENT_FIXTURES,
+  FOLDER_FIXTURES,
   TAG_FIXTURES,
 } from '../fixtures';
 
@@ -371,6 +372,196 @@ describe('DocumentsTab — header actions', () => {
     expect(p.onOpenDetail.mock.calls[0][0].doc_id).toBe('d1');
   });
 
+});
+
+describe('DocumentsTab — folder membership admin actions', () => {
+  let originalFetch: typeof fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const folderList = [
+    {
+      ...FOLDER_FIXTURES[0],
+      id: 'default',
+      kb: 'Default',
+      current: true,
+    },
+    {
+      ...FOLDER_FIXTURES[0],
+      id: 'sandbox',
+      kb: 'Sandbox',
+      current: false,
+    },
+  ];
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('hides folder membership controls for non-admin users', () => {
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders={false}
+      />,
+    );
+    expect(
+      screen.queryByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    ).toBeNull();
+  });
+
+  it('adds a document to another folder from the admin modal', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders') && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ doc_id: 'd1', folders: ['default', 'sandbox'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ doc_id: 'd1', folders: ['default'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    );
+    expect(await screen.findByTestId('document-folders-modal')).toHaveTextContent(
+      'Active folder: Default (default)',
+    );
+    await screen.findByRole('option', { name: 'Sandbox (sandbox)' });
+    await userEvent.selectOptions(screen.getByLabelText('Target folder'), 'sandbox');
+    await userEvent.click(screen.getByRole('button', { name: 'Add to folder' }));
+
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes('/documents/d1/folders') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCall).toBeDefined();
+    expect(JSON.parse((postCall?.[1] as RequestInit).body as string)).toEqual({
+      folder_id: 'sandbox',
+    });
+  });
+
+  it('requires explicit confirmation before removing the last folder membership', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders/default')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              doc_id: 'd1',
+              removed_folder: 'default',
+              physically_deleted: true,
+              remaining_folders: [],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ doc_id: 'd1', folders: ['default'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    );
+    const modal = await screen.findByTestId('document-folders-modal');
+    expect(modal).toHaveTextContent('oracle-restart-procedure.pdf');
+    expect(modal).toHaveTextContent('Default (default)');
+    expect(modal).toHaveTextContent('permanently delete the document');
+
+    await userEvent.click(screen.getByTestId('document-folder-remove-active'));
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).includes('/documents/d1/folders/default') &&
+          (init as RequestInit | undefined)?.method === 'DELETE',
+      ),
+    ).toBe(false);
+    expect(
+      screen.getByRole('button', { name: 'Confirm permanent delete' }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('document-folder-remove-active'));
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).includes('/documents/d1/folders/default') &&
+          (init as RequestInit | undefined)?.method === 'DELETE',
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {

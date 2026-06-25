@@ -233,6 +233,9 @@ function persistGraphState(): void {
  * each other.
  */
 let documentsState: Document[] = loadDocumentsState();
+let documentMemberships: Record<string, string[]> = Object.fromEntries(
+  documentsState.map((doc) => [doc.doc_id, [doc.folder || 'default']]),
+);
 let categoryState: TagCategory[] = loadState(
   E2E_TAG_CATEGORIES_STORAGE_KEY,
   TAG_CATEGORY_FIXTURES,
@@ -330,6 +333,23 @@ let apiKeyCounter = apiKeyState.length;
 
 function persistApiKeyState(): void {
   persistState(E2E_API_KEYS_STORAGE_KEY, apiKeyState);
+}
+
+function resetDocumentMemberships(): void {
+  documentMemberships = Object.fromEntries(
+    documentsState.map((doc) => [doc.doc_id, [doc.folder || 'default']]),
+  );
+}
+
+function foldersForDoc(doc: Document): string[] {
+  return documentMemberships[doc.doc_id] ?? [doc.folder || 'default'];
+}
+
+function isKnownMockFolder(folderId: string): boolean {
+  return (
+    folderState.some((folder) => folder.id === folderId) ||
+    FOLDER_FIXTURES.some((folder) => folder.id === folderId)
+  );
 }
 
 // Instance storage quota — in-memory snapshot tests inject via the
@@ -494,6 +514,7 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_GRAPH_RELATIONS_STORAGE_KEY);
   storage?.removeItem(E2E_API_KEYS_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
+  resetDocumentMemberships();
   categoryState = cloneTagCategories(TAG_CATEGORY_FIXTURES);
   tagState = cloneTags(TAG_FIXTURES);
   notificationState = cloneNotifications(NOTIFICATION_FIXTURES);
@@ -687,7 +708,7 @@ function matchDocumentsQuery(d: Document, params: URLSearchParams): boolean {
   const status = params.get('status');
   if (status && status !== 'all' && d.status !== status) return false;
   const folder = params.get('folder');
-  if (folder && d.folder !== folder) return false;
+  if (folder && !foldersForDoc(d).includes(folder)) return false;
   const q = params.get('q');
   if (q && !d.file_path.toLowerCase().includes(q.toLowerCase())) return false;
   const tag = params.get('tag');
@@ -1558,10 +1579,73 @@ export const handlers = [
       return HttpResponse.json(updated);
     },
   ),
+  http.get(`${ANY}${TWIN}/documents/:id/folders`, ({ params }) => {
+    const forbidden = rejectFolderAdminMutationIfNeeded();
+    if (forbidden) return forbidden;
+    const id = String(params.id);
+    const doc = documentsState.find((d) => d.doc_id === id);
+    if (!doc) return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+    return HttpResponse.json({ doc_id: id, folders: foldersForDoc(doc) });
+  }),
+  http.post(`${ANY}${TWIN}/documents/:id/folders`, async ({ params, request }) => {
+    const forbidden = rejectFolderAdminMutationIfNeeded();
+    if (forbidden) return forbidden;
+    const id = String(params.id);
+    const doc = documentsState.find((d) => d.doc_id === id);
+    if (!doc) return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+    const body = (await request.json()) as { folder_id?: string };
+    const folderId = body.folder_id ?? '';
+    if (!isKnownMockFolder(folderId)) {
+      return HttpResponse.json({ detail: 'folder not found' }, { status: 404 });
+    }
+    const folders = new Set(foldersForDoc(doc));
+    folders.add(folderId);
+    documentMemberships[id] = Array.from(folders);
+    return HttpResponse.json({ doc_id: id, folders: documentMemberships[id] });
+  }),
+  http.delete(
+    `${ANY}${TWIN}/documents/:id/folders/:folderId`,
+    ({ params }) => {
+      const forbidden = rejectFolderAdminMutationIfNeeded();
+      if (forbidden) return forbidden;
+      const id = String(params.id);
+      const folderId = String(params.folderId);
+      const doc = documentsState.find((d) => d.doc_id === id);
+      if (!doc) return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+      const folders = foldersForDoc(doc);
+      if (!folders.includes(folderId)) {
+        return HttpResponse.json({ detail: 'folder not found' }, { status: 404 });
+      }
+      if (folders.length === 1 && folders[0] === folderId) {
+        documentsState = documentsState.filter((d) => d.doc_id !== id);
+        delete documentMemberships[id];
+        persistDocumentsState();
+        cascadeDocsFromGraph(new Set([id]));
+        return HttpResponse.json({
+          ok: true,
+          doc_id: id,
+          removed_folder: folderId,
+          physically_deleted: true,
+          remaining_folders: [],
+        });
+      }
+      documentMemberships[id] = folders.filter((folder) => folder !== folderId);
+      return HttpResponse.json({
+        ok: true,
+        doc_id: id,
+        removed_folder: folderId,
+        physically_deleted: false,
+        remaining_folders: documentMemberships[id],
+      });
+    },
+  ),
   http.post(`${ANY}${TWIN}/documents/bulk-delete`, async ({ request }) => {
     const body = (await request.json()) as { doc_ids: string[] };
     const ids = new Set(body.doc_ids);
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
+    ids.forEach((id) => {
+      delete documentMemberships[id];
+    });
     persistDocumentsState();
     cascadeDocsFromGraph(ids);
     if (e2eScenario.bulkDeleteDelayMs && e2eScenario.bulkDeleteDelayMs > 0) {

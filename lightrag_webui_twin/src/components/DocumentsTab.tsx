@@ -10,12 +10,18 @@
  * continuity; filter pills/labels use lowercase keys mapped via STATUS_TO_FILTER.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import {
+  useAddDocumentToFolder,
+  useDocumentFolders,
+  useRemoveDocumentFromFolder,
+} from '../api/queries';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { ClassPill } from './ClassPill';
 import { QuotaBanner } from './QuotaBanner';
 import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
@@ -23,6 +29,7 @@ import type { PipelineStatusResponse } from '../api/resources';
 import type { Document, DocumentStatus } from '../types/document';
 import type { ClassificationValue } from '../types/classification';
 import type { TagEntry } from '../types/tag';
+import type { Folder } from '../types/topbar';
 
 type StatusFilterKey = 'all' | 'completed' | 'processing' | 'pending' | 'failed';
 
@@ -385,6 +392,9 @@ function BulkActionsBar({
 
 export interface DocumentsTabProps {
   docs: readonly Document[];
+  activeFolder?: string;
+  canManageFolders?: boolean;
+  folderList?: readonly Folder[];
   tagCatalog: readonly TagEntry[];
   onOpenAdd: () => void;
   onOpenRetag: (doc: Document) => void;
@@ -437,6 +447,9 @@ export function DocumentsTab({
   onOpenRetag,
   onOpenBulkRetag,
   onAddToast,
+  activeFolder,
+  canManageFolders = false,
+  folderList = [],
   onScanRetry,
   pipelineStatus,
   pipelineOpen = false,
@@ -485,6 +498,7 @@ export function DocumentsTab({
   const [tagAddVal, setTagAddVal] = useState('');
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(0);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
+  const [folderDialogDoc, setFolderDialogDoc] = useState<Document | null>(null);
   const statusFilter = controlledStatusFilter ?? localStatusFilter;
   const search = controlledSearch ?? localSearch;
   const tagFilters = controlledTagFilters ?? localTagFilters;
@@ -848,6 +862,8 @@ export function DocumentsTab({
               checked={selected.has(d.doc_id)}
               onToggle={toggleRow}
               onOpenRetag={onOpenRetag}
+              canManageFolders={canManageFolders}
+              onOpenFolders={(doc) => setFolderDialogDoc(doc)}
               onClickTag={clickTagOnRow}
               onOpenDetail={openDetail}
               nowMs={nowMs}
@@ -881,6 +897,15 @@ export function DocumentsTab({
           </div>
         )}
       </div>
+      {canManageFolders && folderDialogDoc && (
+        <DocumentFoldersDialog
+          doc={folderDialogDoc}
+          activeFolder={activeFolder ?? folderDialogDoc.folder}
+          folderList={folderList}
+          onAddToast={onAddToast}
+          onClose={() => setFolderDialogDoc(null)}
+        />
+      )}
     </div>
   );
 }
@@ -890,6 +915,8 @@ interface DocRowProps {
   checked: boolean;
   onToggle: (id: string) => void;
   onOpenRetag: (doc: Document) => void;
+  canManageFolders: boolean;
+  onOpenFolders: (doc: Document) => void;
   onClickTag: (e: React.MouseEvent, tag: string) => void;
   onOpenDetail?: (doc: Document) => void;
   nowMs?: number;
@@ -900,6 +927,8 @@ function DocRow({
   checked,
   onToggle,
   onOpenRetag,
+  canManageFolders,
+  onOpenFolders,
   onClickTag,
   onOpenDetail,
   nowMs,
@@ -1047,9 +1076,239 @@ function DocRow({
                 <Icon name="file-text" size={13} />
               </button>
             )}
+            {canManageFolders && (
+              <button
+                type="button"
+                className="row-action"
+                onClick={() => onOpenFolders(doc)}
+                aria-label={`Manage folders for ${doc.file_path}`}
+                title="Add to folder"
+                data-testid={`docs-row-folders-${doc.doc_id}`}
+              >
+                <Icon name="folder" size={13} />
+              </button>
+            )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function folderLabel(folders: readonly Folder[], id: string): string {
+  const folder = folders.find((item) => item.id === id);
+  return folder ? `${folder.kb} (${folder.id})` : id;
+}
+
+function DocumentFoldersDialog({
+  doc,
+  activeFolder,
+  folderList,
+  onAddToast,
+  onClose,
+}: Readonly<{
+  doc: Document;
+  activeFolder: string;
+  folderList: readonly Folder[];
+  onAddToast: (title: string, sub?: string) => void;
+  onClose: () => void;
+}>) {
+  const memberships = useDocumentFolders(doc.doc_id, { enabled: true });
+  const addFolder = useAddDocumentToFolder();
+  const removeFolder = useRemoveDocumentFromFolder();
+  const modalRef = useRef<HTMLDialogElement>(null);
+  useModalA11y({ open: true, onClose, ref: modalRef });
+  const currentMemberships = memberships.data?.folders ?? [doc.folder];
+  const availableFolders = folderList.filter(
+    (folder) => !currentMemberships.includes(folder.id),
+  );
+  const [targetFolder, setTargetFolder] = useState('');
+  const [destructiveArmed, setDestructiveArmed] = useState(false);
+  const activeLabel = folderLabel(folderList, activeFolder);
+  const remainingAfterActiveRemoval = currentMemberships.filter(
+    (folder) => folder !== activeFolder,
+  );
+  const isLastMembership =
+    currentMemberships.length === 1 && currentMemberships[0] === activeFolder;
+  const selectedTargetFolder =
+    targetFolder && availableFolders.some((folder) => folder.id === targetFolder)
+      ? targetFolder
+      : (availableFolders[0]?.id ?? '');
+
+  const addTargetFolder = async () => {
+    if (memberships.isError) return;
+    if (!selectedTargetFolder) return;
+    await addFolder.mutateAsync({
+      docId: doc.doc_id,
+      folderId: selectedTargetFolder,
+    });
+    onAddToast(
+      'Document shared to folder',
+      `${doc.file_path} is now visible in ${folderLabel(folderList, selectedTargetFolder)}.`,
+    );
+    setDestructiveArmed(false);
+  };
+
+  const removeFromActiveFolder = async () => {
+    if (memberships.isError) return;
+    if (!currentMemberships.includes(activeFolder)) return;
+    if (isLastMembership && !destructiveArmed) {
+      setDestructiveArmed(true);
+      return;
+    }
+    const result = await removeFolder.mutateAsync({
+      docId: doc.doc_id,
+      folderId: activeFolder,
+    });
+    if (result.physically_deleted) {
+      onAddToast(
+        'Document permanently deleted',
+        `${doc.file_path} was removed from ${activeLabel}; it had no other folder memberships.`,
+      );
+    } else {
+      const remaining = result.remaining_folders
+        .map((folder) => folderLabel(folderList, folder))
+        .join(', ');
+      onAddToast(
+        'Document removed from folder',
+        `${doc.file_path} was removed from ${activeLabel} and remains in ${remaining}.`,
+      );
+    }
+    onClose();
+  };
+
+  return (
+    <div className="modal-backdrop" data-testid="document-folders-modal">
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        aria-label="Close document folders dialog"
+        onClick={onClose}
+      />
+      <dialog
+        ref={modalRef}
+        open
+        className="modal"
+        aria-modal="true"
+        aria-label={`Manage folders for ${doc.file_path}`}
+      >
+        <div className="modal-header">
+          <div>
+            <h2>Share document across folders</h2>
+            <p className="ctx">
+              Admin-only · one physical document, multiple folder memberships.
+            </p>
+          </div>
+          <button className="modal-x" onClick={onClose} aria-label="Close dialog">
+            ×
+          </button>
+        </div>
+        <div className="modal-body">
+          <p>
+            <strong>{doc.file_path}</strong>
+          </p>
+          <p>
+            Active folder: <strong>{activeLabel}</strong>
+          </p>
+          {memberships.isLoading ? (
+            <p>Loading memberships...</p>
+          ) : memberships.isError ? (
+            <div className="callout danger" role="alert">
+              Memberships could not be loaded. Add/remove actions are disabled
+              because the UI cannot safely determine whether removing from{' '}
+              <strong>{activeLabel}</strong> would unshare the document or
+              permanently delete it.
+            </div>
+          ) : (
+            <>
+              <p>
+                Current memberships:{' '}
+                <strong>
+                  {currentMemberships
+                    .map((folder) => folderLabel(folderList, folder))
+                    .join(', ')}
+                </strong>
+              </p>
+              <label className="field">
+                <span>Add to folder</span>
+                <select
+                  value={selectedTargetFolder}
+                  onChange={(e) => setTargetFolder(e.target.value)}
+                  disabled={availableFolders.length === 0 || addFolder.isPending}
+                  aria-label="Target folder"
+                >
+                  {availableFolders.length === 0 ? (
+                    <option value="">Already shared to every folder</option>
+                  ) : (
+                    availableFolders.map((folder) => (
+                      <option key={folder.id} value={folder.id}>
+                        {folder.kb} ({folder.id})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <div className="callout">
+                {isLastMembership ? (
+                  <p>
+                    Removing from <strong>{activeLabel}</strong> removes the last
+                    folder membership for <strong>{doc.file_path}</strong>. This
+                    will permanently delete the document, chunks, entities and
+                    relations from LightRAG/Memgraph.
+                  </p>
+                ) : (
+                  <p>
+                    Removing from <strong>{activeLabel}</strong> only unshares the
+                    document from the folder you are currently viewing. It
+                    remains available in{' '}
+                    <strong>
+                      {remainingAfterActiveRemoval
+                        .map((folder) => folderLabel(folderList, folder))
+                        .join(', ')}
+                    </strong>
+                    .
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={
+              memberships.isError ||
+              !selectedTargetFolder ||
+              addFolder.isPending
+            }
+            onClick={() => void addTargetFolder()}
+          >
+            Add to folder
+          </button>
+          <button
+            type="button"
+            className={`btn danger${destructiveArmed ? ' armed' : ''}`}
+            disabled={
+              memberships.isLoading ||
+              memberships.isError ||
+              !currentMemberships.includes(activeFolder) ||
+              removeFolder.isPending
+            }
+            onClick={() => void removeFromActiveFolder()}
+            data-testid="document-folder-remove-active"
+          >
+            {isLastMembership
+              ? destructiveArmed
+                ? 'Confirm permanent delete'
+                : 'Delete permanently'
+              : `Remove from ${activeFolder}`}
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }

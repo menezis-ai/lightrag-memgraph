@@ -64,6 +64,19 @@ export interface DocumentChunk {
   text: string;
 }
 
+export interface DocumentFoldersResponse {
+  doc_id: string;
+  folders: readonly string[];
+}
+
+export interface RemoveDocumentFolderResponse {
+  ok: true;
+  doc_id: string;
+  removed_folder: string;
+  physically_deleted: boolean;
+  remaining_folders: readonly string[];
+}
+
 /**
  * Operator-set MIP sensitivity classification (C1..C4). The backend treats
  * this as a floor-raising value: it can only raise the document's
@@ -660,7 +673,30 @@ export const twinApi = {
     );
   },
 
-  // Document overlay (metadata, approve, reject, multi delete)
+  // Document overlay (metadata, approve, reject, folder membership, multi delete)
+  listDocumentFolders: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<DocumentFoldersResponse>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/folders`,
+      init,
+    ),
+  addDocumentToFolder: (
+    docId: string,
+    folderId: string,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<DocumentFoldersResponse>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/folders`,
+      { ...init, method: 'POST', body: { folder_id: folderId } },
+    ),
+  removeDocumentFromFolder: (
+    docId: string,
+    folderId: string,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<RemoveDocumentFolderResponse>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/folders/${encodeURIComponent(folderId)}`,
+      { ...init, method: 'DELETE' },
+    ),
   getDocumentMetadata: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{
       tags: readonly string[];
@@ -861,6 +897,9 @@ export const api = {
   deleteTag: twinApi.deleteTag,
   listActivity: twinApi.listActivity,
   getDocumentMetadata: twinApi.getDocumentMetadata,
+  listDocumentFolders: twinApi.listDocumentFolders,
+  addDocumentToFolder: twinApi.addDocumentToFolder,
+  removeDocumentFromFolder: twinApi.removeDocumentFromFolder,
   approveDocument: twinApi.approveDocument,
   rejectDocument: twinApi.rejectDocument,
   bulkDeleteDocuments: twinApi.bulkDeleteDocuments,

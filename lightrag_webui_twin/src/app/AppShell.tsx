@@ -24,6 +24,7 @@ import { ToastViewport } from '../components/ToastViewport';
 import { Topbar } from '../components/Topbar';
 import type { SettingsSectionKey } from '../components/SettingsTab';
 import { useAuth } from '../hooks/useAuth';
+import { canManageFolders } from '../lib/permissions';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import {
   useActivity,
@@ -504,6 +505,9 @@ export function AppShell() {
                 setDocumentsPageForScope((page) => page - 1)
               }
               onNextPage={() => setDocumentsPageForScope((page) => page + 1)}
+              activeFolder={folder}
+              canManageFolders={canManageFolders(auth.user)}
+              folderList={folderList}
               tagCatalog={tagCatalog}
               pendingSlot={
                 <PendingDocsSection

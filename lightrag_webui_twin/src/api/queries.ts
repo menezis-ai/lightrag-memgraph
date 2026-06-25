@@ -174,6 +174,54 @@ export function useDeleteFolder() {
   });
 }
 
+function documentFoldersKey(docId: string) {
+  return ['document-folders', docId] as const;
+}
+
+export function useDocumentFolders(
+  docId: string | null,
+  options: Pick<QueryGate, 'enabled'> = {},
+) {
+  return useQuery({
+    queryKey: ['document-folders', docId] as const,
+    queryFn: ({ signal }) => api.listDocumentFolders(docId ?? '', { signal }),
+    ...DEFAULTS,
+    enabled: Boolean(docId) && (options.enabled ?? true),
+  });
+}
+
+function invalidateDocumentMembershipSideEffects(
+  qc: ReturnType<typeof useQueryClient>,
+  docId: string,
+) {
+  void qc.invalidateQueries({ queryKey: documentFoldersKey(docId) });
+  void qc.invalidateQueries({ queryKey: ['documents'] });
+  void qc.invalidateQueries({ queryKey: ['activity'] });
+}
+
+export function useAddDocumentToFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docId, folderId }: { docId: string; folderId: string }) =>
+      api.addDocumentToFolder(docId, folderId),
+    onSuccess: (_data, vars) =>
+      invalidateDocumentMembershipSideEffects(qc, vars.docId),
+  });
+}
+
+export function useRemoveDocumentFromFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ docId, folderId }: { docId: string; folderId: string }) =>
+      api.removeDocumentFromFolder(docId, folderId),
+    onSuccess: (_data, vars) => {
+      invalidateDocumentMembershipSideEffects(qc, vars.docId);
+      void qc.invalidateQueries({ queryKey: ['graph-entities'] });
+      void qc.invalidateQueries({ queryKey: ['graph-relations'] });
+    },
+  });
+}
+
 // Instance storage quota — polled every 30s so the banner reflects
 // Memgraph pressure without forcing a manual refresh.
 export function useInstanceQuota(options: QueryGate = {}) {
