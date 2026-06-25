@@ -191,13 +191,26 @@ async def stores(monkeypatch):
 
     async def _wipe():
         async with _pool.get_session() as s:
+            # Vec_* labels carry a vector index. On Memgraph 3.10+ a plain
+            # DETACH DELETE of an indexed vertex leaves a STALE vector-index
+            # entry (vector_index_memory_tracked is not freed on delete); a
+            # later vector_search then returns the deleted node and strict-errors
+            # on property access ("Trying to get a property from a deleted
+            # object", 50N42). Mirror the production delete path
+            # (vector_impl.delete_entity): REMOVE the indexed label first so the
+            # index entry is pruned cleanly, THEN delete the orphan.
             for lbl in (
-                f"DocStatus_{_WS}",
-                f"Folder_{_WS}",
                 f"Vec_{_WS}_chunks",
                 f"Vec_{_WS}_entities",
                 f"Vec_{_WS}_relationships",
             ):
+                await (
+                    await s.run(
+                        f"MATCH (n:`{lbl}`) REMOVE n:`{lbl}` "
+                        f"WITH n DETACH DELETE n"
+                    )
+                ).consume()
+            for lbl in (f"DocStatus_{_WS}", f"Folder_{_WS}"):
                 await (await s.run(f"MATCH (n:`{lbl}`) DETACH DELETE n")).consume()
 
     await _wipe()
