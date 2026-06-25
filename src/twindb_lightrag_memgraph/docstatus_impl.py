@@ -21,6 +21,7 @@ from . import _pool
 from ._constants import (
     DEFAULT_PAGE_SIZE,
     default_twin_folder,
+    get_active_duplicate_share_folder,
     get_active_storage_folder,
     resolve_workspace,
     validate_identifier,
@@ -109,6 +110,25 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             props.get("metadata")
         )
         return metadata_folder or default_twin_folder()
+
+    @staticmethod
+    def _metadata_dict(metadata: Any) -> dict[str, Any]:
+        if isinstance(metadata, dict):
+            return metadata
+        if isinstance(metadata, str) and metadata:
+            try:
+                decoded = json.loads(metadata)
+            except json.JSONDecodeError:
+                return {}
+            return decoded if isinstance(decoded, dict) else {}
+        return {}
+
+    @staticmethod
+    def _duplicate_original_doc_id(props: dict[str, Any]) -> str | None:
+        metadata = MemgraphDocStatusStorage._metadata_dict(props.get("metadata"))
+        if metadata.get("is_duplicate") is True and metadata.get("original_doc_id"):
+            return str(metadata["original_doc_id"])
+        return None
 
     @staticmethod
     def resolve_status_filter_values(
@@ -392,6 +412,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         label = self._label()
         now = datetime.now(timezone.utc).isoformat()
         entries = []
+        duplicate_memberships: list[dict[str, str]] = []
         for doc_id, doc_data in data.items():
             if isinstance(doc_data, DocProcessingStatus):
                 props = self._serialize_status(doc_id, doc_data)
@@ -408,30 +429,59 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                         props[k] = json.dumps(v, default=str)
                     elif hasattr(v, "value"):  # Enum
                         props[k] = v.value
+            original_doc_id = self._duplicate_original_doc_id(props)
+            if original_doc_id and folder:
+                duplicate_memberships.append(
+                    {"doc_id": original_doc_id, "folder": folder}
+                )
+                logger.info(
+                    "[MemgraphDocStatus:%s] duplicate record %s shares original "
+                    "doc %s into folder %s instead of creating a visible dup node",
+                    self.workspace,
+                    doc_id,
+                    original_doc_id,
+                    folder,
+                )
+                continue
             entries.append({"id": doc_id, "props": props, "folder": folder})
+
+        if not entries and not duplicate_memberships:
+            return
 
         folder_label = self._folder_label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{label}` {{id: e.id}})
-                    SET n += e.props
-                    WITH n, coalesce(e.folder, $default_folder) AS fid
-                    // Dual-write the legacy single-valued property (migration
-                    // safety net) only on first insert.
-                    FOREACH (_ IN CASE WHEN n.folder IS NULL THEN [1] ELSE [] END |
-                        SET n.folder = fid)
-                    // The membership relation is the new source of truth: a doc
-                    // is MEMBER_OF one or more folders, stored once.
-                    MERGE (f:`{folder_label}` {{id: fid}})
-                    MERGE (n)-[:MEMBER_OF]->(f)
-                    """,
-                    entries=entries,
-                    default_folder=default_twin_folder(),
-                )
-                await result.consume()
+                if entries:
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{label}` {{id: e.id}})
+                        SET n += e.props
+                        WITH n, coalesce(e.folder, $default_folder) AS fid
+                        // Dual-write the legacy single-valued property (migration
+                        // safety net) only on first insert.
+                        FOREACH (_ IN CASE WHEN n.folder IS NULL THEN [1] ELSE [] END |
+                            SET n.folder = fid)
+                        // The membership relation is the new source of truth: a doc
+                        // is MEMBER_OF one or more folders, stored once.
+                        MERGE (f:`{folder_label}` {{id: fid}})
+                        MERGE (n)-[:MEMBER_OF]->(f)
+                        """,
+                        entries=entries,
+                        default_folder=default_twin_folder(),
+                    )
+                    await result.consume()
+                if duplicate_memberships:
+                    result = await session.run(
+                        f"""
+                        UNWIND $memberships AS m
+                        MATCH (n:`{label}` {{id: m.doc_id}})
+                        MERGE (f:`{folder_label}` {{id: m.folder}})
+                        MERGE (n)-[:MEMBER_OF]->(f)
+                        """,
+                        memberships=duplicate_memberships,
+                    )
+                    await result.consume()
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
@@ -713,15 +763,31 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{file_path: $file_path}})
-                RETURN properties(n) AS props
+                RETURN n.id AS id, properties(n) AS props
                 """,
                 file_path=file_path,
             )
             record = await result.single()
             await result.consume()
-            if record:
-                return dict(record["props"])
+        if not record:
             return None
+        props = self._deserialize_props(record["props"])
+        props["id"] = record["id"]
+        await self._share_existing_doc_for_duplicate_upload(record["id"])
+        return props
+
+    async def _share_existing_doc_for_duplicate_upload(self, doc_id: str) -> None:
+        """Attach an already-known duplicate doc to the active upload folder.
+
+        LightRAG 1.4.9.x detects upload duplicates through
+        ``get_doc_by_file_path``. Newer versions moved duplicate checks to
+        basename/content-hash getters. All three are read-shaped storage calls,
+        so the mutation is gated by a dedicated ingestion-only context, never
+        by generic folder read scoping.
+        """
+        active_folder = get_active_duplicate_share_folder()
+        if active_folder:
+            await self.add_to_folder(doc_id, active_folder)
 
     async def get_doc_by_file_basename(
         self, basename: str
@@ -738,6 +804,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
+                await self._share_existing_doc_for_duplicate_upload(record["id"])
                 return record["id"], self._deserialize_props(
                     record["props"],
                     include_default_folder=False,
@@ -759,6 +826,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
+                await self._share_existing_doc_for_duplicate_upload(record["id"])
                 return record["id"], self._deserialize_props(
                     record["props"],
                     include_default_folder=False,

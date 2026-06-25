@@ -73,6 +73,10 @@ _active_storage_folder: ContextVar[str | None] = ContextVar(
     "twin_active_storage_folder",
     default=None,
 )
+_active_duplicate_share_folder: ContextVar[str | None] = ContextVar(
+    "twin_active_duplicate_share_folder",
+    default=None,
+)
 _active_operator_classification: ContextVar[str | None] = ContextVar(
     "twin_active_operator_classification",
     default=None,
@@ -156,6 +160,33 @@ def storage_folder_context(folder: str | None) -> Iterator[None]:
         yield
     finally:
         _active_storage_folder.reset(token)
+
+
+def get_active_duplicate_share_folder() -> str | None:
+    """Folder allowed to turn duplicate-file lookups into memberships.
+
+    This is deliberately separate from :func:`get_active_storage_folder`.
+    Query/retrieval code also binds a storage folder for read scoping and must
+    never mutate memberships just because a low-level getter is called.
+    """
+    return _active_duplicate_share_folder.get()
+
+
+@contextmanager
+def duplicate_share_folder_context(folder: str | None) -> Iterator[None]:
+    """Temporarily allow duplicate upload compatibility sharing.
+
+    Bound only by ingestion routes. It lets LightRAG's synchronous
+    duplicate checks become "existing doc joins this folder" without making
+    ordinary folder-scoped reads write to the graph.
+    """
+    token = _active_duplicate_share_folder.set(
+        validate_identifier(folder, "folder") if folder else None
+    )
+    try:
+        yield
+    finally:
+        _active_duplicate_share_folder.reset(token)
 
 
 def get_active_operator_classification() -> str | None:

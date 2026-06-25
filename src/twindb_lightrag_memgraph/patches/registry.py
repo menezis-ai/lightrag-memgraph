@@ -1518,6 +1518,8 @@ def _patch_background_tasks_folder_context() -> None:
         import contextlib
 
         from .._constants import (
+            duplicate_share_folder_context,
+            get_active_duplicate_share_folder,
             get_active_operator_classification,
             get_active_storage_folder,
             operator_classification_context,
@@ -1525,14 +1527,19 @@ def _patch_background_tasks_folder_context() -> None:
         )
 
         captured_folder = get_active_storage_folder()
+        captured_duplicate_share_folder = get_active_duplicate_share_folder()
         captured_class = get_active_operator_classification()
-        if not captured_folder and not captured_class:
+        if not captured_folder and not captured_duplicate_share_folder and not captured_class:
             return orig_add_task(self, func, *args, **kwargs)
 
         async def _run_with_context(*task_args, **task_kwargs):
             with contextlib.ExitStack() as stack:
                 if captured_folder:
                     stack.enter_context(storage_folder_context(captured_folder))
+                if captured_duplicate_share_folder:
+                    stack.enter_context(
+                        duplicate_share_folder_context(captured_duplicate_share_folder)
+                    )
                 if captured_class:
                     stack.enter_context(
                         operator_classification_context(captured_class)
@@ -1573,6 +1580,7 @@ def _install_storage_folder_capture(app) -> None:
         from fastapi.responses import JSONResponse
 
         from .._constants import (
+            duplicate_share_folder_context,
             operator_classification_context,
             storage_folder_context,
         )
@@ -1587,8 +1595,10 @@ def _install_storage_folder_capture(app) -> None:
         # folder so the pre-ingestion classification hook can read it across the
         # BackgroundTasks boundary (see _patch_background_tasks_folder_context).
         operator_class = request.headers.get("X-Twin-Classification")
-        with storage_folder_context(folder), operator_classification_context(
-            operator_class
+        with (
+            storage_folder_context(folder),
+            duplicate_share_folder_context(folder),
+            operator_classification_context(operator_class),
         ):
             return await call_next(request)
 
