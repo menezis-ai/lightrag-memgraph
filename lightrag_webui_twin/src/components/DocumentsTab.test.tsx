@@ -15,7 +15,7 @@
 
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DocumentsTab } from './DocumentsTab';
@@ -549,22 +549,93 @@ describe('DocumentsTab — folder membership admin actions', () => {
     await userEvent.selectOptions(screen.getByLabelText('Target folder'), 'sandbox');
     await userEvent.click(screen.getByTestId('document-folder-move'));
 
-    // Move = POST membership on the target, then DELETE the active membership.
-    const postTarget = fetchMock.mock.calls.find(
+    // Move MUST be POST(target) THEN DELETE(active) — order is load-bearing:
+    // adding first guarantees the doc is never folderless mid-move. Assert the
+    // call indices, not just presence (a DELETE-then-POST impl must fail here).
+    const postIdx = fetchMock.mock.calls.findIndex(
       ([url, init]) =>
         String(url).includes('/documents/d1/folders') &&
         (init as RequestInit | undefined)?.method === 'POST',
     );
-    const deleteActive = fetchMock.mock.calls.find(
+    const deleteIdx = fetchMock.mock.calls.findIndex(
       ([url, init]) =>
         String(url).includes('/documents/d1/folders/default') &&
         (init as RequestInit | undefined)?.method === 'DELETE',
     );
-    expect(postTarget).toBeDefined();
-    expect(JSON.parse((postTarget?.[1] as RequestInit).body as string)).toEqual({
-      folder_id: 'sandbox',
+    expect(postIdx).toBeGreaterThanOrEqual(0);
+    expect(deleteIdx).toBeGreaterThan(postIdx);
+    expect(
+      JSON.parse(
+        (fetchMock.mock.calls[postIdx][1] as RequestInit).body as string,
+      ),
+    ).toEqual({ folder_id: 'sandbox' });
+  });
+
+  it('move that copies but fails to remove warns the doc is now in both folders', async () => {
+    const props = defaultProps();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders') && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ doc_id: 'd1', folders: ['default', 'sandbox'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders') && init?.method === 'DELETE') {
+        // The removal half fails — the doc stays in BOTH folders.
+        return Promise.resolve(new Response('boom', { status: 500 }));
+      }
+      if (url.includes('/documents/d1/folders')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ doc_id: 'd1', folders: ['default'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
     });
-    expect(deleteActive).toBeDefined();
+
+    renderTab(
+      <DocumentsTab
+        {...props}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    );
+    await screen.findByTestId('document-folders-modal');
+    await screen.findByRole('option', { name: 'Sandbox (sandbox)' });
+    await userEvent.selectOptions(screen.getByLabelText('Target folder'), 'sandbox');
+    await userEvent.click(screen.getByTestId('document-folder-move'));
+
+    await waitFor(() =>
+      expect(props.onAddToast).toHaveBeenCalledWith(
+        'Move incomplete — copied, not removed',
+        expect.stringContaining('now in both folders'),
+      ),
+    );
   });
 
   it('requires explicit confirmation before removing the last folder membership', async () => {

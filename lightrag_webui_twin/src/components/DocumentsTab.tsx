@@ -1256,20 +1256,36 @@ function DocumentFoldersDialog({
     if (memberships.isError) return;
     if (!selectedTargetFolder) return;
     if (!currentMemberships.includes(activeFolder)) return;
-    // Add to the target FIRST so the document is never folderless mid-move
-    // (which would trip the last-membership physical delete), THEN unshare it
-    // from the active folder. Both are membership edges — no re-ingestion.
-    await addFolder.mutateAsync({
-      docId: doc.doc_id,
-      folderId: selectedTargetFolder,
-    });
-    await removeFolder.mutateAsync({
-      docId: doc.doc_id,
-      folderId: activeFolder,
-    });
+    const targetLabel = folderLabel(folderList, selectedTargetFolder);
+    // A move is two membership edges: add the target FIRST so the document is
+    // never folderless mid-move (which would trip the last-membership physical
+    // delete), THEN unshare from the active folder. If the copy lands but the
+    // removal fails, the doc is now in BOTH folders — surface that exact partial
+    // state so the operator knows to retry the removal, never a generic error.
+    let copied = false;
+    try {
+      await addFolder.mutateAsync({
+        docId: doc.doc_id,
+        folderId: selectedTargetFolder,
+      });
+      copied = true;
+      await removeFolder.mutateAsync({
+        docId: doc.doc_id,
+        folderId: activeFolder,
+      });
+    } catch {
+      onAddToast(
+        copied ? 'Move incomplete — copied, not removed' : 'Move failed',
+        copied
+          ? `${doc.file_path} was copied to ${targetLabel} but could NOT be removed from ${activeLabel}; it is now in both folders. Retry the removal from ${activeLabel}.`
+          : `Could not move ${doc.file_path} to ${targetLabel}. Nothing changed.`,
+      );
+      onClose();
+      return;
+    }
     onAddToast(
       'Document moved to folder',
-      `${doc.file_path} moved from ${activeLabel} to ${folderLabel(folderList, selectedTargetFolder)}.`,
+      `${doc.file_path} moved from ${activeLabel} to ${targetLabel}.`,
     );
     onClose();
   };
