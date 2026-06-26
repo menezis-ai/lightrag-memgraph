@@ -16,7 +16,7 @@ test.describe('Documents RC-1 persistence', () => {
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
     await expect(page.getByRole('dialog', { name: 'Retag document' })).toBeVisible();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
     await expect(page.getByRole('status')).toContainText('Tag memgraph applied');

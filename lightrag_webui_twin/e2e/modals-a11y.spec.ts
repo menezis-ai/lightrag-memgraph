@@ -52,7 +52,7 @@ test.describe('Modal dialogs a11y contract', () => {
     // pressSequentially (real per-key events) — fill() set the value
     // atomically and masked the bug.
     await page.getByRole('button', { name: 'Add source' }).click();
-    const input = page.getByRole('textbox', { name: 'Tag input' });
+    const input = page.getByRole('combobox', { name: 'Tag input' });
     await input.click();
     await input.pressSequentially('rman', { delay: 40 });
     await expect(input).toHaveValue('rman');
@@ -88,7 +88,7 @@ test.describe('Modal dialogs a11y contract', () => {
 
     // Escape inside the tag input only clears the draft text (autocomplete
     // UX); a second Escape from outside the input closes the dialog.
-    const tagInput = page.getByRole('textbox', { name: 'Tag input' });
+    const tagInput = page.getByRole('combobox', { name: 'Tag input' });
     await tagInput.fill('memgraph');
     await tagInput.press('Escape');
     await expect(tagInput).toHaveValue('');

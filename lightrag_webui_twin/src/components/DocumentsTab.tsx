@@ -753,6 +753,7 @@ export function DocumentsTab({
                   }
                 }}
                 placeholder="tag…"
+                role="combobox"
                 aria-label="Add tag filter"
                 aria-autocomplete="list"
                 aria-controls={tagListboxId}
@@ -1100,6 +1101,108 @@ function folderLabel(folders: readonly Folder[], id: string): string {
   return folder ? `${folder.kb} (${folder.id})` : id;
 }
 
+function removeFolderButtonLabel(
+  isLastMembership: boolean,
+  destructiveArmed: boolean,
+  activeFolder: string,
+): string {
+  if (!isLastMembership) return `Remove from ${activeFolder}`;
+  return destructiveArmed ? 'Confirm permanent delete' : 'Delete permanently';
+}
+
+function DocumentFoldersBody({
+  memberships,
+  currentMemberships,
+  availableFolders,
+  selectedTargetFolder,
+  isLastMembership,
+  remainingAfterActiveRemoval,
+  folderList,
+  doc,
+  activeLabel,
+  addPending,
+  onTargetChange,
+}: Readonly<{
+  memberships: { isLoading: boolean; isError: boolean };
+  currentMemberships: readonly string[];
+  availableFolders: readonly Folder[];
+  selectedTargetFolder: string;
+  isLastMembership: boolean;
+  remainingAfterActiveRemoval: readonly string[];
+  folderList: readonly Folder[];
+  doc: Document;
+  activeLabel: string;
+  addPending: boolean;
+  onTargetChange: (id: string) => void;
+}>) {
+  if (memberships.isLoading) {
+    return <p>Loading memberships...</p>;
+  }
+  if (memberships.isError) {
+    return (
+      <div className="callout danger" role="alert">
+        Memberships could not be loaded. Add/remove actions are disabled because
+        the UI cannot safely determine whether removing from{' '}
+        <strong>{activeLabel}</strong> would unshare the document or permanently
+        delete it.
+      </div>
+    );
+  }
+  return (
+    <>
+      <p>
+        Current memberships:{' '}
+        <strong>
+          {currentMemberships
+            .map((folder) => folderLabel(folderList, folder))
+            .join(', ')}
+        </strong>
+      </p>
+      <label className="field">
+        <span>Add to folder</span>
+        <select
+          value={selectedTargetFolder}
+          onChange={(e) => onTargetChange(e.target.value)}
+          disabled={availableFolders.length === 0 || addPending}
+          aria-label="Target folder"
+        >
+          {availableFolders.length === 0 ? (
+            <option value="">Already shared to every folder</option>
+          ) : (
+            availableFolders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.kb} ({folder.id})
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+      <div className="callout">
+        {isLastMembership ? (
+          <p>
+            Removing from <strong>{activeLabel}</strong> removes the last folder
+            membership for <strong>{doc.file_path}</strong>. This will
+            permanently delete the document, chunks, entities and relations from
+            LightRAG/Memgraph.
+          </p>
+        ) : (
+          <p>
+            Removing from <strong>{activeLabel}</strong> only unshares the
+            document from the folder you are currently viewing. It remains
+            available in{' '}
+            <strong>
+              {remainingAfterActiveRemoval
+                .map((folder) => folderLabel(folderList, folder))
+                .join(', ')}
+            </strong>
+            {'.'}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
 function DocumentFoldersDialog({
   doc,
   activeFolder,
@@ -1210,68 +1313,19 @@ function DocumentFoldersDialog({
           <p>
             Active folder: <strong>{activeLabel}</strong>
           </p>
-          {memberships.isLoading ? (
-            <p>Loading memberships...</p>
-          ) : memberships.isError ? (
-            <div className="callout danger" role="alert">
-              Memberships could not be loaded. Add/remove actions are disabled
-              because the UI cannot safely determine whether removing from{' '}
-              <strong>{activeLabel}</strong> would unshare the document or
-              permanently delete it.
-            </div>
-          ) : (
-            <>
-              <p>
-                Current memberships:{' '}
-                <strong>
-                  {currentMemberships
-                    .map((folder) => folderLabel(folderList, folder))
-                    .join(', ')}
-                </strong>
-              </p>
-              <label className="field">
-                <span>Add to folder</span>
-                <select
-                  value={selectedTargetFolder}
-                  onChange={(e) => setTargetFolder(e.target.value)}
-                  disabled={availableFolders.length === 0 || addFolder.isPending}
-                  aria-label="Target folder"
-                >
-                  {availableFolders.length === 0 ? (
-                    <option value="">Already shared to every folder</option>
-                  ) : (
-                    availableFolders.map((folder) => (
-                      <option key={folder.id} value={folder.id}>
-                        {folder.kb} ({folder.id})
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
-              <div className="callout">
-                {isLastMembership ? (
-                  <p>
-                    Removing from <strong>{activeLabel}</strong> removes the last
-                    folder membership for <strong>{doc.file_path}</strong>. This
-                    will permanently delete the document, chunks, entities and
-                    relations from LightRAG/Memgraph.
-                  </p>
-                ) : (
-                  <p>
-                    Removing from <strong>{activeLabel}</strong> only unshares the
-                    document from the folder you are currently viewing. It
-                    remains available in{' '}
-                    <strong>
-                      {remainingAfterActiveRemoval
-                        .map((folder) => folderLabel(folderList, folder))
-                        .join(', ')}
-                    </strong>
-                    .
-                  </p>
-                )}
-              </div>
-            </>
-          )}
+          <DocumentFoldersBody
+            memberships={memberships}
+            currentMemberships={currentMemberships}
+            availableFolders={availableFolders}
+            selectedTargetFolder={selectedTargetFolder}
+            isLastMembership={isLastMembership}
+            remainingAfterActiveRemoval={remainingAfterActiveRemoval}
+            folderList={folderList}
+            doc={doc}
+            activeLabel={activeLabel}
+            addPending={addFolder.isPending}
+            onTargetChange={setTargetFolder}
+          />
         </div>
         <div className="modal-footer">
           <button type="button" className="btn" onClick={onClose}>
@@ -1301,11 +1355,11 @@ function DocumentFoldersDialog({
             onClick={() => void removeFromActiveFolder()}
             data-testid="document-folder-remove-active"
           >
-            {isLastMembership
-              ? destructiveArmed
-                ? 'Confirm permanent delete'
-                : 'Delete permanently'
-              : `Remove from ${activeFolder}`}
+            {removeFolderButtonLabel(
+              isLastMembership,
+              destructiveArmed,
+              activeFolder,
+            )}
           </button>
         </div>
       </dialog>

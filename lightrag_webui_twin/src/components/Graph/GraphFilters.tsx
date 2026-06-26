@@ -187,7 +187,7 @@ export function FilterPicker({
   const boxRef = useRef<HTMLDivElement>(null);
   const listId =
     listboxId ??
-    `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-filter-suggestions`;
+    `${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}-filter-suggestions`;
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -258,6 +258,7 @@ export function FilterPicker({
             className="kg-picker-input"
             value={query}
             placeholder={placeholder}
+            role="combobox"
             aria-label={label}
             aria-autocomplete="list"
             aria-expanded={open && results.length > 0}

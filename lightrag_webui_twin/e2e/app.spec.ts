@@ -43,7 +43,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
     await expect(page.getByRole('dialog', { name: 'Retag document' })).toBeVisible();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await expect(page.getByTestId('preview-impact')).toContainText('Adding');
     await page.getByRole('button', { name: 'Apply tag' }).click();
@@ -458,7 +458,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await setMswScenario(page, { bulkRetagStatus: 500 });
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
     await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
@@ -840,7 +840,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await setMswScenario(page, { bulkRetagStatus: 413 });
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
     await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
@@ -868,7 +868,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel('Select all visible').check();
     await expect(page.getByLabel('Bulk actions')).toContainText('50 selected');
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 50 sources/ }).click();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
     await expect(page.getByRole('alert')).toContainText('Tag mutation failed');

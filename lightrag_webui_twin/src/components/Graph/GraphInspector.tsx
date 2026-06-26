@@ -1197,6 +1197,7 @@ export function TagAttrEditor({
             }
           }}
           placeholder="Add tag…"
+          role="combobox"
           aria-label="Add node tag"
           aria-autocomplete="list"
           aria-expanded={suggestions.length > 0}

@@ -46,7 +46,7 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
       .getByRole('button', { name: /Retag 1 sources/ })
       .click();
     await expect(page.getByRole('dialog', { name: 'Retag document' })).toBeVisible();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('argo');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('argo');
     await expect(page.getByTestId('sugg-argocd')).toContainText('argocd');
     await page.getByTestId('sugg-argocd').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();

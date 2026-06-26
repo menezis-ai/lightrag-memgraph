@@ -674,6 +674,7 @@ export function AddSourceModal({
                   }
                 }}
                 placeholder={tags.length ? '' : 'Search tags…'}
+                role="combobox"
                 aria-label="Tag input"
                 aria-autocomplete="list"
                 aria-expanded={tagSugg.length > 0}

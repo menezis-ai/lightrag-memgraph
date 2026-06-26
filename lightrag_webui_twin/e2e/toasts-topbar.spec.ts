@@ -21,7 +21,7 @@ test.describe('Toast lifecycle', () => {
       .getByLabel('Bulk actions')
       .getByRole('button', { name: /Retag 1 sources/ })
       .click();
-    await page.getByRole('textbox', { name: 'Tag input' }).fill('memgraph');
+    await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
 

@@ -430,6 +430,7 @@ function RetagModalBody({
                 }
               }}
               placeholder="Start typing — autocomplete from tags"
+              role="combobox"
               aria-label="Tag input"
               aria-autocomplete="list"
               aria-expanded={sugg.length > 0}
