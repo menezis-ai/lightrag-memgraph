@@ -330,6 +330,7 @@ export function ActivityTab({
                 <ActivityRow
                   key={e.id}
                   e={e}
+                  folder={(e.meta?.folder as string) || folderLabel}
                   selected={!!selected && selected.id === e.id}
                   onClick={() => setSelectedId(e.id)}
                 />
@@ -350,6 +351,7 @@ export function ActivityTab({
 
       <ActivityDetail
         e={selected}
+        folder={(selected?.meta?.folder as string) || folderLabel}
         onPushToast={onPushToast}
         onNavigate={onNavigate}
       />
@@ -462,11 +464,12 @@ export function ActivityTab({
 
 interface ActivityRowProps {
   e: ActivityEvent;
+  folder: string;
   selected: boolean;
   onClick: () => void;
 }
 
-function ActivityRow({ e, selected, onClick }: Readonly<ActivityRowProps>) {
+function ActivityRow({ e, folder, selected, onClick }: Readonly<ActivityRowProps>) {
   const m = resolveKindMeta(e.kind);
   return (
     <button
@@ -483,6 +486,10 @@ function ActivityRow({ e, selected, onClick }: Readonly<ActivityRowProps>) {
         <span className="row-line1">
           <span className="row-actor">{e.actor.user}</span>
           <span className="row-kind">{m.label}</span>
+          <span className="row-folder" title={`Folder: ${folder}`} data-testid="activity-row-folder">
+            <Icon name="folder" size={10} />
+            {folder}
+          </span>
           <span className="row-target">{e.target.label}</span>
         </span>
         <span className="row-summary">{e.summary}</span>
@@ -494,11 +501,12 @@ function ActivityRow({ e, selected, onClick }: Readonly<ActivityRowProps>) {
 
 interface ActivityDetailProps {
   e: ActivityEvent | null;
+  folder: string;
   onPushToast?: (toast: Omit<Toast, 'id'>) => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
-function ActivityDetail({ e, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
+function ActivityDetail({ e, folder, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
   const [copied, setCopied] = useState(false);
   if (!e) {
     return (
@@ -544,6 +552,10 @@ function ActivityDetail({ e, onPushToast, onNavigate }: Readonly<ActivityDetailP
         <div className="kv">
           <span>Timestamp</span>
           <code>{e.ts}</code>
+        </div>
+        <div className="kv">
+          <span>Folder</span>
+          <code data-testid="activity-detail-folder">{folder}</code>
         </div>
         <div className="kv">
           <span>Relative</span>

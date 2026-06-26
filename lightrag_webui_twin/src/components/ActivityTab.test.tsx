@@ -56,6 +56,13 @@ describe('ActivityTab — rendering', () => {
     expect(t).toMatch(/3\s*warnings/);
     expect(t).toMatch(/4\s*retrievals/);
   });
+
+  it('shows the folder on every activity row (active folder fallback)', () => {
+    render(<ActivityTab {...defaultProps()} folderLabel="cib" />);
+    const chips = screen.getAllByTestId('activity-row-folder');
+    expect(chips).toHaveLength(16);
+    chips.forEach((chip) => expect(chip).toHaveTextContent('cib'));
+  });
 });
 
 describe('ActivityTab — filters', () => {
