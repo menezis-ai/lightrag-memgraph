@@ -1,29 +1,39 @@
 # Twin KMS
 
-Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**.
+Memgraph-backed runtime for [LightRAG](https://github.com/HKUDS/LightRAG), without
+modifying LightRAG source code.
 
-LightRAG already ships with a built-in `MemgraphStorage` for the **graph** layer. This package fills the remaining 3 slots (KV, Vector, DocStatus) so that an entire LightRAG instance can run on a single Memgraph database.
+LightRAG already ships a graph backend for Memgraph (`MemgraphStorage`). This
+package fills the three other storage slots (`KV`, `Vector`, `DocStatus`) and, in
+the full Twin runtime, adds:
 
-**Version 1.0.0** ships the complete Twin runtime: the storage backends, a FastAPI server overlay (`/twin/api/*` — folders, tags governance, activity, knowledge-graph CRUD, structured query) and an embedded operator WebUI served at `/webui` (pre-built, no Node toolchain required on the host). Everything activates through a single `register()` call. Three production entrypoints are available depending on the launcher:
+- a FastAPI overlay under `/twin/api`;
+- an operator WebUI served from the package build;
+- folder-based cloisonnement on top of one physical LightRAG/Memgraph workspace;
+- tag governance, activity, notifications, graph CRUD, structured query, API keys,
+  quota, auth shims, and optional MIP classification gates.
 
-- `python twin_main.py` — reference entrypoint, `register(...)` is called with explicit flags then `lightrag_server.main()` runs.
-- `python -m twindb_lightrag_memgraph.lightrag_server` — BNP container entrypoint, importable as a module so the production `Dockerfile`'s `ENTRYPOINT` is `-m`-launchable.
-- `gunicorn 'twindb_lightrag_memgraph.asgi:get_application()' -k uvicorn.workers.UvicornWorker` (or `uvicorn --factory twindb_lightrag_memgraph.asgi:get_application`) — for launchers that import the app once per worker; overlay activation is env-driven via `TWIN_REPLACE_UI` / `TWIN_MOUNT_SERVER` / `TWIN_SHIM_NATIVE_ROUTES`.
+`register()` is the activation point. It patches LightRAG registries and optional
+runtime surfaces before the LightRAG app or instance is created.
 
-See `Dockerfile.example` for the minimal image wiring and `ENV_VARIABLES.txt` for the full configuration reference.
+Maintainer handover: [docs/technical-maintainer-guide.md](docs/technical-maintainer-guide.md)
+is the technical guide for architecture, request flows, tests, and bus-factor
+reduction.
 
-## Why this exists
+## Status
 
-LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to module paths. The registry is hardcoded at import time and does not support third-party packages out of the box. This package works around that by monkey-patching the three registry dicts at runtime via a single `register()` call, before LightRAG is instantiated.
+Project version: `1.0.0`.
 
-## Requirements
+Production target:
 
-- Python >= 3.10
-- Memgraph >= 3.2 with [MAGE](https://memgraph.com/docs/mage) (for `vector_search.search()`)
-- `lightrag-hku >= 1.4.9, < 2.0.0`
-- `neo4j >= 5.0.0, < 7.0.0` (Bolt driver, compatible with Memgraph)
+- LightRAG: `lightrag-hku==1.4.9.11`
+- Memgraph MAGE: `3.9.0`
+- Forward-compat CI: LightRAG `1.4.11` / `1.4.12`, Memgraph MAGE `3.10.1`
 
-### Tested compatibility matrix
+The public GitHub workflow is intentionally reduced. The compatibility gate is
+Forgejo CI in `.forgejo/workflows/ci.yml`.
+
+## Compatibility Matrix
 
 | | Memgraph MAGE 3.9.0 | Memgraph MAGE 3.10.1 |
 |---|:-:|:-:|
@@ -31,73 +41,66 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 | **LightRAG 1.4.11** | OK | OK |
 | **LightRAG 1.4.12** | OK | OK |
 
-Forgejo CI (`.forgejo/workflows/ci.yml`) runs this matrix on the bunker
-runner for pushes/PRs targeting `main` and `stable/**`. The public GitHub
-mirror only carries a reduced WebUI workflow, so GitHub checks alone are not
-the compatibility gate. Memgraph MAGE `3.9.0` is the current production target
-(BNP rolled back from `3.10.1` on 2026-06-19); `3.10.1` is kept as
-forward-compat coverage (3.11 imminent). Both are pinned explicitly so a
-rolling `latest` tag cannot silently move the coverage point. LightRAG
-`1.4.10` is excluded due to a transient timing regression under integration
-load, fixed upstream in `1.4.11+`; Memgraph 3.7/3.8 columns were dropped once
-no deployment used them.
+Forgejo CI runs:
 
-## Installation
+- unit tests on Python `3.10` / `3.11` / `3.12` / `3.13` across the LightRAG
+  matrix;
+- integration tests across the LightRAG matrix and Memgraph `3.9.0` / `3.10.1`;
+- WebUI lint, typecheck, unit tests, build, MSW Playwright e2e, and real-backend
+  Playwright smoke.
 
-```bash
-pip install -e .
+`1.4.10` is deliberately excluded because it had intermittent integration-load
+failures fixed upstream in `1.4.11+`. Memgraph `latest` is deliberately not used:
+CI pins the coverage points.
 
-# With test dependencies
-pip install -e ".[test]"
-```
+## Install
 
-Production container builds use a reproducible constraints file pinned to the
-current BNP target (`lightrag-hku==1.4.9.11`):
-
-```bash
-pip install -c requirements/constraints-prod.txt \
-    -e ".[server,intelligence,tracing]"
-```
-
-For CI/dev compatibility runs, keep the LightRAG version explicit and apply the
-security floor constraints:
+For local development with the server and tests:
 
 ```bash
 pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==1.4.12"
 pip install -c requirements/constraints-dev.txt -e ".[server,intelligence,test]"
 ```
 
-Refresh `requirements/constraints-prod.txt` after dependency updates with:
+For the reproducible production target:
 
 ```bash
-uv pip compile pyproject.toml --extra intelligence --extra server --extra tracing \
-    --python-version 3.12 --constraints requirements/prod-target.txt \
-    -o requirements/constraints-prod.txt
+pip install -c requirements/constraints-prod.txt \
+  -e ".[server,intelligence,tracing]"
 ```
 
-### Production Auth Posture
-
-The default remains LightRAG-compatible open access when no auth backend is
-configured. Exposed deployments should opt into fail-closed startup by setting
-either:
+`requirements/prod-target.txt` pins the BNP production LightRAG baseline.
+Refresh the resolved production constraints only as part of an explicit dependency
+update:
 
 ```bash
-TWIN_ENV=production
-# or
-TWIN_REQUIRE_AUTH=true
+uv pip compile pyproject.toml \
+  --extra intelligence --extra server --extra tracing \
+  --python-version 3.12 \
+  --constraints requirements/prod-target.txt \
+  -o requirements/constraints-prod.txt
 ```
 
-In that mode, startup requires one of `LIGHTRAG_API_KEY`,
-`LIGHTRAG_JWT_SECRET` / `TOKEN_SECRET`, or `TWIN_IDP_JWKS_URL`. Local HS JWT
-secrets must be at least 32 bytes, and `LIGHTRAG_JWT_PASSWORD` /
-`AUTH_ACCOUNTS` cannot use the default `changeme` password.
+The base package depends only on `lightrag-hku` and the Neo4j Bolt driver. The
+runtime extras are:
 
-## Quick start
+| Extra | Purpose |
+|---|---|
+| `server` | FastAPI/uvicorn runtime and LightRAG upload dependencies. |
+| `intelligence` | OpenAI/Pydantic settings for the Twin intelligence layer. |
+| `tracing` | LangSmith tracing integration. |
+| `test` | Core pytest/httpx/fastapi test dependencies. |
+| `test-server` / `test-intelligence` | Focused test extras for server or intelligence suites. |
+| `all` | Runtime extras (`server`, `intelligence`, `tracing`). |
+
+## Quick Start
+
+Storage-only usage:
 
 ```python
 from twindb_lightrag_memgraph import register
 
-register()  # Call ONCE before instantiating LightRAG
+register()  # Call before constructing LightRAG.
 
 from lightrag import LightRAG
 
@@ -105,104 +108,11 @@ rag = LightRAG(
     kv_storage="MemgraphKVStorage",
     vector_storage="MemgraphVectorDBStorage",
     doc_status_storage="MemgraphDocStatusStorage",
-    graph_storage="MemgraphStorage",  # Built-in, not from this package
-    # ...
+    graph_storage="MemgraphStorage",  # LightRAG's built-in graph backend.
 )
 ```
 
-## Configuration
-
-All backends read their connection settings from environment variables (`os.environ`). Compatible with HashiCorp Vault agent injection, Kubernetes secrets, and systemd `EnvironmentFile`.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MEMGRAPH_URI` | Yes | `bolt://localhost:7687` | Bolt endpoint. `bolt+s://` for TLS (direct). `neo4j+s://` for TLS with routing protocol (Enterprise cluster). |
-| `MEMGRAPH_USERNAME` | No | `""` | Auth username (empty = no auth) |
-| `MEMGRAPH_PASSWORD` | No | `""` | Auth password |
-| `MEMGRAPH_DATABASE` | No | `"memgraph"` | Database name passed to the Bolt driver. Enterprise supports multi-database. |
-| `MEMGRAPH_WORKSPACE` | No | `"base"` | LightRAG/Memgraph workspace prefix in node labels for storage isolation (e.g., `KV_{workspace}_chunks`). This is not the Twin user-facing Folder. |
-| `MEMGRAPH_WRITE_CONCURRENCY` | No | `10` | Max concurrent write operations (upsert/delete/drop). Prevents Bolt pool saturation during bulk uploads. |
-| `MEMGRAPH_POOL_SIZE` | No | `50` | Write pool size (max Bolt connections for write operations) |
-| `MEMGRAPH_READ_POOL_SIZE` | No | `20` | Read pool size (dedicated read-only Bolt connections, isolated from writes) |
-| `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | No | `5.0` | Seconds to wait for a free connection before failing (applies to both pools) |
-| `TWIN_DEFAULT_FOLDER` | No | `default` | Default Twin Folder id. Used as a fallback for `MEMGRAPH_WORKSPACE` resolution when no LightRAG workspace is set. |
-| `TWIN_DEFAULT_FOLDER_LABEL` | No | `Default folder` | Display label for the default Folder when no explicit Folder catalog is provided. |
-| `TWIN_FOLDERS_JSON` | No | (empty) | JSON array defining the available Twin Folders. See [Twin Folders](#twin-folders). |
-| `TWIN_MAX_FOLDERS` | No | `5` | Maximum number of configured runtime Folders. The implementation clamps this to 1..5. |
-| `TWIN_FOLDERS_RUNTIME_FILE` | No | (empty) | Optional JSON file used to persist runtime-created Folders across process restarts. |
-| `TWIN_API_BASE_URL` | No | `/twin/api` | Runtime API base injected into the React WebUI for Twin overlay routes. |
-| `TWIN_LIGHTRAG_BASE_URL` | No | `""` | Runtime API base injected into the React WebUI for native LightRAG routes (`/documents`, `/health`, `/pipeline_status`, etc.). |
-| `TWIN_MIP_LABEL_MAP` | No | (empty) | Path to a JSON file mapping Microsoft Information Protection label GUIDs to tenant classes (e.g. `C1`/`C2`/`C3`/`C4`). See [Classification](#classification-microsoft-information-protection). |
-| `TWIN_MIP_MAX_CLASSIFICATION` | No | `C2` | Maximum allowed class for ingested documents. Files with a mapped class outranking this are refused at the pre-insert hook. Detected MIP labels missing from the tenant map resolve to `UNKNOWN` and are treated as above the ceiling; files with no exploitable classification signal are accepted by default. |
-
-## Twin Folders
-
-The product concept is **Folder**. The preferred public contract is now:
-`TWIN_DEFAULT_FOLDER`, `TWIN_FOLDERS_JSON`, `X-Twin-Folder`, runtime config
-fields `defaultFolderId` / `folders` / `maxFolders`, and `/twin/api/folders`.
-
-There are two different isolation concepts:
-
-- **LightRAG workspace**: storage-level namespace used in Memgraph labels such
-  as `KV_base_chunks`, `Vec_base_entities`, and `DocStatus_base`. It is resolved
-  from `MEMGRAPH_WORKSPACE`, then `WORKSPACE`, then `TWIN_DEFAULT_FOLDER`, then
-  `base`.
-- **Twin Folder**: operator-facing subdivision exposed in the WebUI switcher
-  and Twin overlay API. It scopes WebUI data, document metadata, tags, activity,
-  notifications, and runtime catalog entries.
-
-Minimal single-Folder deployment:
-
-```bash
-TWIN_DEFAULT_FOLDER=Main
-TWIN_DEFAULT_FOLDER_LABEL="Main Knowledge Folder"
-```
-
-Explicit multi-Folder catalog:
-
-```bash
-TWIN_DEFAULT_FOLDER=Main
-TWIN_MAX_FOLDERS=5
-TWIN_FOLDERS_JSON='[
-  {"id":"main","label":"Main Knowledge Folder","kind":"primary","description":"Production KB"},
-  {"id":"sandbox","label":"Sandbox Folder","kind":"sandbox","description":"Operator test area"}
-]'
-```
-
-Folders are created by deployment configuration first. Runtime creation through
-`POST /twin/api/folders` is available for admin users, and persists only when
-`TWIN_FOLDERS_RUNTIME_FILE` points to a writable JSON file. In restricted
-deployments, prefer `TWIN_FOLDERS_JSON` for audited, reproducible provisioning.
-
-Fresh runtime initialization is clean by default when the Twin overlay is
-mounted with Memgraph stores: documents, tags, activity, notifications, and
-graph projections start empty unless real LightRAG/Memgraph data or operator
-mutations exist. Demo fixtures are still available only through explicit
-`webui_stores="seed"` / in-memory settings for local demos and tests.
-
-The browser sends the active Folder on every API call using `X-Twin-Folder`.
-The backend only reads `X-Twin-Folder` for the Twin overlay; LightRAG
-`workspace` remains a separate storage namespace, not an operator-facing
-Folder selector.
-
-Folder administration uses `/twin/api/folders`:
-
-| Method | Route | Purpose |
-|---|---|---|
-| `GET` | `/twin/api/folders` | List configured Folders. |
-| `POST` | `/twin/api/folders` | Create a runtime Folder. Requires admin scope. |
-| `PATCH` | `/twin/api/folders/{folder_id}` | Update a runtime Folder label/kind/description. |
-| `DELETE` | `/twin/api/folders/{folder_id}` | Delete an empty runtime Folder. Env-seeded Folders cannot be deleted through the API. |
-
-## Twin WebUI and API routes
-
-Calling `register(replace_ui=True, mount_server=True, shim_native_routes=True)`
-extends a host LightRAG FastAPI app without patching LightRAG source files:
-
-- replaces the bundled WebUI with the React Twin WebUI;
-- mounts the Twin overlay under `/twin/api`;
-- adds native-route shims so the React port can call stable document routes;
-- captures the host `LightRAG` instance so Twin query endpoints use the same KB.
+Full Twin overlay usage:
 
 ```python
 from twindb_lightrag_memgraph import register
@@ -216,471 +126,350 @@ register(
 )
 ```
 
-Core native/shimmed routes used by the WebUI:
+Production-style entrypoints:
+
+```bash
+# Reference script.
+python twin_main.py
+
+# BNP container entrypoint.
+python -m twindb_lightrag_memgraph.lightrag_server
+
+# Import-string launcher.
+gunicorn 'twindb_lightrag_memgraph.asgi:get_application()' \
+  -k uvicorn.workers.UvicornWorker
+```
+
+When using the import-string launcher, enable overlays through env vars:
+
+```bash
+TWIN_REPLACE_UI=true
+TWIN_MOUNT_SERVER=true
+TWIN_SHIM_NATIVE_ROUTES=true
+```
+
+## Configuration
+
+The storage backends read Memgraph connection settings directly from environment
+variables:
+
+| Variable | Default | Description |
+|---|---:|---|
+| `MEMGRAPH_URI` | `bolt://localhost:7687` | Bolt endpoint. Use `bolt+s://` or `neo4j+s://` for TLS. |
+| `MEMGRAPH_USERNAME` | empty | Memgraph username. |
+| `MEMGRAPH_PASSWORD` | empty | Memgraph password. |
+| `MEMGRAPH_DATABASE` | `memgraph` | Database name. Enterprise can route by database; Community falls back gracefully. |
+| `MEMGRAPH_WORKSPACE` | `base` fallback | Physical LightRAG/Memgraph workspace label prefix. |
+| `MEMGRAPH_POOL_SIZE` | `50` | Write pool size. |
+| `MEMGRAPH_READ_POOL_SIZE` | `20` | Dedicated read pool size. |
+| `MEMGRAPH_WRITE_CONCURRENCY` | `8` | Write semaphore limit. |
+| `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | `5.0` | Seconds to wait for a Bolt connection. |
+
+Common Twin runtime variables:
+
+| Variable | Purpose |
+|---|---|
+| `TWIN_DEFAULT_FOLDER` | Default logical folder id. Also used as a fallback workspace value when no LightRAG workspace env is set. |
+| `TWIN_DEFAULT_FOLDER_LABEL` | Display label for the default folder. |
+| `TWIN_FOLDERS_JSON` | JSON folder catalog. Prefer this for audited provisioning. |
+| `TWIN_MAX_FOLDERS` | Runtime folder cap, clamped by the implementation. |
+| `TWIN_FOLDERS_RUNTIME_FILE` | Optional JSON file for runtime-created folders. |
+| `TWIN_API_BASE_URL` | WebUI base for Twin overlay routes, usually `/twin/api`. |
+| `TWIN_LIGHTRAG_BASE_URL` | WebUI base for native/shimmed LightRAG routes. |
+| `TWIN_MIP_LABEL_MAP` | Tenant MIP GUID-to-class map. |
+| `TWIN_MIP_MAX_CLASSIFICATION` | Maximum accepted class, default `C2`. |
+
+`ENV_VARIABLES.txt` is the full reference.
+
+## Auth
+
+The default matches LightRAG: if no auth backend is configured, access is open and
+the server logs a warning.
+
+Configure one or more auth backends before exposing a deployment:
+
+- static bearer token: `LIGHTRAG_API_KEY`;
+- local JWT login: `LIGHTRAG_JWT_SECRET` or `TOKEN_SECRET`, plus
+  `LIGHTRAG_JWT_PASSWORD` or `AUTH_ACCOUNTS`;
+- IdP/JWKS validation: `TWIN_IDP_JWKS_URL` and claim mapping env vars.
+
+Fail-closed startup is opt-in:
+
+```bash
+TWIN_REQUIRE_AUTH=true
+# or
+TWIN_ENV=production
+```
+
+In fail-closed mode, startup requires an API key, a JWT secret, or an IdP config.
+Default `changeme` local-login passwords are rejected only in that strict mode; in
+LightRAG-parity mode they warn but do not crash the process.
+
+Admin folder operations are gated through `require_admin_user`; with an active IdP,
+that means the configured `admin:folders` gateway scope/group mapping.
+
+## Folder Model
+
+There are two separate concepts:
+
+- **workspace**: the physical LightRAG/Memgraph namespace used in labels such as
+  `KV_base_chunks`, `Vec_base_entities`, `DocStatus_base`;
+- **folder**: the operator-facing logical cloisonnement used by the WebUI and Twin
+  API.
+
+Folders are not just UI filters. A document is stored once as a
+`DocStatus_{workspace}` node and can belong to multiple folders through
+`MEMBER_OF`:
+
+```cypher
+(:DocStatus_base {id: "doc-1", content_hash: "..."})
+  -[:MEMBER_OF]->(:Folder_base {id: "default"})
+
+(:DocStatus_base {id: "doc-1", content_hash: "..."})
+  -[:MEMBER_OF]->(:Folder_base {id: "sandbox"})
+```
+
+Folder-scoped reads traverse membership. This applies to document lists/counts,
+query grounding, KG expansion, WebUI graph `source_docs`, tags/counters, frontend
+caches, and duplicate-upload sharing. The legacy `folder` property is still
+dual-written as a migration safety net; membership is the authoritative model.
+
+Minimal folder config:
+
+```bash
+TWIN_DEFAULT_FOLDER=default
+TWIN_DEFAULT_FOLDER_LABEL="Default"
+```
+
+Explicit catalog:
+
+```bash
+TWIN_DEFAULT_FOLDER=default
+TWIN_FOLDERS_JSON='[
+  {"id":"default","label":"Default","kind":"primary"},
+  {"id":"sandbox","label":"Sandbox","kind":"sandbox"}
+]'
+```
+
+Folder administration routes:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/twin/api/folders` | List folders. |
+| `POST` | `/twin/api/folders` | Create a runtime folder. Admin-gated. |
+| `PATCH` | `/twin/api/folders/{folder_id}` | Update runtime folder metadata. |
+| `DELETE` | `/twin/api/folders/{folder_id}` | Delete an empty runtime folder. Env-seeded folders are not deleted through the API. |
+| `GET` | `/twin/api/documents/{doc_id}/folders` | List memberships for a visible document. Admin-gated. |
+| `POST` | `/twin/api/documents/{doc_id}/folders` | Add membership. Admin-gated. |
+| `DELETE` | `/twin/api/documents/{doc_id}/folders/{folder_id}` | Remove membership; physical delete only when this was the last folder. Admin-gated. |
+
+## HTTP Surfaces
+
+Native or shimmed LightRAG routes used by the WebUI:
 
 | Method | Route | Purpose |
 |---|---|---|
 | `GET` | `/health` | Projected service health. |
-| `GET` | `/pipeline_status` | LightRAG pipeline status in the React contract shape. |
-| `GET` | `/documents` | List documents from DocStatus. |
-| `GET` | `/documents/{doc_id}/chunks` | Read chunks for one document. |
-| `POST` | `/documents/{doc_id}/scan` | Per-document scan compatibility endpoint. Currently an ack/no-op over LightRAG's global scan model. |
-| `DELETE` | `/documents/{doc_id}` | Delete one document by id through LightRAG deletion. |
-| `GET` | `/openapi` | Curated API groups for the WebUI tab. |
+| `GET` | `/ready` | Readiness check for app/dependencies. |
+| `GET` | `/pipeline_status` | Projected LightRAG pipeline status. |
+| `GET` | `/documents` | Folder-scoped document list. |
+| `GET` | `/documents/{doc_id}/chunks` | Read chunks for one visible document. |
+| `POST` | `/documents/{doc_id}/scan` | Explicit 409: per-document scan is unsupported by LightRAG. |
+| `DELETE` | `/documents/{doc_id}` | Delete through the active folder semantics. |
+| `GET` | `/openapi` | Curated WebUI API groups. |
 
-Native LightRAG routes remain available unless the host deployment disables
-them. They are useful for integrators that want the upstream contract:
+Twin overlay routes live under `/twin/api`. Main groups:
 
-| Method | Route | Purpose |
+| Group | Routes |
+|---|---|
+| Query | `/query`, `/query/stream`, `/query/data` |
+| Documents | `/documents/*`, membership endpoints, metadata, bulk delete, bulk retag, approval/rejection |
+| Folders | `/folders` |
+| Tags | `/tags`, `/tags/categories`, taxonomy import/template |
+| Graph | `/graph/entities`, `/graph/relations`, `/graph/search` |
+| Activity/notifications | `/activity`, `/notifications` |
+| Settings | `/settings/api-keys` |
+| Ops | `/quota`, `/ops/metrics`, `/health` |
+
+For route-level contracts, prefer the tests and generated OpenAPI over copying
+large tables into this README.
+
+## How It Works
+
+`register()` patches three LightRAG registry dictionaries:
+
+| Dict | Purpose | Added values |
 |---|---|---|
-| `POST` | `/query` | Native non-streaming LightRAG query. |
-| `POST` | `/query/stream` | Native LightRAG NDJSON stream. |
-| `POST` | `/query/data` | Native structured retrieval data from `LightRAG.aquery_data()`. |
-| `POST` | `/documents/upload` | Native multipart upload. |
-| `POST` | `/documents/text` | Insert one text document. |
-| `POST` | `/documents/texts` | Insert multiple text documents. |
-| `POST` | `/documents/scan` | Native global input-directory scan. |
-| `POST` | `/documents/reprocess_failed` | Requeue failed documents. |
+| `STORAGE_IMPLEMENTATIONS` | Valid class names by storage type. | `MemgraphKVStorage`, `MemgraphVectorDBStorage`, `MemgraphDocStatusStorage` |
+| `STORAGE_ENV_REQUIREMENTS` | Env vars required by storage classes. | `MEMGRAPH_URI` |
+| `STORAGES` | Class-name to module-path mapping. | Absolute `twindb_lightrag_memgraph.*` module paths |
 
-### Restricted runtime smoke test
+The module paths must be absolute because LightRAG imports them relative to the
+`lightrag` package when given relative paths.
 
-For restricted containers, a stdlib-only smoke runner is available in
-`tests/smoke`. It validates that `/webui`, local JWT authentication, native
-LightRAG routes, and Twin overlay routes are wired to the expected service.
-This is intended for developers, auditors, release engineers, and technical
-reviewers who need a reproducible runtime check without browser automation or
-external Python dependencies.
+Storage layout:
+
+| Storage | Label shape | Notes |
+|---|---|---|
+| KV | `KV_{workspace}_{namespace}` | JSON-serialized value in `data`. |
+| Vector | `Vec_{workspace}_{namespace}` | Embeddings plus MAGE vector index. |
+| DocStatus | `DocStatus_{workspace}` | Document processing state, content hash, chunks list, membership edges. |
+| Graph | `{workspace}` | Built-in LightRAG Memgraph graph backend, patched for TLS/multi-db and batched reads/writes. |
+
+Connection model:
+
+- one write Bolt pool shared by KV/Vector/DocStatus;
+- one read Bolt pool for read endpoints;
+- one separate graph pool owned by LightRAG's `MemgraphStorage`;
+- event-loop changes are detected and pools are rebuilt;
+- writes are throttled by `MEMGRAPH_WRITE_CONCURRENCY`; reads are not gated.
+
+## WebUI Build
+
+The production image builds `lightrag_webui_twin/` and embeds the `dist/` output
+into package data under `webui_dist/`. Host deployments do not need Node/Bun at
+runtime.
+
+For local frontend work:
 
 ```bash
-export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
-export ARTIFACTORY_USERNAME="..."
-export ARTIFACTORY_PASSWORD="..."
-python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
+cd lightrag_webui_twin
+npm ci
+npm run lint
+npm run typecheck
+npm run test:run
+npm run test:e2e
 ```
 
-The JSON manifest is the audit contract: it lists each expected route,
-authentication transition, status code, cookie property, and response shape.
-The runner only executes that contract against the deployed service.
-
-The runner writes `/tmp/twin-smoke-report.json` and `/tmp/twin-smoke-http.log`
-without logging credentials or bearer tokens. See `tests/smoke/README.md` for
-the manifest contract, report format, and limitations. This smoke test proves
-runtime routing and authentication wiring; it is not a replacement for unit
-tests, Playwright WebUI flows, or end-to-end ingestion/query validation.
-
-Twin overlay routes:
-
-| Method | Route | Purpose |
-|---|---|---|
-| `POST` | `/twin/api/query` | Structured non-streaming retrieval response: `{response, sources}`. |
-| `POST` | `/twin/api/query/stream` | NDJSON streaming response. Emits token events and a final sources event. |
-| `POST` | `/twin/api/query/data` | Structured retrieval data wrapper around `LightRAG.aquery_data()`. Supports the Twin `tag_filter` contract on returned data. |
-| `GET` | `/twin/api/documents/{doc_id}/metadata` | Folder, tags, review, classification, and raw metadata for one document. |
-| `POST` | `/twin/api/documents/bulk-delete` | Bulk document deletion with activity logging. |
-| `POST` | `/twin/api/documents/_bulk-retag` | Add/remove tags on documents. |
-| `POST` | `/twin/api/documents/{doc_id}/approve` | Approve a pending document in the governance flow. |
-| `POST` | `/twin/api/documents/{doc_id}/reject` | Reject a pending document in the governance flow. |
-| `GET` | `/twin/api/tags` | List governed tags. |
-| `POST` | `/twin/api/tags` | Request/create a tag. |
-| `PATCH` | `/twin/api/tags/{name}` | Edit tag definition/category/aliases. |
-| `POST` | `/twin/api/tags/{name}/approve` | Approve a requested tag. |
-| `POST` | `/twin/api/tags/{name}/reject` | Reject a requested tag. |
-| `POST` | `/twin/api/tags/{name}/deprecate` | Deprecate a tag. |
-| `POST` | `/twin/api/tags/{name}/synonyms` | Replace tag synonyms. |
-| `DELETE` | `/twin/api/tags/{name}` | Delete or migrate a tag. |
-| `GET` | `/twin/api/tags/categories` | List tag taxonomy categories. |
-| `GET` | `/twin/api/tags/categories/template` | Download the canonical category template. |
-| `POST` | `/twin/api/tags/categories/_import` | Import category taxonomy JSON. |
-| `GET` | `/twin/api/graph/entities` | List projected knowledge-graph entities. |
-| `POST` | `/twin/api/graph/entities` | Create a manual graph entity. |
-| `PATCH` | `/twin/api/graph/entities/{entity_id}` | Edit a graph entity projection. |
-| `DELETE` | `/twin/api/graph/entities/{entity_id}` | Delete a graph entity and its edges. |
-| `GET` | `/twin/api/graph/relations` | List projected knowledge-graph relations. |
-| `POST` | `/twin/api/graph/relations` | Create a manual graph relation. |
-| `PATCH` | `/twin/api/graph/relations/{rel_id}` | Edit a graph relation projection. |
-| `DELETE` | `/twin/api/graph/relations/{rel_id}` | Delete a graph relation. |
-| `GET` | `/twin/api/activity` | Audit/activity feed. |
-| `GET` | `/twin/api/notifications` | Operator notifications. |
-| `POST` | `/twin/api/notifications/read-all` | Mark notifications as read. |
-| `DELETE` | `/twin/api/notifications` | Clear notifications. |
-| `GET` | `/twin/api/thesaurus` | Tag autocomplete/thesaurus entries. |
-| `GET` | `/twin/api/health` | Twin overlay component health. |
-| `POST` | `/twin/api/auth/logout` | Logout ack and future cookie clearing hook. |
-
-## How it works
-
-### 1. Registration (`patches/registry.py`, re-exported from `__init__.py`)
-
-`register()` lives in `twindb_lightrag_memgraph.patches.registry`; `__init__.py` is a thin re-export shim that preserves the historical root import surface. It patches three dicts in `lightrag.kg`:
-
-| Dict | What it does | What we add |
-|------|-------------|-------------|
-| `STORAGE_IMPLEMENTATIONS` | Lists valid class names per storage type | `MemgraphKVStorage`, `MemgraphVectorDBStorage`, `MemgraphDocStatusStorage` |
-| `STORAGE_ENV_REQUIREMENTS` | Env vars that must exist for each backend | `MEMGRAPH_URI` for all three |
-| `STORAGES` | Maps class name to importable module path | Absolute paths like `twindb_lightrag_memgraph.kv_impl` |
-
-The module paths **must be absolute** (not relative like `lightrag.storage.xxx`) because LightRAG's `lazy_external_import` calls `importlib.import_module(path, package="lightrag")` -- relative paths would resolve against the `lightrag` package and fail.
-
-The function is idempotent (guarded by a `_registered` flag). Safe to call multiple times.
-
-### 2. Dual connection pool (`_pool.py`)
-
-Two independent `AsyncGraphDatabase` drivers (Bolt protocol) via module-level singletons: one **write pool** (`get_session()`) and one **read pool** (`get_read_session()`). All three backends share these pools.
-
-**Why dual pools?** Under heavy indexing load (bulk file uploads), write operations can saturate the write pool's connections. A dedicated read pool guarantees that read endpoints (like `get_docs_paginated`) never compete with writes for connections, eliminating 502 errors during bulk ingestion.
-
-**Event loop detection:** Both pools detect event loop changes by comparing `id(asyncio.get_running_loop())` to the loop ID at driver creation time. If the loop changed, the old driver is closed and a new one is created.
-
-**Thread safety:** A shared `threading.Lock` with double-check locking protects concurrent driver creation.
-
-**Connection acquire timeout:** Both pools apply `connection_acquisition_timeout` (default 5s, configurable via `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT`). Sessions that cannot acquire a free connection within this timeout raise an error instead of hanging indefinitely.
-
-**Protocol-aware database routing:** The pool detects the URI scheme and adapts how database selection is handled:
-
-| Scheme | Protocol | `database=` in `session()` | `USE DATABASE` in session |
-|--------|----------|:-:|:-:|
-| `bolt://`, `bolt+s://`, `bolt+ssc://` | Direct | No (stripped) | Yes |
-| `neo4j://`, `neo4j+s://`, `neo4j+ssc://` | Routing | Yes (native) | No |
-
-On **Memgraph Community** (no Enterprise license), `USE DATABASE` fails — the pool detects this on the first attempt and silently skips it for all subsequent sessions.
-
-**Write throttle:** `acquire_write_slot()` is an `asynccontextmanager` backed by an `asyncio.Semaphore` (default 10 slots, configurable via `MEMGRAPH_WRITE_CONCURRENCY`). All write operations (`upsert`, `delete`, `drop`) are wrapped with it. Read operations use `get_read_session()` from the dedicated read pool and are **never** gated.
-
-**Note:** The built-in `MemgraphStorage` (graph backend from LightRAG itself) creates its own driver independently via `_SafeDriverWrapper`. In production, this means 3 Bolt connection pools total (write + read + graph). This is by design — the graph pool handles the heavy merge/query workload and benefits from its own isolation.
-
-### 3. KV storage (`kv_impl.py`)
-
-Stores arbitrary key-value data as Cypher nodes.
-
-**Data model:**
-```
-(:KV_base_chunks {id: "chunk-001", data: '{"content": "...", "doc_id": "..."}', __created_at: "...", __updated_at: "..."})
-```
-
-- Label: `KV_{workspace}_{namespace}` (e.g., `KV_base_chunks`, `KV_base_full_documents`)
-- The value dict is serialized to a single JSON string in the `data` property
-- Index on `(id)` created at `initialize()`
-
-**Key methods:**
-
-| Method | Cypher pattern | Notes |
-|--------|---------------|-------|
-| `upsert(data)` | `UNWIND + MERGE` | Batch insert/update in a single query |
-| `get_by_id(id)` | `MATCH ... RETURN n.data` | Deserializes JSON |
-| `get_by_ids(ids)` | `UNWIND + OPTIONAL MATCH` | Preserves order, returns `None` for missing keys |
-| `filter_keys(keys)` | `OPTIONAL MATCH ... WHERE n IS NULL` | Returns keys that do NOT exist |
-| `delete(ids)` | `UNWIND + DETACH DELETE` | |
-| `drop()` | `MATCH (n) DETACH DELETE n` | Drops all nodes for this namespace |
-
-### 4. Vector storage (`vector_impl.py`)
-
-Stores embeddings with metadata, supports cosine similarity search via Memgraph MAGE.
-
-**Data model:**
-```
-(:Vec_base_entities {id: "e-paris", embedding: [0.12, 0.34, ...], entity_name: "Paris", content: "..."})
-```
-
-- Label: `Vec_{workspace}_{namespace}`
-- Vector index: `CREATE VECTOR INDEX vec_{workspace}_{namespace} ON :Vec_...(embedding) WITH CONFIG {"dimension": N, "capacity": 100000, "metric": "cos"}`
-- Both a label index on `(id)` and a vector index on `(embedding)` are created at `initialize()`
-
-**Key methods:**
-
-| Method | Cypher pattern | Notes |
-|--------|---------------|-------|
-| `upsert(data)` | `UNWIND + MERGE + SET embedding` | Batch. If no embedding provided, computes it from `content` via `embedding_func` |
-| `query(query, top_k)` | `CALL vector_search.search(...)` | Filters by `cosine_better_than_threshold` (default 0.2). Returns `{id, similarity, distance, ...meta_fields}` |
-| `delete_entity(name)` | `WHERE n.entity_name = $name` | Deletes all vectors for an entity |
-| `delete_entity_relation(name)` | `WHERE n.src_id = $name OR n.tgt_id = $name` | Deletes relation vectors involving an entity |
-| `get_vectors_by_ids(ids)` | `RETURN n.embedding` | Returns raw float lists |
-
-**`cosine_better_than_threshold`:** Read from `global_config["vector_db_storage_cls_kwargs"]["cosine_better_than_threshold"]`. Defaults to `0.2` if not specified. Results below this similarity threshold are filtered out.
-
-### 5. Doc status storage (`docstatus_impl.py`)
-
-Tracks document processing state through the LightRAG pipeline.
-
-**Data model:**
-```
-(:DocStatus_base {id: "doc1", status: "processed", content_summary: "...", content_length: 1234, file_path: "/data/doc.pdf", chunks_count: 42, track_id: "batch-001", metadata: '{"source": "upload"}', created_at: "...", updated_at: "..."})
-```
-
-- Label: `DocStatus_{workspace}` (no namespace suffix -- doc status is workspace-global)
-- Indexes on `(id)`, `(status)`, `(file_path)`, `(folder)`, `(track_id)`, `(updated_at)`, `(created_at)`, `(content_hash)`
-- Complex fields (`metadata`, `chunks_list`) are JSON-serialized strings
-- Unknown status values in the DB gracefully fall back to `PENDING` with a warning log
-
-**Key methods:**
-
-| Method | Cypher pattern | Notes |
-|--------|---------------|-------|
-| `upsert(data)` | `MERGE + SET` | Accepts both `DocProcessingStatus` objects and raw dicts |
-| `get_status_counts()` | `RETURN n.status, count(n)` | Aggregate counts per status |
-| `get_docs_by_status(status)` | `MATCH ... {status: $status}` | Returns `{doc_id: DocProcessingStatus}` |
-| `get_docs_by_track_id(track_id)` | `MATCH ... {track_id: $track_id}` | Batch tracking |
-| `get_docs_paginated(...)` | `ORDER BY ... SKIP ... LIMIT` | Pagination with sort (whitelist-protected against injection) |
-| `get_doc_by_file_path(path)` | `MATCH ... {file_path: $path}` | Lookup by file path |
-
-### 6. Buffered batch writes
-
-During `merge_nodes_and_edges`, a `_BufferedGraphProxy` wraps the graph storage and intercepts `upsert_node`/`upsert_edge` calls, accumulating them in memory. On `flush()`, nodes are written first (UNWIND + MERGE), then edges (UNWIND + MATCH + MERGE). This reduces 130+ individual Bolt round-trips per document to 2-3 batch queries.
-
-The proxy supports read-your-own-writes: `get_node`/`has_edge`/`get_edge` check the buffer before delegating to the real graph.
-
-### 7. Batch read methods
-
-The package patches `MemgraphGraphStorage` with batch methods that replace N sequential queries with single UNWIND queries:
-
-| Method | Replaces | Description |
-|--------|----------|-------------|
-| `get_nodes_batch(ids)` | N × `get_node()` | Single UNWIND query for all node lookups |
-| `node_degrees_batch(ids)` | N × `node_degree()` | Single UNWIND query for all degree counts |
-| `get_edges_batch(pairs)` | N × `get_edge()` | Single UNWIND query for all edge lookups |
-| `edge_degrees_batch(pairs)` | Derived from `node_degrees_batch` | Sum of endpoint degrees |
-| `get_nodes_edges_batch(ids)` | N × `get_node_edges()` | Single UNWIND query |
-| `get_nodes_with_degrees_batch(ids)` | Fused: nodes + degrees in 1 query | Eliminates a `gather()` |
-| `get_edges_with_degrees_batch(pairs)` | Fused: edges + degrees in 1 session | 2 queries, 1 session |
-
-## Node labels in Memgraph
-
-When you connect to Memgraph with `mgconsole` or Memgraph Lab, you'll see labels like:
-
-```
-:KV_base_chunks              <- KV storage, workspace "base", namespace "chunks"
-:KV_base_full_documents      <- KV storage, namespace "full_documents"
-:Vec_base_entities           <- Vector storage, namespace "entities"
-:Vec_base_relationships      <- Vector storage, namespace "relationships"
-:DocStatus_base              <- Doc status, workspace "base"
-```
-
-With multiple LightRAG workspaces, a second workspace "prod" would create `KV_prod_chunks`, `Vec_prod_entities`, etc. They are fully isolated: `drop()` on one workspace does not affect another.
+The Docker production build strips `mockServiceWorker.js` from the packaged UI.
 
 ## Tests
 
+Python:
+
 ```bash
-# Unit tests only (no Memgraph needed) — collects storage, intelligence,
-# and server suites. conftest.py auto-skips @pytest.mark.integration when
-# MEMGRAPH_URI is unset.
+# Unit tests; integration tests auto-skip when MEMGRAPH_URI is unset.
 pytest tests/ --ignore=tests/test_bench.py -v
 
-# All integration tests (requires running Memgraph)
+# Integration tests.
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
 
-# Single test
-MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_kv.py::TestMemgraphKVStorage::test_upsert_and_get -v
-
-# Benchmarks (latency, throughput, scaling at 100/1K/10K items)
+# Benchmarks.
 MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_bench.py -v -s
 
-# Coverage (workaround for Python 3.14 + numpy double-import on --cov)
+# Coverage for SonarQube.
 coverage run -m pytest tests/ --ignore=tests/test_bench.py
-coverage xml  # produces coverage.xml for SonarQube
-
-# Restricted-runtime smoke test (stdlib-only, for BNP-style containers
-# where no pip install is possible — validates the deployed instance)
-export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
-python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
+coverage xml
 ```
 
-**Quick Memgraph for testing (Docker):**
+Local Memgraph:
 
 ```bash
 docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:3.9.0
 ```
 
-Integration tests use the `@pytest.mark.integration` marker and are **auto-skipped** when `MEMGRAPH_URI` is not set (`conftest.py`).
-
-## Debugging
-
-### "Connection refused" or timeout on Memgraph
+Restricted-runtime smoke:
 
 ```bash
-# Check Memgraph is running and reachable
-docker logs memgraph-test 2>&1 | tail -5
-
-# Test Bolt connectivity directly
-python -c "
-from neo4j import GraphDatabase
-d = GraphDatabase.driver('bolt://localhost:7687')
-d.verify_connectivity()
-print('OK')
-d.close()
-"
+export TWIN_SMOKE_BASE_URL="https://your-runtime-host"
+python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 ```
 
-### Inspecting data in Memgraph
+The smoke runner is stdlib-only and writes `/tmp/twin-smoke-report.json` plus
+`/tmp/twin-smoke-http.log` without logging bearer tokens.
 
-```bash
-# Install mgconsole or use Memgraph Lab (http://localhost:3000 if Lab is running)
+## Classification
 
-# List all labels
-mgconsole --host localhost --port 7687 -c "CALL schema.node_type_properties() YIELD nodeLabels RETURN DISTINCT nodeLabels"
+The optional MIP classification hook reads Microsoft sensitivity labels before
+LightRAG ingestion and can reject files above a configured ceiling.
 
-# Count entries per label
-mgconsole --host localhost --port 7687 -c "MATCH (n:KV_base_chunks) RETURN count(n)"
+Supported inputs:
 
-# View a specific KV entry
-mgconsole --host localhost --port 7687 -c "MATCH (n:KV_base_chunks {id: 'some-chunk-id'}) RETURN n.data"
+- OOXML (`.docx`, `.xlsx`, `.pptx` and macro-enabled variants) via stdlib;
+- legacy OLE (`.doc`, `.xls`, `.ppt`) via optional `olefile`;
+- PDF XMP via optional `pikepdf`.
 
-# List vector indexes
-mgconsole --host localhost --port 7687 -c "SHOW INDEX INFO"
-
-# Manual vector search
-mgconsole --host localhost --port 7687 -c "CALL vector_search.search('vec_base_entities', 5, [0.1, 0.2, ...]) YIELD node, similarity RETURN node.id, similarity"
-```
-
-### "Vector index not found" errors
-
-Vector search requires Memgraph MAGE. The standard `memgraph/memgraph` Docker image does **not** include it. Use the pinned `memgraph/memgraph-mage:3.9.0` production target.
-
-```bash
-# Wrong -- no MAGE
-docker run memgraph/memgraph
-
-# Correct
-docker run memgraph/memgraph-mage:3.9.0
-```
-
-### Backend not found by LightRAG
-
-If LightRAG raises `ValueError: Unknown storage implementation: MemgraphKVStorage`, make sure `register()` was called **before** instantiating `LightRAG`:
-
-```python
-# Wrong
-rag = LightRAG(kv_storage="MemgraphKVStorage", ...)  # Fails: not registered yet
-
-# Correct
-from twindb_lightrag_memgraph import register
-register()  # Must be first
-rag = LightRAG(kv_storage="MemgraphKVStorage", ...)
-```
-
-### Empty query results / low similarity scores
-
-- Check `cosine_better_than_threshold`. Default is `0.2`. Set to `0.0` for debugging to see all results:
-  ```python
-  LightRAG(
-      vector_db_storage_cls_kwargs={"cosine_better_than_threshold": 0.0},
-      ...
-  )
-  ```
-- Verify embedding dimension matches the vector index dimension. A mismatch will silently return 0 results.
-
-### Stale driver after event loop change
-
-If you see `RuntimeError: Event loop is closed` in async code, the driver may be bound to a dead loop. The pool handles this automatically, but if you're managing event loops manually:
-
-```python
-from twindb_lightrag_memgraph._pool import close_driver
-await close_driver()  # Force driver reset; next get_driver() creates a new one
-```
-
-## File map
-
-```
-src/twindb_lightrag_memgraph/
-  __init__.py               Thin re-export shim (root import surface)
-  patches/registry.py       register() -- monkey-patches lightrag.kg registry
-  _pool.py                  Shared Bolt driver singleton (event-loop aware)
-  _constants.py             Validators, defaults, env var names
-  _buffered_graph.py        Buffered batch write proxy
-  _hooks.py                 Post-indexation hooks
-  kv_impl.py                MemgraphKVStorage -- key-value pairs as Cypher nodes
-  vector_impl.py            MemgraphVectorDBStorage -- vector embeddings + cosine search
-  docstatus_impl.py         MemgraphDocStatusStorage -- document processing status tracking
-  classification.py         MSIP / sensitivity-label extractor (OOXML / OLE / PDF)
-  _classification_hook.py   Pre-insert hook that classifies + gates documents
-
-scripts/
-  extract_msip.py    CLI: probe a file for its Microsoft sensitivity label
-
-tests/
-  conftest.py                  Auto-skip integration tests when MEMGRAPH_URI is unset
-  test_register.py             Offline: registration logic
-  test_kv.py                   Integration: KV CRUD
-  test_vector.py               Integration: vector CRUD + search
-  test_docstatus.py            Integration: doc status CRUD + queries
-  test_prod_checklist.py       Integration: dim=1024, multi-workspace, full pipeline
-  test_bench.py                Integration: performance benchmarks
-  test_classification.py       Offline: MSIP extractor (OOXML / optional-dep paths)
-  test_classification_hook.py  Offline: pre-insert hook gating + audit emission
-```
-
-## Classification (Microsoft Information Protection)
-
-Optional pre-insert hook that reads the sensitivity label Microsoft 365 embeds in Office documents and refuses ingestion of files above a configured ceiling. Designed for regulated tenants (banking, healthcare, defense) where letting a `C3 Strictement Confidentiel` document slip into a public retrieval index is a compliance incident.
-
-### What it reads
-
-- **OOXML** (`.docx` `.xlsx` `.pptx` and their `.docm`/`.xlsm`/`.pptm` macro-enabled siblings) — `MSIP_Label_<GUID>_*` properties in `docProps/custom.xml`. Pure stdlib, zero extra dependency.
-- **Legacy OLE binary** (`.doc` `.xls` `.ppt`) — same `MSIP_Label_*` keys in the custom properties stream. Requires `olefile`.
-- **PDF** — `MSIP_Label_*` blocks in the XMP metadata. Requires `pikepdf`.
-
-Missing optional deps degrade gracefully — the affected formats return `ClassificationResult(class_id=None, reason='<pkg>-missing')` instead of raising.
-
-### Tenant label map
-
-MIP label GUIDs are tenant-specific (the GUID for "C2 Confidentiel" in one tenant is different from another organization's). The mapping lives in a JSON file pointed to by `TWIN_MIP_LABEL_MAP`:
+Tenant label map example:
 
 ```json
 {
   "11111111-2222-3333-4444-555555555555": "C1",
   "22222222-3333-4444-5555-666666666666": {"id": "C2", "name": "C2 Confidentiel"},
-  "33333333-4444-5555-6666-777777777777": "C3",
-  "44444444-5555-6666-7777-888888888888": "C4"
+  "33333333-4444-5555-6666-777777777777": "C3"
 }
 ```
 
-Long form (`{id, name}`) overrides the raw label name with a tenant-curated display string. Short form (just the id) is fine when the document already carries the right name.
-
-### CLI
+CLI:
 
 ```bash
-# Probe a single file
 python scripts/extract_msip.py path/to/report.docx --label-map labels.json
-
-# Fail the CI when any file outranks C2
 python scripts/extract_msip.py --label-map labels.json --exit-code-on-above C2 docs/*.docx
 ```
 
-### Programmatic use
+Runtime env:
 
-```python
-from twindb_lightrag_memgraph._classification_hook import install_classification_hook
-
-# Build the hook once at server startup
-hook = install_classification_hook(
-    label_map_path="/etc/twin/labels.json",
-    ceiling="C2",
-    audit_emit=my_audit_callback,  # optional (kind, payload) callback
-)
-
-# Per document, before LightRAG.insert():
-try:
-    classification = hook(file_path)        # dict, ready for DocStatus.metadata
-except ClassificationRejection as exc:
-    log.warning("refused: %s", exc)
-    # Skip the insert + surface the rejection in the operator UI
+```bash
+TWIN_MIP_LABEL_MAP=/etc/twin/labels.json
+TWIN_MIP_MAX_CLASSIFICATION=C2
 ```
 
-The returned `classification` dict is intended to be persisted on `DocStatus.metadata['classification']` — the WebUI's `DocDetailPanel` already gates the chunks tab and the "View raw" notice on `metadata.classification.class_id > 'C2'`.
+Unknown mapped labels resolve to `UNKNOWN` and are treated as above the ceiling.
+Missing labels or missing optional parser dependencies degrade to allow-by-default,
+with an explicit reason in the classification result.
 
-### Behavior summary
+## Debugging
 
-| File state | `class_id` | `reason` | Default ceiling action |
-|---|---|---|---|
-| Labeled, GUID in map | `"C1".."C4"` | `None` | allow / reject per `is_above(class_id, ceiling)` |
-| Labeled, GUID not in map | `"UNKNOWN"` | `"unknown-label-guid"` | reject (fail-closed) |
-| No `docProps/custom.xml` | `None` | `"no-custom-props"` | allow (acceptance by default) |
-| `custom.xml` without MSIP property | `None` | `"no-msip-label"` | allow (acceptance by default) |
-| Malformed file | `None` | `"parse-error: <kind>"` | allow (acceptance by default) |
-| Unsupported extension | `None` | `"unsupported-extension: <ext>"` | allow (acceptance by default) |
-| Missing optional dep | `None` | `"olefile-missing"` / `"pikepdf-missing"` | allow (acceptance by default); install the dep to enable detection |
+Memgraph connectivity:
 
-Set `TWIN_MIP_MAX_CLASSIFICATION` to relax the deployment ceiling. Explicit hook overrides (`install_classification_hook(ceiling="C3")`) take precedence over the env var.
+```bash
+python -c "from neo4j import GraphDatabase; d=GraphDatabase.driver('bolt://localhost:7687'); d.verify_connectivity(); print('OK'); d.close()"
+```
 
-## Known limitations
+List labels:
 
-- **Three Bolt pools in production:** The built-in `MemgraphStorage` (graph) creates its own driver, separate from our write + read pools. ~120 max connections total (50 write + 20 read + 50 graph). This is by design — each pool is isolated from the others for stability under load.
-- **DocStatus upserts are sequential:** Unlike KV and Vector (which use batch `UNWIND`), DocStatus upserts are one-by-one because each entry may be a `DocProcessingStatus` object or a raw dict, requiring per-item serialization logic.
+```bash
+mgconsole --host localhost --port 7687 \
+  -c "CALL schema.node_type_properties() YIELD nodeLabels RETURN DISTINCT nodeLabels"
+```
+
+Vector search requires MAGE. Use `memgraph/memgraph-mage:3.9.0`, not the plain
+`memgraph/memgraph` image.
+
+If LightRAG reports `Unknown storage implementation`, `register()` ran too late.
+Call it before constructing `LightRAG` or before importing the LightRAG server
+factory.
+
+## File Map
+
+```text
+src/twindb_lightrag_memgraph/
+  __init__.py                 Root re-export shim.
+  patches/registry.py         register() and LightRAG runtime patches.
+  _pool.py                    Shared read/write Bolt pools.
+  _constants.py               Env names, validators, folder/workspace context.
+  _buffered_graph.py          Buffered graph write proxy.
+  kv_impl.py                  MemgraphKVStorage.
+  vector_impl.py              MemgraphVectorDBStorage.
+  docstatus_impl.py           MemgraphDocStatusStorage + folder membership.
+  classification.py           MIP sensitivity-label extractor.
+  _classification_hook.py     Pre-ingestion classification gate.
+  server/                     FastAPI overlay, auth, folders, graph, query, shims.
+  intelligence/               TwinRAG intelligence layer.
+
+lightrag_webui_twin/          React operator WebUI.
+tests/                        Python unit/integration suites.
+tests/smoke/                  Stdlib deployed-runtime smoke runner.
+docs/operations/              Install/runbook material.
+docs/test-doctrine-*.md       Compatibility and graph test doctrine.
+```
+
+## Known Limitations
+
+- The LightRAG graph backend owns a separate Bolt driver, so production uses three
+  pools by design: write, read, graph.
+- DocStatus upserts remain per-entry because they accept both LightRAG
+  `DocProcessingStatus` objects and raw dict payloads.
+- Folder membership is authoritative, but the legacy `folder` property is still
+  dual-written as a rollback/migration safety net.
+- Hard-isolated folders with separate physical graph labels are not implemented;
+  current folders are relational cloisonnement over one physical workspace.
