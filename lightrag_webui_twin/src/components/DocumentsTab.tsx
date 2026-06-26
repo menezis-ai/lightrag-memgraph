@@ -1159,7 +1159,7 @@ function DocumentFoldersBody({
         </strong>
       </p>
       <label className="field">
-        <span>Add to folder</span>
+        <span>Copy or move to another folder</span>
         <select
           value={selectedTargetFolder}
           onChange={(e) => onTargetChange(e.target.value)}
@@ -1238,7 +1238,7 @@ function DocumentFoldersDialog({
       ? targetFolder
       : (availableFolders[0]?.id ?? '');
 
-  const addTargetFolder = async () => {
+  const copyToTargetFolder = async () => {
     if (memberships.isError) return;
     if (!selectedTargetFolder) return;
     await addFolder.mutateAsync({
@@ -1246,10 +1246,32 @@ function DocumentFoldersDialog({
       folderId: selectedTargetFolder,
     });
     onAddToast(
-      'Document shared to folder',
-      `${doc.file_path} is now visible in ${folderLabel(folderList, selectedTargetFolder)}.`,
+      'Document copied to folder',
+      `${doc.file_path} is now also in ${folderLabel(folderList, selectedTargetFolder)} — same physical document, no re-ingestion.`,
     );
     setDestructiveArmed(false);
+  };
+
+  const moveToTargetFolder = async () => {
+    if (memberships.isError) return;
+    if (!selectedTargetFolder) return;
+    if (!currentMemberships.includes(activeFolder)) return;
+    // Add to the target FIRST so the document is never folderless mid-move
+    // (which would trip the last-membership physical delete), THEN unshare it
+    // from the active folder. Both are membership edges — no re-ingestion.
+    await addFolder.mutateAsync({
+      docId: doc.doc_id,
+      folderId: selectedTargetFolder,
+    });
+    await removeFolder.mutateAsync({
+      docId: doc.doc_id,
+      folderId: activeFolder,
+    });
+    onAddToast(
+      'Document moved to folder',
+      `${doc.file_path} moved from ${activeLabel} to ${folderLabel(folderList, selectedTargetFolder)}.`,
+    );
+    onClose();
   };
 
   const removeFromActiveFolder = async () => {
@@ -1339,9 +1361,28 @@ function DocumentFoldersDialog({
               !selectedTargetFolder ||
               addFolder.isPending
             }
-            onClick={() => void addTargetFolder()}
+            onClick={() => void copyToTargetFolder()}
+            data-testid="document-folder-copy"
+            title="Share this document into another folder. It stays in its current folder(s) — one physical document, no re-ingestion."
           >
-            Add to folder
+            Copy to folder
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={
+              memberships.isLoading ||
+              memberships.isError ||
+              !selectedTargetFolder ||
+              !currentMemberships.includes(activeFolder) ||
+              addFolder.isPending ||
+              removeFolder.isPending
+            }
+            onClick={() => void moveToTargetFolder()}
+            data-testid="document-folder-move"
+            title={`Move out of ${activeLabel} into the selected folder (add membership, then remove from ${activeLabel}).`}
+          >
+            Move here
           </button>
           <button
             type="button"

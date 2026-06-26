@@ -469,7 +469,7 @@ describe('DocumentsTab — folder membership admin actions', () => {
     );
     await screen.findByRole('option', { name: 'Sandbox (sandbox)' });
     await userEvent.selectOptions(screen.getByLabelText('Target folder'), 'sandbox');
-    await userEvent.click(screen.getByRole('button', { name: 'Add to folder' }));
+    await userEvent.click(screen.getByTestId('document-folder-copy'));
 
     const postCall = fetchMock.mock.calls.find(
       ([url, init]) =>
@@ -480,6 +480,91 @@ describe('DocumentsTab — folder membership admin actions', () => {
     expect(JSON.parse((postCall?.[1] as RequestInit).body as string)).toEqual({
       folder_id: 'sandbox',
     });
+  });
+
+  it('move = add to the target folder then remove from the active folder', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders') && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ doc_id: 'd1', folders: ['default', 'sandbox'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders') && init?.method === 'DELETE') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              doc_id: 'd1',
+              removed_folder: 'default',
+              physically_deleted: false,
+              remaining_folders: ['sandbox'],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/d1/folders')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ doc_id: 'd1', folders: ['default'] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    );
+    await screen.findByTestId('document-folders-modal');
+    await screen.findByRole('option', { name: 'Sandbox (sandbox)' });
+    await userEvent.selectOptions(screen.getByLabelText('Target folder'), 'sandbox');
+    await userEvent.click(screen.getByTestId('document-folder-move'));
+
+    // Move = POST membership on the target, then DELETE the active membership.
+    const postTarget = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes('/documents/d1/folders') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    );
+    const deleteActive = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes('/documents/d1/folders/default') &&
+        (init as RequestInit | undefined)?.method === 'DELETE',
+    );
+    expect(postTarget).toBeDefined();
+    expect(JSON.parse((postTarget?.[1] as RequestInit).body as string)).toEqual({
+      folder_id: 'sandbox',
+    });
+    expect(deleteActive).toBeDefined();
   });
 
   it('requires explicit confirmation before removing the last folder membership', async () => {
