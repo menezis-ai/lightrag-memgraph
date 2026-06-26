@@ -7,22 +7,30 @@ test.describe('Retrieval citations', () => {
     await openTab(page, 'Retrieval');
   });
 
-  // TODO(2026-06-16): rewrite this test so it does not depend on the
-  // `oracle-restart-procedure.pdf` ↔ `d1` linkage that came from
-  // `makeSampleThreads()` + DOCUMENT_FIXTURES alignment. After the
-  // runtime fixture fallbacks were removed (commit 1d1b0a0 "Remove
-  // runtime UI fixture fallbacks"), the Retrieval tab boots with
-  // zero threads and the MSW /query/stream handler returns generic
-  // `mock-source-${i+1}.pdf` sources whose doc_ids do not match the
-  // Documents seed. A faithful citation→Document e2e needs the MSW
-  // handler to emit at least one source whose doc_id matches a real
-  // entry in DOCUMENT_FIXTURES; doing that here would entrench the
-  // very fixture coupling that 1d1b0a0 dismantled. Skipped pending
-  // a deliberate MSW handler tune (or a backend e2e on -real).
-  test.skip(
-    '@retrieval @rc4 clicking a citation opens the referenced source in Documents',
-    async () => {},
-  );
+  // Enabled 2026-06-26: the MSW /query/stream handler now maps source #1 to a
+  // real seeded document (DOCUMENT_FIXTURES[0] = d1, oracle-restart-procedure.pdf),
+  // which is the deliberate, single-source handler tune the prior TODO called
+  // for. The drilldown therefore lands on a document that actually exists in the
+  // Documents seed, so this asserts a true citation -> document linkage.
+  test('@retrieval @rc4 clicking a source opens the referenced document in Documents', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: /New/ }).click();
+    await page.getByLabel('Query input').fill('What is the Oracle restart procedure?');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    // The first source is the real seeded document.
+    const source = page.getByTestId('source-1');
+    await expect(source).toBeVisible({ timeout: 20_000 });
+    await expect(source).toContainText('oracle-restart-procedure.pdf');
+
+    await source.click();
+
+    // Drilldown navigates to Documents, scoped to that source (doc=d1).
+    await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
+    await expect(page).toHaveURL(/doc=d1/);
+    await expect(page.getByTestId('docs-row-d1')).toBeVisible();
+  });
 });
 
 test.describe('Retrieval threads and parameters', () => {

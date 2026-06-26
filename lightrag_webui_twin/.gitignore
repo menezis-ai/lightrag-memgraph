@@ -30,3 +30,6 @@ playwright/.cache/
 *.njsproj
 *.sln
 *.sw?
+
+# QA screenshot capture output (canonical copies live in docs/qa/assets/)
+qa-screenshots/

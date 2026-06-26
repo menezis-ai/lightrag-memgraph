@@ -1247,15 +1247,23 @@ export const handlers = [
     const text = q
       ? `Mock retrieval response for: ${q}`
       : 'Mock retrieval response';
-    const sources = Array.from({ length: topK }).map((_, i) => ({
-      n: i + 1,
-      type: 'file' as const,
-      name: `/cib/runbooks/mock-source-${i + 1}.pdf`,
-      meta: `chunk ${i + 1}`,
-      score: Number((0.95 - i * 0.1).toFixed(2)),
-      doc_id: `mock-doc-${i + 1}`,
-      chunk_id: `mock-chunk-${i + 1}`,
-    }));
+    const sources = Array.from({ length: topK }).map((_, i) => {
+      // Source #1 maps to a real seeded document (DOCUMENT_FIXTURES[0]) so the
+      // citation -> Documents drilldown e2e can assert a true linkage. The
+      // remaining sources stay synthetic. This is the deliberate handler tune
+      // the retrieval citation test's TODO(2026-06-16) called for, scoped to
+      // one source so it does not re-entrench broad fixture coupling.
+      const real = i === 0 ? DOCUMENT_FIXTURES[0] : undefined;
+      return {
+        n: i + 1,
+        type: 'file' as const,
+        name: real ? real.file_path : `/cib/runbooks/mock-source-${i + 1}.pdf`,
+        meta: `chunk ${i + 1}`,
+        score: Number((0.95 - i * 0.1).toFixed(2)),
+        doc_id: real ? real.doc_id : `mock-doc-${i + 1}`,
+        chunk_id: `mock-chunk-${i + 1}`,
+      };
+    });
     const ndjson =
       JSON.stringify({ type: 'token', value: text }) +
       '\n' +
