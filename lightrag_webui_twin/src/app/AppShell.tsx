@@ -245,17 +245,11 @@ export function AppShell() {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const configuredFolders = runtimeConfig.folders;
   const folderList = useMemo<readonly Folder[]>(() => {
-    // The live /twin/api/folders query is the source of truth: it includes
-    // operator-added runtime folders, whereas runtimeConfig.folders is only the
-    // env-seeded snapshot injected at boot. Use the live data once it resolves;
-    // fall back to the injected config until then, or when there is no backend
-    // (standalone / seed / MSW review builds where the query stays empty).
-    const live = folders.data;
-    if (live && live.length > 0) {
-      return live.map((item) => ({ ...item, current: item.id === folder }));
-    }
     if (configuredFolders) {
-      return configuredFolders.map((item) => ({
+      // Explicit empty config = no folder provisioned for this KB → the topbar
+      // shows the Twincore empty-state guidance, never live folders.
+      if (configuredFolders.length === 0) return [];
+      const mapped: Folder[] = configuredFolders.map((item) => ({
         id: item.id,
         kb: item.label,
         visibility: item.kind === 'sandbox' ? 'private' : 'internal',
@@ -263,8 +257,17 @@ export function AppShell() {
         role: 'admin / steward',
         current: item.id === folder,
       }));
+      // The boot-injected config is frozen at server start, so operator-created
+      // runtime folders are missing from it. Append the ones the live
+      // /twin/api/folders query knows about (deduped by id) so they reach the
+      // switcher without a service restart.
+      const known = new Set(configuredFolders.map((item) => item.id));
+      const extra = (folders.data ?? [])
+        .filter((item) => !known.has(item.id))
+        .map((item) => ({ ...item, current: item.id === folder }));
+      return [...mapped, ...extra];
     }
-    return live ?? [];
+    return folders.data ?? [];
   }, [configuredFolders, folder, folders]);
   const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
 

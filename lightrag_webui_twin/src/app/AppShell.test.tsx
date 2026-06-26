@@ -968,11 +968,11 @@ describe('AppShell — folders', () => {
     expect(screen.getByTestId('topbar-kb')).toHaveTextContent('Query KB');
   });
 
-  it('prefers live folders query over runtimeConfig (runtime-added folders appear)', () => {
+  it('appends runtime folders from the live query to the configured set', () => {
     // Regression: a folder created via admin CRUD is returned by GET
     // /twin/api/folders but is NOT in the boot-injected runtimeConfig.folders
-    // (the env-seeded snapshot). The switcher must surface it — the live query
-    // is the source of truth, not the boot config.
+    // (frozen env snapshot). The switcher must still surface it — config folders
+    // first, then the live-only ones (deduped), so it appears without a restart.
     authState.current.config = {
       defaultFolderId: 'default',
       folders: [
@@ -985,6 +985,17 @@ describe('AppShell — folders', () => {
     ] as Folder[];
     renderShell();
     expect(screen.getByTestId('topbar-folders-count')).toHaveTextContent('2');
+  });
+
+  it('explicit empty configured folders stays empty despite live query data', () => {
+    // The Twincore empty-state contract: zero provisioned folders must NOT be
+    // backfilled from the live query (which may carry seed/demo folders).
+    authState.current.config = { defaultFolderId: '', folders: [] };
+    queriesState.folders.data = [
+      { id: 'seed', kb: 'Seed KB', visibility: 'internal', sources: 1, role: 'admin', current: false },
+    ] as Folder[];
+    renderShell();
+    expect(screen.getByTestId('topbar-folders-count')).toHaveTextContent('0');
   });
 
   it('switching folder updates state and persists to storage', async () => {
