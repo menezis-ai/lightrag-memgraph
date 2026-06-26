@@ -245,6 +245,15 @@ export function AppShell() {
   const unreadCount = notifications.filter((n) => !n.read).length;
   const configuredFolders = runtimeConfig.folders;
   const folderList = useMemo<readonly Folder[]>(() => {
+    // The live /twin/api/folders query is the source of truth: it includes
+    // operator-added runtime folders, whereas runtimeConfig.folders is only the
+    // env-seeded snapshot injected at boot. Use the live data once it resolves;
+    // fall back to the injected config until then, or when there is no backend
+    // (standalone / seed / MSW review builds where the query stays empty).
+    const live = folders.data;
+    if (live && live.length > 0) {
+      return live.map((item) => ({ ...item, current: item.id === folder }));
+    }
     if (configuredFolders) {
       return configuredFolders.map((item) => ({
         id: item.id,
@@ -255,7 +264,7 @@ export function AppShell() {
         current: item.id === folder,
       }));
     }
-    return folders.data ?? [];
+    return live ?? [];
   }, [configuredFolders, folder, folders]);
   const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
 

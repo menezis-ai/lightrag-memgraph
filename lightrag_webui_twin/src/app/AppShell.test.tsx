@@ -968,6 +968,25 @@ describe('AppShell — folders', () => {
     expect(screen.getByTestId('topbar-kb')).toHaveTextContent('Query KB');
   });
 
+  it('prefers live folders query over runtimeConfig (runtime-added folders appear)', () => {
+    // Regression: a folder created via admin CRUD is returned by GET
+    // /twin/api/folders but is NOT in the boot-injected runtimeConfig.folders
+    // (the env-seeded snapshot). The switcher must surface it — the live query
+    // is the source of truth, not the boot config.
+    authState.current.config = {
+      defaultFolderId: 'default',
+      folders: [
+        { id: 'default', label: 'Default KB', kind: 'standard', sources: 4 },
+      ],
+    };
+    queriesState.folders.data = [
+      { id: 'default', kb: 'Default KB', visibility: 'internal', sources: 4, role: 'admin', current: true },
+      { id: 'test', kb: 'test', visibility: 'internal', sources: 0, role: 'admin', current: false },
+    ] as Folder[];
+    renderShell();
+    expect(screen.getByTestId('topbar-folders-count')).toHaveTextContent('2');
+  });
+
   it('switching folder updates state and persists to storage', async () => {
     const user = userEvent.setup();
     authState.current.config = {
