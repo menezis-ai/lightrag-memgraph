@@ -360,6 +360,7 @@ jobs:
             -e HOME=/tmp \
             -e npm_config_cache=/tmp/npm \
             -e CI=true \
+            -e PLAYWRIGHT_PORT=4174 \
             -e REAL_BACKEND_URL="$REAL_BACKEND_URL" \
             -e VITE_AUTH_TOKEN="$VITE_AUTH_TOKEN" \
             -e REAL_E2E_EXPECT_AUTH="$REAL_E2E_EXPECT_AUTH" \
