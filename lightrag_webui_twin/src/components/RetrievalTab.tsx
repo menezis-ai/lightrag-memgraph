@@ -1148,8 +1148,21 @@ function Turn({
           No relevant sources found for this question.
         </div>
       )}
+      {/* The answer is grounded but its references could not be projected
+          (LightRAG envelope shape broke). Show the answer + an honest cue
+          rather than a silent empty area that reads as "no sources". */}
+      {!streaming && msg.answerStatus === 'source_projection_failed' && (
+        <div
+          className="sources-empty muted"
+          data-testid="sources-empty-projection-failed"
+          style={{ marginTop: 8, fontSize: 12 }}
+        >
+          Sources unavailable for this answer.
+        </div>
+      )}
       {!streaming &&
         msg.answerStatus !== 'insufficient_information' &&
+        msg.answerStatus !== 'source_projection_failed' &&
         sources.length > 0 && (
         <>
           <div className="sources-header">

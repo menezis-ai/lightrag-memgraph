@@ -47,9 +47,16 @@ export type ChatRole = 'user' | 'assistant';
  * (TR-RET-02). ``insufficient_information`` is the canonical
  * machine-readable signal that LightRAG had no usable context — the
  * React port uses it to suppress the Sources panel cleanly instead of
- * parsing the LLM prose. Default = ``grounded``.
+ * parsing the LLM prose. ``source_projection_failed`` means the answer IS
+ * grounded but its references could not be projected into the sources
+ * contract — the answer is shown, the Sources panel is suppressed, and a
+ * "sources unavailable" cue is rendered (never silently as no-sources).
+ * Default = ``grounded``.
  */
-export type AnswerStatus = 'grounded' | 'insufficient_information';
+export type AnswerStatus =
+  | 'grounded'
+  | 'insufficient_information'
+  | 'source_projection_failed';
 
 export interface ChatMessage {
   role: ChatRole;

@@ -148,7 +148,10 @@ export interface TwinQuerySource {
  * shows a discrete cue instead of pretending the listed chunks back
  * the (fail) answer.
  */
-export type TwinAnswerStatus = 'grounded' | 'insufficient_information';
+export type TwinAnswerStatus =
+  | 'grounded'
+  | 'insufficient_information'
+  | 'source_projection_failed';
 
 export interface TwinQueryResponse {
   response: string;
@@ -461,7 +464,8 @@ export const twinApi = {
       } else if (
         event.type === 'status' &&
         (event.value === 'grounded' ||
-          event.value === 'insufficient_information')
+          event.value === 'insufficient_information' ||
+          event.value === 'source_projection_failed')
       ) {
         answerStatus = event.value;
       }

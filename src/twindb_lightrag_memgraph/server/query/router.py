@@ -58,6 +58,7 @@ from ..._constants import (
 from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
+    ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
     AnswerStatus,
     GraphAnswerEnvelopeError,
@@ -840,7 +841,15 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # fallback inside _build_envelope_sources re-issues a chunks_vdb retrieval,
     # which must also be folder-scoped.
     with _retrieval_scope(folder, body):
-        sources = await _build_envelope_sources(rag, body, folder, envelope)
+        sources, projection_ok = await _build_envelope_sources(
+            rag, body, folder, envelope
+        )
+    # A grounded answer whose references could not be projected is surfaced
+    # honestly (answer kept, sources empty, explicit status) — never silently as
+    # grounded + [] (which reads as "no sources") nor as a 500 (which would hide
+    # a usable answer).
+    if not projection_ok:
+        answer_status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
     await _record_retrieval_activity(
         body, request, sources_count=len(sources), stream=False
     )
@@ -900,10 +909,18 @@ async def _twin_query_data(
     }
 
 
-async def _build_envelope_sources(rag, body: TwinQueryBody, folder, envelope) -> list:
+async def _build_envelope_sources(
+    rag, body: TwinQueryBody, folder, envelope
+) -> tuple[list, bool]:
     """Project + filter sources from an aquery_llm envelope (shared by /query
-    and /query/stream). Unprojectable references → empty sources (no second
-    vector pass — the structural lie this path deliberately avoids)."""
+    and /query/stream).
+
+    Returns ``(sources, projection_ok)``. When ``data.references`` cannot be
+    projected into the Twin contract (LightRAG envelope shape broke), returns
+    ``([], False)`` — the caller then surfaces ``answer_status =
+    source_projection_failed`` rather than a silent ``grounded`` + ``[]`` (which
+    would look like a genuinely source-less answer). No second vector pass — the
+    structural lie this path deliberately avoids."""
     chunk_ids = collect_chunk_ids(envelope or {})
     chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
     try:
@@ -911,17 +928,19 @@ async def _build_envelope_sources(rag, body: TwinQueryBody, folder, envelope) ->
     except GraphAnswerEnvelopeError as exc:
         logger.warning(
             "twin_query: aquery_llm references unprojectable, surfacing empty "
-            "sources rather than reconstructing from a second vector pass: %s",
+            "sources + source_projection_failed status rather than "
+            "reconstructing from a second vector pass: %s",
             exc,
         )
-        sources = []
+        return [], False
     sources = _filter_sources_by_min_score(sources, body.min_score)
-    return await _filter_sources_by_advanced_filters(
+    filtered = await _filter_sources_by_advanced_filters(
         sources,
         tag_filter=body.tag_filter,
         doc_filter=body.doc_filter,
         folder=folder,
     )
+    return filtered, True
 
 
 def _select_token_source(envelope) -> Any:
@@ -1028,19 +1047,27 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
-        yield json.dumps({"type": "status", "value": status}) + "\n"
-
         if (
             body.only_need_context
             or body.only_need_prompt
             or status == ANSWER_STATUS_INSUFFICIENT
         ):
+            yield json.dumps({"type": "status", "value": status}) + "\n"
             await _record_retrieval_activity(body, request, sources_count=0, stream=True)
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
+        # Grounded path: build sources first so the emitted status reflects a
+        # projection failure (answer tokens already streamed). Contract: tokens,
+        # then status (source_projection_failed when projection broke), then the
+        # sources event (empty on failure).
         with _retrieval_scope(folder, body):
-            sources = await _build_envelope_sources(rag, body, folder, envelope)
+            sources, projection_ok = await _build_envelope_sources(
+                rag, body, folder, envelope
+            )
+        if not projection_ok:
+            status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
+        yield json.dumps({"type": "status", "value": status}) + "\n"
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=True
         )
@@ -1097,7 +1124,8 @@ def build_twin_query_router(get_rag) -> APIRouter:
         Wire format (one JSON object per line):
           {"type":"token","value":"<chunk text>"}
           ... repeated for every LLM chunk ...
-          {"type":"status","value":"grounded"|"insufficient_information"}
+          {"type":"status","value":"grounded"|"insufficient_information"
+                                    |"source_projection_failed"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
 
         The ``status`` event lands exactly once, before the final

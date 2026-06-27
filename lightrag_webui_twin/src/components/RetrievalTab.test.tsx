@@ -982,6 +982,78 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     expect(document.querySelector('.sources-header')).toBeNull();
   });
 
+  it('keeps the answer but shows a cue when status=source_projection_failed', async () => {
+    // #2: the answer is grounded but its references could not be projected.
+    // Show the answer + a "sources unavailable" cue — never silently as
+    // no-sources, and NOT as insufficient_information.
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('A grounded answer.');
+        return {
+          response: 'A grounded answer.',
+          sources: [],
+          answer_status: 'source_projection_failed' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'real question');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-projection-failed'),
+      ).toBeInTheDocument(),
+    );
+    // The grounded answer is preserved.
+    expect(document.querySelector('.retrieval-conv')?.textContent).toContain(
+      'A grounded answer.',
+    );
+    // Not mislabeled as insufficient; no Sources panel.
+    expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
+    expect(document.querySelector('.sources-header')).toBeNull();
+  });
+
+  it('suppresses Sources even if they leak behind source_projection_failed', async () => {
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('A grounded answer.');
+        return {
+          response: 'A grounded answer.',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'leaked.pdf', score: 0.5 },
+          ],
+          answer_status: 'source_projection_failed' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'real question');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-projection-failed'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('source-1')).toBeNull();
+    expect(document.querySelector('.sources-header')).toBeNull();
+  });
+
   it('renders the Sources panel as before when status=grounded', async () => {
     const onStreamQuery = vi.fn(
       async (_params, onChunk: (chunk: string) => void) => {

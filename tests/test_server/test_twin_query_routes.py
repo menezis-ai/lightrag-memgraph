@@ -167,6 +167,25 @@ class FakeRag:
         return self.query_data
 
 
+class MalformedRefsRag(FakeRag):
+    """``aquery_llm`` returns a grounded envelope (success + a real answer) whose
+    ``data.references`` cannot be projected into the Twin sources contract — the
+    #2 case: source projection fails *after* a usable answer was produced.
+
+    ``data.chunks`` is left empty so the only failure is in the references
+    block; the answer itself is valid and must still be returned.
+    """
+
+    def __init__(self, *, references: Any, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._bad_references = references
+
+    def _build_envelope(self, *, is_streaming: bool) -> dict[str, Any]:
+        envelope = super()._build_envelope(is_streaming=is_streaming)
+        envelope["data"]["references"] = self._bad_references
+        return envelope
+
+
 @pytest.fixture()
 async def make_client():
     async def _make(rag: FakeRag):
@@ -1339,4 +1358,77 @@ class TestAnswerStatusContract:
         assert len(source_events[0]["value"]) == 1
         assert source_events[0]["value"][0]["name"] == "/a/runbook.pdf"
         # Audit C3 guard on the stream path too.
+        assert rag.chunks_vdb.last_query is None
+
+    # ── #2: grounded answer, source projection fails ──────────────────────
+    # A successful aquery_llm envelope whose data.references can't be projected
+    # must NOT surface as silent grounded+[] (reads as "no sources") nor as a
+    # 500 (hides a usable answer). It surfaces the answer + sources=[] +
+    # answer_status=source_projection_failed.
+
+    BAD_REFS_CASES = [
+        ("missing_reference_id", [{"file_path": "/x/a.pdf"}]),
+        (
+            "non_int_reference_id",
+            [{"reference_id": "not-an-int", "file_path": "/x/a.pdf"}],
+        ),
+        ("reference_not_a_dict", ["i am not a dict"]),
+    ]
+
+    @pytest.mark.parametrize(
+        "label,bad_refs",
+        BAD_REFS_CASES,
+        ids=[c[0] for c in BAD_REFS_CASES],
+    )
+    async def test_non_stream_source_projection_failed(
+        self, make_client, label, bad_refs
+    ):
+        rag = MalformedRefsRag(answer="A grounded answer.", references=bad_refs)
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "real question"})
+
+        assert r.status_code == 200, label
+        body = r.json()
+        # The grounded answer is preserved …
+        assert body["response"] == "A grounded answer."
+        # … but sources are empty and the status is explicit (not grounded,
+        # not insufficient_information).
+        assert body["sources"] == []
+        assert body["answer_status"] == "source_projection_failed"
+        # Audit C3 guard: never a second vector pass to "recover" sources.
+        assert rag.chunks_vdb.last_query is None
+
+    @pytest.mark.parametrize(
+        "label,bad_refs",
+        BAD_REFS_CASES,
+        ids=[c[0] for c in BAD_REFS_CASES],
+    )
+    async def test_stream_source_projection_failed(
+        self, make_client, label, bad_refs
+    ):
+        import json as _json
+
+        rag = MalformedRefsRag(
+            references=bad_refs, stream_chunks=["A ", "grounded ", "answer."]
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query/stream", json={"query": "real question"})
+
+        assert r.status_code == 200, label
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        token_events = [e for e in events if e["type"] == "token"]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+
+        # Answer tokens still stream …
+        assert "".join(e["value"] for e in token_events) == "A grounded answer."
+        # … then an explicit status, then an empty sources event.
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "source_projection_failed"
+        assert len(source_events) == 1
+        assert source_events[0]["value"] == []
         assert rag.chunks_vdb.last_query is None

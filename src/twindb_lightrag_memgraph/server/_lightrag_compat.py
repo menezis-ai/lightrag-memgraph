@@ -53,10 +53,19 @@ LIGHTRAG_NO_CONTEXT_MARKER = "[no-context]"
 Source: ``PROMPTS["fail_response"]`` in ``lightrag/prompt.py:220``.
 """
 
-AnswerStatus = Literal["grounded", "insufficient_information"]
+AnswerStatus = Literal[
+    "grounded", "insufficient_information", "source_projection_failed"
+]
 
 ANSWER_STATUS_GROUNDED: AnswerStatus = "grounded"
 ANSWER_STATUS_INSUFFICIENT: AnswerStatus = "insufficient_information"
+# The answer was produced from real retrieval context (grounded), but its
+# ``data.references`` could not be projected into the Twin sources contract
+# (LightRAG envelope shape broke). The answer is still returned; sources are
+# empty and the UI shows a "sources unavailable" cue. Distinct from
+# ``insufficient_information`` (no usable context) and from a hard 500 (which
+# would hide a usable answer behind a display-layer failure).
+ANSWER_STATUS_SOURCE_PROJECTION_FAILED: AnswerStatus = "source_projection_failed"
 
 
 def classify_answer(answer: str) -> tuple[str, AnswerStatus]:
