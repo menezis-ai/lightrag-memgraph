@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 *.egg-info/
+# uv.lock is not versioned — the project pins deps via `pip install -e` (CLAUDE.md §5)
+uv.lock
 dist/
 build/
 .pytest_cache/
