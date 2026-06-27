@@ -1160,9 +1160,23 @@ function Turn({
           Sources unavailable for this answer.
         </div>
       )}
+      {/* Sourceless by design (bypass / only_need_context / only_need_prompt):
+          no retrieval was attempted, so the empty Sources area is expected.
+          Show a discrete cue so the operator reads it as intentional rather
+          than a missing-sources glitch. */}
+      {!streaming && msg.answerStatus === 'no_retrieval' && (
+        <div
+          className="sources-empty muted"
+          data-testid="sources-empty-no-retrieval"
+          style={{ marginTop: 8, fontSize: 12 }}
+        >
+          Answered without retrieval — no sources for this mode.
+        </div>
+      )}
       {!streaming &&
         msg.answerStatus !== 'insufficient_information' &&
         msg.answerStatus !== 'source_projection_failed' &&
+        msg.answerStatus !== 'no_retrieval' &&
         sources.length > 0 && (
         <>
           <div className="sources-header">

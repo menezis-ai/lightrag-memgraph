@@ -335,10 +335,12 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
+        # only_need_context is sourceless by design -> no_retrieval, not the
+        # grounded default (which would falsely claim a sourced answer).
         assert r.json() == {
             "response": "raw context blob",
             "sources": [],
-            "answer_status": "grounded",
+            "answer_status": "no_retrieval",
         }
         # chunks_vdb should not have been touched in context-only mode
         assert rag.chunks_vdb.last_query is None
@@ -510,11 +512,56 @@ class TestQueryEndpoint:
             )
 
         assert r.status_code == 200
+        # only_need_prompt is sourceless by design -> no_retrieval.
         assert r.json() == {
             "response": "prompt that would be sent",
             "sources": [],
-            "answer_status": "grounded",
+            "answer_status": "no_retrieval",
         }
+
+    async def test_bypass_mode_reports_no_retrieval(self, make_client):
+        # bypass calls the LLM directly with no retrieval. Even though the
+        # fake envelope carries chunks, the route must short-circuit to
+        # no_retrieval + empty sources -- never the grounded default, which
+        # would falsely claim the direct answer is sourced.
+        rag = FakeRag(
+            answer="direct LLM answer",
+            chunks=[{"id": "c1", "file_path": "/a", "score": 0.9}],
+            chunk_to_doc={"c1": "doc-a"},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={"query": "anything", "mode": "bypass"},
+            )
+
+        assert r.status_code == 200
+        assert r.json() == {
+            "response": "direct LLM answer",
+            "sources": [],
+            "answer_status": "no_retrieval",
+        }
+
+    async def test_bypass_mode_reports_no_retrieval_on_stream(self, make_client):
+        rag = FakeRag(
+            stream_chunks=["direct ", "answer"],
+            chunks=[{"id": "c1", "file_path": "/a", "score": 0.9}],
+            chunk_to_doc={"c1": "doc-a"},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={"query": "anything", "mode": "bypass"},
+            )
+
+        assert r.status_code == 200
+        lines = [line for line in r.text.splitlines() if line.strip()]
+        status_event = next(j for j in lines if '"type": "status"' in j)
+        sources_event = next(j for j in lines if '"type": "sources"' in j)
+        assert '"value": "no_retrieval"' in status_event
+        assert '"value": []' in sources_event
 
     async def test_chunks_vdb_is_never_called_even_when_broken(
         self, make_client

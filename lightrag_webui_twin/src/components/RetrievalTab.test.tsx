@@ -1054,6 +1054,45 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     expect(document.querySelector('.sources-header')).toBeNull();
   });
 
+  it('keeps the answer but shows the no-retrieval cue for a sourceless mode', async () => {
+    // bypass / only_need_context / only_need_prompt: the answer/context body is
+    // shown, but the empty Sources area must read as intentional (cue), not as
+    // insufficient_information and not as a missing-sources glitch.
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('Direct answer.');
+        return {
+          response: 'Direct answer.',
+          sources: [],
+          answer_status: 'no_retrieval' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'bypass question');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-no-retrieval'),
+      ).toBeInTheDocument(),
+    );
+    expect(document.querySelector('.retrieval-conv')?.textContent).toContain(
+      'Direct answer.',
+    );
+    // Not mislabeled as insufficient / projection-failed; no Sources panel.
+    expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
+    expect(screen.queryByTestId('sources-empty-projection-failed')).toBeNull();
+    expect(document.querySelector('.sources-header')).toBeNull();
+  });
+
   it('renders the Sources panel as before when status=grounded', async () => {
     const onStreamQuery = vi.fn(
       async (_params, onChunk: (chunk: string) => void) => {

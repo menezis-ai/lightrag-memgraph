@@ -34,7 +34,11 @@ Doctrine (TR-RET-02 step 2 / audit C3):
 The ``only_need_context`` / ``only_need_prompt`` modes still use the
 legacy ``aquery()`` because aquery_llm has no special-casing for
 those — the operator gets the requested body and an empty sources
-list (those modes never claimed grounded sources to begin with).
+list. These modes, and ``bypass`` (direct LLM, no retrieval), report
+``answer_status = no_retrieval`` rather than ``grounded``: they are
+sourceless by design, so the empty sources panel is the contract, not
+a failure. Distinct from ``insufficient_information`` (retrieval ran,
+found nothing usable). See :func:`_is_no_retrieval_mode`.
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ from ..._constants import (
 from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
+    ANSWER_STATUS_NO_RETRIEVAL,
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
     AnswerStatus,
@@ -769,6 +774,20 @@ def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
         yield
 
 
+def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:
+    """True for modes that produce no sourced answer by design.
+
+    ``bypass`` calls the LLM directly with no retrieval; ``only_need_context`` /
+    ``only_need_prompt`` return the retrieved context / assembled prompt instead
+    of a grounded answer. All three carry an empty sources panel as a contract,
+    not a failure -- so they report ``answer_status = no_retrieval`` rather than
+    falsely claiming ``grounded``.
+    """
+    return (
+        body.mode == "bypass" or body.only_need_context or body.only_need_prompt
+    )
+
+
 async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[str, Any]:
     """Body of ``POST /twin/api/query`` (non-streaming, answer + sources)."""
     try:
@@ -805,7 +824,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         return {
             "response": cleaned,
             "sources": [],
-            "answer_status": ANSWER_STATUS_GROUNDED,
+            "answer_status": ANSWER_STATUS_NO_RETRIEVAL,
         }
 
     # --- Nominal path: aquery_llm gives answer + grounding context in a single
@@ -828,6 +847,17 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         # as a real 500 — do NOT mask as insufficient information.
         logger.exception("twin_query: aquery_llm envelope failure: %s", exc)
         raise HTTPException(500, f"Query failed: {exc}") from exc
+
+    # bypass mode answered directly from the LLM with no retrieval -- the answer
+    # is real but never grounded in sources, so report no_retrieval (not the
+    # grounded default the envelope would otherwise imply) and skip projection.
+    if body.mode == "bypass":
+        await _record_retrieval_activity(body, request, sources_count=0, stream=False)
+        return {
+            "response": clean_answer,
+            "sources": [],
+            "answer_status": ANSWER_STATUS_NO_RETRIEVAL,
+        }
 
     if answer_status == ANSWER_STATUS_INSUFFICIENT:
         await _record_retrieval_activity(body, request, sources_count=0, stream=False)
@@ -1047,11 +1077,14 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
-        if (
-            body.only_need_context
-            or body.only_need_prompt
-            or status == ANSWER_STATUS_INSUFFICIENT
-        ):
+        no_retrieval = _is_no_retrieval_mode(body)
+        if no_retrieval:
+            # Sourceless by design (bypass / only_need_context / only_need_prompt):
+            # the tokens already streamed are the answer/context, but there is no
+            # grounding -- report no_retrieval rather than the grounded default.
+            status = ANSWER_STATUS_NO_RETRIEVAL
+
+        if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
             yield json.dumps({"type": "status", "value": status}) + "\n"
             await _record_retrieval_activity(body, request, sources_count=0, stream=True)
             yield json.dumps({"type": "sources", "value": []}) + "\n"

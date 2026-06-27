@@ -98,6 +98,28 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(chunks.join('')).toBe('A grounded answer.');
   });
 
+  it('returns answer_status=no_retrieval when the stream signals a sourceless mode', async () => {
+    // bypass / only_need_context / only_need_prompt stream an answer/context
+    // body but never ground in sources: the parser must propagate no_retrieval
+    // (NOT default to grounded) and surface empty sources.
+    const chunks: string[] = [];
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'token', value: 'Direct answer.' }),
+        JSON.stringify({ type: 'status', value: 'no_retrieval' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+
+    const res = await api.queryStream(
+      { query: 'anything', mode: 'bypass' },
+      (c) => chunks.push(c),
+    );
+    expect(res.answer_status).toBe('no_retrieval');
+    expect(res.sources).toEqual([]);
+    expect(chunks.join('')).toBe('Direct answer.');
+  });
+
   it('defaults answer_status to grounded when the stream has no status event (back-compat)', async () => {
     // A legacy backend not yet shipping the status event must still
     // produce a sensible client default — the panel renders as before.

@@ -54,11 +54,21 @@ Source: ``PROMPTS["fail_response"]`` in ``lightrag/prompt.py:220``.
 """
 
 AnswerStatus = Literal[
-    "grounded", "insufficient_information", "source_projection_failed"
+    "grounded",
+    "insufficient_information",
+    "source_projection_failed",
+    "no_retrieval",
 ]
 
 ANSWER_STATUS_GROUNDED: AnswerStatus = "grounded"
 ANSWER_STATUS_INSUFFICIENT: AnswerStatus = "insufficient_information"
+# The mode is sourceless by design: ``bypass`` calls the LLM directly with no
+# retrieval, and ``only_need_context`` / ``only_need_prompt`` return the
+# retrieved context / assembled prompt rather than a grounded answer. Distinct
+# from ``grounded`` (which promises a sourced answer) and from
+# ``insufficient_information`` (retrieval ran but found nothing usable): here no
+# grounding was attempted, so the empty sources panel is expected, not a defect.
+ANSWER_STATUS_NO_RETRIEVAL: AnswerStatus = "no_retrieval"
 # The answer was produced from real retrieval context (grounded), but its
 # ``data.references`` could not be projected into the Twin sources contract
 # (LightRAG envelope shape broke). The answer is still returned; sources are

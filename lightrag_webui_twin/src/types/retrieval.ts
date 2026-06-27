@@ -51,12 +51,16 @@ export type ChatRole = 'user' | 'assistant';
  * grounded but its references could not be projected into the sources
  * contract — the answer is shown, the Sources panel is suppressed, and a
  * "sources unavailable" cue is rendered (never silently as no-sources).
+ * ``no_retrieval`` means the mode is sourceless by design (``bypass`` /
+ * ``only_need_context`` / ``only_need_prompt``): no grounding was attempted,
+ * so the empty Sources panel is the contract, not a failure.
  * Default = ``grounded``.
  */
 export type AnswerStatus =
   | 'grounded'
   | 'insufficient_information'
-  | 'source_projection_failed';
+  | 'source_projection_failed'
+  | 'no_retrieval';
 
 export interface ChatMessage {
   role: ChatRole;

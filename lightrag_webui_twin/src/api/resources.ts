@@ -151,7 +151,8 @@ export interface TwinQuerySource {
 export type TwinAnswerStatus =
   | 'grounded'
   | 'insufficient_information'
-  | 'source_projection_failed';
+  | 'source_projection_failed'
+  | 'no_retrieval';
 
 export interface TwinQueryResponse {
   response: string;
@@ -434,7 +435,8 @@ export const twinApi = {
 
     // Wire format: NDJSON. One JSON object per line:
     //   {"type":"token","value":"<chunk text>"}
-    //   {"type":"status","value":"grounded"|"insufficient_information"}
+    //   {"type":"status","value":"grounded"|"insufficient_information"
+    //                            |"source_projection_failed"|"no_retrieval"}
     //   {"type":"sources","value":[<RetrievalSource>, ...]}
     // Token events stream the LLM answer (call onChunk for live UI);
     // the status event arrives exactly once before the final sources
@@ -465,7 +467,8 @@ export const twinApi = {
         event.type === 'status' &&
         (event.value === 'grounded' ||
           event.value === 'insufficient_information' ||
-          event.value === 'source_projection_failed')
+          event.value === 'source_projection_failed' ||
+          event.value === 'no_retrieval')
       ) {
         answerStatus = event.value;
       }
