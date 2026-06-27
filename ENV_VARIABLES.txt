@@ -91,7 +91,8 @@ LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE   Chunk overlap (tokens)
 LIGHTRAG_MAX_GLEANING               Entity-extraction gleaning passes
 
 LLM query cache:
-LIGHTRAG_ENABLE_LLM_CACHE           Enable LightRAG's LLM query-response cache.
+LIGHTRAG_ENABLE_LLM_CACHE           Enable LightRAG's LLM query/keyword-response
+                                    cache (final answer + keyword-extraction call).
                                     Default: false (Twin-safe). Upstream keys the
                                     cache on query+keywords only -- NOT the
                                     retrieved context, conversation history,
