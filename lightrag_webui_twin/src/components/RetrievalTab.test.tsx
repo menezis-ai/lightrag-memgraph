@@ -1021,12 +1021,13 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     expect(document.querySelector('.sources-header')).toBeNull();
   });
 
-  it('suppresses Sources even if they leak behind source_projection_failed', async () => {
+  it('suppresses Sources AND inline-citation navigation when they leak behind source_projection_failed', async () => {
+    const onNavigate = vi.fn();
     const onStreamQuery = vi.fn(
       async (_params, onChunk: (chunk: string) => void) => {
-        onChunk('A grounded answer.');
+        onChunk('A grounded answer. [1]');
         return {
-          response: 'A grounded answer.',
+          response: 'A grounded answer. [1]',
           sources: [
             { n: 1, type: 'file' as const, name: 'leaked.pdf', score: 0.5 },
           ],
@@ -1038,6 +1039,7 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
       <RetrievalTab
         {...defaultProps()}
         initialThreads={[]}
+        onNavigate={onNavigate}
         onStreamQuery={onStreamQuery}
       />,
     );
@@ -1052,18 +1054,27 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     );
     expect(screen.queryByTestId('source-1')).toBeNull();
     expect(document.querySelector('.sources-header')).toBeNull();
+    // The [1] citation still renders, but the leaked source was dropped from
+    // state, so clicking it must NOT navigate to the unprojected document.
+    await userEvent.click(screen.getByTestId('citation-1'));
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 
-  it('keeps the answer but shows the no-retrieval cue for a sourceless mode', async () => {
+  it('keeps the answer but shows the no-retrieval cue and blocks leaked-source navigation', async () => {
     // bypass / only_need_context / only_need_prompt: the answer/context body is
     // shown, but the empty Sources area must read as intentional (cue), not as
-    // insufficient_information and not as a missing-sources glitch.
+    // insufficient_information and not as a missing-sources glitch. A future
+    // backend that leaks sources under this status must still not surface them
+    // via the panel OR an inline citation.
+    const onNavigate = vi.fn();
     const onStreamQuery = vi.fn(
       async (_params, onChunk: (chunk: string) => void) => {
-        onChunk('Direct answer.');
+        onChunk('Direct answer. [1]');
         return {
-          response: 'Direct answer.',
-          sources: [],
+          response: 'Direct answer. [1]',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'leaked.pdf', score: 0.4 },
+          ],
           answer_status: 'no_retrieval' as const,
         };
       },
@@ -1072,6 +1083,7 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
       <RetrievalTab
         {...defaultProps()}
         initialThreads={[]}
+        onNavigate={onNavigate}
         onStreamQuery={onStreamQuery}
       />,
     );
@@ -1090,7 +1102,11 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     // Not mislabeled as insufficient / projection-failed; no Sources panel.
     expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
     expect(screen.queryByTestId('sources-empty-projection-failed')).toBeNull();
+    expect(screen.queryByTestId('source-1')).toBeNull();
     expect(document.querySelector('.sources-header')).toBeNull();
+    // Leaked source dropped from state -> the [1] citation cannot navigate.
+    await userEvent.click(screen.getByTestId('citation-1'));
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 
   it('renders the Sources panel as before when status=grounded', async () => {

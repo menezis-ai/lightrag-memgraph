@@ -1171,7 +1171,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
           {"type":"token","value":"<chunk text>"}
           ... repeated for every LLM chunk ...
           {"type":"status","value":"grounded"|"insufficient_information"
-                                    |"source_projection_failed"}
+                                    |"source_projection_failed"|"no_retrieval"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
 
         The ``status`` event lands exactly once, before the final

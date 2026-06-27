@@ -531,12 +531,12 @@ export function RetrievalTab({
             .split(/(\s+)/)
             .filter((t) => t.length > 0);
           const status: AnswerStatus = answer_status ?? 'grounded';
-          // TR-RET-02: when the backend signalled insufficient context,
-          // drop any sources that slipped through (defensive — the
-          // backend already returns []). Prevents a future backend
-          // regression from showing sources behind an unfounded answer.
-          const effectiveSources =
-            status === 'insufficient_information' ? [] : (sources ?? []);
+          // Only a grounded answer carries meaningful sources. For every
+          // other status (insufficient_information, source_projection_failed,
+          // no_retrieval) drop any sources that slipped through so neither the
+          // Sources panel NOR the inline [N] citations can surface or navigate
+          // to them — defends against a future backend regression.
+          const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
           appendToThread(threadId, (c) => [
             ...c,
             {
@@ -565,8 +565,10 @@ export function RetrievalTab({
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
         const status: AnswerStatus = answer_status ?? 'grounded';
-        const effectiveSources =
-          status === 'insufficient_information' ? [] : (sources ?? []);
+        // Only a grounded answer carries meaningful sources (see the
+        // streaming path above) — drop them for every other status so the
+        // inline [N] citations cannot navigate to leaked sources either.
+        const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
         if (tokens.length === 0) {
           streamTokens(
             threadId,
