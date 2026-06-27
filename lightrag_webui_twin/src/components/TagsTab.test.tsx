@@ -241,10 +241,12 @@ describe('TagsTab — selection + detail', () => {
     expect(within(detail).queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  it('palier 2 detail panel offers Suggest edit but no destructive actions', () => {
+  it('palier 2 detail panel shows Suggest edit disabled (no backend endpoint) and no destructive actions', () => {
     render(<TagsTab {...defaultProps(PALIER2)} />);
     const detail = document.querySelector('.tag-detail') as HTMLElement;
-    expect(within(detail).getByRole('button', { name: 'Suggest edit' })).toBeInTheDocument();
+    expect(
+      within(detail).getByRole('button', { name: 'Suggest edit' }),
+    ).toBeDisabled();
     expect(within(detail).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 

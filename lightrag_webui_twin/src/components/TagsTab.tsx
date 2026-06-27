@@ -1188,9 +1188,14 @@ function TagDetailPanel({
           </span>
         )}
         {canSuggest && !canEdit && (
+          // "Suggest edit" has no backend edit-proposal endpoint yet: routing it
+          // through requestTag always 409s on an existing tag (and dropped the
+          // edited fields). Gated off until the endpoint exists, rather than
+          // exposing an action that fails every time. See useTagActions 'suggest'.
           <button
             className="ghost-btn small"
-            onClick={() => onAction({ kind: 'suggest', tag: t })}
+            disabled
+            title="Suggest edit is not available yet — ask a Steward to edit the tag directly."
           >
             Suggest edit
           </button>

@@ -40,7 +40,7 @@ export interface TagActionCommit {
   longDescription?: string;
   /** Governance domain/category for request/edit flows. */
   category?: string;
-  /** Reason for `reject`. */
+  /** Reason for `reject` or `deprecate`. */
   reason?: string;
   /** Request/suggest justification text. */
   justification?: string;
@@ -147,7 +147,7 @@ export function TagActionModal({
         .filter(Boolean);
       payload.justification = justification.trim();
     }
-    if (action.kind === 'reject') {
+    if (action.kind === 'reject' || action.kind === 'deprecate') {
       payload.reason = reason.trim();
     }
     if (action.kind === 'delete') {
@@ -311,6 +311,8 @@ export function TagActionModal({
                 id="tagaction-depreason"
                 className="text-input"
                 rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
                 placeholder="e.g. Superseded by iso20022 — see HLA §4.2"
               />
             </>

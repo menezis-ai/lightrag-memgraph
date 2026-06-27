@@ -119,24 +119,10 @@ export function useTagActions({
         );
         break;
       case 'suggest':
-        // No backend endpoint for "suggest" yet: surface as a request.
-        if (commit.tag) {
-          commitTagMutation(
-            (cb) =>
-              requestTag.mutate(
-                {
-                  tag: commit.tag!.tag,
-                  def: commit.tag!.def,
-                  category: commit.tag!.category,
-                  actor,
-                  justification: 'suggested edit',
-                },
-                cb,
-              ),
-            successToast,
-            failureTitle,
-          );
-        }
+        // Gated off: there is no backend edit-proposal endpoint. Routing this
+        // through requestTag 409s on an already-existing tag and dropped the
+        // edited fields, so the TagsTab "Suggest edit" affordance is disabled.
+        // No-op until a real suggest-edit endpoint exists.
         break;
       case 'synonyms':
         if (commit.tag) {
@@ -157,7 +143,8 @@ export function useTagActions({
         break;
       case 'deprecate':
         commitTagMutation(
-          (cb) => deprecateTag.mutate({ name: tagname, actor }, cb),
+          (cb) =>
+            deprecateTag.mutate({ name: tagname, actor, reason: commit.reason }, cb),
           successToast,
           failureTitle,
         );
@@ -211,7 +198,13 @@ export function useTagActions({
                 actor,
               });
             }
-            await approveTag.mutateAsync({ name: tagname, actor });
+            // After an edit that renames the tag, the old name no longer
+            // exists — approve the NEW name. Trim to match the backend, which
+            // stores the trimmed rename target (a raw name would 404 on approve).
+            await approveTag.mutateAsync({
+              name: commit.name?.trim() || tagname,
+              actor,
+            });
             pushToast(successToast);
           } catch (err) {
             pushToast({
