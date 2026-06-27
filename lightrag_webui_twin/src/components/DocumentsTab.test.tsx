@@ -270,7 +270,7 @@ describe('DocumentsTab — header actions', () => {
     renderTab(<DocumentsTab {...p} />);
     // DOCUMENT_FIXTURES carries 1 FAILED doc (huge-archive.zip).
     const btn = screen.getByRole('button', {
-      name: /Re-process failed sources/,
+      name: /Re-process failed/,
     });
     expect(btn).toBeEnabled();
     await userEvent.click(btn);
@@ -288,7 +288,7 @@ describe('DocumentsTab — header actions', () => {
     };
     renderTab(<DocumentsTab {...p} />);
     const btn = screen.getByRole('button', {
-      name: /Re-process failed sources/,
+      name: /Re-process failed/,
     });
     expect(btn).toBeDisabled();
     expect(btn.getAttribute('title')).toMatch(
@@ -301,7 +301,7 @@ describe('DocumentsTab — header actions', () => {
   it('shows the failed count and POST /documents/reprocess_failed in the button tooltip (audit C7)', () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     const btn = screen.getByRole('button', {
-      name: /Re-process failed sources/,
+      name: /Re-process failed/,
     });
     const title = btn.getAttribute('title') ?? '';
     expect(title).toContain('1 failed source');

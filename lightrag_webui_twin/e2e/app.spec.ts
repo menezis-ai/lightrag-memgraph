@@ -654,7 +654,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByTestId('doc-detail-delete').click();
     await expect(page.getByTestId('doc-detail-delete')).toHaveText(/Confirm delete/);
     await page.getByTestId('doc-detail-delete').click();
-    await expect(page.getByRole('status')).toContainText('Document deleted');
+    await expect(page.getByRole('status')).toContainText('Document removed');
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 

@@ -696,9 +696,11 @@ export function useDeleteTag() {
 }
 
 /**
- * Delete one document via the shimmed DELETE /documents/{id} route.
- * The shim calls ``rag.adelete_by_doc_id`` which cascades to entities,
- * relations, chunks, vector embeddings — full removal from Memgraph.
+ * Delete one document. Routes through the Twin bulk-delete endpoint with a
+ * single id (`api.deleteDocument` → `bulkDeleteDocuments({doc_ids:[id]})`), so
+ * it is ref-counted by folder membership: the doc is un-shared from the active
+ * folder and only physically cascaded (chunks/vectors/entities/relations) when
+ * this was its LAST folder. A doc shared into other folders survives there.
  *
  * Doctrine: every UI-visible mutation persists.
  */

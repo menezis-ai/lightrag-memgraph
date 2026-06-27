@@ -361,7 +361,7 @@ describe('onDeleteSingle', () => {
     });
     expect(deleteDocumentMock).toHaveBeenCalledWith('doc-1');
     expect(pushToast).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'done', title: 'Document deleted' }),
+      expect.objectContaining({ kind: 'done', title: 'Document removed' }),
     );
   });
 

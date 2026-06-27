@@ -449,8 +449,12 @@ export function useDocumentActions({
       await deleteDoc.mutateAsync(doc.doc_id);
       pushToast({
         kind: 'done',
-        title: 'Document deleted',
-        sub: `${doc.file_path} — removed from Memgraph (cascade: chunks + entities + relations)`,
+        title: 'Document removed',
+        // Ref-counted (membership) delete: the doc is un-shared from the active
+        // folder; its chunks/entities/relations cascade only when this was its
+        // last folder. Don't claim a full cascade — a shared doc stays in its
+        // other folders.
+        sub: `${doc.file_path} — removed from the active folder (kept in any other folders it is shared into; fully deleted only if this was its last folder)`,
       });
     } catch (err) {
       pushToast({

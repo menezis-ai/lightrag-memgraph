@@ -323,7 +323,7 @@ function RetryFailedButton({
       onClick={retry}
     >
       <Icon name="refresh" size={14} />
-      Re-process failed sources
+      Re-process failed (workspace)
       {failedCount > 0 && (
         <span className="pipeline-badge" aria-label={`${failedCount} failed`}>
           {failedCount}
@@ -338,9 +338,9 @@ function retryButtonTitle(failedCount: number, ingestionDisabled: boolean) {
     return 'Memgraph instance quota reached — free space before re-processing';
   }
   if (failedCount === 0) return 'No failed sources to re-process';
-  return `Re-process ${failedCount} failed source${
+  return `Re-process all ${failedCount} failed source${
     failedCount > 1 ? 's' : ''
-  } (POST /documents/reprocess_failed)`;
+  } across the workspace — LightRAG's global failed queue, NOT folder-scoped (POST /documents/reprocess_failed)`;
 }
 
 function BulkActionsBar({
