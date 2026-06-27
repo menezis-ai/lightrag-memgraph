@@ -421,14 +421,27 @@ def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
 def _source_matches_doc_filter(
     source: dict[str, Any], doc_filter: dict[str, list[str]] | None
 ) -> bool:
+    """Mirror the storage-layer ``doc_all`` / ``doc_any`` semantics.
+
+    Source candidates are the source's own doc identifiers (``doc_id`` + path),
+    so this is the *set* form of ``vector_impl._doc_conditions_set``:
+    ``all`` → requested ⊆ candidates (strict — NOT the union-as-``any`` the
+    legacy post-filter conflated); ``any`` → candidates ∩ requested ≠ ∅; both
+    AND-ed when present. Same shape as :func:`_doc_tags_match_filter`. The real
+    exclusion lives in the Cypher; this is the last-line guard if the envelope
+    shape shifts under a LightRAG bump.
+    """
     required, optional = _doc_filter_terms(doc_filter)
     if not required and not optional:
         return True
     candidates = _source_doc_candidates(source)
     if not candidates:
         return False
-    requested = required | optional
-    return not candidates.isdisjoint(requested)
+    if required and not required.issubset(candidates):
+        return False
+    if optional and candidates.isdisjoint(optional):
+        return False
+    return True
 
 
 async def _source_matches_tag_filter(

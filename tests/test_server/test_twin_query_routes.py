@@ -1479,3 +1479,71 @@ class TestAnswerStatusContract:
         assert len(source_events) == 1
         assert source_events[0]["value"] == []
         assert rag.chunks_vdb.last_query is None
+
+
+class TestSourceMatchesDocFilter:
+    """Finding #3: the source post-filter must mirror the storage-layer
+    ``doc_all`` / ``doc_any`` semantics (vector_impl._doc_conditions_set),
+    not the legacy union-as-``any`` it used to conflate. It is the
+    last-line guard if the aquery_llm envelope shape shifts under a
+    LightRAG bump and the Cypher exclusion stops being the only gate.
+    """
+
+    @staticmethod
+    def _src(doc_id: str, name: str = "") -> dict[str, Any]:
+        return {"doc_id": doc_id, "name": name}
+
+    def test_no_filter_passes(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        assert _source_matches_doc_filter(self._src("docA"), None) is True
+        assert _source_matches_doc_filter(self._src("docA"), {}) is True
+
+    def test_doc_any_is_intersection(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        flt = {"any": ["docA", "docB"]}
+        assert _source_matches_doc_filter(self._src("docA"), flt) is True
+        assert _source_matches_doc_filter(self._src("docC"), flt) is False
+
+    def test_doc_all_is_strict_subset_not_union(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        # A single-doc source can never satisfy all of TWO distinct docs --
+        # the legacy union-as-``any`` wrongly passed it on "docA in {A,B}".
+        two = {"all": ["docA", "docB"]}
+        assert _source_matches_doc_filter(self._src("docA"), two) is False
+        assert _source_matches_doc_filter(self._src("docB"), two) is False
+
+        # all of a single requested doc == that doc is present.
+        one = {"all": ["docA"]}
+        assert _source_matches_doc_filter(self._src("docA"), one) is True
+        assert _source_matches_doc_filter(self._src("docC"), one) is False
+
+    def test_doc_all_matches_against_name_candidate(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        # candidates = {doc_id, name}; ``all`` of two docs is satisfiable only
+        # when both requested values are among the source's own identifiers.
+        flt = {"all": ["docA", "/path/a.pdf"]}
+        src = self._src("docA", "/path/a.pdf")
+        assert _source_matches_doc_filter(src, flt) is True
+
+    def test_doc_all_and_any_are_anded(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        flt = {"all": ["docA"], "any": ["docB", "docA"]}
+        # required docA present AND (docB|docA) intersect -> pass.
+        assert _source_matches_doc_filter(self._src("docA"), flt) is True
+        # required docA absent -> fail even though ``any`` would match.
+        assert _source_matches_doc_filter(self._src("docB"), flt) is False
