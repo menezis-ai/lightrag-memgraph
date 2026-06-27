@@ -275,6 +275,41 @@ def _webui_uses_memgraph(settings: LightRAGServerSettings) -> bool:
     )
 
 
+def _build_rag_kwargs(
+    settings: LightRAGServerSettings,
+    embedding_func: Any,
+    llm_func: Any,
+) -> dict[str, Any]:
+    """Assemble the LightRAG constructor kwargs from settings.
+
+    Extracted from the lifespan so the wiring (notably the query-cache flag)
+    is unit-testable without standing up Memgraph or the LLM bindings.
+    """
+    rag_kwargs: dict[str, Any] = {
+        "working_dir": settings.working_dir,
+        "kv_storage": settings.kv_storage,
+        "vector_storage": settings.vector_storage,
+        "graph_storage": settings.graph_storage,
+        "doc_status_storage": settings.doc_status_storage,
+        "chunk_token_size": settings.chunk_token_size,
+        "chunk_overlap_token_size": settings.chunk_overlap_token_size,
+        "embedding_func": embedding_func,
+        "llm_model_func": llm_func,
+        "embedding_batch_num": 32,
+        "embedding_func_max_async": 16,
+        # Query cache off by default: upstream compute_args_hash keys on
+        # query+keywords only -- not the retrieved context, conversation
+        # history, active folder, or doc/tag/min_score filters. Folders share
+        # one physical workspace (MEMBER_OF), so an enabled cache would return
+        # folder A's generated answer for the same question asked in folder B
+        # (false-grounded + cross-folder leak). See settings.enable_llm_cache.
+        "enable_llm_cache": settings.enable_llm_cache,
+    }
+    if settings.workspace:
+        rag_kwargs["workspace"] = settings.workspace
+    return rag_kwargs
+
+
 def _build_lifespan(settings: LightRAGServerSettings):
     """Build the FastAPI lifespan context manager for ``create_app``."""
 
@@ -301,22 +336,7 @@ def _build_lifespan(settings: LightRAGServerSettings):
         llm_func = _build_llm_func(settings, llm_api_key)
 
         # -- Instantiate LightRAG --
-        rag_kwargs: dict[str, Any] = {
-            "working_dir": settings.working_dir,
-            "kv_storage": settings.kv_storage,
-            "vector_storage": settings.vector_storage,
-            "graph_storage": settings.graph_storage,
-            "doc_status_storage": settings.doc_status_storage,
-            "chunk_token_size": settings.chunk_token_size,
-            "chunk_overlap_token_size": settings.chunk_overlap_token_size,
-            "embedding_func": embedding_func,
-            "llm_model_func": llm_func,
-            "embedding_batch_num": 32,
-            "embedding_func_max_async": 16,
-        }
-        if settings.workspace:
-            rag_kwargs["workspace"] = settings.workspace
-
+        rag_kwargs = _build_rag_kwargs(settings, embedding_func, llm_func)
         _rag = LightRAG(**rag_kwargs)
         await _rag.initialize()
         logger.info(

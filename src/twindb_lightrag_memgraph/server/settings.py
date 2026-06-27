@@ -116,6 +116,23 @@ class LightRAGServerSettings(BaseSettings):
         description="Max entity extraction attempts for ambiguous content",
     )
 
+    # -- LLM query cache --
+    enable_llm_cache: bool = Field(
+        default=False,
+        description=(
+            "Enable LightRAG's LLM query-response cache. Disabled by default in "
+            "Twin: upstream computes the cache key (compute_args_hash) from the "
+            "query + keywords only -- it does NOT include the retrieved context, "
+            "the conversation history, the active folder, or the doc/tag/min_score "
+            "filters. Folders share one physical workspace (MEMBER_OF membership), "
+            "so an enabled cache returns folder A's generated answer for an "
+            "identical question asked in folder B (false-grounded answer + "
+            "cross-folder text leak). Leave False unless you understand and accept "
+            "that collision. The ingestion-time entity-extraction cache "
+            "(enable_llm_cache_for_entity_extract) is independent and stays on."
+        ),
+    )
+
     # -- Observability --
     enable_langsmith_tracing: bool = Field(
         default=False,

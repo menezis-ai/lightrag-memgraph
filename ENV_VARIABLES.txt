@@ -90,6 +90,19 @@ LIGHTRAG_CHUNK_TOKEN_SIZE           Chunk size (tokens)
 LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE   Chunk overlap (tokens)
 LIGHTRAG_MAX_GLEANING               Entity-extraction gleaning passes
 
+LLM query cache:
+LIGHTRAG_ENABLE_LLM_CACHE           Enable LightRAG's LLM query-response cache.
+                                    Default: false (Twin-safe). Upstream keys the
+                                    cache on query+keywords only -- NOT the
+                                    retrieved context, conversation history,
+                                    active folder, or doc/tag/min_score filters.
+                                    Folders share one physical workspace, so an
+                                    enabled cache leaks folder A's answer into an
+                                    identical question asked in folder B. Leave
+                                    false unless you accept that collision. The
+                                    ingestion entity-extraction cache is a
+                                    separate flag and stays on.
+
 CORS:
 LIGHTRAG_CORS_ALLOWED_ORIGINS       Comma-separated origins
 LIGHTRAG_CORS_ALLOW_CREDENTIALS     true/false
