@@ -139,7 +139,7 @@ class IntentClassifier:
             )
 
         except Exception as e:
-            logger.error("Intent classification error: %s", e)
+            logger.exception("Intent classification error: %s", e)
             return IntentResult(
                 intent=IntentType.IN_SCOPE,
                 confidence=0.0,

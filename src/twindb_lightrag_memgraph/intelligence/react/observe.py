@@ -169,7 +169,7 @@ class SynthesisEngine:
             )
 
         except Exception as e:
-            logger.error("OBSERVE error: %s", e)
+            logger.exception("OBSERVE error: %s", e)
             return SynthesisResult(
                 answer=f"Erreur lors de la synthese : {e}",
                 citations=[],

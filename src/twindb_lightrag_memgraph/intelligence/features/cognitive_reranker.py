@@ -163,7 +163,7 @@ class CognitiveReranker:
             return result
 
         except Exception as e:
-            logger.error("Reranking error: %s", e)
+            logger.exception("Reranking error: %s", e)
             return self._fallback(chunks)
 
     def _fallback(

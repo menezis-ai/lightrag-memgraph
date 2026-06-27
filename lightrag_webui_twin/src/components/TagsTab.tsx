@@ -117,7 +117,7 @@ export function TagsTab({
     'all',
     {
       validate: (v): boolean =>
-        (TAG_STATUS_FILTERS as readonly string[]).includes(v as string),
+        (TAG_STATUS_FILTERS as readonly string[]).includes(v),
     },
   );
   const [q, setQ] = useUrlParam<string>('q', '');

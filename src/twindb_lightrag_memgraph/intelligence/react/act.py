@@ -71,7 +71,7 @@ class SearchEngine:
             return self._parse_lightrag_result(result, rag)
 
         except Exception as e:
-            logger.error("Search error on workspace: %s", e)
+            logger.exception("Search error on workspace: %s", e)
             return []
 
     def _parse_lightrag_result(

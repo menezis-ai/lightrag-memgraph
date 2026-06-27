@@ -9,7 +9,6 @@
  * trivially unit-testable in isolation.
  */
 
-import type { SourceType } from '../components/Icon';
 import type { RetrievalSource } from '../types/retrieval';
 
 import type { TwinAnswerStatus, TwinQueryResponse } from './resources';
@@ -41,7 +40,7 @@ export function mapTwinQueryResponseForRetrievalTab(
       s.type === 'url' ||
       s.type === 'confluence' ||
       s.type === 'sharepoint'
-        ? (s.type as SourceType)
+        ? s.type
         : ('file' as const),
     name: s.name,
     meta: s.meta ?? undefined,

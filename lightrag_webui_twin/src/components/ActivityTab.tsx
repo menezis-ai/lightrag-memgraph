@@ -68,7 +68,7 @@ export function ActivityTab({
   onRefresh,
 }: Readonly<ActivityTabProps>) {
   const [range, setRange] = useUrlParam<ActivityRange>('range', '7d', {
-    validate: (v) => (RANGE_IDS as readonly string[]).includes(v as string),
+    validate: (v) => (RANGE_IDS as readonly string[]).includes(v),
   });
   const [kinds, setKinds] = useUrlParam<Set<string>>('kind', new Set<string>(), {
     parse: (s) => new Set(s.split(',').filter(Boolean)),

@@ -826,7 +826,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     except GraphAnswerEnvelopeError as exc:
         # Hard backend failure (status=failure, reason != no_results). Surface
         # as a real 500 — do NOT mask as insufficient information.
-        logger.error("twin_query: aquery_llm envelope failure: %s", exc)
+        logger.exception("twin_query: aquery_llm envelope failure: %s", exc)
         raise HTTPException(500, f"Query failed: {exc}") from exc
 
     if answer_status == ANSWER_STATUS_INSUFFICIENT:

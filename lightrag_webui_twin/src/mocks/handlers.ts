@@ -434,7 +434,7 @@ function loadScenario(): E2eScenario {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object') return parsed as E2eScenario;
+    if (parsed && typeof parsed === 'object') return parsed;
   } catch {
     // Ignore corrupt e2e state and fall back to an empty scenario.
   }
@@ -1251,7 +1251,7 @@ export const handlers = [
       // Source #1 maps to a real seeded document (DOCUMENT_FIXTURES[0]) so the
       // citation -> Documents drilldown e2e can assert a true linkage. The
       // remaining sources stay synthetic. This is the deliberate handler tune
-      // the retrieval citation test's TODO(2026-06-16) called for, scoped to
+      // the retrieval citation test's follow-up (2026-06-16) called for, scoped to
       // one source so it does not re-entrench broad fixture coupling.
       const real = i === 0 ? DOCUMENT_FIXTURES[0] : undefined;
       return {

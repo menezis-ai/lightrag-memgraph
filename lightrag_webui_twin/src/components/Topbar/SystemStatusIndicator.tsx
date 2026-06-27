@@ -102,8 +102,8 @@ export function SystemStatusIndicator({
     };
   }, []);
 
-  const lightragStatus = (lightrag.data?.status ?? 'down') as Status;
-  const twinStatus = (twin.data?.status ?? 'down') as Status;
+  const lightragStatus = lightrag.data?.status ?? 'down';
+  const twinStatus = twin.data?.status ?? 'down';
   const overall = worst(lightragStatus, twinStatus);
   const meta = OVERALL_META[overall];
 

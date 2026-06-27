@@ -334,7 +334,7 @@ export function TweakRadio<V extends string | number = string>({
 
   const opts = options.map((o) =>
     typeof o === 'object' && o !== null && 'value' in o
-      ? (o as { value: V; label: string })
+      ? o
       : { value: o, label: String(o) },
   );
   const idx = Math.max(

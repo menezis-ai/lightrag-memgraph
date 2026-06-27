@@ -149,7 +149,7 @@ def _apply_app_overlays(
         try:
             resolved_webui_dist = _resolve_webui_dist(webui_dist)
         except FileNotFoundError as exc:
-            logger.error(
+            logger.exception(
                 "twindb: replace_ui=True but no WebUI dist found — "
                 "LightRAG native UI will be served. mount_server / "
                 "shim_native_routes WILL still apply. Details: %s",
@@ -1158,7 +1158,7 @@ def _block_pipmaster_classes(pm) -> None:
             continue
         is_async_cls = cls_name == "AsyncPackageManager"
         for method_name in cls.__dict__:
-            if not (method_name.startswith("install") or method_name.startswith("ensure")):
+            if not method_name.startswith(("install", "ensure")):
                 continue
             replacement = (
                 _refuse_runtime_install_async if is_async_cls else _refuse_runtime_install

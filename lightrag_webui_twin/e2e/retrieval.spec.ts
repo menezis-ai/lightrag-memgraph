@@ -145,10 +145,8 @@ test.describe('Retrieval threads and parameters', () => {
   // The "click a chip → fire a query" affordance has nothing to
   // exercise. If product wants the suggestion rail back, it has to
   // own its own runtime data source first, then this test returns.
-  test.skip(
-    '@retrieval @params empty-state suggestion chips fire a query',
-    async () => {},
-  );
+  // (The placeholder `test.skip` stub was dropped — this comment is the
+  // tombstone; an empty skipped test is itself a lint smell.)
 
   // TR-RET-02 step 3 / audit C1: the "Tag filter chips" scenario was
   // dropped here because the affordance itself was removed — LightRAG

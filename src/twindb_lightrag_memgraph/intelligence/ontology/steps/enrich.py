@@ -146,7 +146,7 @@ async def enrich(
         )
 
     except Exception as e:
-        logger.error("Enrichment error: %s", e)
+        logger.exception("Enrichment error: %s", e)
         return EnrichmentResult(clusters=cluster_result)
 
 

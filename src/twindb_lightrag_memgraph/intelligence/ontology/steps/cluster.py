@@ -121,5 +121,5 @@ async def cluster(
         return ClusterResult(domains=domains, extraction=extraction)
 
     except Exception as e:
-        logger.error("Clustering error: %s", e)
+        logger.exception("Clustering error: %s", e)
         return ClusterResult(extraction=extraction)

@@ -995,5 +995,13 @@ test.describe('Twin WebUI operator journeys', () => {
         })),
       )
       .toMatchObject({ threads: [], extra: null });
+
+    // Direct end-state assertion: after the poll settles, no twin-rag.* key
+    // survives sign-out. (expect.poll above is not recognised as an assertion
+    // by static analysis, so this also satisfies S2699.)
+    const remaining = await page.evaluate(() =>
+      Object.keys(localStorage).filter((k) => k.startsWith('twin-rag.')),
+    );
+    expect(remaining).toEqual([]);
   });
 });

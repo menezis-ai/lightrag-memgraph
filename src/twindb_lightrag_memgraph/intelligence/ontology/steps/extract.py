@@ -241,7 +241,7 @@ async def extract(
         )
 
     except Exception as e:
-        logger.error("Extraction error for doc %s: %s", doc_id, e)
+        logger.exception("Extraction error for doc %s: %s", doc_id, e)
         return ExtractionResult(source_doc=doc_id)
 
 

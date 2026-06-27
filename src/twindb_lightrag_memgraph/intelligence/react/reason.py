@@ -147,7 +147,7 @@ class ReasoningEngine:
             )
 
         except Exception as e:
-            logger.error("REASON error: %s", e)
+            logger.exception("REASON error: %s", e)
             return ReasoningResult(
                 thought=f"Fallback (LLM error): {e}",
                 search_query=question,

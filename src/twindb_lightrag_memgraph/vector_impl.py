@@ -44,6 +44,9 @@ try:  # pragma: no cover - exercised implicitly by the import
 except Exception:  # pragma: no cover - defensive
     GRAPH_FIELD_SEP = "<SEP>"
 
+# Cypher boolean conjunction used to glue WHERE predicates.
+_CYPHER_AND = " AND "
+
 # Folder-scoped retrieval over-fetches before the membership inner-join so that
 # dropping non-member candidates still leaves ~top_k members. A folder that is a
 # very thin slice of a large corpus can still under-return — a documented
@@ -434,7 +437,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 WITH node, similarity, d, collect(DISTINCT toLower(__t.id)) AS __dtags"""
             conds += _tag_conditions(filters, params, "__dtags")
         if conds:
-            base += "\n                WHERE " + " AND ".join(conds)
+            base += "\n                WHERE " + _CYPHER_AND.join(conds)
         return base + tail
 
     def _graph_membership_join(
@@ -480,14 +483,14 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             tag_inner = _tag_conditions(filters, params, "__di.tags")
             if tag_inner:
                 conds.append(
-                    "any(__di IN __docinfos WHERE " + " AND ".join(tag_inner) + ")"
+                    "any(__di IN __docinfos WHERE " + _CYPHER_AND.join(tag_inner) + ")"
                 )
         else:
             base += """
                 WITH node, similarity, collect(DISTINCT d.id) AS __docids"""
             conds = _doc_conditions_set(filters, params, "__docids")
         if conds:
-            base += "\n                WHERE " + " AND ".join(conds)
+            base += "\n                WHERE " + _CYPHER_AND.join(conds)
         return base + tail
 
     async def query(
