@@ -619,6 +619,7 @@ export function AppShell() {
               docOptions={docList.map((doc) => doc.doc_id)}
               docLabels={graphDocLabels}
               onNavigate={onNavigate}
+              activeFolder={folder}
             />
           )}
           {tab === 'activity' && (

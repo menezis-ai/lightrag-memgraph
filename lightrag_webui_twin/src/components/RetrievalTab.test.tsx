@@ -501,6 +501,91 @@ describe('RetrievalTab — params panel', () => {
   });
 });
 
+describe('RetrievalTab — folder cloisonnement (conversation history)', () => {
+  const folderAThread = () => [
+    {
+      id: 'th_a',
+      title: 'A',
+      created: Date.now(),
+      updated: Date.now(),
+      messages: [
+        { role: 'user' as const, text: 'Folder A question?' },
+        {
+          role: 'assistant' as const,
+          tokens: ['Folder A answer.'],
+          sources: [],
+        },
+      ],
+    },
+  ];
+
+  it('replays history within a folder but never across folders', async () => {
+    const onSendQuery = vi.fn(async () => ({
+      response: 'REPLYTOKEN',
+      sources: [],
+    }));
+    const { rerender } = render(
+      <RetrievalTab
+        activeFolder="folderA"
+        initialThreads={folderAThread()}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    // In folder A, the prior A exchange IS replayed as conversation history.
+    await userEvent.type(screen.getByLabelText('Query input'), 'A follow-up?');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        conversationHistory: [
+          { role: 'user', content: 'Folder A question?' },
+          { role: 'assistant', content: 'Folder A answer.' },
+        ],
+      }),
+    );
+    // Let the answer animation settle so `streaming` clears before switching.
+    await waitFor(
+      () =>
+        expect(
+          document.querySelector('.retrieval-conv')?.textContent,
+        ).toContain('REPLYTOKEN'),
+      { timeout: 3000 },
+    );
+
+    // Switch to folder B: the next query must carry NO folder A history —
+    // otherwise A's answer leaks into B's prompt, bypassing storage scoping.
+    rerender(
+      <RetrievalTab
+        activeFolder="folderB"
+        initialThreads={folderAThread()}
+        onSendQuery={onSendQuery}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText('Query input'), 'B question?');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(2));
+    expect(onSendQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ conversationHistory: [] }),
+    );
+  });
+
+  it('persists threads under a per-folder storage key', async () => {
+    render(
+      <RetrievalTab activeFolder="folderA" initialThreads={folderAThread()} />,
+    );
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem('twin-rag.threads.v3:folderA'),
+      ).toBeTruthy(),
+    );
+    // The base (folder-less) key is NOT written when a folder is active.
+    expect(window.localStorage.getItem('twin-rag.threads.v3')).toBeNull();
+  });
+});
+
 describe('RetrievalTab — source cards', () => {
   it('shows only the first five sources until the user expands the list', async () => {
     const sources = Array.from({ length: 7 }, (_, i) => ({

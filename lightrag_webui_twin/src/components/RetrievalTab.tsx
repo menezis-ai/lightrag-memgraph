@@ -40,6 +40,27 @@ import {
 
 // Versioned key — bumped to invalidate stale pre-production local threads.
 const THREADS_STORAGE_KEY = 'twin-rag.threads.v3';
+
+/** Per-folder threads key. Folder cloisonnement extends to retrieval history:
+ *  a thread is scoped to the folder it was created in so its messages can never
+ *  be replayed as ``conversation_history`` into another folder's query. Absent
+ *  a folder (standalone/fixture runs) the base key is used unchanged. */
+function threadsStorageKey(folder?: string): string {
+  return folder ? `${THREADS_STORAGE_KEY}:${folder}` : THREADS_STORAGE_KEY;
+}
+
+function loadThreads(
+  key: string,
+  fallback: readonly RetrievalThread[],
+): readonly RetrievalThread[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return JSON.parse(raw) as RetrievalThread[];
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
 const STREAM_TICK_MS = 70;
 const INITIAL_VISIBLE_SOURCES = 5;
 
@@ -144,6 +165,11 @@ export interface RetrievalTabProps {
   docLabels?: Readonly<Record<string, string>>;
   /** Host-controlled tab navigation for citation/source drill-downs. */
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  /** Active folder id. Retrieval threads are partitioned per folder so that
+   *  ``conversation_history`` from folder A is never replayed into a folder B
+   *  query — that path bypasses the storage-layer folder scoping and would leak
+   *  cross-folder context through the prompt. */
+  activeFolder?: string;
 }
 
 const missingRetrievalBackend: NonNullable<RetrievalTabProps['onSendQuery']> =
@@ -250,19 +276,15 @@ export function RetrievalTab({
   docOptions = [],
   docLabels,
   onNavigate,
+  activeFolder,
 }: Readonly<RetrievalTabProps>) {
+  const threadsKey = threadsStorageKey(activeFolder);
   const [query, setQuery] = useState('');
-  const [threads, setThreads] = useState<readonly RetrievalThread[]>(() => {
-    try {
-      const raw = localStorage.getItem(THREADS_STORAGE_KEY);
-      if (raw) return JSON.parse(raw) as RetrievalThread[];
-    } catch {
-      /* ignore */
-    }
-    return initialThreads;
-  });
+  const [threads, setThreads] = useState<readonly RetrievalThread[]>(() =>
+    loadThreads(threadsKey, initialThreads),
+  );
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    () => initialThreads[0]?.id ?? null,
+    () => loadThreads(threadsKey, initialThreads)[0]?.id ?? null,
   );
   const [streaming, setStreaming] = useState(false);
   const [streamingThreadId, setStreamingThreadId] = useState<string | null>(null);
@@ -295,6 +317,14 @@ export function RetrievalTab({
   const [enableRerank, setEnableRerank] = useState(true);
 
   const convRef = useRef<HTMLDivElement>(null);
+  // Latest-value ref holding the current folder's key, synced in an effect (not
+  // during render). The persist effect fires on `threads` change only and reads
+  // this — so it never fires on a key change alone, which would persist the
+  // *previous* folder's threads under the new key mid-switch.
+  const threadsKeyRef = useRef(threadsKey);
+  // Tracks which folder's threads are loaded, so the reload effect runs once
+  // per real switch (guards StrictMode double-invoke / no-op re-renders).
+  const loadedKeyRef = useRef(threadsKey);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const convo = useMemo<readonly ChatMessage[]>(
@@ -302,10 +332,31 @@ export function RetrievalTab({
     [activeThread],
   );
 
-  // Persist threads to localStorage.
+  useEffect(() => {
+    threadsKeyRef.current = threadsKey;
+  }, [threadsKey]);
+
+  // Folder switch → load that folder's own threads and drop the active one.
+  // This is the cloisonnement guarantee: after switching to folder B no folder
+  // A message survives in state, so the next query's conversation_history is
+  // empty (or B's own), never A's. The subsequent setThreads triggers the
+  // persist effect, which writes B's threads under B's key.
+  useEffect(() => {
+    if (loadedKeyRef.current === threadsKey) return;
+    loadedKeyRef.current = threadsKey;
+    const loaded = loadThreads(threadsKey, []);
+    setThreads(loaded);
+    setActiveThreadId(loaded[0]?.id ?? null);
+  }, [threadsKey]);
+
+  // Persist threads under the active folder's key. Deliberately keyed on
+  // `threads` only (not `threadsKey`): on a switch render `threads` is still
+  // the old folder's value, so this must NOT fire then — it fires on the next
+  // render once the reload effect has swapped in the new folder's threads, by
+  // which point threadsKeyRef holds the new key.
   useEffect(() => {
     try {
-      localStorage.setItem(THREADS_STORAGE_KEY, JSON.stringify(threads));
+      localStorage.setItem(threadsKeyRef.current, JSON.stringify(threads));
     } catch {
       /* ignore quota */
     }
