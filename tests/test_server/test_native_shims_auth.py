@@ -32,6 +32,11 @@ def _reset_auth_state():
     configure_auth(api_key="test-api-key")
     yield
     configure_idp(None)
+    # Reset module-level auth state to open-access on teardown. Without this the
+    # configured api-key leaks into later suites (e.g. test_bulk_delete_endpoint)
+    # and turns their open-access expectations into 401s when run in the same
+    # session.
+    configure_auth()
 
 
 def _build_app(*, with_auth: bool) -> FastAPI:

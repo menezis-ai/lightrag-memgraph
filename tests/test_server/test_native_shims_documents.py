@@ -257,3 +257,60 @@ class TestPerDocumentScanContract:
 
         assert r.status_code == 409
         assert "Per-document scan is not supported" in r.json()["detail"]
+
+
+class _MembershipDocStatus:
+    """DocStatus store exposing the membership API for the ref-counted delete."""
+
+    def __init__(self, folders_by_doc: dict[str, list[str]]) -> None:
+        self._folders = folders_by_doc
+        self.removed: list[tuple[str, str]] = []
+
+    async def get_folders_for_doc(self, doc_id: str):
+        return self._folders.get(doc_id)
+
+    async def remove_from_folder(self, doc_id: str, folder: str) -> int:
+        self.removed.append((doc_id, folder))
+        remaining = [f for f in (self._folders.get(doc_id) or []) if f != folder]
+        self._folders[doc_id] = remaining
+        return len(remaining)
+
+
+class _MembershipRag:
+    def __init__(self, doc_status: Any) -> None:
+        self.doc_status = doc_status
+        self.physically_deleted: list[str] = []
+
+    async def adelete_by_doc_id(self, doc_id: str) -> None:
+        self.physically_deleted.append(doc_id)
+
+
+class TestSingleDeleteRefCounted:
+    """DELETE /documents/{id} must un-share, not hard-delete, a shared doc.
+
+    Parity with the bulk-delete surface: a single-delete from folder A on a doc
+    shared into A+B may NOT destroy the physical record (it stays visible in B).
+    """
+
+    async def test_shared_doc_single_delete_unshares_keeps_it_in_other_folder(self):
+        ds = _MembershipDocStatus({"doc1": ["A", "B"]})
+        rag = _MembershipRag(ds)
+        await native_shims._delete_or_unshare(rag, "doc1", "A")
+        # un-shared from A, NOT physically deleted (still MEMBER_OF B)
+        assert rag.physically_deleted == []
+        assert ds.removed == [("doc1", "A")]
+
+    async def test_last_membership_single_delete_hard_deletes(self):
+        ds = _MembershipDocStatus({"doc1": ["A"]})
+        rag = _MembershipRag(ds)
+        await native_shims._delete_or_unshare(rag, "doc1", "A")
+        assert rag.physically_deleted == ["doc1"]
+        assert ds.removed == []
+
+    async def test_backend_without_membership_falls_back_to_hard_delete(self):
+        class _LegacyDocStatus:
+            pass  # no get_folders_for_doc → legacy LightRAG-native behaviour
+
+        rag = _MembershipRag(_LegacyDocStatus())
+        await native_shims._delete_or_unshare(rag, "doc1", "A")
+        assert rag.physically_deleted == ["doc1"]

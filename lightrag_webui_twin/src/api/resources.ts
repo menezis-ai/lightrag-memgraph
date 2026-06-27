@@ -267,6 +267,11 @@ export const lightragApi = {
    * (the id returned by /documents/upload). Used to discover the
    * generated doc_id once processing completes, so initial tags from
    * the AddSource modal can be applied via bulk-retag.
+   *
+   * NOTE: track lookup is workspace-GLOBAL, not folder-scoped (a track_id is an
+   * opaque per-upload handle). Do not treat it as a cloisonnement surface;
+   * downstream writes still enforce active-folder membership. See
+   * docstatus_impl.get_docs_by_track_id.
    */
   trackStatus: (trackId: string, init?: ApiRequestInit) =>
     apiFetch<{
@@ -280,12 +285,20 @@ export const lightragApi = {
       status_summary: Record<string, number>;
     }>(`/documents/track_status/${encodeURIComponent(trackId)}`, init),
   /**
-   * Trigger re-processing of all FAILED docs in the folder via
-   * LightRAG's native batch endpoint. There is no per-doc-by-id
-   * reprocess in LightRAG 1.4.9.11; the DocDetailPanel "Re-process"
-   * button surfaces this to operators as "retry failed batch" when
-   * the targeted doc is FAILED, and as a clear no-op explanation
-   * otherwise (see App.tsx onReprocess).
+   * Trigger re-processing of FAILED docs via LightRAG's native batch endpoint.
+   *
+   * WARNING: this reprocesses LightRAG's GLOBAL failed queue for the whole
+   * workspace — it is NOT folder-scoped. The native pipeline
+   * (apipeline_process_enqueue_documents → get_docs_by_statuses) has no folder
+   * filter, so a "retry failed batch" click can re-enqueue failed/pending docs
+   * from other folders too. A folder-scoped reprocess would need a dedicated
+   * Twin route + test (it touches the LightRAG pipeline contract) — follow-up,
+   * deliberately out of scope here.
+   *
+   * There is no per-doc-by-id reprocess in LightRAG 1.4.9.11; the DocDetailPanel
+   * "Re-process" button surfaces this as "retry failed batch" when the targeted
+   * doc is FAILED, and as a clear no-op explanation otherwise (see App.tsx
+   * onReprocess).
    */
   reprocessFailedDocuments: (init?: ApiRequestInit) =>
     apiFetch<{ status: string; message?: string; failed_count?: number }>(

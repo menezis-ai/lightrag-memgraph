@@ -374,6 +374,39 @@ async def _list_document_chunks_impl(
     return items
 
 
+async def _delete_or_unshare(rag, doc_id: str, folder: str) -> None:
+    """Ref-counted delete, parity with the bulk-delete surface.
+
+    A document can be MEMBER_OF several folders (one physical record). Deleting
+    it from the active folder must only **un-share** it there; the physical
+    cascade (chunks/vectors/KG via ``adelete_by_doc_id``) runs ONLY when this was
+    its LAST membership — otherwise a single-delete from folder A would destroy a
+    doc still shared into folder B (data loss).
+
+    Backends without ``get_folders_for_doc`` fall back to the legacy hard delete,
+    preserving LightRAG-native behaviour when the membership model is absent.
+    Mirrors ``routes_documents._apply_membership_delete`` (same lock + physical
+    helper) so single- and bulk-delete cannot diverge.
+    """
+    from .webui.router import _delete_doc_from_rag
+
+    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
+    if get_folders is None:
+        await _delete_doc_from_rag(rag, doc_id)
+        return
+
+    from .webui.routes_documents import _membership_lock
+
+    async with _membership_lock(doc_id):
+        folders = await get_folders(doc_id)
+        # Physical delete only on the last (or unknown) membership; otherwise
+        # unshare from the active folder, keeping the doc alive for the others.
+        if folders is None or folders == [folder]:
+            await _delete_doc_from_rag(rag, doc_id)
+        else:
+            await rag.doc_status.remove_from_folder(doc_id, folder)
+
+
 async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
     """Body of the ``DELETE /documents/{doc_id}`` shim."""
     from .folder import resolve_folder_for_request
@@ -384,7 +417,7 @@ async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
     if doc_status is None or not _doc_matches_folder(doc_status, folder):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     try:
-        await rag.adelete_by_doc_id(doc_id)
+        await _delete_or_unshare(rag, doc_id, folder)
     except Exception as exc:
         logger.exception("twindb shim: delete_document(%s) failed", doc_id)
         raise HTTPException(status_code=500, detail=str(exc))

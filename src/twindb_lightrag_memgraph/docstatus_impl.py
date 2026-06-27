@@ -692,6 +692,15 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     async def get_docs_by_track_id(
         self, track_id: str
     ) -> dict[str, DocProcessingStatus]:
+        # INTENTIONALLY workspace-global, NOT folder-scoped. This backs
+        # LightRAG's post-upload polling (/documents/track_status/{id}); folder-
+        # scoping it could break polling when the X-Twin-Folder header is not
+        # propagated on every poll, or when a duplicate upload shared an existing
+        # doc into the active folder under a different track. A track_id is an
+        # opaque per-upload handle, not a cloisonnement surface — downstream
+        # writes (bulk-retag, etc.) still enforce active-folder membership.
+        # If a future tier needs per-folder track isolation, design it with a
+        # dedicated route + test (follow-up ticket), do not silently scope here.
         label = self._label()
         async with _pool.get_read_session() as session:
             result = await session.run(
