@@ -42,14 +42,19 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from ..._constants import storage_folder_context
+from ..._constants import (
+    RetrievalFilters,
+    storage_filter_context,
+    storage_folder_context,
+)
 from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
@@ -727,6 +732,42 @@ async def _record_retrieval_activity(
         logger.exception("twin_query: failed to record retrieval activity")
 
 
+def _retrieval_filters_from_body(body: TwinQueryBody) -> RetrievalFilters:
+    """Map the request's ``doc_filter`` / ``tag_filter`` / ``min_score`` onto the
+    storage-layer ``RetrievalFilters`` contract.
+
+    Reuses the same term extractors as the post-filter guard-rail so the two
+    stay in lock-step: ``tag_*`` are lower-cased (case-insensitive tag ids),
+    ``doc_*`` are case-preserving.
+    """
+    tag_required, tag_optional = _tag_filter_terms(body.tag_filter)
+    doc_required, doc_optional = _doc_filter_terms(body.doc_filter)
+    return RetrievalFilters(
+        doc_all=frozenset(doc_required),
+        doc_any=frozenset(doc_optional),
+        tag_all=frozenset(tag_required),
+        tag_any=frozenset(tag_optional),
+        min_score=body.min_score,
+    )
+
+
+@contextmanager
+def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
+    """Bind folder membership **and** retrieval filters for the duration of a
+    grounding call.
+
+    Every ``aquery_llm`` / ``aquery_data`` / ``aquery`` issued under this scope
+    has its vector retrievals constrained at the Memgraph storage layer to the
+    active folder *and* the requested docs/tags/``min_score`` — so an excluded
+    chunk/entity never enters the prompt. The downstream Sources post-filter
+    becomes a guard-rail that removes nothing in the nominal case.
+    """
+    with storage_folder_context(folder), storage_filter_context(
+        _retrieval_filters_from_body(body)
+    ):
+        yield
+
+
 async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[str, Any]:
     """Body of ``POST /twin/api/query`` (non-streaming, answer + sources)."""
     try:
@@ -750,7 +791,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
             # Folder-scoped retrieval: the storage layer constrains candidate
             # chunks/entities/relations to docs MEMBER_OF the active folder, so
             # no cross-folder context can enter the returned body.
-            with storage_folder_context(folder):
+            with _retrieval_scope(folder, body):
                 answer_raw = await rag.aquery(body.query, param=param)
         except Exception as exc:
             logger.exception("twin_query: aquery failed")
@@ -773,7 +814,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         # Folder-scoped grounding: every vector retrieval LightRAG issues inside
         # aquery_llm (chunks + entity/relation vdb) is filtered to the active
         # folder's membership at the storage layer (batch-2 cloisonnement).
-        with storage_folder_context(folder):
+        with _retrieval_scope(folder, body):
             envelope = await rag.aquery_llm(body.query, param=param)
     except Exception as exc:
         logger.exception("twin_query: aquery_llm failed")
@@ -798,7 +839,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # Keep the sources panel consistent with the grounded answer: the legacy
     # fallback inside _build_envelope_sources re-issues a chunks_vdb retrieval,
     # which must also be folder-scoped.
-    with storage_folder_context(folder):
+    with _retrieval_scope(folder, body):
         sources = await _build_envelope_sources(rag, body, folder, envelope)
     await _record_retrieval_activity(
         body, request, sources_count=len(sources), stream=False
@@ -832,7 +873,7 @@ async def _twin_query_data(
     try:
         # Folder-scoped retrieval (see _twin_query): the structured data path
         # grounds on the same vdb queries, so it must be scoped identically.
-        with storage_folder_context(folder):
+        with _retrieval_scope(folder, body):
             result = await rag.aquery_data(body.query, param=param)
     except Exception as exc:
         logger.exception("twin_query: aquery_data failed")
@@ -954,7 +995,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             # handler returns, so the ContextVar must be bound here, not at the
             # route boundary). Retrieval completes inside aquery_llm before the
             # envelope is returned; token streaming below touches no vdb.
-            with storage_folder_context(folder):
+            with _retrieval_scope(folder, body):
                 envelope = await rag.aquery_llm(body.query, param=param)
             async for line in _emit_answer_tokens(envelope, stripper):
                 yield line
@@ -998,7 +1039,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
-        with storage_folder_context(folder):
+        with _retrieval_scope(folder, body):
             sources = await _build_envelope_sources(rag, body, folder, envelope)
         await _record_retrieval_activity(
             body, request, sources_count=len(sources), stream=True

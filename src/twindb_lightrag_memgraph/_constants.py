@@ -22,6 +22,7 @@ import os
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Iterator
 
 # Environment variable keys.
@@ -79,6 +80,56 @@ _active_duplicate_share_folder: ContextVar[str | None] = ContextVar(
 )
 _active_operator_classification: ContextVar[str | None] = ContextVar(
     "twin_active_operator_classification",
+    default=None,
+)
+
+
+@dataclass(frozen=True)
+class RetrievalFilters:
+    """Storage-layer retrieval filters bound for the current query context.
+
+    These are the ``tag_filter`` / ``doc_filter`` / ``min_score`` knobs the
+    WebUI sends. They used to be attached to ``QueryParam`` and read by nothing
+    in the retrieval path (the LLM was grounded on the *unfiltered* context and
+    only the Sources panel was trimmed afterwards — a "faux grounding" lie).
+    They are now enforced in :meth:`MemgraphVectorDBStorage._build_search_cypher`
+    via :func:`storage_filter_context`, alongside folder membership scoping.
+
+    Sets are normalised by the route boundary:
+
+    - ``doc_*`` hold document ids (case-preserving).
+    - ``tag_*`` hold **lower-cased** tag ids (the ``TAGGED_WITH`` graph ids are
+      compared case-insensitively, matching the legacy post-filter).
+    - ``min_score`` is a cosine-similarity floor; it is folded into the existing
+      ``cosine_better_than_threshold`` as ``max(threshold, min_score)``.
+
+    ``all`` vs ``any`` semantics are pinned in
+    ``tests/test_retrieval_filters_scoping.py`` — notably ``doc_all`` is strict
+    (a chunk has a single ``full_doc_id``, so ``doc_all`` with ≥2 docs is empty),
+    not the union-as-``any`` the old post-filter conflated.
+    """
+
+    doc_all: frozenset[str] = field(default_factory=frozenset)
+    doc_any: frozenset[str] = field(default_factory=frozenset)
+    tag_all: frozenset[str] = field(default_factory=frozenset)
+    tag_any: frozenset[str] = field(default_factory=frozenset)
+    min_score: float = 0.0
+
+    @property
+    def has_doc(self) -> bool:
+        return bool(self.doc_all or self.doc_any)
+
+    @property
+    def has_tag(self) -> bool:
+        return bool(self.tag_all or self.tag_any)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.has_doc and not self.has_tag and self.min_score <= 0.0
+
+
+_active_retrieval_filters: ContextVar[RetrievalFilters | None] = ContextVar(
+    "twin_active_retrieval_filters",
     default=None,
 )
 
@@ -160,6 +211,35 @@ def storage_folder_context(folder: str | None) -> Iterator[None]:
         yield
     finally:
         _active_storage_folder.reset(token)
+
+
+def get_active_retrieval_filters() -> "RetrievalFilters | None":
+    """Retrieval filters captured for read scoping in the current context."""
+    return _active_retrieval_filters.get()
+
+
+@contextmanager
+def storage_filter_context(
+    filters: "RetrievalFilters | None",
+) -> Iterator[None]:
+    """Temporarily bind storage-layer retrieval filters.
+
+    Bound by the query routes around ``aquery_llm`` / ``aquery_data`` so every
+    vector retrieval LightRAG issues is constrained to the requested docs/tags
+    and ``min_score`` *before* the prompt is built — not trimmed afterwards.
+
+    Lives in the storage constants module (FastAPI-free) so the Memgraph vector
+    backend can read it without importing server code, mirroring
+    :func:`storage_folder_context`. A ``None`` or empty filter set is a no-op so
+    the legacy / native LightRAG path is byte-for-byte unchanged.
+    """
+    token = _active_retrieval_filters.set(
+        filters if (filters is not None and not filters.is_empty) else None
+    )
+    try:
+        yield
+    finally:
+        _active_retrieval_filters.reset(token)
 
 
 def get_active_duplicate_share_folder() -> str | None:

@@ -39,7 +39,7 @@ The global directive §7 ("push to all remotes") does **not** apply here.
 
 ## Audits
 
-`docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. The current open one is `docs/audits/lightrag-interactions/audit-2026-06-13.md`, which flags two priorities to be aware of when touching `/twin/api/query` or retrieval: (1) Twin sources are still reconstructed by a second vector search after `aquery()` returns, so they are not guaranteed to be the context LightRAG actually grounded on — migrating the nominal path to LightRAG's `aquery_llm()` + native references is the structural fix; (2) the WebUI `tag_filter` is accepted by both UI and backend but `QueryParam` in LightRAG 1.4.9.11 does not know the field, so the filter is a no-op at retrieval time. Read the relevant audit before claiming a fix in those areas.
+`docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. `docs/audits/lightrag-interactions/audit-2026-06-13.md` is the reference review for `/twin/api/query` and retrieval. Both of its priorities are now **closed** (keep this in mind so you don't "re-fix" them): (1) the nominal `/query` path no longer reconstructs sources via a second vector search — it grounds through `aquery_llm()` and projects sources from `data.references` (the chunks LightRAG actually used); (2) the WebUI `tag_filter` / `doc_filter` / `min_score` are no longer a retrieval no-op — they are enforced at the Memgraph storage layer (`vector_impl._build_search_cypher`, bound via `storage_filter_context`), so an excluded chunk/entity never enters the prompt rather than being trimmed from the Sources panel afterwards. **Known residual:** `tag_filter`/`doc_filter` on the entity/relation vdb scope the *selection*, not the LLM-aggregated `content` of a kept record (same residual as folder scoping — see `test_retrieval_filters_scoping.py` and `vector_impl._build_search_cypher`). Read the relevant audit before claiming a fix in those areas.
 
 Other open audit areas under `docs/audits/`: `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`, `sonarqube/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
 
@@ -61,7 +61,7 @@ pip install -e ".[all]" -e ".[test]"   # everything — what the local .venv car
 
 **Extras matrix (`pyproject.toml`):** `[test]` ships `fastapi`+`httpx` but **not** `openai`/`pydantic-settings`. Since `pytest tests/` collects the `tests/test_intelligence/` and `tests/test_server/` trees, a bare `.[test]` install fails at *import* on those trees (e.g. `intelligence/config.py` needs `pydantic-settings`). For a full local run install the matching test extra (`[test-server]`, `[test-intelligence]`) or `[all]`. Runtime-only extras: `[server]`, `[intelligence]`, `[tracing]`.
 
-`uv.lock` is **not** present — use `uv` defaults if creating one (per global directive §4), but the project currently relies on `pip install -e`.
+`uv.lock` exists locally but is **gitignored and untracked** (commit `1325b47`, "chore: gitignore uv.lock") — the project deliberately ships no committed lockfile and relies on `pip install -e`. Don't commit `uv.lock` or convert dependency management to a `uv sync` flow without an explicit decision; treat the editable-install path above as the source of truth. Pinned dependency sets live under `requirements/` (`constraints-dev.txt`, `constraints-prod.txt`, `prod-target.txt`).
 
 ### Run the FastAPI overlay locally
 

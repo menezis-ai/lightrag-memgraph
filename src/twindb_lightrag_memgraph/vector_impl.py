@@ -28,6 +28,8 @@ from lightrag.utils import logger
 from . import _pool
 from ._constants import (
     VECTOR_INDEX_CAPACITY,
+    RetrievalFilters,
+    get_active_retrieval_filters,
     get_active_storage_folder,
     resolve_workspace,
     validate_identifier,
@@ -64,6 +66,74 @@ def _folder_scope_overfetch(top_k: int) -> int:
     if factor < 1:
         factor = 1
     return min(max(top_k, top_k * factor), _FOLDER_SCOPE_OVERFETCH_CAP)
+
+
+# ── Retrieval-filter Cypher fragments ──────────────────────────────────────
+#
+# These turn an active ``RetrievalFilters`` into Cypher WHERE conditions, so an
+# excluded chunk/entity is dropped *inside* the vector search and never reaches
+# the prompt (real grounding, not a post-hoc Sources-panel trim). Each helper
+# appends only the params it actually uses and returns a list of condition
+# strings — an empty filter contributes nothing, preserving strict compat.
+# Tag ids are compared lower-cased (the route normalises ``$tag_*`` and the
+# Cypher lower-cases the stored ids via ``toLower``).
+
+
+def _doc_conditions_single(
+    filters: RetrievalFilters, params: dict[str, Any], doc_expr: str
+) -> list[str]:
+    """Doc-filter conditions for a record with a single doc (``doc_expr``).
+
+    ``doc_all`` is strict: ``all(x = doc)`` is true only when every requested
+    doc equals the record's single doc, so ``doc_all`` with ≥2 docs excludes
+    every chunk (pinned in tests) — NOT the union-as-``any`` the legacy
+    post-filter conflated.
+    """
+    conds: list[str] = []
+    if filters.doc_all:
+        params["doc_all"] = sorted(filters.doc_all)
+        conds.append(f"all(__x IN $doc_all WHERE __x = {doc_expr})")
+    if filters.doc_any:
+        params["doc_any"] = sorted(filters.doc_any)
+        conds.append(f"{doc_expr} IN $doc_any")
+    return conds
+
+
+def _doc_conditions_set(
+    filters: RetrievalFilters, params: dict[str, Any], docids_expr: str
+) -> list[str]:
+    """Doc-filter conditions over a *set* of docs (``docids_expr``).
+
+    Used for entity/relation records whose ``source_id`` spans several chunks
+    (hence several docs): ``doc_all`` → requested set ⊆ source docs;
+    ``doc_any`` → source docs ∩ requested ≠ ∅.
+    """
+    conds: list[str] = []
+    if filters.doc_all:
+        params["doc_all"] = sorted(filters.doc_all)
+        conds.append(f"all(__x IN $doc_all WHERE __x IN {docids_expr})")
+    if filters.doc_any:
+        params["doc_any"] = sorted(filters.doc_any)
+        conds.append(f"any(__y IN {docids_expr} WHERE __y IN $doc_any)")
+    return conds
+
+
+def _tag_conditions(
+    filters: RetrievalFilters, params: dict[str, Any], tags_expr: str
+) -> list[str]:
+    """Tag-filter conditions over a list of tag ids (``tags_expr``).
+
+    ``tag_all`` → every required tag present; ``tag_any`` → ≥1 optional tag
+    present.
+    """
+    conds: list[str] = []
+    if filters.tag_all:
+        params["tag_all"] = sorted(filters.tag_all)
+        conds.append(f"all(__rt IN $tag_all WHERE __rt IN {tags_expr})")
+    if filters.tag_any:
+        params["tag_any"] = sorted(filters.tag_any)
+        conds.append(f"any(__ot IN $tag_any WHERE __ot IN {tags_expr})")
+    return conds
 
 
 @dataclass
@@ -223,13 +293,17 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         return entry
 
     def _build_search_cypher(
-        self, top_k: int, folder: str | None
+        self,
+        top_k: int,
+        folder: str | None,
+        filters: RetrievalFilters | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Build the vector-search Cypher + params for this query.
 
-        When ``folder`` is None the query is the historical, un-scoped search —
-        **byte-for-byte the legacy behaviour**, so the native LightRAG path and
-        any non-folder caller are unchanged (strict compat).
+        When ``folder`` is None and no filters are active the query is the
+        historical, un-scoped search — **byte-for-byte the legacy behaviour**, so
+        the native LightRAG path and any non-folder caller are unchanged (strict
+        compat).
 
         When a folder is active the search is constrained to records whose
         document is ``MEMBER_OF`` that folder, so no cross-folder context can
@@ -237,6 +311,17 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         an *inner-join* MATCH — chunk→doc is a property equality (``full_doc_id``)
         in LightRAG, not a graph edge, so it cannot be a pattern predicate /
         ``EXISTS`` subquery (the latter is also poorly supported on Memgraph).
+
+        ``filters`` (``RetrievalFilters``) layers the WebUI ``doc_filter`` /
+        ``tag_filter`` / ``min_score`` knobs **onto the same retrieval**, so an
+        excluded chunk/entity never reaches the prompt — fixing the prior "faux
+        grounding" where these were only trimmed from the Sources panel after
+        the LLM had already grounded on the unfiltered context. A filter
+        contributes Cypher *only when non-empty*: an empty/None filter set leaves
+        the folder/legacy Cypher byte-for-byte identical (required for LightRAG
+        upgrades). ``min_score`` is folded into the cosine floor; doc/tag
+        predicates require an active folder (the Twin query path always binds
+        one) — the tag label is folder-scoped (``WebuiTag_{folder}``).
 
         Two membership join shapes, detected from ``meta_fields`` (robust — no
         namespace-string hardcoding):
@@ -251,7 +336,18 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
           extraction time, so a kept record's description may still encode text
           from non-member docs. Un-blending would require per-folder
           re-extraction — out of scope. Known residual (batch-2 acceptance).
+          The same residual applies to ``doc_filter`` / ``tag_filter``: they
+          scope which entity/relation records are *selected*, not the blended
+          content of a kept record.
         """
+        # Normalise: an empty/None filter set is a true no-op so the folder-only
+        # and native LightRAG paths stay byte-for-byte identical.
+        if filters is not None and filters.is_empty:
+            filters = None
+        threshold = self.cosine_better_than_threshold
+        if filters is not None and filters.min_score > threshold:
+            threshold = filters.min_score
+
         index_name = self._index_name()
         if not folder:
             cypher = f"""
@@ -264,7 +360,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return cypher, {
                 "embedding": None,  # filled by caller
                 "top_k": top_k,
-                "threshold": self.cosine_better_than_threshold,
+                "threshold": threshold,
             }
 
         ws = self.workspace
@@ -275,28 +371,19 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             "embedding": None,  # filled by caller
             "top_k": top_k,
             "overfetch": overfetch,
-            "threshold": self.cosine_better_than_threshold,
+            "threshold": threshold,
             "folder": folder,
         }
 
         if "full_doc_id" in self.meta_fields:
-            join = f"""
-                MATCH (d:`{doc_label}` {{id: node.full_doc_id}})
-                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})
-                WITH DISTINCT node, similarity
-                """
+            join = self._chunks_membership_join(
+                doc_label, folder_label, folder, filters, params
+            )
         elif "source_id" in self.meta_fields:
-            chunk_label = f"Vec_{ws}_chunks"
             params["sep"] = GRAPH_FIELD_SEP
-            join = f"""
-                WITH node, similarity,
-                     split(coalesce(node.source_id, ''), $sep) AS cids
-                UNWIND cids AS cid
-                MATCH (c:`{chunk_label}` {{id: cid}})
-                MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
-                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})
-                WITH DISTINCT node, similarity
-                """
+            join = self._graph_membership_join(
+                ws, doc_label, folder_label, folder, filters, params
+            )
         else:
             # Unknown vdb category WITH an active folder: we cannot prove
             # membership, so we MUST NOT silently fall back to the global search
@@ -317,6 +404,92 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             """
         return cypher, params
 
+    def _chunks_membership_join(
+        self,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters | None,
+        params: dict[str, Any],
+    ) -> str:
+        """Folder MEMBER_OF join for the chunks vdb, plus doc/tag predicates.
+
+        ``filters is None`` returns the bare membership join byte-for-byte (the
+        batch-2 folder-scoping contract). With filters, doc predicates run on the
+        single ``d.id`` and tag predicates run on the doc's ``TAGGED_WITH`` ids.
+        """
+        base = f"""
+                MATCH (d:`{doc_label}` {{id: node.full_doc_id}})
+                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
+        tail = """
+                WITH DISTINCT node, similarity
+                """
+        if filters is None:
+            return base + tail
+        conds = _doc_conditions_single(filters, params, "d.id")
+        if filters.has_tag:
+            tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
+            base += f"""
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
+                WITH node, similarity, d, collect(DISTINCT toLower(__t.id)) AS __dtags"""
+            conds += _tag_conditions(filters, params, "__dtags")
+        if conds:
+            base += "\n                WHERE " + " AND ".join(conds)
+        return base + tail
+
+    def _graph_membership_join(
+        self,
+        ws: str,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters | None,
+        params: dict[str, Any],
+    ) -> str:
+        """Folder MEMBER_OF join for the entity/relation vdb, plus doc/tag.
+
+        ``source_id`` is split into source chunk ids → docs. ``filters is None``
+        returns the bare membership join byte-for-byte. With filters, the member
+        source docs (and, when a tag filter is active, their tag ids) are
+        aggregated per record so set semantics apply: ``doc_all`` ⊆ source docs,
+        ``doc_any`` ∩ source docs, and tag filters satisfied by ≥1 source doc.
+        This scopes *selection*, not blended content (known residual).
+        """
+        chunk_label = f"Vec_{ws}_chunks"
+        base = f"""
+                WITH node, similarity,
+                     split(coalesce(node.source_id, ''), $sep) AS cids
+                UNWIND cids AS cid
+                MATCH (c:`{chunk_label}` {{id: cid}})
+                MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
+                      -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
+        tail = """
+                WITH DISTINCT node, similarity
+                """
+        if filters is None:
+            return base + tail
+        if filters.has_tag:
+            tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
+            base += f"""
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
+                WITH node, similarity, d, collect(DISTINCT toLower(__t.id)) AS __dtags
+                WITH node, similarity, collect(DISTINCT {{doc: d.id, tags: __dtags}}) AS __docinfos"""
+            conds = _doc_conditions_set(
+                filters, params, "[__di IN __docinfos | __di.doc]"
+            )
+            tag_inner = _tag_conditions(filters, params, "__di.tags")
+            if tag_inner:
+                conds.append(
+                    "any(__di IN __docinfos WHERE " + " AND ".join(tag_inner) + ")"
+                )
+        else:
+            base += """
+                WITH node, similarity, collect(DISTINCT d.id) AS __docids"""
+            conds = _doc_conditions_set(filters, params, "__docids")
+        if conds:
+            base += "\n                WHERE " + " AND ".join(conds)
+        return base + tail
+
     async def query(
         self,
         query: str,
@@ -333,7 +506,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
         index_name = self._index_name()
         folder = get_active_storage_folder()
-        cypher, params = self._build_search_cypher(top_k, folder)
+        filters = get_active_retrieval_filters()
+        cypher, params = self._build_search_cypher(top_k, folder, filters)
         if cypher is None:
             # Fail-closed: active folder but an unrecognised vdb category. Never
             # leak a global result set into a folder-scoped retrieval.
