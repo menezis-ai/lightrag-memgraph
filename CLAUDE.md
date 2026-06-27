@@ -43,7 +43,7 @@ The global directive §7 ("push to all remotes") does **not** apply here.
 
 Other open audit areas under `docs/audits/`: `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`, `sonarqube/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
 
-Three release/ops docs added for the 1.0.0 cut (current branch `production-readiness-p0-risk-accept-lightrag-cves`):
+Three release/ops docs added for the 1.0.0 cut (merged to `main`; the `production-readiness-p0-risk-accept-lightrag-cves` branch is retired):
 - `docs/security/lightrag-1.4.9.11-risk-acceptance.md` — documented risk-acceptance for the LightRAG CVEs in the pinned `1.4.9.11`. Read before raising a CVE on that dependency.
 - `docs/operations/install-runbook.md` — BNP install runbook.
 - `docs/qa/release-candidate-1.0.0-checklist.md` — the 1.0.0 RC checklist.
