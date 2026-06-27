@@ -188,7 +188,12 @@ test.describe('real backend smoke', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(
       ({ apiBaseUrl, lightragBaseUrl, folder }) => {
-        window.localStorage.removeItem('twin-rag.threads.v3');
+        for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+          const k = window.localStorage.key(i);
+          if (k && k.startsWith('twin-rag.threads.v')) {
+            window.localStorage.removeItem(k);
+          }
+        }
         window.__twinE2eRuntimeConfig = {
           apiBaseUrl,
           lightragBaseUrl,

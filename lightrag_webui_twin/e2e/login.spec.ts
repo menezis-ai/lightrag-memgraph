@@ -24,7 +24,10 @@ const GATED_RUNTIME_CONFIG = {
 
 async function bootToLogin(page: Page) {
   await page.addInitScript((cfg) => {
-    window.localStorage.removeItem('twin-rag.threads.v3');
+    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith('twin-rag.threads.v')) window.localStorage.removeItem(k);
+    }
     window.__twinE2eRuntimeConfig = cfg;
   }, GATED_RUNTIME_CONFIG);
   await page.goto('/');

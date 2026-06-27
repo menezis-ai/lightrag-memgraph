@@ -63,7 +63,10 @@ const ADMIN_CONFIG = {
 
 async function bootAs(page: Page, config: Record<string, unknown>) {
   await page.addInitScript((cfg) => {
-    window.localStorage.removeItem('twin-rag.threads.v3');
+    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith('twin-rag.threads.v')) window.localStorage.removeItem(k);
+    }
     (window as unknown as { __twinE2eRuntimeConfig: unknown }).__twinE2eRuntimeConfig = cfg;
   }, config);
   await page.goto('/');

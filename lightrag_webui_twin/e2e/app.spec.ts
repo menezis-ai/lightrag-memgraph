@@ -969,19 +969,31 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('Persisted before signout');
     await page.getByRole('button', { name: 'Send' }).click();
+    // Threads are persisted per folder (twin-rag.threads.v3:<folder>) since the
+    // cross-folder-leak fix, so assert on the prefix rather than the bare key.
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('twin-rag.threads.v3')))
-      .not.toBeNull();
+      .poll(() =>
+        page.evaluate(() =>
+          Object.keys(localStorage).some((k) =>
+            k.startsWith('twin-rag.threads.v3'),
+          ),
+        ),
+      )
+      .toBe(true);
 
     await openTab(page, 'Settings');
     await page.getByTestId('settings-signout').click();
+    // Sign-out must purge ALL retrieval thread keys (every folder), not just
+    // the base key, plus any other twin-rag.* cache.
     await expect
       .poll(() =>
         page.evaluate(() => ({
-            threads: localStorage.getItem('twin-rag.threads.v3'),
-            extra: localStorage.getItem('twin-rag.extra-cache.v1'),
+          threads: Object.keys(localStorage).filter((k) =>
+            k.startsWith('twin-rag.threads.v3'),
+          ),
+          extra: localStorage.getItem('twin-rag.extra-cache.v1'),
         })),
       )
-      .toMatchObject({ threads: null, extra: null });
+      .toMatchObject({ threads: [], extra: null });
   });
 });

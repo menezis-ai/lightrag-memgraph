@@ -2,8 +2,15 @@ import { expect, type Page } from '@playwright/test';
 
 export async function boot(page: Page) {
   await page.addInitScript(() => {
-    window.localStorage.removeItem('twin-rag.threads.v2');
-    window.localStorage.removeItem('twin-rag.threads.v3');
+    // Clear every retrieval-thread key, including the per-folder
+    // (twin-rag.threads.v<n>:<folder>) variants introduced by the
+    // cross-folder-leak fix — not just the bare base keys.
+    for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith('twin-rag.threads.v')) {
+        window.localStorage.removeItem(k);
+      }
+    }
   });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
