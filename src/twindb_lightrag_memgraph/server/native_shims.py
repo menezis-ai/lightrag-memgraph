@@ -407,6 +407,22 @@ async def _delete_or_unshare(rag, doc_id: str, folder: str) -> None:
             await rag.doc_status.remove_from_folder(doc_id, folder)
 
 
+async def _doc_visible_in_folder(rag, doc_id: str, doc_status: Any, folder: str) -> bool:
+    """Membership-first folder visibility for the native shim gate.
+
+    Authority is the MEMBER_OF graph (``get_folders_for_doc``) when the backend
+    exposes it; the legacy ``folder``/metadata property is only a fallback when
+    the membership API is absent. Without this the shim could 404 a doc that is
+    visible in ``folder`` via MEMBER_OF but whose legacy ``folder`` property
+    points elsewhere (or accept one where the two diverge)."""
+    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
+    if get_folders is not None:
+        folders = await get_folders(doc_id)
+        if folders is not None:
+            return folder in folders
+    return _doc_matches_folder(doc_status, folder)
+
+
 async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
     """Body of the ``DELETE /documents/{doc_id}`` shim."""
     from .folder import resolve_folder_for_request
@@ -414,7 +430,9 @@ async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
     rag = get_rag()
     folder = resolve_folder_for_request(request)
     doc_status = await rag.doc_status.get_by_id(doc_id)
-    if doc_status is None or not _doc_matches_folder(doc_status, folder):
+    if doc_status is None or not await _doc_visible_in_folder(
+        rag, doc_id, doc_status, folder
+    ):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     try:
         await _delete_or_unshare(rag, doc_id, folder)

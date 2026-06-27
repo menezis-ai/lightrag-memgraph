@@ -314,3 +314,100 @@ class TestSingleDeleteRefCounted:
         rag = _MembershipRag(_LegacyDocStatus())
         await native_shims._delete_or_unshare(rag, "doc1", "A")
         assert rag.physically_deleted == ["doc1"]
+
+
+class TestNativeDeleteFolderGate:
+    """The native DELETE /documents/{id} gate must be membership-first: a doc
+    is visible in a folder per MEMBER_OF, not the legacy `folder` property.
+    """
+
+    async def test_membership_is_authority_over_legacy_folder_property(self):
+        ds = _MembershipDocStatus({"doc1": ["B"]})
+        rag = _MembershipRag(ds)
+        legacy_doc = {"folder": "A"}  # legacy property disagrees with membership
+        # member of B → visible in B; NOT a member of A despite the legacy prop
+        assert await native_shims._doc_visible_in_folder(rag, "doc1", legacy_doc, "B")
+        assert not await native_shims._doc_visible_in_folder(
+            rag, "doc1", legacy_doc, "A"
+        )
+
+    async def test_falls_back_to_legacy_folder_when_no_membership_api(self):
+        class _LegacyDocStatus:
+            pass  # no get_folders_for_doc → legacy _doc_matches_folder
+
+        rag = _MembershipRag(_LegacyDocStatus())
+        # _folder_env fixture provisions "default" as the catalog default folder.
+        assert await native_shims._doc_visible_in_folder(
+            rag, "doc1", {"folder": "default"}, "default"
+        )
+        assert not await native_shims._doc_visible_in_folder(
+            rag, "doc1", {"folder": "default"}, "other"
+        )
+
+
+class _DeleteRouteDocStatus:
+    """DocStatus store for the DELETE route: membership is the authority."""
+
+    def __init__(self, membership: list[str]) -> None:
+        self._membership = membership
+        self.removed: list[tuple[str, str]] = []
+
+    async def get_by_id(self, doc_id: str):
+        return {"id": doc_id, "folder": "A"}  # legacy prop intentionally != B
+
+    async def get_folders_for_doc(self, doc_id: str):
+        return self._membership
+
+    async def remove_from_folder(self, doc_id: str, folder: str) -> int:
+        self.removed.append((doc_id, folder))
+        return len([f for f in self._membership if f != folder])
+
+
+class _DeleteRouteRag:
+    def __init__(self, membership: list[str]) -> None:
+        self.doc_status = _DeleteRouteDocStatus(membership)
+        self.physically_deleted: list[str] = []
+
+    async def adelete_by_doc_id(self, doc_id: str) -> None:
+        self.physically_deleted.append(doc_id)
+
+
+def _make_delete_client(monkeypatch, membership: list[str]):
+    monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "A")
+    monkeypatch.setenv(
+        "TWIN_FOLDERS_JSON",
+        json.dumps(
+            [
+                {"id": "A", "label": "A", "kind": "primary"},
+                {"id": "B", "label": "B", "kind": "custom"},
+                {"id": "C", "label": "C", "kind": "custom"},
+            ]
+        ),
+    )
+    rag = _DeleteRouteRag(membership)
+    app = FastAPI()
+    app.include_router(build_native_shims_router(lambda: rag))
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    return client, rag
+
+
+class TestNativeDeleteRouteGate:
+    """End-to-end DELETE /documents/{id} through the router + gate + delete."""
+
+    async def test_legacy_a_member_of_bc_delete_from_b_unshares(self, monkeypatch):
+        client, rag = _make_delete_client(monkeypatch, ["B", "C"])
+        async with client:
+            r = await client.delete("/documents/doc1", headers={"X-Twin-Folder": "B"})
+        # gate accepts B via membership (legacy prop says A); unshare, not physical
+        assert r.status_code == 200
+        assert rag.doc_status.removed == [("doc1", "B")]
+        assert rag.physically_deleted == []
+
+    async def test_legacy_a_member_of_none_delete_from_a_404(self, monkeypatch):
+        client, rag = _make_delete_client(monkeypatch, [])
+        async with client:
+            r = await client.delete("/documents/doc1", headers={"X-Twin-Folder": "A"})
+        # empty membership wins over the legacy folder=A property → not visible
+        assert r.status_code == 404
+        assert rag.physically_deleted == []
+        assert rag.doc_status.removed == []

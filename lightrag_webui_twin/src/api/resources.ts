@@ -738,11 +738,14 @@ export const twinApi = {
     body: { doc_ids: readonly string[]; actor?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<{ deleted: number }>(`${TWIN}/documents/bulk-delete`, {
-      ...init,
-      method: 'POST',
-      body,
-    }),
+    apiFetch<{ deleted: number; failed: readonly string[] }>(
+      `${TWIN}/documents/bulk-delete`,
+      {
+        ...init,
+        method: 'POST',
+        body,
+      },
+    ),
 
   /**
    * Persist a tag mutation (single or bulk) on a list of documents.
@@ -880,9 +883,16 @@ export const api = {
   trackStatus: lightragApi.trackStatus,
   uploadDocument: lightragApi.uploadDocument,
   deleteDocument: (docId: string, init?: ApiRequestInit) =>
-    twinApi.bulkDeleteDocuments({ doc_ids: [docId] }, init).then(() => ({
-      ok: true as const,
-    })),
+    twinApi.bulkDeleteDocuments({ doc_ids: [docId] }, init).then((res) => {
+      // bulk-delete returns HTTP 200 even on a per-doc failure (it reports
+      // {deleted, failed}). Surface a per-doc failure as a thrown error so the
+      // mutation's optimistic rollback fires and the toast is honest, instead
+      // of a false "Document removed" on {deleted: 0, failed: [docId]}.
+      if (res.deleted !== 1 || (res.failed ?? []).includes(docId)) {
+        throw new Error(`Delete failed for ${docId}`);
+      }
+      return { ok: true as const };
+    }),
   health: lightragApi.health,
   pipelineStatus: lightragApi.pipelineStatus,
   getOpenApi: lightragApi.getOpenApi,

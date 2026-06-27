@@ -191,3 +191,27 @@ describe('uploadDocument', () => {
     expect(headers[0].get('X-Twin-Classification')).toBe('C3');
   });
 });
+
+describe('deleteDocument — per-doc failure must not read as success', () => {
+  it('resolves { ok: true } when the bulk endpoint deleted exactly the doc', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(JSON.stringify({ deleted: 1, failed: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    await expect(api.deleteDocument('doc-x')).resolves.toEqual({ ok: true });
+  });
+
+  it('throws when bulk-delete returns HTTP 200 but {deleted:0, failed:[doc]}', async () => {
+    // Regression: bulk-delete reports per-doc failures in `failed` with a 200,
+    // so a naive .then(() => ok) hid the failure (no rollback, false toast).
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(JSON.stringify({ deleted: 0, failed: ['doc-x'] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    await expect(api.deleteDocument('doc-x')).rejects.toThrow(/Delete failed for doc-x/);
+  });
+});
