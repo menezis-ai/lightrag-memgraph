@@ -75,6 +75,29 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(res.sources).toHaveLength(1);
   });
 
+  it('returns answer_status=source_projection_failed when the stream signals it', async () => {
+    // The grounded answer streamed, but its references could not be projected:
+    // the parser must propagate the explicit status (NOT default to grounded,
+    // which would hide the failure) and surface empty sources.
+    const chunks: string[] = [];
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'token', value: 'A grounded answer.' }),
+        JSON.stringify({ type: 'status', value: 'source_projection_failed' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+
+    const res = await api.queryStream(
+      { query: 'real' },
+      (c) => chunks.push(c),
+    );
+    expect(res.answer_status).toBe('source_projection_failed');
+    expect(res.sources).toEqual([]);
+    // The answer itself still reaches the live UI.
+    expect(chunks.join('')).toBe('A grounded answer.');
+  });
+
   it('defaults answer_status to grounded when the stream has no status event (back-compat)', async () => {
     // A legacy backend not yet shipping the status event must still
     // produce a sensible client default — the panel renders as before.
