@@ -176,29 +176,14 @@ describe('onTagCommit success paths', () => {
     );
   });
 
-  it('suggest → requestTag with justification "suggested edit"', async () => {
+  it('suggest is gated off → fires no mutation (no backend edit-proposal endpoint)', () => {
+    // Regression guard: "Suggest edit" used to route through requestTag with the
+    // existing tag name, which the backend rejects with 409, and it dropped the
+    // edited fields. The affordance is disabled until a real endpoint exists, so
+    // onTagCommit('suggest') must be a no-op — with or without a tag.
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
     result.current.onTagCommit({ kind: 'suggest', tag: makeTag() });
-
-    await waitFor(() => expect(requestTagMock).toHaveBeenCalled());
-    expect(requestTagMock).toHaveBeenCalledWith({
-      tag: 'argocd',
-      def: 'GitOps CD',
-      category: 'infra',
-      actor: ACTOR,
-      justification: 'suggested edit',
-    });
-    await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith(
-        expect.objectContaining({ titleSuffix: 'edit suggested' }),
-      ),
-    );
-  });
-
-  it('suggest with no tag → no mutation (guard branch)', () => {
-    const pushToast = vi.fn();
-    const { result } = setup(pushToast);
     result.current.onTagCommit({ kind: 'suggest', tag: null });
     expect(requestTagMock).not.toHaveBeenCalled();
     expect(pushToast).not.toHaveBeenCalled();
@@ -244,13 +229,20 @@ describe('onTagCommit success paths', () => {
     expect(updateTagSynonymsMock).not.toHaveBeenCalled();
   });
 
-  it('deprecate → deprecateTag + "deprecated" toast', async () => {
+  it('deprecate → deprecateTag forwards the reason + "deprecated" toast', async () => {
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
-    result.current.onTagCommit({ kind: 'deprecate', tag: makeTag() });
+    result.current.onTagCommit({
+      kind: 'deprecate',
+      tag: makeTag(),
+      reason: 'Superseded by iso20022',
+    });
 
     await waitFor(() => expect(deprecateTagMock).toHaveBeenCalled());
-    expect(deprecateTagMock).toHaveBeenCalledWith('argocd', { actor: ACTOR });
+    expect(deprecateTagMock).toHaveBeenCalledWith('argocd', {
+      actor: ACTOR,
+      reason: 'Superseded by iso20022',
+    });
     await waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith(
         expect.objectContaining({ titleSuffix: 'deprecated' }),
@@ -485,18 +477,21 @@ describe('onTagCommit error paths (commitTagMutation onError)', () => {
 });
 
 describe('onTagCommit edit-approve path', () => {
-  it('edits then approves and pushes one success toast', async () => {
+  it('renames via edit then approves the trimmed NEW name (not the deleted old one)', async () => {
+    // Regression #2/#1: the rename deletes the old tag, so approving the old
+    // name 404s; and the backend stores the TRIMMED rename target, so approve
+    // must target commit.name.trim() — a raw "  argo-cd  " would 404.
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
     result.current.onTagCommit({
       kind: 'edit-approve',
       tag: makeTag(),
-      name: 'argo-cd',
+      name: '  argo-cd  ',
     });
 
     await waitFor(() => expect(editTagMock).toHaveBeenCalled());
     await waitFor(() => expect(approveTagMock).toHaveBeenCalled());
-    expect(approveTagMock).toHaveBeenCalledWith('argocd', ACTOR);
+    expect(approveTagMock).toHaveBeenCalledWith('argo-cd', ACTOR);
     await waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith(
         expect.objectContaining({
