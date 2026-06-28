@@ -214,6 +214,33 @@ describe('MSW handlers — Twin overlay endpoints', () => {
 });
 
 describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
+  it(`POST ${TWIN}/documents/bulk-delete records doc-deleted activity`, async () => {
+    const del = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc_ids: ['d6', 'd7'], actor: 'claire.benoit' }),
+    });
+    expect(del.ok).toBe(true);
+    expect(await del.json()).toEqual({ deleted: 2, failed: [] });
+
+    const activity = await getJson<{
+      items: Array<{
+        actor: { user: string };
+        meta: Record<string, unknown>;
+        summary: string;
+      }>;
+    }>(`${TWIN}/activity?kind=doc-deleted`);
+    const deletes = activity.items.filter((event) =>
+      ['d6', 'd7'].includes(String(event.meta.doc_id)),
+    );
+    expect(deletes).toHaveLength(2);
+    deletes.forEach((event) => {
+      expect(event.actor.user).toBe('claire.benoit');
+      expect(event.summary).toContain('deleted by claire.benoit');
+      expect(event.meta.operation).toBe('bulk-delete');
+    });
+  });
+
   it(`DELETE ${TWIN}/tags/cft untags documents in the native /documents feed`, async () => {
     const before = await getJson<{
       items: Array<{ file_path: string; tags: string[] }>;
@@ -237,6 +264,53 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
       (doc) => doc.file_path === 'cft-vendor-api-spec-draft.pdf',
     );
     expect(draftAfter?.tags).toEqual(['network']);
+  });
+
+  it(`POST ${TWIN}/tags/argocd/reject records warning activity with reason`, async () => {
+    const reject = await fetch(`${BASE}${TWIN}/tags/argocd/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: 'claire.benoit', reason: 'too broad' }),
+    });
+    expect(reject.ok).toBe(true);
+
+    const activity = await getJson<{
+      items: Array<{
+        meta: Record<string, unknown>;
+        sev: string;
+        summary: string;
+      }>;
+    }>(`${TWIN}/activity?kind=tag-mutation&q=too%20broad`);
+    expect(activity.items[0]).toMatchObject({
+      sev: 'warning',
+      summary: 'Tag argocd rejected: too broad',
+    });
+    expect(activity.items[0].meta.reason).toBe('too broad');
+  });
+
+  it(`POST ${TWIN}/documents/d6/reject records doc-rejected activity with reason`, async () => {
+    const reject = await fetch(`${BASE}${TWIN}/documents/d6/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor: 'claire.benoit',
+        reason: 'policy mismatch',
+      }),
+    });
+    expect(reject.ok).toBe(true);
+
+    const activity = await getJson<{
+      items: Array<{
+        meta: Record<string, unknown>;
+        sev: string;
+        summary: string;
+      }>;
+    }>(`${TWIN}/activity?kind=doc-rejected&q=policy%20mismatch`);
+    expect(activity.items[0]).toMatchObject({
+      sev: 'warning',
+      summary: 'rejected: policy mismatch',
+    });
+    expect(activity.items[0].meta.reason).toBe('policy mismatch');
   });
 
   it('DELETE /documents/d4 cascades to graph entities orphaned by d4', async () => {

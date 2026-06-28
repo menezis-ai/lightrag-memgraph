@@ -56,6 +56,7 @@ export interface TagEntry {
   requested_by?: string;
   requested_at?: string;
   justification?: string;
+  reject_reason?: string;
 }
 
 export interface TagCategory {
