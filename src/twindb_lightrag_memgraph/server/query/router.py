@@ -34,9 +34,13 @@ Doctrine (TR-RET-02 step 2 / audit C3):
   isolation. It MUST NOT be invoked from the nominal route paths.
 
 The ``only_need_context`` / ``only_need_prompt`` modes still use the
-legacy ``aquery()`` because aquery_llm has no special-casing for
-those — the operator gets the requested body and an empty sources
-list. These modes, and ``bypass`` (direct LLM, no retrieval), report
+legacy ``aquery()``: ``aquery_llm`` delegates to ``kg_query`` /
+``naive_query``, which DO honor those flags but return a bare
+context / prompt string rather than the structured ``{data,
+llm_response}`` envelope this module projects — so routing them
+through ``aquery_llm`` would mishandle the return shape. The operator
+gets the requested body and an empty sources list. These modes, and
+``bypass`` (direct LLM, no retrieval), report
 ``answer_status = no_retrieval`` rather than ``grounded``: they are
 sourceless by design, so the empty sources panel is the contract, not
 a failure. Distinct from ``insufficient_information`` (retrieval ran,
