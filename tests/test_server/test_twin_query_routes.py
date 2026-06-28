@@ -1360,17 +1360,52 @@ class TestAnswerStatusContract:
         # silent grounded response with no body.
         joined = "".join(e["value"] for e in token_events)
         assert "[query failed:" in joined
-        assert "query_failed" in joined
-        # We emit grounded status (not insufficient_information) to
-        # avoid pretending an empty sources list is the canonical
-        # "no usable context" response.
+        # The failure_reason ("query_failed" here) is echoed in the token.
+        assert "[query failed: query_failed]" in joined
+        # The status carries the failure: query_failed (NOT grounded, which
+        # would pretend the error notice is a sourced answer; NOT
+        # insufficient_information, which would pretend retrieval ran and
+        # found nothing usable).
         assert len(status_events) == 1
-        assert status_events[0]["value"] == "grounded"
+        assert status_events[0]["value"] == "query_failed"
         # No fabricated sources behind a failure.
         assert source_events[0]["value"] == []
         # Audit C3 guard still holds: no second vector pass even on
         # the failure path.
         assert rag.chunks_vdb.last_query is None
+
+    async def test_stream_aquery_llm_exception_emits_query_failed(
+        self, make_client
+    ):
+        """When aquery_llm raises mid-stream the HTTP 200 is already
+        committed, so the failure is reported via a [query failed: …]
+        token + a query_failed status, never a grounded lie.
+        """
+        import json as _json
+
+        rag = FakeRag(answer="never returned")
+
+        async def boom(*_a, **_kw):
+            raise RuntimeError("LLM down")
+
+        rag.aquery_llm = boom  # type: ignore[assignment]
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query/stream", json={"query": "x"})
+
+        assert r.status_code == 200
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        token_events = [e for e in events if e["type"] == "token"]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+
+        joined = "".join(e["value"] for e in token_events)
+        assert "[query failed: LLM down]" in joined
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "query_failed"
+        assert source_events[0]["value"] == []
 
     async def test_stream_grounded_emits_status_grounded_then_real_sources(
         self, make_client

@@ -120,6 +120,29 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(chunks.join('')).toBe('Direct answer.');
   });
 
+  it('returns answer_status=query_failed when the stream signals a backend error', async () => {
+    // A mid-stream backend error (aquery_llm raised, or a status=failure
+    // envelope) is reported via a [query failed: …] token + query_failed
+    // status. The parser must propagate query_failed (NOT default to grounded)
+    // so the UI can suppress the panel and render an error cue.
+    const chunks: string[] = [];
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'token', value: '\n[query failed: LLM down]' }),
+        JSON.stringify({ type: 'status', value: 'query_failed' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+
+    const res = await api.queryStream(
+      { query: 'anything' },
+      (c) => chunks.push(c),
+    );
+    expect(res.answer_status).toBe('query_failed');
+    expect(res.sources).toEqual([]);
+    expect(chunks.join('')).toContain('[query failed: LLM down]');
+  });
+
   it('defaults answer_status to grounded when the stream has no status event (back-compat)', async () => {
     // A legacy backend not yet shipping the status event must still
     // produce a sensible client default — the panel renders as before.

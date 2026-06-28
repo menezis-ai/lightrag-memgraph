@@ -58,6 +58,7 @@ AnswerStatus = Literal[
     "insufficient_information",
     "source_projection_failed",
     "no_retrieval",
+    "query_failed",
 ]
 
 ANSWER_STATUS_GROUNDED: AnswerStatus = "grounded"
@@ -76,6 +77,17 @@ ANSWER_STATUS_NO_RETRIEVAL: AnswerStatus = "no_retrieval"
 # ``insufficient_information`` (no usable context) and from a hard 500 (which
 # would hide a usable answer behind a display-layer failure).
 ANSWER_STATUS_SOURCE_PROJECTION_FAILED: AnswerStatus = "source_projection_failed"
+# A generic backend failure occurred (aquery_llm raised, or returned a
+# ``status=failure`` envelope for any reason other than ``no_results``). On the
+# non-stream ``/query`` this surfaces as a real HTTP 500; on ``/query/stream``
+# the HTTP status is already committed to 200, so the failure is reported as a
+# ``[query failed: …]`` token plus this status. Distinct from ``grounded`` (the
+# answer is NOT trustworthy — it is an error notice, not a sourced answer),
+# from ``insufficient_information`` (retrieval ran, found nothing usable), and
+# from ``source_projection_failed`` (a real answer was produced, only the
+# sources projection broke). Sources are always empty; the UI shows an error
+# cue, never a citation affordance.
+ANSWER_STATUS_QUERY_FAILED: AnswerStatus = "query_failed"
 
 
 def classify_answer(answer: str) -> tuple[str, AnswerStatus]:
@@ -418,12 +430,27 @@ def build_sources_from_raw_data(
         return []
     references, chunks = parsed
     chunks_by_ref = _index_chunks_by_ref(chunks)
-    return [
+    entries = [
         _build_source_entry(
             reference, rank, len(references), chunks_by_ref, chunk_id_to_doc_id
         )
         for rank, reference in enumerate(references)
     ]
+    # Defense-in-depth: ``n`` mirrors LightRAG's ``reference_id`` and the React
+    # port collapses/keys sources by it. A duplicate would silently merge two
+    # distinct sources into one and make a ``[N]`` citation ambiguous, so reject
+    # the envelope here rather than project a corrupt sources list. Local
+    # LightRAG mints unique reference_ids per file_path; this guards a future
+    # upstream regression, not a path seen today.
+    seen_n: set[int] = set()
+    for entry in entries:
+        n_value = entry["n"]
+        if n_value in seen_n:
+            raise GraphAnswerEnvelopeError(
+                f"duplicate reference_id projected to n={n_value}"
+            )
+        seen_n.add(n_value)
+    return entries
 
 
 def collect_chunk_ids(result: dict[str, Any]) -> list[str]:

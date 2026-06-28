@@ -54,13 +54,18 @@ export type ChatRole = 'user' | 'assistant';
  * ``no_retrieval`` means the mode is sourceless by design (``bypass`` /
  * ``only_need_context`` / ``only_need_prompt``): no grounding was attempted,
  * so the empty Sources panel is the contract, not a failure.
+ * ``query_failed`` means a backend error occurred mid-stream (the HTTP status
+ * was already committed to 200): the answer text is an ``[query failed: …]``
+ * error notice, NOT a grounded answer — the Sources panel is suppressed and no
+ * citation affordance is rendered.
  * Default = ``grounded``.
  */
 export type AnswerStatus =
   | 'grounded'
   | 'insufficient_information'
   | 'source_projection_failed'
-  | 'no_retrieval';
+  | 'no_retrieval'
+  | 'query_failed';
 
 export interface ChatMessage {
   role: ChatRole;

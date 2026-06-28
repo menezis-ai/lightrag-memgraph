@@ -403,6 +403,24 @@ class TestBuildSourcesFromRawData:
         with pytest.raises(GraphAnswerEnvelopeError):
             build_sources_from_raw_data(result)
 
+    def test_raises_on_duplicate_reference_id(self):
+        # Defense-in-depth: two references coercing to the same ``n`` would
+        # silently collapse in the React port (it keys sources by ``n``) and
+        # make a ``[N]`` citation ambiguous. Reject the envelope so the route
+        # degrades to source_projection_failed rather than ship a corrupt list.
+        # NB: distinct ids sharing a file_path is the legitimate case kept by
+        # test_does_not_dedup_when_two_references_share_file_path — this guards
+        # only genuinely duplicate reference_ids.
+        result = _envelope(
+            references=[
+                {"reference_id": "1", "file_path": "/a.pdf"},
+                {"reference_id": "1", "file_path": "/b.pdf"},
+            ],
+            chunks=[],
+        )
+        with pytest.raises(GraphAnswerEnvelopeError):
+            build_sources_from_raw_data(result)
+
     def test_name_falls_back_to_chunk_id_when_file_path_empty(self):
         result = _envelope(
             references=[{"reference_id": "1", "file_path": ""}],

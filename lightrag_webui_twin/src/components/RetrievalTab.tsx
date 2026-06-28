@@ -533,9 +533,10 @@ export function RetrievalTab({
           const status: AnswerStatus = answer_status ?? 'grounded';
           // Only a grounded answer carries meaningful sources. For every
           // other status (insufficient_information, source_projection_failed,
-          // no_retrieval) drop any sources that slipped through so neither the
-          // Sources panel NOR the inline [N] citations can surface or navigate
-          // to them — defends against a future backend regression.
+          // no_retrieval, query_failed) drop any sources that slipped through
+          // so neither the Sources panel NOR the inline [N] citations can
+          // surface or navigate to them — defends against a future backend
+          // regression.
           const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
           appendToThread(threadId, (c) => [
             ...c,
@@ -552,7 +553,7 @@ export function RetrievalTab({
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Query failed';
-          streamTokens(threadId, [`⚠ ${msg}`], [], 'grounded', requestedTopK);
+          streamTokens(threadId, [`⚠ ${msg}`], [], 'query_failed', requestedTopK);
         });
       return;
     }
@@ -583,7 +584,7 @@ export function RetrievalTab({
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : 'Query failed';
-        streamTokens(threadId, [`⚠ ${msg}`], [], 'grounded', requestedTopK);
+        streamTokens(threadId, [`⚠ ${msg}`], [], 'query_failed', requestedTopK);
       });
   };
 
@@ -1037,6 +1038,7 @@ function Turn({
   const { visible, thoughts } = splitThinkBlocks(answerText);
   const parts: AnswerPart[] = parseAnswer([visible]);
   const sources = msg.sources ?? [];
+  const availableSourceNumbers = new Set(sources.map((source) => source.n));
   const citedSourceNumbers = collectCitedSourceNumbers(parts);
   const collapsedVisibleSources = collapsedSources(sources, citedSourceNumbers);
   const visibleSources = sourcesExpanded
@@ -1054,6 +1056,22 @@ function Turn({
       if (p.type === 'text') return <span key={key}>{p.value}</span>;
       if (p.type === 'bold') return <strong key={key}>{p.value}</strong>;
       if (p.type === 'code') return <code key={key}>{p.value}</code>;
+      // A ``[N]`` marker with no matching source (LLM hallucination, an
+      // external bibliographic ref, or any non-grounded answer whose sources
+      // are empty) must NOT masquerade as a live Twin anchor. Render it inert:
+      // no button affordance, no hover/click, so the operator can't be misled
+      // into thinking it navigates somewhere.
+      if (!availableSourceNumbers.has(p.value)) {
+        return (
+          <span
+            key={key}
+            className="citation citation-inert"
+            data-testid={`citation-inert-${p.value}`}
+          >
+            {p.value}
+          </span>
+        );
+      }
       return (
         <button
           key={key}
@@ -1175,10 +1193,24 @@ function Turn({
           Answered without retrieval — no sources for this mode.
         </div>
       )}
+      {/* A backend error occurred mid-stream: the answer text is an
+          ``[query failed: …]`` error notice, not a grounded answer. Suppress
+          the Sources panel and show an explicit failure cue rather than
+          letting an empty area read as "no sources for a real answer". */}
+      {!streaming && msg.answerStatus === 'query_failed' && (
+        <div
+          className="sources-empty muted"
+          data-testid="sources-empty-query-failed"
+          style={{ marginTop: 8, fontSize: 12 }}
+        >
+          The query could not be completed — no answer was retrieved.
+        </div>
+      )}
       {!streaming &&
         msg.answerStatus !== 'insufficient_information' &&
         msg.answerStatus !== 'source_projection_failed' &&
         msg.answerStatus !== 'no_retrieval' &&
+        msg.answerStatus !== 'query_failed' &&
         sources.length > 0 && (
         <>
           <div className="sources-header">

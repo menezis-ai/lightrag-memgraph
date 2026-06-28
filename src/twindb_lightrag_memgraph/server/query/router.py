@@ -24,9 +24,11 @@ Doctrine (TR-RET-02 step 2 / audit C3):
   the ``[no-context]`` marker in the response content.
 - Generic backend failures (failure with another reason, or an
   exception inside aquery_llm) surface as real HTTP 500 on
-  ``/query`` and an ``[query failed: …]`` token + grounded status on
-  ``/query/stream`` (the HTTP status cannot flip mid-stream). They
-  are NEVER masked as ``insufficient_information``.
+  ``/query`` and an ``[query failed: …]`` token + ``query_failed``
+  status on ``/query/stream`` (the HTTP status cannot flip
+  mid-stream, so the failure is carried in the status event rather
+  than masked as ``grounded``). They are NEVER masked as
+  ``insufficient_information``.
 - The legacy ``aquery() + chunks_vdb`` path lives on as
   :func:`_build_sources_legacy_fallback`, kept for compat tests in
   isolation. It MUST NOT be invoked from the nominal route paths.
@@ -63,6 +65,7 @@ from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
     ANSWER_STATUS_NO_RETRIEVAL,
+    ANSWER_STATUS_QUERY_FAILED,
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
     AnswerStatus,
@@ -1067,7 +1070,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
                 {"type": "token", "value": f"\n[query failed: {exc}]"}
             ) + "\n"
             yield json.dumps(
-                {"type": "status", "value": ANSWER_STATUS_GROUNDED}
+                {"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}
             ) + "\n"
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
@@ -1084,7 +1087,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
                 {"type": "token", "value": f"\n[query failed: {fatal_reason}]"}
             ) + "\n"
             yield json.dumps(
-                {"type": "status", "value": ANSWER_STATUS_GROUNDED}
+                {"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}
             ) + "\n"
             await _record_retrieval_activity(body, request, sources_count=0, stream=True)
             yield json.dumps({"type": "sources", "value": []}) + "\n"
@@ -1171,7 +1174,8 @@ def build_twin_query_router(get_rag) -> APIRouter:
           {"type":"token","value":"<chunk text>"}
           ... repeated for every LLM chunk ...
           {"type":"status","value":"grounded"|"insufficient_information"
-                                    |"source_projection_failed"|"no_retrieval"}
+                                    |"source_projection_failed"|"no_retrieval"
+                                    |"query_failed"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
 
         The ``status`` event lands exactly once, before the final
@@ -1195,11 +1199,14 @@ def build_twin_query_router(get_rag) -> APIRouter:
         ``aquery_llm`` exceptions and structured backend failures
         (``status=failure`` for any reason other than ``no_results``)
         are therefore surfaced as a final ``token`` event carrying
-        ``"[query failed: <reason>]"`` followed by ``status=grounded``
-        and an empty ``sources`` event. Callers MUST treat token
+        ``"[query failed: <reason>]"`` followed by
+        ``status=query_failed`` and an empty ``sources`` event — the
+        status carries the failure rather than pretending the error
+        notice is a ``grounded`` answer. Callers MUST treat token
         events as possibly-error-bearing and render the text verbatim;
-        the absence of a non-empty sources payload is the only signal
-        that the run did not complete cleanly. ``no_results`` is the
+        a ``query_failed`` status (or the absence of a non-empty
+        sources payload) signals the run did not complete cleanly.
+        ``no_results`` is the
         only failure_reason mapped to ``insufficient_information`` —
         the rest must NOT be masked as such. Pre-stream failures
         (RAG bootstrap, body validation) still surface as real HTTP

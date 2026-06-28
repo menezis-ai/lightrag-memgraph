@@ -1054,9 +1054,13 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     );
     expect(screen.queryByTestId('source-1')).toBeNull();
     expect(document.querySelector('.sources-header')).toBeNull();
-    // The [1] citation still renders, but the leaked source was dropped from
-    // state, so clicking it must NOT navigate to the unprojected document.
-    await userEvent.click(screen.getByTestId('citation-1'));
+    // The [1] marker still renders, but the leaked source was dropped from
+    // state, so it must render INERT (no button affordance) and clicking it
+    // must NOT navigate to the unprojected document.
+    expect(screen.queryByTestId('citation-1')).toBeNull();
+    const inert = screen.getByTestId('citation-inert-1');
+    expect(inert.tagName).toBe('SPAN');
+    await userEvent.click(inert);
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
@@ -1104,8 +1108,105 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     expect(screen.queryByTestId('sources-empty-projection-failed')).toBeNull();
     expect(screen.queryByTestId('source-1')).toBeNull();
     expect(document.querySelector('.sources-header')).toBeNull();
-    // Leaked source dropped from state -> the [1] citation cannot navigate.
+    // Leaked source dropped from state -> the [1] marker is inert (no button)
+    // and cannot navigate.
+    expect(screen.queryByTestId('citation-1')).toBeNull();
+    const inert = screen.getByTestId('citation-inert-1');
+    expect(inert.tagName).toBe('SPAN');
+    await userEvent.click(inert);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('renders an orphan [N] citation inert when no matching source exists', async () => {
+    // Finding #2 (audit 2026-06-27): a [N] marker with no source in the list
+    // (LLM hallucination like [99], or an external bibliographic ref) must NOT
+    // look like a live Twin anchor. The grounded source [1] stays clickable;
+    // the orphan [99] renders inert (a span, no navigation).
+    const onNavigate = vi.fn();
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('Grounded on [1] but also cites [99].');
+        return {
+          response: 'Grounded on [1] but also cites [99].',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'real.pdf', score: 0.7 },
+          ],
+          answer_status: 'grounded' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onNavigate={onNavigate}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'orphan cite');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    // The real source [1] is a live citation button.
+    await waitFor(() =>
+      expect(screen.getByTestId('citation-1')).toBeInTheDocument(),
+    );
+    // The orphan [99] is inert: no button, a span, and clicking it no-ops.
+    expect(screen.queryByTestId('citation-99')).toBeNull();
+    const orphan = screen.getByTestId('citation-inert-99');
+    expect(orphan.tagName).toBe('SPAN');
+    await userEvent.click(orphan);
+    expect(onNavigate).not.toHaveBeenCalled();
+    // The grounded source [1] still navigates.
     await userEvent.click(screen.getByTestId('citation-1'));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the answer but shows the query-failed cue and renders no citation affordance', async () => {
+    // Finding #1 (audit 2026-06-27): a mid-stream backend error is reported as
+    // answer_status=query_failed (NOT grounded). The error-notice text is shown
+    // with an explicit failure cue, no Sources panel, and any [N] marker in the
+    // notice is inert.
+    const onNavigate = vi.fn();
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('[query failed: LLM down] see [1]');
+        return {
+          response: '[query failed: LLM down] see [1]',
+          sources: [
+            { n: 1, type: 'file' as const, name: 'leaked.pdf', score: 0.3 },
+          ],
+          answer_status: 'query_failed' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onNavigate={onNavigate}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'boom');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-query-failed'),
+      ).toBeInTheDocument(),
+    );
+    expect(document.querySelector('.retrieval-conv')?.textContent).toContain(
+      '[query failed: LLM down]',
+    );
+    // Not mislabeled, no Sources panel, no live citation.
+    expect(screen.queryByTestId('sources-empty-insufficient')).toBeNull();
+    expect(screen.queryByTestId('sources-empty-no-retrieval')).toBeNull();
+    expect(screen.queryByTestId('source-1')).toBeNull();
+    expect(document.querySelector('.sources-header')).toBeNull();
+    expect(screen.queryByTestId('citation-1')).toBeNull();
+    await userEvent.click(screen.getByTestId('citation-inert-1'));
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
