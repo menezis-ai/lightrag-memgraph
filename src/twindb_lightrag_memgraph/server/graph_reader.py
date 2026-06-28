@@ -911,6 +911,62 @@ async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
     return rows
 
 
+async def _load_relation_rows_between_entities(
+    workspace: str,
+    entity_ids: set[str],
+    *,
+    max_edges: int = 5000,
+) -> list[dict[str, Any]] | None:
+    """Load stored ``:DIRECTED`` edges whose endpoints are already visible.
+
+    ``read_graph_native`` still delegates node selection to LightRAG, but native
+    edge objects can omit relationship properties such as ``source_id``. Folder
+    scoping depends on that provenance, so after selecting visible nodes we
+    re-read matching edges from Memgraph and project those authoritative rows.
+    ``None`` means the read failed and callers should fall back to native edges.
+    """
+    if not entity_ids:
+        return []
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
+        "WHERE s.entity_id IN $entity_ids AND t.entity_id IN $entity_ids "
+        "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        "r.keywords AS keywords, r.weight AS weight, "
+        "r.source_id AS chunk_source_id, "
+        f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
+        "r.twin_props_json AS twin_props_json "
+        "LIMIT $max_edges"
+    )
+    rows: list[dict[str, Any]] = []
+    try:
+        async with get_read_session() as session:
+            result = await session.run(
+                query,
+                entity_ids=sorted(entity_ids),
+                max_edges=max_edges,
+            )
+            async for record in result:
+                rows.append(
+                    {
+                        "source_id": record["source_id"],
+                        "target_id": record["target_id"],
+                        "keywords": record["keywords"],
+                        "weight": record["weight"],
+                        "chunk_source_id": record["chunk_source_id"],
+                        "twin_folder_json": record["twin_folder_json"],
+                        "twin_props_json": record["twin_props_json"],
+                    }
+                )
+            await result.consume()
+        return rows
+    except Exception:
+        logger.exception(
+            "graph_reader: visible relation row load failed (ws=%s)", workspace
+        )
+        return None
+
+
 async def _entity_mutation_gate(
     workspace: str,
     entity_id: str,
@@ -1504,9 +1560,38 @@ async def read_graph_native(
             present.add(ent["id"])
 
     valid_ids = {e["id"] for e in entities}
-    relations = _build_native_relations(
-        kg, workspace, valid_ids, chunk_to_doc, member_docs, folder, rel_overrides
+    raw_valid_ids = {_strip_node_prefix(eid) for eid in valid_ids}
+    stored_relation_rows = await _load_relation_rows_between_entities(
+        workspace, raw_valid_ids
     )
+    if stored_relation_rows is None:
+        relations = _build_native_relations(
+            kg, workspace, valid_ids, chunk_to_doc, member_docs, folder, rel_overrides
+        )
+    else:
+        relations = []
+        for i, row in enumerate(stored_relation_rows):
+            rel = _edge_record_to_relation(
+                row,
+                i,
+                chunk_to_doc,
+                member_docs,
+                folder,
+                rel_overrides.get(
+                    (str(row.get("source_id")), str(row.get("target_id")))
+                ),
+            )
+            if rel is None:
+                continue
+            if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
+                continue
+            _remember_relation(
+                workspace,
+                rel["id"],
+                rel["source"],
+                rel["target"],
+            )
+            relations.append(rel)
     # Union operator-created relations among the visible entities (#1a) — the
     # native read only returns edges between degree-ranked nodes, so a manual
     # edge touching a manual node would otherwise never appear.

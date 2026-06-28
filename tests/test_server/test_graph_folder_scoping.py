@@ -822,6 +822,15 @@ def patched_loaders(monkeypatch):
 
     monkeypatch.setattr(graph_reader, "_load_chunk_to_doc_index", _ctd)
 
+    async def _no_stored_relation_rows(_ws, _entity_ids, *, max_edges=5000):
+        return None
+
+    monkeypatch.setattr(
+        graph_reader,
+        "_load_relation_rows_between_entities",
+        _no_stored_relation_rows,
+    )
+
     def _set_members(members):
         async def _md(_ws, _folder):
             return set(members)
@@ -868,6 +877,45 @@ async def test_native_global_when_no_folder(patched_loaders, monkeypatch):
     entities, relations = await graph_reader.read_graph_native(rag, "ws")
     assert {e["name"] for e in entities} == {"e1", "e2"}
     assert len(relations) == 1  # global: edge kept
+
+
+async def test_native_relations_use_stored_edge_provenance(
+    patched_loaders, monkeypatch
+):
+    """Native KG edge objects can omit source_id; stored Memgraph rows carry it."""
+    patched_loaders({"doc-a"})
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "A")
+
+    kg = _KG(
+        [
+            _Node({"entity_id": "e1", "source_id": "chunk-a", "description": "A"}),
+            _Node({"entity_id": "e2", "source_id": "chunk-a", "description": "B"}),
+        ],
+        [_Edge("e1", "e2", {"keywords": "native_without_source"})],
+    )
+
+    async def _stored(_ws, entity_ids, *, max_edges=5000):
+        assert entity_ids == {"e1", "e2"}
+        return [
+            {
+                "source_id": "e1",
+                "target_id": "e2",
+                "keywords": "uses",
+                "weight": 0.9,
+                "chunk_source_id": "chunk-a",
+                "twin_folder_json": None,
+                "twin_props_json": None,
+            }
+        ]
+
+    monkeypatch.setattr(graph_reader, "_load_relation_rows_between_entities", _stored)
+
+    entities, relations = await graph_reader.read_graph_native(_FakeRag(kg), "ws")
+    assert {e["name"] for e in entities} == {"e1", "e2"}
+    assert len(relations) == 1
+    assert relations[0]["label"] == "USES"
 
 
 async def test_native_unions_direct_member_entities(patched_loaders, monkeypatch):
