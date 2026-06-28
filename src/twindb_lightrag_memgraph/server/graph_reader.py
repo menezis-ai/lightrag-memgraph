@@ -294,6 +294,7 @@ def _node_record_to_entity(
     record: dict[str, Any],
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
+    direct_members: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Project a Cypher entity row into the WebUI ``GraphEntity`` shape.
 
@@ -311,6 +312,11 @@ def _node_record_to_entity(
     ``source_docs`` are scoped to member chunks/docs. Returns ``None`` when the
     entity has no member source (caller drops it). ``member_docs`` None → legacy
     global behaviour (no scoping).
+
+    **Manual creates** (#1a): an entity whose id is in ``direct_members`` is
+    visible in the active folder via explicit ``GRAPH_MEMBER_OF`` membership even
+    with no chunk provenance — it shows as a pure, operator-owned node (zero
+    mentions/sources, no source_docs, real description kept).
     """
     entity_id = record.get("entity_id") or ""
     raw_type = record.get("entity_type") or ""
@@ -331,8 +337,17 @@ def _node_record_to_entity(
     }
     scope = _resolve_entity_scope(all_chunks, chunk_to_doc, member_docs)
     if scope is None:
-        return None  # not visible in this folder
-    mentions, sources, resolved_docs, mixed = scope
+        is_direct = (
+            member_docs is not None
+            and direct_members is not None
+            and str(entity_id) in direct_members
+        )
+        if not is_direct:
+            return None  # not visible in this folder
+        # Operator-owned in this folder, no chunk provenance.
+        mentions, sources, resolved_docs, mixed = 0, 0, set(), False
+    else:
+        mentions, sources, resolved_docs, mixed = scope
     if mixed:
         # The description LightRAG blended across all source docs may carry
         # non-member text; the graph tab is a direct exposure surface → mask it.
@@ -486,6 +501,103 @@ _GATE_MEMBER = "member"
 _GATE_MIXED = "mixed"
 _GATE_ABSENT = "absent"
 
+# Manual graph authorship (#1a). LLM-extracted records are folder-scoped by chunk
+# provenance (source_id chunks ∈ a folder's member docs). Operator-created records
+# have no chunk provenance, so their folder membership is explicit:
+#   - entities  → a relationship  (:{ws} {entity_id})-[:GRAPH_MEMBER_OF]->(:Folder_{ws} {id})
+#   - relations → an edge property `twin_folder_json` (a JSON list of folder ids;
+#     a Memgraph edge can't own a sub-relationship, so the relational form isn't
+#     available — this is the one justified property, mirroring how the edge
+#     already carries its own `source_id`).
+# A future folder-local override layer (#1b) builds on the same Folder nodes.
+_GRAPH_MEMBER_REL = "GRAPH_MEMBER_OF"
+_REL_FOLDER_PROP = "twin_folder_json"
+
+
+async def _load_direct_member_entity_rows(
+    workspace: str, folder: str
+) -> list[dict[str, Any]]:
+    """Full entity rows for nodes explicitly ``GRAPH_MEMBER_OF`` *folder*.
+
+    These are operator-created entities with no chunk provenance, so the
+    chunk-membership read skips them. Surfaced here so a manual create survives a
+    folder-scoped refresh. Best-effort: ``[]`` on error (the chunk-membership
+    result still stands)."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (n:`{label}`)-[:`{_GRAPH_MEMBER_REL}`]->"
+        f"(:`Folder_{label}` {{id: $folder}}) "
+        "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
+        "n.description AS description, n.source_id AS source_id, "
+        "n.display_name AS display_name, n.twin_tags_json AS twin_tags_json, "
+        "n.twin_props_json AS twin_props_json"
+    )
+    rows: list[dict[str, Any]] = []
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            async for record in result:
+                rows.append(
+                    {
+                        "entity_id": record["entity_id"],
+                        "entity_type": record["entity_type"],
+                        "description": record["description"],
+                        "source_id": record["source_id"],
+                        "display_name": record["display_name"],
+                        "twin_tags_json": record["twin_tags_json"],
+                        "twin_props_json": record["twin_props_json"],
+                    }
+                )
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: direct-member entity load failed (ws=%s, folder=%s)",
+            workspace,
+            folder,
+        )
+        return []
+    return rows
+
+
+async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
+    """Edge rows for operator-created relations (those carrying a
+    ``twin_folder_json`` stamp). Bounded — manual relations are few. The active
+    folder is matched in Python (avoids fragile JSON-substring Cypher). ``[]`` on
+    error."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
+        f"WHERE r.`{_REL_FOLDER_PROP}` IS NOT NULL "
+        "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        "r.keywords AS keywords, r.weight AS weight, "
+        "r.source_id AS chunk_source_id, "
+        f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
+        "r.twin_props_json AS twin_props_json"
+    )
+    rows: list[dict[str, Any]] = []
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query)
+            async for record in result:
+                rows.append(
+                    {
+                        "source_id": record["source_id"],
+                        "target_id": record["target_id"],
+                        "keywords": record["keywords"],
+                        "weight": record["weight"],
+                        "chunk_source_id": record["chunk_source_id"],
+                        "twin_folder_json": record["twin_folder_json"],
+                        "twin_props_json": record["twin_props_json"],
+                    }
+                )
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: manual relation load failed (ws=%s)", workspace
+        )
+        return []
+    return rows
+
 
 async def _entity_mutation_gate(
     workspace: str,
@@ -494,18 +606,29 @@ async def _entity_mutation_gate(
     member_docs: set[str],
 ) -> str:
     """Classify an entity for a folder-scoped mutation: pure-member, mixed, or
-    absent. Reads only the node's ``source_id``. Fail-closed (``absent``) on any
-    read error so a transient backend fault refuses the write."""
+    absent. A record is ``member`` when its chunk provenance is pure-member OR it
+    is an operator-created entity explicitly ``GRAPH_MEMBER_OF`` the active folder
+    (#1a) — so manual creates are editable/deletable in their folder. Fail-closed
+    (``absent``) on read error so a transient backend fault refuses the write."""
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
     label = _sanitize_workspace(workspace)
     query = (
-        f"MATCH (n:`{label}` {{entity_id: $eid}}) RETURN n.source_id AS source_id"
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+        f"OPTIONAL MATCH (n)-[gm:`{_GRAPH_MEMBER_REL}`]->"
+        f"(:`Folder_{label}` {{id: $folder}}) "
+        "RETURN n.source_id AS source_id, gm IS NOT NULL AS direct"
     )
     try:
         async with get_read_session() as session:
-            result = await session.run(query, eid=entity_id)
+            result = await session.run(query, eid=entity_id, folder=folder)
             row = None
             async for record in result:
-                row = {"source_id": record["source_id"]}
+                row = {
+                    "source_id": record["source_id"],
+                    "direct": record["direct"],
+                }
                 break
             await result.consume()
     except Exception:
@@ -523,9 +646,10 @@ async def _entity_mutation_gate(
         if c.strip()
     }
     scope = _resolve_entity_scope(all_chunks, chunk_to_doc, member_docs)
-    if scope is None:
-        return _GATE_ABSENT
-    return _GATE_MIXED if scope[3] else _GATE_MEMBER
+    if scope is not None:
+        return _GATE_MIXED if scope[3] else _GATE_MEMBER
+    # No chunk membership → fall back to explicit manual-create folder membership.
+    return _GATE_MEMBER if row.get("direct") else _GATE_ABSENT
 
 
 async def _relation_mutation_gate(
@@ -535,20 +659,29 @@ async def _relation_mutation_gate(
     chunk_to_doc: dict[str, str] | None,
     member_docs: set[str],
 ) -> str:
-    """Classify a relation for a folder-scoped mutation. Reads only the edge's
-    own ``source_id`` provenance. Fail-closed (``absent``) on read error."""
+    """Classify a relation for a folder-scoped mutation. ``member`` when the
+    edge's own chunk provenance is pure-member OR it is an operator-created edge
+    stamped with the active folder in ``twin_folder_json`` (#1a). Fail-closed
+    (``absent``) on read error."""
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
         f"(t:`{label}` {{entity_id: $tgt}}) "
-        "RETURN r.source_id AS chunk_source_id"
+        f"RETURN r.source_id AS chunk_source_id, "
+        f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json"
     )
     try:
         async with get_read_session() as session:
             result = await session.run(query, src=src, tgt=tgt)
             row = None
             async for record in result:
-                row = {"chunk_source_id": record["chunk_source_id"]}
+                row = {
+                    "chunk_source_id": record["chunk_source_id"],
+                    "twin_folder_json": record["twin_folder_json"],
+                }
                 break
             await result.consume()
     except Exception:
@@ -563,9 +696,12 @@ async def _relation_mutation_gate(
     _docs, in_folder, mixed = _resolve_source_docs(
         row["chunk_source_id"], chunk_to_doc, member_docs
     )
-    if not in_folder:
-        return _GATE_ABSENT
-    return _GATE_MIXED if mixed else _GATE_MEMBER
+    if in_folder:
+        return _GATE_MIXED if mixed else _GATE_MEMBER
+    # No chunk membership → fall back to explicit manual-relation folder stamp.
+    if folder and folder in _json_list(row.get("twin_folder_json")):
+        return _GATE_MEMBER
+    return _GATE_ABSENT
 
 
 async def _load_member_chunks(workspace: str, folder: str) -> set[str]:
@@ -721,6 +857,7 @@ def _edge_record_to_relation(
     index: int,
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
+    active_folder: str | None = None,
 ) -> dict[str, Any] | None:
     """Project a Cypher edge row into the WebUI ``GraphRelation`` shape.
 
@@ -735,6 +872,11 @@ def _edge_record_to_relation(
     blended text payload (``label`` from keywords, operator ``properties``) is
     neutralised. This is on top of the endpoint-visibility filter the callers
     already apply. ``None`` → legacy global behaviour.
+
+    **Manual relations** (#1a): an operator-created edge has no chunk provenance
+    but is stamped with ``active_folder`` in ``record["twin_folder_json"]``. When
+    chunk-membership fails, the edge is still visible (pure, not masked) if the
+    active folder is in that stamp.
     """
     del index  # ignored — id is endpoint-derived
     mixed = False
@@ -743,7 +885,10 @@ def _edge_record_to_relation(
             record.get("chunk_source_id"), chunk_to_doc, member_docs
         )
         if not in_folder:
-            return None
+            stamped = _json_list(record.get("twin_folder_json"))
+            if not (active_folder and active_folder in stamped):
+                return None
+            mixed = False  # operator-owned in this folder
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
     keywords = record.get("keywords") or ""
@@ -822,11 +967,25 @@ async def read_graph_entities(
             await result.consume()
         chunk_to_doc = await _load_chunk_to_doc_index(workspace)
         member_docs = await _active_member_docs(workspace)
+        # #1a: union operator-created entities (GRAPH_MEMBER_OF the active
+        # folder) — they have no chunk provenance so the predicate above skips
+        # them. Dedup by id; direct rows are surfaced via `direct_members`.
+        direct_members: set[str] | None = None
+        from .folder import active_folder_id
+
+        folder = active_folder_id()
+        if member_docs is not None and folder:
+            seen = {r.get("entity_id") for r in rows}
+            direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+            direct_members = {r["entity_id"] for r in direct_rows if r.get("entity_id")}
+            rows.extend(r for r in direct_rows if r.get("entity_id") not in seen)
         out: list[dict[str, Any]] = []
         for row in rows:
             if not row.get("entity_id"):
                 continue
-            entity = _node_record_to_entity(row, chunk_to_doc, member_docs)
+            entity = _node_record_to_entity(
+                row, chunk_to_doc, member_docs, direct_members
+            )
             if entity is not None:
                 out.append(entity)
         return out
@@ -841,6 +1000,7 @@ def _native_node_to_entity(
     node: Any,
     chunk_to_doc: dict[str, str],
     member_docs: set[str] | None = None,
+    direct_members: set[str] | None = None,
 ) -> dict[str, Any] | None:
     props = getattr(node, "properties", None) or {}
     entity_id = props.get("entity_id") or getattr(node, "id", None)
@@ -855,7 +1015,7 @@ def _native_node_to_entity(
         "twin_tags_json": props.get("twin_tags_json"),
         "twin_props_json": props.get("twin_props_json"),
     }
-    return _node_record_to_entity(row, chunk_to_doc, member_docs)
+    return _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
 
 
 def _native_edge_to_relation(
@@ -863,6 +1023,7 @@ def _native_edge_to_relation(
     index: int,
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
+    active_folder: str | None = None,
 ) -> dict[str, Any] | None:
     src = getattr(edge, "source", None)
     tgt = getattr(edge, "target", None)
@@ -877,16 +1038,23 @@ def _native_edge_to_relation(
         "chunk_source_id": eprops.get("source_id"),
         "keywords": eprops.get("keywords"),
         "weight": eprops.get("weight"),
+        "twin_folder_json": eprops.get(_REL_FOLDER_PROP),
         "twin_props_json": eprops.get("twin_props_json"),
     }
-    return _edge_record_to_relation(row, index, chunk_to_doc, member_docs)
+    return _edge_record_to_relation(
+        row, index, chunk_to_doc, member_docs, active_folder
+    )
 
 
-def _build_native_entities(kg, chunk_to_doc, member_docs, max_nodes) -> list[dict]:
+def _build_native_entities(
+    kg, chunk_to_doc, member_docs, direct_members, max_nodes
+) -> list[dict]:
     """Project native KG nodes to entities, capped after membership filtering."""
     entities: list[dict[str, Any]] = []
     for node in getattr(kg, "nodes", []) or []:
-        entity = _native_node_to_entity(node, chunk_to_doc, member_docs)
+        entity = _native_node_to_entity(
+            node, chunk_to_doc, member_docs, direct_members
+        )
         if entity is not None:
             entities.append(entity)
             if len(entities) >= max_nodes:
@@ -895,13 +1063,15 @@ def _build_native_entities(kg, chunk_to_doc, member_docs, max_nodes) -> list[dic
 
 
 def _build_native_relations(
-    kg, workspace, valid_ids, chunk_to_doc, member_docs
+    kg, workspace, valid_ids, chunk_to_doc, member_docs, active_folder
 ) -> list[dict]:
     """Project native KG edges to relations, dropping any whose endpoints did
     not survive entity membership filtering."""
     relations: list[dict[str, Any]] = []
     for i, edge in enumerate(getattr(kg, "edges", []) or []):
-        rel = _native_edge_to_relation(edge, i, chunk_to_doc, member_docs)
+        rel = _native_edge_to_relation(
+            edge, i, chunk_to_doc, member_docs, active_folder
+        )
         if rel is None:
             continue
         if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
@@ -965,11 +1135,49 @@ async def read_graph_native(
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder) if folder else None
 
-    entities = _build_native_entities(kg, chunk_to_doc, member_docs, max_nodes)
+    # #1a: operator-created entities have no chunk provenance and the native
+    # degree-ranked read won't return an isolated manual node — load them
+    # explicitly and union them in so a manual create survives a folder refresh.
+    direct_rows: list[dict[str, Any]] = []
+    direct_members: set[str] | None = None
+    if folder:
+        direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+        direct_members = {r["entity_id"] for r in direct_rows if r.get("entity_id")}
+
+    entities = _build_native_entities(
+        kg, chunk_to_doc, member_docs, direct_members, max_nodes
+    )
+    present = {e["id"] for e in entities}
+    for row in direct_rows:
+        ent = _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
+        if ent is not None and ent["id"] not in present:
+            entities.append(ent)
+            present.add(ent["id"])
+
     valid_ids = {e["id"] for e in entities}
     relations = _build_native_relations(
-        kg, workspace, valid_ids, chunk_to_doc, member_docs
+        kg, workspace, valid_ids, chunk_to_doc, member_docs, folder
     )
+    # Union operator-created relations among the visible entities (#1a) — the
+    # native read only returns edges between degree-ranked nodes, so a manual
+    # edge touching a manual node would otherwise never appear.
+    if folder:
+        rel_ids = {r["id"] for r in relations}
+        for row in await _load_manual_relation_rows(workspace):
+            if folder not in _json_list(row.get("twin_folder_json")):
+                continue
+            rel = _edge_record_to_relation(
+                row, 0, chunk_to_doc, member_docs, folder
+            )
+            if rel is None:
+                continue
+            if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
+                continue
+            if rel["id"] in rel_ids:
+                continue
+            _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
+            relations.append(rel)
+            rel_ids.add(rel["id"])
     return entities, relations
 
 
@@ -1301,20 +1509,28 @@ async def _read_one_entity(
     folder-scoped exactly like the GET path: returns ``None`` if the entity has
     no member source chunk (so a post-write re-read of an out-of-folder entity
     surfaces nothing), and masks the blended description on mixed-folder
-    provenance. ``member_docs=None`` keeps the legacy global projection.
+    provenance. A manually-created entity ``GRAPH_MEMBER_OF`` the active folder
+    is surfaced via direct membership (#1a). ``member_docs=None`` keeps the
+    legacy global projection.
     """
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+        f"OPTIONAL MATCH (n)-[gm:`{_GRAPH_MEMBER_REL}`]->"
+        f"(:`Folder_{label}` {{id: $folder}}) "
         "RETURN n.entity_id AS entity_id, n.entity_type AS entity_type, "
         "n.description AS description, n.source_id AS source_id, "
         "n.display_name AS display_name, n.twin_tags_json AS twin_tags_json, "
-        "n.twin_props_json AS twin_props_json"
+        "n.twin_props_json AS twin_props_json, gm IS NOT NULL AS direct"
     )
     try:
         async with get_read_session() as session:
-            result = await session.run(query, eid=entity_id)
+            result = await session.run(query, eid=entity_id, folder=folder)
             row = None
+            direct = False
             async for record in result:
                 row = {
                     "entity_id": record["entity_id"],
@@ -1325,6 +1541,7 @@ async def _read_one_entity(
                     "twin_tags_json": record["twin_tags_json"],
                     "twin_props_json": record["twin_props_json"],
                 }
+                direct = bool(record["direct"])
                 break
             await result.consume()
     except Exception:
@@ -1334,7 +1551,8 @@ async def _read_one_entity(
         return None
     if not row or not row.get("entity_id"):
         return None
-    return _node_record_to_entity(row, chunk_to_doc, member_docs)
+    direct_members = {entity_id} if direct else None
+    return _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
 
 
 async def _read_one_relation(
@@ -1350,9 +1568,14 @@ async def _read_one_relation(
     folder-scoped projection can detect mixed-folder provenance — without it a
     mixed relation is undetectable and its blended label/props leak. When
     ``member_docs`` is provided the projection is folder-scoped like the GET
-    path (``None`` when no member source chunk; masked label/props on mixed).
-    ``member_docs=None`` keeps the legacy global projection.
+    path (``None`` when no member source chunk; masked label/props on mixed). A
+    manually-created edge stamped with the active folder in ``twin_folder_json``
+    is surfaced via that stamp (#1a). ``member_docs=None`` keeps the legacy
+    global projection.
     """
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
@@ -1360,6 +1583,7 @@ async def _read_one_relation(
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
         "r.keywords AS keywords, r.weight AS weight, "
         "r.source_id AS chunk_source_id, "
+        f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
         "r.twin_props_json AS twin_props_json"
     )
     try:
@@ -1373,6 +1597,7 @@ async def _read_one_relation(
                     "keywords": record["keywords"],
                     "weight": record["weight"],
                     "chunk_source_id": record["chunk_source_id"],
+                    "twin_folder_json": record["twin_folder_json"],
                     "twin_props_json": record["twin_props_json"],
                 }
                 break
@@ -1384,7 +1609,7 @@ async def _read_one_relation(
         return None
     if not row:
         return None
-    return _edge_record_to_relation(row, 0, chunk_to_doc, member_docs)
+    return _edge_record_to_relation(row, 0, chunk_to_doc, member_docs, folder)
 
 
 # ----------------------------------------------------------------------
@@ -1461,6 +1686,9 @@ async def create_graph_entity(
     if payload.get("properties"):
         props["twin_props_json"] = json.dumps(dict(payload["properties"]))
 
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
     async with acquire_write_slot():
         async with get_session() as session:
             query = (
@@ -1472,6 +1700,17 @@ async def create_graph_entity(
                 result = await session.run(query, props=props)
                 rows = [record async for record in result]
                 await result.consume()
+                if folder:
+                    # #1a: stamp explicit folder membership so this chunk-less
+                    # manual entity survives a folder-scoped refresh.
+                    stamp = (
+                        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+                        f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
+                        f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
+                    )
+                    await (
+                        await session.run(stamp, eid=entity_id, folder=folder)
+                    ).consume()
             except Exception as exc:
                 logger.exception(
                     "graph_reader.create_graph_entity: insert failed for %s",
@@ -1598,6 +1837,13 @@ async def create_graph_relation(
     props: dict[str, Any] = {"keywords": label_kw, "weight": weight}
     if payload.get("properties"):
         props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+    # #1a: a manual edge has no chunk provenance — stamp the active folder so
+    # folder-scoped reads surface it after a refresh.
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if folder:
+        props[_REL_FOLDER_PROP] = json.dumps([folder])
 
     label = _sanitize_workspace(workspace)
     async with acquire_write_slot():

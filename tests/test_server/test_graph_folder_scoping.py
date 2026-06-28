@@ -86,6 +86,25 @@ class TestEntityProjectorScoping:
         assert ent is not None
         assert ent["summary"] == "A content"
 
+    def test_direct_member_visible_without_chunks(self):
+        # Manual create (#1a): no real chunk provenance, but id ∈ direct_members
+        # → visible as a pure, operator-owned node.
+        row = {
+            "entity_id": "e1", "source_id": "manual:operator", "description": "M",
+        }
+        ent = graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, {"e1"})
+        assert ent is not None
+        assert ent["source_docs"] == []
+        assert ent["mentions"] == 0 and ent["sources"] == 0
+        assert ent["summary"] == "M"  # real description, not masked
+
+    def test_direct_member_dropped_when_not_in_set(self):
+        row = {"entity_id": "e1", "source_id": "manual:operator"}
+        # member_docs bound, no chunk membership, id NOT a direct member → hidden.
+        assert (
+            graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, set()) is None
+        )
+
 
 class TestRelationProjectorScoping:
     def test_relation_scoped_by_its_own_source_chunk(self):
@@ -133,6 +152,27 @@ class TestRelationProjectorScoping:
         assert rel is not None
         assert rel["label"] == "USES"
 
+    def test_manual_relation_visible_via_folder_stamp(self):
+        # Manual edge (#1a): no chunk provenance, stamped twin_folder_json=[A].
+        row = {
+            "source_id": "e1", "target_id": "e2", "chunk_source_id": None,
+            "keywords": "uses", "twin_folder_json": json.dumps(["A"]),
+        }
+        rel = graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A")
+        assert rel is not None
+        assert rel["label"] == "USES"  # not masked — operator-owned in A
+
+    def test_manual_relation_hidden_for_other_folder(self):
+        row = {
+            "source_id": "e1", "target_id": "e2", "chunk_source_id": None,
+            "twin_folder_json": json.dumps(["B"]),
+        }
+        # active folder A, edge stamped only for B → not visible.
+        assert (
+            graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A")
+            is None
+        )
+
 
 # ── write-side folder cloisonnement (audit Graph/KG #1 + #2) ───────────────
 #
@@ -169,9 +209,11 @@ class _RecordingSession:
     def __init__(self, rows=None):
         self.rows = rows or []
         self.queries: list[str] = []
+        self.params: list[dict] = []
 
-    async def run(self, query, **_params):
+    async def run(self, query, **params):
         self.queries.append(query)
+        self.params.append(params)
         return _RowsResult(self.rows)
 
 
@@ -183,8 +225,9 @@ def _cm(session):
     return _factory
 
 
-def _ent_row(source_id, description="x"):
-    """A full entity row as `_read_one_entity`'s query returns it."""
+def _ent_row(source_id, description="x", direct=False):
+    """A full entity row as `_read_one_entity`'s / the gate's query returns it
+    (incl. the #1a `direct` GRAPH_MEMBER_OF flag)."""
     return {
         "entity_id": "e1",
         "entity_type": "CONCEPT",
@@ -193,16 +236,18 @@ def _ent_row(source_id, description="x"):
         "display_name": "e1",
         "twin_tags_json": None,
         "twin_props_json": None,
+        "direct": direct,
     }
 
 
-def _rel_row(chunk_source_id, keywords="uses"):
+def _rel_row(chunk_source_id, keywords="uses", twin_folder_json=None):
     return {
         "source_id": "e1",
         "target_id": "e2",
         "keywords": keywords,
         "weight": 1.0,
         "chunk_source_id": chunk_source_id,
+        "twin_folder_json": twin_folder_json,
         "twin_props_json": None,
     }
 
@@ -434,7 +479,7 @@ class _PerEntityReadSession:
     async def run(self, _query, **params):
         eid = params.get("eid")
         rows = (
-            [{"source_id": self.source_by_id[eid]}]
+            [{"source_id": self.source_by_id[eid], "direct": False}]
             if eid in self.source_by_id
             else []
         )
@@ -519,6 +564,104 @@ class TestCreateRelationFolderGate:
         assert any("MERGE" in q for q in write.queries)
 
 
+# ── manual graph authorship: membership makes manual records mutable (#1a) ──
+
+
+class TestManualRecordGate:
+    async def test_direct_member_entity_is_mutable(self, folder_a, monkeypatch):
+        # No chunk provenance (source_id=manual:operator) but GRAPH_MEMBER_OF A
+        # (direct=True) → the gate must classify it `member`, so it's editable.
+        read = _RecordingSession([_ent_row("manual:operator", direct=True)])
+        write = _RecordingSession([{"entity_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_entity(
+            "ws", "kg_e1", {"summary": "edited"}
+        )
+        assert out is not None
+        assert any("SET n +=" in q for q in write.queries)
+
+    async def test_manual_relation_is_mutable(self, folder_a, monkeypatch):
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        # Manual edge: no chunk provenance, stamped twin_folder_json=[A].
+        read = _RecordingSession(
+            [_rel_row(None, twin_folder_json=json.dumps(["A"]))]
+        )
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_relation(
+            "ws", "kr_x", {"label": "x"}
+        )
+        assert out is not None
+        assert any("SET r +=" in q for q in write.queries)
+
+
+class TestManualCreateStamping:
+    async def test_create_entity_stamps_folder_membership(
+        self, folder_a, monkeypatch
+    ):
+        async def absent(_ws, _eid):
+            return False
+
+        monkeypatch.setattr(graph_reader, "entity_exists", absent)
+        write = _RecordingSession([{"entity_id": "X"}])
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        async def proj(_ws, _eid, *_a, **_k):
+            return {
+                "id": "kg_X", "name": "X", "type": "CONCEPT", "x": 0, "y": 0,
+                "mentions": 0, "sources": 0, "summary": "",
+            }
+
+        monkeypatch.setattr(graph_reader, "_read_one_entity", proj)
+
+        out = await graph_reader.create_graph_entity(
+            "ws", {"name": "X", "type": "CONCEPT"}
+        )
+        assert out is not None
+        # The GRAPH_MEMBER_OF stamp must have been written.
+        assert any("GRAPH_MEMBER_OF" in q for q in write.queries)
+        # And the Folder node id is the active folder.
+        stamp_params = next(
+            p for q, p in zip(write.queries, write.params)
+            if "GRAPH_MEMBER_OF" in q
+        )
+        assert stamp_params.get("folder") == "A"
+
+    async def test_create_relation_stamps_folder_on_edge(
+        self, folder_a, monkeypatch
+    ):
+        # Both endpoints pure-member so the #2 gate passes.
+        read = _PerEntityReadSession({"e1": "chunk-a", "e2": "chunk-a"})
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        async def proj(_ws, _src, _tgt, *_a, **_k):
+            return {
+                "id": "kr_x", "source": "kg_e1", "target": "kg_e2",
+                "label": "USES", "strength": 0.5, "properties": {},
+            }
+
+        monkeypatch.setattr(graph_reader, "_read_one_relation", proj)
+
+        out = await graph_reader.create_graph_relation(
+            "ws", {"source": "e1", "target": "e2", "label": "uses"}
+        )
+        assert out is not None
+        merge_params = next(
+            p for q, p in zip(write.queries, write.params) if "MERGE" in q
+        )
+        props = merge_params.get("props", {})
+        assert json.loads(props["twin_folder_json"]) == ["A"]
+
+
 # ── read_graph_native (the route's path) with mocked index loaders ────────
 
 
@@ -589,6 +732,37 @@ async def test_native_global_when_no_folder(patched_loaders, monkeypatch):
     entities, relations = await graph_reader.read_graph_native(rag, "ws")
     assert {e["name"] for e in entities} == {"e1", "e2"}
     assert len(relations) == 1  # global: edge kept
+
+
+async def test_native_unions_direct_member_entities(patched_loaders, monkeypatch):
+    """#1a: an operator-created entity with no chunk provenance (so the native
+    degree-ranked read never returns it) is unioned into the folder result."""
+    patched_loaders({"doc-a"})
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "A")
+
+    async def _direct(_ws, _folder):
+        return [
+            {
+                "entity_id": "manualX", "entity_type": "CONCEPT",
+                "description": "M", "source_id": "manual:operator",
+                "display_name": "manualX", "twin_tags_json": None,
+                "twin_props_json": None,
+            }
+        ]
+
+    async def _no_manual_rel(_ws):
+        return []
+
+    monkeypatch.setattr(graph_reader, "_load_direct_member_entity_rows", _direct)
+    monkeypatch.setattr(graph_reader, "_load_manual_relation_rows", _no_manual_rel)
+
+    rag = _FakeRag(_kg_two_entities())  # e1 (doc-a), e2 (doc-b)
+    entities, _relations = await graph_reader.read_graph_native(rag, "ws")
+    names = {e["name"] for e in entities}
+    assert "manualX" in names  # unioned despite zero chunk provenance / degree
+    assert "e1" in names and "e2" not in names  # chunk scoping still applies
 
 
 # ── route wiring: X-Twin-Folder header drives the scoping ─────────────────
@@ -1005,3 +1179,39 @@ async def test_create_relation_live_refused_to_out_of_folder_endpoint(seeded):
         rows = [rec["k"] async for rec in result]
         await result.consume()
     assert "leaks" not in rows  # the refused create wrote nothing
+
+
+@pytestmark_integration
+async def test_manual_create_entity_survives_folder_refresh(seeded):
+    """#1a end-to-end: an entity created in folder A is stamped GRAPH_MEMBER_OF A,
+    so a subsequent folder-scoped read in A surfaces it (no chunk provenance) and
+    folder B never sees it. The mutation gate must also treat it as editable."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    tok = _bind_folder("A")
+    try:
+        created = await graph_reader.create_graph_entity(
+            _WS, {"name": "ManualEnt", "type": "CONCEPT", "summary": "hand-made"}
+        )
+        assert created is not None
+        # Folder-scoped refresh in A surfaces it despite zero chunk provenance.
+        ents = await graph_reader.read_graph_entities(_WS)
+        names = {e["name"] for e in ents}
+        assert "ManualEnt" in names
+        manual = next(e for e in ents if e["name"] == "ManualEnt")
+        assert manual["source_docs"] == []  # operator-owned, no source docs
+        # The #318 gate must allow editing it (direct member ⇒ member verdict).
+        edited = await graph_reader.update_graph_entity(
+            _WS, "kg_ManualEnt", {"summary": "revised"}
+        )
+        assert edited is not None and edited["summary"] == "revised"
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    # Folder B must NOT see the manual entity created in A.
+    tok = _bind_folder("B")
+    try:
+        ents_b = await graph_reader.read_graph_entities(_WS)
+        assert "ManualEnt" not in {e["name"] for e in ents_b}
+    finally:
+        folder_mod._active_folder_id.reset(tok)
