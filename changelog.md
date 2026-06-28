@@ -5,7 +5,7 @@
 First complete release: the package now ships the full Twin runtime on top of
 an unmodified LightRAG — storage backends, server overlay and operator WebUI —
 installable with a single `pip install` and activated with a single
-`register()` call (see `twin_main.py` for the container entrypoint).
+`register()` call (the BNP container entrypoint is `python -m twindb_lightrag_memgraph.lightrag_server`; `twin_main.py` is the reference launcher).
 
 ### Storage (Memgraph)
 - `MemgraphKVStorage`, `MemgraphVectorDBStorage`, `MemgraphDocStatusStorage`

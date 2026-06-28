@@ -350,7 +350,7 @@ def _uses_routing_protocol() -> bool:
 
 
 def _read_write_concurrency() -> int:
-    """Read MEMGRAPH_WRITE_CONCURRENCY from env, default 10."""
+    """Read MEMGRAPH_WRITE_CONCURRENCY from env, default 8."""
     raw = os.environ.get(MEMGRAPH_WRITE_CONCURRENCY_ENV, "")
     try:
         val = int(raw)

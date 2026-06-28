@@ -66,7 +66,7 @@ Last aligned: 2026-06-23.
   - `/twin/api/thesaurus`
   - `/twin/api/settings/api-keys`
   - `/twin/api/quota`
-  - `/twin/api/openapi/groups`
+  - `/twin/api/openapi`
 - WebUI stores have in-memory and Memgraph variants for tags, activity, and
   notifications.
 - Memgraph WebUI stores are initialized per configured Twin Folder when
@@ -84,7 +84,7 @@ React WebUI needs stable behavior:
 - `/documents/{id}/chunks`
 - `/health`
 - `/pipeline_status`
-- `/openapi.json`
+- `/openapi`
 - `/logout`
 
 The rule is translation, not takeover: native LightRAG behavior must remain
@@ -106,9 +106,11 @@ Route parity tests guard this boundary.
 
 ## Auth and API Keys
 
-- Production fails closed unless an auth backend is configured:
-  `LIGHTRAG_API_KEY`, `LIGHTRAG_JWT_SECRET`, `TWIN_IDP_JWKS_URL`, or explicit
-  `TWIN_ALLOW_OPEN_ACCESS=1`.
+- Production fail-closed is gated by `_production_auth_required()`
+  (`TWIN_REQUIRE_AUTH` truthy, or `TWIN_ENV=production`); when active, an auth
+  backend must be configured — `LIGHTRAG_API_KEY`, `LIGHTRAG_JWT_SECRET` /
+  `TOKEN_SECRET`, or `TWIN_IDP_JWKS_URL`. There is no open-access override env
+  var.
 - `TWIN_IDP_JWKS_URL` activates IdP JWT validation.
 - The IdP path supports admin group mapping and `admin:folders` enforcement.
 - Generated API keys are minted through `/twin/api/settings/api-keys`.

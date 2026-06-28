@@ -5,8 +5,9 @@ twindb-lightrag-memgraph 1.0.0 — Environment variables reference
 Every variable read by the package, grouped by concern. "Required" means the
 runtime will not work without it; everything else has a safe default.
 
-The container entrypoint is twin_main.py (register() then LightRAG's own
-server). LightRAG-native variables (OPENAI_API_KEY, LLM_BINDING, EMBEDDING_*,
+The BNP container entrypoint is `python -m twindb_lightrag_memgraph.lightrag_server`
+(register() then LightRAG's own server); twin_main.py is the readable reference
+launcher. LightRAG-native variables (OPENAI_API_KEY, LLM_BINDING, EMBEDDING_*,
 SUMMARY_LANGUAGE, ...) keep working as documented upstream; only the variables
 introduced or consumed by this package are listed here.
 

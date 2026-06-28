@@ -11,7 +11,8 @@ against the real IdP, not only mocked JWKS tests.
 
 Current mechanics:
 
-- `ensure_auth_backend_configured` fails closed in production unless an auth
+- `_production_auth_required()` (`TWIN_REQUIRE_AUTH` truthy, or
+  `TWIN_ENV=production`) makes auth fail closed in production unless an auth
   backend is configured.
 - `TWIN_IDP_JWKS_URL` activates IdP JWT verification.
 - Missing, expired, malformed, or invalid-signature tokens return 401.

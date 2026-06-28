@@ -887,9 +887,11 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
             "answer_status": answer_status,
         }
 
-    # Keep the sources panel consistent with the grounded answer: the legacy
-    # fallback inside _build_envelope_sources re-issues a chunks_vdb retrieval,
-    # which must also be folder-scoped.
+    # Keep the sources panel consistent with the grounded answer.
+    # _build_envelope_sources projects from the aquery_llm envelope's
+    # data.references (no second chunks_vdb pass — that structural lie was
+    # removed in audit C3). The _retrieval_scope wrapper is retained
+    # defensively so any future retrieval added here stays folder-scoped.
     with _retrieval_scope(folder, body):
         sources, projection_ok = await _build_envelope_sources(
             rag, body, folder, envelope
