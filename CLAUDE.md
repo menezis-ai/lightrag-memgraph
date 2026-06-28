@@ -6,12 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This package provides Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**. LightRAG ships a graph backend; this package fills the remaining 3 slots so an entire instance runs on a single Memgraph DB.
 
-### Branch policy (per project memory, 2026-05-20)
+### Branch policy (updated 2026-06-28)
 
-- `stable/0.6.x` — **active dev** branch. Carries the WebUI fork (`lightrag_webui_twin/`) and the production-oriented runtime/deploy code. **Default working branch.**
-- `stable/0.5.x` — **LTS, storage backends only**. WebUI/runtime work is pollution here and was force-reverted from it (PR #30, 2026-05-20).
+- `main` — **active full-runtime line** (storage backends + intelligence + server overlay + WebUI fork + doctrine docs). The **default working branch**; day-to-day dev merges here, and it carries `pyproject` version `1.0.0`. It is ~130 commits ahead of `stable/0.6.x`.
+- `stable/0.6.x` — **superseded by `main`.** Was the active dev line through mid-2026; now trails `main` and is no longer the working branch. Kept for history.
+- `stable/0.5.x` — **LTS, storage backends only** (intent). WebUI/runtime work is pollution here. NB: the branch currently still carries `lightrag_webui_twin/` + `server/` paths despite the PR #30 (2026-05-20) revert — branch-hygiene cleanup pending, not yet done.
 - `stable/0.3.2-lts` — frozen LTS = 0.3.2 + auto-create vector index.
-- `main` — tracks 0.5.x; `0.4.x` was abandoned.
+- `0.4.x` was abandoned.
 
 `pyproject.toml` reports version `1.0.0` and `register()` patches `lightrag.__version__` to `vX.Y.Z+memgraph-1.0.0` so the WebUI shows the composite version. See `changelog.md` for what's in vs. out of stable.
 
@@ -19,9 +20,9 @@ This package provides Memgraph storage backends (KV, Vector, DocStatus) for [Lig
 
 **Three-surface model** (re-articulated 2026-06-16, supersedes the looser "Forgejo-first / GitHub archived" framing of 2026-05-11). Each surface has a strict file-level scope; the source-of-truth flow is always **bunker → (GitHub `main` xor GitHub `export-1.0.0`)**, never the reverse.
 
-- **`bunker` (Forgejo, `192.168.1.61`) — full source of truth.** Storage backends + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module (FastAPI overlay, classification, folders, idp_jwt, native_shims) + WebUI fork (`lightrag_webui_twin/`) + doctrine docs (`CLAUDE.md`, `DOCTRINE.md`, `WEBUI-WIRING-*`). Day-to-day dev pushes here. Active branch: `stable/0.6.x`. The L1/L2/L3 ZIP-delivery split is retired here; intelligence/server are tracked normally and no longer gitignored.
+- **`bunker` (Forgejo, `192.168.1.61`) — full source of truth.** Storage backends + intelligence layer (TwinRAGEngine, ReAct, DSEP) + server module (FastAPI overlay, classification, folders, idp_jwt, native_shims) + WebUI fork (`lightrag_webui_twin/`) + doctrine docs (`CLAUDE.md`, `DOCTRINE.md`, `WEBUI-WIRING-*`). Day-to-day dev pushes here. Active branch: `main`. The L1/L2/L3 ZIP-delivery split is retired here; intelligence/server are tracked normally and no longer gitignored.
 - **GitHub `origin/main` (`menezis-ai/lightrag-memgraph`) — public backend patch only.** Strictly the storage adapter slice: `src/twindb_lightrag_memgraph/{__init__,_buffered_graph,_constants,_hooks,_pool,kv_impl,vector_impl,docstatus_impl}.py` + `tests/` for those + `pyproject.toml` + `README.md` + `sonar-project.properties`. **No `server/`, no `intelligence/`, no `classification*.py`, no `_folders.py`, no `asgi.py`, no `lightrag_server.py`, no `lightrag_webui_twin/`, no CLAUDE.md.** Used (a) for visibility on the Memgraph adapter, (b) as the receiving surface for Claude-action PRs from the GitHub integration when they target storage code, (c) as the substrate `export-1.0.0` rebuilds from.
-- **GitHub `origin/export-1.0.0` — BNP delivery snapshot.** Full repo with prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/` (no Bun/Node in the BNP runtime path). Rebuilt from `stable/0.6.x` via `EXPORT_PROCEDURE.md`. **Never** pushed to `bunker`. Nothing else is pushed to `origin`.
+- **GitHub `origin/export-1.0.0` — BNP delivery snapshot.** Full repo with prebuilt WebUI assets bundled under `src/twindb_lightrag_memgraph/webui_dist/` (no Bun/Node in the BNP runtime path). Rebuilt from `main` via `EXPORT_PROCEDURE.md`. **Never** pushed to `bunker`. Nothing else is pushed to `origin`.
 
 **Flow direction is INTO bunker only — do not propose bunker → GitHub propagation as a routine step.** Clarified 2026-06-16 after a session over-invested in mirror-pushing a bunker fix back to GitHub `main`:
 

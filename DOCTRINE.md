@@ -68,7 +68,7 @@ Sans être exhaustif, voici les inscriptions principales et le pattern d'intenti
 - **Doctrine de test "graphe = contrat, pas écran"** — *protéger les axes sensibles (cache front, seed fallback, folder binding, source_docs) par des tests contractuels, pas par des screenshots.*
 - **Classification MIP opt-in via env (`TWIN_MIP_LABEL_MAP`)** — *ne jamais imposer une politique BNP-spécifique en dur ; le code reste portable hors-BNP par défaut.*
 - **WebUI fork (`lightrag_webui_twin/`)** — *propriété du contrat front : la React port est notre version canonique de l'expérience opérateur, pas une dérivation de LightRAG.*
-- **Branches `stable/X.Y.x`** — *l'isolation temporelle des contrats : 0.5.x = LTS storage, 0.6.x = surface produit complète. La séparation rend chaque ligne auditable indépendamment.*
+- **Branches** — *l'isolation temporelle des contrats : `main` = ligne runtime complète active (surface produit complète, v1.0.0), `stable/0.5.x` = LTS storage, `stable/0.6.x` = ligne dev historique désormais supplantée par `main`. La séparation rend chaque ligne auditable indépendamment.*
 
 ## Quand la fractale mute — propagation
 

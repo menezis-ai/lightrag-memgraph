@@ -1,7 +1,7 @@
 # BNP Export Procedure
 
 This procedure rebuilds the GitHub `export-1.0.0` branch from the private
-`stable/0.6.x` integration branch.
+`main` integration branch (the active full-runtime line).
 
 BNP does not have Bun/Node in the runtime path. The export must therefore ship
 the prebuilt WebUI assets under `src/twindb_lightrag_memgraph/webui_dist/`.
@@ -10,7 +10,7 @@ audit/review needs, but the BNP Dockerfile must not build it.
 
 ## Branches
 
-- Source branch: private integration `stable/0.6.x`
+- Source branch: private integration `main`
 - Export target: GitHub `origin/export-1.0.0`
 - Do not push `export-1.0.0` to the private integration remote.
 
@@ -24,12 +24,13 @@ EXPORT_TREE=/private/tmp/twindb-export-1.0.0
 PRIVATE_REMOTE=internal
 
 cd "$SOURCE_REPO"
-git fetch "$PRIVATE_REMOTE" stable/0.6.x
-git switch stable/0.6.x
-git merge --ff-only "$PRIVATE_REMOTE/stable/0.6.x"
+git fetch "$PRIVATE_REMOTE" main
+git switch main
+git merge --ff-only "$PRIVATE_REMOTE/main"
 
 cd lightrag_webui_twin
-npm run build
+bun install --frozen-lockfile
+bun run build
 cd ..
 ```
 
