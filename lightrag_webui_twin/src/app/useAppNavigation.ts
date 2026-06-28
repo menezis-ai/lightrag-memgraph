@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { setActiveFolder } from '../api/client';
 import type { Document } from '../types/document';
+import type { DocumentsStatusFilterKey } from './appConstants';
 import { queryClient } from './queryClient';
 import { FOLDER_STORAGE_KEY, writeUiPreference } from './uiPreferences';
 
@@ -15,6 +16,10 @@ interface UseAppNavigationOptions {
   setDetailChunkId: Dispatch<SetStateAction<string | null>>;
   setDetailDoc: Dispatch<SetStateAction<Document | null>>;
   setDetailRequest: Dispatch<SetStateAction<DetailRequest | null>>;
+  setDocumentsSearch?: (value: string) => void;
+  setDocumentsSourceFilters?: (value: readonly string[]) => void;
+  setDocumentsStatusFilter?: (value: DocumentsStatusFilterKey) => void;
+  setDocumentsTagFilters?: (value: readonly string[]) => void;
   setFolderState: Dispatch<SetStateAction<string>>;
   setReadNotificationIds: Dispatch<SetStateAction<ReadonlySet<string>>>;
   setReadSourceDoc: Dispatch<SetStateAction<Document | null>>;
@@ -28,6 +33,10 @@ export function useAppNavigation({
   setDetailChunkId,
   setDetailDoc,
   setDetailRequest,
+  setDocumentsSearch,
+  setDocumentsSourceFilters,
+  setDocumentsStatusFilter,
+  setDocumentsTagFilters,
   setFolderState,
   setReadNotificationIds,
   setReadSourceDoc,
@@ -74,6 +83,10 @@ export function useAppNavigation({
     setReadSourceDoc(null);
     setRetagDoc(null);
     setRetagBulk(null);
+    setDocumentsStatusFilter?.('all');
+    setDocumentsSearch?.('');
+    setDocumentsTagFilters?.([]);
+    setDocumentsSourceFilters?.([]);
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ['documents'] }),
       queryClient.invalidateQueries({ queryKey: ['pipeline_status'] }),

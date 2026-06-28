@@ -21,15 +21,9 @@ test.describe('Knowledge Graph filters and drill-downs', () => {
     await expect(page.getByTestId('kg-type-PRODUCT')).toContainText('0');
   });
 
-  test('@graph @rc2 entity drill-down opens Documents with the entity name as text query', async ({
+  test('@graph @rc2 entity drill-down opens Documents with exact source filters', async ({
     page,
   }) => {
-    // Mock-kill F3 — the per-entity `?source=...` filter was dropped
-    // because the fixture map `GRAPH_ENTITY_DOCS` was keyed on
-    // prototype entity ids and always missed real Memgraph entities.
-    // The drill-down now navigates with `?q=<entity name>` so the
-    // Documents tab filters by text content instead of explicit
-    // source-id list.
     await page.getByLabel('Search entities').fill('Oracle');
     await page.getByLabel('Select entity Oracle Database').click();
     await page
@@ -37,12 +31,24 @@ test.describe('Knowledge Graph filters and drill-downs', () => {
       .click();
 
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
-    await expect(page).toHaveURL(/[?&]q=/);
+    await expect(page).toHaveURL(/[?&]source=/);
+    await expect(page).not.toHaveURL(/[?&]q=/);
 
-    const qParam = await page.evaluate(
-      () => new URLSearchParams(window.location.search).get('q'),
+    const sourceParam = await page.evaluate(
+      () => new URLSearchParams(window.location.search).get('source'),
     );
-    expect(qParam).toBe('Oracle Database');
+    expect(sourceParam?.split(',')).toEqual([
+      'oracle-restart-procedure.pdf',
+      '/cib/runbooks/oracle-pga-tuning',
+    ]);
+    await expect(
+      page.getByTestId('source-filter-oracle-restart-procedure.pdf'),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId('source-filter-/cib/runbooks/oracle-pga-tuning'),
+    ).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).toBeVisible();
+    await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 
   test('@graph @rc1 pinned entity state survives reload', async ({ page }) => {

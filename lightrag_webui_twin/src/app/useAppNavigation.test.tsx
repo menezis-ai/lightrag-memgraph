@@ -36,6 +36,10 @@ function makeOptions() {
     setDetailChunkId: vi.fn(),
     setDetailDoc: vi.fn(),
     setDetailRequest: vi.fn(),
+    setDocumentsSearch: vi.fn(),
+    setDocumentsSourceFilters: vi.fn(),
+    setDocumentsStatusFilter: vi.fn(),
+    setDocumentsTagFilters: vi.fn(),
     setFolderState: vi.fn(),
     setReadNotificationIds: vi.fn(),
     setReadSourceDoc: vi.fn(),
@@ -179,6 +183,10 @@ describe('useAppNavigation — onSwitchFolder', () => {
     expect(opts.setReadSourceDoc).toHaveBeenCalledWith(null);
     expect(opts.setRetagDoc).toHaveBeenCalledWith(null);
     expect(opts.setRetagBulk).toHaveBeenCalledWith(null);
+    expect(opts.setDocumentsStatusFilter).toHaveBeenCalledWith('all');
+    expect(opts.setDocumentsSearch).toHaveBeenCalledWith('');
+    expect(opts.setDocumentsTagFilters).toHaveBeenCalledWith([]);
+    expect(opts.setDocumentsSourceFilters).toHaveBeenCalledWith([]);
 
     // The two notification setters receive fresh empty sets.
     const readArg = (opts.setReadNotificationIds.mock.calls[0][0]) as Set<string>;

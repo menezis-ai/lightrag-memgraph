@@ -125,15 +125,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByLabel(/Select entity Oracle/).click();
     await page.getByLabel('Zoom in').click();
     await expect(page.getByTestId('kg-zoom-value')).not.toHaveText('100%');
-    // Mock-kill F3 — the CTA label is now "View documents mentioning
-    // this entity" and navigation falls back to `?q=<entity name>`
-    // (the per-entity `?source=` filter was dropped because the fixture
-    // map keyed on prototype ids missed real Memgraph entities).
+    // Graph -> Documents must drill down through projected source_docs, not a
+    // broad text search on the entity label.
     await page
       .getByRole('button', { name: /View documents mentioning this entity/ })
       .click();
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
-    await expect(page).toHaveURL(/[?&]q=/);
+    await expect(page).toHaveURL(/[?&]source=/);
+    await expect(page).not.toHaveURL(/[?&]q=/);
 
     await openTab(page, 'Activity');
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();

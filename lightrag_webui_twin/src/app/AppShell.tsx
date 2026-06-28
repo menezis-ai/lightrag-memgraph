@@ -313,6 +313,10 @@ export function AppShell() {
     setDetailChunkId,
     setDetailDoc,
     setDetailRequest,
+    setDocumentsSearch,
+    setDocumentsSourceFilters,
+    setDocumentsStatusFilter,
+    setDocumentsTagFilters,
     setFolderState: setFolder,
     setReadNotificationIds,
     setReadSourceDoc,
@@ -503,7 +507,7 @@ export function AppShell() {
               totalCount={uploadedTotalCount}
               statusCounts={uploadedStatusCounts}
               hasNextPage={Boolean(docs.data?.next_cursor)}
-              isPageFetching={docs.isFetching}
+              isPageFetching={Boolean(docs.isFetching && !docs.data)}
               statusFilter={documentsStatusFilter}
               onStatusFilterChange={setDocumentsStatusFilter}
               search={documentsSearch}

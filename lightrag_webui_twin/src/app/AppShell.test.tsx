@@ -251,6 +251,7 @@ vi.mock('../components/DocumentsTab', () => ({
       <span data-testid="dt-total">{String(p.totalCount)}</span>
       <span data-testid="dt-page">{String(p.currentPage)}</span>
       <span data-testid="dt-hasnext">{String(p.hasNextPage)}</span>
+      <span data-testid="dt-page-fetching">{String(p.isPageFetching)}</span>
       <span data-testid="dt-pipeline-error">{String(p.pipelineError)}</span>
       <span data-testid="dt-status-counts">
         {JSON.stringify(p.statusCounts ?? null)}
@@ -761,6 +762,24 @@ describe('AppShell — documents tab derivations', () => {
     // prev again clamps at 1
     await user.click(screen.getByText('prev-page'));
     expect(screen.getByTestId('dt-page')).toHaveTextContent('1');
+  });
+
+  it('does not mark pagination as loading during a background documents refresh', () => {
+    queriesState.docs.isFetching = true;
+    queriesState.docs.data = {
+      items: [makeDoc({ doc_id: 'a' })],
+      total: 1,
+      next_cursor: 'n',
+    };
+    renderShell();
+    expect(screen.getByTestId('dt-page-fetching')).toHaveTextContent('false');
+  });
+
+  it('marks pagination as loading when documents are fetching without page data', () => {
+    queriesState.docs.isFetching = true;
+    queriesState.docs.data = undefined;
+    renderShell();
+    expect(screen.getByTestId('dt-page-fetching')).toHaveTextContent('true');
   });
 
   it('changing a filter resets the page back to 1', async () => {
