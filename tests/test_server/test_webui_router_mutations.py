@@ -308,6 +308,21 @@ class TestApproveTag:
         )
         assert r.status_code == 404
 
+    async def test_clears_previous_reject_reason(self, client):
+        rejected = await client.post(
+            "/tags/argocd/reject",
+            json={"reason": "too broad", "actor": "claire.benoit"},
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["reject_reason"] == "too broad"
+
+        approved = await client.post(
+            "/tags/argocd/approve", json={"actor": "claire.benoit"}
+        )
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "active"
+        assert approved.json().get("reject_reason") is None
+
     async def test_emits_event_and_notification(self, client):
         await client.post(
             "/tags/argocd/approve", json={"actor": "claire.benoit"}

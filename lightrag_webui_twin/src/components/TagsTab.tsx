@@ -283,7 +283,7 @@ export function TagsTab({
   };
 
   const requested = useMemo(
-    () => tags.filter((t) => t.tier === 'requested'),
+    () => tags.filter((t) => t.tier === 'requested' && t.status === 'pending-review'),
     [tags],
   );
   const knownCategories = useMemo(

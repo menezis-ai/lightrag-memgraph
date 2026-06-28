@@ -97,6 +97,23 @@ describe('TagsTab — rendering', () => {
     );
   });
 
+  it('does not keep rejected requested tags in the approval queue', () => {
+    const props = defaultProps();
+    render(
+      <TagsTab
+        {...props}
+        tags={props.tags.map((tag) =>
+          tag.tag === 'argocd' ? { ...tag, status: 'rejected' } : tag,
+        )}
+      />,
+    );
+    const sub = document.querySelector('.tags-sub') as HTMLElement;
+    expect(sub.textContent).toMatch(/19 active tags · 1 pending requests/);
+    expect(document.querySelector('.pending-counts')?.textContent).toMatch(
+      /1 tag request awaiting review/,
+    );
+  });
+
   it('opens pending requests with Approve/Edit-approve/Reject for palier 3', async () => {
     render(<TagsTab {...defaultProps()} />);
     await openTagRequests();

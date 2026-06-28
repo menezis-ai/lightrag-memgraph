@@ -412,6 +412,7 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
     entry.pop("requested_by", None)
     entry.pop("requested_at", None)
     entry.pop("justification", None)
+    entry.pop("reject_reason", None)
     stored = await store.tags.upsert_tag(entry)
     await _emit_tag_audit(
         store=store,
