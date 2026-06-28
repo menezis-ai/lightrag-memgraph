@@ -134,6 +134,288 @@ class TestRelationProjectorScoping:
         assert rel["label"] == "USES"
 
 
+# ── write-side folder cloisonnement (audit Graph/KG #1 + #2) ───────────────
+#
+# The GET path drops out-of-folder entities/relations and masks mixed
+# provenance. Before this fix, the PATCH/DELETE helpers matched globally by id
+# (workspace label only) and re-projected without scoping — so a caller in
+# folder A could mutate a B-only object, and a mixed edit leaked B text in the
+# response. These contract tests pin the gate (no write when out-of-folder) and
+# the scoped re-projection (masked payload on the response). They run at the
+# graph_reader function layer because the routes monkeypatch these helpers.
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __aiter__(self):
+        async def _gen():
+            for r in self._rows:
+                yield r
+
+        return _gen()
+
+    async def consume(self):
+        return None
+
+
+class _RecordingSession:
+    """Yields preset rows for every ``run`` and records the query strings so a
+    test can assert whether a mutating statement actually executed."""
+
+    def __init__(self, rows=None):
+        self.rows = rows or []
+        self.queries: list[str] = []
+
+    async def run(self, query, **_params):
+        self.queries.append(query)
+        return _RowsResult(self.rows)
+
+
+def _cm(session):
+    @asynccontextmanager
+    async def _factory():
+        yield session
+
+    return _factory
+
+
+def _ent_row(source_id, description="x"):
+    """A full entity row as `_read_one_entity`'s query returns it."""
+    return {
+        "entity_id": "e1",
+        "entity_type": "CONCEPT",
+        "description": description,
+        "source_id": source_id,
+        "display_name": "e1",
+        "twin_tags_json": None,
+        "twin_props_json": None,
+    }
+
+
+def _rel_row(chunk_source_id, keywords="uses"):
+    return {
+        "source_id": "e1",
+        "target_id": "e2",
+        "keywords": keywords,
+        "weight": 1.0,
+        "chunk_source_id": chunk_source_id,
+        "twin_props_json": None,
+    }
+
+
+@pytest.fixture
+def folder_a(monkeypatch):
+    """Bind active folder A: member docs = {doc-a}, chunk→doc = _CTD."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "A")
+
+    async def _ctd(_ws):
+        return _CTD
+
+    async def _md(_ws, _folder):
+        return {"doc-a"}
+
+    monkeypatch.setattr(graph_reader, "_load_chunk_to_doc_index", _ctd)
+    monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
+    monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+
+class TestUpdateEntityFolderGate:
+    async def test_patch_b_only_entity_from_folder_a_is_refused(
+        self, folder_a, monkeypatch
+    ):
+        # e1's only source chunk is chunk-b (doc-b) → invisible in folder A.
+        read = _RecordingSession([_ent_row("chunk-b")])
+        write = _RecordingSession([{"entity_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_entity(
+            "ws", "kg_e1", {"summary": "tampered"}
+        )
+        assert out is None  # 404 to the caller
+        # The gate must short-circuit BEFORE the write — no SET ran.
+        assert not any("SET n +=" in q for q in write.queries)
+
+    async def test_patch_member_entity_writes_and_returns_scoped(
+        self, folder_a, monkeypatch
+    ):
+        read = _RecordingSession([_ent_row("chunk-a", description="A content")])
+        write = _RecordingSession([{"entity_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_entity(
+            "ws", "kg_e1", {"summary": "A content"}
+        )
+        assert out is not None
+        assert out["source_docs"] == ["doc-a"]
+        assert any("SET n +=" in q for q in write.queries)  # write happened
+
+    async def test_patch_mixed_entity_is_refused_no_write(
+        self, folder_a, monkeypatch
+    ):
+        # member chunk-a + non-member chunk-b → MIXED. The node is shared with
+        # folder B; a global SET would corrupt B's view. Mutation must be refused
+        # (409), NOT merely masked in the response. Visibility ≠ mutability.
+        read = _RecordingSession(
+            [_ent_row("chunk-a<SEP>chunk-b", description="secret B content")]
+        )
+        write = _RecordingSession([{"entity_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.update_graph_entity("ws", "kg_e1", {"summary": "x"})
+        # The shared node must be untouched.
+        assert not any("SET n +=" in q for q in write.queries)
+
+
+class TestDeleteEntityFolderGate:
+    async def test_delete_b_only_entity_from_folder_a_is_refused(
+        self, folder_a, monkeypatch
+    ):
+        read = _RecordingSession([_ent_row("chunk-b")])
+        write = _RecordingSession([])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        ok = await graph_reader.delete_graph_entity("ws", "kg_e1")
+        assert ok is False
+        assert not any("DETACH DELETE" in q for q in write.queries)
+
+    async def test_delete_member_entity_proceeds(self, folder_a, monkeypatch):
+        read = _RecordingSession([_ent_row("chunk-a")])
+        write = _RecordingSession([])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        ok = await graph_reader.delete_graph_entity("ws", "kg_e1")
+        assert ok is True
+        assert any("DETACH DELETE" in q for q in write.queries)
+
+    async def test_delete_mixed_entity_is_refused_no_write(
+        self, folder_a, monkeypatch
+    ):
+        # Shared node: a global DETACH DELETE would remove it from folder B too.
+        read = _RecordingSession([_ent_row("chunk-a<SEP>chunk-b")])
+        write = _RecordingSession([])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.delete_graph_entity("ws", "kg_e1")
+        assert not any("DETACH DELETE" in q for q in write.queries)
+
+
+class TestRelationFolderGate:
+    async def test_patch_b_only_relation_is_refused(self, folder_a, monkeypatch):
+        # relation provenance chunk-b (doc-b) → invisible in folder A.
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        read = _RecordingSession([_rel_row("chunk-b")])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_relation(
+            "ws", "kr_x", {"label": "tampered"}
+        )
+        assert out is None
+        assert not any("SET r +=" in q for q in write.queries)
+
+    async def test_delete_b_only_relation_is_refused(self, folder_a, monkeypatch):
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        read = _RecordingSession([_rel_row("chunk-b")])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        ok = await graph_reader.delete_graph_relation("ws", "kr_x")
+        assert ok is False
+        assert not any("DELETE r" in q for q in write.queries)
+
+    async def test_patch_member_relation_writes(self, folder_a, monkeypatch):
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        read = _RecordingSession([_rel_row("chunk-a")])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_relation(
+            "ws", "kr_x", {"label": "uses"}
+        )
+        assert out is not None
+        assert any("SET r +=" in q for q in write.queries)
+
+    async def test_patch_mixed_relation_is_refused_no_write(
+        self, folder_a, monkeypatch
+    ):
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        # edge provenance spans chunk-a (member) + chunk-b (non-member) → mixed.
+        read = _RecordingSession([_rel_row("chunk-a<SEP>chunk-b")])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.update_graph_relation("ws", "kr_x", {"label": "x"})
+        assert not any("SET r +=" in q for q in write.queries)
+
+    async def test_delete_mixed_relation_is_refused_no_write(
+        self, folder_a, monkeypatch
+    ):
+        monkeypatch.setattr(
+            graph_reader, "lookup_relation_endpoints",
+            lambda rid: ("ws", "e1", "e2"),
+        )
+        read = _RecordingSession([_rel_row("chunk-a<SEP>chunk-b")])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.delete_graph_relation("ws", "kr_x")
+        assert not any("DELETE r" in q for q in write.queries)
+
+
+class TestGlobalModeUnchanged:
+    """No folder bound (native / legacy caller) → no gate, no scoping."""
+
+    async def test_update_entity_global_has_no_gate(self, monkeypatch):
+        import twindb_lightrag_memgraph.server.folder as folder_mod
+
+        monkeypatch.setattr(folder_mod, "active_folder_id", lambda: None)
+        # Even a B-only entity is editable globally (no folder → no membership).
+        read = _RecordingSession([_ent_row("chunk-b", description="global")])
+        write = _RecordingSession([{"entity_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.update_graph_entity(
+            "ws", "kg_e1", {"summary": "global"}
+        )
+        assert out is not None
+        assert out["summary"] == "global"  # not masked, global projection
+        assert any("SET n +=" in q for q in write.queries)
+
 # ── read_graph_native (the route's path) with mocked index loaders ────────
 
 
@@ -465,3 +747,130 @@ async def test_read_entities_filters_before_limit(seeded):
         assert {e["name"] for e in ents} == {"e1"}
     finally:
         folder_mod._active_folder_id.reset(tok)
+
+
+# ── write-side cloisonnement, live (audit Graph/KG #1 + #2) ────────────────
+
+
+@pytestmark_integration
+async def test_update_entity_live_refused_out_of_folder(seeded):
+    """From folder A, a PATCH on e2 (doc-b, B-only) must be refused and write
+    nothing — the real MEMBER_OF traversal, not a mocked membership set."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    tok = _bind_folder("A")
+    try:
+        out = await graph_reader.update_graph_entity(
+            _WS, "kg_e2", {"summary": "tampered from A"}
+        )
+        assert out is None
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    # Prove no write landed: e2's description is untouched (read it in folder B).
+    tok = _bind_folder("B")
+    try:
+        ents = await graph_reader.read_graph_entities(_WS)
+        e2 = next(e for e in ents if e["name"] == "e2")
+        assert e2["summary"] == "B"  # original, not "tampered from A"
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_update_entity_live_allowed_in_folder(seeded):
+    """From folder A, a PATCH on e1 (doc-a, member) succeeds and the response is
+    folder-scoped (source_docs == [doc-a])."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    tok = _bind_folder("A")
+    try:
+        out = await graph_reader.update_graph_entity(
+            _WS, "kg_e1", {"summary": "A content edited"}
+        )
+        assert out is not None
+        assert out["summary"] == "A content edited"
+        assert out["source_docs"] == ["doc-a"]
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_delete_entity_live_refused_out_of_folder(seeded):
+    """From folder A, DELETE on e2 (B-only) must be refused; e2 still exists."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    tok = _bind_folder("A")
+    try:
+        ok = await graph_reader.delete_graph_entity(_WS, "kg_e2")
+        assert ok is False
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    tok = _bind_folder("B")
+    try:
+        ents = await graph_reader.read_graph_entities(_WS)
+        assert "e2" in {e["name"] for e in ents}  # survived the refused delete
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_update_relation_live_refused_out_of_folder(seeded):
+    """The e1→e2 edge's provenance is chunk-b (doc-b). Primed via a folder-B
+    read, a PATCH from folder A must be refused (gate), leaving it unchanged."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+
+    # Prime the endpoint cache from folder B (where the edge is visible).
+    tok = _bind_folder("B")
+    try:
+        rels = await graph_reader.read_graph_relations(_WS)
+        assert len(rels) == 1
+        rel_id = rels[0]["id"]
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    tok = _bind_folder("A")
+    try:
+        out = await graph_reader.update_graph_relation(
+            _WS, rel_id, {"label": "tampered"}
+        )
+        assert out is None  # gated: edge provenance is doc-b, not in folder A
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_update_entity_live_refused_when_mixed(seeded):
+    """A node co-owned by A and B (source chunks chunk-a + chunk-b) must NOT be
+    mutable from folder A: a global SET would corrupt B's view. Expect a refusal
+    (MixedProvenanceError) and the node left unchanged."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+    from twindb_lightrag_memgraph import _pool
+
+    # e3 is sourced from both chunk-a (doc-a ∈ A) and chunk-b (doc-b ∈ B).
+    async with _pool.get_session() as s:
+        await (
+            await s.run(
+                f"CREATE (:`{_WS}` {{entity_id:'e3', entity_type:'CONCEPT', "
+                f"source_id:'chunk-a<SEP>chunk-b', description:'shared'}})"
+            )
+        ).consume()
+
+    tok = _bind_folder("A")
+    try:
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.update_graph_entity(
+                _WS, "kg_e3", {"summary": "tampered from A"}
+            )
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    # The shared node's description must be intact (read globally, no folder).
+    async with _pool.get_read_session() as s:
+        result = await s.run(
+            f"MATCH (n:`{_WS}` {{entity_id:'e3'}}) RETURN n.description AS d"
+        )
+        row = await result.single()
+        await result.consume()
+    assert row["d"] == "shared"  # unchanged

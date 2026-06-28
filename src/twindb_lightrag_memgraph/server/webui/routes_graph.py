@@ -19,6 +19,16 @@ from .store import get_store
 
 router = APIRouter()
 
+# 409 detail for a refused mutation on a mixed-provenance (cross-folder) record.
+# The physical node/edge is co-owned by another folder; a global write would
+# corrupt that folder's view, so the operator must act on the record from a
+# context that owns all of its provenance (or via a future folder-local override).
+_MIXED_PROVENANCE_DETAIL = (
+    "This {kind} is shared with another folder (mixed provenance). It cannot be "
+    "edited or deleted from the current folder, because the change would alter a "
+    "record another folder co-owns."
+)
+
 
 def _graph_memgraph_label() -> str:
     """Resolve the Cypher label LightRAG uses for entity nodes.
@@ -209,6 +219,7 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
     response_model=GraphEntity,
     responses={
         404: {"description": "Graph entity not found"},
+        409: {"description": "Entity shared with another folder (mixed provenance)"},
         422: {"description": "Invalid graph entity tags"},
     },
 )
@@ -221,7 +232,10 @@ async def update_graph_entity_endpoint(
     label = _graph_memgraph_label()
     patch_dict = body.model_dump(exclude_unset=True)
     await _validate_graph_entity_tags(patch_dict.get("tags"))
-    updated = await graph_reader.update_graph_entity(label, entity_id, patch_dict)
+    try:
+        updated = await graph_reader.update_graph_entity(label, entity_id, patch_dict)
+    except graph_reader.MixedProvenanceError:
+        raise HTTPException(409, _MIXED_PROVENANCE_DETAIL.format(kind="entity"))
     if updated is None:
         raise HTTPException(
             404, f"Graph entity '{entity_id}' not found in workspace '{label}'"
@@ -309,14 +323,20 @@ async def create_graph_entity_endpoint(
 @router.delete(
     "/graph/entities/{entity_id}",
     status_code=204,
-    responses={404: {"description": "Graph entity not found"}},
+    responses={
+        404: {"description": "Graph entity not found"},
+        409: {"description": "Entity shared with another folder (mixed provenance)"},
+    },
 )
 async def delete_graph_entity_endpoint(entity_id: str) -> None:
     """Remove an entity from the KB and cascade-delete its edges."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
-    ok = await graph_reader.delete_graph_entity(label, entity_id)
+    try:
+        ok = await graph_reader.delete_graph_entity(label, entity_id)
+    except graph_reader.MixedProvenanceError:
+        raise HTTPException(409, _MIXED_PROVENANCE_DETAIL.format(kind="entity"))
     if not ok:
         raise HTTPException(
             404, f"Graph entity '{entity_id}' not found in workspace '{label}'"
@@ -378,14 +398,20 @@ async def create_graph_relation_endpoint(
 @router.delete(
     "/graph/relations/{rel_id}",
     status_code=204,
-    responses={404: {"description": "Graph relation not found"}},
+    responses={
+        404: {"description": "Graph relation not found"},
+        409: {"description": "Relation shared with another folder (mixed provenance)"},
+    },
 )
 async def delete_graph_relation_endpoint(rel_id: str) -> None:
     """Remove a relation from the KB."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
-    ok = await graph_reader.delete_graph_relation(label, rel_id)
+    try:
+        ok = await graph_reader.delete_graph_relation(label, rel_id)
+    except graph_reader.MixedProvenanceError:
+        raise HTTPException(409, _MIXED_PROVENANCE_DETAIL.format(kind="relation"))
     if not ok:
         raise HTTPException(
             404,
@@ -410,7 +436,10 @@ async def delete_graph_relation_endpoint(rel_id: str) -> None:
 @router.patch(
     "/graph/relations/{rel_id}",
     response_model=GraphRelation,
-    responses={404: {"description": "Graph relation not found"}},
+    responses={
+        404: {"description": "Graph relation not found"},
+        409: {"description": "Relation shared with another folder (mixed provenance)"},
+    },
 )
 async def update_graph_relation_endpoint(
     rel_id: str, body: GraphRelationPatch
@@ -420,7 +449,10 @@ async def update_graph_relation_endpoint(
 
     label = _graph_memgraph_label()
     patch_dict = body.model_dump(exclude_unset=True)
-    updated = await graph_reader.update_graph_relation(label, rel_id, patch_dict)
+    try:
+        updated = await graph_reader.update_graph_relation(label, rel_id, patch_dict)
+    except graph_reader.MixedProvenanceError:
+        raise HTTPException(409, _MIXED_PROVENANCE_DETAIL.format(kind="relation"))
     if updated is None:
         raise HTTPException(
             404,

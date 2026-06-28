@@ -313,6 +313,49 @@ class TestGraphPatchPersistence:
         assert r.status_code == 404
         assert "not found" in r.json()["detail"].lower()
 
+    async def test_patch_entity_409_on_mixed_provenance(self, monkeypatch, client):
+        async def fake_update_mixed(workspace, entity_id, patch):
+            raise gr.MixedProvenanceError(entity_id)
+
+        monkeypatch.setattr(gr, "update_graph_entity", fake_update_mixed)
+
+        r = await client.patch(
+            "/graph/entities/kg_shared",
+            json={"summary": "x"},
+        )
+        assert r.status_code == 409
+        assert "shared" in r.json()["detail"].lower()
+
+    async def test_delete_entity_409_on_mixed_provenance(self, monkeypatch, client):
+        async def fake_delete_mixed(workspace, entity_id):
+            raise gr.MixedProvenanceError(entity_id)
+
+        monkeypatch.setattr(gr, "delete_graph_entity", fake_delete_mixed)
+
+        r = await client.delete("/graph/entities/kg_shared")
+        assert r.status_code == 409
+        assert "shared" in r.json()["detail"].lower()
+
+    async def test_patch_relation_409_on_mixed_provenance(self, monkeypatch, client):
+        async def fake_update_mixed(workspace, rel_id, patch):
+            raise gr.MixedProvenanceError(rel_id)
+
+        monkeypatch.setattr(gr, "update_graph_relation", fake_update_mixed)
+
+        r = await client.patch("/graph/relations/kr_shared", json={"label": "X"})
+        assert r.status_code == 409
+        assert "shared" in r.json()["detail"].lower()
+
+    async def test_delete_relation_409_on_mixed_provenance(self, monkeypatch, client):
+        async def fake_delete_mixed(workspace, rel_id):
+            raise gr.MixedProvenanceError(rel_id)
+
+        monkeypatch.setattr(gr, "delete_graph_relation", fake_delete_mixed)
+
+        r = await client.delete("/graph/relations/kr_shared")
+        assert r.status_code == 409
+        assert "shared" in r.json()["detail"].lower()
+
     async def test_patch_relation_returns_updated_shape_and_emits_activity(
         self, monkeypatch, client
     ):

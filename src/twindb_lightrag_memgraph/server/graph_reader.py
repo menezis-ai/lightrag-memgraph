@@ -78,6 +78,20 @@ class EntityProjectionError(GraphEntityCreateError):
     """
 
 
+class MixedProvenanceError(Exception):
+    """A folder-scoped mutation targeted an entity/relation whose provenance is
+    *mixed* — at least one source chunk belongs to the active folder, but at
+    least one belongs to another folder.
+
+    The physical node/edge is shared across folders (single LightRAG namespace).
+    A global ``SET`` / ``DETACH DELETE`` would corrupt the other folder's view of
+    a record it co-owns, so the mutation is refused rather than silently applied.
+    The route maps this to HTTP 409. Visibility (the record IS visible in the
+    folder) is intentionally NOT sufficient to grant mutation — only a
+    *pure-member* record (every source chunk in the folder) may be mutated.
+    """
+
+
 # ----------------------------------------------------------------------
 # Type mapping (LightRAG free-form → WebUI closed enum)
 # ----------------------------------------------------------------------
@@ -440,6 +454,118 @@ async def _active_member_docs(workspace: str) -> set[str] | None:
     if not folder:
         return None
     return await _load_member_docs(workspace, folder)
+
+
+async def _member_context(
+    workspace: str,
+) -> tuple[set[str] | None, dict[str, str] | None]:
+    """Resolve ``(member_docs, chunk_to_doc)`` for the request's active folder.
+
+    Returns ``(None, None)`` when no folder is bound (unscoped / native caller)
+    → graph mutations keep their legacy global behaviour. When a folder IS bound,
+    returns the folder's member-doc set plus the chunk→doc index so the write
+    helpers can (a) gate the mutation on folder visibility and (b) re-project the
+    post-write response through the same membership masking the GET path applies.
+
+    ``member_docs`` is fail-closed (empty set) on load failure — an empty set
+    hides every entity/relation, so a transient Memgraph error refuses the write
+    rather than letting it touch an out-of-folder object.
+    """
+    member_docs = await _active_member_docs(workspace)
+    if member_docs is None:
+        return None, None
+    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+    return member_docs, chunk_to_doc
+
+
+# Folder-scoped mutation gate verdicts (see _entity_mutation_gate /
+# _relation_mutation_gate). "member" → pure-member, mutation allowed;
+# "mixed" → shared across folders, mutation refused (would corrupt another
+# folder's view of a co-owned record); "absent" → not visible in this folder.
+_GATE_MEMBER = "member"
+_GATE_MIXED = "mixed"
+_GATE_ABSENT = "absent"
+
+
+async def _entity_mutation_gate(
+    workspace: str,
+    entity_id: str,
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str],
+) -> str:
+    """Classify an entity for a folder-scoped mutation: pure-member, mixed, or
+    absent. Reads only the node's ``source_id``. Fail-closed (``absent``) on any
+    read error so a transient backend fault refuses the write."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) RETURN n.source_id AS source_id"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, eid=entity_id)
+            row = None
+            async for record in result:
+                row = {"source_id": record["source_id"]}
+                break
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader._entity_mutation_gate: read failed for %s", entity_id
+        )
+        return _GATE_ABSENT
+    if row is None:
+        return _GATE_ABSENT
+    all_chunks = {
+        c.strip()
+        for c in str(row["source_id"] or "")
+        .replace(_GRAPH_FIELD_SEP, ",")
+        .split(",")
+        if c.strip()
+    }
+    scope = _resolve_entity_scope(all_chunks, chunk_to_doc, member_docs)
+    if scope is None:
+        return _GATE_ABSENT
+    return _GATE_MIXED if scope[3] else _GATE_MEMBER
+
+
+async def _relation_mutation_gate(
+    workspace: str,
+    src: str,
+    tgt: str,
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str],
+) -> str:
+    """Classify a relation for a folder-scoped mutation. Reads only the edge's
+    own ``source_id`` provenance. Fail-closed (``absent``) on read error."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+        f"(t:`{label}` {{entity_id: $tgt}}) "
+        "RETURN r.source_id AS chunk_source_id"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, src=src, tgt=tgt)
+            row = None
+            async for record in result:
+                row = {"chunk_source_id": record["chunk_source_id"]}
+                break
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader._relation_mutation_gate: read failed for %s→%s",
+            src,
+            tgt,
+        )
+        return _GATE_ABSENT
+    if row is None:
+        return _GATE_ABSENT
+    _docs, in_folder, mixed = _resolve_source_docs(
+        row["chunk_source_id"], chunk_to_doc, member_docs
+    )
+    if not in_folder:
+        return _GATE_ABSENT
+    return _GATE_MIXED if mixed else _GATE_MEMBER
 
 
 async def _load_member_chunks(workspace: str, folder: str) -> set[str]:
@@ -1054,11 +1180,27 @@ async def update_graph_entity(
     the node doesn't exist.
     """
     entity_id = _strip_node_prefix(webui_id)
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    # Folder cloisonnement (#1): a folder-scoped mutation may only touch a
+    # *pure-member* entity. `absent` (out-of-folder / missing) → 404; `mixed`
+    # (shared with another folder) → refuse, because a global SET would corrupt
+    # the co-owning folder's view of this physical node. Visibility alone is NOT
+    # sufficient — a mixed entity is visible in this folder but still shared.
+    if member_docs is not None:
+        verdict = await _entity_mutation_gate(
+            workspace, entity_id, chunk_to_doc, member_docs
+        )
+        if verdict == _GATE_ABSENT:
+            return None
+        if verdict == _GATE_MIXED:
+            raise MixedProvenanceError(entity_id)
     props = _entity_patch_to_props(patch)
     label = _sanitize_workspace(workspace)
     if not props:
         # Nothing to write — still return the current state if the node exists.
-        return await _read_one_entity(workspace, entity_id)
+        return await _read_one_entity(
+            workspace, entity_id, chunk_to_doc, member_docs
+        )
     async with acquire_write_slot():
         async with get_session() as session:
             update_query = (
@@ -1080,7 +1222,7 @@ async def update_graph_entity(
                 return None
             if not rows:
                 return None
-    return await _read_one_entity(workspace, entity_id)
+    return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
 
 
 async def update_graph_relation(
@@ -1103,10 +1245,24 @@ async def update_graph_relation(
         # between calls we want to refuse the write rather than
         # silently update a different KB.
         return None
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    # Folder cloisonnement (#1): only a pure-member relation is mutable. `absent`
+    # (provenance out-of-folder / missing) → None (404); `mixed` (shared edge) →
+    # refuse so a global SET can't corrupt the co-owning folder.
+    if member_docs is not None:
+        verdict = await _relation_mutation_gate(
+            workspace, src, tgt, chunk_to_doc, member_docs
+        )
+        if verdict == _GATE_ABSENT:
+            return None
+        if verdict == _GATE_MIXED:
+            raise MixedProvenanceError(rel_id)
     props = _relation_patch_to_props(patch)
     label = _sanitize_workspace(workspace)
     if not props:
-        return await _read_one_relation(workspace, src, tgt)
+        return await _read_one_relation(
+            workspace, src, tgt, chunk_to_doc, member_docs
+        )
     async with acquire_write_slot():
         async with get_session() as session:
             update_query = (
@@ -1130,13 +1286,23 @@ async def update_graph_relation(
                 return None
             if not rows:
                 return None
-    return await _read_one_relation(workspace, src, tgt)
+    return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
 
 
 async def _read_one_entity(
-    workspace: str, entity_id: str
+    workspace: str,
+    entity_id: str,
+    chunk_to_doc: dict[str, str] | None = None,
+    member_docs: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Re-fetch a single entity to return its canonical projection."""
+    """Re-fetch a single entity to return its canonical projection.
+
+    When ``member_docs`` is provided (folder bound) the projection is
+    folder-scoped exactly like the GET path: returns ``None`` if the entity has
+    no member source chunk (so a post-write re-read of an out-of-folder entity
+    surfaces nothing), and masks the blended description on mixed-folder
+    provenance. ``member_docs=None`` keeps the legacy global projection.
+    """
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (n:`{label}` {{entity_id: $eid}}) "
@@ -1168,19 +1334,32 @@ async def _read_one_entity(
         return None
     if not row or not row.get("entity_id"):
         return None
-    return _node_record_to_entity(row)
+    return _node_record_to_entity(row, chunk_to_doc, member_docs)
 
 
 async def _read_one_relation(
-    workspace: str, src: str, tgt: str
+    workspace: str,
+    src: str,
+    tgt: str,
+    chunk_to_doc: dict[str, str] | None = None,
+    member_docs: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Re-fetch a single relation to return its canonical projection."""
+    """Re-fetch a single relation to return its canonical projection.
+
+    The edge's own ``source_id`` (``chunk_source_id``) is selected so the
+    folder-scoped projection can detect mixed-folder provenance — without it a
+    mixed relation is undetectable and its blended label/props leak. When
+    ``member_docs`` is provided the projection is folder-scoped like the GET
+    path (``None`` when no member source chunk; masked label/props on mixed).
+    ``member_docs=None`` keeps the legacy global projection.
+    """
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
         f"(t:`{label}` {{entity_id: $tgt}}) "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
         "r.keywords AS keywords, r.weight AS weight, "
+        "r.source_id AS chunk_source_id, "
         "r.twin_props_json AS twin_props_json"
     )
     try:
@@ -1193,6 +1372,7 @@ async def _read_one_relation(
                     "target_id": record["target_id"],
                     "keywords": record["keywords"],
                     "weight": record["weight"],
+                    "chunk_source_id": record["chunk_source_id"],
                     "twin_props_json": record["twin_props_json"],
                 }
                 break
@@ -1204,7 +1384,7 @@ async def _read_one_relation(
         return None
     if not row:
         return None
-    return _edge_record_to_relation(row, 0)
+    return _edge_record_to_relation(row, 0, chunk_to_doc, member_docs)
 
 
 # ----------------------------------------------------------------------
@@ -1321,7 +1501,20 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     entity_id = _strip_node_prefix(webui_id)
     label = _sanitize_workspace(workspace)
 
-    if not await entity_exists(workspace, entity_id):
+    # Folder cloisonnement (#1): only a pure-member entity is deletable from a
+    # folder. `mixed` → refuse (a global DETACH DELETE would remove a node the
+    # other folder co-owns); `absent` → 404. Off the Twin routes (no folder) the
+    # cheap existence probe keeps the global path unchanged.
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    if member_docs is not None:
+        verdict = await _entity_mutation_gate(
+            workspace, entity_id, chunk_to_doc, member_docs
+        )
+        if verdict == _GATE_ABSENT:
+            return False
+        if verdict == _GATE_MIXED:
+            raise MixedProvenanceError(entity_id)
+    elif not await entity_exists(workspace, entity_id):
         return False
 
     async with acquire_write_slot():
@@ -1428,6 +1621,18 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
     if cached_workspace != workspace:
         return False
 
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    # Folder cloisonnement (#1): only a pure-member relation is deletable.
+    # `mixed` → refuse (shared edge); `absent` → 404.
+    if member_docs is not None:
+        verdict = await _relation_mutation_gate(
+            workspace, src, tgt, chunk_to_doc, member_docs
+        )
+        if verdict == _GATE_ABSENT:
+            return False
+        if verdict == _GATE_MIXED:
+            raise MixedProvenanceError(rel_id)
+
     label = _sanitize_workspace(workspace)
     async with acquire_write_slot():
         async with get_session() as session:
@@ -1459,6 +1664,7 @@ __all__ = [
     "EntityExistsError",
     "EntityProjectionError",
     "GraphEntityCreateError",
+    "MixedProvenanceError",
     "create_graph_entity",
     "create_graph_relation",
     "delete_graph_entity",
