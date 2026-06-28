@@ -84,11 +84,10 @@ class MixedProvenanceError(Exception):
     least one belongs to another folder.
 
     The physical node/edge is shared across folders (single LightRAG namespace).
-    A global ``SET`` / ``DETACH DELETE`` would corrupt the other folder's view of
-    a record it co-owns, so the mutation is refused rather than silently applied.
-    The route maps this to HTTP 409. Visibility (the record IS visible in the
-    folder) is intentionally NOT sufficient to grant mutation — only a
-    *pure-member* record (every source chunk in the folder) may be mutated.
+    PATCH/DELETE now handle this by writing a folder-local overlay/tombstone
+    instead of touching the shared base. Operations without a folder-local model
+    (notably create-relation on a mixed endpoint) still raise this and the route
+    maps it to HTTP 409.
     """
 
 
@@ -295,6 +294,7 @@ def _node_record_to_entity(
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
     direct_members: set[str] | None = None,
+    override: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Project a Cypher entity row into the WebUI ``GraphEntity`` shape.
 
@@ -317,6 +317,12 @@ def _node_record_to_entity(
     visible in the active folder via explicit ``GRAPH_MEMBER_OF`` membership even
     with no chunk provenance — it shows as a pure, operator-owned node (zero
     mentions/sources, no source_docs, real description kept).
+
+    **Folder-local override** (#1b): when an ``override`` overlay is present for
+    the active folder, ``deleted`` drops the record (folder-local tombstone) and
+    otherwise its fields replace the (possibly masked) base values — folder F sees
+    its own edit while folder B keeps the base. The overlay only applies to an
+    already-visible record (it is a view modifier, not a membership grant).
     """
     entity_id = record.get("entity_id") or ""
     raw_type = record.get("entity_type") or ""
@@ -348,13 +354,16 @@ def _node_record_to_entity(
         mentions, sources, resolved_docs, mixed = 0, 0, set(), False
     else:
         mentions, sources, resolved_docs, mixed = scope
+    # #1b: a folder-local tombstone hides an otherwise-visible record in F only.
+    if override is not None and override.get("deleted"):
+        return None
     if mixed:
         # The description LightRAG blended across all source docs may carry
         # non-member text; the graph tab is a direct exposure surface → mask it.
         # The node + folder-scoped source_docs stay visible.
         summary = _MASKED_ENTITY_SUMMARY
     x, y = layout_position(str(entity_id), mapped_type)
-    return {
+    entity = {
         "id": _entity_id_to_node_id(str(entity_id)),
         "name": str(record.get("display_name") or entity_id),
         "type": mapped_type,
@@ -367,6 +376,10 @@ def _node_record_to_entity(
         "tags": _json_list(record.get("twin_tags_json")),
         "properties": _json_str_dict(record.get("twin_props_json")),
     }
+    # #1b: overlay folder-local edits (un-masks the fields F explicitly set).
+    if override is not None:
+        _apply_entity_override(entity, override)
+    return entity
 
 
 def _chunk_ids_from_record(record) -> tuple[str, list] | None:
@@ -512,6 +525,305 @@ _GATE_ABSENT = "absent"
 # A future folder-local override layer (#1b) builds on the same Folder nodes.
 _GRAPH_MEMBER_REL = "GRAPH_MEMBER_OF"
 _REL_FOLDER_PROP = "twin_folder_json"
+
+# Folder-local overrides (#1b). A *mixed* (cross-folder shared) record is never
+# mutated on its base node/edge — instead folder F's edit/delete lands on a
+# per-folder overlay, so folder B keeps seeing the untouched base. The overlay
+# stores base-shaped props (description, entity_type, display_name, twin_tags_json,
+# twin_props_json for entities; keywords, weight, twin_props_json for relations)
+# plus a `deleted` tombstone, applied on read only inside F.
+#   - entity overlay → (base:{ws} {entity_id})-[:HAS_OVERRIDE]->(:GraphOverride_{ws} {folder})
+#     (relationship → a base DETACH DELETE cascades the overlay).
+#   - relation overlay → standalone (:GraphRelOverride_{ws} {src, tgt, folder}),
+#     linked (s)-[:HAS_REL_OVERRIDE]->(o) from the source endpoint (edges can't own
+#     a sub-relationship). entity_id / endpoints stay the immutable global key —
+#     a display_name override never changes identity or relations.
+_HAS_OVERRIDE_REL = "HAS_OVERRIDE"
+_HAS_REL_OVERRIDE_REL = "HAS_REL_OVERRIDE"
+_ENTITY_OVERRIDE_FIELDS = (
+    "description",
+    "entity_type",
+    "display_name",
+    "twin_tags_json",
+    "twin_props_json",
+)
+_REL_OVERRIDE_FIELDS = ("keywords", "weight", "twin_props_json")
+
+
+def _entity_override_label(label: str) -> str:
+    return f"GraphOverride_{label}"
+
+
+def _rel_override_label(label: str) -> str:
+    return f"GraphRelOverride_{label}"
+
+
+def _entity_override_return(var: str) -> str:
+    """RETURN fragment projecting an entity-overlay node's fields + tombstone."""
+    cols = ", ".join(f"{var}.{f} AS {f}" for f in _ENTITY_OVERRIDE_FIELDS)
+    return f"{cols}, {var}.deleted AS deleted"
+
+
+def _row_to_entity_override(record) -> dict[str, Any] | None:
+    """Build an entity-override dict from a Cypher record, or None if the
+    overlay node is absent (all fields + deleted are null)."""
+    ov = {f: record.get(f) for f in _ENTITY_OVERRIDE_FIELDS}
+    deleted = record.get("deleted")
+    if deleted is None and all(v is None for v in ov.values()):
+        return None
+    ov["deleted"] = bool(deleted)
+    return ov
+
+
+def _row_to_rel_override(record) -> dict[str, Any] | None:
+    ov = {f: record.get(f) for f in _REL_OVERRIDE_FIELDS}
+    deleted = record.get("deleted")
+    if deleted is None and all(v is None for v in ov.values()):
+        return None
+    ov["deleted"] = bool(deleted)
+    return ov
+
+
+def _apply_entity_override(ent: dict[str, Any], ov: dict[str, Any]) -> None:
+    """Overlay folder-local entity fields onto a projected GraphEntity, replacing
+    the (possibly masked) base values. Never touches ``id`` (the global key)."""
+    if ov.get("description") is not None:
+        ent["summary"] = str(ov["description"])[:600]
+    if ov.get("entity_type") is not None:
+        ent["type"] = map_entity_type(str(ov["entity_type"]))
+    if ov.get("display_name") is not None:
+        ent["name"] = str(ov["display_name"])
+    if ov.get("twin_tags_json") is not None:
+        ent["tags"] = _json_list(ov["twin_tags_json"])
+    if ov.get("twin_props_json") is not None:
+        ent["properties"] = _json_str_dict(ov["twin_props_json"])
+
+
+def _apply_relation_override(rel: dict[str, Any], ov: dict[str, Any]) -> None:
+    """Overlay folder-local relation fields onto a projected GraphRelation. Never
+    touches ``id`` / ``source`` / ``target`` (endpoint identity is immutable)."""
+    if ov.get("keywords") is not None:
+        label = str(ov["keywords"]).strip().upper().replace(" ", "_")
+        rel["label"] = label or "RELATED_TO"
+    if ov.get("weight") is not None:
+        try:
+            strength = float(ov["weight"])
+        except (TypeError, ValueError):
+            strength = rel.get("strength", 0.5)
+        if strength > 1.0:
+            strength = min(1.0, strength / 10.0)
+        rel["strength"] = round(strength, 3)
+    if ov.get("twin_props_json") is not None:
+        rel["properties"] = _json_str_dict(ov["twin_props_json"])
+
+
+async def _load_folder_overrides(
+    workspace: str, folder: str
+) -> dict[str, dict[str, Any]]:
+    """All entity overlays for *folder*, keyed by ``entity_id`` (batch — one read
+    per graph load, like ``chunk_to_doc``). ``{}`` on error."""
+    label = _sanitize_workspace(workspace)
+    ov_label = _entity_override_label(label)
+    query = (
+        f"MATCH (n:`{label}`)-[:`{_HAS_OVERRIDE_REL}`]->"
+        f"(o:`{ov_label}` {{folder: $folder}}) "
+        f"RETURN n.entity_id AS entity_id, {_entity_override_return('o')}"
+    )
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            async for record in result:
+                eid = record["entity_id"]
+                ov = _row_to_entity_override(record)
+                if eid and ov is not None:
+                    out[str(eid)] = ov
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: folder-override load failed (ws=%s, folder=%s)",
+            workspace,
+            folder,
+        )
+        return {}
+    return out
+
+
+async def _load_folder_rel_overrides(
+    workspace: str, folder: str
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """All relation overlays for *folder*, keyed by ``(src, tgt)``. ``{}`` on error."""
+    label = _sanitize_workspace(workspace)
+    ro_label = _rel_override_label(label)
+    cols = ", ".join(f"o.{f} AS {f}" for f in _REL_OVERRIDE_FIELDS)
+    query = (
+        f"MATCH (o:`{ro_label}` {{folder: $folder}}) "
+        f"RETURN o.src AS src, o.tgt AS tgt, {cols}, o.deleted AS deleted"
+    )
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            async for record in result:
+                src, tgt = record["src"], record["tgt"]
+                ov = _row_to_rel_override(record)
+                if src and tgt and ov is not None:
+                    out[(str(src), str(tgt))] = ov
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: folder rel-override load failed (ws=%s, folder=%s)",
+            workspace,
+            folder,
+        )
+        return {}
+    return out
+
+
+async def _load_one_entity_override(
+    workspace: str, folder: str | None, entity_id: str
+) -> dict[str, Any] | None:
+    """Targeted entity-overlay lookup for a single (entity, folder) — used by the
+    post-write projection. ``None`` when no folder is bound or no overlay exists."""
+    if not folder:
+        return None
+    label = _sanitize_workspace(workspace)
+    ov_label = _entity_override_label(label)
+    query = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}})-[:`{_HAS_OVERRIDE_REL}`]->"
+        f"(o:`{ov_label}` {{folder: $folder}}) "
+        f"RETURN {_entity_override_return('o')}"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, eid=entity_id, folder=folder)
+            ov = None
+            async for record in result:
+                ov = _row_to_entity_override(record)
+                break
+            await result.consume()
+        return ov
+    except Exception:
+        logger.exception(
+            "graph_reader: one-entity override load failed (%s)", entity_id
+        )
+        return None
+
+
+async def _load_one_rel_override(
+    workspace: str, folder: str | None, src: str, tgt: str
+) -> dict[str, Any] | None:
+    if not folder:
+        return None
+    label = _sanitize_workspace(workspace)
+    ro_label = _rel_override_label(label)
+    cols = ", ".join(f"o.{f} AS {f}" for f in _REL_OVERRIDE_FIELDS)
+    query = (
+        f"MATCH (o:`{ro_label}` {{src: $src, tgt: $tgt, folder: $folder}}) "
+        f"RETURN {cols}, o.deleted AS deleted"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, src=src, tgt=tgt, folder=folder)
+            ov = None
+            async for record in result:
+                ov = _row_to_rel_override(record)
+                break
+            await result.consume()
+        return ov
+    except Exception:
+        logger.exception(
+            "graph_reader: one-rel override load failed (%s→%s)", src, tgt
+        )
+        return None
+
+
+async def _upsert_entity_override(
+    workspace: str,
+    folder: str,
+    entity_id: str,
+    fields: dict[str, Any],
+    *,
+    deleted: bool,
+) -> bool:
+    """MERGE folder F's entity overlay and set its fields + tombstone flag. The
+    base node is never modified. Returns ``False`` if the base node is missing."""
+    label = _sanitize_workspace(workspace)
+    ov_label = _entity_override_label(label)
+    set_fields = "SET o += $fields " if fields else ""
+    query = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+        f"MERGE (n)-[:`{_HAS_OVERRIDE_REL}`]->(o:`{ov_label}` {{folder: $folder}}) "
+        f"{set_fields}"
+        "SET o.deleted = $deleted "
+        "RETURN o.folder AS folder"
+    )
+    try:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    query,
+                    eid=entity_id,
+                    folder=folder,
+                    fields=fields,
+                    deleted=deleted,
+                )
+                rows = [record async for record in result]
+                await result.consume()
+        return bool(rows)
+    except Exception:
+        logger.exception(
+            "graph_reader: entity override upsert failed (%s, folder=%s)",
+            entity_id,
+            folder,
+        )
+        return False
+
+
+async def _upsert_rel_override(
+    workspace: str,
+    folder: str,
+    src: str,
+    tgt: str,
+    fields: dict[str, Any],
+    *,
+    deleted: bool,
+) -> bool:
+    """MERGE folder F's relation overlay (standalone, linked from the source
+    endpoint for cascade) and set its fields + tombstone. Base edge untouched."""
+    label = _sanitize_workspace(workspace)
+    ro_label = _rel_override_label(label)
+    set_fields = "SET o += $fields " if fields else ""
+    query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}}) "
+        f"MERGE (o:`{ro_label}` {{src: $src, tgt: $tgt, folder: $folder}}) "
+        f"MERGE (s)-[:`{_HAS_REL_OVERRIDE_REL}`]->(o) "
+        f"{set_fields}"
+        "SET o.deleted = $deleted "
+        "RETURN o.folder AS folder"
+    )
+    try:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    query,
+                    src=src,
+                    tgt=tgt,
+                    folder=folder,
+                    fields=fields,
+                    deleted=deleted,
+                )
+                rows = [record async for record in result]
+                await result.consume()
+        return bool(rows)
+    except Exception:
+        logger.exception(
+            "graph_reader: rel override upsert failed (%s→%s, folder=%s)",
+            src,
+            tgt,
+            folder,
+        )
+        return False
 
 
 async def _load_direct_member_entity_rows(
@@ -858,6 +1170,7 @@ def _edge_record_to_relation(
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
     active_folder: str | None = None,
+    override: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Project a Cypher edge row into the WebUI ``GraphRelation`` shape.
 
@@ -877,6 +1190,10 @@ def _edge_record_to_relation(
     but is stamped with ``active_folder`` in ``record["twin_folder_json"]``. When
     chunk-membership fails, the edge is still visible (pure, not masked) if the
     active folder is in that stamp.
+
+    **Folder-local override** (#1b): an ``override`` overlay for the active folder
+    tombstones (``deleted`` → ``None``) or replaces the edge's label/strength/props
+    in F's view only.
     """
     del index  # ignored — id is endpoint-derived
     mixed = False
@@ -889,6 +1206,8 @@ def _edge_record_to_relation(
             if not (active_folder and active_folder in stamped):
                 return None
             mixed = False  # operator-owned in this folder
+    if override is not None and override.get("deleted"):
+        return None  # #1b folder-local tombstone
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
     keywords = record.get("keywords") or ""
@@ -908,7 +1227,7 @@ def _edge_record_to_relation(
         # LightRAG keywords, operator props). Endpoints + strength stay.
         label = _MIXED_RELATION_LABEL
         properties = {}
-    return {
+    relation = {
         "id": _relation_id_from_endpoints(str(src), str(tgt)),
         "source": _entity_id_to_node_id(str(src)),
         "target": _entity_id_to_node_id(str(tgt)),
@@ -916,6 +1235,10 @@ def _edge_record_to_relation(
         "strength": round(strength, 3),
         "properties": properties,
     }
+    # #1b: overlay folder-local edits (un-masks the fields F explicitly set).
+    if override is not None:
+        _apply_relation_override(relation, override)
+    return relation
 
 
 async def read_graph_entities(
@@ -974,17 +1297,23 @@ async def read_graph_entities(
         from .folder import active_folder_id
 
         folder = active_folder_id()
+        overrides: dict[str, dict[str, Any]] = {}
         if member_docs is not None and folder:
             seen = {r.get("entity_id") for r in rows}
             direct_rows = await _load_direct_member_entity_rows(workspace, folder)
             direct_members = {r["entity_id"] for r in direct_rows if r.get("entity_id")}
             rows.extend(r for r in direct_rows if r.get("entity_id") not in seen)
+            overrides = await _load_folder_overrides(workspace, folder)
         out: list[dict[str, Any]] = []
         for row in rows:
             if not row.get("entity_id"):
                 continue
             entity = _node_record_to_entity(
-                row, chunk_to_doc, member_docs, direct_members
+                row,
+                chunk_to_doc,
+                member_docs,
+                direct_members,
+                overrides.get(str(row["entity_id"])),
             )
             if entity is not None:
                 out.append(entity)
@@ -1001,6 +1330,7 @@ def _native_node_to_entity(
     chunk_to_doc: dict[str, str],
     member_docs: set[str] | None = None,
     direct_members: set[str] | None = None,
+    overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     props = getattr(node, "properties", None) or {}
     entity_id = props.get("entity_id") or getattr(node, "id", None)
@@ -1015,7 +1345,10 @@ def _native_node_to_entity(
         "twin_tags_json": props.get("twin_tags_json"),
         "twin_props_json": props.get("twin_props_json"),
     }
-    return _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
+    override = overrides.get(str(entity_id)) if overrides else None
+    return _node_record_to_entity(
+        row, chunk_to_doc, member_docs, direct_members, override
+    )
 
 
 def _native_edge_to_relation(
@@ -1024,6 +1357,7 @@ def _native_edge_to_relation(
     chunk_to_doc: dict[str, str] | None = None,
     member_docs: set[str] | None = None,
     active_folder: str | None = None,
+    overrides: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     src = getattr(edge, "source", None)
     tgt = getattr(edge, "target", None)
@@ -1041,19 +1375,20 @@ def _native_edge_to_relation(
         "twin_folder_json": eprops.get(_REL_FOLDER_PROP),
         "twin_props_json": eprops.get("twin_props_json"),
     }
+    override = overrides.get((str(src), str(tgt))) if overrides else None
     return _edge_record_to_relation(
-        row, index, chunk_to_doc, member_docs, active_folder
+        row, index, chunk_to_doc, member_docs, active_folder, override
     )
 
 
 def _build_native_entities(
-    kg, chunk_to_doc, member_docs, direct_members, max_nodes
+    kg, chunk_to_doc, member_docs, direct_members, overrides, max_nodes
 ) -> list[dict]:
     """Project native KG nodes to entities, capped after membership filtering."""
     entities: list[dict[str, Any]] = []
     for node in getattr(kg, "nodes", []) or []:
         entity = _native_node_to_entity(
-            node, chunk_to_doc, member_docs, direct_members
+            node, chunk_to_doc, member_docs, direct_members, overrides
         )
         if entity is not None:
             entities.append(entity)
@@ -1063,14 +1398,20 @@ def _build_native_entities(
 
 
 def _build_native_relations(
-    kg, workspace, valid_ids, chunk_to_doc, member_docs, active_folder
+    kg,
+    workspace,
+    valid_ids,
+    chunk_to_doc,
+    member_docs,
+    active_folder,
+    overrides,
 ) -> list[dict]:
     """Project native KG edges to relations, dropping any whose endpoints did
     not survive entity membership filtering."""
     relations: list[dict[str, Any]] = []
     for i, edge in enumerate(getattr(kg, "edges", []) or []):
         rel = _native_edge_to_relation(
-            edge, i, chunk_to_doc, member_docs, active_folder
+            edge, i, chunk_to_doc, member_docs, active_folder, overrides
         )
         if rel is None:
             continue
@@ -1134,6 +1475,8 @@ async def read_graph_native(
 
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder) if folder else None
+    entity_overrides = await _load_folder_overrides(workspace, folder) if folder else {}
+    rel_overrides = await _load_folder_rel_overrides(workspace, folder) if folder else {}
 
     # #1a: operator-created entities have no chunk provenance and the native
     # degree-ranked read won't return an isolated manual node — load them
@@ -1145,18 +1488,24 @@ async def read_graph_native(
         direct_members = {r["entity_id"] for r in direct_rows if r.get("entity_id")}
 
     entities = _build_native_entities(
-        kg, chunk_to_doc, member_docs, direct_members, max_nodes
+        kg, chunk_to_doc, member_docs, direct_members, entity_overrides, max_nodes
     )
     present = {e["id"] for e in entities}
     for row in direct_rows:
-        ent = _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
+        ent = _node_record_to_entity(
+            row,
+            chunk_to_doc,
+            member_docs,
+            direct_members,
+            entity_overrides.get(str(row.get("entity_id"))),
+        )
         if ent is not None and ent["id"] not in present:
             entities.append(ent)
             present.add(ent["id"])
 
     valid_ids = {e["id"] for e in entities}
     relations = _build_native_relations(
-        kg, workspace, valid_ids, chunk_to_doc, member_docs, folder
+        kg, workspace, valid_ids, chunk_to_doc, member_docs, folder, rel_overrides
     )
     # Union operator-created relations among the visible entities (#1a) — the
     # native read only returns edges between degree-ranked nodes, so a manual
@@ -1167,7 +1516,12 @@ async def read_graph_native(
             if folder not in _json_list(row.get("twin_folder_json")):
                 continue
             rel = _edge_record_to_relation(
-                row, 0, chunk_to_doc, member_docs, folder
+                row,
+                0,
+                chunk_to_doc,
+                member_docs,
+                folder,
+                rel_overrides.get((str(row.get("source_id")), str(row.get("target_id")))),
             )
             if rel is None:
                 continue
@@ -1187,8 +1541,6 @@ async def _search_labels_scoped(
     """Folder-aware entity-label search: substring match constrained to entities
     with ≥1 member source chunk. Loses the native fuzzy ranking but never reveals
     out-of-folder labels (the search box is an exposure surface)."""
-    if not member_chunks:
-        return []  # fail-closed: empty folder reveals nothing
     label = _sanitize_workspace(workspace)
     query = (
         f"MATCH (n:`{label}`) "
@@ -1197,28 +1549,78 @@ async def _search_labels_scoped(
         "RETURN DISTINCT n.entity_id AS eid LIMIT $limit"
     )
     out: list[str] = []
-    try:
-        async with get_read_session() as session:
-            result = await session.run(
-                query,
-                q=q,
-                sep=_GRAPH_FIELD_SEP,
-                mchunks=list(member_chunks),
-                limit=limit,
+    if member_chunks:
+        try:
+            async with get_read_session() as session:
+                result = await session.run(
+                    query,
+                    q=q,
+                    sep=_GRAPH_FIELD_SEP,
+                    mchunks=list(member_chunks),
+                    limit=limit,
+                )
+                async for record in result:
+                    eid = record.get("eid")
+                    if eid:
+                        out.append(str(eid))
+                await result.consume()
+        except Exception:
+            logger.exception(
+                "graph_reader: scoped label search failed (ws=%s, q=%r) — "
+                "fail-closed (empty)",
+                workspace,
+                q,
             )
-            async for record in result:
-                eid = record.get("eid")
-                if eid:
-                    out.append(str(eid))
-            await result.consume()
-    except Exception:
-        logger.exception(
-            "graph_reader: scoped label search failed (ws=%s, q=%r) — "
-            "fail-closed (empty)",
-            workspace,
-            q,
+            return []
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        return out
+    overrides = await _load_folder_overrides(workspace, folder)
+    tombstoned = {
+        eid for eid, override in overrides.items() if override.get("deleted")
+    }
+    out = [eid for eid in out if eid not in tombstoned]
+
+    def add_match(eid: str, *labels: Any) -> None:
+        if len(out) >= limit or eid in tombstoned or eid in out:
+            return
+        needle = q.lower()
+        if any(needle in str(label or "").lower() for label in labels):
+            out.append(eid)
+
+    # #1a + #1b: direct-member manual entities have no chunk provenance, and a
+    # folder-local display_name override should be searchable in that folder.
+    direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+    direct_members = {str(r["entity_id"]) for r in direct_rows if r.get("entity_id")}
+    for row in direct_rows:
+        eid = str(row.get("entity_id") or "")
+        if not eid:
+            continue
+        override = overrides.get(eid) or {}
+        add_match(
+            eid,
+            row.get("entity_id"),
+            row.get("display_name"),
+            override.get("display_name"),
         )
-        return []
+
+    # Overlay display names on chunk-backed entities may be the only text that
+    # matches the query. Verify visibility through the same gate used by writes
+    # so the overlay never grants cross-folder search visibility by itself.
+    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+    member_docs = await _load_member_docs(workspace, folder)
+    for eid, override in overrides.items():
+        if len(out) >= limit:
+            break
+        if eid in direct_members or override.get("deleted"):
+            continue
+        if q.lower() not in str(override.get("display_name") or "").lower():
+            continue
+        verdict = await _entity_mutation_gate(workspace, eid, chunk_to_doc, member_docs)
+        if verdict != _GATE_ABSENT:
+            add_match(eid, override.get("display_name"))
     return out
 
 
@@ -1296,12 +1698,27 @@ async def read_graph_relations(
             await result.consume()
         chunk_to_doc = await _load_chunk_to_doc_index(workspace)
         member_docs = await _active_member_docs(workspace)
+        from .folder import active_folder_id
+
+        folder = active_folder_id()
+        rel_overrides = (
+            await _load_folder_rel_overrides(workspace, folder) if folder else {}
+        )
         valid = set(valid_node_ids) if valid_node_ids is not None else None
         out: list[dict[str, Any]] = []
         for i, row in enumerate(rows):
             if not row.get("source_id") or not row.get("target_id"):
                 continue
-            rel = _edge_record_to_relation(row, i, chunk_to_doc, member_docs)
+            rel = _edge_record_to_relation(
+                row,
+                i,
+                chunk_to_doc,
+                member_docs,
+                folder,
+                rel_overrides.get(
+                    (str(row.get("source_id")), str(row.get("target_id")))
+                ),
+            )
             if rel is None:
                 continue  # scoped out of the active folder
             if valid is not None and (
@@ -1389,11 +1806,11 @@ async def update_graph_entity(
     """
     entity_id = _strip_node_prefix(webui_id)
     member_docs, chunk_to_doc = await _member_context(workspace)
-    # Folder cloisonnement (#1): a folder-scoped mutation may only touch a
-    # *pure-member* entity. `absent` (out-of-folder / missing) → 404; `mixed`
-    # (shared with another folder) → refuse, because a global SET would corrupt
-    # the co-owning folder's view of this physical node. Visibility alone is NOT
-    # sufficient — a mixed entity is visible in this folder but still shared.
+    props = _entity_patch_to_props(patch)
+    # Folder cloisonnement (#1/#1b): a folder-scoped mutation may only touch
+    # the shared base when the entity is pure-member. `absent` stays 404.
+    # `mixed` is now a folder-local overlay write, so folder A can edit its view
+    # without mutating folder B's shared physical node.
     if member_docs is not None:
         verdict = await _entity_mutation_gate(
             workspace, entity_id, chunk_to_doc, member_docs
@@ -1401,8 +1818,23 @@ async def update_graph_entity(
         if verdict == _GATE_ABSENT:
             return None
         if verdict == _GATE_MIXED:
-            raise MixedProvenanceError(entity_id)
-    props = _entity_patch_to_props(patch)
+            if not props:
+                return await _read_one_entity(
+                    workspace, entity_id, chunk_to_doc, member_docs
+                )
+            from .folder import active_folder_id
+
+            folder = active_folder_id()
+            if not folder:
+                raise MixedProvenanceError(entity_id)
+            ok = await _upsert_entity_override(
+                workspace, folder, entity_id, props, deleted=False
+            )
+            if not ok:
+                return None
+            return await _read_one_entity(
+                workspace, entity_id, chunk_to_doc, member_docs
+            )
     label = _sanitize_workspace(workspace)
     if not props:
         # Nothing to write — still return the current state if the node exists.
@@ -1454,9 +1886,9 @@ async def update_graph_relation(
         # silently update a different KB.
         return None
     member_docs, chunk_to_doc = await _member_context(workspace)
-    # Folder cloisonnement (#1): only a pure-member relation is mutable. `absent`
-    # (provenance out-of-folder / missing) → None (404); `mixed` (shared edge) →
-    # refuse so a global SET can't corrupt the co-owning folder.
+    props = _relation_patch_to_props(patch)
+    # Folder cloisonnement (#1/#1b): only a pure-member relation mutates the
+    # base edge. `mixed` writes a folder-local overlay; `absent` stays 404.
     if member_docs is not None:
         verdict = await _relation_mutation_gate(
             workspace, src, tgt, chunk_to_doc, member_docs
@@ -1464,8 +1896,23 @@ async def update_graph_relation(
         if verdict == _GATE_ABSENT:
             return None
         if verdict == _GATE_MIXED:
-            raise MixedProvenanceError(rel_id)
-    props = _relation_patch_to_props(patch)
+            if not props:
+                return await _read_one_relation(
+                    workspace, src, tgt, chunk_to_doc, member_docs
+                )
+            from .folder import active_folder_id
+
+            folder = active_folder_id()
+            if not folder:
+                raise MixedProvenanceError(rel_id)
+            ok = await _upsert_rel_override(
+                workspace, folder, src, tgt, props, deleted=False
+            )
+            if not ok:
+                return None
+            return await _read_one_relation(
+                workspace, src, tgt, chunk_to_doc, member_docs
+            )
     label = _sanitize_workspace(workspace)
     if not props:
         return await _read_one_relation(
@@ -1552,7 +1999,10 @@ async def _read_one_entity(
     if not row or not row.get("entity_id"):
         return None
     direct_members = {entity_id} if direct else None
-    return _node_record_to_entity(row, chunk_to_doc, member_docs, direct_members)
+    override = await _load_one_entity_override(workspace, folder, entity_id)
+    return _node_record_to_entity(
+        row, chunk_to_doc, member_docs, direct_members, override
+    )
 
 
 async def _read_one_relation(
@@ -1609,7 +2059,10 @@ async def _read_one_relation(
         return None
     if not row:
         return None
-    return _edge_record_to_relation(row, 0, chunk_to_doc, member_docs, folder)
+    override = await _load_one_rel_override(workspace, folder, src, tgt)
+    return _edge_record_to_relation(
+        row, 0, chunk_to_doc, member_docs, folder, override
+    )
 
 
 # ----------------------------------------------------------------------
@@ -1740,10 +2193,10 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     entity_id = _strip_node_prefix(webui_id)
     label = _sanitize_workspace(workspace)
 
-    # Folder cloisonnement (#1): only a pure-member entity is deletable from a
-    # folder. `mixed` → refuse (a global DETACH DELETE would remove a node the
-    # other folder co-owns); `absent` → 404. Off the Twin routes (no folder) the
-    # cheap existence probe keeps the global path unchanged.
+    # Folder cloisonnement (#1/#1b): a pure-member entity is physically deleted.
+    # `mixed` becomes a folder-local tombstone so folder A hides it without
+    # deleting folder B's shared physical node. `absent` → 404. Off Twin routes
+    # (no folder), the global path is unchanged.
     member_docs, chunk_to_doc = await _member_context(workspace)
     if member_docs is not None:
         verdict = await _entity_mutation_gate(
@@ -1752,7 +2205,14 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
         if verdict == _GATE_ABSENT:
             return False
         if verdict == _GATE_MIXED:
-            raise MixedProvenanceError(entity_id)
+            from .folder import active_folder_id
+
+            folder = active_folder_id()
+            if not folder:
+                raise MixedProvenanceError(entity_id)
+            return await _upsert_entity_override(
+                workspace, folder, entity_id, {}, deleted=True
+            )
     elif not await entity_exists(workspace, entity_id):
         return False
 
@@ -1888,8 +2348,8 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
         return False
 
     member_docs, chunk_to_doc = await _member_context(workspace)
-    # Folder cloisonnement (#1): only a pure-member relation is deletable.
-    # `mixed` → refuse (shared edge); `absent` → 404.
+    # Folder cloisonnement (#1/#1b): pure-member physically deletes; mixed
+    # writes a folder-local tombstone; absent stays 404.
     if member_docs is not None:
         verdict = await _relation_mutation_gate(
             workspace, src, tgt, chunk_to_doc, member_docs
@@ -1897,7 +2357,14 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
         if verdict == _GATE_ABSENT:
             return False
         if verdict == _GATE_MIXED:
-            raise MixedProvenanceError(rel_id)
+            from .folder import active_folder_id
+
+            folder = active_folder_id()
+            if not folder:
+                raise MixedProvenanceError(rel_id)
+            return await _upsert_rel_override(
+                workspace, folder, src, tgt, {}, deleted=True
+            )
 
     label = _sanitize_workspace(workspace)
     async with acquire_write_slot():

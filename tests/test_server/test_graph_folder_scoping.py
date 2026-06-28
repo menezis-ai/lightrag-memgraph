@@ -105,6 +105,43 @@ class TestEntityProjectorScoping:
             graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, set()) is None
         )
 
+    def test_mixed_entity_overlay_replaces_masked_fields(self):
+        row = {
+            "entity_id": "e1",
+            "source_id": "chunk-a<SEP>chunk-b",
+            "description": "secret B content",
+            "display_name": "Base",
+        }
+        ent = graph_reader._node_record_to_entity(
+            row,
+            _CTD,
+            {"doc-a"},
+            override={
+                "description": "Folder A text",
+                "display_name": "Folder A name",
+                "entity_type": "organization",
+                "twin_tags_json": json.dumps(["local"]),
+                "twin_props_json": json.dumps({"scope": "A"}),
+                "deleted": False,
+            },
+        )
+        assert ent is not None
+        assert ent["summary"] == "Folder A text"
+        assert ent["name"] == "Folder A name"
+        assert ent["type"] == "ORG"
+        assert ent["tags"] == ["local"]
+        assert ent["properties"] == {"scope": "A"}
+        assert ent["id"] == graph_reader._entity_id_to_node_id("e1")
+
+    def test_entity_overlay_tombstone_hides_visible_record(self):
+        row = {"entity_id": "e1", "source_id": "chunk-a"}
+        assert (
+            graph_reader._node_record_to_entity(
+                row, _CTD, {"doc-a"}, override={"deleted": True}
+            )
+            is None
+        )
+
 
 class TestRelationProjectorScoping:
     def test_relation_scoped_by_its_own_source_chunk(self):
@@ -170,6 +207,46 @@ class TestRelationProjectorScoping:
         # active folder A, edge stamped only for B → not visible.
         assert (
             graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A")
+            is None
+        )
+
+    def test_mixed_relation_overlay_replaces_masked_fields(self):
+        row = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "chunk_source_id": "chunk-a<SEP>chunk-b",
+            "keywords": "leaks B",
+            "weight": 7,
+            "twin_props_json": json.dumps({"base": "B"}),
+        }
+        rel = graph_reader._edge_record_to_relation(
+            row,
+            0,
+            _CTD,
+            {"doc-a"},
+            override={
+                "keywords": "folder local",
+                "weight": 0.42,
+                "twin_props_json": json.dumps({"scope": "A"}),
+                "deleted": False,
+            },
+        )
+        assert rel is not None
+        assert rel["label"] == "FOLDER_LOCAL"
+        assert rel["strength"] == 0.42
+        assert rel["properties"] == {"scope": "A"}
+        assert rel["id"] == graph_reader._relation_id_from_endpoints("e1", "e2")
+
+    def test_relation_overlay_tombstone_hides_visible_record(self):
+        row = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "chunk_source_id": "chunk-a",
+        }
+        assert (
+            graph_reader._edge_record_to_relation(
+                row, 0, _CTD, {"doc-a"}, override={"deleted": True}
+            )
             is None
         )
 
@@ -302,22 +379,30 @@ class TestUpdateEntityFolderGate:
         assert out["source_docs"] == ["doc-a"]
         assert any("SET n +=" in q for q in write.queries)  # write happened
 
-    async def test_patch_mixed_entity_is_refused_no_write(
+    async def test_patch_mixed_entity_writes_folder_overlay_not_base(
         self, folder_a, monkeypatch
     ):
-        # member chunk-a + non-member chunk-b → MIXED. The node is shared with
-        # folder B; a global SET would corrupt B's view. Mutation must be refused
-        # (409), NOT merely masked in the response. Visibility ≠ mutability.
+        # member chunk-a + non-member chunk-b → MIXED. The node is shared, so
+        # PATCH writes folder A's overlay instead of SETting the physical node.
         read = _RecordingSession(
             [_ent_row("chunk-a<SEP>chunk-b", description="secret B content")]
         )
-        write = _RecordingSession([{"entity_id": "e1"}])
+        write = _RecordingSession([{"folder": "A"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        with pytest.raises(graph_reader.MixedProvenanceError):
-            await graph_reader.update_graph_entity("ws", "kg_e1", {"summary": "x"})
-        # The shared node must be untouched.
+        async def fake_read_one(_ws, _eid, *_args):
+            return {"id": "kg_e1", "summary": "x", "source_docs": ["doc-a"]}
+
+        monkeypatch.setattr(graph_reader, "_read_one_entity", fake_read_one)
+
+        out = await graph_reader.update_graph_entity("ws", "kg_e1", {"summary": "x"})
+        assert out is not None
+        assert out["summary"] == "x"
+        assert any("GraphOverride_" in q for q in write.queries)
+        assert write.params[-1]["fields"]["description"] == "x"
+        assert write.params[-1]["deleted"] is False
+        # The shared base node must be untouched.
         assert not any("SET n +=" in q for q in write.queries)
 
 
@@ -344,17 +429,20 @@ class TestDeleteEntityFolderGate:
         assert ok is True
         assert any("DETACH DELETE" in q for q in write.queries)
 
-    async def test_delete_mixed_entity_is_refused_no_write(
+    async def test_delete_mixed_entity_writes_folder_tombstone_not_base(
         self, folder_a, monkeypatch
     ):
-        # Shared node: a global DETACH DELETE would remove it from folder B too.
+        # Shared node: folder A delete hides it in A only, not DETACH DELETE.
         read = _RecordingSession([_ent_row("chunk-a<SEP>chunk-b")])
-        write = _RecordingSession([])
+        write = _RecordingSession([{"folder": "A"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        with pytest.raises(graph_reader.MixedProvenanceError):
-            await graph_reader.delete_graph_entity("ws", "kg_e1")
+        ok = await graph_reader.delete_graph_entity("ws", "kg_e1")
+        assert ok is True
+        assert any("GraphOverride_" in q for q in write.queries)
+        assert write.params[-1]["fields"] == {}
+        assert write.params[-1]["deleted"] is True
         assert not any("DETACH DELETE" in q for q in write.queries)
 
 
@@ -406,7 +494,7 @@ class TestRelationFolderGate:
         assert out is not None
         assert any("SET r +=" in q for q in write.queries)
 
-    async def test_patch_mixed_relation_is_refused_no_write(
+    async def test_patch_mixed_relation_writes_folder_overlay_not_base(
         self, folder_a, monkeypatch
     ):
         monkeypatch.setattr(
@@ -415,15 +503,24 @@ class TestRelationFolderGate:
         )
         # edge provenance spans chunk-a (member) + chunk-b (non-member) → mixed.
         read = _RecordingSession([_rel_row("chunk-a<SEP>chunk-b")])
-        write = _RecordingSession([{"source_id": "e1"}])
+        write = _RecordingSession([{"folder": "A"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        with pytest.raises(graph_reader.MixedProvenanceError):
-            await graph_reader.update_graph_relation("ws", "kr_x", {"label": "x"})
+        async def fake_read_one(_ws, _src, _tgt, *_args):
+            return {"id": "kr_x", "label": "X"}
+
+        monkeypatch.setattr(graph_reader, "_read_one_relation", fake_read_one)
+
+        out = await graph_reader.update_graph_relation("ws", "kr_x", {"label": "x"})
+        assert out is not None
+        assert out["label"] == "X"
+        assert any("GraphRelOverride_" in q for q in write.queries)
+        assert write.params[-1]["fields"]["keywords"] == "x"
+        assert write.params[-1]["deleted"] is False
         assert not any("SET r +=" in q for q in write.queries)
 
-    async def test_delete_mixed_relation_is_refused_no_write(
+    async def test_delete_mixed_relation_writes_folder_tombstone_not_base(
         self, folder_a, monkeypatch
     ):
         monkeypatch.setattr(
@@ -431,12 +528,15 @@ class TestRelationFolderGate:
             lambda rid: ("ws", "e1", "e2"),
         )
         read = _RecordingSession([_rel_row("chunk-a<SEP>chunk-b")])
-        write = _RecordingSession([{"source_id": "e1"}])
+        write = _RecordingSession([{"folder": "A"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        with pytest.raises(graph_reader.MixedProvenanceError):
-            await graph_reader.delete_graph_relation("ws", "kr_x")
+        ok = await graph_reader.delete_graph_relation("ws", "kr_x")
+        assert ok is True
+        assert any("GraphRelOverride_" in q for q in write.queries)
+        assert write.params[-1]["fields"] == {}
+        assert write.params[-1]["deleted"] is True
         assert not any("DELETE r" in q for q in write.queries)
 
 
@@ -562,6 +662,42 @@ class TestCreateRelationFolderGate:
         )
         assert out is not None  # global path unchanged: existence-only check
         assert any("MERGE" in q for q in write.queries)
+
+
+class TestSearchLabelsFolderOverrides:
+    async def test_empty_chunk_folder_can_search_direct_member(
+        self, folder_a, monkeypatch
+    ):
+        async def direct_rows(_ws, _folder):
+            return [_ent_row("manual:operator", description="manual")]
+
+        async def no_overrides(_ws, _folder):
+            return {}
+
+        monkeypatch.setattr(
+            graph_reader, "_load_direct_member_entity_rows", direct_rows
+        )
+        monkeypatch.setattr(graph_reader, "_load_folder_overrides", no_overrides)
+
+        labels = await graph_reader._search_labels_scoped("ws", "e1", set(), 10)
+        assert labels == ["e1"]
+
+    async def test_direct_member_tombstone_is_not_searchable(
+        self, folder_a, monkeypatch
+    ):
+        async def direct_rows(_ws, _folder):
+            return [_ent_row("manual:operator", description="manual")]
+
+        async def overrides(_ws, _folder):
+            return {"e1": {"display_name": "Local E1", "deleted": True}}
+
+        monkeypatch.setattr(
+            graph_reader, "_load_direct_member_entity_rows", direct_rows
+        )
+        monkeypatch.setattr(graph_reader, "_load_folder_overrides", overrides)
+
+        labels = await graph_reader._search_labels_scoped("ws", "local", set(), 10)
+        assert labels == []
 
 
 # ── manual graph authorship: membership makes manual records mutable (#1a) ──
@@ -1118,10 +1254,9 @@ async def test_update_relation_live_refused_out_of_folder(seeded):
 
 
 @pytestmark_integration
-async def test_update_entity_live_refused_when_mixed(seeded):
-    """A node co-owned by A and B (source chunks chunk-a + chunk-b) must NOT be
-    mutable from folder A: a global SET would corrupt B's view. Expect a refusal
-    (MixedProvenanceError) and the node left unchanged."""
+async def test_update_entity_live_mixed_writes_folder_overlay(seeded):
+    """A node co-owned by A and B is folder-locally editable from A: the base
+    node remains intact, A sees the overlay, B/global see the shared base."""
     import twindb_lightrag_memgraph.server.folder as folder_mod
     from twindb_lightrag_memgraph import _pool
 
@@ -1136,14 +1271,16 @@ async def test_update_entity_live_refused_when_mixed(seeded):
 
     tok = _bind_folder("A")
     try:
-        with pytest.raises(graph_reader.MixedProvenanceError):
-            await graph_reader.update_graph_entity(
-                _WS, "kg_e3", {"summary": "tampered from A"}
-            )
+        out = await graph_reader.update_graph_entity(
+            _WS, "kg_e3", {"summary": "tampered from A"}
+        )
+        assert out is not None
+        assert out["summary"] == "tampered from A"
     finally:
         folder_mod._active_folder_id.reset(tok)
 
-    # The shared node's description must be intact (read globally, no folder).
+    # The shared base node's description must be intact (read globally, no
+    # folder), proving the PATCH did not corrupt folder B's physical record.
     async with _pool.get_read_session() as s:
         result = await s.run(
             f"MATCH (n:`{_WS}` {{entity_id:'e3'}}) RETURN n.description AS d"
@@ -1151,6 +1288,92 @@ async def test_update_entity_live_refused_when_mixed(seeded):
         row = await result.single()
         await result.consume()
     assert row["d"] == "shared"  # unchanged
+
+    tok = _bind_folder("B")
+    try:
+        ents = await graph_reader.read_graph_entities(_WS)
+        e3 = next(e for e in ents if e["name"] == "e3")
+        assert e3["summary"] == graph_reader._MASKED_ENTITY_SUMMARY
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_delete_entity_live_mixed_writes_folder_tombstone(seeded):
+    """DELETE on a mixed node hides it in folder A only; the shared base remains
+    available to other folders."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+    from twindb_lightrag_memgraph import _pool
+
+    async with _pool.get_session() as s:
+        await (
+            await s.run(
+                f"CREATE (:`{_WS}` {{entity_id:'e4', entity_type:'CONCEPT', "
+                f"source_id:'chunk-a<SEP>chunk-b', description:'shared'}})"
+            )
+        ).consume()
+
+    tok = _bind_folder("A")
+    try:
+        assert await graph_reader.delete_graph_entity(_WS, "kg_e4") is True
+        ents = await graph_reader.read_graph_entities(_WS)
+        assert "e4" not in {e["name"] for e in ents}
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    async with _pool.get_read_session() as s:
+        result = await s.run(
+            f"MATCH (n:`{_WS}` {{entity_id:'e4'}}) RETURN n.entity_id AS eid"
+        )
+        row = await result.single()
+        await result.consume()
+    assert row["eid"] == "e4"  # base node not DETACH DELETE'd
+
+    tok = _bind_folder("B")
+    try:
+        ents = await graph_reader.read_graph_entities(_WS)
+        assert "e4" in {e["name"] for e in ents}
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+
+@pytestmark_integration
+async def test_update_relation_live_mixed_writes_folder_overlay(seeded):
+    """PATCH on a mixed relation writes a folder-local relation overlay, leaving
+    the shared edge keywords intact."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+    from twindb_lightrag_memgraph import _pool
+
+    async with _pool.get_session() as s:
+        await (
+            await s.run(
+                f"MATCH (a:`{_WS}` {{entity_id:'e1'}})-[r:DIRECTED]->"
+                f"(b:`{_WS}` {{entity_id:'e2'}}) "
+                "SET r.source_id='chunk-a<SEP>chunk-b', r.keywords='base'"
+            )
+        ).consume()
+
+    rel_id = graph_reader._relation_id_from_endpoints("e1", "e2")
+    graph_reader._remember_relation(_WS, rel_id, "e1", "e2")
+
+    tok = _bind_folder("A")
+    try:
+        out = await graph_reader.update_graph_relation(
+            _WS, rel_id, {"label": "folder local"}
+        )
+        assert out is not None
+        assert out["label"] == "FOLDER_LOCAL"
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    async with _pool.get_read_session() as s:
+        result = await s.run(
+            f"MATCH (:`{_WS}` {{entity_id:'e1'}})-[r:DIRECTED]->"
+            f"(:`{_WS}` {{entity_id:'e2'}}) RETURN r.keywords AS kw"
+        )
+        row = await result.single()
+        await result.consume()
+    assert row["kw"] == "base"  # base edge not SET by folder A
 
 
 @pytestmark_integration
