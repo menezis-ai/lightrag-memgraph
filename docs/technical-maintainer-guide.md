@@ -49,6 +49,18 @@ Do not describe LightRAG upgrades as untested by default. The Forgejo CI matrix
 tests LightRAG `1.4.9.11`, `1.4.11`, and `1.4.12`, and integration tests cover
 Memgraph MAGE `3.9.0` and `3.10.1`.
 
+The intended compatibility table is:
+
+| | Memgraph MAGE 3.9.0 | Memgraph MAGE 3.10.1 |
+|---|:-:|:-:|
+| **LightRAG 1.4.9.11** | required | required |
+| **LightRAG 1.4.11** | required | required |
+| **LightRAG 1.4.12** | required | required |
+
+When changing the CI matrix, update this guide and the README in the same
+change. Do not replace the pinned Memgraph versions with `latest`; the point is
+to cover the BNP target plus one explicit forward-compat point.
+
 The public GitHub workflow is intentionally reduced. The compatibility gate is
 Forgejo CI in `.forgejo/workflows/ci.yml`.
 
