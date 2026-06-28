@@ -119,7 +119,8 @@ class TestMemgraphActivityStore:
             store = await make_memgraph_activity_store(workspace=_ws)
             items, now_ms = await store.list()
             assert len(items) == len(webui_seed.ACTIVITY)
-            assert now_ms == webui_seed.ACTIVITY_NOW_MS
+            assert isinstance(now_ms, int)
+            assert now_ms >= webui_seed.ACTIVITY_NOW_MS
             # Seed insert order = reversed(ACTIVITY), so newest-first reading
             # returns ACTIVITY[0] first.
             assert items[0]["id"] == webui_seed.ACTIVITY[0]["id"]

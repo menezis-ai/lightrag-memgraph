@@ -57,6 +57,15 @@ async def client(monkeypatch):
             ]
         ),
     )
+
+    async def graph_tags_unavailable(_doc_id: str) -> list[str] | None:
+        return None
+
+    monkeypatch.setattr(
+        webui_router,
+        "_graph_tags_for_doc_or_none",
+        graph_tags_unavailable,
+    )
     webui_router.reset_store()
     _twindb_state["rag"] = FakeRag()
     app = FastAPI()
