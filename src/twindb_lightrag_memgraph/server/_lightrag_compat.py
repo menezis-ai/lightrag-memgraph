@@ -358,6 +358,24 @@ def _first_chunk_id(matching_chunks: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _first_doc_id(matching_chunks: list[dict[str, Any]]) -> str | None:
+    """Return the first doc identifier carried by the retrieval envelope.
+
+    LightRAG's ``data.chunks`` rows already include ``full_doc_id`` on the
+    chunk-vdb path Twin filters in storage. The separate ``chunk_id -> doc_id``
+    lookup is only a fallback for older/looser envelopes; relying on it first
+    can make filtered retrieval appear source-less when that enrichment fails.
+    """
+    for chunk in matching_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        for key in ("full_doc_id", "doc_id"):
+            doc_id_raw = chunk.get(key)
+            if isinstance(doc_id_raw, str) and doc_id_raw:
+                return doc_id_raw
+    return None
+
+
 def _chunk_count_label(chunk_count: int) -> str | None:
     if chunk_count > 1:
         return f"{chunk_count} chunks"
@@ -387,7 +405,7 @@ def _build_source_entry(
     file_path = reference.get("file_path") or ""
     matching_chunks = chunks_by_ref.get(str(ref_id_raw), [])
     chunk_id = _first_chunk_id(matching_chunks)
-    doc_id = (
+    doc_id = _first_doc_id(matching_chunks) or (
         chunk_id_to_doc_id.get(chunk_id)
         if (chunk_id and chunk_id_to_doc_id)
         else None

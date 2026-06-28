@@ -362,6 +362,21 @@ class TestBuildSourcesFromRawData:
         sources = build_sources_from_raw_data(result, {"c-1": "doc-A"})
         assert sources[0]["doc_id"] == "doc-A"
 
+    def test_full_doc_id_enriches_doc_id_without_lookup(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {
+                    "reference_id": "1",
+                    "chunk_id": "c-1",
+                    "full_doc_id": "doc-A",
+                    "file_path": "/a.pdf",
+                },
+            ],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert sources[0]["doc_id"] == "doc-A"
+
     def test_missing_data_block_returns_empty_list(self):
         # Bypass mode produces an envelope without ``data.references``
         # — legitimate, surface empty sources, do NOT raise.

@@ -122,6 +122,8 @@ class FakeRag:
             for key in ("score", "similarity", "cosine_similarity", "__metrics__"):
                 if key in chunk:
                     envelope_chunk[key] = chunk[key]
+            if "full_doc_id" in chunk:
+                envelope_chunk["full_doc_id"] = chunk["full_doc_id"]
             envelope_chunks.append(envelope_chunk)
         envelope: dict[str, Any] = {
             "status": self._envelope_status,
@@ -410,6 +412,50 @@ class TestQueryEndpoint:
         assert [s["doc_id"] for s in r.json()["sources"]] == ["doc-oracle"]
         _query, param = rag.llm_calls[0]
         assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
+
+    async def test_tag_filter_keeps_sources_with_full_doc_id_without_lookup(
+        self, make_client
+    ):
+        """Regression: filtered retrieval must not render as source-less when
+        the aquery_llm envelope already carries ``full_doc_id`` but the optional
+        chunk->doc enrichment lookup cannot resolve it.
+        """
+        rag = FakeRag(
+            answer="tagged",
+            chunks=[
+                {
+                    "id": "chunk-a",
+                    "file_path": "/oracle",
+                    "full_doc_id": "doc-oracle",
+                    "score": 0.9,
+                },
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+
+        async def fake_tags(doc_id: str, folder: str):
+            assert folder == "default"
+            return {"oracle"} if doc_id == "doc-oracle" else set()
+
+        with patch(
+            "twindb_lightrag_memgraph.server.twin_query_routes._fetch_doc_graph_tags",
+            AsyncMock(side_effect=fake_tags),
+        ):
+            async with client:
+                r = await client.post(
+                    "/query",
+                    json={
+                        "query": "tagged retrieval",
+                        "tag_filter": {"all": ["oracle"], "any": []},
+                    },
+                )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert [s["doc_id"] for s in body["sources"]] == ["doc-oracle"]
+        assert [s["name"] for s in body["sources"]] == ["/oracle"]
 
     async def test_tag_filter_filters_projected_sources_on_query_stream(
         self, make_client
