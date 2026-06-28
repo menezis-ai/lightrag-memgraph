@@ -416,6 +416,109 @@ class TestGlobalModeUnchanged:
         assert out["summary"] == "global"  # not masked, global projection
         assert any("SET n +=" in q for q in write.queries)
 
+
+# ── create-relation endpoint cloisonnement (audit Graph/KG #2) ─────────────
+#
+# A relation created from folder A must not link to a B-only entity known by id.
+# Both endpoints are gated pure-member: out-of-folder → 422 (the security gate),
+# mixed (shared) endpoint → 409.
+
+
+class _PerEntityReadSession:
+    """Read session that returns a ``source_id`` row keyed by the queried
+    entity id (the ``eid`` bind param of `_entity_mutation_gate`)."""
+
+    def __init__(self, source_by_id):
+        self.source_by_id = source_by_id
+
+    async def run(self, _query, **params):
+        eid = params.get("eid")
+        rows = (
+            [{"source_id": self.source_by_id[eid]}]
+            if eid in self.source_by_id
+            else []
+        )
+        return _RowsResult(rows)
+
+
+class TestCreateRelationFolderGate:
+    async def test_create_to_b_only_entity_is_refused(self, folder_a, monkeypatch):
+        # src e1 member (chunk-a); tgt e2 is B-only (chunk-b) → absent → refuse.
+        read = _PerEntityReadSession({"e1": "chunk-a", "e2": "chunk-b"})
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        out = await graph_reader.create_graph_relation(
+            "ws", {"source": "e1", "target": "e2", "label": "uses"}
+        )
+        assert out is None  # 422 to the caller — no link to a B-only entity
+        assert not any("MERGE" in q for q in write.queries)
+
+    async def test_create_with_mixed_endpoint_is_refused(
+        self, folder_a, monkeypatch
+    ):
+        read = _PerEntityReadSession(
+            {"e1": "chunk-a", "em": "chunk-a<SEP>chunk-b"}
+        )
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        with pytest.raises(graph_reader.MixedProvenanceError):
+            await graph_reader.create_graph_relation(
+                "ws", {"source": "e1", "target": "em", "label": "uses"}
+            )
+        assert not any("MERGE" in q for q in write.queries)
+
+    async def test_create_between_members_proceeds(self, folder_a, monkeypatch):
+        read = _PerEntityReadSession({"e1": "chunk-a", "e1b": "chunk-a"})
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        async def fake_proj(_ws, _src, _tgt, *_a, **_k):
+            return {
+                "id": "kr_x", "source": "kg_e1", "target": "kg_e1b",
+                "label": "USES", "strength": 0.5, "properties": {},
+            }
+
+        monkeypatch.setattr(graph_reader, "_read_one_relation", fake_proj)
+
+        out = await graph_reader.create_graph_relation(
+            "ws", {"source": "e1", "target": "e1b", "label": "uses"}
+        )
+        assert out is not None
+        assert any("MERGE" in q for q in write.queries)
+
+    async def test_create_global_mode_uses_entity_exists(self, monkeypatch):
+        import twindb_lightrag_memgraph.server.folder as folder_mod
+
+        monkeypatch.setattr(folder_mod, "active_folder_id", lambda: None)
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+        async def yes(_ws, _eid):
+            return True
+
+        monkeypatch.setattr(graph_reader, "entity_exists", yes)
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+
+        async def fake_proj(_ws, _src, _tgt, *_a, **_k):
+            return {
+                "id": "kr_x", "source": "kg_e1", "target": "kg_e2",
+                "label": "USES", "strength": 0.5, "properties": {},
+            }
+
+        monkeypatch.setattr(graph_reader, "_read_one_relation", fake_proj)
+
+        out = await graph_reader.create_graph_relation(
+            "ws", {"source": "e1", "target": "e2", "label": "uses"}
+        )
+        assert out is not None  # global path unchanged: existence-only check
+        assert any("MERGE" in q for q in write.queries)
+
+
 # ── read_graph_native (the route's path) with mocked index loaders ────────
 
 
@@ -874,3 +977,31 @@ async def test_update_entity_live_refused_when_mixed(seeded):
         row = await result.single()
         await result.consume()
     assert row["d"] == "shared"  # unchanged
+
+
+@pytestmark_integration
+async def test_create_relation_live_refused_to_out_of_folder_endpoint(seeded):
+    """From folder A, creating a relation e1→e2 (e2 is doc-b, B-only) must be
+    refused: no edge linking into another folder's entity by id. No edge lands."""
+    import twindb_lightrag_memgraph.server.folder as folder_mod
+    from twindb_lightrag_memgraph import _pool
+
+    tok = _bind_folder("A")
+    try:
+        out = await graph_reader.create_graph_relation(
+            _WS, {"source": "e1", "target": "e2", "label": "leaks"}
+        )
+        assert out is None  # e2 is out-of-folder for A → refused (422)
+    finally:
+        folder_mod._active_folder_id.reset(tok)
+
+    # No DIRECTED edge e1→e2 should exist (the seeded edge is e1→e2 with
+    # provenance chunk-b; assert no edge carries the new 'leaks' keyword).
+    async with _pool.get_read_session() as s:
+        result = await s.run(
+            f"MATCH (:`{_WS}` {{entity_id:'e1'}})-[r:DIRECTED]->"
+            f"(:`{_WS}` {{entity_id:'e2'}}) RETURN r.keywords AS k"
+        )
+        rows = [rec["k"] async for rec in result]
+        await result.consume()
+    assert "leaks" not in rows  # the refused create wrote nothing

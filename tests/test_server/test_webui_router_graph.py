@@ -615,6 +615,19 @@ class TestGraphLifecycle:
         )
         assert r.status_code == 422
 
+    async def test_post_relation_409_on_mixed_endpoint(self, monkeypatch, client):
+        async def fake_create_mixed(workspace, payload):
+            raise gr.MixedProvenanceError(payload.get("target"))
+
+        monkeypatch.setattr(gr, "create_graph_relation", fake_create_mixed)
+
+        r = await client.post(
+            "/graph/relations",
+            json={"source": "kg_A", "target": "kg_shared", "label": "uses"},
+        )
+        assert r.status_code == 409
+        assert "shared" in r.json()["detail"].lower()
+
     async def test_delete_relation_204(self, monkeypatch, client):
         async def fake_delete_rel(workspace, rel_id):
             return True

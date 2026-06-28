@@ -1555,16 +1555,36 @@ async def create_graph_relation(
     Returns the projected relation on success; ``None`` if either
     endpoint is missing (route maps to 422). Idempotent: re-issuing
     the same source/target pair MERGEs onto the existing edge.
+
+    **Folder cloisonnement** (a folder is bound): both endpoints must be
+    *pure-member* of the active folder. An out-of-folder endpoint → ``None``
+    (422) — this is the gate that stops a relation from folder A to a B-only
+    entity known by id. A *mixed* (cross-folder shared) endpoint raises
+    ``MixedProvenanceError`` (→ 409): anchoring a new edge on a shared node
+    would add an edge the other folder also sees, i.e. mutate the shared
+    subgraph from a single folder (same doctrine as the PATCH/DELETE gate). No
+    folder bound (native/legacy caller) keeps the global existence-only check.
     """
     src = _strip_node_prefix(str(payload.get("source") or ""))
     tgt = _strip_node_prefix(str(payload.get("target") or ""))
     if not src or not tgt:
         return None
-    if not (
-        await entity_exists(workspace, src)
-        and await entity_exists(workspace, tgt)
-    ):
-        return None
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    if member_docs is None:
+        if not (
+            await entity_exists(workspace, src)
+            and await entity_exists(workspace, tgt)
+        ):
+            return None
+    else:
+        for endpoint in (src, tgt):
+            verdict = await _entity_mutation_gate(
+                workspace, endpoint, chunk_to_doc, member_docs
+            )
+            if verdict == _GATE_ABSENT:
+                return None
+            if verdict == _GATE_MIXED:
+                raise MixedProvenanceError(endpoint)
 
     label_kw = (payload.get("label") or "").strip()
     if not label_kw:

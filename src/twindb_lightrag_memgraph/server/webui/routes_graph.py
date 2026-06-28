@@ -359,7 +359,10 @@ async def delete_graph_entity_endpoint(entity_id: str) -> None:
     "/graph/relations",
     response_model=GraphRelation,
     status_code=201,
-    responses={422: {"description": "Invalid graph relation"}},
+    responses={
+        409: {"description": "Endpoint shared with another folder (mixed provenance)"},
+        422: {"description": "Invalid graph relation"},
+    },
 )
 async def create_graph_relation_endpoint(
     body: GraphRelationCreate,
@@ -369,7 +372,10 @@ async def create_graph_relation_endpoint(
 
     label = _graph_memgraph_label()
     payload = body.model_dump(exclude_unset=True)
-    relation = await graph_reader.create_graph_relation(label, payload)
+    try:
+        relation = await graph_reader.create_graph_relation(label, payload)
+    except graph_reader.MixedProvenanceError:
+        raise HTTPException(409, _MIXED_PROVENANCE_DETAIL.format(kind="entity"))
     if relation is None:
         raise HTTPException(
             422,
