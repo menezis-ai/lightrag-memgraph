@@ -385,23 +385,49 @@ describe('GraphTab — selection + detail', () => {
     expect(entityPanel?.textContent).toMatch(/Red Hat Enterprise Linux/);
   });
 
-  it('"View documents" CTA navigates with the entity name as the query', async () => {
-    // Document filtering is available in the graph rail. This CTA stays a
-    // broader documents-tab query so it works for generated entities that
-    // only have a name and no projected source_docs.
+  it('"View documents" CTA navigates with exact source_docs when available', async () => {
     const p = defaultProps();
-    renderWithClient(<GraphTab {...p} />);
+    renderWithClient(
+      <GraphTab
+        {...p}
+        entities={[
+          {
+            ...GRAPH_ENTITY_FIXTURES[0],
+            source_docs: ['doc-oracle'],
+          },
+        ]}
+        relations={[]}
+        docLabels={{ 'doc-oracle': 'oracle-restart-procedure.pdf' }}
+      />,
+    );
     const detail = document.querySelector('.kg-detail') as HTMLElement;
     const cta = Array.from(detail.querySelectorAll('button')).find((b) =>
-      b.textContent?.match(/View documents mentioning/),
+      b.textContent?.match(/View documents/),
     );
     expect(cta).toBeDefined();
     await userEvent.click(cta!);
     expect(p.onNavigate).toHaveBeenCalledTimes(1);
     const [tabArg, paramsArg] = p.onNavigate.mock.calls[0];
     expect(tabArg).toBe('documents');
-    expect(paramsArg).toHaveProperty('q');
-    expect(typeof paramsArg.q).toBe('string');
+    expect(paramsArg).toEqual({
+      doc: 'doc-oracle',
+      source: 'oracle-restart-procedure.pdf',
+    });
+  });
+
+  it('"View documents" CTA falls back to text query without source_docs', async () => {
+    const p = defaultProps();
+    renderWithClient(<GraphTab {...p} />);
+    const detail = document.querySelector('.kg-detail') as HTMLElement;
+    const cta = Array.from(detail.querySelectorAll('button')).find((b) =>
+      b.textContent?.match(/View documents/),
+    );
+    expect(cta).toBeDefined();
+    await userEvent.click(cta!);
+    expect(p.onNavigate).toHaveBeenCalledTimes(1);
+    const [tabArg, paramsArg] = p.onNavigate.mock.calls[0];
+    expect(tabArg).toBe('documents');
+    expect(paramsArg).toEqual({ q: GRAPH_ENTITY_FIXTURES[0].name });
   });
 
   it('saves Entity type changes through the graph entity PATCH payload', async () => {

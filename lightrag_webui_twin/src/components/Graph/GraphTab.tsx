@@ -458,6 +458,7 @@ export function GraphTab({
           entities={entities}
           relations={relations}
           typeLabels={GRAPH_TYPE_LABEL}
+          docLabels={docLabels}
           tagCatalog={tagCatalog}
           propertyKeySuggestions={propertyKeySuggestions}
           onSelect={(id) => {

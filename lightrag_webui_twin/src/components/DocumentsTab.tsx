@@ -77,7 +77,11 @@ function documentMatchesSearchAndTags(
   if (tagFilters.length && !tagFilters.every((tag) => doc.tags.includes(tag))) {
     return false;
   }
-  return sourceFilters.length === 0 || sourceFilters.includes(doc.file_path);
+  return (
+    sourceFilters.length === 0 ||
+    sourceFilters.includes(doc.file_path) ||
+    sourceFilters.includes(doc.doc_id)
+  );
 }
 
 function statusCountsFor(

@@ -25,6 +25,7 @@ interface GraphDetailPanelProps {
   entities: readonly GraphEntity[];
   relations: readonly GraphRelation[];
   typeLabels: Record<GraphEntityType, string>;
+  docLabels?: Readonly<Record<string, string>>;
   /** TR-KG-03: active tag catalog. Empty list disables the node
    *  tag editor's autocomplete + lets any free text through (used
    *  by the legacy seed tests that don't render a catalog). */
@@ -46,6 +47,7 @@ export function GraphDetailPanel({
   entities,
   relations,
   typeLabels,
+  docLabels,
   tagCatalog,
   propertyKeySuggestions,
   onSelect,
@@ -95,6 +97,7 @@ export function GraphDetailPanel({
         relations={relations}
         colors={colors}
         typeLabels={typeLabels}
+        docLabels={docLabels}
         tagCatalog={tagCatalog}
         propertyKeySuggestions={propertyKeySuggestions}
         onSelectRelation={onSelectRelation}
@@ -118,6 +121,7 @@ interface EntityEditorProps {
   relations: readonly GraphRelation[];
   colors: Record<GraphEntityType, string>;
   typeLabels: Record<GraphEntityType, string>;
+  docLabels?: Readonly<Record<string, string>>;
   /** TR-KG-03: active tag catalog passed down to the in-editor
    *  TagAttrEditor so unknown tags can't reach the backend.
    *  Empty list disables the binding (mirrors GraphTab's default). */
@@ -614,6 +618,7 @@ function EntityEditor({
   relations,
   colors,
   typeLabels,
+  docLabels,
   tagCatalog,
   propertyKeySuggestions,
   onSelectRelation,
@@ -802,9 +807,16 @@ function EntityEditor({
             <button
               className="ghost-btn"
               onClick={() => {
-                // Mock-kill F3 — navigation falls back to a text query
-                // on the entity name; the previous per-entity source
-                // list came from a prototype map keyed by local ids.
+                const sourceDocs = entity.source_docs ?? [];
+                if (sourceDocs.length > 0) {
+                  const sources = sourceDocs.map((doc) => docLabels?.[doc] ?? doc);
+                  const params: Record<string, string> = {
+                    source: sources.join(','),
+                  };
+                  if (sourceDocs.length === 1) params.doc = sourceDocs[0];
+                  onNavigate?.('documents', params);
+                  return;
+                }
                 onNavigate?.('documents', { q: entity.name });
               }}
               type="button"

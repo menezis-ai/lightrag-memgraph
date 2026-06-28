@@ -143,6 +143,21 @@ describe('DocumentsTab — filters', () => {
     expect(screen.getByTestId('docs-row-d4')).toBeInTheDocument();
   });
 
+  it('?source= also filters by doc_id for Graph source_docs drilldown', () => {
+    const target = DOCUMENT_FIXTURES[0].doc_id;
+    window.history.replaceState(
+      null,
+      '',
+      `/?source=${encodeURIComponent(target)}`,
+    );
+    renderTab(<DocumentsTab {...defaultProps()} />);
+
+    expect(screen.getByTestId('source-filter-row')).toBeInTheDocument();
+    expect(screen.getByTestId(`source-filter-${target}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`docs-row-${target}`)).toBeInTheDocument();
+    expect(screen.queryByTestId('docs-row-d4')).toBeNull();
+  });
+
   it('search filters by source name', async () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');
