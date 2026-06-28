@@ -418,7 +418,7 @@ test.describe('real backend smoke', () => {
 
     await page.goto('/');
 
-    const targetDocId = bulkDeleteDocId ?? (await uploadTextDocument(page));
+    const targetDocId = uploadForDelete ? await uploadTextDocument(page) : bulkDeleteDocId!;
     const result = await fetchFromBrowser<{ deleted: number; failed: string[] }>(
       page,
       '/twin/api/documents/bulk-delete',
