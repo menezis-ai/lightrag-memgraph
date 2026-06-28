@@ -126,6 +126,40 @@ input:focus, textarea:focus, select:focus { outline: none; }
   margin-bottom: 24px;
 }
 
+.login-brand .brand-mark {
+  box-sizing: border-box;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(150deg, var(--blue) 10%, var(--blue-bright) 120%);
+  box-shadow: 0 2px 8px rgba(45, 90, 142, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.login-brand .brand-mark::before,
+.login-brand .brand-mark::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.login-brand .brand-mark::before {
+  left: 9px;
+}
+
+.login-brand .brand-mark::after {
+  right: 9px;
+  opacity: 0.62;
+}
+
 .login-brand h1 {
   margin: 0;
   font-size: 20px;
@@ -8379,12 +8413,15 @@ body:where(*) {
 }
 
 .topbar .brand-mark:where(*) {
+  box-sizing: border-box;
+  flex: 0 0 32px;
   width: 32px;
   height: 32px;
   border-radius: 9px;
   background: linear-gradient(150deg, var(--blue) 10%, var(--blue-bright) 120%);
   box-shadow: 0 2px 6px rgba(45, 90, 142, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   color: transparent;
+  font-size: 0;
   position: relative;
 }
 
@@ -8395,7 +8432,7 @@ body:where(*) {
   top: 9px;
   bottom: 9px;
   width: 7px;
-  border-radius: 1px;
+  border-radius: 2px;
   background: rgba(255, 255, 255, 0.94);
 }
 
@@ -9072,19 +9109,25 @@ body:where(*) {
 }
 
 .tag-detail:where(*):where(*) {
-  height: max-content;
+  height: 100%;
+  min-height: 0;
   max-height: 100%;
   border: 1px solid var(--border);
   border-radius: 13px;
   background: var(--surface);
   box-shadow: var(--shadow-md);
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .activity:where(*):where(*):where(*) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   height: calc(100vh - 62px);
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   gap: 18px;
   padding: 22px 28px 28px;
   align-items: start;
@@ -9097,6 +9140,11 @@ body:where(*) {
   padding: 0;
   border-right: 0;
   overflow: hidden;
+}
+
+.activity-detail:where(*) {
+  min-width: 0;
+  height: 100%;
 }
 
 .activity-header:where(*) {

@@ -82,6 +82,23 @@ class TestDocumentMetadataEndpoint:
         assert body["classification"]["class_id"] == "C2"
         assert body["metadata"]["classification"]["raw_name"] == "C2 Confidentiel"
 
+    async def test_empty_graph_tags_do_not_fall_back_to_stale_metadata(
+        self, monkeypatch, client
+    ):
+        async def graph_tags_empty(_doc_id: str) -> list[str]:
+            return []
+
+        monkeypatch.setattr(
+            webui_router,
+            "_graph_tags_for_doc_or_none",
+            graph_tags_empty,
+        )
+
+        r = await client.get("/documents/doc-c2/metadata")
+
+        assert r.status_code == 200
+        assert r.json()["tags"] == []
+
     async def test_hides_document_from_another_folder(self, client):
         r = await client.get("/documents/doc-sandbox/metadata")
 

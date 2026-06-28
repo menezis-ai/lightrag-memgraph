@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from typing import Any
 
 from .. import _pool
@@ -130,7 +131,6 @@ class MemgraphActivityStore:
     def __init__(self, workspace: str = "default") -> None:
         validate_identifier(workspace, "workspace")
         self._workspace = workspace
-        self._now_ms = webui_seed.ACTIVITY_NOW_MS
 
     @property
     def _label(self) -> str:
@@ -240,7 +240,7 @@ class MemgraphActivityStore:
         filtered = [
             e for e in events if _matches(e, kind=kind, sev=sev, actor=actor, q=q)
         ]
-        return filtered, self._now_ms
+        return filtered, int(time.time() * 1000)
 
     async def append(self, event: dict[str, Any]) -> dict[str, Any]:
         if "id" not in event:

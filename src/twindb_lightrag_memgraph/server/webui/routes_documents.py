@@ -80,8 +80,12 @@ async def get_document_metadata(doc_id: str) -> dict[str, Any]:
 
     doc = await legacy._get_doc_for_active_folder(doc_id)
     metadata = doc.get("metadata") or {}
-    graph_tags = await legacy._graph_tags_for_doc(doc_id)
-    tags = graph_tags or list(metadata.get("tags") or doc.get("tags") or [])
+    graph_tags = await legacy._graph_tags_for_doc_or_none(doc_id)
+    tags = (
+        graph_tags
+        if graph_tags is not None
+        else list(metadata.get("tags") or doc.get("tags") or [])
+    )
     folder = doc.get("folder") or metadata.get("folder") or legacy.current_folder_id()
     return {
         "tags": tags,

@@ -774,7 +774,40 @@ function upsertTag(tag: TagEntry): TagEntry {
   return tag;
 }
 
-function recordTagMutation(name: string, suffix: string): void {
+function cascadeDeletedTagFromDocuments(
+  name: string,
+  strategy: 'migrate' | 'untag' = 'untag',
+  to?: string,
+): number {
+  let affected = 0;
+  documentsState = documentsState.map((doc) => {
+    if (!doc.tags.includes(name)) return doc;
+    affected += 1;
+    const nextTags = doc.tags.filter((tag) => tag !== name);
+    if (strategy === 'migrate' && to && !nextTags.includes(to)) {
+      nextTags.push(to);
+    }
+    return { ...doc, tags: nextTags };
+  });
+  if (affected > 0) persistDocumentsState();
+  return affected;
+}
+
+function recordActivity(event: ActivityEvent): void {
+  activityState = [event, ...activityState];
+  persistActivityState();
+}
+
+function recordTagMutation(
+  name: string,
+  suffix: string,
+  options: {
+    actor?: string;
+    sev?: ActivityEvent['sev'];
+    meta?: Record<string, unknown>;
+  } = {},
+): void {
+  const actor = options.actor ?? 'claire.benoit';
   notificationState = [
     {
       id: `n_tag_${name}_${Date.now()}`,
@@ -788,23 +821,43 @@ function recordTagMutation(name: string, suffix: string): void {
     },
     ...notificationState,
   ];
-  activityState = [
-    {
-      id: `evt_tag_${name}_${Date.now()}`,
-      ts: '2026-06-02T00:00:00Z',
-      rel: 'now',
-      day: 'Today',
-      kind: 'tag-mutation',
-      sev: 'info',
-      actor: { user: 'claire.benoit', role: 'KB Admin' },
-      target: { type: 'tag', label: name, id: name },
-      summary: `Tag ${name} ${suffix}`,
-      meta: { tag: name, action: suffix },
-    },
-    ...activityState,
-  ];
+  recordActivity({
+    id: `evt_tag_${name}_${Date.now()}`,
+    ts: new Date().toISOString(),
+    rel: 'now',
+    day: 'Today',
+    kind: 'tag-mutation',
+    sev: options.sev ?? 'info',
+    actor: { user: actor, role: 'KB Admin' },
+    target: { type: 'tag', label: name, id: name },
+    summary: `Tag ${name} ${suffix}`,
+    meta: options.meta ?? { tag: name, action: suffix },
+  });
   persistNotificationState();
-  persistActivityState();
+}
+
+function recordDocumentActivity(
+  kind: Extract<ActivityEvent['kind'], 'doc-approved' | 'doc-rejected' | 'doc-deleted'>,
+  doc: Document,
+  summary: string,
+  meta: Record<string, unknown>,
+  options: {
+    actor?: string;
+    sev?: ActivityEvent['sev'];
+  } = {},
+): void {
+  recordActivity({
+    id: `evt_doc_${doc.doc_id}_${kind}_${Date.now()}`,
+    ts: new Date().toISOString(),
+    rel: 'now',
+    day: 'Today',
+    kind,
+    sev: options.sev ?? 'info',
+    actor: { user: options.actor ?? 'operator.demo', role: 'KB Steward' },
+    target: { type: 'document', label: doc.file_path, id: doc.doc_id },
+    summary,
+    meta: { doc_id: doc.doc_id, ...meta },
+  });
 }
 
 function authGateResponse(
@@ -1469,14 +1522,25 @@ export const handlers = [
     recordTagMutation(name, 'approved');
     return HttpResponse.json(next);
   }),
-  http.post(`${ANY}${TWIN}/tags/:name/reject`, ({ params }) => {
+  http.post(`${ANY}${TWIN}/tags/:name/reject`, async ({ params, request }) => {
     const name = String(params.name);
+    const body = (await request.json().catch(() => ({}))) as {
+      actor?: string;
+      reason?: string;
+    };
+    const reason = body.reason?.trim() || 'rejected';
     const current = tagState.find((t) => t.tag === name);
     const next = upsertTag({
       ...(current ?? tagEntryStub(name, 'rejected', 'rejected')),
       status: 'rejected',
       tier: 3,
-      last_edit: { by: 'system', at: '2026-05-29', action: 'rejected' },
+      reject_reason: reason,
+      last_edit: { by: body.actor ?? 'system', at: '2026-05-29', action: 'rejected' },
+    });
+    recordTagMutation(name, `rejected: ${reason}`, {
+      actor: body.actor,
+      sev: 'warning',
+      meta: { tag: name, action: 'rejected', reason },
     });
     return HttpResponse.json(next);
   }),
@@ -1517,9 +1581,28 @@ export const handlers = [
       return HttpResponse.json(next);
     },
   ),
-  http.delete(`${ANY}${TWIN}/tags/:name`, ({ params }) => {
-    tagState = tagState.filter((t) => t.tag !== String(params.name));
+  http.delete(`${ANY}${TWIN}/tags/:name`, async ({ params, request }) => {
+    const name = String(params.name);
+    const body = (await request.json().catch(() => ({}))) as {
+      strategy?: 'migrate' | 'untag';
+      to?: string;
+    };
+    const strategy = body.strategy ?? 'untag';
+    if (strategy === 'migrate' && body.to && !tagState.some((t) => t.tag === body.to)) {
+      return HttpResponse.json(
+        { detail: `Migration target tag '${body.to}' not found` },
+        { status: 404 },
+      );
+    }
+    tagState = tagState.filter((t) => t.tag !== name);
     persistTagState();
+    const affected = cascadeDeletedTagFromDocuments(name, strategy, body.to);
+    recordTagMutation(
+      name,
+      strategy === 'migrate'
+        ? `migrated to ${body.to}`
+        : `deleted (${affected} docs untagged)`,
+    );
     return HttpResponse.json({ ok: true });
   }),
 
@@ -1558,6 +1641,7 @@ export const handlers = [
         await new Promise((resolve) => setTimeout(resolve, e2eScenario.approveDelayMs));
       }
       const body = (await request.json().catch(() => ({}))) as {
+        actor?: string;
         edits?: Partial<Document>;
       };
       const doc = documentsState.find((d) => d.doc_id === id);
@@ -1567,6 +1651,15 @@ export const handlers = [
         status: 'PROCESSED',
         review: { ...doc.review!, state: 'approved' as const },
       });
+      if (updated) {
+        recordDocumentActivity(
+          'doc-approved',
+          updated,
+          `approved by ${body.actor ?? 'operator.demo'}${body.edits ? ' with edits' : ''}`,
+          { edits: body.edits ?? {} },
+          { actor: body.actor },
+        );
+      }
       return HttpResponse.json(updated);
     },
   ),
@@ -1574,16 +1667,26 @@ export const handlers = [
     `${ANY}${TWIN}/documents/:id/reject`,
     async ({ params, request }) => {
       const id = String(params.id);
-      const body = (await request.json()) as { reason: string };
+      const body = (await request.json()) as { actor?: string; reason: string };
       const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
+      const reason = body.reason?.trim() || 'rejected';
       const updated = updateDoc(id, {
         review: {
           ...doc.review!,
           state: 'rejected' as const,
-          justification: body.reason,
+          justification: reason,
         },
       });
+      if (updated) {
+        recordDocumentActivity(
+          'doc-rejected',
+          updated,
+          `rejected: ${reason}`,
+          { reason },
+          { actor: body.actor, sev: 'warning' },
+        );
+      }
       return HttpResponse.json(updated);
     },
   ),
@@ -1648,9 +1751,24 @@ export const handlers = [
     },
   ),
   http.post(`${ANY}${TWIN}/documents/bulk-delete`, async ({ request }) => {
-    const body = (await request.json()) as { doc_ids: string[] };
+    const body = (await request.json()) as { actor?: string; doc_ids: string[] };
     const ids = new Set(body.doc_ids);
+    const deletedDocs = documentsState.filter((d) => ids.has(d.doc_id));
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
+    deletedDocs.forEach((doc) => {
+      delete documentMemberships[doc.doc_id];
+      recordDocumentActivity(
+        'doc-deleted',
+        doc,
+        `deleted by ${body.actor ?? 'operator.demo'}`,
+        {
+          folder: doc.folder,
+          operation: 'bulk-delete',
+          physically_deleted: true,
+        },
+        { actor: body.actor },
+      );
+    });
     ids.forEach((id) => {
       delete documentMemberships[id];
     });
@@ -1661,7 +1779,10 @@ export const handlers = [
         setTimeout(res, e2eScenario.bulkDeleteDelayMs),
       );
     }
-    return HttpResponse.json({ deleted: body.doc_ids.length });
+    const failed = body.doc_ids.filter(
+      (id) => !deletedDocs.some((doc) => doc.doc_id === id),
+    );
+    return HttpResponse.json({ deleted: deletedDocs.length, failed });
   }),
   http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {
     if (e2eScenario.bulkRetagStatus) {

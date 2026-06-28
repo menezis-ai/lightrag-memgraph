@@ -101,7 +101,7 @@ export function Topbar({
         aria-label="Open Documents"
         title="Open Documents"
       >
-        <div className="brand-mark">TK</div>
+        <div className="brand-mark" aria-hidden="true" />
         <span className="brand-name">
           <span>Twin</span>
           {' '}

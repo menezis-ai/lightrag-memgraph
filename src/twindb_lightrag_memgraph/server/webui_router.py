@@ -23,6 +23,7 @@ from .webui.router import (
     _get_doc_for_active_folder,
     _get_rag,
     _graph_tags_for_doc,
+    _graph_tags_for_doc_or_none,
     _infer_document_type,
     _list_documents_from_doc_status,
     _project_doc_status_for_webui,
@@ -62,6 +63,11 @@ async def _get_doc_for_active_folder(doc_id: str) -> dict[str, Any]:
 async def _graph_tags_for_doc(doc_id: str) -> list[str]:
     _sync_patchable_helpers()
     return await _router_module._graph_tags_for_doc(doc_id)
+
+
+async def _graph_tags_for_doc_or_none(doc_id: str) -> list[str] | None:
+    _sync_patchable_helpers()
+    return await _router_module._graph_tags_for_doc_or_none(doc_id)
 
 
 async def _list_documents_from_doc_status(

@@ -9,7 +9,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { setupServer } from 'msw/node';
-import { handlers } from './handlers';
+import { handlers, resetDocumentsState } from './handlers';
 import {
   ACTIVITY_NOW_MS,
   API_VERSION,
@@ -24,7 +24,10 @@ import {
 const server = setupServer(...handlers);
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  resetDocumentsState();
+});
 afterAll(() => server.close());
 
 const BASE = 'http://localhost';
@@ -211,6 +214,31 @@ describe('MSW handlers — Twin overlay endpoints', () => {
 });
 
 describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
+  it(`DELETE ${TWIN}/tags/cft untags documents in the native /documents feed`, async () => {
+    const before = await getJson<{
+      items: Array<{ file_path: string; tags: string[] }>;
+    }>('/documents');
+    const draftBefore = before.items.find(
+      (doc) => doc.file_path === 'cft-vendor-api-spec-draft.pdf',
+    );
+    expect(draftBefore?.tags).toEqual(['cft', 'network']);
+
+    const del = await fetch(`${BASE}${TWIN}/tags/cft`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: 'untag' }),
+    });
+    expect(del.ok).toBe(true);
+
+    const after = await getJson<{
+      items: Array<{ file_path: string; tags: string[] }>;
+    }>('/documents');
+    const draftAfter = after.items.find(
+      (doc) => doc.file_path === 'cft-vendor-api-spec-draft.pdf',
+    );
+    expect(draftAfter?.tags).toEqual(['network']);
+  });
+
   it('DELETE /documents/d4 cascades to graph entities orphaned by d4', async () => {
     // d4 is the only fixture doc sourcing e_memgraph / e_mage / e_lightrag / e_cypher.
     const before = await getJson<unknown[]>(`${TWIN}/graph/entities`);
