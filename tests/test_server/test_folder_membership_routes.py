@@ -169,6 +169,23 @@ class TestRemoveMembership:
         assert r.status_code == 404
 
 
+class TestMembershipActivity:
+    async def test_folder_membership_events_are_serializable(self, client):
+        add = await client.post(
+            "/documents/doc-a/folders", json={"folder_id": "sandbox"}
+        )
+        assert add.status_code == 200
+
+        remove = await client.delete("/documents/doc-a/folders/default")
+        assert remove.status_code == 200
+
+        activity = await client.get("/activity")
+        assert activity.status_code == 200
+        kinds = {event["kind"] for event in activity.json()["items"]}
+        assert "doc-folder-added" in kinds
+        assert "doc-folder-removed" in kinds
+
+
 # ── Bulk-delete routed through ref-count ─────────────────────────────────
 
 

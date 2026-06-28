@@ -823,11 +823,18 @@ describe('AppShell — documents tab derivations', () => {
 
 // ── Optimistic uploads + dedupe ──────────────────────────────────────────────
 describe('AppShell — backend error banner', () => {
-  it('renders the banner when any resource query errors', () => {
-    queriesState.tags.isError = true;
-    queriesState.tags.error = new Error('tags exploded');
+  it('renders the banner when the document list query errors', () => {
+    queriesState.docs.isError = true;
+    queriesState.docs.error = new Error('documents exploded');
     renderShell();
     expect(screen.getByTestId('backend-data-error')).toBeInTheDocument();
+  });
+
+  it('does not render the document-list banner for unrelated resource errors', () => {
+    queriesState.activity.isError = true;
+    queriesState.activity.error = new Error('activity exploded');
+    renderShell();
+    expect(screen.queryByTestId('backend-data-error')).toBeNull();
   });
 
   it('hides the banner when all queries are healthy', () => {

@@ -322,7 +322,7 @@ function NotificationsPopover({
   const unread = notifications.filter((n) => !n.read).length;
 
   return (
-    <dialog open className="notif-popover" aria-label="Notifications">
+    <div role="dialog" className="notif-popover" aria-label="Notifications">
       <header className="notif-h">
         <span className="notif-title">Notifications</span>
         <span className="notif-count">
@@ -410,6 +410,6 @@ function NotificationsPopover({
           </button>
         )}
       </footer>
-    </dialog>
+    </div>
   );
 }

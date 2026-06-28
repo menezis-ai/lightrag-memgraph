@@ -1112,6 +1112,11 @@ dialog.pipeline-popover {
   padding: 0;
   color: inherit;
 }
+.notif-popover {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+}
 .modal-backdrop > dialog.modal,
 .modal-bg > dialog.modal {
   position: relative;
@@ -3173,8 +3178,9 @@ dialog::backdrop {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 380px;
-  max-height: 520px;
+  width: min(380px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: min(520px, calc(100vh - 96px));
   display: flex; flex-direction: column;
   background: var(--color-background-primary);
   border: 0.5px solid var(--color-border-secondary);
@@ -3184,6 +3190,7 @@ dialog::backdrop {
   overflow: hidden;
   animation: ws-menu-in 120ms ease-out;
 }
+
 .notif-h {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -8568,6 +8575,18 @@ body:where(*) {
 .notif-f {
   background: var(--surface-warm);
   border-color: var(--border-soft);
+}
+
+@media (max-width: 520px) {
+  .notif-popover {
+    position: fixed;
+    top: 72px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 96px);
+  }
 }
 
 .btn,

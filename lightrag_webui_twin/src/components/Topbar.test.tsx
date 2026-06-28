@@ -190,6 +190,16 @@ describe('Topbar — notifications', () => {
     ).toBeInTheDocument();
   });
 
+  it('uses an anchored popover element instead of a native dialog', async () => {
+    render(<Topbar {...baseProps()} />);
+    await userEvent.click(
+      screen.getByRole('button', { name: /Notifications, 1 unread/ }),
+    );
+    expect(
+      screen.getByRole('dialog', { name: 'Notifications' }).tagName,
+    ).toBe('DIV');
+  });
+
   it('shows "all caught up" when notifications is empty', async () => {
     render(<Topbar {...baseProps()} notifications={[]} unreadCount={0} />);
     await userEvent.click(screen.getByRole('button', { name: /Notifications$/ }));

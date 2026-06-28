@@ -45,11 +45,7 @@ import type { Document } from '../types/document';
 import type { Theme, Folder } from '../types/topbar';
 import { dedupeDocumentsBySource } from '../utils/documents';
 import { tagCatalogForSuggestions } from '../utils/tags';
-import {
-  type BackendResourceError,
-  formatBackendError,
-  resourceError,
-} from './appErrors';
+import { formatBackendError, resourceError } from './appErrors';
 import {
   CURRENT_USER,
   DOCUMENTS_STATUS_FILTERS,
@@ -325,20 +321,11 @@ export function AppShell() {
     setTab,
   });
 
-  const backendErrors = [
-    resourceError('Documents', docs),
-    resourceError('Folders', folders),
-    resourceError('Notifications', notificationsQ),
-    resourceError('Tags', tags),
-    resourceError('Tag categories', tagCategories),
-    resourceError('Activity', activity),
-    resourceError('Graph entities', graphEntities),
-    resourceError('Graph relations', graphRelations),
-  ].filter((err): err is BackendResourceError => err !== null);
+  const documentsError = resourceError('Documents', docs);
 
   // Resolved props. Do not silently fall back to local samples: empty arrays
-  // + the backend error banner make failures visible instead of showing stale
-  // sample data.
+  // + the document error banner make document-list failures visible instead
+  // of showing stale sample data.
   const backendDocList = useMemo(
     () => docs.data?.items ?? [],
     [docs.data],
@@ -471,7 +458,7 @@ export function AppShell() {
           setTab('settings');
         }}
       />
-      {backendErrors.length > 0 && (
+      {documentsError && (
         <div className="sys-banner-stack" role="status" aria-live="polite">
           <div className="sys-banner sys-info" data-testid="backend-data-error">
             <span className="sys-banner-ico" aria-hidden="true">

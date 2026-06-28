@@ -15,6 +15,8 @@ export type ActivityKind =
   | 'doc-approved'
   | 'doc-rejected'
   | 'doc-deleted'
+  | 'doc-folder-added'
+  | 'doc-folder-removed'
   | 'classification-rejected'
   | 'source-uploaded'
   | 'source-ready'
@@ -89,6 +91,16 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
   'doc-deleted': {
     label: 'Document deleted',
     icon: 'trash',
+    color: 'var(--color-text-secondary)',
+  },
+  'doc-folder-added': {
+    label: 'Document added to folder',
+    icon: 'folder',
+    color: 'var(--twin-accent)',
+  },
+  'doc-folder-removed': {
+    label: 'Document removed from folder',
+    icon: 'folder',
     color: 'var(--color-text-secondary)',
   },
   'classification-rejected': {
