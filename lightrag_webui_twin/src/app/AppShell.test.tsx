@@ -54,7 +54,7 @@ vi.mock('../hooks/useAuth', () => ({
 const setActiveFolderMock = vi.hoisted(() => vi.fn());
 vi.mock('../api/client', () => ({
   setActiveFolder: setActiveFolderMock,
-  getTwinRuntimeConfig: () => ({ defaultFolderId: 'default', folders: undefined }),
+  getTwinRuntimeConfig: () => authState.current.config,
   ApiError: class ApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -116,16 +116,55 @@ const queriesState = vi.hoisted(() => {
   };
 });
 
+const queriesSpy = vi.hoisted(() => ({
+  useDocuments: [] as unknown[][],
+  useFolders: [] as unknown[][],
+  useNotifications: [] as unknown[][],
+  useTags: [] as unknown[][],
+  useTagCategories: [] as unknown[][],
+  useActivity: [] as unknown[][],
+  useGraphEntities: [] as unknown[][],
+  useGraphRelations: [] as unknown[][],
+  usePipelineStatus: [] as unknown[][],
+}));
+
 vi.mock('../api/queries', () => ({
-  useDocuments: () => queriesState.docs,
-  useFolders: () => queriesState.folders,
-  useNotifications: () => queriesState.notifications,
-  useTags: () => queriesState.tags,
-  useTagCategories: () => queriesState.tagCategories,
-  useActivity: () => queriesState.activity,
-  useGraphEntities: () => queriesState.graphEntities,
-  useGraphRelations: () => queriesState.graphRelations,
-  usePipelineStatus: () => queriesState.pipelineStatus,
+  useDocuments: (...args: unknown[]) => {
+    queriesSpy.useDocuments.push(args);
+    return queriesState.docs;
+  },
+  useFolders: (...args: unknown[]) => {
+    queriesSpy.useFolders.push(args);
+    return queriesState.folders;
+  },
+  useNotifications: (...args: unknown[]) => {
+    queriesSpy.useNotifications.push(args);
+    return queriesState.notifications;
+  },
+  useTags: (...args: unknown[]) => {
+    queriesSpy.useTags.push(args);
+    return queriesState.tags;
+  },
+  useTagCategories: (...args: unknown[]) => {
+    queriesSpy.useTagCategories.push(args);
+    return queriesState.tagCategories;
+  },
+  useActivity: (...args: unknown[]) => {
+    queriesSpy.useActivity.push(args);
+    return queriesState.activity;
+  },
+  useGraphEntities: (...args: unknown[]) => {
+    queriesSpy.useGraphEntities.push(args);
+    return queriesState.graphEntities;
+  },
+  useGraphRelations: (...args: unknown[]) => {
+    queriesSpy.useGraphRelations.push(args);
+    return queriesState.graphRelations;
+  },
+  usePipelineStatus: (...args: unknown[]) => {
+    queriesSpy.usePipelineStatus.push(args);
+    return queriesState.pipelineStatus;
+  },
 }));
 
 // ── resources mock (RetrievalTab query + reprocess) ──────────────────────────
@@ -648,6 +687,17 @@ function resetQueries() {
     pipelineStatus: { ...q(), refetch: vi.fn().mockResolvedValue(undefined) },
   });
 }
+function resetQueriesSpy() {
+  queriesSpy.useDocuments.length = 0;
+  queriesSpy.useFolders.length = 0;
+  queriesSpy.useNotifications.length = 0;
+  queriesSpy.useTags.length = 0;
+  queriesSpy.useTagCategories.length = 0;
+  queriesSpy.useActivity.length = 0;
+  queriesSpy.useGraphEntities.length = 0;
+  queriesSpy.useGraphRelations.length = 0;
+  queriesSpy.usePipelineStatus.length = 0;
+}
 
 beforeEach(() => {
   resetQueries();
@@ -661,6 +711,7 @@ beforeEach(() => {
   globalThis.localStorage.clear();
   globalThis.history.replaceState(null, '', '/');
   vi.clearAllMocks();
+  resetQueriesSpy();
 });
 
 afterEach(() => {
@@ -971,6 +1022,55 @@ describe('AppShell — tab navigation', () => {
 
 // ── Folder switching + folderList ────────────────────────────────────────────
 describe('AppShell — folders', () => {
+  it('keeps a persisted folder when it is still provisioned at runtime', () => {
+    globalThis.localStorage.setItem('twin.ui.folder.v1', 'finance');
+    authState.current.config = {
+      defaultFolderId: 'default',
+      folders: [
+        { id: 'default', label: 'Default KB', kind: 'standard', sources: 4 },
+        { id: 'finance', label: 'Finance', kind: 'standard', sources: 2 },
+      ],
+    };
+    renderShell();
+
+    expect(screen.getByTestId('topbar-folder')).toHaveTextContent('finance');
+    expect(setActiveFolderMock).toHaveBeenCalledWith('finance');
+    const [queryInput, queryOptions] = queriesSpy.useDocuments[0] as [
+      { folder: string },
+      { folderKey: string },
+    ];
+    expect(queryInput.folder).toBe('finance');
+    expect(queryOptions.folderKey).toBe('finance');
+  });
+
+  it('keeps a persisted runtime-only folder when folders are only in live data', () => {
+    globalThis.localStorage.setItem('twin.ui.folder.v1', 'runtime-only');
+    authState.current.config = {
+      defaultFolderId: 'default',
+      folders: [{ id: 'default', label: 'Default KB', kind: 'standard', sources: 4 }],
+    };
+    queriesState.folders.data = [
+      {
+        id: 'runtime-only',
+        kb: 'Runtime-only KB',
+        visibility: 'internal',
+        sources: 0,
+        role: 'admin',
+        current: false,
+      },
+    ] as Folder[];
+    renderShell();
+
+    expect(screen.getByTestId('topbar-folder')).toHaveTextContent('runtime-only');
+    const [queryInput, queryOptions] = queriesSpy.useDocuments[0] as [
+      { folder: string },
+      { folderKey: string },
+    ];
+    expect(queryInput.folder).toBe('runtime-only');
+    expect(queryOptions.folderKey).toBe('runtime-only');
+    expect(setActiveFolderMock).toHaveBeenCalledWith('runtime-only');
+  });
+
   it('derives folderList from runtimeConfig.folders when configured', () => {
     authState.current.config = {
       defaultFolderId: 'default',
@@ -1048,7 +1148,7 @@ describe('AppShell — folders', () => {
 
   it('falls back to the default folder when the active folder is not in the list', async () => {
     // current folder persisted as something not present → effect rewrites
-    // storage to the configured default.
+    // storage/state to the configured default.
     globalThis.localStorage.setItem('twin.ui.folder.v1', 'ghost');
     authState.current.config = {
       defaultFolderId: 'finance',
@@ -1059,10 +1159,14 @@ describe('AppShell — folders', () => {
     };
     renderShell();
     await waitFor(() =>
+      expect(screen.getByTestId('topbar-folder')).toHaveTextContent('finance'),
+    );
+    await waitFor(() =>
       expect(globalThis.localStorage.getItem('twin.ui.folder.v1')).toBe(
         'finance',
       ),
     );
+    expect(setActiveFolderMock).toHaveBeenCalledWith('finance');
   });
 });
 

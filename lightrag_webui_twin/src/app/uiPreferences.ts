@@ -34,7 +34,13 @@ export function getInitialTheme(): Theme {
 
 function getConfiguredDefaultFolderId(): string {
   const cfg = getTwinRuntimeConfig();
-  return cfg.defaultFolderId || cfg.folders?.[0]?.id || 'default';
+  if (cfg.defaultFolderId) {
+    return cfg.defaultFolderId;
+  }
+  if (cfg.folders?.length) {
+    return cfg.folders[0].id;
+  }
+  return 'default';
 }
 
 export function getInitialFolderId(): string {
@@ -42,7 +48,7 @@ export function getInitialFolderId(): string {
   const fallback = getConfiguredDefaultFolderId();
   const stored = readUiPreference(FOLDER_STORAGE_KEY);
   if (!stored) return fallback;
-  if (cfg.folders && !cfg.folders.some((folder) => folder.id === stored)) {
+  if (cfg.folders?.length === 0) {
     return fallback;
   }
   return stored;

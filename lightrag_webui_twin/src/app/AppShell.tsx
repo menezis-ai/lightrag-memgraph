@@ -279,16 +279,31 @@ export function AppShell() {
   const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
 
   useEffect(() => {
-    if (folderList.length === 0) return;
+    if (!authReady || configuredFolders?.length === 0) return;
+    if (folders.isLoading && folders.data === undefined) return;
+    if (folderList.length === 0) {
+      const fallback = runtimeConfig.defaultFolderId ?? 'default';
+      if (fallback !== folder) {
+        setFolder(fallback);
+        setActiveFolder(fallback);
+      }
+      writeUiPreference(FOLDER_STORAGE_KEY, fallback);
+      return;
+    }
     if (folderList.some((item) => item.id === folder)) {
       writeUiPreference(FOLDER_STORAGE_KEY, folder);
+      setActiveFolder(folder);
       return;
     }
     const fallback =
       folderList.find((item) => item.id === runtimeConfig.defaultFolderId)?.id ??
       folderList[0].id;
+    if (fallback !== folder) {
+      setFolder(fallback);
+      setActiveFolder(fallback);
+    }
     writeUiPreference(FOLDER_STORAGE_KEY, fallback);
-  }, [folder, folderList, runtimeConfig.defaultFolderId]);
+  }, [authReady, folder, folderList, runtimeConfig.defaultFolderId, folders.data, folders.isLoading]);
 
   const onAddToast = (title: string, sub?: string) =>
     pushToast({ kind: 'done', title, sub });
