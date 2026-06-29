@@ -3039,6 +3039,44 @@ dialog::backdrop {
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
 }
+.tags-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px 8px;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tags-rail-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.rail-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.rail-tool-btn:hover {
+  border-color: var(--twin-accent);
+  color: var(--twin-accent);
+}
+.rail-tool-btn.danger:hover {
+  border-color: var(--twin-red-border);
+  color: var(--twin-red-vivid);
+}
 .rail-item {
   display: flex; align-items: center; gap: 8px;
   font: inherit; font-size: 12.5px;
@@ -3053,6 +3091,72 @@ dialog::backdrop {
 .rail-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .rail-label { flex: 1; }
 .rail-count { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+
+.domain-rail-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.domain-rail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.domain-rail-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 24px 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+.domain-rail-color {
+  width: 24px;
+  height: 24px;
+}
+.domain-rail-fields {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.domain-rail-label,
+.domain-rail-id {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  font-size: 12px;
+}
+.domain-rail-id {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+.domain-rail-count {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+.domain-rail-add {
+  justify-content: center;
+}
+.domain-rail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.domain-rail-impact {
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.domain-rail-impact code {
+  display: inline-flex;
+  margin-right: 4px;
+}
 
 .tags-grid-wrap {
   overflow-y: auto;
@@ -10293,11 +10397,68 @@ body:where(*) {
 }
 
 .tags-screen:where(*):where(*):where(*):where(*):where(*) {
-  height: auto;
+  height: calc(100vh - 62px);
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+}
+
+.tags-body:where(*):where(*):where(*):where(*):where(*) {
+  flex: none;
+  min-height: 0;
+  overflow: visible;
+}
+
+.tags-rail:where(*):where(*):where(*) {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.tags-rail.is-managing:where(*):where(*):where(*) {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tags-grid-wrap:where(*):where(*),
+.tag-detail:where(*):where(*) {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.activity:where(*):where(*):where(*):where(*) {
+  height: calc(100vh - 62px);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.activity-main:where(*):where(*):where(*) {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.activity-timeline:where(*):where(*) {
+  flex: none;
+  min-height: 0;
+  overflow: visible;
+}
+
+.activity-detail:where(*):where(*):where(*) {
+  position: sticky;
+  top: 22px;
+  align-self: start;
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 106px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .docs-header:where(*):where(*):where(*):where(*) {

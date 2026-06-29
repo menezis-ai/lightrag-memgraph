@@ -32,6 +32,7 @@ import type { TagEntry } from '../types/tag';
 import type { Folder } from '../types/topbar';
 
 type StatusFilterKey = 'all' | 'completed' | 'processing' | 'pending' | 'failed';
+type BulkFolderAction = 'copy' | 'move';
 
 const FILTER_TO_STATUS: Record<Exclude<StatusFilterKey, 'all'>, DocumentStatus> = {
   completed: 'PROCESSED',
@@ -87,10 +88,13 @@ function documentMatchesSearchAndTags(
 function statusCountsFor(
   docs: readonly Document[],
   statusCounts: Record<string, number> | null,
+  allDocumentsCount: number | undefined,
 ): Record<StatusFilterKey, number> {
   if (statusCounts) {
     return {
-      all: Object.values(statusCounts).reduce((a, b) => a + b, 0),
+      all:
+        allDocumentsCount ??
+        Object.values(statusCounts).reduce((a, b) => a + b, 0),
       completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
       processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
       pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
@@ -98,7 +102,7 @@ function statusCountsFor(
     };
   }
   const counts: Record<StatusFilterKey, number> = {
-    all: docs.length,
+    all: allDocumentsCount ?? docs.length,
     completed: 0,
     processing: 0,
     pending: 0,
@@ -355,7 +359,10 @@ function BulkActionsBar({
   selectedCount,
   filteredCount,
   bulkDeleteArmed,
+  showFolderActions,
   onOpenBulk,
+  onOpenBulkCopy,
+  onOpenBulkMove,
   onBulkDelete,
   onTriggerBulkDelete,
   onClearSelection,
@@ -363,7 +370,10 @@ function BulkActionsBar({
   selectedCount: number;
   filteredCount: number;
   bulkDeleteArmed: boolean;
+  showFolderActions: boolean;
   onOpenBulk: () => void;
+  onOpenBulkCopy: () => void;
+  onOpenBulkMove: () => void;
   onBulkDelete?: (docs: readonly Document[]) => void;
   onTriggerBulkDelete: () => void;
   onClearSelection: () => void;
@@ -377,6 +387,26 @@ function BulkActionsBar({
       <button type="button" className="bulk-action primary" onClick={onOpenBulk}>
         <Icon name="tags" size={13} /> Retag {selectedCount} sources
       </button>
+      {showFolderActions && (
+        <>
+          <button
+            type="button"
+            className="bulk-action"
+            onClick={onOpenBulkCopy}
+            data-testid="docs-bulk-copy"
+          >
+            <Icon name="folder" size={13} /> Copy {selectedCount}
+          </button>
+          <button
+            type="button"
+            className="bulk-action"
+            onClick={onOpenBulkMove}
+            data-testid="docs-bulk-move"
+          >
+            <Icon name="arrow-right" size={13} /> Move {selectedCount}
+          </button>
+        </>
+      )}
       {onBulkDelete && (
         <button
           type="button"
@@ -432,6 +462,7 @@ export interface DocumentsTabProps {
   pendingSlot?: React.ReactNode;
   currentPage?: number;
   totalCount?: number;
+  allDocumentsCount?: number;
   statusCounts?: Record<string, number> | null;
   hasNextPage?: boolean;
   isPageFetching?: boolean;
@@ -472,6 +503,7 @@ export function DocumentsTab({
   pendingSlot,
   currentPage = 1,
   totalCount,
+  allDocumentsCount,
   statusCounts = null,
   hasNextPage = false,
   isPageFetching = false,
@@ -506,6 +538,8 @@ export function DocumentsTab({
   const [tagAddVal, setTagAddVal] = useState('');
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(0);
   const [bulkDeleteArmed, setBulkDeleteArmed] = useState(false);
+  const [bulkFolderAction, setBulkFolderAction] =
+    useState<BulkFolderAction | null>(null);
   const [folderDialogDoc, setFolderDialogDoc] = useState<Document | null>(null);
   const statusFilter = controlledStatusFilter ?? localStatusFilter;
   const search = controlledSearch ?? localSearch;
@@ -551,8 +585,12 @@ export function DocumentsTab({
   }, [docs, search, tagFilters, sourceFilters]);
 
   const counts = useMemo(() => {
-    return statusCountsFor(searchAndTagFiltered, statusCounts);
-  }, [searchAndTagFiltered, statusCounts]);
+    return statusCountsFor(
+      searchAndTagFiltered,
+      statusCounts,
+      allDocumentsCount ?? docs.length,
+    );
+  }, [allDocumentsCount, docs.length, searchAndTagFiltered, statusCounts]);
   const failedCount = counts.failed;
 
   const filtered = useMemo(() => {
@@ -623,10 +661,13 @@ export function DocumentsTab({
   };
   const clearSelection = () => {
     setBulkDeleteArmed(false);
+    setBulkFolderAction(null);
     setSelected(new Set());
   };
   const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
   const openBulk = () => onOpenBulkRetag(selectedDocs);
+  const activeFolderId = activeFolder ?? selectedDocs[0]?.folder ?? 'default';
+  const hasBulkFolderTarget = folderList.some((folder) => folder.id !== activeFolderId);
   const pipelineMessages = useMemo(() => {
     return pipelineHistoryMessages(pipelineStatus);
   }, [pipelineStatus]);
@@ -861,7 +902,10 @@ export function DocumentsTab({
           selectedCount={selected.size}
           filteredCount={filtered.length}
           bulkDeleteArmed={bulkDeleteArmed}
+          showFolderActions={canManageFolders && hasBulkFolderTarget}
           onOpenBulk={openBulk}
+          onOpenBulkCopy={() => setBulkFolderAction('copy')}
+          onOpenBulkMove={() => setBulkFolderAction('move')}
           onBulkDelete={onBulkDelete}
           onTriggerBulkDelete={triggerBulkDelete}
           onClearSelection={clearSelection}
@@ -957,6 +1001,17 @@ export function DocumentsTab({
           folderList={folderList}
           onAddToast={onAddToast}
           onClose={() => setFolderDialogDoc(null)}
+        />
+      )}
+      {canManageFolders && bulkFolderAction && selectedDocs.length > 0 && (
+        <BulkFolderDialog
+          docs={selectedDocs}
+          action={bulkFolderAction}
+          activeFolder={activeFolderId}
+          folderList={folderList}
+          onAddToast={onAddToast}
+          onDone={clearSelection}
+          onClose={() => setBulkFolderAction(null)}
         />
       )}
     </div>
@@ -1178,6 +1233,191 @@ function removeFolderButtonLabel(
 ): string {
   if (!isLastMembership) return `Remove from ${activeFolder}`;
   return destructiveArmed ? 'Confirm permanent delete' : 'Delete permanently';
+}
+
+function bulkFolderSummary(
+  action: BulkFolderAction,
+  success: number,
+  partial: number,
+  failed: number,
+  targetLabel: string,
+): { title: string; sub: string } {
+  const noun = success === 1 ? 'source' : 'sources';
+  if (failed === 0 && partial === 0) {
+    return action === 'copy'
+      ? {
+          title: 'Sources copied to folder',
+          sub: `${success} ${noun} copied to ${targetLabel}.`,
+        }
+      : {
+          title: 'Sources moved to folder',
+          sub: `${success} ${noun} moved to ${targetLabel}.`,
+        };
+  }
+  if (action === 'copy') {
+    return {
+      title: 'Bulk copy completed with issues',
+      sub: `${success} copied · ${failed} failed · destination ${targetLabel}.`,
+    };
+  }
+  return {
+    title: 'Bulk move completed with issues',
+    sub: `${success} moved · ${partial} copied but not removed · ${failed} failed · destination ${targetLabel}.`,
+  };
+}
+
+function BulkFolderDialog({
+  docs,
+  action,
+  activeFolder,
+  folderList,
+  onAddToast,
+  onDone,
+  onClose,
+}: Readonly<{
+  docs: readonly Document[];
+  action: BulkFolderAction;
+  activeFolder: string;
+  folderList: readonly Folder[];
+  onAddToast: (title: string, sub?: string) => void;
+  onDone: () => void;
+  onClose: () => void;
+}>) {
+  const addFolder = useAddDocumentToFolder();
+  const removeFolder = useRemoveDocumentFromFolder();
+  const modalRef = useRef<HTMLDialogElement>(null);
+  const [targetFolder, setTargetFolder] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
+  useModalA11y({ open: true, onClose, ref: modalRef });
+  const availableFolders = folderList.filter((folder) => folder.id !== activeFolder);
+  const selectedTargetFolder =
+    targetFolder && availableFolders.some((folder) => folder.id === targetFolder)
+      ? targetFolder
+      : (availableFolders[0]?.id ?? '');
+  const targetLabel = selectedTargetFolder
+    ? folderLabel(folderList, selectedTargetFolder)
+    : '';
+  const activeLabel = folderLabel(folderList, activeFolder);
+  const actionLabel = action === 'copy' ? 'Copy' : 'Move';
+
+  const runBulkFolderAction = async () => {
+    if (!selectedTargetFolder || isRunning) return;
+    setIsRunning(true);
+    let success = 0;
+    let failed = 0;
+    let partial = 0;
+
+    for (const doc of docs) {
+      try {
+        await addFolder.mutateAsync({
+          docId: doc.doc_id,
+          folderId: selectedTargetFolder,
+        });
+      } catch {
+        failed += 1;
+        continue;
+      }
+
+      if (action === 'copy') {
+        success += 1;
+        continue;
+      }
+
+      try {
+        await removeFolder.mutateAsync({
+          docId: doc.doc_id,
+          folderId: activeFolder,
+        });
+        success += 1;
+      } catch {
+        partial += 1;
+      }
+    }
+
+    const summary = bulkFolderSummary(
+      action,
+      success,
+      partial,
+      failed,
+      targetLabel,
+    );
+    onAddToast(summary.title, summary.sub);
+    onDone();
+  };
+
+  return (
+    <div className="modal-backdrop" data-testid="bulk-folder-modal">
+      <button
+        type="button"
+        className="modal-backdrop-dismiss"
+        aria-label="Close bulk folder dialog"
+        onClick={onClose}
+      />
+      <dialog
+        ref={modalRef}
+        open
+        className="modal document-folders-modal"
+        aria-modal="true"
+        aria-label={`${actionLabel} selected sources to folder`}
+      >
+        <div className="modal-header">
+          <div>
+            <h2>{actionLabel} selected sources</h2>
+            <p className="ctx">
+              {docs.length} selected · active folder {activeLabel}
+            </p>
+          </div>
+          <button className="modal-x" onClick={onClose} aria-label="Close dialog">
+            ×
+          </button>
+        </div>
+        <div className="modal-body">
+          <section className="document-folder-card" aria-label="Destination folder">
+            <label className="field document-folder-target">
+              <span>Destination folder</span>
+              <select
+                value={selectedTargetFolder}
+                onChange={(e) => setTargetFolder(e.target.value)}
+                disabled={availableFolders.length === 0 || isRunning}
+                aria-label="Bulk target folder"
+              >
+                {availableFolders.length === 0 ? (
+                  <option value="">No other folder available</option>
+                ) : (
+                  availableFolders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>
+                      {folder.kb} ({folder.id})
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            <p className="document-folder-help">
+              {action === 'copy'
+                ? 'Copy keeps each source in the active folder and adds the destination membership.'
+                : 'Move adds the destination membership first, then removes the active folder membership.'}
+            </p>
+          </section>
+        </div>
+        <div className="modal-footer document-folders-footer">
+          <button type="button" className="btn" onClick={onClose} disabled={isRunning}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!selectedTargetFolder || isRunning}
+            onClick={() => void runBulkFolderAction()}
+            data-testid={`bulk-folder-${action}`}
+          >
+            {isRunning
+              ? `${actionLabel}ing...`
+              : `${actionLabel} ${docs.length} source${docs.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      </dialog>
+    </div>
+  );
 }
 
 function DocumentFoldersBody({

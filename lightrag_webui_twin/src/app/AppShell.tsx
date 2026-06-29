@@ -76,6 +76,13 @@ import { useToasts } from './useToasts';
 
 const ACTIVITY_PAGE_LIMIT = 200;
 
+function isPendingReviewDocument(doc: Document): boolean {
+  return (
+    doc.review?.state === 'pending-review' ||
+    doc.review?.state === 'modified'
+  );
+}
+
 declare global {
   interface Window {
     __TWIN_E2E_INITIAL_TAG_POLL?: {
@@ -259,6 +266,13 @@ export function AppShell() {
         (tab === 'documents' || tab === 'retrieval' || tab === 'graph'),
     },
   );
+  const allDocs = useDocuments(
+    { folder: effectiveFolder },
+    {
+      folderKey: effectiveFolder,
+      enabled: authReady && tab === 'documents',
+    },
+  );
   const notificationsQ = useNotifications({
     enabled: authReady,
     folderKey: effectiveFolder,
@@ -381,6 +395,10 @@ export function AppShell() {
     () => docs.data?.items ?? [],
     [docs.data],
   );
+  const allBackendDocList = useMemo(
+    () => allDocs.data?.items ?? [],
+    [allDocs.data],
+  );
   const docList = useMemo(() => {
     const backendTrackIds = new Set(
       backendDocList.map((doc) => doc.track_id).filter(Boolean),
@@ -430,17 +448,15 @@ export function AppShell() {
     });
     return tags;
   }, [docList]);
-  const isPendingReview = (d: Document) =>
-    d.review?.state === 'pending-review' || d.review?.state === 'modified';
   const pendingDocs = docList
-    .filter(isPendingReview)
+    .filter(isPendingReviewDocument)
     .slice()
     .sort(
       (a, b) =>
         (a.review!.state === 'modified' ? 1 : 0) -
         (b.review!.state === 'modified' ? 1 : 0),
     );
-  const nonPendingDocs = docList.filter((d) => !isPendingReview(d));
+  const nonPendingDocs = docList.filter((d) => !isPendingReviewDocument(d));
   const uploadedStatusCounts = useMemo(() => {
     const raw = docs.data?.status_counts;
     if (!raw) return null;
@@ -459,6 +475,13 @@ export function AppShell() {
     0,
     (docs.data?.total ?? backendDocList.length) - pendingDocs.length,
   );
+  const allPendingDocs = allBackendDocList.filter(isPendingReviewDocument);
+  const allUploadedTotalCount = allDocs.data
+    ? Math.max(
+        0,
+        (allDocs.data.total ?? allBackendDocList.length) - allPendingDocs.length,
+      )
+    : uploadedTotalCount;
   const tagList = tags.data ?? [];
   const tagCatalog = tagCatalogForSuggestions(tagList);
   const tagCategoryList = tagCategories.data ?? [];
@@ -544,6 +567,7 @@ export function AppShell() {
               docs={nonPendingDocs}
               currentPage={documentsPage}
               totalCount={uploadedTotalCount}
+              allDocumentsCount={allUploadedTotalCount}
               statusCounts={uploadedStatusCounts}
               hasNextPage={Boolean(docs.data?.next_cursor)}
               isPageFetching={Boolean(docs.isFetching && !docs.data)}

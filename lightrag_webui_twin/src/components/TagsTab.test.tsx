@@ -360,7 +360,7 @@ describe('TagsTab — approve direct (palier 3)', () => {
 });
 
 describe('TagsTab — domain taxonomy editor', () => {
-  it('saves direct domain edits through the taxonomy import endpoint', async () => {
+  it('edits domains inline from the domain rail', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn<typeof fetch>(async () =>
       new Response(JSON.stringify({ ok: true }), {
@@ -372,27 +372,28 @@ describe('TagsTab — domain taxonomy editor', () => {
 
     try {
       render(<TagsTab {...defaultProps()} />);
+      expect(screen.queryByRole('button', { name: 'Edit domains' })).toBeNull();
       await userEvent.click(
-        screen.getByRole('button', { name: 'Edit domains' }),
+        screen.getByRole('button', { name: 'Manage domains' }),
       );
-      const dialog = await screen.findByRole('dialog', { name: 'Edit domains' });
+      const editor = screen.getByTestId('domain-rail-editor');
 
-      const messagingLabel = within(dialog).getByLabelText(
-        'messaging domain label',
-      );
-      fireEvent.change(messagingLabel, { target: { value: 'Communication' } });
-
-      await userEvent.click(
-        within(dialog).getByRole('button', { name: 'Add domain' }),
-      );
-      const newId = within(dialog).getByLabelText('New domain domain id');
-      fireEvent.change(newId, { target: { value: 'collaboration' } });
-      const newLabel = within(dialog).getByLabelText('collaboration domain label');
-      fireEvent.change(newLabel, { target: { value: 'Collaboration' } });
+      fireEvent.change(within(editor).getByLabelText('messaging domain label'), {
+        target: { value: 'Communication' },
+      });
 
       await userEvent.click(
-        within(dialog).getByRole('button', { name: 'Save domains' }),
+        within(editor).getByRole('button', { name: 'Add domain' }),
       );
+      fireEvent.change(within(editor).getByLabelText('New domain domain id'), {
+        target: { value: 'collaboration' },
+      });
+      fireEvent.change(
+        within(editor).getByLabelText('collaboration domain label'),
+        { target: { value: 'Collaboration' } },
+      );
+
+      await userEvent.click(within(editor).getByRole('button', { name: 'Save' }));
 
       await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       const [url, init] = fetchMock.mock.calls[0];
@@ -405,9 +406,6 @@ describe('TagsTab — domain taxonomy editor', () => {
           { id: 'collaboration', label: 'Collaboration', color: '#5A7FB4' },
         ]),
       );
-      expect(
-        await screen.findByTestId('taxonomy-import-status'),
-      ).toHaveTextContent(/domains applied/);
     } finally {
       globalThis.fetch = originalFetch;
     }

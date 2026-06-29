@@ -75,6 +75,26 @@ function draftFromCategories(categories: readonly TagCategory[]): DomainDraft[] 
   }));
 }
 
+function appendNewDomainDraft(current: readonly DomainDraft[]): DomainDraft[] {
+  const existingIds = new Set(current.map((row) => normalizeDomainId(row.id)));
+  let nextId = 'new-domain';
+  let index = 2;
+  while (existingIds.has(nextId)) {
+    nextId = `new-domain-${index}`;
+    index += 1;
+  }
+  return [
+    ...current,
+    {
+      key: `draft-${Date.now()}-${index}`,
+      id: nextId,
+      label: 'New domain',
+      color: '#5A7FB4',
+      existing: false,
+    },
+  ];
+}
+
 function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
   if (draft.length === 0) return 'At least one domain is required.';
   const seen = new Set<string>();
@@ -149,17 +169,18 @@ export function TagsTab({
     | { kind: 'success'; count: number }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
-  const [domainEditorOpen, setDomainEditorOpen] = useState(false);
   const [domainDraft, setDomainDraft] = useState<DomainDraft[]>(() =>
     draftFromCategories(categories),
   );
   const [domainError, setDomainError] = useState<string | null>(null);
+  const [domainRailEditing, setDomainRailEditing] = useState(false);
   const importCategories = useImportCategories();
 
-  const openDomainEditor = (): void => {
-    setDomainDraft(draftFromCategories(categories));
+  const openDomainRailEditor = (options: { addNew?: boolean } = {}): void => {
+    const draft = draftFromCategories(categories);
+    setDomainDraft(options.addNew ? appendNewDomainDraft(draft) : draft);
     setDomainError(null);
-    setDomainEditorOpen(true);
+    setDomainRailEditing(true);
   };
 
   const updateDomainDraft = (
@@ -173,25 +194,7 @@ export function TagsTab({
   };
 
   const addDomainDraft = (): void => {
-    setDomainDraft((current) => {
-      const existingIds = new Set(current.map((row) => normalizeDomainId(row.id)));
-      let nextId = 'new-domain';
-      let index = 2;
-      while (existingIds.has(nextId)) {
-        nextId = `new-domain-${index}`;
-        index += 1;
-      }
-      return [
-        ...current,
-        {
-          key: `draft-${Date.now()}-${index}`,
-          id: nextId,
-          label: 'New domain',
-          color: '#5A7FB4',
-          existing: false,
-        },
-      ];
-    });
+    setDomainDraft((current) => appendNewDomainDraft(current));
     setDomainError(null);
   };
 
@@ -214,7 +217,14 @@ export function TagsTab({
     try {
       await importCategories.mutateAsync(payload);
       setImportStatus({ kind: 'success', count: payload.length });
-      setDomainEditorOpen(false);
+      setDomainRailEditing(false);
+      if (
+        selectedCat !== 'all' &&
+        selectedCat !== 'uncategorized' &&
+        !payload.some((row) => row.id === selectedCat)
+      ) {
+        setSelectedCat('all');
+      }
     } catch (err) {
       const message = apiErrorMessage(err, 'Domain update failed.');
       setDomainError(message);
@@ -448,15 +458,6 @@ export function TagsTab({
             <>
               <button
                 className="ghost-btn"
-                onClick={openDomainEditor}
-                disabled={importCategories.isPending}
-                title="Edit the folder domain taxonomy"
-                data-testid="taxonomy-edit-domains"
-              >
-                <Icon name="settings" size={12} /> Edit domains
-              </button>
-              <button
-                className="ghost-btn"
                 onClick={() => void handleDownloadTemplate()}
                 title="Download the canonical category template JSON"
                 data-testid="taxonomy-download-template"
@@ -665,46 +666,97 @@ export function TagsTab({
       </div>
 
       <div className="tags-body">
-        <aside className="tags-rail">
-          <button
-            className={'rail-item ' + (selectedCat === 'all' ? 'is-active' : '')}
-            onClick={() => setSelectedCat('all')}
-            aria-pressed={selectedCat === 'all'}
-            data-testid="rail-all"
-          >
-            <span
-              className="rail-dot"
-              style={{ background: 'var(--color-text-tertiary)' }}
+        <aside className={'tags-rail ' + (domainRailEditing ? 'is-managing' : '')}>
+          <div className="tags-rail-head">
+            <span>Domains</span>
+            {canEdit && !domainRailEditing && (
+              <span className="tags-rail-tools">
+                <button
+                  className="rail-tool-btn"
+                  type="button"
+                  onClick={() => openDomainRailEditor()}
+                  aria-label="Manage domains"
+                  title="Manage domains"
+                  data-testid="rail-manage-domains"
+                >
+                  <Icon name="settings" size={12} />
+                </button>
+                <button
+                  className="rail-tool-btn"
+                  type="button"
+                  onClick={() => openDomainRailEditor({ addNew: true })}
+                  aria-label="Add domain"
+                  title="Add domain"
+                  data-testid="rail-add-domain"
+                >
+                  <Icon name="plus" size={12} />
+                </button>
+              </span>
+            )}
+          </div>
+          {domainRailEditing ? (
+            <DomainRailEditor
+              draft={domainDraft}
+              error={domainError}
+              tagCounts={counts}
+              removedDomainsWithTags={removedDomainsWithTags}
+              isSaving={importCategories.isPending}
+              onAdd={addDomainDraft}
+              onUpdate={updateDomainDraft}
+              onRemove={removeDomainDraft}
+              onCancel={() => {
+                setDomainRailEditing(false);
+                setDomainError(null);
+              }}
+              onSave={() => void saveDomainDraft()}
             />
-            <span className="rail-label">All domains</span>
-            <span className="rail-count">{counts.all}</span>
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              className={'rail-item ' + (selectedCat === c.id ? 'is-active' : '')}
-              onClick={() => setSelectedCat(c.id)}
-              aria-pressed={selectedCat === c.id}
-              data-testid={`rail-${c.id}`}
-            >
-              <span className="rail-dot" style={{ background: c.color }} />
-              <span className="rail-label">{c.label}</span>
-              <span className="rail-count">{counts[c.id] ?? 0}</span>
-            </button>
-          ))}
-          <button
-            className={'rail-item ' + (selectedCat === 'uncategorized' ? 'is-active' : '')}
-            onClick={() => setSelectedCat('uncategorized')}
-            aria-pressed={selectedCat === 'uncategorized'}
-            data-testid="rail-uncategorized"
-          >
-            <span
-              className="rail-dot"
-              style={{ background: 'var(--color-text-tertiary)' }}
-            />
-            <span className="rail-label">Uncategorized</span>
-            <span className="rail-count">{counts.uncategorized ?? 0}</span>
-          </button>
+          ) : (
+            <>
+              <button
+                className={'rail-item ' + (selectedCat === 'all' ? 'is-active' : '')}
+                onClick={() => setSelectedCat('all')}
+                aria-pressed={selectedCat === 'all'}
+                data-testid="rail-all"
+              >
+                <span
+                  className="rail-dot"
+                  style={{ background: 'var(--color-text-tertiary)' }}
+                />
+                <span className="rail-label">All domains</span>
+                <span className="rail-count">{counts.all}</span>
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c.id}
+                  className={
+                    'rail-item ' + (selectedCat === c.id ? 'is-active' : '')
+                  }
+                  onClick={() => setSelectedCat(c.id)}
+                  aria-pressed={selectedCat === c.id}
+                  data-testid={`rail-${c.id}`}
+                >
+                  <span className="rail-dot" style={{ background: c.color }} />
+                  <span className="rail-label">{c.label}</span>
+                  <span className="rail-count">{counts[c.id] ?? 0}</span>
+                </button>
+              ))}
+              <button
+                className={
+                  'rail-item ' + (selectedCat === 'uncategorized' ? 'is-active' : '')
+                }
+                onClick={() => setSelectedCat('uncategorized')}
+                aria-pressed={selectedCat === 'uncategorized'}
+                data-testid="rail-uncategorized"
+              >
+                <span
+                  className="rail-dot"
+                  style={{ background: 'var(--color-text-tertiary)' }}
+                />
+                <span className="rail-label">Uncategorized</span>
+                <span className="rail-count">{counts.uncategorized ?? 0}</span>
+              </button>
+            </>
+          )}
         </aside>
 
         <main className="tags-grid-wrap">{tagsGridContent}</main>
@@ -722,21 +774,6 @@ export function TagsTab({
         />
       </div>
 
-      {domainEditorOpen && (
-        <DomainEditorModal
-          draft={domainDraft}
-          error={domainError}
-          tagCounts={counts}
-          removedDomainsWithTags={removedDomainsWithTags}
-          isSaving={importCategories.isPending}
-          onAdd={addDomainDraft}
-          onUpdate={updateDomainDraft}
-          onRemove={removeDomainDraft}
-          onClose={() => setDomainEditorOpen(false)}
-          onSave={() => void saveDomainDraft()}
-        />
-      )}
-
       {modal && (
         <TagActionModal
           action={modal}
@@ -753,7 +790,7 @@ export function TagsTab({
   );
 }
 
-interface DomainEditorModalProps {
+interface DomainRailEditorProps {
   draft: readonly DomainDraft[];
   error: string | null;
   tagCounts: Record<string, number>;
@@ -765,11 +802,11 @@ interface DomainEditorModalProps {
     patch: Partial<Pick<DomainDraft, 'id' | 'label' | 'color'>>,
   ) => void;
   onRemove: (key: string) => void;
-  onClose: () => void;
+  onCancel: () => void;
   onSave: () => void;
 }
 
-function DomainEditorModal({
+function DomainRailEditor({
   draft,
   error,
   tagCounts,
@@ -778,116 +815,97 @@ function DomainEditorModal({
   onAdd,
   onUpdate,
   onRemove,
-  onClose,
+  onCancel,
   onSave,
-}: Readonly<DomainEditorModalProps>) {
+}: Readonly<DomainRailEditorProps>) {
   return (
-    <div
-      className="modal-bg"
-    >
-      <button
-        type="button"
-        className="modal-backdrop-dismiss"
-        onClick={onClose}
-        aria-label="Close domain editor"
-        data-testid="domain-editor-backdrop"
-      />
-      <dialog
-        open
-        className="modal domain-editor-modal"
-        aria-modal="true"
-        aria-label="Edit domains"
-      >
-        <div className="modal-h">
-          <h3>Edit domains</h3>
-          <div className="modal-h-sub">
-            Folder taxonomy · {draft.length} domain{draft.length === 1 ? '' : 's'}
-          </div>
-          <button className="modal-x" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-        <div className="modal-body domain-editor-body">
-          <div className="domain-editor-head">
-            <span>Color</span>
-            <span>Id</span>
-            <span>Label</span>
-            <span>Tags</span>
-            <span />
-          </div>
-          <div className="domain-editor-rows">
-            {draft.map((row) => (
-              <div className="domain-editor-row" key={row.key}>
+    <div className="domain-rail-editor" data-testid="domain-rail-editor">
+      <div className="domain-rail-rows">
+        {draft.map((row) => (
+          <div className="domain-rail-row" key={row.key}>
+            <input
+              className="domain-color-input domain-rail-color"
+              type="color"
+              value={row.color}
+              aria-label={`${row.label || row.id} color`}
+              onChange={(e) =>
+                onUpdate(row.key, { color: e.target.value.toUpperCase() })
+              }
+            />
+            <div className="domain-rail-fields">
+              <input
+                className="text-input domain-rail-label"
+                value={row.label}
+                aria-label={`${row.id} domain label`}
+                placeholder="Domain name"
+                onChange={(e) => onUpdate(row.key, { label: e.target.value })}
+              />
+              {!row.existing && (
                 <input
-                  className="domain-color-input"
-                  type="color"
-                  value={row.color}
-                  aria-label={`${row.label || row.id} color`}
-                  onChange={(e) =>
-                    onUpdate(row.key, { color: e.target.value.toUpperCase() })
-                  }
-                />
-                <input
-                  className="text-input domain-id-input"
+                  className="text-input domain-rail-id"
                   value={row.id}
-                  readOnly={row.existing}
                   aria-label={`${row.label || row.id} domain id`}
+                  placeholder="domain-id"
                   onChange={(e) =>
                     onUpdate(row.key, { id: normalizeDomainId(e.target.value) })
                   }
                 />
-                <input
-                  className="text-input"
-                  value={row.label}
-                  aria-label={`${row.id} domain label`}
-                  onChange={(e) => onUpdate(row.key, { label: e.target.value })}
-                />
-                <span className="domain-tag-count">
-                  {row.existing ? (tagCounts[row.id] ?? 0) : 0}
-                </span>
-                <button
-                  className="ghost-btn small danger domain-row-delete"
-                  onClick={() => onRemove(row.key)}
-                  aria-label={`Remove ${row.label || row.id}`}
-                >
-                  <Icon name="trash" size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button className="ghost-btn small domain-add" onClick={onAdd}>
-            <Icon name="plus" size={12} /> Add domain
-          </button>
-          {removedDomainsWithTags.length > 0 && (
-            <output className="impact-box warning">
-              <Icon name="alert-triangle" size={14} />
-              <span>
-                Removing{' '}
-                {removedDomainsWithTags.map((cat) => (
-                  <code key={cat.id}>
-                    {cat.label} ({cat.count})
-                  </code>
-                ))}{' '}
-                will show those tags as uncategorized until they are edited.
-              </span>
-            </output>
-          )}
-          {error && (
-            <div className="impact-box danger" role="alert">
-              <Icon name="alert-triangle" size={14} />
-              <span>{error}</span>
+              )}
             </div>
-          )}
+            <span className="domain-rail-count">
+              {row.existing ? (tagCounts[row.id] ?? 0) : 0}
+            </span>
+            <button
+              className="rail-tool-btn danger"
+              type="button"
+              onClick={() => onRemove(row.key)}
+              aria-label={`Remove ${row.label || row.id}`}
+            >
+              <Icon name="trash" size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button className="ghost-btn small domain-rail-add" type="button" onClick={onAdd}>
+        <Icon name="plus" size={12} /> Add domain
+      </button>
+      {removedDomainsWithTags.length > 0 && (
+        <output className="impact-box warning domain-rail-impact">
+          <Icon name="alert-triangle" size={14} />
+          <span>
+            Removed domains with tags become uncategorized until retagged:{' '}
+            {removedDomainsWithTags.map((cat) => (
+              <code key={cat.id}>
+                {cat.label} ({cat.count})
+              </code>
+            ))}
+          </span>
+        </output>
+      )}
+      {error && (
+        <div className="impact-box danger domain-rail-impact" role="alert">
+          <Icon name="alert-triangle" size={14} />
+          <span>{error}</span>
         </div>
-        <div className="modal-footer">
-          <button className="ghost-btn" onClick={onClose} disabled={isSaving}>
-            Cancel
-          </button>
-          <button className="primary-btn" onClick={onSave} disabled={isSaving}>
-            {isSaving ? 'Saving…' : 'Save domains'}
-          </button>
-        </div>
-      </dialog>
+      )}
+      <div className="domain-rail-actions">
+        <button
+          className="ghost-btn small"
+          type="button"
+          onClick={onCancel}
+          disabled={isSaving}
+        >
+          Cancel
+        </button>
+        <button
+          className="primary-btn small"
+          type="button"
+          onClick={onSave}
+          disabled={isSaving}
+        >
+          {isSaving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
     </div>
   );
 }

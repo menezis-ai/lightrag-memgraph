@@ -166,12 +166,12 @@ describe('DocumentsTab — filters', () => {
     expect(screen.queryByTestId('docs-row-d4')).toBeNull();
   });
 
-  it('status counts are scoped by the active search filter', async () => {
+  it('keeps All global while non-all status counts follow the active search filter', async () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     const searchBox = screen.getByLabelText('Search source');
     await userEvent.type(searchBox, 'oracle');
 
-    expect(screen.getByRole('button', { name: /^All \(2\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^All \(7\)/ })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /^Completed \(2\)/ }),
     ).toBeInTheDocument();
@@ -195,11 +195,11 @@ describe('DocumentsTab — filters', () => {
     expect(screen.queryByTestId('docs-row-d4')).toBeNull();
   });
 
-  it('status counts are scoped by the active tag filter', async () => {
+  it('keeps All global while non-all status counts follow the active tag filter', async () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
 
-    expect(screen.getByRole('button', { name: /^All \(2\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^All \(7\)/ })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /^Completed \(2\)/ }),
     ).toBeInTheDocument();
@@ -476,6 +476,162 @@ describe('DocumentsTab — folder membership admin actions', () => {
     expect(
       screen.queryByLabelText('Manage folders for oracle-restart-procedure.pdf'),
     ).toBeNull();
+  });
+
+  it('bulk copy adds every selected document to the target folder', async () => {
+    const props = defaultProps();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/') && url.includes('/folders') && init?.method === 'POST') {
+        const docId = url.split('/documents/')[1]?.split('/folders')[0];
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ doc_id: docId, folders: ['default', 'sandbox'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+
+    renderTab(
+      <DocumentsTab
+        {...props}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[0].file_path}`));
+    await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[1].file_path}`));
+    await userEvent.click(screen.getByTestId('docs-bulk-copy'));
+    await userEvent.selectOptions(screen.getByLabelText('Bulk target folder'), 'sandbox');
+    await userEvent.click(screen.getByTestId('bulk-folder-copy'));
+
+    await waitFor(() =>
+      expect(props.onAddToast).toHaveBeenCalledWith(
+        'Sources copied to folder',
+        expect.stringContaining('2 sources copied'),
+      ),
+    );
+    const postCalls = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        String(url).includes('/documents/') &&
+        String(url).includes('/folders') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(2);
+    expect(
+      postCalls.map(([url]) => String(url)).sort(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/documents/d1/folders'),
+        expect.stringContaining('/documents/d2/folders'),
+      ]),
+    );
+    postCalls.forEach(([, init]) => {
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+        folder_id: 'sandbox',
+      });
+    });
+  });
+
+  it('bulk move adds target membership before removing the active folder', async () => {
+    const props = defaultProps();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/') && url.includes('/folders') && init?.method === 'POST') {
+        const docId = url.split('/documents/')[1]?.split('/folders')[0];
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ doc_id: docId, folders: ['default', 'sandbox'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      if (url.includes('/documents/') && url.includes('/folders/default') && init?.method === 'DELETE') {
+        const docId = url.split('/documents/')[1]?.split('/folders')[0];
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              doc_id: docId,
+              removed_folder: 'default',
+              physically_deleted: false,
+              remaining_folders: ['sandbox'],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+
+    renderTab(
+      <DocumentsTab
+        {...props}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[0].file_path}`));
+    await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[1].file_path}`));
+    await userEvent.click(screen.getByTestId('docs-bulk-move'));
+    await userEvent.selectOptions(screen.getByLabelText('Bulk target folder'), 'sandbox');
+    await userEvent.click(screen.getByTestId('bulk-folder-move'));
+
+    await waitFor(() =>
+      expect(props.onAddToast).toHaveBeenCalledWith(
+        'Sources moved to folder',
+        expect.stringContaining('2 sources moved'),
+      ),
+    );
+    for (const docId of ['d1', 'd2']) {
+      const postIdx = fetchMock.mock.calls.findIndex(
+        ([url, init]) =>
+          String(url).includes(`/documents/${docId}/folders`) &&
+          (init as RequestInit | undefined)?.method === 'POST',
+      );
+      const deleteIdx = fetchMock.mock.calls.findIndex(
+        ([url, init]) =>
+          String(url).includes(`/documents/${docId}/folders/default`) &&
+          (init as RequestInit | undefined)?.method === 'DELETE',
+      );
+      expect(postIdx).toBeGreaterThanOrEqual(0);
+      expect(deleteIdx).toBeGreaterThan(postIdx);
+    }
   });
 
   it('adds a document to another folder from the admin modal', async () => {
