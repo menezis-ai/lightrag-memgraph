@@ -745,10 +745,14 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
   const actor = params.get('actor');
   if (actor && actor !== 'any' && e.actor.user !== actor) return false;
   const resourceId = params.get('resource.id');
+  const metaDocIds = Array.isArray(e.meta?.doc_ids)
+    ? e.meta.doc_ids.map((id) => String(id))
+    : [];
   if (
     resourceId &&
     e.target.id !== resourceId &&
-    String(e.meta?.doc_id ?? '') !== resourceId
+    String(e.meta?.doc_id ?? '') !== resourceId &&
+    !metaDocIds.includes(resourceId)
   ) {
     return false;
   }
@@ -1783,17 +1787,6 @@ export const handlers = [
     documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
     deletedDocs.forEach((doc) => {
       delete documentMemberships[doc.doc_id];
-      recordDocumentActivity(
-        'doc-deleted',
-        doc,
-        `deleted by ${body.actor ?? 'operator.demo'}`,
-        {
-          folder: doc.folder,
-          operation: 'bulk-delete',
-          physically_deleted: true,
-        },
-        { actor: body.actor },
-      );
     });
     ids.forEach((id) => {
       delete documentMemberships[id];
@@ -1808,6 +1801,42 @@ export const handlers = [
     const failed = body.doc_ids.filter(
       (id) => !deletedDocs.some((doc) => doc.doc_id === id),
     );
+    if (deletedDocs.length > 0) {
+      const actor = body.actor ?? 'operator.demo';
+      const docIds = deletedDocs.map((doc) => doc.doc_id);
+      const cascade =
+        'physical delete cascades document data, chunks, vectors and graph links';
+      recordActivity({
+        id: `evt_doc_bulk_delete_${Date.now()}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'doc-deleted',
+        sev: 'info',
+        actor: { user: actor, role: 'KB Steward' },
+        target:
+          deletedDocs.length === 1
+            ? {
+                type: 'document',
+                label: deletedDocs[0].file_path,
+                id: deletedDocs[0].doc_id,
+              }
+            : { type: 'bulk', label: `${deletedDocs.length} documents` },
+        summary: `Bulk delete by ${actor}: ${deletedDocs.length} documents physically deleted; ${cascade}`,
+        meta: {
+          operation: 'bulk-delete',
+          folder: deletedDocs[0].folder,
+          doc_count: deletedDocs.length,
+          doc_ids: docIds,
+          ...(deletedDocs.length === 1 ? { doc_id: docIds[0] } : {}),
+          failed,
+          failed_count: failed.length,
+          physically_deleted_count: deletedDocs.length,
+          unshared_count: 0,
+          cascade,
+        },
+      });
+    }
     return HttpResponse.json({ deleted: deletedDocs.length, failed });
   }),
   http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {

@@ -277,7 +277,7 @@ describe('MSW handlers — Twin overlay endpoints', () => {
 });
 
 describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
-  it(`POST ${TWIN}/documents/bulk-delete records doc-deleted activity`, async () => {
+  it(`POST ${TWIN}/documents/bulk-delete records one bulk activity event`, async () => {
     const del = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -288,20 +288,43 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
 
     const activity = await getJson<{
       items: Array<{
+        id: string;
         actor: { user: string };
         meta: Record<string, unknown>;
         summary: string;
+        target: { type: string; label: string; id?: string };
       }>;
     }>(`${TWIN}/activity?kind=doc-deleted`);
     const deletes = activity.items.filter((event) =>
-      ['d6', 'd7'].includes(String(event.meta.doc_id)),
+      Array.isArray(event.meta.doc_ids)
+        ? event.meta.doc_ids.includes('d6') && event.meta.doc_ids.includes('d7')
+        : false,
     );
-    expect(deletes).toHaveLength(2);
-    deletes.forEach((event) => {
-      expect(event.actor.user).toBe('claire.benoit');
-      expect(event.summary).toContain('deleted by claire.benoit');
-      expect(event.meta.operation).toBe('bulk-delete');
-    });
+    expect(deletes).toHaveLength(1);
+    const event = deletes[0];
+    expect(event.actor.user).toBe('claire.benoit');
+    expect(event.target).toMatchObject({ type: 'bulk', label: '2 documents' });
+    expect(event.summary).toContain('2 documents physically deleted');
+    expect(event.summary).toContain('cascade');
+    expect(event.meta.operation).toBe('bulk-delete');
+    expect(event.meta.doc_count).toBe(2);
+    expect(event.meta.doc_ids).toEqual(['d6', 'd7']);
+    expect(event.meta.physically_deleted_count).toBe(2);
+
+    const d6Activity = await getJson<{ total: number; items: Array<{ id: string }> }>(
+      `${TWIN}/activity?resource.id=d6`,
+    );
+    const d7Activity = await getJson<{ total: number; items: Array<{ id: string }> }>(
+      `${TWIN}/activity?resource.id=d7`,
+    );
+    const missingActivity = await getJson<{ total: number }>(
+      `${TWIN}/activity?resource.id=missing`,
+    );
+    expect(d6Activity.total).toBe(1);
+    expect(d6Activity.items[0].id).toBe(event.id);
+    expect(d7Activity.total).toBe(1);
+    expect(d7Activity.items[0].id).toBe(event.id);
+    expect(missingActivity.total).toBe(0);
   });
 
   it(`DELETE ${TWIN}/tags/cft untags documents in the native /documents feed`, async () => {
