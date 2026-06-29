@@ -10292,6 +10292,14 @@ body:where(*) {
   -webkit-overflow-scrolling: touch;
 }
 
+.tags-screen:where(*):where(*):where(*):where(*):where(*) {
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 .docs-header:where(*):where(*):where(*):where(*) {
   gap: 16px;
 }
