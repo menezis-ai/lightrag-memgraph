@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 import json
 
@@ -525,6 +525,7 @@ _GATE_ABSENT = "absent"
 # A future folder-local override layer (#1b) builds on the same Folder nodes.
 _GRAPH_MEMBER_REL = "GRAPH_MEMBER_OF"
 _REL_FOLDER_PROP = "twin_folder_json"
+_REL_ID_PROP = "twin_relation_id"
 
 # Folder-local overrides (#1b). A *mixed* (cross-folder shared) record is never
 # mutated on its base node/edge — instead folder F's edit/delete lands on a
@@ -881,6 +882,7 @@ async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
         f"WHERE r.`{_REL_FOLDER_PROP}` IS NOT NULL "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        f"r.`{_REL_ID_PROP}` AS relation_id, "
         "r.keywords AS keywords, r.weight AS weight, "
         "r.source_id AS chunk_source_id, "
         f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
@@ -895,6 +897,7 @@ async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
                     {
                         "source_id": record["source_id"],
                         "target_id": record["target_id"],
+                        "relation_id": record["relation_id"],
                         "keywords": record["keywords"],
                         "weight": record["weight"],
                         "chunk_source_id": record["chunk_source_id"],
@@ -908,6 +911,7 @@ async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
             "graph_reader: manual relation load failed (ws=%s)", workspace
         )
         return []
+    await _persist_relation_ids(workspace, rows)
     return rows
 
 
@@ -932,6 +936,7 @@ async def _load_relation_rows_between_entities(
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
         "WHERE s.entity_id IN $entity_ids AND t.entity_id IN $entity_ids "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        f"r.`{_REL_ID_PROP}` AS relation_id, "
         "r.keywords AS keywords, r.weight AS weight, "
         "r.source_id AS chunk_source_id, "
         f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
@@ -951,6 +956,7 @@ async def _load_relation_rows_between_entities(
                     {
                         "source_id": record["source_id"],
                         "target_id": record["target_id"],
+                        "relation_id": record["relation_id"],
                         "keywords": record["keywords"],
                         "weight": record["weight"],
                         "chunk_source_id": record["chunk_source_id"],
@@ -959,12 +965,13 @@ async def _load_relation_rows_between_entities(
                     }
                 )
             await result.consume()
-        return rows
     except Exception:
         logger.exception(
             "graph_reader: visible relation row load failed (ws=%s)", workspace
         )
         return None
+    await _persist_relation_ids(workspace, rows)
+    return rows
 
 
 async def _entity_mutation_gate(
@@ -1189,12 +1196,10 @@ def _resolve_source_docs(
     return scoped, in_folder, mixed
 
 
-# In-process cache of relation_id → (workspace, src, tgt). Populated on
-# every `read_graph_relations` call so the PATCH route can reverse the
-# hash back to a Cypher MATCH. Eviction is intentionally lazy — for a
-# typical KB with O(10³) relations the memory cost is trivial; multi-
-# process deploys are tolerable because every worker rebuilds its own
-# cache as soon as the React port re-fetches.
+# In-process cache of relation_id → (workspace, src, tgt). Populated on graph
+# reads as a fast path only. Mutations must not depend on it: relation ids are
+# also persisted on the :DIRECTED edge as `twin_relation_id` and resolved from
+# Memgraph when the worker-local cache is cold.
 _RELATION_ENDPOINT_CACHE: dict[str, tuple[str, str, str]] = {}
 _BASE_WRITE = object()
 
@@ -1213,12 +1218,161 @@ def _relation_id_from_endpoints(src: str, tgt: str) -> str:
     """Stable relation id derived from the endpoint pair.
 
     Since LightRAG MERGEs a single :DIRECTED edge per source/target
-    pair, encoding the pair as the public id gives the WebUI a key
-    that PATCH can resolve back to a Cypher MATCH without storing an
-    extra property on the edge.
+    pair, encoding the pair as the public id keeps ids deterministic.
+    The value is persisted on the edge as ``twin_relation_id`` so
+    mutations can resolve it without a process-local cache.
     """
     h = hashlib.sha1(f"{src}->{tgt}".encode("utf-8")).hexdigest()[:12]
     return f"kr_{h}"
+
+
+def _relation_id_for_row(record: dict[str, Any], src: str, tgt: str) -> str:
+    stored = str(record.get("relation_id") or "").strip()
+    return stored or _relation_id_from_endpoints(src, tgt)
+
+
+def _relation_id_bindings(rows: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    bindings: list[dict[str, str]] = []
+    for row in rows:
+        if str(row.get("relation_id") or "").strip():
+            continue
+        src = str(row.get("source_id") or "")
+        tgt = str(row.get("target_id") or "")
+        if not src or not tgt:
+            continue
+        bindings.append(
+            {"src": src, "tgt": tgt, "rid": _relation_id_from_endpoints(src, tgt)}
+        )
+    return bindings
+
+
+async def _persist_relation_ids(
+    workspace: str,
+    rows: Iterable[dict[str, Any]],
+    *,
+    strict: bool = False,
+) -> int:
+    bindings = _relation_id_bindings(rows)
+    if not bindings:
+        return 0
+    label = _sanitize_workspace(workspace)
+    query = (
+        "UNWIND $relations AS rel "
+        f"MATCH (s:`{label}` {{entity_id: rel.src}})-[r:DIRECTED]->"
+        f"(t:`{label}` {{entity_id: rel.tgt}}) "
+        f"SET r.`{_REL_ID_PROP}` = rel.rid"
+    )
+    try:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(query, relations=bindings)
+                await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: relation-id persistence failed (ws=%s)", workspace
+        )
+        if strict:
+            raise
+        return 0
+    return len(bindings)
+
+
+async def _load_missing_relation_id_rows(
+    workspace: str,
+    *,
+    batch_size: int,
+) -> list[dict[str, Any]]:
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
+        f"WHERE (r.`{_REL_ID_PROP}` IS NULL OR r.`{_REL_ID_PROP}` = '') "
+        "AND s.entity_id IS NOT NULL AND t.entity_id IS NOT NULL "
+        "AND s.entity_id <> '' AND t.entity_id <> '' "
+        "RETURN s.entity_id AS source_id, t.entity_id AS target_id "
+        "LIMIT $batch_size"
+    )
+    async with get_read_session() as session:
+        result = await session.run(query, batch_size=batch_size)
+        rows = [
+            {
+                "source_id": record["source_id"],
+                "target_id": record["target_id"],
+                "relation_id": None,
+            }
+            async for record in result
+        ]
+        await result.consume()
+    return rows
+
+
+async def backfill_relation_ids(workspace: str, *, batch_size: int = 1000) -> int:
+    """Persist ``twin_relation_id`` on existing graph edges.
+
+    Legacy relations may predate the persisted id property. This startup
+    migration stamps them explicitly so PATCH/DELETE can resolve by property
+    lookup rather than by worker-local cache or runtime scans.
+    """
+    size = max(1, int(batch_size))
+    total = 0
+    while True:
+        rows = await _load_missing_relation_id_rows(workspace, batch_size=size)
+        if not rows:
+            break
+        written = await _persist_relation_ids(workspace, rows, strict=True)
+        if written <= 0:
+            raise RuntimeError(
+                f"relation-id backfill made no progress for workspace {workspace!r}"
+            )
+        total += written
+    return total
+
+
+async def _lookup_relation_endpoints_from_store(
+    workspace: str, rel_id: str
+) -> tuple[str, str, str] | None:
+    """Recover relation endpoints from the persisted relation id."""
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
+        f"WHERE r.`{_REL_ID_PROP}` = $rel_id "
+        "RETURN s.entity_id AS source_id, t.entity_id AS target_id"
+        " LIMIT 1"
+    )
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, rel_id=rel_id)
+            row = None
+            async for record in result:
+                row = record
+                break
+            await result.consume()
+        if row is None:
+            return None
+        src = str(row["source_id"] or "")
+        tgt = str(row["target_id"] or "")
+        if not src or not tgt:
+            return None
+        _remember_relation(workspace, rel_id, src, tgt)
+        return workspace, src, tgt
+    except Exception:
+        logger.exception(
+            "graph_reader: relation endpoint lookup by id failed "
+            "(ws=%s, rel_id=%s)",
+            workspace,
+            rel_id,
+        )
+    return None
+
+
+async def _resolve_relation_endpoints(
+    workspace: str, rel_id: str
+) -> tuple[str, str, str] | None:
+    endpoints = lookup_relation_endpoints(rel_id)
+    if endpoints is not None:
+        cached_workspace, _src, _tgt = endpoints
+        if cached_workspace == workspace:
+            return endpoints
+    return await _lookup_relation_endpoints_from_store(workspace, rel_id)
 
 
 def _relation_scope_state(
@@ -1289,7 +1443,7 @@ def _edge_record_to_relation(
     tombstones (``deleted`` → ``None``) or replaces the edge's label/strength/props
     in F's view only.
     """
-    del index  # ignored — id is endpoint-derived
+    del index  # ignored — relation ids are explicit or endpoint-derived
     visible, mixed = _relation_scope_state(
         record, chunk_to_doc, member_docs, active_folder
     )
@@ -1300,10 +1454,12 @@ def _edge_record_to_relation(
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
     label, properties = _relation_label_and_properties(record, mixed=mixed)
+    src_s = str(src)
+    tgt_s = str(tgt)
     relation = {
-        "id": _relation_id_from_endpoints(str(src), str(tgt)),
-        "source": _entity_id_to_node_id(str(src)),
-        "target": _entity_id_to_node_id(str(tgt)),
+        "id": _relation_id_for_row(record, src_s, tgt_s),
+        "source": _entity_id_to_node_id(src_s),
+        "target": _entity_id_to_node_id(tgt_s),
         "label": label,
         "strength": round(_relation_strength(record.get("weight")), 3),
         "properties": properties,
@@ -1440,6 +1596,7 @@ def _native_edge_to_relation(
     row = {
         "source_id": src,
         "target_id": tgt,
+        "relation_id": eprops.get(_REL_ID_PROP),
         # The relationship's OWN chunk provenance (distinct from the endpoint
         # entity ids above) — drives folder-scoping of the relation.
         "chunk_source_id": eprops.get("source_id"),
@@ -1906,6 +2063,7 @@ async def _fetch_relation_rows(
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
         f"{where}"
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        f"r.`{_REL_ID_PROP}` AS relation_id, "
         "r.keywords AS keywords, r.weight AS weight, "
         "r.source_id AS chunk_source_id, "
         "r.twin_props_json AS twin_props_json "
@@ -1921,6 +2079,7 @@ async def _fetch_relation_rows(
             {
                 "source_id": record["source_id"],
                 "target_id": record["target_id"],
+                "relation_id": record["relation_id"],
                 "keywords": record["keywords"],
                 "weight": record["weight"],
                 "chunk_source_id": record["chunk_source_id"],
@@ -1929,6 +2088,7 @@ async def _fetch_relation_rows(
             async for record in result
         ]
         await result.consume()
+    await _persist_relation_ids(workspace, rows)
     return rows
 
 
@@ -2214,11 +2374,11 @@ async def update_graph_relation(
     patch: dict[str, Any],
 ) -> dict[str, Any] | None:
     """MERGE properties on the DIRECTED edge whose WebUI id is
-    ``rel_id``. The endpoint pair is recovered from
-    ``_RELATION_ENDPOINT_CACHE`` populated on previous reads — callers
-    that haven't fetched the relations recently get ``None``.
+    ``rel_id``. The endpoint pair is recovered from the process cache
+    populated on previous reads, or from Memgraph when the cache is cold
+    for the current workspace.
     """
-    endpoints = lookup_relation_endpoints(rel_id)
+    endpoints = await _resolve_relation_endpoints(workspace, rel_id)
     if endpoints is None:
         return None
     cached_workspace, src, tgt = endpoints
@@ -2340,6 +2500,7 @@ async def _read_one_relation(
         f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
         f"(t:`{label}` {{entity_id: $tgt}}) "
         "RETURN s.entity_id AS source_id, t.entity_id AS target_id, "
+        f"r.`{_REL_ID_PROP}` AS relation_id, "
         "r.keywords AS keywords, r.weight AS weight, "
         "r.source_id AS chunk_source_id, "
         f"r.`{_REL_FOLDER_PROP}` AS twin_folder_json, "
@@ -2353,6 +2514,7 @@ async def _read_one_relation(
                 row = {
                     "source_id": record["source_id"],
                     "target_id": record["target_id"],
+                    "relation_id": record["relation_id"],
                     "keywords": record["keywords"],
                     "weight": record["weight"],
                     "chunk_source_id": record["chunk_source_id"],
@@ -2368,6 +2530,7 @@ async def _read_one_relation(
         return None
     if not row:
         return None
+    await _persist_relation_ids(workspace, [row])
     override = await _load_one_rel_override(workspace, folder, src, tgt)
     return _edge_record_to_relation(
         row, 0, chunk_to_doc, member_docs, folder, override
@@ -2659,6 +2822,7 @@ async def create_graph_relation(
     props = _create_relation_props(payload, folder)
     if props is None:
         return None
+    props[_REL_ID_PROP] = _relation_id_from_endpoints(src, tgt)
     if not await _merge_relation(workspace=workspace, src=src, tgt=tgt, props=props):
         return None
     relation = await _read_one_relation(workspace, src, tgt)
@@ -2669,9 +2833,9 @@ async def create_graph_relation(
 
 async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
     """Remove the relation identified by ``rel_id``. Returns ``True``
-    on success, ``False`` when the cache doesn't know the id (cold
-    process) or no edge matches in Memgraph."""
-    endpoints = lookup_relation_endpoints(rel_id)
+    on success, ``False`` when the id cannot be resolved to an edge in
+    Memgraph or no edge matches at delete time."""
+    endpoints = await _resolve_relation_endpoints(workspace, rel_id)
     if endpoints is None:
         return False
     cached_workspace, src, tgt = endpoints

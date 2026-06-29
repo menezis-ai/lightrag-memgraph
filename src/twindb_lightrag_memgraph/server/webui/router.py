@@ -230,7 +230,11 @@ def _infer_document_type(file_path: str, metadata: dict[str, Any]) -> str:
     return "file"
 
 
-def _project_doc_status_for_webui(doc: dict[str, Any]) -> dict[str, Any]:
+def _project_doc_status_for_webui(
+    doc: dict[str, Any],
+    *,
+    visible_folder: str | None = None,
+) -> dict[str, Any]:
     doc_id = str(doc.get("id") or doc.get("doc_id") or "")
     metadata = enrich_metadata_with_document_hash(
         _coerce_doc_metadata(doc.get("metadata")),
@@ -238,7 +242,12 @@ def _project_doc_status_for_webui(doc: dict[str, Any]) -> dict[str, Any]:
     )
     file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
     summary = str(doc.get("content_summary") or doc.get("summary") or "")
-    folder = str(doc.get("folder") or metadata.get("folder") or current_folder_id())
+    folder = str(
+        visible_folder
+        or doc.get("folder")
+        or metadata.get("folder")
+        or current_folder_id()
+    )
     updated_at = str(
         doc.get("updated_at")
         or doc.get("created_at")
@@ -403,7 +412,10 @@ async def _list_documents_from_doc_status(
 
     if folder is not None:
         doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
-    docs = [_project_doc_status_for_webui(doc) for doc in doc_rows]
+    docs = [
+        _project_doc_status_for_webui(doc, visible_folder=folder)
+        for doc in doc_rows
+    ]
     await _attach_graph_tags_for_documents(docs)
     return _filter_doc_status_rows(
         docs,

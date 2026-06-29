@@ -1177,6 +1177,7 @@ class TestForFolderMode:
             assert copied_docs.status_code == 200
             assert copied_docs.json()["total"] == 1
             assert copied_docs.json()["items"][0]["doc_id"] == "doc-a"
+            assert copied_docs.json()["items"][0]["folder"] == "sandbox"
         finally:
             _twindb_state.pop("rag", None)
 
@@ -1265,5 +1266,6 @@ class TestForFolderMode:
             assert default_docs.json()["total"] == 0
             assert sandbox_docs.json()["total"] == 1
             assert sandbox_docs.json()["items"][0]["doc_id"] == "doc-a"
+            assert sandbox_docs.json()["items"][0]["folder"] == "sandbox"
         finally:
             _twindb_state.pop("rag", None)

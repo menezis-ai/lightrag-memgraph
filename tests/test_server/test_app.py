@@ -62,6 +62,7 @@ import twindb_lightrag_memgraph.server.app as app_module
 from twindb_lightrag_memgraph.server.app import (
     _build_embedding_func,
     _build_llm_func,
+    _effective_graph_workspace,
     _get_rag,
     _production_auth_required,
     create_app,
@@ -82,6 +83,7 @@ def _make_settings(*, api_key="test-key", jwt_secret=None, **overrides):
         doc_status_storage="MemgraphDocStatusStorage",
         workspace="test_ws",
         enable_langsmith_tracing=False,
+        graph_relation_id_backfill_on_startup=False,
         webui_tag_backend="memory",
         webui_activity_backend="memory",
         webui_notifications_backend="memory",
@@ -882,6 +884,12 @@ class TestBuildLlmFunc:
 
 
 class TestLifespan:
+    def test_effective_graph_workspace_prefers_rag_workspace(self, _mock_rag):
+        settings = _make_settings(workspace="settings_ws")
+        _mock_rag.workspace = "runtime_ws"
+
+        assert _effective_graph_workspace(settings, _mock_rag) == "runtime_ws"
+
     async def test_register_called_during_startup(self, _mock_rag):
         """register() is called exactly once when the app starts."""
         settings = _make_settings()
@@ -904,6 +912,29 @@ class TestLifespan:
 
             async with app.router.lifespan_context(app):
                 _mock_rag.initialize.assert_awaited_once()
+
+    async def test_relation_id_backfill_runs_during_startup(self, _mock_rag):
+        settings = _make_settings(
+            graph_relation_id_backfill_on_startup=True,
+            graph_relation_id_backfill_batch_size=77,
+        )
+        _mock_rag.workspace = "runtime_ws"
+        backfill = AsyncMock(return_value=3)
+
+        with ExitStack() as stack:
+            _apply_lifespan_patches(stack, _mock_rag)
+            stack.enter_context(
+                patch(
+                    "twindb_lightrag_memgraph.server.graph_reader.backfill_relation_ids",
+                    backfill,
+                )
+            )
+            app = create_app(settings)
+
+            async with app.router.lifespan_context(app):
+                pass
+
+        backfill.assert_awaited_once_with("runtime_ws", batch_size=77)
 
     async def test_memgraph_webui_stores_boot_fresh_without_seed(
         self, monkeypatch, _mock_rag

@@ -275,6 +275,44 @@ async def _init_webui_backends(settings: LightRAGServerSettings) -> None:
     )
 
 
+def _effective_graph_workspace(settings: LightRAGServerSettings, rag: Any) -> str:
+    raw = getattr(rag, "workspace", None)
+    if isinstance(raw, str) and raw.strip():
+        candidate = raw.strip()
+    elif settings.workspace:
+        candidate = settings.workspace
+    else:
+        from .._constants import resolve_workspace
+
+        candidate = resolve_workspace()
+    from .._constants import validate_identifier
+
+    return validate_identifier(candidate, "workspace")
+
+
+async def _backfill_graph_relation_ids(
+    settings: LightRAGServerSettings, rag: Any
+) -> int:
+    if not settings.graph_relation_id_backfill_on_startup:
+        return 0
+    if settings.graph_storage != "MemgraphStorage":
+        return 0
+
+    from .graph_reader import backfill_relation_ids
+
+    workspace = _effective_graph_workspace(settings, rag)
+    updated = await backfill_relation_ids(
+        workspace,
+        batch_size=settings.graph_relation_id_backfill_batch_size,
+    )
+    logger.info(
+        "Graph relation id backfill complete (workspace=%s, updated=%s)",
+        workspace,
+        updated,
+    )
+    return updated
+
+
 def _webui_uses_memgraph(settings: LightRAGServerSettings) -> bool:
     return settings.enable_webui_routes and (
         settings.webui_tag_backend == "memgraph"
@@ -354,6 +392,7 @@ def _build_lifespan(settings: LightRAGServerSettings):
             settings.vector_storage,
             settings.graph_storage,
         )
+        await _backfill_graph_relation_ids(settings, _rag)
 
         # -- L2 Patch: tracing --
         if settings.enable_langsmith_tracing:

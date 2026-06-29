@@ -140,6 +140,19 @@ class LightRAGServerSettings(BaseSettings):
         default=False,
         description="Enable LangSmith tracing for LLM/embedding/rerank spans",
     )
+    graph_relation_id_backfill_on_startup: bool = Field(
+        default=True,
+        description=(
+            "Backfill missing twin_relation_id properties on Memgraph graph "
+            "relations during server startup. Keeps graph PATCH/DELETE "
+            "independent from worker-local caches."
+        ),
+    )
+    graph_relation_id_backfill_batch_size: int = Field(
+        default=1000,
+        ge=1,
+        description="Batch size for startup graph relation-id backfill.",
+    )
     max_request_body_bytes: int = Field(
         default=16 * 1024 * 1024,
         ge=0,

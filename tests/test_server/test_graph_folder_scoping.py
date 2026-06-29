@@ -294,6 +294,18 @@ class _RecordingSession:
         return _RowsResult(self.rows)
 
 
+class _QueuedRecordingSession(_RecordingSession):
+    def __init__(self, batches):
+        super().__init__([])
+        self._batches = list(batches)
+
+    async def run(self, query, **params):
+        self.queries.append(query)
+        self.params.append(params)
+        rows = self._batches.pop(0) if self._batches else []
+        return _RowsResult(rows)
+
+
 def _cm(session):
     @asynccontextmanager
     async def _factory():
@@ -321,6 +333,7 @@ def _rel_row(chunk_source_id, keywords="uses", twin_folder_json=None):
     return {
         "source_id": "e1",
         "target_id": "e2",
+        "relation_id": graph_reader._relation_id_from_endpoints("e1", "e2"),
         "keywords": keywords,
         "weight": 1.0,
         "chunk_source_id": chunk_source_id,
@@ -447,6 +460,116 @@ class TestDeleteEntityFolderGate:
 
 
 class TestRelationFolderGate:
+    async def test_startup_relation_id_backfill_batches_until_empty(
+        self, monkeypatch
+    ):
+        read = _QueuedRecordingSession(
+            [
+                [{"source_id": "e1", "target_id": "e2"}],
+                [],
+            ]
+        )
+        write = _RecordingSession([{}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+        updated = await graph_reader.backfill_relation_ids("ws", batch_size=5)
+
+        assert updated == 1
+        assert len(read.queries) == 2
+        assert "twin_relation_id` IS NULL" in read.queries[0]
+        assert read.params[0]["batch_size"] == 5
+        assert any("SET r.`twin_relation_id` = rel.rid" in q for q in write.queries)
+        assert write.params[-1]["relations"] == [
+            {
+                "src": "e1",
+                "tgt": "e2",
+                "rid": graph_reader._relation_id_from_endpoints("e1", "e2"),
+            }
+        ]
+
+    async def test_relation_read_persists_missing_relation_id(self, monkeypatch):
+        read = _RecordingSession(
+            [
+                {
+                    "source_id": "e1",
+                    "target_id": "e2",
+                    "relation_id": None,
+                    "keywords": "uses",
+                    "weight": 0.8,
+                    "chunk_source_id": "chunk-a",
+                    "twin_props_json": None,
+                }
+            ]
+        )
+        write = _RecordingSession([{}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+        rows = await graph_reader._fetch_relation_rows(
+            workspace="ws", member_chunks=None, max_edges=10
+        )
+
+        assert rows[0]["relation_id"] is None
+        assert any("SET r.`twin_relation_id` = rel.rid" in q for q in write.queries)
+        assert write.params[-1]["relations"] == [
+            {
+                "src": "e1",
+                "tgt": "e2",
+                "rid": graph_reader._relation_id_from_endpoints("e1", "e2"),
+            }
+        ]
+
+    async def test_delete_relation_resolves_endpoints_when_cache_is_cold(
+        self, monkeypatch
+    ):
+        rel_id = graph_reader._relation_id_from_endpoints("e1", "e2")
+        graph_reader._RELATION_ENDPOINT_CACHE.clear()
+        read = _RecordingSession([{"source_id": "e1", "target_id": "e2"}])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+        async def no_folder_context(_workspace):
+            return None, None
+
+        monkeypatch.setattr(graph_reader, "_member_context", no_folder_context)
+
+        ok = await graph_reader.delete_graph_relation("ws", rel_id)
+        assert ok is True
+        assert graph_reader.lookup_relation_endpoints(rel_id) is None
+        assert any("twin_relation_id" in q and "$rel_id" in q for q in read.queries)
+        assert not any("-[:DIRECTED]->" in q for q in read.queries)
+        assert any("DELETE r" in q for q in write.queries)
+        assert write.params[-1]["src"] == "e1"
+        assert write.params[-1]["tgt"] == "e2"
+
+    async def test_delete_relation_ignores_cache_entry_from_other_workspace(
+        self, monkeypatch
+    ):
+        rel_id = graph_reader._relation_id_from_endpoints("e1", "e2")
+        graph_reader._remember_relation("other", rel_id, "e1", "e2")
+        read = _RecordingSession([{"source_id": "e1", "target_id": "e2"}])
+        write = _RecordingSession([{"source_id": "e1"}])
+        monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
+        monkeypatch.setattr(graph_reader, "get_session", _cm(write))
+        monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
+
+        async def no_folder_context(_workspace):
+            return None, None
+
+        monkeypatch.setattr(graph_reader, "_member_context", no_folder_context)
+
+        ok = await graph_reader.delete_graph_relation("ws", rel_id)
+        assert ok is True
+        assert any("twin_relation_id" in q and "$rel_id" in q for q in read.queries)
+        assert not any("-[:DIRECTED]->" in q for q in read.queries)
+        assert any("DELETE r" in q for q in write.queries)
+        assert graph_reader.lookup_relation_endpoints(rel_id) is None
+
     async def test_patch_b_only_relation_is_refused(self, folder_a, monkeypatch):
         # relation provenance chunk-b (doc-b) → invisible in folder A.
         monkeypatch.setattr(
@@ -796,6 +919,9 @@ class TestManualCreateStamping:
         )
         props = merge_params.get("props", {})
         assert json.loads(props["twin_folder_json"]) == ["A"]
+        assert props["twin_relation_id"] == graph_reader._relation_id_from_endpoints(
+            "e1", "e2"
+        )
 
 
 # ── read_graph_native (the route's path) with mocked index loaders ────────

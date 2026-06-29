@@ -13,7 +13,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph.server.auth import require_auth
+from twindb_lightrag_memgraph.server.auth import configure_auth, require_auth
 from twindb_lightrag_memgraph.server.folder import load_folder_catalog
 from twindb_lightrag_memgraph.server.twin_query_routes import (
     build_twin_query_router,
@@ -345,6 +345,7 @@ class TestQueryEndpoint:
         assert event["meta"]["sources_count"] == 0
 
     async def test_retrieval_activity_is_scoped_to_x_twin_folder(self, monkeypatch):
+        configure_auth(api_key=None, jwt_secret=None)
         # Keep the test deterministic on environments that override the default
         # folder via test fixture/environment defaults.
         monkeypatch.setenv(
