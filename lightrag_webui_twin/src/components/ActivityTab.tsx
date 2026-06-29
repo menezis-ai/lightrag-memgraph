@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useUrlParam } from '../hooks/useUrlParam';
+import { relativeTime } from '../utils/relativeTime';
 import {
   ACTIVITY_KIND_META,
   ACTIVITY_RANGE_MS,
@@ -59,6 +60,28 @@ export interface ActivityTabProps {
 }
 
 const RANGE_IDS = ACTIVITY_RANGES.map((r) => r.id);
+const DAY_MS = 86_400_000;
+
+function utcDayStart(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function activityRelativeLabel(event: ActivityEvent, nowMs: number): string {
+  const ts = Date.parse(event.ts);
+  if (Number.isNaN(ts)) return event.rel;
+  return relativeTime(event.ts, nowMs);
+}
+
+function activityDayLabel(event: ActivityEvent, nowMs: number): string {
+  const ts = Date.parse(event.ts);
+  if (Number.isNaN(ts)) return event.day;
+  const dayDelta = Math.floor((utcDayStart(nowMs) - utcDayStart(ts)) / DAY_MS);
+  if (dayDelta <= 0) return 'Today';
+  if (dayDelta === 1) return 'Yesterday';
+  if (dayDelta < 7) return 'Earlier this week';
+  return new Date(ts).toISOString().slice(0, 10);
+}
 
 function kindPillStateClass(explicit: boolean, active: boolean): string {
   if (explicit) return 'is-explicit';
@@ -194,16 +217,19 @@ export function ActivityTab({
     (q.trim() ? 1 : 0) +
     (resourceId ? 1 : 0);
 
+  const displayNowMs = nowMs ?? initialNowMs;
+
   const grouped = useMemo(() => {
     if (!groupByDay) return [['', filtered] as const];
     const acc = new Map<string, ActivityEvent[]>();
     filtered.forEach((e) => {
-      const bucket = acc.get(e.day) ?? [];
+      const day = activityDayLabel(e, displayNowMs);
+      const bucket = acc.get(day) ?? [];
       bucket.push(e);
-      acc.set(e.day, bucket);
+      acc.set(day, bucket);
     });
     return Array.from(acc.entries());
-  }, [filtered, groupByDay]);
+  }, [filtered, groupByDay, displayNowMs]);
 
   const clearFilters = () => {
     setKinds(new Set());
@@ -381,6 +407,7 @@ export function ActivityTab({
                 <ActivityRow
                   key={e.id}
                   e={e}
+                  rel={activityRelativeLabel(e, displayNowMs)}
                   folder={(e.meta?.folder as string) || folderLabel}
                   selected={!!selected && selected.id === e.id}
                   onClick={() => setSelectedId(e.id)}
@@ -402,6 +429,7 @@ export function ActivityTab({
 
       <ActivityDetail
         e={selected}
+        rel={selected ? activityRelativeLabel(selected, displayNowMs) : ''}
         folder={(selected?.meta?.folder as string) || folderLabel}
         onPushToast={onPushToast}
         onNavigate={onNavigate}
@@ -515,12 +543,13 @@ export function ActivityTab({
 
 interface ActivityRowProps {
   e: ActivityEvent;
+  rel: string;
   folder: string;
   selected: boolean;
   onClick: () => void;
 }
 
-function ActivityRow({ e, folder, selected, onClick }: Readonly<ActivityRowProps>) {
+function ActivityRow({ e, rel, folder, selected, onClick }: Readonly<ActivityRowProps>) {
   const m = resolveKindMeta(e.kind);
   return (
     <button
@@ -528,7 +557,7 @@ function ActivityRow({ e, folder, selected, onClick }: Readonly<ActivityRowProps
       onClick={onClick}
       aria-current={selected ? 'true' : undefined}
     >
-      <span className="row-time">{e.rel}</span>
+      <span className="row-time">{rel}</span>
       <span className="row-rail" style={{ background: m.color }} />
       <span className="row-icon" style={{ color: m.color }}>
         <Icon name={m.icon} size={14} />
@@ -552,12 +581,13 @@ function ActivityRow({ e, folder, selected, onClick }: Readonly<ActivityRowProps
 
 interface ActivityDetailProps {
   e: ActivityEvent | null;
+  rel: string;
   folder: string;
   onPushToast?: (toast: Omit<Toast, 'id'>) => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
 }
 
-function ActivityDetail({ e, folder, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
+function ActivityDetail({ e, rel, folder, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
   const [copied, setCopied] = useState(false);
   if (!e) {
     return (
@@ -610,7 +640,7 @@ function ActivityDetail({ e, folder, onPushToast, onNavigate }: Readonly<Activit
         </div>
         <div className="kv">
           <span>Relative</span>
-          <span>{e.rel}</span>
+          <span>{rel}</span>
         </div>
         <div className="kv">
           <span>Actor</span>

@@ -45,6 +45,34 @@ describe('ActivityTab — rendering', () => {
     expect(screen.getByText('Earlier this week')).toBeInTheDocument();
   });
 
+  it('derives relative time and day bucket from ts + nowMs, not rel/day fields', () => {
+    render(
+      <ActivityTab
+        {...defaultProps()}
+        events={[
+          {
+            id: 'evt_temporal_truth',
+            ts: '2026-05-11T09:55:00Z',
+            rel: '99d ago',
+            day: 'Yesterday',
+            kind: 'retrieval',
+            sev: 'info',
+            actor: { user: 'temporal.user', role: 'operator' },
+            target: { type: 'query', label: 'Temporal truth query' },
+            summary: 'Temporal fields are stale',
+            meta: {},
+          },
+        ]}
+        nowMs={Date.parse('2026-05-11T10:00:00Z')}
+      />,
+    );
+
+    expect(screen.getByText('Today')).toBeInTheDocument();
+    expect(screen.queryByText('Yesterday')).toBeNull();
+    expect(screen.getAllByText('5m ago')).toHaveLength(2);
+    expect(screen.queryByText('99d ago')).toBeNull();
+  });
+
   it('shows honest backend-scope stats: total / loaded / limit / filters', () => {
     render(<ActivityTab {...defaultProps()} />);
     // Within 7d range = all 16 fixtures (the oldest is 2026-05-07 = 4d ago).

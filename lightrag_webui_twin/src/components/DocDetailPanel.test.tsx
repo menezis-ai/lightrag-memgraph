@@ -59,7 +59,7 @@ const server = setupServer(
         {
           id: 'a1',
           ts: '2026-05-29T13:00:00Z',
-          rel: '1h ago',
+          rel: '99d ago',
           day: '2026-05-29',
           kind: 'tag-mutation',
           sev: 'info',
@@ -256,6 +256,8 @@ describe('DocDetailPanel — tabs', () => {
     const url = new URL(auditRequests[0]);
     expect(url.searchParams.get('resource.id')).toBe('d-test-1');
     expect(url.searchParams.get('limit')).toBe('200');
+    expect(screen.getByText(/claire\.benoit/)).toHaveTextContent('3h ago');
+    expect(screen.queryByText(/99d ago/)).toBeNull();
   });
 });
 
