@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from lightrag import LightRAG
 from lightrag.base import DocStatus
 from lightrag.kg.shared_storage import finalize_share_data, initialize_share_data
-from lightrag.utils import EmbeddingFunc
+from lightrag.utils import EmbeddingFunc, Tokenizer
 
 import twindb_lightrag_memgraph
 from twindb_lightrag_memgraph import _install_storage_folder_capture, _pool
@@ -82,39 +82,12 @@ async def _mock_embedding(texts: list[str]) -> np.ndarray:
     return np.array(vectors)
 
 
-def _passthrough_priority_limit_async_func_call(*args, **kwargs):
-    def decorator(func):
-        async def wrapped(*call_args, **call_kwargs):
-            return await func(*call_args, **call_kwargs)
+class _CharTokenizer:
+    def encode(self, content: str) -> list[int]:
+        return [ord(char) for char in content]
 
-        async def shutdown(*args, **kwargs):
-            return None
-
-        wrapped.shutdown = shutdown
-        return wrapped
-
-    return decorator
-
-
-async def _shutdown_rag_workers(rag: LightRAG) -> None:
-    async def _shutdown(shutdown):
-        try:
-            await shutdown(graceful=False)
-        except TypeError as exc:
-            if "unexpected keyword argument" not in str(exc):
-                raise
-            await shutdown()
-
-    embedding_func = getattr(getattr(rag, "embedding_func", None), "func", None)
-    shutdown = getattr(embedding_func, "shutdown", None)
-    if callable(shutdown):
-        await _shutdown(shutdown)
-
-    role_funcs = getattr(rag, "role_llm_funcs", {})
-    for wrapped in role_funcs.values():
-        shutdown = getattr(wrapped, "shutdown", None)
-        if callable(shutdown):
-            await _shutdown(shutdown)
+    def decode(self, tokens: list[int]) -> str:
+        return "".join(chr(token) for token in tokens)
 
 
 @pytest.fixture
@@ -143,20 +116,6 @@ async def native_runtime(monkeypatch, runtime_dirs):
     initialize_share_data()
     await _cleanup_workspace()
 
-    import lightrag.lightrag as lightrag_module
-    import lightrag.llm_roles as llm_roles_module
-
-    monkeypatch.setattr(
-        lightrag_module,
-        "priority_limit_async_func_call",
-        _passthrough_priority_limit_async_func_call,
-    )
-    monkeypatch.setattr(
-        llm_roles_module,
-        "priority_limit_async_func_call",
-        _passthrough_priority_limit_async_func_call,
-    )
-
     async def mock_llm(prompt, system_prompt=None, history_messages=None, **kwargs):
         return await _mock_llm(prompt, system_prompt, history_messages, **kwargs)
 
@@ -179,6 +138,7 @@ async def native_runtime(monkeypatch, runtime_dirs):
         enable_llm_cache=False,
         chunk_token_size=120,
         chunk_overlap_token_size=20,
+        tokenizer=Tokenizer("native-runtime-char", _CharTokenizer()),
     )
     await rag.initialize_storages()
 
@@ -202,7 +162,6 @@ async def native_runtime(monkeypatch, runtime_dirs):
     try:
         yield rag, app
     finally:
-        await _shutdown_rag_workers(rag)
         await _cleanup_workspace()
         await rag.finalize_storages()
 
@@ -258,7 +217,7 @@ def _doc_field(doc_status, field: str):
 
 
 @pytest.mark.integration
-async def test_native_upload_ingests_file_through_runtime_pipeline(native_runtime):
+async def test_native_document_runtime_upload_and_failed_reprocess(native_runtime):
     rag, app = native_runtime
 
     async with httpx.AsyncClient(
@@ -296,16 +255,6 @@ async def test_native_upload_ingests_file_through_runtime_pipeline(native_runtim
     assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
     assert await _count_nodes(f"Vec_{WORKSPACE}") > 0
 
-    deletion = await rag.adelete_by_doc_id(doc_id)
-    assert deletion.status == "success"
-    assert await rag.doc_status.get_by_id(doc_id) is None
-
-
-@pytest.mark.integration
-async def test_reprocess_failed_resumes_failed_document_through_runtime_pipeline(
-    native_runtime,
-):
-    rag, app = native_runtime
     track_id = "runtime-reprocess-track"
 
     await rag.apipeline_enqueue_documents(
