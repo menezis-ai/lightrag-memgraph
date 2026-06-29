@@ -190,7 +190,8 @@ test.describe('Knowledge Graph entity and relation lifecycle', () => {
     await page.getByTestId('kg-add-rel-btn').click();
     // e_cft → e_swift already exists in the fixtures (duplicate guard keeps
     // the submit disabled) — link towards DC Paris instead.
-    await page.getByTestId('kg-add-rel-target').selectOption('e_paris');
+    await page.getByTestId('kg-add-rel-target').fill('paris');
+    await page.getByTestId('kg-add-rel-target-option-e_paris').click();
     await page.getByTestId('kg-add-rel-label').fill('DEPLOYED_AT');
     await page.getByTestId('kg-add-rel-submit').click();
 

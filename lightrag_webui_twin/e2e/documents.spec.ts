@@ -150,10 +150,10 @@ test.describe('Documents RC-2 filters and counters', () => {
     await boot(page);
   });
 
-  test('@documents @rc2 counters follow the active search filter', async ({ page }) => {
+  test('@documents @rc2 counters keep total while match count follows search filter', async ({ page }) => {
     await page.getByLabel('Search source').fill('oracle');
 
-    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^All \(4\)/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Completed \(1\)/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Failed \(0\)/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Processing \(0\)/ })).toBeVisible();
@@ -174,9 +174,10 @@ test.describe('Documents RC-2 filters and counters', () => {
     await page.getByRole('button', { name: /^All/ }).click();
     await addDocumentTagFilter(page, 'rman');
     await expect(page).toHaveURL(/tag=rman/);
-    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^All \(4\)/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Completed \(1\)/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Failed \(0\)/ })).toBeVisible();
+    await expect(page.getByText('1 document match')).toBeVisible();
     await expect(page.getByTestId('docs-row-d1')).toBeVisible();
     await expect(page.getByTestId('docs-row-d2')).toBeHidden();
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
@@ -184,7 +185,8 @@ test.describe('Documents RC-2 filters and counters', () => {
     await page.reload();
     await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
     await expect(page).toHaveURL(/tag=rman/);
-    await expect(page.getByRole('button', { name: /^All \(1\)/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^All \(4\)/ })).toBeVisible();
+    await expect(page.getByText('1 document match')).toBeVisible();
     await expect(page.getByTestId('docs-row-d1')).toBeVisible();
     await expect(page.getByTestId('docs-row-d2')).toBeHidden();
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();

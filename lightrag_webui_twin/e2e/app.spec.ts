@@ -321,11 +321,12 @@ test.describe('Twin WebUI operator journeys', () => {
   test('@tags @governance request and reject review workflows are enforced', async ({ page }) => {
     await openTab(page, 'Tags');
     await page.getByRole('button', { name: 'Request new tag' }).click();
-    await expect(page.getByRole('dialog', { name: /Request new tag/ })).toBeVisible();
+    const requestDialog = page.getByRole('dialog', { name: /Request new tag/ });
+    await expect(requestDialog).toBeVisible();
     await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled();
     await page.getByLabel(/Proposed name/).fill('golden-signal');
     await page.getByLabel(/Definition/).fill('Operational telemetry signal used for SLO triage.');
-    await page.getByLabel('Domain').selectOption('infra');
+    await requestDialog.getByLabel('Domain', { exact: true }).selectOption('infra');
     await page.getByLabel(/Synonyms/).fill('sli, service-level-indicator');
     await page.getByLabel('Justification').fill(
       'Needed to classify runbooks that describe SLO-driven incident triage.',
@@ -695,15 +696,17 @@ test.describe('Twin WebUI operator journeys', () => {
     page,
   }) => {
     await openTab(page, 'Tags');
-    await page.getByTestId('taxonomy-edit-domains').click();
-    const dialog = page.getByRole('dialog', { name: 'Edit domains' });
-    await expect(dialog).toBeVisible();
+    await page.getByTestId('rail-manage-domains').click();
+    const editor = page.getByTestId('domain-rail-editor');
+    await expect(editor).toBeVisible();
 
-    await dialog.getByLabel('messaging domain label').fill('Communication');
-    await dialog.getByRole('button', { name: 'Add domain' }).click();
-    await dialog.getByLabel('New domain domain id').fill('collaboration');
-    await dialog.getByLabel('collaboration domain label').fill('Collaboration');
-    await dialog.getByRole('button', { name: 'Save domains' }).click();
+    await editor.getByLabel('messaging domain label').fill('Communication');
+    await editor.getByRole('button', { name: 'Add domain' }).click();
+    await editor.getByLabel('New domain domain id').fill('collaboration');
+    await editor
+      .getByLabel('collaboration domain label')
+      .fill('Collaboration');
+    await editor.getByRole('button', { name: 'Save' }).click();
 
     await expect(page.getByTestId('taxonomy-import-status')).toContainText(
       'domains applied',
@@ -780,11 +783,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('rail-reliability')).toContainText('Reliability');
 
     await page.getByRole('button', { name: 'Request new tag' }).click();
+    const requestDialog = page.getByRole('dialog', { name: /Request new tag/ });
     await page.getByLabel(/Proposed name/).fill('golden-signal');
     await page
       .getByLabel(/Definition/)
       .fill('Operational signal used to triage reliability regressions.');
-    await page.getByLabel('Domain').selectOption('reliability');
+    await requestDialog
+      .getByLabel('Domain', { exact: true })
+      .selectOption('reliability');
     await page
       .getByLabel('Justification')
       .fill('Required for Saad demo workflow and SLO runbooks.');
@@ -934,9 +940,10 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('button', { name: 'Mark all read' }).click();
     await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
     await page.getByRole('button', { name: 'Notifications' }).click();
-    await expect(page.getByRole('dialog', { name: 'Notifications' })).not.toContainText('unread');
-    await page.getByRole('button', { name: 'Clear all' }).click();
-    await expect(page.getByRole('dialog', { name: 'Notifications' })).toContainText(
+    const dialog = page.getByRole('dialog', { name: 'Notifications' });
+    await expect(dialog).not.toContainText('unread');
+    await dialog.getByRole('button', { name: 'Clear all', exact: true }).click();
+    await expect(dialog).toContainText(
       "You're all caught up.",
     );
   });

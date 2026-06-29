@@ -33,11 +33,12 @@ test.describe('Twin WebUI tag governance persistence', () => {
     page,
   }) => {
     await page.getByRole('button', { name: 'Request new tag' }).click();
+    const requestDialog = page.getByRole('dialog', { name: /Request new tag/ });
     await page.getByLabel(/Proposed name/).fill('golden-signal');
     await page
       .getByLabel(/Definition/)
       .fill('Operational signal used to triage reliability regressions.');
-    await page.getByLabel('Domain').selectOption('infra');
+    await requestDialog.getByLabel('Domain', { exact: true }).selectOption('infra');
     await page
       .getByLabel('Justification')
       .fill('Required for SLO triage runbooks.');
@@ -153,5 +154,36 @@ test.describe('Twin WebUI tag governance persistence', () => {
     await openTab(page, 'Tags');
     await page.getByLabel('Search tags').fill('ansible');
     await expect(page.getByTestId('tag-card-ansible')).toBeHidden();
+  });
+
+  test('@tags @dark deprecate modal keeps tag identity readable', async ({
+    page,
+  }) => {
+    await page.getByLabel('Theme').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+    await page.getByLabel('Search tags').fill('ansible');
+    await page.getByTestId('tag-card-ansible').click();
+    await page.getByRole('button', { name: 'Deprecate' }).click();
+
+    const dialog = page.getByRole('dialog', { name: /Deprecate tag/ });
+    await expect(dialog).toBeVisible();
+    const tagCode = dialog.locator('.modal-h-sub code');
+    const statusBadge = dialog.locator('.status-badge');
+    await expect(tagCode).toHaveText('ansible');
+    await expect(statusBadge).toBeVisible();
+
+    const styleSnapshot = await tagCode.evaluate((el) => {
+      const code = window.getComputedStyle(el);
+      const modal = window.getComputedStyle(el.closest('.modal') as Element);
+      return {
+        color: code.color,
+        backgroundColor: code.backgroundColor,
+        modalBackgroundColor: modal.backgroundColor,
+      };
+    });
+    expect(styleSnapshot.color).not.toBe('rgba(0, 0, 0, 0)');
+    expect(styleSnapshot.color).not.toBe(styleSnapshot.backgroundColor);
+    expect(styleSnapshot.color).not.toBe(styleSnapshot.modalBackgroundColor);
   });
 });
