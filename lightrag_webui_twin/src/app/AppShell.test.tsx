@@ -1184,6 +1184,40 @@ describe('AppShell — folders', () => {
     );
   });
 
+  it('restores a stored runtime folder after refresh when the live folders query knows it', async () => {
+    globalThis.localStorage.setItem('twin.ui.folder.v1', 'test');
+    authState.current.config = {
+      defaultFolderId: 'default',
+      folders: [
+        { id: 'default', label: 'Default KB', kind: 'standard', sources: 4 },
+      ],
+    };
+    queriesState.folders.data = [
+      {
+        id: 'default',
+        kb: 'Default KB',
+        visibility: 'internal',
+        sources: 4,
+        role: 'admin',
+        current: false,
+      },
+      {
+        id: 'test',
+        kb: 'test',
+        visibility: 'internal',
+        sources: 0,
+        role: 'admin',
+        current: true,
+      },
+    ] as Folder[];
+
+    renderShell();
+
+    expect(screen.getByTestId('topbar-folder')).toHaveTextContent('test');
+    expect(setActiveFolderMock).toHaveBeenCalledWith('test');
+    expect(globalThis.localStorage.getItem('twin.ui.folder.v1')).toBe('test');
+  });
+
   it('falls back to the default folder when the active folder is not in the list', async () => {
     // current folder persisted as something not present → effect rewrites
     // storage/state to the configured default.
