@@ -728,6 +728,7 @@ async def _record_retrieval_activity(
     body: TwinQueryBody,
     request: Request,
     *,
+    folder: str,
     sources_count: int,
     stream: bool,
 ) -> None:
@@ -753,7 +754,7 @@ async def _record_retrieval_activity(
             },
             target_type="query",
         )
-        await get_store().record_activity(event)
+        await get_store(folder).record_activity(event)
     except Exception:
         logger.exception("twin_query: failed to record retrieval activity")
 
@@ -840,7 +841,9 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
             answer_raw if isinstance(answer_raw, str) else str(answer_raw or "")
         )
         cleaned, _ = classify_answer(answer_text)
-        await _record_retrieval_activity(body, request, sources_count=0, stream=False)
+        await _record_retrieval_activity(
+            body, request, folder=folder, sources_count=0, stream=False
+        )
         return {
             "response": cleaned,
             "sources": [],
@@ -872,7 +875,9 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # is real but never grounded in sources, so report no_retrieval (not the
     # grounded default the envelope would otherwise imply) and skip projection.
     if body.mode == "bypass":
-        await _record_retrieval_activity(body, request, sources_count=0, stream=False)
+        await _record_retrieval_activity(
+            body, request, folder=folder, sources_count=0, stream=False
+        )
         return {
             "response": clean_answer,
             "sources": [],
@@ -880,7 +885,9 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         }
 
     if answer_status == ANSWER_STATUS_INSUFFICIENT:
-        await _record_retrieval_activity(body, request, sources_count=0, stream=False)
+        await _record_retrieval_activity(
+            body, request, folder=folder, sources_count=0, stream=False
+        )
         return {
             "response": clean_answer,
             "sources": [],
@@ -903,7 +910,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     if not projection_ok:
         answer_status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
     await _record_retrieval_activity(
-        body, request, sources_count=len(sources), stream=False
+        body, request, folder=folder, sources_count=len(sources), stream=False
     )
     return {
         "response": clean_answer,
@@ -1095,7 +1102,9 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             yield json.dumps(
                 {"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}
             ) + "\n"
-            await _record_retrieval_activity(body, request, sources_count=0, stream=True)
+            await _record_retrieval_activity(
+                body, request, folder=folder, sources_count=0, stream=True
+            )
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
@@ -1108,7 +1117,9 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
 
         if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
             yield json.dumps({"type": "status", "value": status}) + "\n"
-            await _record_retrieval_activity(body, request, sources_count=0, stream=True)
+            await _record_retrieval_activity(
+                body, request, folder=folder, sources_count=0, stream=True
+            )
             yield json.dumps({"type": "sources", "value": []}) + "\n"
             return
 
@@ -1124,7 +1135,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
         yield json.dumps({"type": "status", "value": status}) + "\n"
         await _record_retrieval_activity(
-            body, request, sources_count=len(sources), stream=True
+            body, request, folder=folder, sources_count=len(sources), stream=True
         )
         yield json.dumps({"type": "sources", "value": sources}) + "\n"
 

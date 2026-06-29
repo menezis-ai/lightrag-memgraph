@@ -10,12 +10,15 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from twindb_lightrag_memgraph.server.auth import require_auth
+from twindb_lightrag_memgraph.server.folder import load_folder_catalog
 from twindb_lightrag_memgraph.server.twin_query_routes import (
     build_twin_query_router,
 )
+from twindb_lightrag_memgraph.server.webui import router as webui_router
 
 
 class FakeChunksVdb:
@@ -288,6 +291,68 @@ class TestQueryEndpoint:
         assert event["target"]["type"] == "query"
         assert event["meta"]["sources_count"] == 1
         assert event["meta"]["query"] == "How do I restart Oracle?"
+
+    async def test_retrieval_activity_is_scoped_to_x_twin_folder(self, monkeypatch):
+        # Keep the test deterministic on environments that override the default
+        # folder via test fixture/environment defaults.
+        monkeypatch.setenv(
+            "TWIN_DEFAULT_FOLDER",
+            "default",
+        )
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            '[{"id":"default","label":"Default folder"},{"id":"tests","label":"Tests"}]',
+        )
+        default_folder = load_folder_catalog().default_folder_id
+        assert default_folder == "default"
+
+        webui_router.reset_store()
+        rag = FakeRag(
+            answer="How to retrieve from folder tests?",
+            chunks=[{"id": "chunk-aa", "file_path": "/cib/runbooks/oracle.pdf"}],
+        )
+        actor = "folder-scope-checker"
+        app = FastAPI()
+        app.include_router(
+            build_twin_query_router(lambda: rag),
+            prefix="/twin/api",
+            dependencies=[Depends(require_auth)],
+        )
+        app.include_router(webui_router.router, prefix="/twin/api")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/twin/api/query",
+                headers={"X-Twin-Folder": "tests"},
+                json={
+                    "query": "How to configure folder-scoped retrieval?",
+                    "actor": actor,
+                    "top_k": 1,
+                },
+            )
+            assert response.status_code == 200
+
+            default_activity = await client.get(
+                "/twin/api/activity",
+                headers={"X-Twin-Folder": default_folder},
+                params={"kind": "retrieval", "actor": actor},
+            )
+            assert default_activity.status_code == 200
+            assert default_activity.json()["total"] == 0
+
+            scoped_activity = await client.get(
+                "/twin/api/activity",
+                headers={"X-Twin-Folder": "tests"},
+                params={"kind": "retrieval", "actor": actor},
+            )
+            assert scoped_activity.status_code == 200
+            body = scoped_activity.json()
+            assert body["total"] == 1
+            assert body["items"][0]["actor"]["user"] == actor
+            assert (
+                body["items"][0]["target"]["label"]
+                == "How to configure folder-scoped retrieval?"
+            )
 
     async def test_preserves_lightrag_answer_text_with_references_block(
         self, make_client
