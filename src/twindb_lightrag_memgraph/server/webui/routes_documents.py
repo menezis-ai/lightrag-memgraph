@@ -191,6 +191,7 @@ async def add_document_to_folder(doc_id: str, body: dict[str, Any]) -> dict[str,
         summary=f"added to folder {folder_id} by {actor}",
         meta={"doc_id": doc_id, "folder_id": folder_id, "operation": "add-membership"},
         target_type="document",
+        target_id=doc_id,
     )
     await get_store().record_activity(event)
     return {"doc_id": doc_id, "folders": folders}
@@ -271,6 +272,7 @@ async def remove_document_from_folder(
             "remaining_folders": remaining,
         },
         target_type="document",
+        target_id=doc_id,
     )
     await get_store().record_activity(event)
     return {
@@ -322,7 +324,9 @@ async def _apply_membership_delete(
         return None
 
 
-async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -> bool:
+async def _delete_one_document(
+    legacy: Any, rag: Any, doc_id: Any
+) -> dict[str, Any] | None:
     """Delete a doc from the bulk-delete surface, ref-counted (architect P1).
 
     "Delete" here means **remove from the active folder**: a doc shared across
@@ -331,41 +335,95 @@ async def _delete_one_document(legacy: Any, rag: Any, doc_id: Any, actor: str) -
     Backends without membership fall back to the legacy hard delete.
     """
     if not isinstance(doc_id, str) or not doc_id:
-        return False
+        return None
     active = legacy.current_folder_id()
     try:
         doc = await legacy._get_doc_for_active_folder(doc_id)
     except HTTPException as exc:
         if exc.status_code != 404:
             raise
-        return False
+        return None
     except Exception:
-        return False
+        return None
 
     physically_deleted = await _apply_membership_delete(legacy, rag, doc_id, active)
     if physically_deleted is None:
-        return False
+        return None
+
+    return {
+        "doc_id": doc_id,
+        "label": doc.get("file_path") or doc_id,
+        "folder": active,
+        "physically_deleted": physically_deleted,
+    }
+
+
+async def _emit_bulk_delete_activity(
+    *,
+    actor: str,
+    results: list[dict[str, Any]],
+    failed: list[str],
+) -> None:
+    """Emit one audit event for a bulk-delete request that changed documents."""
+    if not results:
+        return
+
+    doc_ids = [str(result["doc_id"]) for result in results]
+    deleted = len(results)
+    active = str(results[0]["folder"])
+    physically_deleted_count = sum(1 for r in results if r["physically_deleted"])
+    unshared_count = deleted - physically_deleted_count
+    cascade_summary = (
+        "physical delete cascades document data, chunks, vectors and graph links"
+    )
+    if physically_deleted_count and unshared_count:
+        summary = (
+            f"Bulk delete by {actor}: {deleted} documents affected "
+            f"({physically_deleted_count} physically deleted with cascade, "
+            f"{unshared_count} unshared from folder {active})"
+        )
+    elif physically_deleted_count:
+        summary = (
+            f"Bulk delete by {actor}: {deleted} documents physically deleted; "
+            f"{cascade_summary}"
+        )
+    else:
+        summary = (
+            f"Bulk delete by {actor}: {deleted} documents unshared "
+            f"from folder {active}; no physical cascade"
+        )
+
+    meta: dict[str, Any] = {
+        "operation": "bulk-delete",
+        "folder": active,
+        "doc_count": deleted,
+        "doc_ids": doc_ids,
+        "failed": failed,
+        "failed_count": len(failed),
+        "physically_deleted_count": physically_deleted_count,
+        "unshared_count": unshared_count,
+        "cascade": cascade_summary,
+    }
+    target_id = None
+    target_label = f"{deleted} documents"
+    target_type = "bulk"
+    if deleted == 1:
+        target_id = doc_ids[0]
+        target_label = str(results[0]["label"])
+        target_type = "document"
+        meta["doc_id"] = doc_ids[0]
 
     event = _make_event(
-        kind="doc-deleted" if physically_deleted else "doc-folder-removed",
+        kind="doc-deleted" if physically_deleted_count else "doc-folder-removed",
         sev="info",
         actor=actor,
-        target_label=doc.get("file_path") or doc_id,
-        summary=(
-            f"deleted by {actor}"
-            if physically_deleted
-            else f"removed from folder {active} by {actor}"
-        ),
-        meta={
-            "doc_id": doc_id,
-            "operation": "bulk-delete",
-            "folder": active,
-            "physically_deleted": physically_deleted,
-        },
-        target_type="document",
+        target_label=target_label,
+        summary=summary,
+        meta=meta,
+        target_type=target_type,
+        target_id=target_id,
     )
     await get_store().record_activity(event)
-    return True
 
 
 @router.post(
@@ -381,12 +439,14 @@ async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
 
     doc_ids, actor = _parse_bulk_delete_body(body)
     rag = legacy._get_rag()
-    deleted = 0
+    results: list[dict[str, Any]] = []
     failed: list[str] = []
     for doc_id in doc_ids:
-        if await _delete_one_document(legacy, rag, doc_id, actor):
-            deleted += 1
+        result = await _delete_one_document(legacy, rag, doc_id)
+        if result is not None:
+            results.append(result)
         else:
             failed.append(str(doc_id))
 
-    return {"deleted": deleted, "failed": failed}
+    await _emit_bulk_delete_activity(actor=actor, results=results, failed=failed)
+    return {"deleted": len(results), "failed": failed}

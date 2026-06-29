@@ -15,6 +15,7 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
@@ -118,6 +119,30 @@ class _FakeWriteSession:
         return _FakeTx()
 
 
+class _FakeDocStatus:
+    def __init__(self):
+        self.docs = {
+            "doc-reject": {
+                "id": "doc-reject",
+                "file_path": "/kb/reject-me.pdf",
+                "metadata": {},
+            }
+        }
+        self.upserts: list[dict] = []
+
+    async def get_by_id(self, doc_id: str):
+        return self.docs.get(doc_id)
+
+    async def upsert(self, docs: dict[str, dict]) -> None:
+        self.upserts.append(docs)
+        self.docs.update(docs)
+
+
+class _FakeRag:
+    def __init__(self):
+        self.doc_status = _FakeDocStatus()
+
+
 # ---------------------------------------------------------------------------
 # POST /documents/_bulk-retag
 # ---------------------------------------------------------------------------
@@ -183,6 +208,37 @@ class TestBulkRetag:
 
         assert r.status_code == 200
         assert r.json() == {"updated": 0, "failed": ["doc-in-other-folder"]}
+
+
+# ---------------------------------------------------------------------------
+# POST /documents/{doc_id}/reject
+# ---------------------------------------------------------------------------
+
+
+class TestRejectDocument:
+    async def test_emits_warning_event_with_doc_id_and_reason(self, client):
+        _twindb_state["rag"] = _FakeRag()
+        try:
+            r = await client.post(
+                "/documents/doc-reject/reject",
+                json={"reason": "classification too high", "actor": "auditor"},
+            )
+
+            assert r.status_code == 200
+            body = r.json()
+            assert body["review"]["state"] == "rejected"
+            assert body["review"]["justification"] == "classification too high"
+
+            events = await _get_activity(client)
+            event = events[0]
+            assert event["kind"] == "doc-rejected"
+            assert event["sev"] == "warning"
+            assert event["target"]["id"] == "doc-reject"
+            assert event["meta"]["doc_id"] == "doc-reject"
+            assert event["meta"]["reason"] == "classification too high"
+            assert "classification too high" in event["summary"]
+        finally:
+            _twindb_state.pop("rag", None)
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +412,8 @@ class TestRejectTag:
         )
         events = await _get_activity(client)
         assert events[0]["sev"] == "warning"
+        assert events[0]["target"]["id"] == "argocd"
+        assert events[0]["meta"]["reason"] == "scope creep"
         assert "scope creep" in events[0]["summary"]
 
     async def test_missing_reason_is_422(self, client):
@@ -490,6 +548,12 @@ class TestDeleteTag:
         assert all("rman" not in doc["tags"] for doc in oracle_docs.json()["items"])
         events = await _get_activity(client)
         assert "migrated to oracle" in events[0]["summary"]
+        assert "docs migrated to oracle" in events[0]["summary"]
+        assert events[0]["target"]["id"] == "rman"
+        assert events[0]["meta"]["operation"] == "delete-tag"
+        assert events[0]["meta"]["strategy"] == "migrate"
+        assert events[0]["meta"]["to"] == "oracle"
+        assert "docs migrated to oracle" in events[0]["meta"]["result"]
         assert events[0]["meta"]["affected_docs"] >= 1
 
     async def test_untag_strategy_default(self, client):
@@ -499,6 +563,9 @@ class TestDeleteTag:
         assert vault_docs.json()["items"] == []
         events = await _get_activity(client)
         assert "deleted (docs untagged)" in events[0]["summary"]
+        assert events[0]["target"]["id"] == "vault"
+        assert events[0]["meta"]["strategy"] == "untag"
+        assert "docs untagged" in events[0]["meta"]["result"]
 
     async def test_migrate_requires_existing_target(self, client):
         r = await client.request(

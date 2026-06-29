@@ -659,6 +659,7 @@ async def approve_document(
         ),
         meta={"doc_id": doc_id, "edits": edits},
         target_type="document",
+        target_id=doc_id,
     )
     await get_store().record_activity(event)
 
@@ -718,9 +719,10 @@ async def reject_document(
         sev="warning",
         actor=actor,
         target_label=doc.get("file_path") or doc_id,
-        summary=f"rejected: {reason}",
+        summary=f"Document {doc.get('file_path') or doc_id} rejected: {reason}",
         meta={"doc_id": doc_id, "reason": reason},
         target_type="document",
+        target_id=doc_id,
     )
     await get_store().record_activity(event)
 

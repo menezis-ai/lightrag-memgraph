@@ -261,11 +261,13 @@ async def _emit_rejection_event(
             summary=str(exc),
             meta={
                 "doc_id": doc_id,
+                "reason": str(exc),
                 "path": file_path,
                 "classification": exc.result.as_dict(),
                 "ceiling": exc.ceiling,
             },
             target_type="document",
+            target_id=doc_id,
         )
         await get_store().record_activity(event)
     except Exception as event_exc:

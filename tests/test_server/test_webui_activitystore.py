@@ -217,6 +217,18 @@ class TestInMemoryActivityStore:
                     "meta": {"doc_id": "doc-456"},
                 },
                 {
+                    "id": "evt_meta_doc_ids",
+                    "ts": "2026-05-13T00:01:30Z",
+                    "rel": "now",
+                    "day": "Today",
+                    "kind": "doc-deleted",
+                    "sev": "info",
+                    "actor": {"user": "system", "role": "operator"},
+                    "target": {"type": "bulk", "label": "2 documents"},
+                    "summary": "bulk delete",
+                    "meta": {"doc_ids": ["doc-bulk-a", "doc-bulk-b"]},
+                },
+                {
                     "id": "evt_historic",
                     "ts": "2026-05-13T00:02:00Z",
                     "rel": "now",
@@ -234,6 +246,10 @@ class TestInMemoryActivityStore:
         assert total == 1
         assert len(doc_events) == 1
         assert doc_events[0]["id"] == "evt_meta"
+        bulk_events, total, _ = await store.list(resource_id="doc-bulk-a")
+        assert total == 1
+        assert len(bulk_events) == 1
+        assert bulk_events[0]["id"] == "evt_meta_doc_ids"
         historic_events, total, _ = await store.list(resource_id="doc-unknown")
         assert total == 0
         assert len(historic_events) == 0
@@ -407,11 +423,29 @@ class TestMemgraphActivityStore:
                     "meta": {"doc_id": "doc-456"},
                 }
             )
+            await store.append(
+                {
+                    "id": "evt_mg_resource_meta_doc_ids",
+                    "ts": "2026-05-13T00:02:00Z",
+                    "rel": "today",
+                    "day": "Today",
+                    "kind": "doc-deleted",
+                    "sev": "info",
+                    "actor": {"user": "system", "role": "operator"},
+                    "target": {"type": "bulk", "label": "2 documents"},
+                    "summary": "bulk delete",
+                    "meta": {"doc_ids": ["doc-bulk-a", "doc-bulk-b"]},
+                }
+            )
 
             events, total, _ = await store.list(resource_id="doc-456")
             assert total == 1
             assert len(events) == 1
             assert events[0]["id"] == "evt_mg_resource_meta"
+            events, total, _ = await store.list(resource_id="doc-bulk-b")
+            assert total == 1
+            assert len(events) == 1
+            assert events[0]["id"] == "evt_mg_resource_meta_doc_ids"
         finally:
             await _cleanup(_ws)
 
@@ -656,7 +690,7 @@ class TestMemgraphActivityStore:
                 "actor": {"user": "claire.benoit", "role": "operator"},
                 "target": {"type": "document", "label": "doc-target", "id": "doc-001"},
                 "summary": "scalar-check",
-                "meta": {"doc_id": "doc-meta"},
+                "meta": {"doc_id": "doc-meta", "doc_ids": ["doc-a", "doc-b"]},
             }
             await store.append(appended)
 
@@ -667,6 +701,7 @@ class TestMemgraphActivityStore:
                     f"MATCH (n:`WebuiActivity_{_ws}` {{id: $id}}) "
                     "RETURN n.target_id AS target_id, "
                     "       n.meta_doc_id AS meta_doc_id, "
+                    "       n.meta_doc_ids AS meta_doc_ids, "
                     "       n.ts_ms AS ts_ms, "
                     "       n.`__scalars_version` AS scalars_version",
                     id="evt_append_scalars",
@@ -677,6 +712,7 @@ class TestMemgraphActivityStore:
             assert record is not None
             assert record["target_id"] == "doc-001"
             assert record["meta_doc_id"] == "doc-meta"
+            assert record["meta_doc_ids"] == ["doc-a", "doc-b"]
             assert record["scalars_version"] == SCALARS_VERSION
             expected_ts = int(
                 datetime.datetime(

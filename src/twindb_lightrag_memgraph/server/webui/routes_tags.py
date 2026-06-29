@@ -326,6 +326,7 @@ async def _emit_tag_audit(
     summary: str,
     meta: dict[str, Any],
     notification: dict[str, Any] | None,
+    target_id: str | None = None,
 ) -> None:
     """Record an activity event and (optionally) push a notification."""
     event = _make_event(
@@ -335,6 +336,7 @@ async def _emit_tag_audit(
         target_label=target_label,
         summary=summary,
         meta=meta,
+        target_id=target_id or target_label,
     )
     await store.record_activity(event)
     if notification is not None:
@@ -702,16 +704,23 @@ async def delete_tag(
         if payload.strategy == "migrate"
         else "deleted (docs untagged)"
     )
+    result = (
+        f"{affected_docs} docs migrated to {payload.to}"
+        if payload.strategy == "migrate"
+        else f"{affected_docs} docs untagged"
+    )
     await _emit_tag_audit(
         store=store,
         actor=actor,
         kind="tag-mutation",
         sev="warning",
         target_label=name,
-        summary=f"Tag {name} {suffix}",
+        summary=f"Tag {name} {suffix} — {result}",
         meta={
+            "operation": "delete-tag",
             "strategy": payload.strategy,
             "to": payload.to,
+            "result": result,
             "affected_docs": affected_docs,
             "sources_count_at_delete": entry.get("sources_count", 0),
         },

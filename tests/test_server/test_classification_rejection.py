@@ -111,5 +111,7 @@ class TestClassificationRejectionIntegration:
         events, _, _ = await webui_router.get_store().list_activity()
         rejected = [e for e in events if e["kind"] == "classification-rejected"]
         assert len(rejected) == 1
+        assert rejected[0]["target"]["id"] == "doc-c3"
         assert rejected[0]["meta"]["doc_id"] == "doc-c3"
+        assert "outranks workspace ceiling" in rejected[0]["meta"]["reason"]
         assert rejected[0]["meta"]["classification"]["class_id"] == "C3"

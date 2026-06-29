@@ -92,8 +92,33 @@ class TestBulkDeleteEndpoint:
         activity = await client.get("/activity")
         events = activity.json()["items"]
         deletes = [e for e in events if e["kind"] == "doc-deleted"]
-        assert len(deletes) == 2
-        assert {e["meta"]["doc_id"] for e in deletes} == {"doc-a", "doc-b"}
+        assert len(deletes) == 1
+        event = deletes[0]
+        assert event["target"]["type"] == "bulk"
+        assert event["target"]["label"] == "2 documents"
+        assert event["target"]["id"] is None
+        assert "2 documents physically deleted" in event["summary"]
+        assert "cascade" in event["summary"]
+        assert event["meta"]["doc_count"] == 2
+        assert set(event["meta"]["doc_ids"]) == {"doc-a", "doc-b"}
+        assert event["meta"]["physically_deleted_count"] == 2
+        assert event["meta"]["unshared_count"] == 0
+        assert event["meta"]["failed"] == []
+
+        doc_a_activity = await client.get(
+            "/activity", params={"resource.id": "doc-a"}
+        )
+        doc_b_activity = await client.get(
+            "/activity", params={"resource.id": "doc-b"}
+        )
+        missing_activity = await client.get(
+            "/activity", params={"resource.id": "missing"}
+        )
+        assert doc_a_activity.json()["total"] == 1
+        assert doc_a_activity.json()["items"][0]["id"] == event["id"]
+        assert doc_b_activity.json()["total"] == 1
+        assert doc_b_activity.json()["items"][0]["id"] == event["id"]
+        assert missing_activity.json()["total"] == 0
 
     async def test_reports_missing_or_cross_folder_ids_as_failed(self, client):
         r = await client.post(
@@ -107,6 +132,14 @@ class TestBulkDeleteEndpoint:
             "failed": ["doc-sandbox", "missing"],
         }
         assert client._test_rag.deleted == ["doc-a"]
+
+        activity = await client.get("/activity")
+        events = activity.json()["items"]
+        deletes = [e for e in events if e["kind"] == "doc-deleted"]
+        assert len(deletes) == 1
+        assert deletes[0]["target"]["id"] == "doc-a"
+        assert deletes[0]["meta"]["doc_id"] == "doc-a"
+        assert deletes[0]["meta"]["failed"] == ["doc-sandbox", "missing"]
 
     async def test_rejects_empty_target_list(self, client):
         r = await client.post("/documents/bulk-delete", json={"doc_ids": []})

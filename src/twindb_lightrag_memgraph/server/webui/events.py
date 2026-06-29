@@ -29,7 +29,11 @@ def _make_event(
     summary: str,
     meta: dict[str, Any],
     target_type: str = "tag",
+    target_id: str | None = None,
 ) -> dict[str, Any]:
+    target = {"type": target_type, "label": target_label}
+    if target_id is not None:
+        target["id"] = target_id
     return {
         "id": _new_id("evt"),
         "ts": _utcnow_iso(),
@@ -38,7 +42,7 @@ def _make_event(
         "kind": kind,
         "sev": sev,
         "actor": {"user": actor, "role": "operator"},
-        "target": {"type": target_type, "label": target_label},
+        "target": target,
         "summary": summary,
         "meta": meta,
     }
@@ -62,4 +66,3 @@ def _make_notification(
         "rel": "now",
         "read": False,
     }
-

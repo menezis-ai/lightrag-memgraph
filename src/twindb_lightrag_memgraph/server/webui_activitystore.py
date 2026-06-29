@@ -31,7 +31,7 @@ DEFAULT_ACTIVITY_LIMIT = 200
 MAX_ACTIVITY_LIMIT = 1000
 MEMGRAPH_COMPAT_SCAN_LIMIT = 1000
 MEMGRAPH_BACKFILL_BATCH = 200
-SCALARS_VERSION = 1
+SCALARS_VERSION = 2
 _LEGACY_SCALARS_CLAUSE = (
     "n.`__scalars_version` IS NULL OR n.`__scalars_version` < $scalars_version"
 )
@@ -93,9 +93,19 @@ def _matches(
         wanted = str(resource_id)
         target_id = target.get("id")
         meta_doc_id = meta.get("doc_id")
-        if target_id is None and meta_doc_id is None:
+        meta_doc_ids_raw = meta.get("doc_ids")
+        meta_doc_ids = (
+            [str(doc_id) for doc_id in meta_doc_ids_raw if doc_id is not None]
+            if isinstance(meta_doc_ids_raw, list)
+            else []
+        )
+        if target_id is None and meta_doc_id is None and not meta_doc_ids:
             return False
-        if str(target_id) != wanted and str(meta_doc_id) != wanted:
+        if (
+            str(target_id) != wanted
+            and str(meta_doc_id) != wanted
+            and wanted not in meta_doc_ids
+        ):
             return False
     return True
 
@@ -130,6 +140,12 @@ def _event_scalars(event: dict[str, Any]) -> dict[str, Any]:
     actor = event.get("actor", {}) if isinstance(event.get("actor"), dict) else {}
     target = event.get("target", {}) if isinstance(event.get("target"), dict) else {}
     meta = event.get("meta", {}) if isinstance(event.get("meta"), dict) else {}
+    meta_doc_ids_raw = meta.get("doc_ids")
+    meta_doc_ids = (
+        [str(doc_id) for doc_id in meta_doc_ids_raw if doc_id is not None]
+        if isinstance(meta_doc_ids_raw, list)
+        else []
+    )
     return {
         "kind": str(event.get("kind") or ""),
         "sev": str(event.get("sev") or ""),
@@ -137,6 +153,7 @@ def _event_scalars(event: dict[str, Any]) -> dict[str, Any]:
         "target_id": str(target.get("id") or ""),
         "target_label": str(target.get("label") or ""),
         "meta_doc_id": str(meta.get("doc_id") or ""),
+        "meta_doc_ids": meta_doc_ids,
         "ts_ms": _event_ts_ms(event.get("ts")),
         "summary": str(event.get("summary") or ""),
     }
@@ -263,6 +280,7 @@ class MemgraphActivityStore:
                             n.actor_user = row.actor_user,
                             n.target_id = row.target_id,
                             n.meta_doc_id = row.meta_doc_id,
+                            n.meta_doc_ids = row.meta_doc_ids,
                             n.ts_ms = row.ts_ms,
                             n.target_label = row.target_label,
                             n.summary = row.summary,
@@ -290,6 +308,7 @@ class MemgraphActivityStore:
                     "actor_user",
                     "target_id",
                     "meta_doc_id",
+                    "meta_doc_ids",
                     "ts_ms",
                     "__scalars_version",
                 ):
@@ -413,7 +432,13 @@ class MemgraphActivityStore:
             params["range_min"] = now_range_ms
 
         if resource_id:
-            scalar_clause = "(n.target_id = $resource_id OR n.meta_doc_id = $resource_id)"
+            scalar_clause = (
+                "("
+                "n.target_id = $resource_id OR "
+                "n.meta_doc_id = $resource_id OR "
+                "$resource_id IN coalesce(n.meta_doc_ids, [])"
+                ")"
+            )
             scalar_clauses.append(scalar_clause)
             params["resource_id"] = resource_id
 
@@ -500,6 +525,7 @@ class MemgraphActivityStore:
                         n.actor_user = $actor_user,
                         n.target_id = $target_id,
                         n.meta_doc_id = $meta_doc_id,
+                        n.meta_doc_ids = $meta_doc_ids,
                         n.ts_ms = $ts_ms,
                         n.target_label = $target_label,
                         n.summary = $summary,
