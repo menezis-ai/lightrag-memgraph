@@ -417,11 +417,23 @@ def _doc_tags_match_filter(
 
 
 def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
+    # ``name`` is used as a document-level fallback only when it is a real
+    # identifier-like value coming from payload metadata. Synthetic fallbacks from
+    # the envelope projection cannot be trusted as filter evidence.
+    # We only drop the synthetic ``reference-<digits>`` emitted by
+    # ``_build_source_entry`` when neither file path nor chunk_id is available.
+    def _is_synthetic_reference_name(value: str) -> bool:
+        return bool(value.startswith("reference-") and value[10:].isdigit())
+
+    ignore_if_unknown = "unknown source"
     out = {
         str(source[key]).strip()
         for key in ("doc_id", "name")
         if isinstance(source.get(key), str) and source.get(key).strip()
     }
+    if ignore_if_unknown in out:
+        out.discard(ignore_if_unknown)
+    out = {value for value in out if not _is_synthetic_reference_name(value)}
     return out
 
 
@@ -441,13 +453,9 @@ def _source_matches_doc_filter(
     required, optional = _doc_filter_terms(doc_filter)
     if not required and not optional:
         return True
-    # If `doc_id` is not available, we cannot safely apply a strict
-    # doc-filter guardrail at the source layer. The query was already
-    # scoped in storage via `_retrieval_scope`; dropping every source here is
-    # a false-negative regression when upstream metadata is partial.
-    if not source.get("doc_id"):
-        return True
     candidates = _source_doc_candidates(source)
+    if not candidates:
+        return False
     if required and not required.issubset(candidates):
         return False
     if optional and candidates.isdisjoint(optional):
@@ -466,10 +474,10 @@ async def _source_matches_tag_filter(
         return True
     doc_id = source.get("doc_id")
     if not isinstance(doc_id, str) or not doc_id:
-        # If we cannot resolve the source document, keep it visible to avoid
-        # dropping otherwise valid grounded sources when envelope projection
-        # misses doc metadata.
-        return True
+        # If we cannot read ``TAGGED_WITH`` because doc_id is unavailable, we do
+        # not assert a match. We keep only explicit matches from resolvable doc
+        # ids and fail the source otherwise.
+        return False
     if doc_id not in tags_cache:
         tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
     return _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
@@ -481,7 +489,7 @@ async def _filter_sources_by_advanced_filters(
     tag_filter: dict[str, list[str]] | None,
     doc_filter: dict[str, list[str]] | None,
     folder: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     tag_required, tag_optional = _tag_filter_terms(tag_filter)
     doc_required, doc_optional = _doc_filter_terms(doc_filter)
     if (
@@ -490,19 +498,24 @@ async def _filter_sources_by_advanced_filters(
         and not doc_required
         and not doc_optional
     ):
-        return sources
+        return sources, False
 
     tags_cache: dict[str, set[str]] = {}
     kept: list[dict[str, Any]] = []
+    has_unverified = False
     for source in sources:
         if not _source_matches_doc_filter(source, doc_filter):
+            if not _source_doc_candidates(source):
+                has_unverified = True
             continue
         if not await _source_matches_tag_filter(
             source, tag_filter, folder, tags_cache
         ):
+            if not source.get("doc_id"):
+                has_unverified = True
             continue
         kept.append(source)
-    return kept
+    return kept, has_unverified
 
 
 async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
@@ -916,12 +929,20 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # a usable answer).
     if not projection_ok:
         answer_status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
+        sources_for_activity = []
+    else:
+        sources_for_activity = sources
+
     await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=len(sources), stream=False
+        body,
+        request,
+        folder=folder,
+        sources_count=len(sources_for_activity),
+        stream=False,
     )
     return {
         "response": clean_answer,
-        "sources": sources,
+        "sources": sources_for_activity,
         "answer_status": answer_status,
     }
 
@@ -1000,13 +1021,16 @@ async def _build_envelope_sources(
         )
         return [], False
     sources = _filter_sources_by_min_score(sources, body.min_score)
-    filtered = await _filter_sources_by_advanced_filters(
+    filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
         sources,
         tag_filter=body.tag_filter,
         doc_filter=body.doc_filter,
         folder=folder,
     )
-    return filtered, True
+    # If advanced filters are active but could not be validated against all
+    # projected sources (missing doc id/name candidates), keep a conservative
+    # posture and mark the projection as incomplete.
+    return filtered, not filter_projection_incomplete
 
 
 def _select_token_source(envelope) -> Any:
@@ -1140,6 +1164,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             )
         if not projection_ok:
             status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
+            sources = []
         yield json.dumps({"type": "status", "value": status}) + "\n"
         await _record_retrieval_activity(
             body, request, folder=folder, sources_count=len(sources), stream=True

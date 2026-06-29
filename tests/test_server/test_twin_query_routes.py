@@ -292,6 +292,43 @@ class TestQueryEndpoint:
         assert event["meta"]["sources_count"] == 1
         assert event["meta"]["query"] == "How do I restart Oracle?"
 
+    async def test_records_zero_sources_on_projection_failed_when_sources_incomplete(
+        self, make_client
+    ):
+        rag = FakeRag(
+            answer="Filtered answer from mixed candidates.",
+            chunks=[
+                {"id": "chunk-good", "file_path": "/doc-oracle", "score": 0.93},
+                {"score": 0.82},
+            ],
+        )
+        store = type("Store", (), {"record_activity": AsyncMock()})()
+
+        client = await make_client(rag)
+        with patch(
+            "twindb_lightrag_memgraph.server.webui_router.get_store",
+            return_value=store,
+        ):
+            async with client:
+                r = await client.post(
+                    "/query",
+                    json={
+                        "query": "How do I restart Oracle?",
+                        "doc_filter": {"any": ["/doc-oracle"]},
+                        "actor": "claire.benoit",
+                    },
+                )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "source_projection_failed"
+        assert body["sources"] == []
+
+        store.record_activity.assert_awaited_once()
+        event = store.record_activity.await_args.args[0]
+        assert event["kind"] == "retrieval"
+        assert event["meta"]["sources_count"] == 0
+
     async def test_retrieval_activity_is_scoped_to_x_twin_folder(self, monkeypatch):
         # Keep the test deterministic on environments that override the default
         # folder via test fixture/environment defaults.
@@ -387,7 +424,7 @@ class TestQueryEndpoint:
         # aquery_llm is the API the nominal path calls now — the
         # legacy ``aquery()`` is only hit in only_need_context /
         # only_need_prompt mode.
-        _query, param = rag.llm_calls[0]
+        _, param = rag.llm_calls[0]
         assert param.top_k == 20
         # chunks_vdb is never touched — sources come from aquery_llm.
         assert rag.chunks_vdb.last_query is None
@@ -475,7 +512,7 @@ class TestQueryEndpoint:
 
         assert r.status_code == 200
         assert [s["doc_id"] for s in r.json()["sources"]] == ["doc-oracle"]
-        _query, param = rag.llm_calls[0]
+        _, param = rag.llm_calls[0]
         assert param.tag_filter == {"all": ["oracle", "rman"], "any": []}
 
     async def test_tag_filter_keeps_sources_with_full_doc_id_without_lookup(
@@ -613,16 +650,17 @@ class TestQueryEndpoint:
         _query, param = rag.llm_calls[0]
         assert param.doc_filter == {"any": ["doc-b"]}
 
-    async def test_doc_filter_keeps_sources_when_source_doc_id_is_missing(self, make_client):
-        # Regression: when source projection can't resolve `doc_id` from the
-        # envelope, a strict post-filter guard can erase the entire sources list
-        # despite a grounded answer. The prompt has still been scoped by
-        # storage-level filters, so we keep sources visible for usability.
+    async def test_doc_filter_keeps_source_without_doc_id_when_name_matches_filter(
+        self, make_client
+    ):
+        # A filtered source is kept when a supported candidate exists
+        # (``name``), even if doc_id is missing in the projected source
+        # envelope.
         rag = FakeRag(
             answer="x",
             chunks=[
-                {"id": "a", "file_path": "/a", "score": 0.91},
-                {"id": "b", "file_path": "/b", "score": 0.82},
+                {"id": "a", "file_path": "/doc-b", "score": 0.91},
+                {"id": "b", "file_path": "/doc-a", "score": 0.82},
             ],
             chunk_to_doc={},
         )
@@ -630,17 +668,124 @@ class TestQueryEndpoint:
         async with client:
             r = await client.post(
                 "/query",
-                json={"query": "x", "doc_filter": {"any": ["doc-b"]}},
+                json={"query": "x", "doc_filter": {"any": ["/doc-b"]}},
             )
 
         assert r.status_code == 200
         body = r.json()
         assert body["answer_status"] == "grounded"
-        assert [s["n"] for s in body["sources"]] == [1, 2]
+        assert [s["n"] for s in body["sources"]] == [1]
+        assert [s["name"] for s in body["sources"]] == ["/doc-b"]
         assert body["sources"][0]["doc_id"] is None
-        assert body["sources"][1]["doc_id"] is None
         _query, param = rag.llm_calls[0]
-        assert param.doc_filter == {"any": ["doc-b"]}
+        assert param.doc_filter == {"any": ["/doc-b"]}
+
+    async def test_doc_filter_no_candidate_sets_source_projection_failed(
+        self, make_client
+    ):
+        # No doc_id/name candidate under active doc_filter means the source
+        # cannot be verified; we keep a grounded answer but surface explicit
+        # source_projection_failed instead of an ambiguous grounded + [].
+        rag = FakeRag(
+            answer="x",
+            chunks=[{}, {}],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={"query": "x", "doc_filter": {"all": ["doc-b"]}},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "source_projection_failed"
+        assert body["sources"] == []
+
+    async def test_doc_filter_keeps_real_reference_like_name(self, make_client):
+        # A legitimate document name that starts with ``reference-`` but is not
+        # synthetic (non-numeric suffix) must still be considered for matching.
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {
+                    "file_path": "reference-architecture.pdf",
+                    "score": 0.91,
+                }
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "x",
+                    "doc_filter": {"any": ["reference-architecture.pdf"]},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert len(body["sources"]) == 1
+        assert body["sources"][0]["name"] == "reference-architecture.pdf"
+
+    async def test_doc_filter_rejects_synthetic_reference_name(self, make_client):
+        # ``reference-<digits>`` is synthetic fallback and cannot be relied on
+        # for doc-filter proof.
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {
+                    "file_path": "reference-1",
+                    "score": 0.91,
+                }
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "x",
+                    "doc_filter": {"any": ["reference-1"]},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "source_projection_failed"
+        assert body["sources"] == []
+
+    async def test_tag_filter_ignores_source_without_doc_id(self, make_client):
+        # A source without doc_id cannot be validated against TAGGED_WITH and is
+        # therefore not silently kept.
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {"id": "a", "file_path": "/oracle", "score": 0.91},
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "x",
+                    "tag_filter": {"all": ["oracle"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "source_projection_failed"
+        assert body["sources"] == []
+        _query, param = rag.llm_calls[0]
+        assert param.tag_filter == {"all": ["oracle"], "any": []}
 
     async def test_only_need_prompt_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="prompt that would be sent")
@@ -1621,6 +1766,31 @@ class TestAnswerStatusContract:
         # Audit C3 guard: never a second vector pass to "recover" sources.
         assert rag.chunks_vdb.last_query is None
 
+    async def test_non_stream_projection_failed_when_partial_sources_survive_filter(
+        self, make_client
+    ):
+        rag = FakeRag(
+            answer="Mixed-source grounded answer.",
+            chunks=[
+                {"id": "chunk-good", "file_path": "/doc-oracle", "score": 0.93},
+                {"score": 0.82},
+            ],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "real question",
+                    "doc_filter": {"any": ["/doc-oracle"]},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "source_projection_failed"
+        assert body["sources"] == []
+
     @pytest.mark.parametrize(
         "label,bad_refs",
         BAD_REFS_CASES,
@@ -1654,6 +1824,43 @@ class TestAnswerStatusContract:
         assert len(source_events) == 1
         assert source_events[0]["value"] == []
         assert rag.chunks_vdb.last_query is None
+
+    async def test_stream_projection_failed_when_partial_sources_survive_filter(
+        self, make_client
+    ):
+        import json as _json
+
+        rag = FakeRag(
+            answer="Mixed-source grounded answer.",
+            chunks=[
+                {"id": "chunk-good", "file_path": "/doc-oracle", "score": 0.93},
+                {"score": 0.82},
+            ],
+            stream_chunks=["A ", "grounded ", "answer."],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={
+                    "query": "real question",
+                    "doc_filter": {"any": ["/doc-oracle"]},
+                },
+            )
+
+        assert r.status_code == 200
+        events = [
+            _json.loads(line) for line in r.text.splitlines() if line.strip()
+        ]
+        token_events = [e for e in events if e["type"] == "token"]
+        status_events = [e for e in events if e["type"] == "status"]
+        source_events = [e for e in events if e["type"] == "sources"]
+
+        assert "".join(e["value"] for e in token_events) == "A grounded answer."
+        assert len(status_events) == 1
+        assert status_events[0]["value"] == "source_projection_failed"
+        assert len(source_events) == 1
+        assert source_events[0]["value"] == []
 
 
 class TestSourceMatchesDocFilter:
@@ -1712,6 +1919,35 @@ class TestSourceMatchesDocFilter:
         src = self._src("docA", "/path/a.pdf")
         assert _source_matches_doc_filter(src, flt) is True
 
+    def test_doc_filter_without_reliable_candidate_fails(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        # Envelope metadata without doc-level identifiers must not be treated as a
+        # match against active filters.
+        src = self._src("", "unknown source")
+        flt = {"any": ["doc-b"]}
+        assert _source_matches_doc_filter(src, flt) is False
+
+    def test_doc_filter_real_reference_name_kept(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        src = self._src("", "reference-architecture.pdf")
+        flt = {"any": ["reference-architecture.pdf"]}
+        assert _source_matches_doc_filter(src, flt) is True
+
+    def test_doc_filter_synthetic_reference_name_rejected(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        src = self._src("", "reference-1")
+        flt = {"any": ["reference-1"]}
+        assert _source_matches_doc_filter(src, flt) is False
+
     def test_doc_all_and_any_are_anded(self):
         from twindb_lightrag_memgraph.server.query.router import (
             _source_matches_doc_filter,
@@ -1722,3 +1958,20 @@ class TestSourceMatchesDocFilter:
         assert _source_matches_doc_filter(self._src("docA"), flt) is True
         # required docA absent -> fail even though ``any`` would match.
         assert _source_matches_doc_filter(self._src("docB"), flt) is False
+
+
+class TestSourceMatchesTagFilter:
+    async def test_tag_filter_without_doc_id_fails(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_tag_filter,
+        )
+
+        assert (
+            await _source_matches_tag_filter(
+                {"name": "/doc-oracle"},
+                {"all": ["oracle"]},
+                "default",
+                {},
+            )
+            is False
+        )
