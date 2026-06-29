@@ -6,6 +6,7 @@ import {
   useReactivateTag,
   useRejectTag,
   useRequestTag,
+  useSuggestTagEdit,
   useUpdateTagSynonyms,
 } from '../api/queries';
 import type { TagActionCommit } from '../components/TagActionModal';
@@ -28,6 +29,7 @@ export function useTagActions({
   const approveTag = useApproveTag();
   const rejectTag = useRejectTag();
   const editTag = useEditTag();
+  const suggestTagEdit = useSuggestTagEdit();
   const deprecateTag = useDeprecateTag();
   const reactivateTag = useReactivateTag();
   const updateSynonyms = useUpdateTagSynonyms();
@@ -122,10 +124,25 @@ export function useTagActions({
         );
         break;
       case 'suggest':
-        // Gated off: there is no backend edit-proposal endpoint. Routing this
-        // through requestTag 409s on an already-existing tag and dropped the
-        // edited fields, so the TagsTab "Suggest edit" affordance is disabled.
-        // No-op until a real suggest-edit endpoint exists.
+        if (commit.tag) {
+          commitTagMutation(
+            (cb) =>
+              suggestTagEdit.mutate(
+                {
+                  name: tagname,
+                  def: commit.def,
+                  long_description: commit.longDescription,
+                  category: commit.category,
+                  aliases: commit.aliases ?? commit.tag!.aliases,
+                  justification: commit.justification,
+                  actor,
+                },
+                cb,
+              ),
+            successToast,
+            failureTitle,
+          );
+        }
         break;
       case 'synonyms':
         if (commit.tag) {

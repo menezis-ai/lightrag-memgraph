@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -19,6 +20,7 @@ from ..webui_models import (
     TagReactivateBody,
     TagRejectBody,
     TagRequestBody,
+    TagSuggestEditBody,
     TagSynonymsBody,
     ThesaurusEntry,
 )
@@ -397,6 +399,133 @@ async def request_tag(body: TagRequestBody) -> dict[str, Any]:
     return stored
 
 
+_TAG_PROPOSAL_ID_RE = re.compile(r"[^a-zA-Z0-9_-]+")
+
+
+def _proposal_id_base(name: str, actor: str, now: str) -> str:
+    safe_name = _TAG_PROPOSAL_ID_RE.sub("-", name).strip("-") or "tag"
+    safe_actor = _TAG_PROPOSAL_ID_RE.sub("-", actor).strip("-") or "system"
+    stamp = re.sub(r"[^0-9]", "", now)[:14] or "now"
+    return f"{safe_name}__edit__{safe_actor}-{stamp}"
+
+
+async def _next_proposal_id(store: WebuiStore, base: str) -> str:
+    proposal_id = base
+    suffix = 2
+    while await store.tags.get_tag(proposal_id) is not None:
+        proposal_id = f"{base}-{suffix}"
+        suffix += 1
+    return proposal_id
+
+
+def _suggested_edit_fields(
+    entry: dict[str, Any], body: TagSuggestEditBody
+) -> dict[str, Any]:
+    return {
+        "def": body.def_ if body.def_ is not None else entry.get("def", ""),
+        "long_description": (
+            body.long_description
+            if body.long_description is not None
+            else entry.get("long_description", "")
+        ),
+        "category": (
+            body.category
+            if body.category is not None
+            else entry.get("category", "infra")
+        ),
+        "aliases": (
+            list(body.aliases)
+            if body.aliases is not None
+            else list(entry.get("aliases", []))
+        ),
+    }
+
+
+def _changed_suggested_fields(
+    entry: dict[str, Any],
+    proposed: dict[str, Any],
+) -> list[str]:
+    changed: list[str] = []
+    for field in ("def", "long_description", "category", "aliases"):
+        current = entry.get(field, [] if field == "aliases" else "")
+        if proposed[field] != current:
+            changed.append(field)
+    return changed
+
+
+@router.post(
+    "/tags/{name}/suggest-edit",
+    response_model=TagEntry,
+    status_code=201,
+    responses={
+        400: {"description": "No edit provided"},
+        404: {"description": "Tag not found"},
+    },
+)
+async def suggest_tag_edit(name: str, body: TagSuggestEditBody) -> dict[str, Any]:
+    """Queue a palier-2 edit proposal for palier-3 review."""
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now_iso = _utcnow_iso()
+    now = now_iso[:10]
+    proposed = _suggested_edit_fields(entry, body)
+    changed = _changed_suggested_fields(entry, proposed)
+    if not changed:
+        raise HTTPException(400, "Suggest edit requires at least one changed field")
+
+    proposal_id = await _next_proposal_id(
+        store, _proposal_id_base(name, actor, now_iso)
+    )
+    proposal: dict[str, Any] = {
+        "tag": proposal_id,
+        "tier": "requested",
+        "category": proposed["category"],
+        "status": "pending-review",
+        "def": proposed["def"],
+        "long_description": proposed["long_description"],
+        "aliases": proposed["aliases"],
+        "deprecates": list(entry.get("deprecates", [])),
+        "sources_count": int(entry.get("sources_count", 0) or 0),
+        "chunks_count": int(entry.get("chunks_count", 0) or 0),
+        "query_freq_30d": int(entry.get("query_freq_30d", 0) or 0),
+        "created": {"by": actor, "at": now},
+        "last_edit": {"by": actor, "at": now, "action": "edit-suggested"},
+        "related": list(entry.get("related", [])),
+        "examples": list(entry.get("examples", [])),
+        "requested_by": actor,
+        "requested_at": now,
+        "justification": body.justification or "",
+        "proposal_kind": "edit",
+        "target_tag": name,
+        "proposed_fields": changed,
+    }
+    stored = await store.tags.upsert_tag(proposal)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=name,
+        summary=f"Tag {name} edit suggested for palier-3 review",
+        meta={
+            "proposal_id": proposal_id,
+            "fields": changed,
+            "justification": body.justification,
+        },
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="edit suggested",
+            sub=body.justification or ", ".join(changed),
+        ),
+        target_id=name,
+    )
+    return stored
+
+
 @router.post(
     "/tags/{name}/approve",
     response_model=TagEntry,
@@ -409,6 +538,45 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
         raise HTTPException(404, f"Tag '{name}' not found")
     actor = body.actor or "system"
     now = _utcnow_iso()[:10]
+    if entry.get("proposal_kind") == "edit" and entry.get("target_tag"):
+        target_name = str(entry["target_tag"])
+        target = await store.tags.get_tag(target_name)
+        if target is None:
+            raise HTTPException(404, f"Tag '{target_name}' not found")
+        changed: list[str] = []
+        proposed_fields = [
+            field
+            for field in entry.get("proposed_fields", [])
+            if field in {"def", "long_description", "category", "aliases"}
+        ]
+        for field in proposed_fields:
+            if field in entry and entry[field] != target.get(field):
+                target[field] = (
+                    list(entry[field])
+                    if isinstance(entry[field], list)
+                    else entry[field]
+                )
+                changed.append(field)
+        target["last_edit"] = {"by": actor, "at": now, "action": "edit-approved"}
+        stored = await store.tags.upsert_tag(target)
+        await store.tags.delete_tag(name)
+        await _emit_tag_audit(
+            store=store,
+            actor=actor,
+            kind="tag-mutation",
+            sev="info",
+            target_label=target_name,
+            summary=f"Tag {target_name} edit approved ({', '.join(changed)})",
+            meta={"proposal_id": name, "fields": changed},
+            notification=_make_notification(
+                title="Tag",
+                tagname=target_name,
+                suffix="edit approved",
+                sub=", ".join(changed) or "no field change",
+            ),
+            target_id=target_name,
+        )
+        return stored
     entry["tier"] = 3
     entry["status"] = "active"
     entry["last_edit"] = {"by": actor, "at": now, "action": "approved"}

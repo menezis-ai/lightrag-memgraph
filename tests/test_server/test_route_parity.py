@@ -169,6 +169,7 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("POST", "/twin/api/tags/{param}/approve"),
     Route("POST", "/twin/api/tags/{param}/reject"),
     Route("PATCH", "/twin/api/tags/{param}"),
+    Route("POST", "/twin/api/tags/{param}/suggest-edit"),
     Route("POST", "/twin/api/tags/{param}/deprecate"),
     Route("POST", "/twin/api/tags/{param}/reactivate"),
     Route("POST", "/twin/api/tags/{param}/synonyms"),

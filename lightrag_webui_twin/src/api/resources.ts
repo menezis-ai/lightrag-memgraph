@@ -651,6 +651,26 @@ export const twinApi = {
       method: 'PATCH',
       body,
     }),
+  suggestTagEdit: (
+    name: string,
+    body: {
+      def?: string;
+      long_description?: string;
+      category?: string;
+      aliases?: readonly string[];
+      justification?: string;
+      actor?: string;
+    },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(
+      `${TWIN}/tags/${encodeURIComponent(name)}/suggest-edit`,
+      {
+        ...init,
+        method: 'POST',
+        body,
+      },
+    ),
   deprecateTag: (
     name: string,
     body: { reason?: string; actor?: string } = {},
@@ -937,6 +957,7 @@ export const api = {
   approveTag: twinApi.approveTag,
   rejectTag: twinApi.rejectTag,
   editTag: twinApi.editTag,
+  suggestTagEdit: twinApi.suggestTagEdit,
   deprecateTag: twinApi.deprecateTag,
   reactivateTag: twinApi.reactivateTag,
   updateTagSynonyms: twinApi.updateTagSynonyms,

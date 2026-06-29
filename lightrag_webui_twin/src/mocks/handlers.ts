@@ -156,6 +156,7 @@ function cloneTags(items: readonly TagEntry[]): TagEntry[] {
     ...tag,
     aliases: [...tag.aliases],
     deprecates: [...tag.deprecates],
+    proposed_fields: tag.proposed_fields ? [...tag.proposed_fields] : [],
     related: tag.related.map((related) => ({ ...related })),
     examples: [...tag.examples],
     created: { ...tag.created },
@@ -1546,6 +1547,28 @@ export const handlers = [
       );
     }
     const current = tagState.find((t) => t.tag === name);
+    if (current?.proposal_kind === 'edit' && current.target_tag) {
+      const target = tagState.find((t) => t.tag === current.target_tag);
+      const fields = current.proposed_fields ?? [];
+      const next = upsertTag({
+        ...(target ?? tagEntryStub(current.target_tag, 'active', 'edit-approved')),
+        def: fields.includes('def') ? current.def : (target?.def ?? current.def),
+        long_description: fields.includes('long_description')
+          ? current.long_description
+          : target?.long_description,
+        category: fields.includes('category')
+          ? current.category
+          : (target?.category ?? current.category),
+        aliases: fields.includes('aliases')
+          ? current.aliases
+          : (target?.aliases ?? current.aliases),
+        last_edit: { by: 'system', at: '2026-05-29', action: 'edit-approved' },
+      });
+      tagState = tagState.filter((t) => t.tag !== name);
+      persistTagState();
+      recordTagMutation(current.target_tag, 'edit approved');
+      return HttpResponse.json(next);
+    }
     const next = upsertTag({
       ...(current ?? tagEntryStub(name, 'active', 'approved')),
       status: 'active',
@@ -1589,6 +1612,59 @@ export const handlers = [
       last_edit: { by: 'system', at: '2026-05-29', action: 'edited' },
     });
     return HttpResponse.json(next);
+  }),
+  http.post(`${ANY}${TWIN}/tags/:name/suggest-edit`, async ({ params, request }) => {
+    const name = String(params.name);
+    const current = tagState.find((t) => t.tag === name);
+    if (!current) {
+      return HttpResponse.json({ detail: `Tag '${name}' not found` }, { status: 404 });
+    }
+    const body = (await request.json()) as {
+      actor?: string;
+      def?: string;
+      long_description?: string;
+      category?: string;
+      aliases?: string[];
+      justification?: string;
+    };
+    const proposed = {
+      def: body.def ?? current.def,
+      long_description: body.long_description ?? current.long_description,
+      category: body.category ?? current.category,
+      aliases: body.aliases ?? current.aliases,
+    };
+    const proposedFields = ([
+      proposed.def !== current.def ? 'def' : null,
+      proposed.long_description !== current.long_description ? 'long_description' : null,
+      proposed.category !== current.category ? 'category' : null,
+      JSON.stringify(proposed.aliases) !== JSON.stringify(current.aliases)
+        ? 'aliases'
+        : null,
+    ].filter(Boolean)) as string[];
+    if (proposedFields.length === 0) {
+      return HttpResponse.json(
+        { detail: 'Suggest edit requires at least one changed field' },
+        { status: 400 },
+      );
+    }
+    const proposalId = `${name}__edit__${body.actor ?? 'system'}-${Date.now()}`
+      .replaceAll(/[^a-zA-Z0-9_-]+/g, '-');
+    const next = upsertTag({
+      ...tagEntryStub(proposalId, 'pending-review', 'edit-suggested'),
+      ...proposed,
+      deprecates: [...current.deprecates],
+      sources_count: current.sources_count,
+      chunks_count: current.chunks_count,
+      query_freq_30d: current.query_freq_30d,
+      requested_by: body.actor ?? 'system',
+      requested_at: '2026-05-29',
+      justification: body.justification ?? '',
+      proposal_kind: 'edit',
+      target_tag: name,
+      proposed_fields: proposedFields,
+    });
+    recordTagMutation(name, 'edit suggested');
+    return HttpResponse.json(next, { status: 201 });
   }),
   http.post(`${ANY}${TWIN}/tags/:name/deprecate`, ({ params }) => {
     const name = String(params.name);

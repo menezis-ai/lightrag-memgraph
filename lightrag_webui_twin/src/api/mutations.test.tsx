@@ -21,6 +21,7 @@ import {
   useReactivateTag,
   useRejectTag,
   useRequestTag,
+  useSuggestTagEdit,
   useUploadDocumentsBatch,
   useUpdateTagSynonyms,
 } from './queries';
@@ -127,6 +128,36 @@ describe('useEditTag', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/tags/rman');
     expect((init as RequestInit).method).toBe('PATCH');
+  });
+});
+
+describe('useSuggestTagEdit', () => {
+  it('POSTs /tags/{name}/suggest-edit with proposed fields', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ tag: 'rman__edit__claire', proposal_kind: 'edit' }, 201),
+    );
+    const { result } = renderHook(() => useSuggestTagEdit(), {
+      wrapper: wrapper(),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({
+        name: 'rman',
+        def: 'new',
+        aliases: ['rmgr'],
+        justification: 'clarify',
+        actor: 'claire',
+      });
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/tags/rman/suggest-edit');
+    expect((init as RequestInit).method).toBe('POST');
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toMatchObject({
+      def: 'new',
+      aliases: ['rmgr'],
+      justification: 'clarify',
+      actor: 'claire',
+    });
   });
 });
 

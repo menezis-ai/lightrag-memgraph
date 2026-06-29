@@ -146,6 +146,34 @@ describe('MSW handlers — Twin overlay endpoints', () => {
     expect(data).toHaveLength(TAG_FIXTURES.length);
   });
 
+  it(`POST ${TWIN}/tags/:name/suggest-edit queues an edit proposal`, async () => {
+    const r = await fetch(BASE + `${TWIN}/tags/rman/suggest-edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        def: 'Updated RMAN wording',
+        aliases: ['rmgr'],
+        justification: 'clarify',
+        actor: 'alberto',
+      }),
+    });
+    expect(r.status).toBe(201);
+    const proposal = (await r.json()) as {
+      tag: string;
+      proposal_kind: string;
+      target_tag: string;
+      proposed_fields: string[];
+    };
+    expect(proposal.proposal_kind).toBe('edit');
+    expect(proposal.target_tag).toBe('rman');
+    expect(proposal.proposed_fields).toEqual(
+      expect.arrayContaining(['def', 'aliases']),
+    );
+
+    const tags = await getJson<Array<{ tag: string }>>(`${TWIN}/tags`);
+    expect(tags.some((tag) => tag.tag === proposal.tag)).toBe(true);
+  });
+
   it(`GET ${TWIN}/thesaurus returns the legacy projection of active tags`, async () => {
     const data = await getJson<Array<{ tag: string }>>(`${TWIN}/thesaurus`);
     const expected = TAG_FIXTURES.filter(

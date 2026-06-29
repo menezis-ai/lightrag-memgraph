@@ -1,5 +1,5 @@
 /**
- * TagsTab — tag catalog governance (header → pending requests → filters →
+ * TagsTab — tag catalog governance (header → review queue → filters →
  * category rail + card grid + detail panel).
  *
  * Ported from Desktop/UI/tags.jsx. Sub-components extracted out:
@@ -286,6 +286,7 @@ export function TagsTab({
     () => tags.filter((t) => t.tier === 'requested' && t.status === 'pending-review'),
     [tags],
   );
+  const pendingLabel = requested.length === 1 ? 'pending item' : 'pending items';
   const knownCategories = useMemo(
     () => new Set(categories.map((cat) => cat.id)),
     [categories],
@@ -431,7 +432,7 @@ export function TagsTab({
           <div className="tags-sub">
             <span>
               Tag catalog governance · {totalActive} active tags · {requested.length}{' '}
-              pending requests · folder <code>{folderLabel}</code>
+              {pendingLabel} · folder <code>{folderLabel}</code>
             </span>
             {/*
               palier-pill killed per the 30/05 cleanup. Role is JWT-only —
@@ -539,9 +540,9 @@ export function TagsTab({
             aria-expanded={pendingOpen}
           >
             <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
-            <span className="pending-title">Tag requests</span>
+            <span className="pending-title">Tag review queue</span>
             <span className="pending-counts">
-              <b>{requested.length}</b> tag request
+              <b>{requested.length}</b> governance item
               {requested.length === 1 ? '' : 's'} awaiting review
             </span>
             <span
@@ -560,52 +561,71 @@ export function TagsTab({
           </button>
           {pendingOpen && (
             <div className="pending-grid">
-              {requested.map((t) => (
-                <div
-                  key={t.tag}
-                  className="pending-card requested"
-                  data-testid={`pending-${t.tag}`}
-                >
-                  <div className="pending-card-h">
-                    <code className="pending-tagname">{t.tag}</code>
-                    <span style={{ marginLeft: 'auto' }}>
-                      <StatusBadge status="pending-review" />
-                    </span>
-                  </div>
-                  <div className="pending-justif">{t.justification}</div>
-                  <div className="pending-meta">
-                    Proposed by <b>{t.requested_by}</b> · {t.requested_at} · category{' '}
-                    <code>{t.category}</code>
-                  </div>
-                  {canEdit ? (
-                    <div className="pending-actions">
-                      <button
-                        className="primary-btn small"
-                        disabled={approvingTags.has(t.tag)}
-                        onClick={() => approveRequestedTag(t)}
-                      >
-                        {approvingTags.has(t.tag) ? 'Approving…' : 'Approve'}
-                      </button>
-                      <button
-                        className="ghost-btn small"
-                        onClick={() => setModal({ kind: 'edit-approve', tag: t })}
-                      >
-                        Edit & approve
-                      </button>
-                      <button
-                        className="ghost-btn small danger"
-                        onClick={() => setModal({ kind: 'reject', tag: t })}
-                      >
-                        Reject
-                      </button>
+              {requested.map((t) => {
+                const isEditProposal = t.proposal_kind === 'edit' && t.target_tag;
+                const pendingTitle = isEditProposal ? t.target_tag! : t.tag;
+                const pendingKind = isEditProposal ? 'Edit suggestion' : 'New tag request';
+                let approveLabel = 'Approve';
+                if (approvingTags.has(t.tag)) {
+                  approveLabel = 'Approving…';
+                } else if (isEditProposal) {
+                  approveLabel = 'Approve edit';
+                }
+                return (
+                  <div
+                    key={t.tag}
+                    className="pending-card requested"
+                    data-testid={`pending-${t.tag}`}
+                  >
+                    <div className="pending-card-h">
+                      <code className="pending-tagname">{pendingTitle}</code>
+                      <span className="pending-kind">{pendingKind}</span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <StatusBadge status="pending-review" />
+                      </span>
                     </div>
-                  ) : (
-                    <div className="pending-actions">
-                      <span className="muted">Awaiting reviewer approval</span>
+                    <div className="pending-justif">{t.justification}</div>
+                    <div className="pending-meta">
+                      Proposed by <b>{t.requested_by}</b> · {t.requested_at} · category{' '}
+                      <code>{t.category}</code>
+                      {isEditProposal && t.proposed_fields?.length ? (
+                        <>
+                          {' '}· fields <code>{t.proposed_fields.join(', ')}</code>
+                        </>
+                      ) : null}
                     </div>
-                  )}
-                </div>
-              ))}
+                    {canEdit ? (
+                      <div className="pending-actions">
+                        <button
+                          className="primary-btn small"
+                          disabled={approvingTags.has(t.tag)}
+                          onClick={() => approveRequestedTag(t)}
+                        >
+                          {approveLabel}
+                        </button>
+                        {!isEditProposal && (
+                          <button
+                            className="ghost-btn small"
+                            onClick={() => setModal({ kind: 'edit-approve', tag: t })}
+                          >
+                            Edit & approve
+                          </button>
+                        )}
+                        <button
+                          className="ghost-btn small danger"
+                          onClick={() => setModal({ kind: 'reject', tag: t })}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="pending-actions">
+                        <span className="muted">Awaiting reviewer approval</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1191,14 +1211,9 @@ function TagDetailPanel({
           </span>
         )}
         {canSuggest && !canEdit && (
-          // "Suggest edit" has no backend edit-proposal endpoint yet: routing it
-          // through requestTag always 409s on an existing tag (and dropped the
-          // edited fields). Gated off until the endpoint exists, rather than
-          // exposing an action that fails every time. See useTagActions 'suggest'.
           <button
             className="ghost-btn small"
-            disabled
-            title="Suggest edit is not available yet — ask a Steward to edit the tag directly."
+            onClick={() => onAction({ kind: 'suggest', tag: t })}
           >
             Suggest edit
           </button>

@@ -23,6 +23,7 @@ const requestTagMock = vi.hoisted(() => vi.fn());
 const approveTagMock = vi.hoisted(() => vi.fn());
 const rejectTagMock = vi.hoisted(() => vi.fn());
 const editTagMock = vi.hoisted(() => vi.fn());
+const suggestTagEditMock = vi.hoisted(() => vi.fn());
 const deprecateTagMock = vi.hoisted(() => vi.fn());
 const reactivateTagMock = vi.hoisted(() => vi.fn());
 const updateTagSynonymsMock = vi.hoisted(() => vi.fn());
@@ -34,6 +35,7 @@ vi.mock('../api/resources', () => ({
     approveTag: approveTagMock,
     rejectTag: rejectTagMock,
     editTag: editTagMock,
+    suggestTagEdit: suggestTagEditMock,
     deprecateTag: deprecateTagMock,
     reactivateTag: reactivateTagMock,
     updateTagSynonyms: updateTagSynonymsMock,
@@ -85,6 +87,7 @@ function resolveAll() {
   approveTagMock.mockResolvedValue({});
   rejectTagMock.mockResolvedValue({});
   editTagMock.mockResolvedValue({});
+  suggestTagEditMock.mockResolvedValue({});
   deprecateTagMock.mockResolvedValue({});
   reactivateTagMock.mockResolvedValue({});
   updateTagSynonymsMock.mockResolvedValue({});
@@ -179,17 +182,41 @@ describe('onTagCommit success paths', () => {
     );
   });
 
-  it('suggest is gated off → fires no mutation (no backend edit-proposal endpoint)', () => {
-    // Regression guard: "Suggest edit" used to route through requestTag with the
-    // existing tag name, which the backend rejects with 409, and it dropped the
-    // edited fields. The affordance is disabled until a real endpoint exists, so
-    // onTagCommit('suggest') must be a no-op — with or without a tag.
+  it('suggest → suggestTagEdit forwards proposed fields + "edit suggested" toast', async () => {
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
-    result.current.onTagCommit({ kind: 'suggest', tag: makeTag() });
-    result.current.onTagCommit({ kind: 'suggest', tag: null });
+    result.current.onTagCommit({
+      kind: 'suggest',
+      tag: makeTag(),
+      def: 'new def',
+      longDescription: 'long',
+      category: 'platform',
+      aliases: ['argo', 'argo-cd'],
+      justification: 'clarify',
+    });
+
+    await waitFor(() => expect(suggestTagEditMock).toHaveBeenCalled());
     expect(requestTagMock).not.toHaveBeenCalled();
-    expect(pushToast).not.toHaveBeenCalled();
+    expect(suggestTagEditMock).toHaveBeenCalledWith('argocd', {
+      def: 'new def',
+      long_description: 'long',
+      category: 'platform',
+      aliases: ['argo', 'argo-cd'],
+      justification: 'clarify',
+      actor: ACTOR,
+    });
+    await waitFor(() =>
+      expect(pushToast).toHaveBeenCalledWith(
+        expect.objectContaining({ titleSuffix: 'edit suggested' }),
+      ),
+    );
+  });
+
+  it('suggest with no tag → no mutation', () => {
+    const pushToast = vi.fn();
+    const { result } = setup(pushToast);
+    result.current.onTagCommit({ kind: 'suggest', tag: null });
+    expect(suggestTagEditMock).not.toHaveBeenCalled();
   });
 
   it('synonyms → updateSynonyms using commit.aliases', async () => {

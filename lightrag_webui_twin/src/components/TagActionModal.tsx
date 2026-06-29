@@ -85,6 +85,17 @@ const SUBMIT_LABEL: Record<TagActionKind, (state: { migrateStrategy: 'migrate' |
   request: () => 'Submit request',
 };
 
+function parseAliases(value: string): string[] {
+  return value
+    .split(',')
+    .map((alias) => alias.trim())
+    .filter(Boolean);
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
 export function TagActionModal({
   action,
   allTags,
@@ -106,6 +117,9 @@ export function TagActionModal({
   const [migrateStrategy, setMigrateStrategy] = useState<'migrate' | 'untag'>('migrate');
   const [newSyn, setNewSyn] = useState('');
   const [aliases, setAliases] = useState<readonly string[]>(tag?.aliases ?? []);
+  const [suggestAliases, setSuggestAliases] = useState(
+    (tag?.aliases ?? []).join(', '),
+  );
   const [reason, setReason] = useState('');
   const [requestSynonyms, setRequestSynonyms] = useState('');
   const [justification, setJustification] = useState('');
@@ -131,7 +145,12 @@ export function TagActionModal({
 
   const commit = () => {
     const payload: TagActionCommit = { kind: action.kind, tag };
-    if (action.kind === 'request' || action.kind === 'edit' || action.kind === 'edit-approve') {
+    if (
+      action.kind === 'request' ||
+      action.kind === 'edit' ||
+      action.kind === 'edit-approve' ||
+      action.kind === 'suggest'
+    ) {
       payload.name = name;
       payload.def = definition;
       payload.longDescription = longDescription;
@@ -148,9 +167,12 @@ export function TagActionModal({
     }
     if (action.kind === 'request') {
       payload.aliases = requestSynonyms
-        .split(',')
-        .map((alias) => alias.trim())
-        .filter(Boolean);
+        ? parseAliases(requestSynonyms)
+        : [];
+      payload.justification = justification.trim();
+    }
+    if (action.kind === 'suggest') {
+      payload.aliases = parseAliases(suggestAliases);
       payload.justification = justification.trim();
     }
     if (action.kind === 'reject' || action.kind === 'deprecate') {
@@ -170,6 +192,13 @@ export function TagActionModal({
     (action.kind === 'reject' && !reason.trim()) ||
     (action.kind === 'request' &&
       (requestNameMissing || requestDefinitionMissing)) ||
+    (action.kind === 'suggest' &&
+      (!definition.trim() ||
+        !tag ||
+        (definition === tag.def &&
+          longDescription === (tag.long_description ?? '') &&
+          category === tag.category &&
+          sameList(parseAliases(suggestAliases), tag.aliases)))) ||
     (action.kind === 'delete' && migrateStrategy === 'migrate' && !migrateTo);
 
   return (
@@ -245,6 +274,47 @@ export function TagActionModal({
                   onChange={(e) => setLongDescription(e.target.value)}
                   placeholder="For complex tags — surfaced in autocomplete tooltip."
                 />
+                <label className="field-label" htmlFor="tagaction-domain">
+                  Domain
+                </label>
+                <select
+                  id="tagaction-domain"
+                  className="text-input"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                  <option value="other">Other</option>
+                </select>
+                {action.kind === 'suggest' && (
+                  <>
+                    <label className="field-label" htmlFor="tagaction-suggest-aliases">
+                      Proposed synonyms <span className="hint">comma-separated</span>
+                    </label>
+                    <input
+                      id="tagaction-suggest-aliases"
+                      className="text-input"
+                      value={suggestAliases}
+                      onChange={(e) => setSuggestAliases(e.target.value)}
+                      placeholder="e.g. recovery-manager, backup-tool"
+                    />
+                    <label className="field-label" htmlFor="tagaction-suggest-justif">
+                      Justification <span className="hint">optional</span>
+                    </label>
+                    <textarea
+                      id="tagaction-suggest-justif"
+                      className="text-input"
+                      rows={3}
+                      value={justification}
+                      onChange={(e) => setJustification(e.target.value)}
+                      placeholder="Explain why a steward should accept this edit."
+                    />
+                  </>
+                )}
                 <div className="impact-box">
                   <Icon name="info-circle" size={13} color="var(--twin-accent)" />
                   <span>

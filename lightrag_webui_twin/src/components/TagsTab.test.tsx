@@ -67,7 +67,7 @@ afterEach(() => {
 
 async function openTagRequests() {
   await userEvent.click(
-    screen.getByRole('button', { name: /Tag requests/i }),
+    screen.getByRole('button', { name: /Tag review queue/i }),
   );
 }
 
@@ -77,7 +77,7 @@ describe('TagsTab — rendering', () => {
     expect(screen.getByRole('heading', { name: 'Tags' })).toBeInTheDocument();
     // 21 fixtures - 2 requested = 19 active
     const sub = document.querySelector('.tags-sub') as HTMLElement;
-    expect(sub.textContent).toMatch(/19 active tags · 2 pending requests/);
+    expect(sub.textContent).toMatch(/19 active tags · 2 pending items/);
     expect(sub.textContent).toMatch(/folder sandbox/);
     // palier-pill killed per 30/05 cleanup — role lives in JWT, not in chrome
     expect(sub.textContent).not.toMatch(/palier 3/);
@@ -86,12 +86,12 @@ describe('TagsTab — rendering', () => {
 
   it('renders the pending requests section collapsed by default', () => {
     render(<TagsTab {...defaultProps()} />);
-    expect(screen.getByText('Tag requests')).toBeInTheDocument();
+    expect(screen.getByText('Tag review queue')).toBeInTheDocument();
     expect(document.querySelector('.pending-counts')?.textContent).toMatch(
-      /2 tag requests awaiting review/,
+      /2 governance items awaiting review/,
     );
     expect(screen.queryByTestId('pending-argocd')).toBeNull();
-    expect(screen.getByRole('button', { name: /Tag requests/i })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Tag review queue/i })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
@@ -108,9 +108,9 @@ describe('TagsTab — rendering', () => {
       />,
     );
     const sub = document.querySelector('.tags-sub') as HTMLElement;
-    expect(sub.textContent).toMatch(/19 active tags · 1 pending requests/);
+    expect(sub.textContent).toMatch(/19 active tags · 1 pending item/);
     expect(document.querySelector('.pending-counts')?.textContent).toMatch(
-      /1 tag request awaiting review/,
+      /1 governance item awaiting review/,
     );
   });
 
@@ -125,6 +125,31 @@ describe('TagsTab — rendering', () => {
       within(argocd).getByRole('button', { name: 'Edit & approve' }),
     ).toBeInTheDocument();
     expect(within(argocd).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
+
+  it('renders pending edit proposals with target tag and approve-edit action', async () => {
+    const props = defaultProps();
+    const proposal = {
+      ...TAG_FIXTURES[0],
+      tag: 'rman__edit__alberto-20260629',
+      tier: 'requested' as const,
+      status: 'pending-review' as const,
+      def: 'Updated RMAN definition',
+      requested_by: 'alberto',
+      requested_at: '2026-06-29',
+      justification: 'Clarify wording',
+      proposal_kind: 'edit' as const,
+      target_tag: 'rman',
+      proposed_fields: ['def', 'aliases'],
+      last_edit: { by: 'alberto', at: '2026-06-29', action: 'edit-suggested' },
+    };
+    render(<TagsTab {...props} tags={[...props.tags, proposal]} />);
+    await openTagRequests();
+    const card = screen.getByTestId('pending-rman__edit__alberto-20260629');
+    expect(within(card).getByText('Edit suggestion')).toBeInTheDocument();
+    expect(within(card).getByText('rman')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Approve edit' })).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Edit & approve' })).toBeNull();
   });
 
   it('palier 2 sees pending section but only "Awaiting reviewer approval" caption', async () => {
@@ -258,12 +283,37 @@ describe('TagsTab — selection + detail', () => {
     expect(within(detail).queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
-  it('palier 2 detail panel shows Suggest edit disabled (no backend endpoint) and no destructive actions', () => {
-    render(<TagsTab {...defaultProps(PALIER2)} />);
+  it('palier 2 detail panel opens Suggest edit and emits proposed fields', async () => {
+    const props = defaultProps(PALIER2);
+    render(<TagsTab {...props} />);
     const detail = document.querySelector('.tag-detail') as HTMLElement;
+    await userEvent.click(within(detail).getByRole('button', { name: 'Suggest edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Suggest tag edit' });
     expect(
-      within(detail).getByRole('button', { name: 'Suggest edit' }),
+      within(dialog).getByRole('button', { name: 'Submit suggestion' }),
     ).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('Short definition'), {
+      target: { value: 'Updated recovery manager definition' },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Proposed synonyms/), {
+      target: { value: 'rmgr, recovery-manager' },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Justification/), {
+      target: { value: 'Clarify Alberto recette wording' },
+    });
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Submit suggestion' }),
+    );
+
+    expect(props.onCommit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'suggest',
+        tag: expect.objectContaining({ tag: 'rman' }),
+        def: 'Updated recovery manager definition',
+        aliases: ['rmgr', 'recovery-manager'],
+        justification: 'Clarify Alberto recette wording',
+      }),
+    );
     expect(within(detail).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 

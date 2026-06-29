@@ -669,6 +669,18 @@ export function useEditTag() {
   });
 }
 
+export function useSuggestTagEdit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...body
+    }: { name: string } & Parameters<typeof api.suggestTagEdit>[1]) =>
+      api.suggestTagEdit(name, body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
 export function useDeprecateTag() {
   const qc = useQueryClient();
   return useMutation({

@@ -150,6 +150,9 @@ class TagEntry(_Base):
     requested_by: str | None = None
     requested_at: str | None = None
     justification: str | None = None
+    proposal_kind: Literal["edit"] | None = None
+    target_tag: str | None = None
+    proposed_fields: list[str] = Field(default_factory=list)
 
 
 class TagCategory(_Base):
@@ -387,6 +390,17 @@ class TagEditBody(_Base):
     category: str | None = None
     aliases: list[str] | None = None
     deprecates: list[str] | None = None
+    actor: str | None = None
+
+
+class TagSuggestEditBody(_Base):
+    """POST /tags/{name}/suggest-edit — palier-2 edit proposal."""
+
+    def_: str | None = Field(default=None, alias="def")
+    long_description: str | None = None
+    category: str | None = None
+    aliases: list[str] | None = None
+    justification: str | None = None
     actor: str | None = None
 
 

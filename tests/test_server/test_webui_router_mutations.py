@@ -482,6 +482,102 @@ class TestEditTag:
 
 
 # ---------------------------------------------------------------------------
+# POST /tags/{name}/suggest-edit
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestTagEdit:
+    async def test_creates_pending_edit_proposal(self, client):
+        r = await client.post(
+            "/tags/rman/suggest-edit",
+            json={
+                "def": "Updated RMAN definition",
+                "aliases": ["rmgr", "recovery-manager"],
+                "justification": "clarify recovery manager wording",
+                "actor": "alberto",
+            },
+        )
+
+        assert r.status_code == 201
+        body = r.json()
+        assert body["tier"] == "requested"
+        assert body["status"] == "pending-review"
+        assert body["proposal_kind"] == "edit"
+        assert body["target_tag"] == "rman"
+        assert body["def"] == "Updated RMAN definition"
+        assert body["aliases"] == ["rmgr", "recovery-manager"]
+        assert set(body["proposed_fields"]) == {"def", "aliases"}
+
+        persisted = await _get_tag(client, body["tag"])
+        assert persisted is not None
+        events = await _get_activity(client)
+        assert events[0]["summary"] == "Tag rman edit suggested for palier-3 review"
+        notifications = await _get_notifications(client)
+        assert notifications[0]["title"] == "Tag"
+
+    async def test_approve_applies_proposal_to_target_and_removes_proposal(self, client):
+        proposal = (
+            await client.post(
+                "/tags/rman/suggest-edit",
+                json={
+                    "def": "Updated RMAN definition",
+                    "long_description": "Longer approved note",
+                    "actor": "alberto",
+                },
+            )
+        ).json()
+
+        r = await client.post(
+            f"/tags/{proposal['tag']}/approve",
+            json={"actor": "claire.benoit"},
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tag"] == "rman"
+        assert body["def"] == "Updated RMAN definition"
+        assert body["long_description"] == "Longer approved note"
+        assert body["last_edit"]["action"] == "edit-approved"
+        assert await _get_tag(client, proposal["tag"]) is None
+        assert (await _get_tag(client, "rman"))["def"] == "Updated RMAN definition"
+
+    async def test_reject_marks_edit_proposal_rejected(self, client):
+        proposal = (
+            await client.post(
+                "/tags/rman/suggest-edit",
+                json={"def": "Rejected wording", "actor": "alberto"},
+            )
+        ).json()
+
+        r = await client.post(
+            f"/tags/{proposal['tag']}/reject",
+            json={"reason": "too broad", "actor": "claire.benoit"},
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "rejected"
+        assert body["proposal_kind"] == "edit"
+        assert body["target_tag"] == "rman"
+        assert body["reject_reason"] == "too broad"
+
+    async def test_unknown_target_returns_404(self, client):
+        r = await client.post(
+            "/tags/does-not-exist/suggest-edit",
+            json={"def": "new", "actor": "alberto"},
+        )
+        assert r.status_code == 404
+
+    async def test_no_changed_field_returns_400(self, client):
+        current = await _get_tag(client, "rman")
+        r = await client.post(
+            "/tags/rman/suggest-edit",
+            json={"def": current["def"], "actor": "alberto"},
+        )
+        assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # POST /tags/{name}/deprecate
 # ---------------------------------------------------------------------------
 

@@ -56,6 +56,9 @@ export interface TagEntry {
   requested_by?: string;
   requested_at?: string;
   justification?: string;
+  proposal_kind?: 'edit';
+  target_tag?: string;
+  proposed_fields?: readonly string[];
   reject_reason?: string;
 }
 
