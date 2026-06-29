@@ -138,8 +138,86 @@ export function AppShell() {
       : DOCUMENTS_STATUS_TO_API[documentsStatusFilter];
   const documentsSearchParam = documentsSearch.trim() || undefined;
   const documentsTagParam = documentsTagFilters[0] || undefined;
-  const documentsPageScope = [
+
+  // Auth
+  const auth = useAuth();
+  const runtimeConfig = auth.config;
+  const currentActor = auth.user?.email ?? CURRENT_USER.name;
+  const authReady = !auth.isCheckingAuth && !auth.needsLogin;
+  const retagOpen = retagDoc !== null || retagBulk !== null;
+  const configuredFolders = runtimeConfig.folders;
+  const configuredFolderCount = configuredFolders?.length;
+  const folders = useFolders({ enabled: authReady });
+  const availableFolders = useMemo<readonly Folder[]>(() => {
+    if (configuredFolders) {
+      // Explicit empty config = no folder provisioned for this KB → the topbar
+      // shows the Twincore empty-state guidance, never live folders.
+      if (configuredFolders.length === 0) return [];
+      const mapped: Folder[] = configuredFolders.map((item) => ({
+        id: item.id,
+        kb: item.label,
+        visibility: item.kind === 'sandbox' ? 'private' : 'internal',
+        sources: item.sources ?? 0,
+        role: 'admin / steward',
+        current: false,
+      }));
+      // The boot-injected config is frozen at server start, so operator-created
+      // runtime folders are missing from it. Append the ones the live
+      // /twin/api/folders query knows about (deduped by id) so they reach the
+      // switcher without a service restart.
+      const known = new Set(configuredFolders.map((item) => item.id));
+      const extra = (folders.data ?? [])
+        .filter((item) => !known.has(item.id))
+        .map((item) => ({ ...item, current: false }));
+      return [...mapped, ...extra];
+    }
+    return (folders.data ?? []).map((item) => ({ ...item, current: false }));
+  }, [configuredFolders, folders.data]);
+  const effectiveFolder = useMemo(() => {
+    if (!authReady || configuredFolderCount === 0) return folder;
+    if (folders.isLoading && folders.data === undefined) return folder;
+    if (availableFolders.length === 0) {
+      return runtimeConfig.defaultFolderId ?? 'default';
+    }
+    if (availableFolders.some((item) => item.id === folder)) return folder;
+    return (
+      availableFolders.find((item) => item.id === runtimeConfig.defaultFolderId)
+        ?.id ?? availableFolders[0].id
+    );
+  }, [
+    authReady,
+    availableFolders,
+    configuredFolderCount,
     folder,
+    folders.data,
+    folders.isLoading,
+    runtimeConfig.defaultFolderId,
+  ]);
+  const folderList = useMemo<readonly Folder[]>(
+    () =>
+      availableFolders.map((item) => ({
+        ...item,
+        current: item.id === effectiveFolder,
+      })),
+    [availableFolders, effectiveFolder],
+  );
+  const kbName = folderList.find((w) => w.id === effectiveFolder)?.kb ?? '';
+
+  useEffect(() => {
+    if (!authReady || configuredFolderCount === 0) return;
+    if (folders.isLoading && folders.data === undefined) return;
+    writeUiPreference(FOLDER_STORAGE_KEY, effectiveFolder);
+    setActiveFolder(effectiveFolder);
+  }, [
+    authReady,
+    configuredFolderCount,
+    effectiveFolder,
+    folders.data,
+    folders.isLoading,
+  ]);
+
+  const documentsPageScope = [
+    effectiveFolder,
     documentsStatusFilter,
     documentsSearchParam ?? '',
     documentsTagFilters.join(','),
@@ -164,40 +242,38 @@ export function AppShell() {
     });
   };
 
-  // Auth
-  const auth = useAuth();
-  const runtimeConfig = auth.config;
-  const currentActor = auth.user?.email ?? CURRENT_USER.name;
-  const authReady = !auth.isCheckingAuth && !auth.needsLogin;
-  const retagOpen = retagDoc !== null || retagBulk !== null;
-
   // Data — every visible resource comes from the API query layer. No local
   // sample fallback is allowed on the operator surface.
   const docs = useDocuments(
     {
-      folder,
+      folder: effectiveFolder,
       cursor: documentsPage > 1 ? String(documentsPage) : undefined,
       status: documentsStatusParam,
       q: documentsSearchParam,
       tag: documentsTagParam,
     },
     {
-      folderKey: folder,
+      folderKey: effectiveFolder,
       enabled:
         authReady &&
         (tab === 'documents' || tab === 'retrieval' || tab === 'graph'),
     },
   );
-  const folders = useFolders({ enabled: authReady });
-  const notificationsQ = useNotifications({ enabled: authReady, folderKey: folder });
+  const notificationsQ = useNotifications({
+    enabled: authReady,
+    folderKey: effectiveFolder,
+  });
   // Twin overlay tag surfaces stay always-enabled (vs. tab-gated): both
   // are lightweight, the catalog is used cross-tab (badge counts, filter
   // pickers, retag modal), and the e2e contract on "switching folder
   // rescopes /twin/api/tags immediately" depends on the query existing
   // in the cache for `refetchQueries` to trigger. Gating heavy reads
   // (documents, graph) preserves the bulk of the perf win.
-  const tags = useTags({ enabled: authReady, folderKey: folder });
-  const tagCategories = useTagCategories({ enabled: authReady, folderKey: folder });
+  const tags = useTags({ enabled: authReady, folderKey: effectiveFolder });
+  const tagCategories = useTagCategories({
+    enabled: authReady,
+    folderKey: effectiveFolder,
+  });
   const [activityQuery, setActivityQuery] = useState<ActivityQuery>({
     range: '7d',
     limit: ACTIVITY_PAGE_LIMIT,
@@ -212,18 +288,21 @@ export function AppShell() {
   // `/twin/api/activity` to refire under the new folder header at switch
   // time. Lightweight read (bounded via `limit`), so the perf cost is
   // negligible compared to documents / graph which remain gated.
-  const activity = useActivity(activityQuery, { enabled: authReady, folderKey: folder });
+  const activity = useActivity(activityQuery, {
+    enabled: authReady,
+    folderKey: effectiveFolder,
+  });
   const graphEntities = useGraphEntities({
     enabled: authReady && tab === 'graph',
-    folderKey: folder,
+    folderKey: effectiveFolder,
   });
   const graphRelations = useGraphRelations({
     enabled: authReady && tab === 'graph',
-    folderKey: folder,
+    folderKey: effectiveFolder,
   });
   const pipelineStatus = usePipelineStatus({
     enabled: authReady && tab === 'documents',
-    folderKey: folder,
+    folderKey: effectiveFolder,
   });
 
   // Notifications carry mutable client state (read/cleared) on top of the
@@ -250,60 +329,6 @@ export function AppShell() {
         : notification,
     );
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const configuredFolders = runtimeConfig.folders;
-  const folderList = useMemo<readonly Folder[]>(() => {
-    if (configuredFolders) {
-      // Explicit empty config = no folder provisioned for this KB → the topbar
-      // shows the Twincore empty-state guidance, never live folders.
-      if (configuredFolders.length === 0) return [];
-      const mapped: Folder[] = configuredFolders.map((item) => ({
-        id: item.id,
-        kb: item.label,
-        visibility: item.kind === 'sandbox' ? 'private' : 'internal',
-        sources: item.sources ?? 0,
-        role: 'admin / steward',
-        current: item.id === folder,
-      }));
-      // The boot-injected config is frozen at server start, so operator-created
-      // runtime folders are missing from it. Append the ones the live
-      // /twin/api/folders query knows about (deduped by id) so they reach the
-      // switcher without a service restart.
-      const known = new Set(configuredFolders.map((item) => item.id));
-      const extra = (folders.data ?? [])
-        .filter((item) => !known.has(item.id))
-        .map((item) => ({ ...item, current: item.id === folder }));
-      return [...mapped, ...extra];
-    }
-    return folders.data ?? [];
-  }, [configuredFolders, folder, folders]);
-  const kbName = folderList.find((w) => w.id === folder)?.kb ?? '';
-
-  useEffect(() => {
-    if (!authReady || configuredFolders?.length === 0) return;
-    if (folders.isLoading && folders.data === undefined) return;
-    if (folderList.length === 0) {
-      const fallback = runtimeConfig.defaultFolderId ?? 'default';
-      if (fallback !== folder) {
-        setFolder(fallback);
-        setActiveFolder(fallback);
-      }
-      writeUiPreference(FOLDER_STORAGE_KEY, fallback);
-      return;
-    }
-    if (folderList.some((item) => item.id === folder)) {
-      writeUiPreference(FOLDER_STORAGE_KEY, folder);
-      setActiveFolder(folder);
-      return;
-    }
-    const fallback =
-      folderList.find((item) => item.id === runtimeConfig.defaultFolderId)?.id ??
-      folderList[0].id;
-    if (fallback !== folder) {
-      setFolder(fallback);
-      setActiveFolder(fallback);
-    }
-    writeUiPreference(FOLDER_STORAGE_KEY, fallback);
-  }, [authReady, folder, folderList, runtimeConfig.defaultFolderId, folders.data, folders.isLoading]);
 
   const onAddToast = (title: string, sub?: string) =>
     pushToast({ kind: 'done', title, sub });
@@ -320,7 +345,7 @@ export function AppShell() {
     activity,
     currentActor,
     docs,
-    folder,
+    folder: effectiveFolder,
     folderList,
     pushToast,
     setAddOpen,
@@ -365,14 +390,14 @@ export function AppShell() {
     );
     const pendingUploads = optimisticUploadDocs.filter(
       (doc) =>
-        doc.folder === folder &&
+        doc.folder === effectiveFolder &&
         !(
           (doc.track_id && backendTrackIds.has(doc.track_id)) ||
           backendKeys.has(`${doc.folder}:${doc.file_path}`)
         ),
     );
     return dedupeDocumentsBySource([...pendingUploads, ...backendDocList]);
-  }, [backendDocList, folder, optimisticUploadDocs]);
+  }, [backendDocList, effectiveFolder, optimisticUploadDocs]);
   const requestedDetailDoc = useMemo(() => {
     if (tab !== 'documents' || !detailRequest) return null;
     const target =
@@ -463,7 +488,7 @@ export function AppShell() {
         }}
         theme={theme}
         onTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
-        folder={folder}
+        folder={effectiveFolder}
         kbName={kbName}
         onSwitchFolder={(w) => onSwitchFolder(w.id)}
         folders={folderList}
@@ -512,7 +537,7 @@ export function AppShell() {
           position: 'relative',
         }}
       >
-        <div className="tab-pane" key={`${tab}:${folder}`}>
+        <div className="tab-pane" key={`${tab}:${effectiveFolder}`}>
           <Suspense fallback={<div className="tab-loading" aria-live="polite" />}>
           {tab === 'documents' && (
             <DocumentsTab
@@ -535,7 +560,7 @@ export function AppShell() {
                 setDocumentsPageForScope((page) => page - 1)
               }
               onNextPage={() => setDocumentsPageForScope((page) => page + 1)}
-              activeFolder={folder}
+              activeFolder={effectiveFolder}
               canManageFolders={canManageFolders(auth.user)}
               folderList={folderList}
               tagCatalog={tagCatalog}
@@ -577,7 +602,7 @@ export function AppShell() {
           )}
           {tab === 'settings' && (
             <SettingsTab
-              activeFolder={folder}
+              activeFolder={effectiveFolder}
               kbName={kbName}
               initialSection={settingsSection}
               onSignOut={() => {
@@ -637,7 +662,7 @@ export function AppShell() {
               docOptions={docList.map((doc) => doc.doc_id)}
               docLabels={graphDocLabels}
               onNavigate={onNavigate}
-              activeFolder={folder}
+              activeFolder={effectiveFolder}
             />
           )}
           {tab === 'activity' && (
@@ -645,7 +670,7 @@ export function AppShell() {
               events={activityEvents}
               total={activityTotal}
               nowMs={activityNow}
-              folderLabel={kbName || folder}
+              folderLabel={kbName || effectiveFolder}
               density="comfortable"
               live={true}
               onPushToast={pushToast}
@@ -662,7 +687,7 @@ export function AppShell() {
               docLabels={graphDocLabels}
               docTags={graphDocTags}
               tagCatalog={tagCatalog.map((tag) => tag.tag)}
-              folderLabel={kbName || folder}
+              folderLabel={kbName || effectiveFolder}
               onNavigate={onNavigate}
               onToast={pushToast}
             />
@@ -672,7 +697,7 @@ export function AppShell() {
               tags={tagList}
               categories={tagCategoryList}
               currentUser={CURRENT_USER}
-              folderLabel={kbName || folder}
+              folderLabel={kbName || effectiveFolder}
               defaultPendingOpen
               onApprove={onTagApprove}
               onCommit={onTagCommit}
