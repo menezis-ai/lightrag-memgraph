@@ -441,9 +441,13 @@ def _source_matches_doc_filter(
     required, optional = _doc_filter_terms(doc_filter)
     if not required and not optional:
         return True
+    # If `doc_id` is not available, we cannot safely apply a strict
+    # doc-filter guardrail at the source layer. The query was already
+    # scoped in storage via `_retrieval_scope`; dropping every source here is
+    # a false-negative regression when upstream metadata is partial.
+    if not source.get("doc_id"):
+        return True
     candidates = _source_doc_candidates(source)
-    if not candidates:
-        return False
     if required and not required.issubset(candidates):
         return False
     if optional and candidates.isdisjoint(optional):
@@ -462,7 +466,10 @@ async def _source_matches_tag_filter(
         return True
     doc_id = source.get("doc_id")
     if not isinstance(doc_id, str) or not doc_id:
-        return False
+        # If we cannot resolve the source document, keep it visible to avoid
+        # dropping otherwise valid grounded sources when envelope projection
+        # misses doc metadata.
+        return True
     if doc_id not in tags_cache:
         tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
     return _doc_tags_match_filter(tags_cache[doc_id], tag_filter)

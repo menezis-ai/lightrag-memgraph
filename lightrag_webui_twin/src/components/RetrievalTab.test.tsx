@@ -395,6 +395,48 @@ describe('RetrievalTab — params panel', () => {
     );
   });
 
+  it('hydrates Graph-transferred filters from URL and shows sources when grounded', async () => {
+    const onSendQuery = vi.fn(async () => ({
+      response: 'Graph-driven answer',
+      sources: [
+        { n: 1, type: 'file' as const, name: 'graph-source-a.pdf', score: 0.91 },
+      ],
+      answer_status: 'grounded' as const,
+    }));
+    window.history.replaceState(
+      null,
+      '',
+      '/?rtag=oracle,rman&rtagmode=all&rdoc=doc-oracle&rdocmode=any',
+    );
+
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText('Query input'),
+      'Graph sourced query',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: 'Graph sourced query',
+        tagFilter: { all: ['oracle', 'rman'] },
+        docFilter: { any: ['doc-oracle'] },
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/^Sources$/)).toBeInTheDocument();
+      expect(screen.getByTestId('source-1')).toBeInTheDocument();
+    });
+  });
+
   it('sends prior thread messages as conversation history', async () => {
     const onSendQuery = vi.fn(async () => ({ response: 'ok', sources: [] }));
     render(

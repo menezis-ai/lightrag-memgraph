@@ -613,6 +613,35 @@ class TestQueryEndpoint:
         _query, param = rag.llm_calls[0]
         assert param.doc_filter == {"any": ["doc-b"]}
 
+    async def test_doc_filter_keeps_sources_when_source_doc_id_is_missing(self, make_client):
+        # Regression: when source projection can't resolve `doc_id` from the
+        # envelope, a strict post-filter guard can erase the entire sources list
+        # despite a grounded answer. The prompt has still been scoped by
+        # storage-level filters, so we keep sources visible for usability.
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {"id": "a", "file_path": "/a", "score": 0.91},
+                {"id": "b", "file_path": "/b", "score": 0.82},
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={"query": "x", "doc_filter": {"any": ["doc-b"]}},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert [s["n"] for s in body["sources"]] == [1, 2]
+        assert body["sources"][0]["doc_id"] is None
+        assert body["sources"][1]["doc_id"] is None
+        _query, param = rag.llm_calls[0]
+        assert param.doc_filter == {"any": ["doc-b"]}
+
     async def test_only_need_prompt_skips_source_enrichment(self, make_client):
         rag = FakeRag(answer="prompt that would be sent")
         client = await make_client(rag)
