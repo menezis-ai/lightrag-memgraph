@@ -329,6 +329,70 @@ describe('document folder membership hooks', () => {
     expect(String(url)).toContain('/documents/d1/folders/default');
     expect((init as RequestInit).method).toBe('DELETE');
   });
+
+  it('useAddDocumentToFolder invalidates source + destination document queries', async () => {
+    setActiveFolder('default');
+    const client = newClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        doc_id: 'd1',
+        folders: ['default', 'sandbox'],
+      }),
+    );
+    const { result } = renderHook(() => useAddDocumentToFolder(), {
+      wrapper: wrapperForClient(client),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ docId: 'd1', folderId: 'sandbox' });
+    });
+    const keys = spy.mock.calls.map(
+      ([o]) => (o as { queryKey: unknown[] }).queryKey,
+    );
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        ['document-folders', 'd1'],
+        ['documents', 'default'],
+        ['documents', 'sandbox'],
+        ['documents'],
+        ['activity'],
+      ]),
+    );
+  });
+
+  it('useRemoveDocumentFromFolder invalidates source + destination document queries', async () => {
+    setActiveFolder('default');
+    const client = newClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        ok: true,
+        doc_id: 'd1',
+        removed_folder: 'default',
+        physically_deleted: false,
+        remaining_folders: ['sandbox'],
+      }),
+    );
+    const { result } = renderHook(() => useRemoveDocumentFromFolder(), {
+      wrapper: wrapperForClient(client),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ docId: 'd1', folderId: 'default' });
+    });
+    const keys = spy.mock.calls.map(
+      ([o]) => (o as { queryKey: unknown[] }).queryKey,
+    );
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        ['document-folders', 'd1'],
+        ['documents', 'default'],
+        ['documents'],
+        ['activity'],
+        ['graph-entities'],
+        ['graph-relations'],
+      ]),
+    );
+  });
 });
 
 describe('api-key mutations', () => {

@@ -193,8 +193,14 @@ export function useDocumentFolders(
 function invalidateDocumentMembershipSideEffects(
   qc: ReturnType<typeof useQueryClient>,
   docId: string,
+  targetFolder?: string | null,
 ) {
   void qc.invalidateQueries({ queryKey: documentFoldersKey(docId) });
+  const active = getActiveFolder() ?? 'default';
+  void qc.invalidateQueries({ queryKey: ['documents', active] });
+  if (targetFolder) {
+    void qc.invalidateQueries({ queryKey: ['documents', targetFolder] });
+  }
   void qc.invalidateQueries({ queryKey: ['documents'] });
   void qc.invalidateQueries({ queryKey: ['activity'] });
 }
@@ -205,7 +211,7 @@ export function useAddDocumentToFolder() {
     mutationFn: ({ docId, folderId }: { docId: string; folderId: string }) =>
       api.addDocumentToFolder(docId, folderId),
     onSuccess: (_data, vars) =>
-      invalidateDocumentMembershipSideEffects(qc, vars.docId),
+      invalidateDocumentMembershipSideEffects(qc, vars.docId, vars.folderId),
   });
 }
 
@@ -215,7 +221,7 @@ export function useRemoveDocumentFromFolder() {
     mutationFn: ({ docId, folderId }: { docId: string; folderId: string }) =>
       api.removeDocumentFromFolder(docId, folderId),
     onSuccess: (_data, vars) => {
-      invalidateDocumentMembershipSideEffects(qc, vars.docId);
+      invalidateDocumentMembershipSideEffects(qc, vars.docId, vars.folderId);
       void qc.invalidateQueries({ queryKey: ['graph-entities'] });
       void qc.invalidateQueries({ queryKey: ['graph-relations'] });
     },

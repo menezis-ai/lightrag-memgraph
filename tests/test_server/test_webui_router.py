@@ -611,6 +611,18 @@ class TestForFolderMode:
         from twindb_lightrag_memgraph.server.folder import load_folder_catalog
         return load_folder_catalog().default_folder_id
 
+    def _configure_default_plus_sandbox_folders(self, monkeypatch):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [
+                    {"id": "default", "label": "Default folder", "kind": "primary"},
+                    {"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
+                ]
+            ),
+        )
+
     def test_default_folder_seed_mode_keeps_full_payload(self):
         # Sanity: the legacy `seed` mode (CI + standalone demo) still
         # populates documents/graph for the default folder.
@@ -695,14 +707,42 @@ class TestForFolderMode:
                         "metadata": {"folder": "sandbox"},
                     },
                 }
+                self.folders = {
+                    "doc-abcdef0123456789abcdef0123456789": {"default"},
+                    "doc-mlops": {"default"},
+                    "doc-sandbox": {"sandbox"},
+                }
 
-            async def get_docs_paginated(self, **kwargs):
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_folders_for_doc(self, doc_id: str):
+                folders = self.folders.get(doc_id)
+                if folders is None:
+                    return None
+                return sorted(folders)
+
+            async def add_to_folder(self, doc_id: str, folder: str) -> bool:
+                if doc_id not in self.docs:
+                    return False
+                self.folders.setdefault(doc_id, set()).add(folder)
+                return True
+
+            async def remove_from_folder(self, doc_id: str, folder: str) -> int:
+                folders = self.folders.get(doc_id, set())
+                folders.discard(folder)
+                self.folders[doc_id] = folders
+                return len(folders)
+
+            async def get_docs_paginated(self, **kwargs: Any):
                 status_filter = kwargs.get("status_filter")
+                folder = kwargs.get("folder")
                 wanted = getattr(status_filter, "value", None)
                 rows = [
                     (doc_id, doc)
                     for doc_id, doc in self.docs.items()
-                    if wanted is None or doc["status"] == wanted
+                    if (wanted is None or doc["status"] == wanted)
+                    and (not folder or folder in self.folders.get(doc_id, set()))
                 ]
                 return rows, len(rows)
 
@@ -718,6 +758,7 @@ class TestForFolderMode:
         )
         webui_router.set_store(empty_store)
         _twindb_state["rag"] = FakeRag()
+        self._configure_default_plus_sandbox_folders(monkeypatch)
         monkeypatch.setattr(
             webui_router,
             "_attach_graph_tags_for_documents",
@@ -755,5 +796,201 @@ class TestForFolderMode:
             assert [doc["doc_id"] for doc in tagged.json()["items"]] == [
                 "doc-abcdef0123456789abcdef0123456789"
             ]
+
+            copied = await client.post(
+                "/documents/doc-abcdef0123456789abcdef0123456789/folders",
+                json={"folder_id": "sandbox"},
+            )
+            assert copied.status_code == 200
+
+            default_docs = await client.get("/documents")
+            sandbox_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+            assert default_docs.status_code == 200
+            assert sandbox_docs.status_code == 200
+
+            assert default_docs.json()["total"] == 2
+            assert [
+                doc["doc_id"]
+                for doc in default_docs.json()["items"]
+            ] == [
+                "doc-abcdef0123456789abcdef0123456789",
+                "doc-mlops",
+            ]
+            assert sandbox_docs.json()["total"] == 2
+            assert {
+                doc["doc_id"]
+                for doc in sandbox_docs.json()["items"]
+            } == {
+                "doc-abcdef0123456789abcdef0123456789",
+                "doc-sandbox",
+            }
+        finally:
+            _twindb_state.pop("rag", None)
+
+    async def test_destination_folder_visible_after_copy_to_folder(self, client, monkeypatch):
+        """Copying a doc into another folder makes it appear there in list queries."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-a": {
+                        "status": "processed",
+                        "file_path": "doc-a.pdf",
+                        "content_summary": "Source file",
+                        "chunks_count": 2,
+                        "metadata": {"folder": "default"},
+                    },
+                }
+                self.folders = {"doc-a": {"default"}}
+
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_folders_for_doc(self, doc_id: str):
+                folders = self.folders.get(doc_id)
+                return sorted(folders) if folders is not None else None
+
+            async def add_to_folder(self, doc_id: str, folder: str) -> bool:
+                if doc_id not in self.docs:
+                    return False
+                self.folders.setdefault(doc_id, set()).add(folder)
+                return True
+
+            async def remove_from_folder(self, doc_id: str, folder: str) -> int:
+                folders = self.folders.get(doc_id, set())
+                folders.discard(folder)
+                self.folders[doc_id] = folders
+                return len(folders)
+
+            async def get_docs_paginated(self, **kwargs: Any):
+                folder = kwargs.get("folder")
+                status_filter = kwargs.get("status_filter")
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if (wanted is None or doc["status"] == wanted)
+                    and (not folder or folder in self.folders.get(doc_id, set()))
+                ]
+                return rows, len(rows)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        _twindb_state["rag"] = FakeRag()
+        self._configure_default_plus_sandbox_folders(monkeypatch)
+        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        try:
+            copy_response = await client.post(
+                "/documents/doc-a/folders",
+                json={"folder_id": "sandbox"},
+            )
+            assert copy_response.status_code == 200
+            copied_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+            assert copied_docs.status_code == 200
+            assert copied_docs.json()["total"] == 1
+            assert copied_docs.json()["items"][0]["doc_id"] == "doc-a"
+        finally:
+            _twindb_state.pop("rag", None)
+
+    async def test_destination_folder_visible_after_move_to_folder(self, client, monkeypatch):
+        """Moving a doc removes it from source and keeps it visible in destination."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-a": {
+                        "status": "processed",
+                        "file_path": "doc-a.pdf",
+                        "content_summary": "Source file",
+                        "chunks_count": 2,
+                        "metadata": {"folder": "default"},
+                    },
+                }
+                self.folders = {"doc-a": {"default"}}
+
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_folders_for_doc(self, doc_id: str):
+                folders = self.folders.get(doc_id)
+                return sorted(folders) if folders is not None else None
+
+            async def add_to_folder(self, doc_id: str, folder: str) -> bool:
+                if doc_id not in self.docs:
+                    return False
+                self.folders.setdefault(doc_id, set()).add(folder)
+                return True
+
+            async def remove_from_folder(self, doc_id: str, folder: str) -> int:
+                folders = self.folders.get(doc_id, set())
+                folders.discard(folder)
+                self.folders[doc_id] = folders
+                return len(folders)
+
+            async def get_docs_paginated(self, **kwargs: Any):
+                folder = kwargs.get("folder")
+                status_filter = kwargs.get("status_filter")
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if (wanted is None or doc["status"] == wanted)
+                    and (not folder or folder in self.folders.get(doc_id, set()))
+                ]
+                return rows, len(rows)
+
+            async def adelete_by_doc_id(self, doc_id: str) -> None:
+                self.docs.pop(doc_id, None)
+                self.folders.pop(doc_id, None)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        _twindb_state["rag"] = FakeRag()
+        self._configure_default_plus_sandbox_folders(monkeypatch)
+        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        try:
+            move_to_b = await client.post(
+                "/documents/doc-a/folders",
+                json={"folder_id": "sandbox"},
+            )
+            assert move_to_b.status_code == 200
+            remove_from_default = await client.delete("/documents/doc-a/folders/default")
+            assert remove_from_default.status_code == 200
+
+            default_docs = await client.get("/documents")
+            sandbox_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+
+            assert default_docs.status_code == 200
+            assert sandbox_docs.status_code == 200
+            assert default_docs.json()["total"] == 0
+            assert sandbox_docs.json()["total"] == 1
+            assert sandbox_docs.json()["items"][0]["doc_id"] == "doc-a"
         finally:
             _twindb_state.pop("rag", None)

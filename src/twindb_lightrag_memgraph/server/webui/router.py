@@ -281,19 +281,21 @@ def _filter_doc_status_rows(
     *,
     q: str | None,
     tag: str | None,
+    folder: str | None = None,
 ) -> list[dict[str, Any]]:
-    folder = current_folder_id()
     default_folder = load_folder_catalog().default_folder_id
-    filtered = [
-        doc
-        for doc in items
-        if (
-            doc.get("folder")
-            or (doc.get("metadata") or {}).get("folder")
-            or default_folder
-        )
-        == folder
-    ]
+    filtered = list(items)
+    if folder is not None:
+        filtered = [
+            doc
+            for doc in filtered
+            if (
+                doc.get("folder")
+                or (doc.get("metadata") or {}).get("folder")
+                or default_folder
+            )
+            == folder
+        ]
     if q:
         needle = q.lower()
         filtered = [
@@ -325,6 +327,7 @@ async def _list_documents_from_doc_status(
             return []
 
     folder = current_folder_id()
+    scoped_by_storage = True
     try:
         docs_tuples, _total = await rag.doc_status.get_docs_paginated(
             page=1,
@@ -333,6 +336,7 @@ async def _list_documents_from_doc_status(
             folder=folder,
         )
     except TypeError:
+        scoped_by_storage = False
         docs_tuples, _total = await rag.doc_status.get_docs_paginated(
             page=1,
             page_size=500,
@@ -345,7 +349,12 @@ async def _list_documents_from_doc_status(
         docs.append(_project_doc_status_for_webui(payload))
 
     await _attach_graph_tags_for_documents(docs)
-    return _filter_doc_status_rows(docs, q=q, tag=tag)
+    return _filter_doc_status_rows(
+        docs,
+        q=q,
+        tag=tag,
+        folder=folder if not scoped_by_storage else None,
+    )
 
 
 def _rewrite_doc_tags(
