@@ -255,6 +255,21 @@ class TestQueryEndpoint:
         # retrieval pipeline itself, not from a second vector pass.
         assert rag.chunks_vdb.last_query is None
 
+    async def test_non_stream_response_does_not_leak_source_markers(self, make_client):
+        rag = FakeRag(
+            answer="Grounded answer.",
+            chunks=[{"score": 0.75}],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post("/query", json={"query": "How is fallback tracked?"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert len(body["sources"]) == 1
+        assert "_lightrag_reference_name_fallback" not in body["sources"][0]
+
     async def test_records_retrieval_activity(self, make_client):
         rag = FakeRag(
             answer="Restart Oracle by …",
@@ -985,6 +1000,28 @@ class TestQueryEndpoint:
         assert param.user_prompt == "short answer"
         # Audit C3 guard on the stream path: chunks_vdb stays cold.
         assert rag.chunks_vdb.last_query is None
+
+    async def test_stream_sources_event_does_not_leak_internal_markers(self, make_client):
+        import json as _json
+
+        rag = FakeRag(
+            stream_chunks=["A ", "streamed ", "answer."],
+            chunks=[{"score": 0.88}],
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/stream",
+                json={"query": "Who tracked source markers?"},
+            )
+
+        assert r.status_code == 200
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
+        source_events = [e for e in events if e["type"] == "sources"]
+        assert len(source_events) == 1
+        assert source_events[0]["type"] == "sources"
+        source = source_events[0]["value"][0]
+        assert "_lightrag_reference_name_fallback" not in source
 
     async def test_query_data_returns_structured_lightrag_payload(
         self, make_client

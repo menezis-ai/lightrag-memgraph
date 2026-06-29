@@ -81,6 +81,16 @@ from .._lightrag_compat import (
     is_streaming_envelope,
 )
 
+_PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
+
+def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip internal source markers before returning public responses."""
+    return [
+        {key: value for key, value in source.items() if key not in _PUBLIC_SOURCE_KEYS}
+        for source in sources
+    ]
+
+
 logger = logging.getLogger(__name__)
 
 class TwinQueryBody(BaseModel):
@@ -941,7 +951,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     )
     return {
         "response": clean_answer,
-        "sources": sources_for_activity,
+        "sources": _public_sources(sources_for_activity),
         "answer_status": answer_status,
     }
 
@@ -1168,7 +1178,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
         await _record_retrieval_activity(
             body, request, folder=folder, sources_count=len(sources), stream=True
         )
-        yield json.dumps({"type": "sources", "value": sources}) + "\n"
+        yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
