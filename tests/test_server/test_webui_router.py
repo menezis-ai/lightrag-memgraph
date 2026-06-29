@@ -830,6 +830,279 @@ class TestForFolderMode:
         finally:
             _twindb_state.pop("rag", None)
 
+    async def test_documents_query_uses_folder_arg_when_supported(
+        self, client, monkeypatch
+    ):
+        """DocStatus listing must pass folder explicitly when the storage supports it."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-default": {
+                        "status": "processed",
+                        "file_path": "default.pdf",
+                        "content_summary": "default",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "default"},
+                    },
+                    "doc-sandbox": {
+                        "status": "processed",
+                        "file_path": "sandbox.pdf",
+                        "content_summary": "sandbox",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "sandbox"},
+                    },
+                }
+                self.folders = {"doc-default": {"default"}, "doc-sandbox": {"sandbox"}}
+                self.last_kwargs: dict[str, Any] = {}
+
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_folders_for_doc(self, doc_id: str):
+                return sorted(self.folders.get(doc_id, []))
+
+            async def get_docs_paginated(
+                self,
+                page: int = 1,
+                page_size: int = 500,
+                status_filter: Any | None = None,
+                folder: str | None = None,
+            ):
+                self.last_kwargs["folder"] = folder
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if wanted is None or doc["status"] == wanted
+                ]
+                if folder:
+                    rows = [
+                        row
+                        for row in rows
+                        if row[1]["metadata"]["folder"] == folder
+                    ]
+                return rows, len(rows)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        rag = FakeRag()
+        _twindb_state["rag"] = rag
+        self._configure_default_plus_sandbox_folders(monkeypatch)
+        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        try:
+            sandbox_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+            assert sandbox_docs.status_code == 200
+            assert sandbox_docs.json()["total"] == 1
+            assert sandbox_docs.json()["items"][0]["doc_id"] == "doc-sandbox"
+            assert rag.doc_status.last_kwargs.get("folder") == "sandbox"
+        finally:
+            _twindb_state.pop("rag", None)
+
+    async def test_folder_aware_documents_query_is_safety_filtered_for_active_folder(
+        self, client, monkeypatch
+    ):
+        """Even folder-aware storages must not leak documents from other folders."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-default": {
+                        "status": "processed",
+                        "file_path": "default.pdf",
+                        "content_summary": "default",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "default"},
+                    },
+                    "doc-sandbox": {
+                        "status": "processed",
+                        "file_path": "sandbox.pdf",
+                        "content_summary": "sandbox",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "sandbox"},
+                    },
+                }
+                self.folders = {"doc-default": {"default"}, "doc-sandbox": {"sandbox"}}
+                self.calls: list[str] = []
+
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_folders_for_doc(self, doc_id: str):
+                self.calls.append(doc_id)
+                return sorted(self.folders.get(doc_id, []))
+
+            async def get_docs_paginated(
+                self,
+                page: int = 1,
+                page_size: int = 500,
+                status_filter: Any | None = None,
+                folder: str | None = None,
+            ):
+                self.calls.append(f"folder={folder}")
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if wanted is None or doc["status"] == wanted
+                ]
+                # Simulate a folder-aware storage bug: returns all folders even when filtered.
+                return rows, len(rows)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        rag = FakeRag()
+        _twindb_state["rag"] = rag
+        self._configure_default_plus_sandbox_folders(monkeypatch)
+        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        try:
+            sandbox_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+            assert sandbox_docs.status_code == 200
+            assert sandbox_docs.json()["total"] == 1
+            assert sandbox_docs.json()["items"][0]["doc_id"] == "doc-sandbox"
+            assert any(call == "folder=sandbox" for call in rag.doc_status.calls)
+            assert "doc-default" not in {
+                doc["doc_id"] for doc in sandbox_docs.json()["items"]
+            }
+            assert "doc-default" in {
+                value for value in rag.doc_status.calls if value.startswith("doc-")
+            }
+        finally:
+            _twindb_state.pop("rag", None)
+
+    async def test_legacy_doc_status_listing_falls_back_without_folder_scoping(
+        self, client, monkeypatch
+    ):
+        """Legacy storage fallback keeps list memory-filtered by active folder."""
+
+        class FakeDocStatus:
+            def __init__(self) -> None:
+                self.docs = {
+                    "doc-default": {
+                        "status": "processed",
+                        "file_path": "default.pdf",
+                        "content_summary": "default",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "default"},
+                    },
+                    "doc-sandbox": {
+                        "status": "processed",
+                        "file_path": "sandbox.pdf",
+                        "content_summary": "sandbox",
+                        "chunks_count": 1,
+                        "metadata": {"folder": "sandbox"},
+                    },
+                    "doc-other": {
+                        "status": "processed",
+                        "file_path": "other.pdf",
+                        "content_summary": "other",
+                        "chunks_count": 1,
+                        "metadata": {},
+                    },
+                }
+
+            async def get_by_id(self, doc_id: str):
+                return self.docs.get(doc_id)
+
+            async def get_docs_paginated(
+                self,
+                page: int = 1,
+                page_size: int = 500,
+                status_filter: Any | None = None,
+            ):
+                wanted = getattr(status_filter, "value", None)
+                rows = [
+                    (doc_id, doc)
+                    for doc_id, doc in self.docs.items()
+                    if wanted is None or doc["status"] == wanted
+                ]
+                return rows, len(rows)
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        async def no_graph_tags(_docs):
+            return None
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        self._configure_default_plus_sandbox_folders(monkeypatch)
+        rag = FakeRag()
+        _twindb_state["rag"] = rag
+        try:
+            sandbox_docs = await client.get(
+                "/documents",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+            assert sandbox_docs.status_code == 200
+            assert {doc["doc_id"] for doc in sandbox_docs.json()["items"]} == {
+                "doc-sandbox"
+            }
+        finally:
+            _twindb_state.pop("rag", None)
+
+    async def test_internal_folder_scoped_storage_typeerror_is_not_suppressed(
+        self, client
+    ):
+        """A TypeError from a folder-aware storage path must bubble up."""
+
+        class FakeDocStatus:
+            async def get_by_id(self, doc_id: str):
+                return {"status": "processed"}
+
+            async def get_docs_paginated(
+                self,
+                page: int = 1,
+                page_size: int = 500,
+                status_filter: Any | None = None,
+                folder: str | None = None,
+            ):
+                if folder == "default":
+                    raise TypeError("simulated type mismatch in folder-aware path")
+                return [("doc-default", {"status": "processed"})], 1
+
+        class FakeRag:
+            def __init__(self) -> None:
+                self.doc_status = FakeDocStatus()
+
+        empty_store = webui_router.WebuiStore.for_folder(
+            self._default_folder(), mode="memgraph"
+        )
+        webui_router.set_store(empty_store)
+        _twindb_state["rag"] = FakeRag()
+        try:
+            with pytest.raises(TypeError, match="simulated type mismatch"):
+                await client.get("/documents")
+        finally:
+            _twindb_state.pop("rag", None)
+
     async def test_destination_folder_visible_after_copy_to_folder(self, client, monkeypatch):
         """Copying a doc into another folder makes it appear there in list queries."""
 

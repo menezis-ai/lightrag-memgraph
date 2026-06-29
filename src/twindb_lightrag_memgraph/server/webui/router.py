@@ -22,6 +22,8 @@ mutation so the operator sees an audit trail without any extra plumbing.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from typing import Any
 
@@ -309,6 +311,61 @@ def _filter_doc_status_rows(
     return filtered
 
 
+def _doc_status_get_docs_paginated_supports_folder(storage: Any) -> bool:
+    """Return True when ``storage.get_docs_paginated()`` accepts a ``folder`` kwarg."""
+    get_docs_paginated = getattr(storage, "get_docs_paginated", None)
+    if not callable(get_docs_paginated):
+        return False
+    try:
+        params = inspect.signature(get_docs_paginated).parameters
+    except (TypeError, ValueError):
+        return False
+    if "folder" in params:
+        return True
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
+    )
+
+
+def _doc_row_has_active_folder_hint(doc: dict[str, Any], folder: str) -> bool:
+    default_folder = load_folder_catalog().default_folder_id
+    row_folder = doc.get("folder") or (doc.get("metadata") or {}).get("folder")
+    if row_folder is None:
+        return folder == default_folder
+    return str(row_folder) == folder
+
+
+async def _filter_docs_to_active_folder(
+    items: list[dict[str, Any]],
+    *,
+    folder: str,
+    rag: Any,
+) -> list[dict[str, Any]]:
+    """In-memory fallback filter used when DocStatus listing is not folder-scoped."""
+    get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
+    if not callable(get_folders):
+        return [
+            doc for doc in items if _doc_row_has_active_folder_hint(doc, folder=folder)
+        ]
+
+    if not items:
+        return []
+
+    doc_ids = [str(doc.get("doc_id") or doc.get("id") or "") for doc in items]
+    memberships_by_doc = await asyncio.gather(
+        *(get_folders(doc_id) for doc_id in doc_ids)
+    )
+    filtered: list[dict[str, Any]] = []
+    for doc, memberships in zip(items, memberships_by_doc):
+        if memberships is None:
+            if _doc_row_has_active_folder_hint(doc, folder=folder):
+                filtered.append(doc)
+            continue
+        if folder in memberships:
+            filtered.append(doc)
+    return filtered
+
+
 async def _list_documents_from_doc_status(
     *,
     status: str | None,
@@ -327,33 +384,32 @@ async def _list_documents_from_doc_status(
             return []
 
     folder = current_folder_id()
-    scoped_by_storage = True
-    try:
-        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
-            page=1,
-            page_size=500,
-            status_filter=status_filter,
-            folder=folder,
-        )
-    except TypeError:
-        scoped_by_storage = False
-        docs_tuples, _total = await rag.doc_status.get_docs_paginated(
-            page=1,
-            page_size=500,
-            status_filter=status_filter,
-        )
-    docs: list[dict[str, Any]] = []
+    scoped_by_storage = _doc_status_get_docs_paginated_supports_folder(rag.doc_status)
+    kwargs = {
+        "page": 1,
+        "page_size": 500,
+        "status_filter": status_filter,
+    }
+    if scoped_by_storage and folder is not None:
+        kwargs["folder"] = folder
+
+    docs_tuples, _total = await rag.doc_status.get_docs_paginated(**kwargs)
+
+    doc_rows: list[dict[str, Any]] = []
     for doc_id, raw in docs_tuples:
         payload = _status_to_dict(raw)
         payload["id"] = doc_id
-        docs.append(_project_doc_status_for_webui(payload))
+        doc_rows.append(payload)
 
+    if folder is not None:
+        doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
+    docs = [_project_doc_status_for_webui(doc) for doc in doc_rows]
     await _attach_graph_tags_for_documents(docs)
     return _filter_doc_status_rows(
         docs,
         q=q,
         tag=tag,
-        folder=folder if not scoped_by_storage else None,
+        folder=None,
     )
 
 
