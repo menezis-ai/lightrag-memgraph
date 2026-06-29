@@ -9340,7 +9340,7 @@ body:where(*) {
 
 .bulk-bar:where(*) {
   max-width: 1380px;
-  margin: 0 auto 10px;
+  margin: 12px auto 10px;
   border: 1px solid var(--blue-soft-bd);
   border-radius: 10px;
   background: var(--blue-soft);
@@ -10926,8 +10926,8 @@ select {
   padding: 7px 9px;
   border: 1px solid var(--border-strong, #D7D0C4);
   border-radius: 7px;
-  background: var(--surface, #FFFFFF);
-  color: var(--text, #252B35);
+  background: var(--color-background-primary, var(--surface, #FFFFFF));
+  color: var(--color-text-primary, var(--ink, #252B35));
   box-shadow: 0 8px 22px rgba(15, 23, 32, 0.14);
   font-family: var(--font-sans);
   font-size: 12px;
