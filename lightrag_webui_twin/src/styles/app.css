@@ -10870,6 +10870,7 @@ select {
 
 .class-pill:where(*) {
   position: relative;
+  z-index: 1;
   width: 26px;
   height: 26px;
   min-width: 26px;
@@ -10886,6 +10887,30 @@ select {
   isolation: isolate;
 }
 
+.docs-row.has-select:has(.class-pill) {
+  position: relative;
+  z-index: 0;
+}
+
+.docs-row.header:where(*) {
+  z-index: 20;
+}
+
+.docs-row.has-select:has(.class-pill:hover),
+.docs-row.has-select:has(.class-pill:focus-visible) {
+  z-index: 30;
+}
+
+.cell-source:has(.class-pill:hover),
+.cell-source:has(.class-pill:focus-visible) {
+  overflow: visible;
+}
+
+.class-pill:hover,
+.class-pill:focus-visible {
+  z-index: 31;
+}
+
 .class-pill svg {
   display: block;
 }
@@ -10893,7 +10918,7 @@ select {
 .class-pill::after {
   content: attr(data-tooltip);
   position: absolute;
-  z-index: 80;
+  z-index: 32;
   left: 50%;
   bottom: calc(100% + 8px);
   max-width: min(260px, calc(100vw - 32px));
@@ -10919,7 +10944,7 @@ select {
 .class-pill::before {
   content: "";
   position: absolute;
-  z-index: 81;
+  z-index: 33;
   left: 50%;
   bottom: calc(100% + 3px);
   width: 8px;
