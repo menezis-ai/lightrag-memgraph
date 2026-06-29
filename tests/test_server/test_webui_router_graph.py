@@ -649,6 +649,143 @@ class TestGraphLifecycle:
         assert r.status_code == 404
         assert "refresh" in r.json()["detail"].lower()
 
+    async def test_post_relation_created_then_visible_in_graph_relations(self, monkeypatch, client):
+        entities = [
+            {
+                "id": "kg_A",
+                "name": "A",
+                "type": "PRODUCT",
+                "x": 100,
+                "y": 100,
+                "mentions": 1,
+                "sources": 1,
+                "summary": "",
+            },
+            {
+                "id": "kg_B",
+                "name": "B",
+                "type": "PRODUCT",
+                "x": 200,
+                "y": 120,
+                "mentions": 1,
+                "sources": 1,
+                "summary": "",
+            },
+        ]
+        relations = []
+
+        async def fake_native(
+            rag,
+            workspace,
+            *,
+            node_label="*",
+            max_depth=3,
+            max_nodes=1000,
+        ):
+            return entities, list(relations)
+
+        async def fake_create_rel(workspace, payload):
+            relation = {
+                "id": "kr_new",
+                "source": payload["source"],
+                "target": payload["target"],
+                "label": payload["label"].upper().replace(" ", "_"),
+                "strength": payload.get("strength", 0.5),
+            }
+            relations.append(relation)
+            return relation
+
+        monkeypatch.setattr(gr, "read_graph_native", fake_native)
+        monkeypatch.setattr(gr, "create_graph_relation", fake_create_rel)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
+
+        create = await client.post(
+            "/graph/relations",
+            json={
+                "source": "kg_A",
+                "target": "kg_B",
+                "label": "used with",
+                "strength": 0.72,
+            },
+        )
+        assert create.status_code == 201
+        create_body = create.json()
+        assert create_body["id"] == "kr_new"
+        assert create_body["source"] == "kg_A"
+        assert create_body["target"] == "kg_B"
+        assert create_body["label"] == "USED_WITH"
+
+        rel_list = await client.get("/graph/relations")
+        assert rel_list.status_code == 200
+        body = rel_list.json()
+        assert body == [create_body]
+
+    async def test_delete_relation_hides_after_delete(self, monkeypatch, client):
+        entities = [
+            {
+                "id": "kg_A",
+                "name": "A",
+                "type": "PRODUCT",
+                "x": 100,
+                "y": 100,
+                "mentions": 1,
+                "sources": 1,
+                "summary": "",
+            },
+            {
+                "id": "kg_B",
+                "name": "B",
+                "type": "PRODUCT",
+                "x": 200,
+                "y": 120,
+                "mentions": 1,
+                "sources": 1,
+                "summary": "",
+            },
+        ]
+        relations = [
+            {
+                "id": "kr_old",
+                "source": "kg_A",
+                "target": "kg_B",
+                "label": "RUNS_ON",
+                "strength": 0.5,
+                "properties": {},
+            }
+        ]
+
+        async def fake_native(
+            rag,
+            workspace,
+            *,
+            node_label="*",
+            max_depth=3,
+            max_nodes=1000,
+        ):
+            return entities, list(relations)
+
+        async def fake_delete_rel(workspace, rel_id):
+            nonlocal relations
+            new_relations = [rel for rel in relations if rel["id"] != rel_id]
+            removed = len(new_relations) < len(relations)
+            relations = new_relations
+            return removed
+
+        monkeypatch.setattr(gr, "read_graph_native", fake_native)
+        monkeypatch.setattr(gr, "delete_graph_relation", fake_delete_rel)
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: object())
+
+        before = await client.get("/graph/relations")
+        assert before.status_code == 200
+        assert before.json() == relations
+
+        delete = await client.delete("/graph/relations/kr_old")
+        assert delete.status_code == 204
+
+        after = await client.get("/graph/relations")
+        assert after.status_code == 200
+        assert after.json() == []
+
 
 class TestGraphEntityTagThesaurusBinding:
     """TR-KG-03 / QA audit 2026-06-12: node tags must come from

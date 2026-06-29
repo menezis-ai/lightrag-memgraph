@@ -11,8 +11,11 @@ import pytest
 
 from twindb_lightrag_memgraph.server.graph_reader import (
     _edge_record_to_relation,
+    _build_native_relations,
     _entity_id_to_node_id,
+    _project_relation_rows,
     _node_record_to_entity,
+    _RELATION_ENDPOINT_CACHE,
     layout_position,
     map_entity_type,
 )
@@ -380,6 +383,66 @@ class TestRelationEndpointCache:
         _remember_relation("cib", "kr_test123", "A", "B")
         got = lookup_relation_endpoints("kr_test123")
         assert got == ("cib", "A", "B")
+
+    def test_project_relation_rows_remembers_stripped_endpoints(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            lookup_relation_endpoints,
+        )
+
+        _RELATION_ENDPOINT_CACHE.clear()
+        rows = [
+            {
+                "source_id": "A",
+                "target_id": "B",
+                "keywords": "depends_on",
+                "weight": 0.8,
+            },
+        ]
+        relations = _project_relation_rows(
+            workspace="cib",
+            rows=rows,
+            valid_ids={"kg_A", "kg_B"},
+            chunk_to_doc=None,
+            member_docs=None,
+            folder=None,
+            rel_overrides={},
+        )
+        assert len(relations) == 1
+        rel_id = relations[0]["id"]
+        assert relations[0]["source"] == "kg_A"
+        assert relations[0]["target"] == "kg_B"
+        assert lookup_relation_endpoints(rel_id) == ("cib", "A", "B")
+
+    def test_build_native_relations_remembers_stripped_endpoints(self):
+        from twindb_lightrag_memgraph.server.graph_reader import (
+            lookup_relation_endpoints,
+        )
+
+        _RELATION_ENDPOINT_CACHE.clear()
+
+        class _Edge:
+            def __init__(self, source, target):
+                self.source = source
+                self.target = target
+                self.properties = {}
+
+        class _Graph:
+            edges = [_Edge("A", "B")]
+
+        relations = _build_native_relations(
+            _Graph(),
+            workspace="cib",
+            valid_ids={"kg_A", "kg_B"},
+            chunk_to_doc=None,
+            member_docs=None,
+            active_folder=None,
+            overrides={},
+        )
+        assert len(relations) == 1
+        rel_id = relations[0]["id"]
+        assert relations[0]["source"] == "kg_A"
+        assert relations[0]["target"] == "kg_B"
+        assert lookup_relation_endpoints(rel_id) == ("cib", "A", "B")
 
 
 # ----------------------------------------------------------------------

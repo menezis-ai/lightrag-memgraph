@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GraphTab } from './GraphTab';
@@ -431,7 +431,8 @@ describe('GraphTab — selection + detail', () => {
   });
 
   it('saves Entity type changes through the graph entity PATCH payload', async () => {
-    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      const [url, init] = args;
       const href = String(url);
       if (href.includes('/graph/entities/e_oracle') && init?.method === 'PATCH') {
         return new Response(
@@ -443,7 +444,7 @@ describe('GraphTab — selection + detail', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
-    }) as unknown as typeof fetch;
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     renderWithClient(<GraphTab {...defaultProps()} />);
@@ -779,7 +780,8 @@ describe('GraphTab — lifecycle: Delete relation', () => {
       (r) => r.id !== deletedId,
     );
     let relationDeleted = false;
-    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      const [url, init] = args;
       const href = String(url);
       if (href.includes('/graph/relations') && init?.method === 'DELETE') {
         relationDeleted = true;
@@ -797,7 +799,7 @@ describe('GraphTab — lifecycle: Delete relation', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
-    }) as unknown as typeof fetch;
+    });
 
     renderGraphWithLiveRelations(fetchMock);
 
@@ -867,5 +869,164 @@ describe('GraphTab — lifecycle: Add relation', () => {
     expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
     await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
     expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
+  });
+
+  it('adds a relation and refetches the relation list', async () => {
+    const newRelation = {
+      id: 'r_custom',
+      source: 'e_oracle',
+      target: 'e_aubervil',
+      label: 'DEPENDS_ON',
+      strength: 0.77,
+    };
+    let created = false;
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      const [url, init] = args;
+      const href = String(url);
+      if (href.includes('/graph/relations') && init?.method === 'POST') {
+        created = true;
+        return new Response(JSON.stringify(newRelation), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (href.includes('/graph/relations')) {
+        const relations = created
+          ? [...GRAPH_RELATION_FIXTURES, newRelation]
+          : GRAPH_RELATION_FIXTURES;
+        return new Response(JSON.stringify(relations), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    renderGraphWithLiveRelations(fetchMock);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          new RegExp(`${GRAPH_RELATION_FIXTURES.length} relations`),
+        ),
+      ).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
+    const addRelationForm = screen.getByTestId('kg-add-rel-form') as HTMLFormElement;
+    await userEvent.selectOptions(screen.getByTestId('kg-add-rel-target'), 'e_aubervil');
+    await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'depends on');
+    await waitFor(
+      () =>
+        expect(
+          screen.getByTestId('kg-add-rel-submit'),
+        ).not.toBeDisabled(),
+      { timeout: 2000 },
+    );
+    const submitBtn = screen.getByTestId('kg-add-rel-submit') as HTMLButtonElement;
+    expect(screen.getByTestId('kg-add-rel-submit').getAttribute('type')).toBe('submit');
+    expect(submitBtn.disabled).toBe(false);
+    expect((screen.getByTestId('kg-add-rel-label') as HTMLInputElement).value).toBe('depends on');
+
+    fireEvent.submit(addRelationForm);
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes('/graph/relations') &&
+          (init as RequestInit | undefined)?.method === 'POST',
+      )).toBeDefined(),
+      { timeout: 5000 },
+    );
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(
+            new RegExp(`${GRAPH_RELATION_FIXTURES.length + 1} relations`),
+          ),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('kg-rel-row-r_custom')).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+
+    const postCalls = fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        String(url).includes('/graph/relations') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(1);
+    const [url, init] = postCalls[0];
+    expect(String(url)).toContain('/graph/relations');
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.source).toBe('e_oracle');
+    expect(body.target).toBe('e_aubervil');
+    expect(body.label).toBe('DEPENDS_ON');
+  });
+
+  it('fires DELETE on confirm and updates list after removing a relation', async () => {
+    const deletedId = 'r_01';
+    const remainingRelations = GRAPH_RELATION_FIXTURES.filter(
+      (r) => r.id !== deletedId,
+    );
+    let relationDeleted = false;
+    const fetchMock = vi.fn(async (...args: [RequestInfo | URL, RequestInit?]) => {
+      const [url, init] = args;
+      const href = String(url);
+      if (href.includes(`/graph/relations/${deletedId}`) && init?.method === 'DELETE') {
+        relationDeleted = true;
+        return new Response(null, { status: 204 });
+      }
+      if (href.includes('/graph/relations')) {
+        return new Response(
+          JSON.stringify(
+            relationDeleted ? remainingRelations : GRAPH_RELATION_FIXTURES,
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    renderGraphWithLiveRelations(fetchMock);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(new RegExp(`${GRAPH_RELATION_FIXTURES.length} relations`)),
+      ).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId(`kg-rel-row-${deletedId}`));
+    const btn = screen.getByTestId('kg-rel-delete');
+    await userEvent.click(btn);
+    await userEvent.click(btn);
+
+    await waitFor(() => {
+      const deleteCalls = fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).includes(`/graph/relations/${deletedId}`) &&
+          (init as RequestInit | undefined)?.method === 'DELETE',
+      );
+      expect(deleteCalls).toHaveLength(1);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByTestId(`kg-rel-row-${deletedId}`)).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(new RegExp(`${remainingRelations.length} relations`)),
+      ).toBeInTheDocument(),
+    );
   });
 });

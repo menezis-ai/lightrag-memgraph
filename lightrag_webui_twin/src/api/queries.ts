@@ -520,6 +520,21 @@ export function useCreateGraphRelation() {
   return useMutation({
     mutationFn: (body: Parameters<typeof api.createGraphRelation>[0]) =>
       api.createGraphRelation(body),
+    onSuccess: (created) => {
+      const key = graphRelationsKey();
+      qc.setQueryData<readonly GraphRelation[]>(
+        key,
+        (prev) => {
+          if (!prev) {
+            return [created];
+          }
+          if (prev.some((relation) => relation.id === created.id)) {
+            return prev;
+          }
+          return [...prev, created];
+        },
+      );
+    },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['graph-relations'] });
       void qc.invalidateQueries({ queryKey: ['activity'] });

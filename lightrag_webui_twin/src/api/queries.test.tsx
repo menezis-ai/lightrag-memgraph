@@ -590,6 +590,12 @@ describe('useCreateGraphEntity / useCreateGraphRelation', () => {
   });
 
   it('useCreateGraphRelation POSTs and invalidates on settle', async () => {
+    const relationPayload = {
+      source: 'e1',
+      target: 'e2',
+      label: 'rel',
+      strength: 0.72,
+    };
     fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'r9', label: 'rel' }));
     const client = newClient();
     const spy = vi.spyOn(client, 'invalidateQueries');
@@ -597,8 +603,14 @@ describe('useCreateGraphEntity / useCreateGraphRelation', () => {
       wrapper: wrapperForClient(client),
     });
     await act(async () => {
-      await result.current.mutateAsync({ source: 'e1', target: 'e2', label: 'rel' });
+      await result.current.mutateAsync(relationPayload);
     });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/graph/relations');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(
+      relationPayload,
+    );
     const keys = spy.mock.calls.map(([o]) => (o as { queryKey: unknown[] }).queryKey[0]);
     expect(keys).toEqual(expect.arrayContaining(['graph-relations', 'activity']));
   });
@@ -660,6 +672,9 @@ describe('useDeleteGraphRelation', () => {
     await act(async () => {
       await result.current.mutateAsync('r1');
     });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/graph/relations/r1');
+    expect((init as RequestInit).method).toBe('DELETE');
     const rels = client.getQueryData<Array<{ id: string }>>(RELATIONS_KEY);
     expect(rels?.some((r) => r.id === 'r1')).toBe(false);
     expect(rels).toHaveLength(1);

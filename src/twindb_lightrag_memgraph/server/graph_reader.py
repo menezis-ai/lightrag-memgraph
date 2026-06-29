@@ -1490,7 +1490,12 @@ def _build_native_relations(
             continue
         if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
             continue
-        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
+        _remember_relation(
+            workspace,
+            rel["id"],
+            _strip_node_prefix(rel["source"]),
+            _strip_node_prefix(rel["target"]),
+        )
         relations.append(rel)
     return relations
 
@@ -1545,7 +1550,12 @@ def _project_relation_rows(
             continue
         if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
             continue
-        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
+        _remember_relation(
+            workspace,
+            rel["id"],
+            _strip_node_prefix(src),
+            _strip_node_prefix(tgt),
+        )
         relations.append(rel)
     return relations
 
