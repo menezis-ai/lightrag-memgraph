@@ -410,10 +410,13 @@ def _build_source_entry(
         if (chunk_id and chunk_id_to_doc_id)
         else None
     )
+    source_name = file_path or (chunk_id or f"reference-{n_value}")
+    source_name_is_fallback = not file_path and not chunk_id
     return {
         "n": n_value,
         "type": "file",
-        "name": file_path or (chunk_id or f"reference-{n_value}"),
+        "name": source_name,
+        "_lightrag_reference_name_fallback": source_name_is_fallback,
         "meta": _chunk_count_label(len(matching_chunks)),
         "score": _reference_score(matching_chunks, rank=rank, total=total),
         "doc_id": doc_id,

@@ -420,10 +420,8 @@ def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
     # ``name`` is used as a document-level fallback only when it is a real
     # identifier-like value coming from payload metadata. Synthetic fallbacks from
     # the envelope projection cannot be trusted as filter evidence.
-    # We only drop the synthetic ``reference-<digits>`` emitted by
-    # ``_build_source_entry`` when neither file path nor chunk_id is available.
-    def _is_synthetic_reference_name(value: str) -> bool:
-        return bool(value.startswith("reference-") and value[10:].isdigit())
+    # We rely on an explicit marker emitted during projection.
+    synthetic_name_marker = "_lightrag_reference_name_fallback"
 
     ignore_if_unknown = "unknown source"
     out = {
@@ -433,7 +431,8 @@ def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
     }
     if ignore_if_unknown in out:
         out.discard(ignore_if_unknown)
-    out = {value for value in out if not _is_synthetic_reference_name(value)}
+    if source.get(synthetic_name_marker):
+        out.discard(str(source.get("name") or "").strip())
     return out
 
 

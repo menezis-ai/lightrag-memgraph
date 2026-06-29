@@ -445,6 +445,16 @@ class TestBuildSourcesFromRawData:
         )
         sources = build_sources_from_raw_data(result)
         assert sources[0]["name"] == "c-aa"
+        assert sources[0]["_lightrag_reference_name_fallback"] is False
+
+    def test_name_falls_back_to_reference_id_when_no_file_path_nor_chunk_id(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": ""}],
+            chunks=[{"reference_id": "1", "file_path": ""}],
+        )
+        sources = build_sources_from_raw_data(result)
+        assert sources[0]["name"] == "reference-1"
+        assert sources[0]["_lightrag_reference_name_fallback"] is True
 
 
 class TestCollectChunkIds:

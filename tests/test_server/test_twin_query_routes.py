@@ -732,6 +732,34 @@ class TestQueryEndpoint:
         assert len(body["sources"]) == 1
         assert body["sources"][0]["name"] == "reference-architecture.pdf"
 
+    async def test_doc_filter_keeps_real_reference_hyphen_numeric_name(self, make_client):
+        # A short real document name can start like ``reference-1``.
+        rag = FakeRag(
+            answer="x",
+            chunks=[
+                {
+                    "file_path": "reference-1",
+                    "score": 0.91,
+                }
+            ],
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query",
+                json={
+                    "query": "x",
+                    "doc_filter": {"any": ["reference-1"]},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert len(body["sources"]) == 1
+        assert body["sources"][0]["name"] == "reference-1"
+
     async def test_doc_filter_rejects_synthetic_reference_name(self, make_client):
         # ``reference-<digits>`` is synthetic fallback and cannot be relied on
         # for doc-filter proof.
@@ -739,7 +767,6 @@ class TestQueryEndpoint:
             answer="x",
             chunks=[
                 {
-                    "file_path": "reference-1",
                     "score": 0.91,
                 }
             ],
@@ -1939,12 +1966,25 @@ class TestSourceMatchesDocFilter:
         flt = {"any": ["reference-architecture.pdf"]}
         assert _source_matches_doc_filter(src, flt) is True
 
-    def test_doc_filter_synthetic_reference_name_rejected(self):
+    def test_doc_filter_real_reference_numeric_name_kept(self):
         from twindb_lightrag_memgraph.server.query.router import (
             _source_matches_doc_filter,
         )
 
         src = self._src("", "reference-1")
+        flt = {"any": ["reference-1"]}
+        assert _source_matches_doc_filter(src, flt) is True
+
+    def test_doc_filter_synthetic_reference_name_rejected(self):
+        from twindb_lightrag_memgraph.server.query.router import (
+            _source_matches_doc_filter,
+        )
+
+        src = {
+            "doc_id": "",
+            "name": "reference-1",
+            "_lightrag_reference_name_fallback": True,
+        }
         flt = {"any": ["reference-1"]}
         assert _source_matches_doc_filter(src, flt) is False
 
