@@ -3,6 +3,7 @@ import {
   useDeleteTag,
   useDeprecateTag,
   useEditTag,
+  useReactivateTag,
   useRejectTag,
   useRequestTag,
   useUpdateTagSynonyms,
@@ -28,6 +29,7 @@ export function useTagActions({
   const rejectTag = useRejectTag();
   const editTag = useEditTag();
   const deprecateTag = useDeprecateTag();
+  const reactivateTag = useReactivateTag();
   const updateSynonyms = useUpdateTagSynonyms();
   const deleteTag = useDeleteTag();
 
@@ -82,6 +84,7 @@ export function useTagActions({
       suggest: 'edit suggested',
       synonyms: 'synonyms updated',
       deprecate: 'deprecated',
+      reactivate: 'reactivated',
       delete:
         commit.migrate?.strategy === 'migrate'
           ? `migrated to ${commit.migrate.to ?? ''}`
@@ -145,6 +148,13 @@ export function useTagActions({
         commitTagMutation(
           (cb) =>
             deprecateTag.mutate({ name: tagname, actor, reason: commit.reason }, cb),
+          successToast,
+          failureTitle,
+        );
+        break;
+      case 'reactivate':
+        commitTagMutation(
+          (cb) => reactivateTag.mutate({ name: tagname, actor }, cb),
           successToast,
           failureTitle,
         );

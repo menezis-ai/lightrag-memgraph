@@ -24,6 +24,7 @@ const approveTagMock = vi.hoisted(() => vi.fn());
 const rejectTagMock = vi.hoisted(() => vi.fn());
 const editTagMock = vi.hoisted(() => vi.fn());
 const deprecateTagMock = vi.hoisted(() => vi.fn());
+const reactivateTagMock = vi.hoisted(() => vi.fn());
 const updateTagSynonymsMock = vi.hoisted(() => vi.fn());
 const deleteTagMock = vi.hoisted(() => vi.fn());
 
@@ -34,6 +35,7 @@ vi.mock('../api/resources', () => ({
     rejectTag: rejectTagMock,
     editTag: editTagMock,
     deprecateTag: deprecateTagMock,
+    reactivateTag: reactivateTagMock,
     updateTagSynonyms: updateTagSynonymsMock,
     deleteTag: deleteTagMock,
   },
@@ -84,6 +86,7 @@ function resolveAll() {
   rejectTagMock.mockResolvedValue({});
   editTagMock.mockResolvedValue({});
   deprecateTagMock.mockResolvedValue({});
+  reactivateTagMock.mockResolvedValue({});
   updateTagSynonymsMock.mockResolvedValue({});
   deleteTagMock.mockResolvedValue({});
 }
@@ -246,6 +249,25 @@ describe('onTagCommit success paths', () => {
     await waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith(
         expect.objectContaining({ titleSuffix: 'deprecated' }),
+      ),
+    );
+  });
+
+  it('reactivate → reactivateTag forwards actor + "reactivated" toast', async () => {
+    const pushToast = vi.fn();
+    const { result } = setup(pushToast);
+    result.current.onTagCommit({
+      kind: 'reactivate',
+      tag: makeTag({ status: 'deprecated' }),
+    });
+
+    await waitFor(() => expect(reactivateTagMock).toHaveBeenCalled());
+    expect(reactivateTagMock).toHaveBeenCalledWith('argocd', {
+      actor: ACTOR,
+    });
+    await waitFor(() =>
+      expect(pushToast).toHaveBeenCalledWith(
+        expect.objectContaining({ titleSuffix: 'reactivated' }),
       ),
     );
   });

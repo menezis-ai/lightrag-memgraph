@@ -18,6 +18,7 @@ import {
   useDeleteTag,
   useDeprecateTag,
   useEditTag,
+  useReactivateTag,
   useRejectTag,
   useRequestTag,
   useUploadDocumentsBatch,
@@ -139,6 +140,25 @@ describe('useDeprecateTag', () => {
       await result.current.mutateAsync({ name: 'rman', reason: 'old' });
     });
     expect(String(fetchMock.mock.calls[0][0])).toContain('/tags/rman/deprecate');
+  });
+});
+
+describe('useReactivateTag', () => {
+  it('POSTs /tags/{name}/reactivate', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ tag: 'rman', status: 'active' }),
+    );
+    const { result } = renderHook(() => useReactivateTag(), {
+      wrapper: wrapper(),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ name: 'rman', actor: 'claire' });
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/tags/rman/reactivate');
+    expect((init as RequestInit).method).toBe('POST');
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.actor).toBe('claire');
   });
 });
 

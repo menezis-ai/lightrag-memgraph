@@ -110,6 +110,10 @@ function statusCountsFor(
   return counts;
 }
 
+function documentsCountLabel(count: number): string {
+  return `${count.toLocaleString()} document${count === 1 ? '' : 's'}`;
+}
+
 function documentMatchesStatus(doc: Document, statusFilter: StatusFilterKey) {
   return (
     statusFilter === 'all' ||
@@ -540,6 +544,17 @@ export function DocumentsTab({
       documentMatchesStatus(doc, statusFilter),
     );
   }, [searchAndTagFiltered, statusFilter]);
+  const tagFilterMatchCount = useMemo(() => {
+    if (tagFilters.length === 0) return null;
+    if (
+      tagFilters.length === 1 &&
+      sourceFilters.length === 0 &&
+      typeof totalCount === 'number'
+    ) {
+      return totalCount;
+    }
+    return filtered.length;
+  }, [filtered.length, sourceFilters.length, tagFilters.length, totalCount]);
 
   const removeTagFilter = (t: string) =>
     updateTagFilters(tagFilters.filter((x) => x !== t));
@@ -711,6 +726,15 @@ export function DocumentsTab({
         <span className="lbl">
           Filter by tag<em>— Twin</em>
         </span>
+        {tagFilterMatchCount !== null && (
+          <span
+            className="tag-filter-count"
+            data-testid="tag-filter-count"
+            aria-live="polite"
+          >
+            {documentsCountLabel(tagFilterMatchCount)} match
+          </span>
+        )}
         <div className="tag-chips">
           {tagFilters.map((t) => (
             <TagChip key={t} tag={t} removable onRemove={removeTagFilter} />
@@ -1140,7 +1164,7 @@ function DocumentFoldersBody({
   onTargetChange: (id: string) => void;
 }>) {
   if (memberships.isLoading) {
-    return <p>Loading memberships...</p>;
+    return <p className="document-folders-loading">Loading memberships...</p>;
   }
   if (memberships.isError) {
     return (
@@ -1153,35 +1177,48 @@ function DocumentFoldersBody({
     );
   }
   return (
-    <>
-      <p>
-        Current memberships:{' '}
-        <strong>
-          {currentMemberships
-            .map((folder) => folderLabel(folderList, folder))
-            .join(', ')}
-        </strong>
-      </p>
-      <label className="field">
-        <span>Copy or move to another folder</span>
-        <select
-          value={selectedTargetFolder}
-          onChange={(e) => onTargetChange(e.target.value)}
-          disabled={availableFolders.length === 0 || addPending}
-          aria-label="Target folder"
-        >
-          {availableFolders.length === 0 ? (
-            <option value="">Already shared to every folder</option>
-          ) : (
-            availableFolders.map((folder) => (
-              <option key={folder.id} value={folder.id}>
-                {folder.kb} ({folder.id})
-              </option>
-            ))
-          )}
-        </select>
-      </label>
-      <div className="callout">
+    <div className="document-folders-body">
+      <section className="document-folder-card" aria-label="Current folders">
+        <div className="document-folder-card-head">
+          <Icon name="folder" size={14} />
+          <span>Current folders</span>
+        </div>
+        <div className="document-folder-memberships">
+          {currentMemberships.map((folder) => (
+            <span className="document-folder-pill" key={folder}>
+              {folderLabel(folderList, folder)}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <section className="document-folder-card" aria-label="Destination folder">
+        <label className="field document-folder-target">
+          <span>Destination folder</span>
+          <select
+            value={selectedTargetFolder}
+            onChange={(e) => onTargetChange(e.target.value)}
+            disabled={availableFolders.length === 0 || addPending}
+            aria-label="Target folder"
+          >
+            {availableFolders.length === 0 ? (
+              <option value="">Already shared to every folder</option>
+            ) : (
+              availableFolders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.kb} ({folder.id})
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <p className="document-folder-help">
+          Copy keeps the document in every current folder. Move first shares it
+          to the destination, then removes it from <strong>{activeLabel}</strong>.
+        </p>
+      </section>
+
+      <div className={`callout ${isLastMembership ? 'danger' : ''}`}>
         {isLastMembership ? (
           <p>
             Removing from <strong>{activeLabel}</strong> removes the last folder
@@ -1203,7 +1240,7 @@ function DocumentFoldersBody({
           </p>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1333,7 +1370,7 @@ function DocumentFoldersDialog({
       <dialog
         ref={modalRef}
         open
-        className="modal"
+        className="modal document-folders-modal"
         aria-modal="true"
         aria-label={`Manage folders for ${doc.file_path}`}
       >
@@ -1349,10 +1386,10 @@ function DocumentFoldersDialog({
           </button>
         </div>
         <div className="modal-body">
-          <p>
+          <p className="document-folder-doc-name">
             <strong>{doc.file_path}</strong>
           </p>
-          <p>
+          <p className="document-folder-active">
             Active folder: <strong>{activeLabel}</strong>
           </p>
           <DocumentFoldersBody
@@ -1369,59 +1406,65 @@ function DocumentFoldersDialog({
             onTargetChange={setTargetFolder}
           />
         </div>
-        <div className="modal-footer">
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={
-              memberships.isError ||
-              !selectedTargetFolder ||
-              addFolder.isPending
-            }
-            onClick={() => void copyToTargetFolder()}
-            data-testid="document-folder-copy"
-            title="Share this document into another folder. It stays in its current folder(s) — one physical document, no re-ingestion."
-          >
-            Copy to folder
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={
-              memberships.isLoading ||
-              memberships.isError ||
-              !selectedTargetFolder ||
-              !currentMemberships.includes(activeFolder) ||
-              addFolder.isPending ||
-              removeFolder.isPending
-            }
-            onClick={() => void moveToTargetFolder()}
-            data-testid="document-folder-move"
-            title={`Move out of ${activeLabel} into the selected folder (add membership, then remove from ${activeLabel}).`}
-          >
-            Move here
-          </button>
-          <button
-            type="button"
-            className={`btn danger${destructiveArmed ? ' armed' : ''}`}
-            disabled={
-              memberships.isLoading ||
-              memberships.isError ||
-              !currentMemberships.includes(activeFolder) ||
-              removeFolder.isPending
-            }
-            onClick={() => void removeFromActiveFolder()}
-            data-testid="document-folder-remove-active"
-          >
-            {removeFolderButtonLabel(
-              isLastMembership,
-              destructiveArmed,
-              activeFolder,
-            )}
-          </button>
+        <div className="modal-footer document-folders-footer">
+          <div className="document-folder-primary-actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={
+                memberships.isError ||
+                !selectedTargetFolder ||
+                addFolder.isPending
+              }
+              onClick={() => void copyToTargetFolder()}
+              data-testid="document-folder-copy"
+              title="Share this document into another folder. It stays in its current folder(s) — one physical document, no re-ingestion."
+            >
+              <Icon name="plus" size={13} />
+              Copy to folder
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={
+                memberships.isLoading ||
+                memberships.isError ||
+                !selectedTargetFolder ||
+                !currentMemberships.includes(activeFolder) ||
+                addFolder.isPending ||
+                removeFolder.isPending
+              }
+              onClick={() => void moveToTargetFolder()}
+              data-testid="document-folder-move"
+              title={`Move out of ${activeLabel} into the selected folder (add membership, then remove from ${activeLabel}).`}
+            >
+              <Icon name="arrow-right" size={13} />
+              Move here
+            </button>
+          </div>
+          <div className="document-folder-secondary-actions">
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={`btn danger${destructiveArmed ? ' armed' : ''}`}
+              disabled={
+                memberships.isLoading ||
+                memberships.isError ||
+                !currentMemberships.includes(activeFolder) ||
+                removeFolder.isPending
+              }
+              onClick={() => void removeFromActiveFolder()}
+              data-testid="document-folder-remove-active"
+            >
+              {removeFolderButtonLabel(
+                isLastMembership,
+                destructiveArmed,
+                activeFolder,
+              )}
+            </button>
+          </div>
         </div>
       </dialog>
     </div>

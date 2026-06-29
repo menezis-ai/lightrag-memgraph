@@ -410,6 +410,12 @@ class TagDeprecateBody(_Base):
     actor: str | None = None
 
 
+class TagReactivateBody(_Base):
+    """POST /tags/{name}/reactivate."""
+
+    actor: str | None = None
+
+
 class TagSynonymsBody(_Base):
     """POST /tags/{name}/synonyms — replace alias list."""
 

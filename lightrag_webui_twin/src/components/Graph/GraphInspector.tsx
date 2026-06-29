@@ -1547,31 +1547,89 @@ function AddRelationForm({
         .sort((a, b) => a.name.localeCompare(b.name)),
     [entities, source.id],
   );
-  const [targetId, setTargetId] = useState<string>(
+  const [selectedTargetId, setSelectedTargetId] = useState<string>(
     targetOptions[0]?.id ?? '',
   );
+  const [targetQuery, setTargetQuery] = useState('');
+  const [activeTargetIndex, setActiveTargetIndex] = useState(0);
   const [label, setLabel] = useState('');
   const [strength, setStrength] = useState(0.7);
 
+  const filteredTargetOptions = useMemo(() => {
+    const query = targetQuery.trim().toLocaleLowerCase();
+    if (!query) return targetOptions;
+    return targetOptions.filter((e) =>
+      `${e.name} ${e.type}`.toLocaleLowerCase().includes(query),
+    );
+  }, [targetOptions, targetQuery]);
+  const visibleTargetOptions = filteredTargetOptions.slice(0, 12);
+  const clampedActiveTargetIndex = Math.min(
+    activeTargetIndex,
+    Math.max(visibleTargetOptions.length - 1, 0),
+  );
+  const activeTarget = visibleTargetOptions[clampedActiveTargetIndex] ?? null;
+  const effectiveTargetId = useMemo(() => {
+    if (
+      selectedTargetId &&
+      filteredTargetOptions.some((e) => e.id === selectedTargetId)
+    ) {
+      return selectedTargetId;
+    }
+    return filteredTargetOptions[0]?.id ?? '';
+  }, [filteredTargetOptions, selectedTargetId]);
+
   const trimmedLabel = label.trim().toUpperCase().replaceAll(/\s+/g, '_');
   const duplicate =
-    targetId !== '' &&
-    relations.some((r) => r.source === source.id && r.target === targetId);
+    effectiveTargetId !== '' &&
+    relations.some((r) => r.source === source.id && r.target === effectiveTargetId);
   const canSubmit =
-    targetId !== '' && trimmedLabel.length > 0 && !duplicate && !pending;
+    effectiveTargetId !== '' && trimmedLabel.length > 0 && !duplicate && !pending;
 
   const submit = (e?: React.SyntheticEvent<HTMLFormElement>) => {
     e?.preventDefault();
     if (!canSubmit) return;
     onSubmit({
       source: source.id,
-      target: targetId,
+      target: effectiveTargetId,
       label: trimmedLabel,
       strength: Math.max(0, Math.min(1, strength)),
     });
   };
 
-  const target = targetOptions.find((e) => e.id === targetId) ?? null;
+  const target = targetOptions.find((e) => e.id === effectiveTargetId) ?? null;
+  const selectTarget = (targetEntity: GraphEntity) => {
+    setSelectedTargetId(targetEntity.id);
+    setTargetQuery(targetEntity.name);
+  };
+  const onTargetKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (visibleTargetOptions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveTargetIndex((i) =>
+        Math.min(i + 1, visibleTargetOptions.length - 1),
+      );
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveTargetIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      setActiveTargetIndex(0);
+      return;
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      setActiveTargetIndex(visibleTargetOptions.length - 1);
+      return;
+    }
+    if (e.key === 'Enter' && activeTarget) {
+      e.preventDefault();
+      selectTarget(activeTarget);
+    }
+  };
 
   return (
     <form
@@ -1587,27 +1645,74 @@ function AddRelationForm({
             style={{ background: colors[source.type] }}
             aria-hidden
           />
-          {source.name}
+          <span className="kg-form-readonly-text">{source.name}</span>
         </span>
       </label>
       <label className="kg-form-field kg-form-target">
         <span>To</span>
-        <select
-          value={targetId}
-          onChange={(e) => setTargetId(e.target.value)}
-          aria-label="Relation target entity"
-          data-testid="kg-add-rel-target"
-        >
-          {targetOptions.length === 0 ? (
-            <option value="">No other entities</option>
-          ) : (
-            targetOptions.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name} · {e.type}
-              </option>
-            ))
+        <div className="kg-target-picker">
+          <input
+            type="search"
+            value={targetQuery}
+            onChange={(e) => {
+              setTargetQuery(e.target.value);
+              setActiveTargetIndex(0);
+            }}
+            onKeyDown={onTargetKeyDown}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="kg-add-rel-target-list"
+            aria-activedescendant={
+              activeTarget ? `kg-add-rel-target-${activeTarget.id}` : undefined
+            }
+            aria-label="Relation target entity"
+            placeholder={
+              targetOptions.length === 0
+                ? 'No other entities'
+                : 'Search entity name'
+            }
+            data-testid="kg-add-rel-target"
+          />
+          <div
+            id="kg-add-rel-target-list"
+            className="kg-target-list"
+            role="listbox"
+            aria-label="Matching target entities"
+          >
+            {visibleTargetOptions.map((e, index) => (
+              <button
+                key={e.id}
+                id={`kg-add-rel-target-${e.id}`}
+                type="button"
+                className={`kg-target-option${e.id === effectiveTargetId ? ' is-selected' : ''}${index === clampedActiveTargetIndex ? ' is-active' : ''}`}
+                role="option"
+                aria-selected={e.id === effectiveTargetId}
+                onMouseEnter={() => setActiveTargetIndex(index)}
+                onClick={() => selectTarget(e)}
+                data-testid={`kg-add-rel-target-option-${e.id}`}
+              >
+                <span
+                  className="kg-type-swatch"
+                  style={{ background: colors[e.type] }}
+                  aria-hidden
+                />
+                <span className="kg-target-name">{e.name}</span>
+                <span className="kg-target-type">{e.type}</span>
+              </button>
+            ))}
+            {filteredTargetOptions.length === 0 && (
+              <div className="kg-target-empty" role="status">
+                No matching entity
+              </div>
+            )}
+          </div>
+          {filteredTargetOptions.length > visibleTargetOptions.length && (
+            <div className="kg-target-result-count">
+              Showing {visibleTargetOptions.length} of{' '}
+              {filteredTargetOptions.length}; refine search
+            </div>
           )}
-        </select>
+        </div>
       </label>
       <label className="kg-form-field kg-form-relation-label">
         <span>Label</span>

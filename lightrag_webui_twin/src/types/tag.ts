@@ -70,6 +70,7 @@ export type TagActionKind =
   | 'suggest'
   | 'synonyms'
   | 'deprecate'
+  | 'reactivate'
   | 'delete'
   | 'reject'
   | 'edit-approve'

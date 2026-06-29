@@ -1600,6 +1600,17 @@ export const handlers = [
     });
     return HttpResponse.json(next);
   }),
+  http.post(`${ANY}${TWIN}/tags/:name/reactivate`, ({ params }) => {
+    const name = String(params.name);
+    const current = tagState.find((t) => t.tag === name);
+    const next = upsertTag({
+      ...(current ?? tagEntryStub(name, 'active', 'reactivated')),
+      status: 'active',
+      last_edit: { by: 'system', at: '2026-05-29', action: 'reactivated' },
+    });
+    recordTagMutation(name, 'reactivated');
+    return HttpResponse.json(next);
+  }),
   http.post(
     `${ANY}${TWIN}/tags/:name/synonyms`,
     async ({ params, request }) => {

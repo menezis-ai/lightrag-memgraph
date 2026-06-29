@@ -847,13 +847,30 @@ describe('GraphTab — lifecycle: Add relation', () => {
     await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
     // Default-selected entity is Oracle (e_oracle); pick RHEL 9 as target —
     // there is already RUNS_ON between them in the fixtures.
-    await userEvent.selectOptions(
-      screen.getByTestId('kg-add-rel-target'),
-      'e_rhel',
-    );
+    await userEvent.type(screen.getByTestId('kg-add-rel-target'), 'RHEL');
+    await userEvent.click(screen.getByTestId('kg-add-rel-target-option-e_rhel'));
     await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'RUNS_ON');
     expect(screen.getByTestId('kg-add-rel-duplicate')).toBeInTheDocument();
     expect(screen.getByTestId('kg-add-rel-submit')).toBeDisabled();
+  });
+
+  it('filters target entities and supports keyboard selection', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    const targetSearch = screen.getByTestId('kg-add-rel-target');
+
+    await userEvent.type(targetSearch, 'aub');
+
+    expect(
+      screen.getByTestId('kg-add-rel-target-option-e_aubervil'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('kg-add-rel-target-option-e_rhel'),
+    ).toBeNull();
+
+    await userEvent.keyboard('{Enter}');
+    await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'depends on');
+    expect(screen.getByTestId('kg-add-rel-submit')).not.toBeDisabled();
   });
 
   it('Cancel closes the form', async () => {
@@ -918,7 +935,8 @@ describe('GraphTab — lifecycle: Add relation', () => {
     await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
     expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
     const addRelationForm = screen.getByTestId('kg-add-rel-form') as HTMLFormElement;
-    await userEvent.selectOptions(screen.getByTestId('kg-add-rel-target'), 'e_aubervil');
+    await userEvent.type(screen.getByTestId('kg-add-rel-target'), 'aub');
+    await userEvent.click(screen.getByTestId('kg-add-rel-target-option-e_aubervil'));
     await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'depends on');
     await waitFor(
       () =>

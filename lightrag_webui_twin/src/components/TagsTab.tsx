@@ -695,6 +695,7 @@ export function TagsTab({
           categories={categories}
           onSelect={setSelectedTag}
           onAction={setModal}
+          onCommit={onCommit}
           onNavigate={onNavigate}
           canEdit={canEdit}
           canSuggest={canSuggest}
@@ -1040,6 +1041,7 @@ interface TagDetailPanelProps {
   categories: readonly TagCategory[];
   onSelect: (name: string) => void;
   onAction: (action: TagAction) => void;
+  onCommit?: (commit: TagActionCommit) => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
   canEdit: boolean;
   canSuggest: boolean;
@@ -1051,6 +1053,7 @@ function TagDetailPanel({
   categories,
   onSelect,
   onAction,
+  onCommit,
   onNavigate,
   canEdit,
   canSuggest,
@@ -1214,12 +1217,21 @@ function TagDetailPanel({
             >
               Manage synonyms
             </button>
-            <button
-              className="ghost-btn small"
-              onClick={() => onAction({ kind: 'deprecate', tag: t })}
-            >
-              Deprecate
-            </button>
+            {t.status === 'deprecated' ? (
+              <button
+                className="ghost-btn small"
+                onClick={() => onCommit?.({ kind: 'reactivate', tag: t })}
+              >
+                Reactivate
+              </button>
+            ) : (
+              <button
+                className="ghost-btn small"
+                onClick={() => onAction({ kind: 'deprecate', tag: t })}
+              >
+                Deprecate
+              </button>
+            )}
             <button
               className="ghost-btn small danger"
               onClick={() => onAction({ kind: 'delete', tag: t })}

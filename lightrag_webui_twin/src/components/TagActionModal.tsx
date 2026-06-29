@@ -8,6 +8,7 @@
  *   suggest      — palier-2 proposes an edit, queued for palier-3 review.
  *   synonyms     — palier-3 manages the alias list at the gateway.
  *   deprecate    — flag the tag as excluded from default retrieval.
+ *   reactivate   — restore a deprecated tag to the active catalog.
  *   delete       — palier-3 destructive action; requires a migration strategy.
  *   reject       — palier-3 rejects a pending tag request with a reason.
  *   edit-approve — palier-3 tweaks then accepts a request.
@@ -65,6 +66,7 @@ const TITLE_MAP: Record<TagActionKind, string> = {
   suggest: 'Suggest tag edit',
   synonyms: 'Manage synonyms',
   deprecate: 'Deprecate tag',
+  reactivate: 'Reactivate tag',
   delete: 'Delete tag',
   reject: 'Reject request',
   'edit-approve': 'Edit & approve request',
@@ -76,6 +78,7 @@ const SUBMIT_LABEL: Record<TagActionKind, (state: { migrateStrategy: 'migrate' |
   suggest: () => 'Submit suggestion',
   synonyms: () => 'Save synonyms',
   deprecate: () => 'Deprecate',
+  reactivate: () => 'Reactivate',
   delete: (s) => (s.migrateStrategy === 'migrate' ? 'Migrate and delete' : 'Untag and delete'),
   reject: () => 'Reject request',
   'edit-approve': () => 'Approve with edits',
@@ -119,6 +122,9 @@ export function TagActionModal({
 
   const isDanger = action.kind === 'delete' || action.kind === 'reject';
   const submitLabel = SUBMIT_LABEL[action.kind]({ migrateStrategy });
+  const requestNameMissing = action.kind === 'request' && !name.trim();
+  const requestDefinitionMissing =
+    action.kind === 'request' && !definition.trim();
   const removeAlias = (alias: string) => {
     setAliases((current) => current.filter((x) => x !== alias));
   };
@@ -162,7 +168,8 @@ export function TagActionModal({
   // Submit gate — block destructive submits until prerequisites are met.
   const submitDisabled =
     (action.kind === 'reject' && !reason.trim()) ||
-    (action.kind === 'request' && (!name.trim() || !definition.trim())) ||
+    (action.kind === 'request' &&
+      (requestNameMissing || requestDefinitionMissing)) ||
     (action.kind === 'delete' && migrateStrategy === 'migrate' && !migrateTo);
 
   return (
@@ -408,7 +415,11 @@ export function TagActionModal({
           {action.kind === 'request' && (
             <>
               <label className="field-label" htmlFor="tagaction-reqname">
-                Proposed name <span className="hint">lowercase, no spaces</span>
+                Proposed name{' '}
+                <span className="required-indicator" aria-hidden="true">
+                  required
+                </span>
+                <span className="hint">lowercase, no spaces</span>
               </label>
               <input
                 id="tagaction-reqname"
@@ -418,9 +429,28 @@ export function TagActionModal({
                   setName(e.target.value.toLowerCase().replaceAll(/\s+/g, '-'))
                 }
                 placeholder="e.g. argocd"
+                required
+                aria-required="true"
+                aria-invalid={requestNameMissing}
+                aria-describedby={
+                  requestNameMissing ? 'tagaction-reqname-error' : undefined
+                }
               />
+              {requestNameMissing && (
+                <div
+                  id="tagaction-reqname-error"
+                  className="field-error"
+                  role="alert"
+                >
+                  Proposed name is required before the request can be submitted.
+                </div>
+              )}
               <label className="field-label" htmlFor="tagaction-reqdef">
-                Definition <span className="hint">200 chars max</span>
+                Definition{' '}
+                <span className="required-indicator" aria-hidden="true">
+                  required
+                </span>
+                <span className="hint">200 chars max</span>
               </label>
               <textarea
                 id="tagaction-reqdef"
@@ -430,7 +460,22 @@ export function TagActionModal({
                 value={definition}
                 onChange={(e) => setDefinition(e.target.value)}
                 placeholder="What should this tag mean? When should it be applied?"
+                required
+                aria-required="true"
+                aria-invalid={requestDefinitionMissing}
+                aria-describedby={
+                  requestDefinitionMissing ? 'tagaction-reqdef-error' : undefined
+                }
               />
+              {requestDefinitionMissing && (
+                <div
+                  id="tagaction-reqdef-error"
+                  className="field-error"
+                  role="alert"
+                >
+                  Definition is required before the request can be submitted.
+                </div>
+              )}
               <label className="field-label" htmlFor="tagaction-reqlongdef">
                 Long description <span className="hint">optional</span>
               </label>

@@ -503,6 +503,31 @@ class TestDeprecateTag:
 
 
 # ---------------------------------------------------------------------------
+# POST /tags/{name}/reactivate
+# ---------------------------------------------------------------------------
+
+
+class TestReactivateTag:
+    async def test_sets_status_active_and_clears_reason(self, client):
+        await client.post(
+            "/tags/rman/deprecate",
+            json={"reason": "superseded by rman-v2"},
+        )
+        r = await client.post("/tags/rman/reactivate", json={"actor": "claire"})
+        body = r.json()
+        assert body["status"] == "active"
+        assert "deprecate_reason" not in body
+        assert body["last_edit"]["action"] == "reactivated"
+
+    async def test_emits_info_event(self, client):
+        await client.post("/tags/rman/deprecate", json={})
+        await client.post("/tags/rman/reactivate", json={})
+        events = await _get_activity(client)
+        assert events[0]["sev"] == "info"
+        assert events[0]["summary"] == "Tag rman reactivated"
+
+
+# ---------------------------------------------------------------------------
 # POST /tags/{name}/synonyms
 # ---------------------------------------------------------------------------
 

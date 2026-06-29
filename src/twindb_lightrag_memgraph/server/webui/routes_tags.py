@@ -16,6 +16,7 @@ from ..webui_models import (
     TagDeprecateBody,
     TagEditBody,
     TagEntry,
+    TagReactivateBody,
     TagRejectBody,
     TagRequestBody,
     TagSynonymsBody,
@@ -616,6 +617,40 @@ async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
             tagname=name,
             suffix="deprecated",
             sub=body.reason or "Excluded from default retrieval",
+        ),
+    )
+    return stored
+
+
+@router.post(
+    "/tags/{name}/reactivate",
+    response_model=TagEntry,
+    responses={404: {"description": "Tag not found"}},
+)
+async def reactivate_tag(name: str, body: TagReactivateBody) -> dict[str, Any]:
+    store = get_store()
+    entry = await store.tags.get_tag(name)
+    if entry is None:
+        raise HTTPException(404, f"Tag '{name}' not found")
+    actor = body.actor or "system"
+    now = _utcnow_iso()[:10]
+    entry["status"] = "active"
+    entry["last_edit"] = {"by": actor, "at": now, "action": "reactivated"}
+    entry.pop("deprecate_reason", None)
+    stored = await store.tags.upsert_tag(entry)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=name,
+        summary=f"Tag {name} reactivated",
+        meta={"previous_status": "deprecated"},
+        notification=_make_notification(
+            title="Tag",
+            tagname=name,
+            suffix="reactivated",
+            sub="Available again in the active catalog",
         ),
     )
     return stored

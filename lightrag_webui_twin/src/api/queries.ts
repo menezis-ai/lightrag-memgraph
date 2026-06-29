@@ -681,6 +681,18 @@ export function useDeprecateTag() {
   });
 }
 
+export function useReactivateTag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      ...body
+    }: { name: string } & Parameters<typeof api.reactivateTag>[1]) =>
+      api.reactivateTag(name, body),
+    onSuccess: () => invalidateTagSideEffects(qc),
+  });
+}
+
 export function useUpdateTagSynonyms() {
   const qc = useQueryClient();
   return useMutation({

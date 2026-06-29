@@ -276,6 +276,25 @@ describe('TagsTab — selection + detail', () => {
       ).toBeInTheDocument();
     });
   });
+
+  it('deprecated tags expose a real Reactivate action instead of another Deprecate action', async () => {
+    const props = defaultProps();
+    render(
+      <TagsTab
+        {...props}
+        tags={props.tags.map((tag) =>
+          tag.tag === 'rman' ? { ...tag, status: 'deprecated' } : tag,
+        )}
+      />,
+    );
+    const detail = document.querySelector('.tag-detail') as HTMLElement;
+    expect(within(detail).queryByRole('button', { name: 'Deprecate' })).toBeNull();
+    await userEvent.click(within(detail).getByRole('button', { name: 'Reactivate' }));
+    expect(props.onCommit).toHaveBeenCalledWith({
+      kind: 'reactivate',
+      tag: expect.objectContaining({ tag: 'rman', status: 'deprecated' }),
+    });
+  });
 });
 
 describe('TagsTab — approve direct (palier 3)', () => {
@@ -439,11 +458,21 @@ describe('TagsTab — modal dispatch', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Request new tag' });
     const submit = within(dialog).getByRole('button', { name: 'Submit request' });
     expect(submit).toBeDisabled();
+    expect(
+      within(dialog).getByText(/Proposed name is required/i),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Definition is required/i),
+    ).toBeInTheDocument();
     const nameInput = within(dialog).getByLabelText(/Proposed name/);
     await new Promise((r) => setTimeout(r, 60));
     (nameInput as HTMLInputElement).focus();
     await userEvent.type(nameInput, 'argocd');
     expect(submit).toBeDisabled();
+    expect(within(dialog).queryByText(/Proposed name is required/i)).toBeNull();
+    expect(
+      within(dialog).getByText(/Definition is required/i),
+    ).toBeInTheDocument();
     await userEvent.type(
       within(dialog).getByLabelText(/Definition/),
       'Argo CD deployment automation',

@@ -661,6 +661,16 @@ export const twinApi = {
       method: 'POST',
       body,
     }),
+  reactivateTag: (
+    name: string,
+    body: { actor?: string } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<TagEntry>(`${TWIN}/tags/${encodeURIComponent(name)}/reactivate`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
   updateTagSynonyms: (
     name: string,
     body: { aliases: readonly string[]; actor?: string },
@@ -928,6 +938,7 @@ export const api = {
   rejectTag: twinApi.rejectTag,
   editTag: twinApi.editTag,
   deprecateTag: twinApi.deprecateTag,
+  reactivateTag: twinApi.reactivateTag,
   updateTagSynonyms: twinApi.updateTagSynonyms,
   deleteTag: twinApi.deleteTag,
   listActivity: twinApi.listActivity,

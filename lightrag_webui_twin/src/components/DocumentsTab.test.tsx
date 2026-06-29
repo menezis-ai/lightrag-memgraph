@@ -211,6 +211,15 @@ describe('DocumentsTab — filters', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows the document count for the active tag filter selection', async () => {
+    renderTab(<DocumentsTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
+
+    expect(screen.getByTestId('tag-filter-count')).toHaveTextContent(
+      '2 documents match',
+    );
+  });
+
   it('navigates Add-tag suggestions with arrow keys and Enter', async () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByRole('button', { name: '+ Add tag' }));
