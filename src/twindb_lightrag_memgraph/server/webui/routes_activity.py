@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -56,9 +57,20 @@ async def list_activity(
     sev: Annotated[str | None, Query()] = None,
     actor: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
+    activity_range: Annotated[
+        Literal["24h", "7d", "30d", "all"] | None,
+        Query(alias="range"),
+    ] = None,
+    resource_id: Annotated[str | None, Query(alias="resource.id")] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ) -> dict[str, Any]:
-    items, now_ms = await get_store().list_activity(
-        kind=kind, sev=sev, actor=actor, q=q, limit=limit
+    items, total, now_ms = await get_store().list_activity(
+        kind=kind,
+        sev=sev,
+        actor=actor,
+        q=q,
+        range=activity_range,
+        resource_id=resource_id,
+        limit=limit,
     )
-    return {"items": items, "total": len(items), "nowMs": now_ms}
+    return {"items": items, "total": total, "nowMs": now_ms}

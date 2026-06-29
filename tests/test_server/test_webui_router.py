@@ -11,6 +11,7 @@ JSON, never HTML. We assert content-type on each response to lock that in.
 
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -281,6 +282,13 @@ class TestActivity:
         body = r.json()
         assert body["total"] >= 1
 
+    async def test_q_matches_event_id(self, client):
+        r = await client.get("/activity", params={"q": ACTIVITY[0]["id"]})
+        body = r.json()
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["id"] == ACTIVITY[0]["id"]
+
     async def test_record_source_uploaded_persists_activity(self, client):
         r = await client.post(
             "/documents/uploads/activity",
@@ -303,6 +311,111 @@ class TestActivity:
         assert event["target"]["type"] == "source"
         assert event["target"]["label"] == "runbook.pdf"
         assert event["meta"]["track_id"] == "upload-track-1"
+
+    async def test_total_is_pre_limit(self, client):
+        response = await client.get("/activity", params={"kind": "retrieval", "limit": 1})
+        body = response.json()
+        assert body["total"] >= len(body["items"])
+        assert body["total"] >= 2
+        assert len(body["items"]) == 1
+
+    async def test_range_filter(self, client):
+        now = datetime.datetime.fromtimestamp(
+            ACTIVITY_NOW_MS / 1000, tz=datetime.timezone.utc
+        ).replace(microsecond=0)
+        recent = (now - datetime.timedelta(hours=1)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        old = (now - datetime.timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        store = webui_router.get_store()
+        await store.record_activity(
+            {
+                "id": "evt_range_recent",
+                "ts": recent,
+                "rel": "now",
+                "day": "Today",
+                "kind": "retrieval",
+                "sev": "info",
+                "actor": {"user": "range-tester", "role": "operator"},
+                "target": {"type": "query", "label": "quick lookup"},
+                "summary": "within 24h",
+                "meta": {},
+            }
+        )
+        await store.record_activity(
+            {
+                "id": "evt_range_old",
+                "ts": old,
+                "rel": "today",
+                "day": "Yesterday",
+                "kind": "retrieval",
+                "sev": "info",
+                "actor": {"user": "range-tester", "role": "operator"},
+                "target": {"type": "query", "label": "older lookup"},
+                "summary": "older than 24h",
+                "meta": {},
+            }
+        )
+
+        response = await client.get(
+            "/activity",
+            params={"actor": "range-tester", "range": "24h"},
+        )
+        body = response.json()
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["id"] == "evt_range_recent"
+
+    async def test_resource_id_filter(self, client):
+        store = webui_router.get_store()
+        await store.record_activity(
+            {
+                "id": "evt_resource_target",
+                "ts": "2026-05-13T00:00:00Z",
+                "rel": "today",
+                "day": "Today",
+                "kind": "doc-approved",
+                "sev": "info",
+                "actor": {"user": "system", "role": "operator"},
+                "target": {"type": "document", "label": "doc-one", "id": "doc-123"},
+                "summary": "resource id in target",
+                "meta": {},
+            }
+        )
+        await store.record_activity(
+            {
+                "id": "evt_resource_meta",
+                "ts": "2026-05-13T00:01:00Z",
+                "rel": "today",
+                "day": "Today",
+                "kind": "doc-approved",
+                "sev": "info",
+                "actor": {"user": "system", "role": "operator"},
+                "target": {"type": "document", "label": "doc-two"},
+                "summary": "resource id in meta.doc_id",
+                "meta": {"doc_id": "doc-456"},
+            }
+        )
+        await store.record_activity(
+            {
+                "id": "evt_resource_historic",
+                "ts": "2026-05-13T00:02:00Z",
+                "rel": "today",
+                "day": "Today",
+                "kind": "doc-approved",
+                "sev": "info",
+                "actor": {"user": "system", "role": "operator"},
+                "target": {"type": "document", "label": "legacy"},
+                "summary": "resource id missing",
+                "meta": {},
+            }
+        )
+
+        response = await client.get("/activity", params={"resource.id": "doc-456"})
+        body = response.json()
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["id"] == "evt_resource_meta"
 
 
 # ---------------------------------------------------------------------------

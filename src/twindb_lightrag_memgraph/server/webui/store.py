@@ -253,10 +253,18 @@ class WebuiStore:
         sev: str | None = None,
         actor: str | None = None,
         q: str | None = None,
+        range: str | None = None,
+        resource_id: str | None = None,
         limit: int | None = None,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, Any]], int, int]:
         return await self._activity_backend.list(
-            kind=kind, sev=sev, actor=actor, q=q, limit=limit
+            kind=kind,
+            sev=sev,
+            actor=actor,
+            q=q,
+            range=range,
+            resource_id=resource_id,
+            limit=limit,
         )
 
     async def record_activity(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -297,4 +305,3 @@ def reset_store() -> None:
     _stores.clear()
     folder_store.reset_runtime_store()
     set_store(WebuiStore.from_seed())
-

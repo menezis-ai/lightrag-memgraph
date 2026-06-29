@@ -67,6 +67,7 @@ from twindb_lightrag_memgraph.server.app import (
     create_app,
 )
 from twindb_lightrag_memgraph.server.auth import AuthConfigurationError
+from twindb_lightrag_memgraph.server import webui_seed
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 from twindb_lightrag_memgraph.server.tracing import metrics_snapshot, reset_metrics
 
@@ -958,7 +959,7 @@ class TestLifespan:
                 return True
 
             async def list(self, **_filters):
-                return list(self._events), 0
+                return list(self._events), len(self._events), webui_seed.ACTIVITY_NOW_MS
 
             async def append(self, event: dict) -> dict:
                 self._events.insert(0, dict(event))
@@ -1030,8 +1031,10 @@ class TestLifespan:
                     assert await sandbox_store.list_tags() == []
                     assert await default_store.list_notifications() == []
                     assert await sandbox_store.list_notifications() == []
-                    default_activity, _ = await default_store.list_activity()
-                    sandbox_activity, _ = await sandbox_store.list_activity()
+                    default_activity, default_total, _ = await default_store.list_activity()
+                    sandbox_activity, sandbox_total, _ = await sandbox_store.list_activity()
+                    assert default_total == 0
+                    assert sandbox_total == 0
                     assert default_activity == []
                     assert sandbox_activity == []
                     assert await default_store.list_tag_categories() == [

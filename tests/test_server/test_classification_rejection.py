@@ -108,7 +108,7 @@ class TestClassificationRejectionIntegration:
         assert failed["metadata"]["classification"]["class_id"] == "C3"
         assert failed["metadata"]["classification_rejected"] is True
 
-        events, _now = await webui_router.get_store().list_activity()
+        events, _, _ = await webui_router.get_store().list_activity()
         rejected = [e for e in events if e["kind"] == "classification-rejected"]
         assert len(rejected) == 1
         assert rejected[0]["meta"]["doc_id"] == "doc-c3"
