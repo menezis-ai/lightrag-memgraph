@@ -1146,11 +1146,6 @@ dialog.pipeline-popover {
   padding: 0;
   color: inherit;
 }
-.notif-popover {
-  margin: 0;
-  padding: 0;
-  color: inherit;
-}
 .modal-backdrop > dialog.modal,
 .modal-bg > dialog.modal {
   position: relative;

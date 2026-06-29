@@ -42,6 +42,69 @@ RANGE_TO_MS = {
 }
 
 
+def _dict_field(event: dict[str, Any], key: str) -> dict[str, Any]:
+    value = event.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _meta_doc_ids(meta: dict[str, Any]) -> list[str]:
+    raw_doc_ids = meta.get("doc_ids")
+    if not isinstance(raw_doc_ids, list):
+        return []
+    return [str(doc_id) for doc_id in raw_doc_ids if doc_id is not None]
+
+
+def _matches_kind(event: dict[str, Any], kind: str | None) -> bool:
+    if not kind:
+        return True
+    wanted = {k for k in kind.split(",") if k}
+    return not wanted or event["kind"] in wanted
+
+
+def _matches_range(event: dict[str, Any], range: str | None, now_ms: int) -> bool:
+    cutoff_ms = _range_to_cutoff_ms(range=range, now_ms=now_ms)
+    if cutoff_ms is None:
+        return True
+    event_ms = _event_ts_ms(event.get("ts"))
+    return event_ms is not None and event_ms >= cutoff_ms
+
+
+def _matches_resource(
+    target: dict[str, Any],
+    meta: dict[str, Any],
+    resource_id: str | None,
+) -> bool:
+    if not resource_id:
+        return True
+    wanted = str(resource_id)
+    resource_ids = [
+        str(candidate)
+        for candidate in (target.get("id"), meta.get("doc_id"))
+        if candidate is not None
+    ]
+    resource_ids.extend(_meta_doc_ids(meta))
+    return wanted in resource_ids
+
+
+def _matches_text(
+    event: dict[str, Any],
+    target: dict[str, Any],
+    actor_data: dict[str, Any],
+    q: str | None,
+) -> bool:
+    if not q:
+        return True
+    haystack = " ".join(
+        (
+            str(event.get("summary", "")),
+            str(target.get("label", "")),
+            str(actor_data.get("user", "")),
+            str(event.get("id", "")),
+        )
+    ).lower()
+    return q.lower() in haystack
+
+
 def _matches(
     e: dict[str, Any],
     *,
@@ -53,61 +116,17 @@ def _matches(
     now_ms: int,
     resource_id: str | None,
 ) -> bool:
-    target = e.get("target")
-    if not isinstance(target, dict):
-        target = {}
-    meta = e.get("meta")
-    if not isinstance(meta, dict):
-        meta = {}
-    actor_data = e.get("actor")
-    if not isinstance(actor_data, dict):
-        actor_data = {}
-    if kind:
-        wanted = {k for k in kind.split(",") if k}
-        if wanted and e["kind"] not in wanted:
-            return False
-    if sev and sev != "any" and e["sev"] != sev:
-        return False
-    if actor and actor != "any" and str(actor_data.get("user")) != actor:
-        return False
-    if q:
-        needle = q.lower()
-        hay = (
-            str(e.get("summary", ""))
-            + " "
-            + str(target.get("label", ""))
-            + " "
-            + str(actor_data.get("user", ""))
-            + " "
-            + str(e.get("id", ""))
-        ).lower()
-        if needle not in hay:
-            return False
-    if range:
-        cutoff_ms = _range_to_cutoff_ms(range=range, now_ms=now_ms)
-        if cutoff_ms is not None:
-            event_ms = _event_ts_ms(e.get("ts"))
-            if event_ms is None or event_ms < cutoff_ms:
-                return False
-    if resource_id:
-        wanted = str(resource_id)
-        target_id = target.get("id")
-        meta_doc_id = meta.get("doc_id")
-        meta_doc_ids_raw = meta.get("doc_ids")
-        meta_doc_ids = (
-            [str(doc_id) for doc_id in meta_doc_ids_raw if doc_id is not None]
-            if isinstance(meta_doc_ids_raw, list)
-            else []
-        )
-        if target_id is None and meta_doc_id is None and not meta_doc_ids:
-            return False
-        if (
-            str(target_id) != wanted
-            and str(meta_doc_id) != wanted
-            and wanted not in meta_doc_ids
-        ):
-            return False
-    return True
+    target = _dict_field(e, "target")
+    meta = _dict_field(e, "meta")
+    actor_data = _dict_field(e, "actor")
+    return (
+        _matches_kind(e, kind)
+        and (not sev or sev == "any" or e["sev"] == sev)
+        and (not actor or actor == "any" or str(actor_data.get("user")) == actor)
+        and _matches_text(e, target, actor_data, q)
+        and _matches_range(e, range, now_ms)
+        and _matches_resource(target, meta, resource_id)
+    )
 
 
 def _bounded_limit(limit: int | None) -> int:
@@ -137,15 +156,9 @@ def _event_ts_ms(event_ts: Any) -> int | None:
 
 def _event_scalars(event: dict[str, Any]) -> dict[str, Any]:
     """Mirror hot filters as properties so Memgraph can index them."""
-    actor = event.get("actor", {}) if isinstance(event.get("actor"), dict) else {}
-    target = event.get("target", {}) if isinstance(event.get("target"), dict) else {}
-    meta = event.get("meta", {}) if isinstance(event.get("meta"), dict) else {}
-    meta_doc_ids_raw = meta.get("doc_ids")
-    meta_doc_ids = (
-        [str(doc_id) for doc_id in meta_doc_ids_raw if doc_id is not None]
-        if isinstance(meta_doc_ids_raw, list)
-        else []
-    )
+    actor = _dict_field(event, "actor")
+    target = _dict_field(event, "target")
+    meta = _dict_field(event, "meta")
     return {
         "kind": str(event.get("kind") or ""),
         "sev": str(event.get("sev") or ""),
@@ -153,10 +166,119 @@ def _event_scalars(event: dict[str, Any]) -> dict[str, Any]:
         "target_id": str(target.get("id") or ""),
         "target_label": str(target.get("label") or ""),
         "meta_doc_id": str(meta.get("doc_id") or ""),
-        "meta_doc_ids": meta_doc_ids,
+        "meta_doc_ids": _meta_doc_ids(meta),
         "ts_ms": _event_ts_ms(event.get("ts")),
         "summary": str(event.get("summary") or ""),
     }
+
+
+def _to_where(clauses: list[str]) -> str:
+    return f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+
+def _decode_rows(
+    raw_rows: list[dict[str, Any]],
+    *,
+    fallback_created_at: int,
+) -> list[tuple[int, dict[str, Any]]]:
+    decoded: list[tuple[int, dict[str, Any]]] = []
+    for row in raw_rows:
+        raw = row.get("data")
+        if not raw:
+            continue
+        try:
+            created_at = int(row.get("created_at", fallback_created_at))
+        except (TypeError, ValueError):
+            created_at = fallback_created_at
+        try:
+            decoded.append((created_at, json.loads(raw)))
+        except json.JSONDecodeError:
+            continue
+    return decoded
+
+
+def _add_shared_filter(
+    *,
+    enabled: bool,
+    clause: str,
+    param_name: str,
+    param_value: Any,
+    base_clauses: list[str],
+    scalar_clauses: list[str],
+    params: dict[str, Any],
+) -> None:
+    if not enabled:
+        return
+    base_clauses.append(clause)
+    scalar_clauses.append(clause)
+    params[param_name] = param_value
+
+
+def _activity_query_filters(
+    *,
+    kind: str | None,
+    sev: str | None,
+    actor: str | None,
+    q: str | None,
+    now_range_ms: int | None,
+    resource_id: str | None,
+    need_json_fallback: bool,
+    limit: int,
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    base_clauses: list[str] = []
+    scalar_clauses: list[str] = []
+    params: dict[str, Any] = {
+        "limit": limit,
+        "compat_limit": min(MEMGRAPH_COMPAT_SCAN_LIMIT, MAX_ACTIVITY_LIMIT),
+        "scalars_version": SCALARS_VERSION,
+    }
+    kind_values = [k for k in (kind or "").split(",") if k]
+    shared_filters = (
+        (bool(kind_values), "n.kind IN $kinds", "kinds", kind_values),
+        (bool(sev and sev != "any"), "n.sev = $sev", "sev", sev),
+        (bool(actor and actor != "any"), "n.actor_user = $actor", "actor", actor),
+        (bool(q), _text_search_clause(), "needle", q.lower() if q else None),
+    )
+    for enabled, clause, param_name, param_value in shared_filters:
+        _add_shared_filter(
+            enabled=enabled,
+            clause=clause,
+            param_name=param_name,
+            param_value=param_value,
+            base_clauses=base_clauses,
+            scalar_clauses=scalar_clauses,
+            params=params,
+        )
+    if now_range_ms is not None:
+        scalar_clauses.append("n.ts_ms >= $range_min")
+        params["range_min"] = now_range_ms
+    if resource_id:
+        scalar_clauses.append(_resource_clause())
+        params["resource_id"] = resource_id
+    if need_json_fallback:
+        scalar_clauses.append("n.`__scalars_version` >= $scalars_version")
+    return base_clauses, scalar_clauses, params
+
+
+def _text_search_clause() -> str:
+    return (
+        "("
+        "toLower(coalesce(n.summary, '')) CONTAINS $needle OR "
+        "toLower(coalesce(n.target_label, '')) CONTAINS $needle OR "
+        "toLower(coalesce(n.actor_user, '')) CONTAINS $needle OR "
+        "toLower(coalesce(n.id, '')) CONTAINS $needle"
+        ")"
+    )
+
+
+def _resource_clause() -> str:
+    return (
+        "("
+        "n.target_id = $resource_id OR "
+        "n.meta_doc_id = $resource_id OR "
+        "$resource_id IN coalesce(n.meta_doc_ids, [])"
+        ")"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -364,86 +486,16 @@ class MemgraphActivityStore:
         now_range_ms = _range_to_cutoff_ms(range=range, now_ms=now_ms)
         range_requested = range is not None and range != "all" and range in RANGE_TO_MS
         need_json_fallback = range_requested or bool(resource_id)
-        limit_query = limit
-        legacy_scan_limit = min(MEMGRAPH_COMPAT_SCAN_LIMIT, MAX_ACTIVITY_LIMIT)
-        kind_values = [k for k in (kind or "").split(",") if k]
-
-        def _to_where(clauses: list[str]) -> str:
-            return f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
-        def _decode_rows(raw_rows: list[dict[str, Any]]) -> list[tuple[int, dict[str, Any]]]:
-            decoded: list[tuple[int, dict[str, Any]]] = []
-            for row in raw_rows:
-                raw = row.get("data")
-                if not raw:
-                    continue
-                try:
-                    created_at = int(row.get("created_at", now_ms))
-                except (TypeError, ValueError):
-                    created_at = now_ms
-                try:
-                    decoded.append((created_at, json.loads(raw)))
-                except json.JSONDecodeError:
-                    continue
-            return decoded
-
-        base_clauses: list[str] = []
-        scalar_clauses: list[str] = []
-        params: dict[str, Any] = {
-            "limit": limit_query,
-            "compat_limit": legacy_scan_limit,
-            "scalars_version": SCALARS_VERSION,
-        }
-
-        if kind_values:
-            base_clause = "n.kind IN $kinds"
-            base_clauses.append(base_clause)
-            scalar_clauses.append(base_clause)
-            params["kinds"] = kind_values
-
-        if sev and sev != "any":
-            base_clause = "n.sev = $sev"
-            base_clauses.append(base_clause)
-            scalar_clauses.append(base_clause)
-            params["sev"] = sev
-
-        if actor and actor != "any":
-            base_clause = "n.actor_user = $actor"
-            base_clauses.append(base_clause)
-            scalar_clauses.append(base_clause)
-            params["actor"] = actor
-
-        if q:
-            q_clause = (
-                "("
-                "toLower(coalesce(n.summary, '')) CONTAINS $needle OR "
-                "toLower(coalesce(n.target_label, '')) CONTAINS $needle OR "
-                "toLower(coalesce(n.actor_user, '')) CONTAINS $needle OR "
-                "toLower(coalesce(n.id, '')) CONTAINS $needle"
-                ")"
-            )
-            base_clauses.append(q_clause)
-            scalar_clauses.append(q_clause)
-            params["needle"] = q.lower()
-
-        if now_range_ms is not None:
-            scalar_clause = "n.ts_ms >= $range_min"
-            scalar_clauses.append(scalar_clause)
-            params["range_min"] = now_range_ms
-
-        if resource_id:
-            scalar_clause = (
-                "("
-                "n.target_id = $resource_id OR "
-                "n.meta_doc_id = $resource_id OR "
-                "$resource_id IN coalesce(n.meta_doc_ids, [])"
-                ")"
-            )
-            scalar_clauses.append(scalar_clause)
-            params["resource_id"] = resource_id
-
-        if need_json_fallback:
-            scalar_clauses.append("n.`__scalars_version` >= $scalars_version")
+        base_clauses, scalar_clauses, params = _activity_query_filters(
+            kind=kind,
+            sev=sev,
+            actor=actor,
+            q=q,
+            now_range_ms=now_range_ms,
+            resource_id=resource_id,
+            need_json_fallback=need_json_fallback,
+            limit=limit,
+        )
 
         where_scalar = _to_where(scalar_clauses)
         data_query = (
@@ -457,7 +509,7 @@ class MemgraphActivityStore:
             result = await session.run(data_query, **params)
             rows = await result.data()
             await result.consume()
-        events: list[tuple[int, dict[str, Any]]] = _decode_rows(rows)
+        events = _decode_rows(rows, fallback_created_at=now_ms)
         async with _pool.get_read_session() as session:
             count_query = f"MATCH (n:`{self._label}`) {where_scalar} RETURN count(n) AS c"
             result = await session.run(count_query, **params)
@@ -487,7 +539,7 @@ class MemgraphActivityStore:
             await legacy_result.consume()
 
         legacy_events: list[tuple[int, dict[str, Any]]] = []
-        for created_at, event in _decode_rows(legacy_rows):
+        for created_at, event in _decode_rows(legacy_rows, fallback_created_at=now_ms):
             if not _matches(
                 event,
                 kind=kind,
@@ -503,7 +555,7 @@ class MemgraphActivityStore:
 
         merged = sorted(events + legacy_events, key=lambda item: item[0], reverse=True)
         return (
-            [event for _, event in merged[:limit_query]],
+            [event for _, event in merged[:limit]],
             scalar_total + len(legacy_events),
             now_ms,
         )

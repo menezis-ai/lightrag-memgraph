@@ -210,10 +210,10 @@ export function ActivityTab({
   const backendTotal = total ?? filtered.length;
   const loadedCount = filtered.length;
   const activeFilterCount =
-    (range !== 'all' ? 1 : 0) +
+    (range === 'all' ? 0 : 1) +
     (kinds.size ? 1 : 0) +
-    (sev !== 'any' ? 1 : 0) +
-    (actor !== 'any' ? 1 : 0) +
+    (sev === 'any' ? 0 : 1) +
+    (actor === 'any' ? 0 : 1) +
     (q.trim() ? 1 : 0) +
     (resourceId ? 1 : 0);
 

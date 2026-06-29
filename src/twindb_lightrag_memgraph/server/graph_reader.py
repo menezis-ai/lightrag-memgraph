@@ -1196,6 +1196,7 @@ def _resolve_source_docs(
 # process deploys are tolerable because every worker rebuilds its own
 # cache as soon as the React port re-fetches.
 _RELATION_ENDPOINT_CACHE: dict[str, tuple[str, str, str]] = {}
+_BASE_WRITE = object()
 
 
 def _remember_relation(workspace: str, rel_id: str, src: str, tgt: str) -> None:
@@ -1218,6 +1219,43 @@ def _relation_id_from_endpoints(src: str, tgt: str) -> str:
     """
     h = hashlib.sha1(f"{src}->{tgt}".encode("utf-8")).hexdigest()[:12]
     return f"kr_{h}"
+
+
+def _relation_scope_state(
+    record: dict[str, Any],
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+    active_folder: str | None,
+) -> tuple[bool, bool]:
+    if member_docs is None:
+        return True, False
+    _docs, in_folder, mixed = _resolve_source_docs(
+        record.get("chunk_source_id"), chunk_to_doc, member_docs
+    )
+    if in_folder:
+        return True, mixed
+    stamped = _json_list(record.get("twin_folder_json"))
+    return bool(active_folder and active_folder in stamped), False
+
+
+def _relation_strength(weight: Any) -> float:
+    try:
+        strength = float(weight) if weight is not None else 0.5
+    except (TypeError, ValueError):
+        strength = 0.5
+    if strength > 1.0:
+        return min(1.0, strength / 10.0)
+    return strength
+
+
+def _relation_label_and_properties(
+    record: dict[str, Any], *, mixed: bool
+) -> tuple[str, dict[str, str]]:
+    if mixed:
+        return _MIXED_RELATION_LABEL, {}
+    keywords = record.get("keywords") or ""
+    label = str(keywords).strip().upper().replace(" ", "_") or "RELATED_TO"
+    return label, _json_str_dict(record.get("twin_props_json"))
 
 
 def _edge_record_to_relation(
@@ -1252,43 +1290,22 @@ def _edge_record_to_relation(
     in F's view only.
     """
     del index  # ignored — id is endpoint-derived
-    mixed = False
-    if member_docs is not None:
-        _docs, in_folder, mixed = _resolve_source_docs(
-            record.get("chunk_source_id"), chunk_to_doc, member_docs
-        )
-        if not in_folder:
-            stamped = _json_list(record.get("twin_folder_json"))
-            if not (active_folder and active_folder in stamped):
-                return None
-            mixed = False  # operator-owned in this folder
+    visible, mixed = _relation_scope_state(
+        record, chunk_to_doc, member_docs, active_folder
+    )
+    if not visible:
+        return None
     if override is not None and override.get("deleted"):
         return None  # #1b folder-local tombstone
     src = record.get("source_id") or ""
     tgt = record.get("target_id") or ""
-    keywords = record.get("keywords") or ""
-    weight = record.get("weight")
-    try:
-        strength = float(weight) if weight is not None else 0.5
-    except (TypeError, ValueError):
-        strength = 0.5
-    # LightRAG sometimes returns weight on a 0..10 scale; normalize to
-    # 0..1 if it overshoots.
-    if strength > 1.0:
-        strength = min(1.0, strength / 10.0)
-    label = str(keywords).strip().upper().replace(" ", "_") or "RELATED_TO"
-    properties = _json_str_dict(record.get("twin_props_json"))
-    if mixed:
-        # Mixed-folder provenance → mask the blended text payload (label from
-        # LightRAG keywords, operator props). Endpoints + strength stay.
-        label = _MIXED_RELATION_LABEL
-        properties = {}
+    label, properties = _relation_label_and_properties(record, mixed=mixed)
     relation = {
         "id": _relation_id_from_endpoints(str(src), str(tgt)),
         "source": _entity_id_to_node_id(str(src)),
         "target": _entity_id_to_node_id(str(tgt)),
         "label": label,
-        "strength": round(strength, 3),
+        "strength": round(_relation_strength(record.get("weight")), 3),
         "properties": properties,
     }
     # #1b: overlay folder-local edits (un-masks the fields F explicitly set).
@@ -1478,6 +1495,93 @@ def _build_native_relations(
     return relations
 
 
+def _append_direct_entities(
+    entities: list[dict[str, Any]],
+    direct_rows: list[dict[str, Any]],
+    *,
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+    direct_members: set[str] | None,
+    entity_overrides: dict[str, dict[str, Any]],
+) -> None:
+    present = {entity["id"] for entity in entities}
+    for row in direct_rows:
+        ent = _node_record_to_entity(
+            row,
+            chunk_to_doc,
+            member_docs,
+            direct_members,
+            entity_overrides.get(str(row.get("entity_id"))),
+        )
+        if ent is None or ent["id"] in present:
+            continue
+        entities.append(ent)
+        present.add(ent["id"])
+
+
+def _project_relation_rows(
+    *,
+    workspace: str,
+    rows: list[dict[str, Any]],
+    valid_ids: set[str],
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+    folder: str | None,
+    rel_overrides: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    relations: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        src = str(row.get("source_id"))
+        tgt = str(row.get("target_id"))
+        rel = _edge_record_to_relation(
+            row,
+            i,
+            chunk_to_doc,
+            member_docs,
+            folder,
+            rel_overrides.get((src, tgt)),
+        )
+        if rel is None:
+            continue
+        if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
+            continue
+        _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
+        relations.append(rel)
+    return relations
+
+
+async def _append_manual_relations(
+    *,
+    workspace: str,
+    relations: list[dict[str, Any]],
+    valid_ids: set[str],
+    chunk_to_doc: dict[str, str] | None,
+    member_docs: set[str] | None,
+    folder: str | None,
+    rel_overrides: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    if not folder:
+        return
+    rel_ids = {relation["id"] for relation in relations}
+    for row in await _load_manual_relation_rows(workspace):
+        if folder not in _json_list(row.get("twin_folder_json")):
+            continue
+        projected = _project_relation_rows(
+            workspace=workspace,
+            rows=[row],
+            valid_ids=valid_ids,
+            chunk_to_doc=chunk_to_doc,
+            member_docs=member_docs,
+            folder=folder,
+            rel_overrides=rel_overrides,
+        )
+        for rel in projected:
+            if rel["id"] in rel_ids:
+                continue
+            relations.append(rel)
+            rel_ids.add(rel["id"])
+
+
 async def read_graph_native(
     rag: Any,
     workspace: str,
@@ -1546,18 +1650,14 @@ async def read_graph_native(
     entities = _build_native_entities(
         kg, chunk_to_doc, member_docs, direct_members, entity_overrides, max_nodes
     )
-    present = {e["id"] for e in entities}
-    for row in direct_rows:
-        ent = _node_record_to_entity(
-            row,
-            chunk_to_doc,
-            member_docs,
-            direct_members,
-            entity_overrides.get(str(row.get("entity_id"))),
-        )
-        if ent is not None and ent["id"] not in present:
-            entities.append(ent)
-            present.add(ent["id"])
+    _append_direct_entities(
+        entities,
+        direct_rows,
+        chunk_to_doc=chunk_to_doc,
+        member_docs=member_docs,
+        direct_members=direct_members,
+        entity_overrides=entity_overrides,
+    )
 
     valid_ids = {e["id"] for e in entities}
     raw_valid_ids = {_strip_node_prefix(eid) for eid in valid_ids}
@@ -1569,54 +1669,27 @@ async def read_graph_native(
             kg, workspace, valid_ids, chunk_to_doc, member_docs, folder, rel_overrides
         )
     else:
-        relations = []
-        for i, row in enumerate(stored_relation_rows):
-            rel = _edge_record_to_relation(
-                row,
-                i,
-                chunk_to_doc,
-                member_docs,
-                folder,
-                rel_overrides.get(
-                    (str(row.get("source_id")), str(row.get("target_id")))
-                ),
-            )
-            if rel is None:
-                continue
-            if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
-                continue
-            _remember_relation(
-                workspace,
-                rel["id"],
-                rel["source"],
-                rel["target"],
-            )
-            relations.append(rel)
+        relations = _project_relation_rows(
+            workspace=workspace,
+            rows=stored_relation_rows,
+            valid_ids=valid_ids,
+            chunk_to_doc=chunk_to_doc,
+            member_docs=member_docs,
+            folder=folder,
+            rel_overrides=rel_overrides,
+        )
     # Union operator-created relations among the visible entities (#1a) — the
     # native read only returns edges between degree-ranked nodes, so a manual
     # edge touching a manual node would otherwise never appear.
-    if folder:
-        rel_ids = {r["id"] for r in relations}
-        for row in await _load_manual_relation_rows(workspace):
-            if folder not in _json_list(row.get("twin_folder_json")):
-                continue
-            rel = _edge_record_to_relation(
-                row,
-                0,
-                chunk_to_doc,
-                member_docs,
-                folder,
-                rel_overrides.get((str(row.get("source_id")), str(row.get("target_id")))),
-            )
-            if rel is None:
-                continue
-            if rel["source"] not in valid_ids or rel["target"] not in valid_ids:
-                continue
-            if rel["id"] in rel_ids:
-                continue
-            _remember_relation(workspace, rel["id"], rel["source"], rel["target"])
-            relations.append(rel)
-            rel_ids.add(rel["id"])
+    await _append_manual_relations(
+        workspace=workspace,
+        relations=relations,
+        valid_ids=valid_ids,
+        chunk_to_doc=chunk_to_doc,
+        member_docs=member_docs,
+        folder=folder,
+        rel_overrides=rel_overrides,
+    )
     return entities, relations
 
 
@@ -1635,28 +1708,13 @@ async def _search_labels_scoped(
     )
     out: list[str] = []
     if member_chunks:
-        try:
-            async with get_read_session() as session:
-                result = await session.run(
-                    query,
-                    q=q,
-                    sep=_GRAPH_FIELD_SEP,
-                    mchunks=list(member_chunks),
-                    limit=limit,
-                )
-                async for record in result:
-                    eid = record.get("eid")
-                    if eid:
-                        out.append(str(eid))
-                await result.consume()
-        except Exception:
-            logger.exception(
-                "graph_reader: scoped label search failed (ws=%s, q=%r) — "
-                "fail-closed (empty)",
-                workspace,
-                q,
-            )
-            return []
+        out = await _search_member_chunk_labels(
+            workspace=workspace,
+            q=q,
+            member_chunks=member_chunks,
+            limit=limit,
+            query=query,
+        )
     from .folder import active_folder_id
 
     folder = active_folder_id()
@@ -1667,33 +1725,121 @@ async def _search_labels_scoped(
         eid for eid, override in overrides.items() if override.get("deleted")
     }
     out = [eid for eid in out if eid not in tombstoned]
+    await _append_direct_label_matches(
+        workspace=workspace,
+        folder=folder,
+        q=q,
+        limit=limit,
+        out=out,
+        overrides=overrides,
+        tombstoned=tombstoned,
+    )
+    await _append_override_label_matches(
+        workspace=workspace,
+        folder=folder,
+        q=q,
+        limit=limit,
+        out=out,
+        overrides=overrides,
+    )
+    return out
 
-    def add_match(eid: str, *labels: Any) -> None:
-        if len(out) >= limit or eid in tombstoned or eid in out:
-            return
-        needle = q.lower()
-        if any(needle in str(label or "").lower() for label in labels):
-            out.append(eid)
 
+async def _search_member_chunk_labels(
+    *,
+    workspace: str,
+    q: str,
+    member_chunks: set[str],
+    limit: int,
+    query: str,
+) -> list[str]:
+    out: list[str] = []
+    try:
+        async with get_read_session() as session:
+            result = await session.run(
+                query,
+                q=q,
+                sep=_GRAPH_FIELD_SEP,
+                mchunks=list(member_chunks),
+                limit=limit,
+            )
+            async for record in result:
+                eid = record.get("eid")
+                if eid:
+                    out.append(str(eid))
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: scoped label search failed (ws=%s, q=%r) — "
+            "fail-closed (empty)",
+            workspace,
+            q,
+        )
+    return out
+
+
+def _append_label_match(
+    out: list[str],
+    *,
+    eid: str,
+    labels: Sequence[Any],
+    q: str,
+    limit: int,
+    tombstoned: set[str] | None = None,
+) -> None:
+    if len(out) >= limit or eid in out or eid in (tombstoned or set()):
+        return
+    needle = q.lower()
+    if any(needle in str(label or "").lower() for label in labels):
+        out.append(eid)
+
+
+async def _append_direct_label_matches(
+    *,
+    workspace: str,
+    folder: str,
+    q: str,
+    limit: int,
+    out: list[str],
+    overrides: dict[str, dict[str, Any]],
+    tombstoned: set[str],
+) -> None:
     # #1a + #1b: direct-member manual entities have no chunk provenance, and a
     # folder-local display_name override should be searchable in that folder.
     direct_rows = await _load_direct_member_entity_rows(workspace, folder)
-    direct_members = {str(r["entity_id"]) for r in direct_rows if r.get("entity_id")}
     for row in direct_rows:
         eid = str(row.get("entity_id") or "")
         if not eid:
             continue
         override = overrides.get(eid) or {}
-        add_match(
-            eid,
-            row.get("entity_id"),
-            row.get("display_name"),
-            override.get("display_name"),
+        _append_label_match(
+            out,
+            eid=eid,
+            labels=(
+                row.get("entity_id"),
+                row.get("display_name"),
+                override.get("display_name"),
+            ),
+            q=q,
+            limit=limit,
+            tombstoned=tombstoned,
         )
 
+
+async def _append_override_label_matches(
+    *,
+    workspace: str,
+    folder: str,
+    q: str,
+    limit: int,
+    out: list[str],
+    overrides: dict[str, dict[str, Any]],
+) -> None:
     # Overlay display names on chunk-backed entities may be the only text that
     # matches the query. Verify visibility through the same gate used by writes
     # so the overlay never grants cross-folder search visibility by itself.
+    direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+    direct_members = {str(r["entity_id"]) for r in direct_rows if r.get("entity_id")}
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder)
     for eid, override in overrides.items():
@@ -1705,8 +1851,13 @@ async def _search_labels_scoped(
             continue
         verdict = await _entity_mutation_gate(workspace, eid, chunk_to_doc, member_docs)
         if verdict != _GATE_ABSENT:
-            add_match(eid, override.get("display_name"))
-    return out
+            _append_label_match(
+                out,
+                eid=eid,
+                labels=(override.get("display_name"),),
+                q=q,
+                limit=limit,
+            )
 
 
 async def search_graph_labels(
@@ -1733,24 +1884,13 @@ async def search_graph_labels(
         return []
 
 
-async def read_graph_relations(
-    workspace: str,
+async def _fetch_relation_rows(
     *,
-    valid_node_ids: Sequence[str] | None = None,
-    max_edges: int = 600,
+    workspace: str,
+    member_chunks: set[str] | None,
+    max_edges: int,
 ) -> list[dict[str, Any]]:
-    """Return every relation stored under ``workspace`` as a WebUI
-    ``GraphRelation`` dict, capped at ``max_edges``.
-
-    When ``valid_node_ids`` is provided (already-projected WebUI ids
-    from a preceding `read_graph_entities` call), edges whose endpoints
-    aren't in that set are dropped to keep the layout consistent with
-    the truncated node list.
-    """
     label = _sanitize_workspace(workspace)
-    # Membership predicate on the relationship's own source chunks, BEFORE the
-    # LIMIT (same rationale as read_graph_entities). None → unscoped global.
-    member_chunks = await _active_member_chunks(workspace)
     where = f"WHERE {_membership_predicate('r')} " if member_chunks is not None else ""
     query = (
         f"MATCH (s:`{label}`)-[r:DIRECTED]->(t:`{label}`) "
@@ -1765,22 +1905,50 @@ async def read_graph_relations(
     if member_chunks is not None:
         params["sep"] = _GRAPH_FIELD_SEP
         params["mchunks"] = list(member_chunks)
+    async with get_read_session() as session:
+        result = await session.run(query, **params)
+        rows = [
+            {
+                "source_id": record["source_id"],
+                "target_id": record["target_id"],
+                "keywords": record["keywords"],
+                "weight": record["weight"],
+                "chunk_source_id": record["chunk_source_id"],
+                "twin_props_json": record["twin_props_json"],
+            }
+            async for record in result
+        ]
+        await result.consume()
+    return rows
+
+
+def _relation_row_has_endpoints(row: dict[str, Any]) -> bool:
+    return bool(row.get("source_id") and row.get("target_id"))
+
+
+async def read_graph_relations(
+    workspace: str,
+    *,
+    valid_node_ids: Sequence[str] | None = None,
+    max_edges: int = 600,
+) -> list[dict[str, Any]]:
+    """Return every relation stored under ``workspace`` as a WebUI
+    ``GraphRelation`` dict, capped at ``max_edges``.
+
+    When ``valid_node_ids`` is provided (already-projected WebUI ids
+    from a preceding `read_graph_entities` call), edges whose endpoints
+    aren't in that set are dropped to keep the layout consistent with
+    the truncated node list.
+    """
+    # Membership predicate on the relationship's own source chunks, BEFORE the
+    # LIMIT (same rationale as read_graph_entities). None → unscoped global.
+    member_chunks = await _active_member_chunks(workspace)
     try:
-        async with get_read_session() as session:
-            result = await session.run(query, **params)
-            rows = []
-            async for record in result:
-                rows.append(
-                    {
-                        "source_id": record["source_id"],
-                        "target_id": record["target_id"],
-                        "keywords": record["keywords"],
-                        "weight": record["weight"],
-                        "chunk_source_id": record["chunk_source_id"],
-                        "twin_props_json": record["twin_props_json"],
-                    }
-                )
-            await result.consume()
+        rows = await _fetch_relation_rows(
+            workspace=workspace,
+            member_chunks=member_chunks,
+            max_edges=max_edges,
+        )
         chunk_to_doc = await _load_chunk_to_doc_index(workspace)
         member_docs = await _active_member_docs(workspace)
         from .folder import active_folder_id
@@ -1792,7 +1960,7 @@ async def read_graph_relations(
         valid = set(valid_node_ids) if valid_node_ids is not None else None
         out: list[dict[str, Any]] = []
         for i, row in enumerate(rows):
-            if not row.get("source_id") or not row.get("target_id"):
+            if not _relation_row_has_endpoints(row):
                 continue
             rel = _edge_record_to_relation(
                 row,
@@ -1880,52 +2048,38 @@ def _relation_patch_to_props(patch: dict[str, Any]) -> dict[str, Any]:
     return props
 
 
-async def update_graph_entity(
+async def _scoped_entity_update_result(
+    *,
     workspace: str,
-    webui_id: str,
-    patch: dict[str, Any],
-) -> dict[str, Any] | None:
-    """MERGE the given properties onto a Memgraph entity node, then
-    re-read and return the canonical WebUI shape. Returns ``None`` when
-    the node doesn't exist.
-    """
-    entity_id = _strip_node_prefix(webui_id)
-    member_docs, chunk_to_doc = await _member_context(workspace)
-    props = _entity_patch_to_props(patch)
-    # Folder cloisonnement (#1/#1b): a folder-scoped mutation may only touch
-    # the shared base when the entity is pure-member. `absent` stays 404.
-    # `mixed` is now a folder-local overlay write, so folder A can edit its view
-    # without mutating folder B's shared physical node.
-    if member_docs is not None:
-        verdict = await _entity_mutation_gate(
-            workspace, entity_id, chunk_to_doc, member_docs
-        )
-        if verdict == _GATE_ABSENT:
-            return None
-        if verdict == _GATE_MIXED:
-            if not props:
-                return await _read_one_entity(
-                    workspace, entity_id, chunk_to_doc, member_docs
-                )
-            from .folder import active_folder_id
-
-            folder = active_folder_id()
-            if not folder:
-                raise MixedProvenanceError(entity_id)
-            ok = await _upsert_entity_override(
-                workspace, folder, entity_id, props, deleted=False
-            )
-            if not ok:
-                return None
-            return await _read_one_entity(
-                workspace, entity_id, chunk_to_doc, member_docs
-            )
-    label = _sanitize_workspace(workspace)
+    entity_id: str,
+    props: dict[str, Any],
+    chunk_to_doc: dict[str, str],
+    member_docs: set[str],
+) -> dict[str, Any] | None | object:
+    verdict = await _entity_mutation_gate(workspace, entity_id, chunk_to_doc, member_docs)
+    if verdict == _GATE_ABSENT:
+        return None
+    if verdict != _GATE_MIXED:
+        return _BASE_WRITE
     if not props:
-        # Nothing to write — still return the current state if the node exists.
-        return await _read_one_entity(
-            workspace, entity_id, chunk_to_doc, member_docs
-        )
+        return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        raise MixedProvenanceError(entity_id)
+    ok = await _upsert_entity_override(
+        workspace, folder, entity_id, props, deleted=False
+    )
+    if not ok:
+        return None
+    return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
+
+
+async def _write_entity_props(
+    *, workspace: str, entity_id: str, props: dict[str, Any]
+) -> bool:
+    label = _sanitize_workspace(workspace)
     async with acquire_write_slot():
         async with get_session() as session:
             update_query = (
@@ -1944,10 +2098,104 @@ async def update_graph_entity(
                     "graph_reader.update_graph_entity: write failed for %s",
                     entity_id,
                 )
-                return None
-            if not rows:
-                return None
+                return False
+    return bool(rows)
+
+
+async def update_graph_entity(
+    workspace: str,
+    webui_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """MERGE the given properties onto a Memgraph entity node, then
+    re-read and return the canonical WebUI shape. Returns ``None`` when
+    the node doesn't exist.
+    """
+    entity_id = _strip_node_prefix(webui_id)
+    member_docs, chunk_to_doc = await _member_context(workspace)
+    props = _entity_patch_to_props(patch)
+    # Folder cloisonnement (#1/#1b): a folder-scoped mutation may only touch
+    # the shared base when the entity is pure-member. `absent` stays 404.
+    # `mixed` is now a folder-local overlay write, so folder A can edit its view
+    # without mutating folder B's shared physical node.
+    if member_docs is not None:
+        scoped = await _scoped_entity_update_result(
+            workspace=workspace,
+            entity_id=entity_id,
+            props=props,
+            chunk_to_doc=chunk_to_doc,
+            member_docs=member_docs,
+        )
+        if scoped is not _BASE_WRITE:
+            return scoped
+    if not props:
+        # Nothing to write — still return the current state if the node exists.
+        return await _read_one_entity(
+            workspace, entity_id, chunk_to_doc, member_docs
+        )
+    if not await _write_entity_props(workspace=workspace, entity_id=entity_id, props=props):
+        return None
     return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
+
+
+async def _scoped_relation_update_result(
+    *,
+    workspace: str,
+    rel_id: str,
+    src: str,
+    tgt: str,
+    props: dict[str, Any],
+    chunk_to_doc: dict[str, str],
+    member_docs: set[str],
+) -> dict[str, Any] | None | object:
+    verdict = await _relation_mutation_gate(
+        workspace, src, tgt, chunk_to_doc, member_docs
+    )
+    if verdict == _GATE_ABSENT:
+        return None
+    if verdict != _GATE_MIXED:
+        return _BASE_WRITE
+    if not props:
+        return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        raise MixedProvenanceError(rel_id)
+    ok = await _upsert_rel_override(
+        workspace, folder, src, tgt, props, deleted=False
+    )
+    if not ok:
+        return None
+    return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
+
+
+async def _write_relation_props(
+    *, workspace: str, src: str, tgt: str, props: dict[str, Any]
+) -> bool:
+    label = _sanitize_workspace(workspace)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            update_query = (
+                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+                f"(t:`{label}` {{entity_id: $tgt}}) "
+                "SET r += $props "
+                "RETURN s.entity_id AS source_id"
+            )
+            try:
+                result = await session.run(
+                    update_query, src=src, tgt=tgt, props=props
+                )
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.update_graph_relation: write failed for %s→%s",
+                    src,
+                    tgt,
+                )
+                return False
+    return bool(rows)
 
 
 async def update_graph_relation(
@@ -1975,57 +2223,23 @@ async def update_graph_relation(
     # Folder cloisonnement (#1/#1b): only a pure-member relation mutates the
     # base edge. `mixed` writes a folder-local overlay; `absent` stays 404.
     if member_docs is not None:
-        verdict = await _relation_mutation_gate(
-            workspace, src, tgt, chunk_to_doc, member_docs
+        scoped = await _scoped_relation_update_result(
+            workspace=workspace,
+            rel_id=rel_id,
+            src=src,
+            tgt=tgt,
+            props=props,
+            chunk_to_doc=chunk_to_doc,
+            member_docs=member_docs,
         )
-        if verdict == _GATE_ABSENT:
-            return None
-        if verdict == _GATE_MIXED:
-            if not props:
-                return await _read_one_relation(
-                    workspace, src, tgt, chunk_to_doc, member_docs
-                )
-            from .folder import active_folder_id
-
-            folder = active_folder_id()
-            if not folder:
-                raise MixedProvenanceError(rel_id)
-            ok = await _upsert_rel_override(
-                workspace, folder, src, tgt, props, deleted=False
-            )
-            if not ok:
-                return None
-            return await _read_one_relation(
-                workspace, src, tgt, chunk_to_doc, member_docs
-            )
-    label = _sanitize_workspace(workspace)
+        if scoped is not _BASE_WRITE:
+            return scoped
     if not props:
         return await _read_one_relation(
             workspace, src, tgt, chunk_to_doc, member_docs
         )
-    async with acquire_write_slot():
-        async with get_session() as session:
-            update_query = (
-                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
-                f"(t:`{label}` {{entity_id: $tgt}}) "
-                "SET r += $props "
-                "RETURN s.entity_id AS source_id"
-            )
-            try:
-                result = await session.run(
-                    update_query, src=src, tgt=tgt, props=props
-                )
-                rows = [record async for record in result]
-                await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.update_graph_relation: write failed for %s→%s",
-                    src,
-                    tgt,
-                )
-                return None
-            if not rows:
-                return None
+    if not await _write_relation_props(workspace=workspace, src=src, tgt=tgt, props=props):
+        return None
     return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
 
 
@@ -2331,6 +2545,71 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     return True
 
 
+async def _relation_endpoints_allowed(
+    *,
+    workspace: str,
+    src: str,
+    tgt: str,
+    member_docs: set[str] | None,
+    chunk_to_doc: dict[str, str] | None,
+) -> bool:
+    if member_docs is None:
+        return await entity_exists(workspace, src) and await entity_exists(workspace, tgt)
+    for endpoint in (src, tgt):
+        verdict = await _entity_mutation_gate(
+            workspace, endpoint, chunk_to_doc, member_docs
+        )
+        if verdict == _GATE_ABSENT:
+            return False
+        if verdict == _GATE_MIXED:
+            raise MixedProvenanceError(endpoint)
+    return True
+
+
+def _create_relation_props(payload: dict[str, Any], folder: str | None) -> dict[str, Any] | None:
+    label_kw = (payload.get("label") or "").strip()
+    if not label_kw:
+        return None
+    strength = payload.get("strength")
+    try:
+        weight = float(strength) if strength is not None else 0.5
+    except (TypeError, ValueError):
+        weight = 0.5
+    props: dict[str, Any] = {"keywords": label_kw, "weight": weight}
+    if payload.get("properties"):
+        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+    if folder:
+        props[_REL_FOLDER_PROP] = json.dumps([folder])
+    return props
+
+
+async def _merge_relation(
+    *, workspace: str, src: str, tgt: str, props: dict[str, Any]
+) -> bool:
+    label = _sanitize_workspace(workspace)
+    async with acquire_write_slot():
+        async with get_session() as session:
+            query = (
+                f"MATCH (s:`{label}` {{entity_id: $src}}), "
+                f"(t:`{label}` {{entity_id: $tgt}}) "
+                "MERGE (s)-[r:DIRECTED]->(t) "
+                "SET r += $props "
+                "RETURN s.entity_id AS source_id"
+            )
+            try:
+                result = await session.run(query, src=src, tgt=tgt, props=props)
+                rows = [record async for record in result]
+                await result.consume()
+            except Exception:
+                logger.exception(
+                    "graph_reader.create_graph_relation: insert failed for %s→%s",
+                    src,
+                    tgt,
+                )
+                return False
+    return bool(rows)
+
+
 async def create_graph_relation(
     workspace: str, payload: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -2354,67 +2633,24 @@ async def create_graph_relation(
     if not src or not tgt:
         return None
     member_docs, chunk_to_doc = await _member_context(workspace)
-    if member_docs is None:
-        if not (
-            await entity_exists(workspace, src)
-            and await entity_exists(workspace, tgt)
-        ):
-            return None
-    else:
-        for endpoint in (src, tgt):
-            verdict = await _entity_mutation_gate(
-                workspace, endpoint, chunk_to_doc, member_docs
-            )
-            if verdict == _GATE_ABSENT:
-                return None
-            if verdict == _GATE_MIXED:
-                raise MixedProvenanceError(endpoint)
-
-    label_kw = (payload.get("label") or "").strip()
-    if not label_kw:
+    if not await _relation_endpoints_allowed(
+        workspace=workspace,
+        src=src,
+        tgt=tgt,
+        member_docs=member_docs,
+        chunk_to_doc=chunk_to_doc,
+    ):
         return None
-    strength = payload.get("strength")
-    try:
-        weight = float(strength) if strength is not None else 0.5
-    except (TypeError, ValueError):
-        weight = 0.5
-
-    props: dict[str, Any] = {"keywords": label_kw, "weight": weight}
-    if payload.get("properties"):
-        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
     # #1a: a manual edge has no chunk provenance — stamp the active folder so
     # folder-scoped reads surface it after a refresh.
     from .folder import active_folder_id
 
     folder = active_folder_id()
-    if folder:
-        props[_REL_FOLDER_PROP] = json.dumps([folder])
-
-    label = _sanitize_workspace(workspace)
-    async with acquire_write_slot():
-        async with get_session() as session:
-            query = (
-                f"MATCH (s:`{label}` {{entity_id: $src}}), "
-                f"(t:`{label}` {{entity_id: $tgt}}) "
-                "MERGE (s)-[r:DIRECTED]->(t) "
-                "SET r += $props "
-                "RETURN s.entity_id AS source_id"
-            )
-            try:
-                result = await session.run(
-                    query, src=src, tgt=tgt, props=props
-                )
-                rows = [record async for record in result]
-                await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.create_graph_relation: insert failed for %s→%s",
-                    src,
-                    tgt,
-                )
-                return None
-            if not rows:
-                return None
+    props = _create_relation_props(payload, folder)
+    if props is None:
+        return None
+    if not await _merge_relation(workspace=workspace, src=src, tgt=tgt, props=props):
+        return None
     relation = await _read_one_relation(workspace, src, tgt)
     if relation is not None:
         _remember_relation(workspace, relation["id"], src, tgt)

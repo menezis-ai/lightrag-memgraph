@@ -393,6 +393,57 @@ def _cascade_seed_document_tags(
     return affected
 
 
+def _metadata_from_raw(raw: Any) -> dict[str, Any]:
+    try:
+        metadata = json.loads(raw) if isinstance(raw, str) and raw else {}
+    except json.JSONDecodeError:
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+async def _rewrite_legacy_tag_metadata(
+    session: Any,
+    *,
+    doc_label: str,
+    tag_label: str,
+    name: str,
+    strategy: str,
+    to: str | None,
+) -> None:
+    result = await session.run(
+        f"""
+        MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(:`{tag_label}` {{id: $tag}})
+        RETURN d.id AS id, d.metadata AS metadata
+        """,
+        tag=name,
+    )
+    rows: list[dict[str, str]] = []
+    async for record in result:
+        metadata = _metadata_from_raw(record.get("metadata"))
+        rewritten = _rewrite_doc_tags(metadata.get("tags"), name, strategy, to)
+        if rewritten is None:
+            continue
+        metadata["tags"] = rewritten
+        rows.append(
+            {
+                "id": record["id"],
+                "metadata": json.dumps(metadata, sort_keys=True),
+            }
+        )
+    await result.consume()
+    if not rows:
+        return
+    update = await session.run(
+        f"""
+        UNWIND $rows AS row
+        MATCH (d:`{doc_label}` {{id: row.id}})
+        SET d.metadata = row.metadata
+        """,
+        rows=rows,
+    )
+    await update.consume()
+
+
 async def _cascade_graph_tag_edges(
     *,
     name: str,
@@ -416,51 +467,16 @@ async def _cascade_graph_tag_edges(
         tag_label = f"WebuiTag_{folder}"
         now = _utcnow_iso()
 
-        async def rewrite_legacy_metadata(session) -> None:
-            result = await session.run(
-                f"""
-                MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(:`{tag_label}` {{id: $tag}})
-                RETURN d.id AS id, d.metadata AS metadata
-                """,
-                tag=name,
-            )
-            rows: list[dict[str, str]] = []
-            async for record in result:
-                raw = record.get("metadata")
-                try:
-                    metadata = json.loads(raw) if isinstance(raw, str) and raw else {}
-                except json.JSONDecodeError:
-                    metadata = {}
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                rewritten = _rewrite_doc_tags(
-                    metadata.get("tags"), name, strategy, to
-                )
-                if rewritten is None:
-                    continue
-                metadata["tags"] = rewritten
-                rows.append(
-                    {
-                        "id": record["id"],
-                        "metadata": json.dumps(metadata, sort_keys=True),
-                    }
-                )
-            await result.consume()
-            if not rows:
-                return
-            update = await session.run(
-                f"""
-                UNWIND $rows AS row
-                MATCH (d:`{doc_label}` {{id: row.id}})
-                SET d.metadata = row.metadata
-                """,
-                rows=rows,
-            )
-            await update.consume()
-
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                await rewrite_legacy_metadata(session)
+                await _rewrite_legacy_tag_metadata(
+                    session,
+                    doc_label=doc_label,
+                    tag_label=tag_label,
+                    name=name,
+                    strategy=strategy,
+                    to=to,
+                )
                 if strategy == "migrate":
                     result = await session.run(
                         f"""

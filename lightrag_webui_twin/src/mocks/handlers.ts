@@ -726,8 +726,7 @@ function statusCountsFor(docs: readonly Document[]): Record<DocumentStatus, numb
   );
 }
 
-function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean {
-  const range = params.get('range');
+function matchActivityRange(e: ActivityEvent, range: string | null): boolean {
   if (range && range !== 'all') {
     const windowMs = ACTIVITY_RANGE_MS[range as keyof typeof ACTIVITY_RANGE_MS];
     if (windowMs !== undefined) {
@@ -735,6 +734,22 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
       if (Number.isNaN(ts) || ts < ACTIVITY_NOW_MS - windowMs) return false;
     }
   }
+  return true;
+}
+
+function activityResourceIds(e: ActivityEvent): string[] {
+  const metaDocIds = Array.isArray(e.meta?.doc_ids) ? e.meta.doc_ids.map(String) : [];
+  const metaDocId =
+    typeof e.meta?.doc_id === 'string' || typeof e.meta?.doc_id === 'number'
+      ? [String(e.meta.doc_id)]
+      : [];
+  return [e.target.id, ...metaDocId, ...metaDocIds].filter(
+    (id): id is string => typeof id === 'string' && id.length > 0,
+  );
+}
+
+function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean {
+  if (!matchActivityRange(e, params.get('range'))) return false;
   const kind = params.get('kind');
   if (kind) {
     const wanted = new Set(kind.split(','));
@@ -745,15 +760,7 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
   const actor = params.get('actor');
   if (actor && actor !== 'any' && e.actor.user !== actor) return false;
   const resourceId = params.get('resource.id');
-  const metaDocIds = Array.isArray(e.meta?.doc_ids)
-    ? e.meta.doc_ids.map((id) => String(id))
-    : [];
-  if (
-    resourceId &&
-    e.target.id !== resourceId &&
-    String(e.meta?.doc_id ?? '') !== resourceId &&
-    !metaDocIds.includes(resourceId)
-  ) {
+  if (resourceId && !activityResourceIds(e).includes(resourceId)) {
     return false;
   }
   const q = params.get('q');
