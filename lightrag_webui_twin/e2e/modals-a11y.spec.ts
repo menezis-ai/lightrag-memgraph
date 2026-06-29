@@ -19,6 +19,23 @@ async function expectFocusInsideDialog(page: Page) {
     .toBe(true);
 }
 
+async function expectNotificationsPopoverInsideViewport(page: Page) {
+  await page.getByRole('button', { name: /Notifications/ }).click();
+  const popover = page.getByRole('dialog', { name: 'Notifications' });
+  await expect(popover).toBeVisible();
+
+  const box = await popover.boundingBox();
+  expect(box).not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  if (!box || !viewport) return;
+
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+}
+
 test.describe('Modal dialogs a11y contract', () => {
   test.beforeEach(async ({ page }) => {
     await boot(page);
@@ -195,4 +212,22 @@ test.describe('Modal dialogs a11y contract', () => {
     await page.getByRole('heading', { name: 'Document management' }).click();
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeHidden();
   });
+
+  for (const viewport of [
+    { name: 'desktop', width: 1440, height: 900 },
+    { name: 'narrow', width: 390, height: 844 },
+  ]) {
+    test(`@a11y @modals notifications popover stays inside viewport on ${viewport.name}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
+      await page.reload();
+      await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
+
+      await expectNotificationsPopoverInsideViewport(page);
+    });
+  }
 });

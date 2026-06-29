@@ -83,7 +83,7 @@ Appels reels dans `lightrag_webui_twin/src/api/resources.ts` :
 | `deprecateTag` | POST | `/tags/{name}/deprecate` | `{reason?, actor?}` | `TagEntry` | `lightrag_webui_twin/src/api/resources.ts:97` |
 | `updateTagSynonyms` | POST | `/tags/{name}/synonyms` | `{aliases, actor?}` | `TagEntry` | `lightrag_webui_twin/src/api/resources.ts:107` |
 | `deleteTag` | DELETE | `/tags/{name}` | `{strategy?, to?, actor?}` | `{ok:boolean}` | `lightrag_webui_twin/src/api/resources.ts:117` |
-| `listActivity` | GET | `/activity` | query `{range?,kind?,sev?,actor?,q?}` | `ListEnvelope<ActivityEvent> & {nowMs?}` | `lightrag_webui_twin/src/api/resources.ts:129` |
+| `listActivity` | GET | `/activity` | query `{range?,kind?,sev?,actor?,q?,limit?,resourceId?}` (`resourceId` serialise en `resource.id`) | `ListEnvelope<ActivityEvent> & {nowMs?}`; `total` = backend pre-limit | `lightrag_webui_twin/src/api/resources.ts:686` |
 | `getOpenApi` | GET | `/openapi` | - | `{groups: OpenApiGroup[], version}` | `lightrag_webui_twin/src/api/resources.ts:139` |
 | `listGraphEntities` | GET | `/graph/entities` | query `{workspace?,type?}` | `GraphEntity[]` | `lightrag_webui_twin/src/api/resources.ts:143` |
 | `listGraphRelations` | GET | `/graph/relations` | query `{workspace?}` | `GraphRelation[]` | `lightrag_webui_twin/src/api/resources.ts:148` |
@@ -93,7 +93,7 @@ Contrats TS/fixtures qui precisent les shapes :
 - `Document` attend `{id,type,source,summary,tags,status,chunks,updated,visibility,workspace}` (`lightrag_webui_twin/src/types/document.ts:20`).
 - `Workspace` et `Notification` sont les contrats topbar (`lightrag_webui_twin/src/types/topbar.ts:15`, `:33`).
 - `TagEntry`, `TagCategory` et mutations tag sont dans `lightrag_webui_twin/src/types/tag.ts:39`, `:60`.
-- `ActivityEvent` et son envelope `{items,total}` sont documentes dans `lightrag_webui_twin/src/types/activity.ts:5`, `:43`.
+- `ActivityEvent` et son envelope `{items,total,nowMs}` sont documentes dans `lightrag_webui_twin/src/types/activity.ts:5`, `:43`.
 - `GraphEntity`/`GraphRelation` sont des teasers pre-layout, pas le graph natif LightRAG (`lightrag_webui_twin/src/types/graph.ts:7`, `:22`, `:37`).
 - `OpenApiGroup` est une vue curatee `{m,p,s}`, pas le JSON OpenAPI FastAPI brut (`lightrag_webui_twin/src/types/api.ts:12`, `:21`).
 - Le catalogue fixture affiche des routes natives LightRAG (`lightrag_webui_twin/src/fixtures/api.ts:12` a `:77`) mais n'est pas la liste des fetchs reels de `resources.ts`.
@@ -117,7 +117,7 @@ Le routeur Twin est root-level (`router = APIRouter(tags=["webui"])`, `src/twind
 | GET | `/thesaurus` | `list_thesaurus` | - | `list[ThesaurusEntry]` | `src/twindb_lightrag_memgraph/server/webui_router.py:367` |
 | GET | `/tags` | `list_tags` | - | `list[TagEntry]` | `src/twindb_lightrag_memgraph/server/webui_router.py:372` |
 | GET | `/tags/categories` | `list_tag_categories` | - | `list[TagCategory]` | `src/twindb_lightrag_memgraph/server/webui_router.py:377` |
-| GET | `/activity` | `list_activity` | query `kind,sev,actor,q` | `ActivityEnvelope` | `src/twindb_lightrag_memgraph/server/webui_router.py:382` |
+| GET | `/activity` | `list_activity` | query `kind,sev,actor,q,range,resource.id,limit` | `ActivityEnvelope {items,total,nowMs}` avec `total` calcule cote backend avant `limit` | `src/twindb_lightrag_memgraph/server/webui/routes_activity.py:54` |
 | GET | `/openapi` | `get_openapi_groups` | - | `OpenApiEnvelope` | `src/twindb_lightrag_memgraph/server/webui_router.py:395` |
 | GET | `/graph/entities` | `list_graph_entities` | - | `list[GraphEntity]` | `src/twindb_lightrag_memgraph/server/webui_router.py:401` |
 | GET | `/graph/relations` | `list_graph_relations` | - | `list[GraphRelation]` | `src/twindb_lightrag_memgraph/server/webui_router.py:406` |
@@ -157,7 +157,7 @@ Legende : ✅ existe et contrat compatible ; 🚧 route existe mais contrat diff
 | POST `/tags/{name}/deprecate` | <span style="color:red">❌ missing</span> | ✅ Oui (`webui_router.py:590`) | Twin only. |
 | POST `/tags/{name}/synonyms` | <span style="color:red">❌ missing</span> | ✅ Oui (`webui_router.py:622`) | Twin only. |
 | DELETE `/tags/{name}` | <span style="color:red">❌ missing</span> | ✅ Oui (`webui_router.py:651`) | Twin only. |
-| GET `/activity?range&kind&sev&actor&q` -> `{items,total,nowMs?}` | <span style="color:red">❌ missing</span> | 🚧 `kind/sev/actor/q` oui, `range` ignore (`webui_router.py:382`) | Ajouter filtre `range` cote Twin si l'UI l'utilise strictement. |
+| GET `/activity?range&kind&sev&actor&q&resource.id&limit` -> `{items,total,nowMs}` | <span style="color:red">❌ missing</span> | ✅ Oui (`routes_activity.py:54`); `range` filtre par `ts`, `resource.id` matche `target.id`, `meta.doc_id`, `meta.doc_ids`; `total` est pre-limit; `nowMs` est retourne pour les calculs relatifs. | Twin only. |
 | GET `/openapi` -> `{groups,version}` curatee | 🚧 Natif expose `/openapi.json`, pas `/openapi`, et schema FastAPI brut | ✅ Oui (`webui_router.py:395`) | Twin fournit le format UI. |
 | GET `/graph/entities` -> `GraphEntity[]` teaser | <span style="color:red">❌ missing</span>; natif a `/graphs` et `/graph/label/*` | ✅ Oui (`webui_router.py:401`) | Twin only, ou adaptateur sur graph LightRAG. |
 | GET `/graph/relations` -> `GraphRelation[]` teaser | <span style="color:red">❌ missing</span> | ✅ Oui (`webui_router.py:406`) | Twin only, ou adaptateur sur graph LightRAG. |
@@ -213,7 +213,10 @@ Si on monte sous `/twin/api` :
 
 Routes WebUI a backporter/completer dans `server/` :
 
-- `GET /activity` : ajouter le filtre `range` attendu par le client (`resources.ts:129`) ; actuellement ignore (`webui_router.py:382`).
+- `GET /activity` : contrat live. Le filtre `range`, le filtre `resource.id`,
+  le `total` backend pre-limit et `nowMs` sont desormais cables dans
+  `server/webui/routes_activity.py` + `webui_activitystore.py`. Ne pas reouvrir
+  cet item sans regression concrete.
 - `GET /documents` : remplacer progressivement les seed docs par une adaptation reelle depuis `rag.doc_status`, en conservant le contrat `ListEnvelope[Document]`.
 - `GET /graph/entities` et `GET /graph/relations` : brancher sur le graph LightRAG reel au lieu des fixtures, en gardant les champs pre-layout `x/y`.
 - Retrieval live si le tab devient dynamique : `POST /retrieval`, `GET /threads`, `POST /threads`, `DELETE /threads/{id}` sont absents des deux surfaces mais declares par les types (`types/retrieval.ts:4`).

@@ -63,7 +63,6 @@ rsync -a \
   "$SOURCE_REPO/docker-compose.yml" \
   "$SOURCE_REPO/.gitignore" \
   "$SOURCE_REPO/Dockerfile" \
-  "$SOURCE_REPO/Twin-KMS-QA-Test-Plan.docx" \
   ./
 
 mkdir -p config requirements .github/workflows src/twindb_lightrag_memgraph/webui_dist
@@ -117,7 +116,6 @@ can fail before the application code is even imported.
 - `config/build.conf`
 - `README.md`
 - `ENV_VARIABLES.txt`
-- `Twin-KMS-QA-Test-Plan.docx`
 
 ## Exclude
 
@@ -144,7 +142,6 @@ test -f lightrag_webui_twin/package.json
 test -f tests/smoke/run_smoke.py
 test -f requirements/constraints-prod.txt
 test -f .github/workflows/bnp-export-smoke.yml
-test -f Twin-KMS-QA-Test-Plan.docx
 find . -path '*/__pycache__/*' -o -name '*.pyc'
 find . -maxdepth 2 \( -name docs -o -name scripts -o -name node_modules \)
 grep -n 'pip install' Dockerfile

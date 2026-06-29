@@ -8586,6 +8586,16 @@ body:where(*) {
   box-shadow: var(--shadow-lg);
 }
 
+.notif-popover {
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  left: auto;
+  width: min(380px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 76px);
+}
+
 .ws-menu-h:where(*) {
   color: var(--faint);
   font-family: var(--font-mono);
@@ -8611,7 +8621,6 @@ body:where(*) {
 
 @media (max-width: 520px) {
   .notif-popover {
-    position: fixed;
     top: 72px;
     right: 12px;
     left: 12px;
