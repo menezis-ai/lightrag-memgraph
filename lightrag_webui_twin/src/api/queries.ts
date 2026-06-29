@@ -17,7 +17,7 @@ import { api } from './resources';
 import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
-import type { ListEnvelope, UploadDocumentInput } from './resources';
+import type { ActivityQuery, ListEnvelope, UploadDocumentInput } from './resources';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
@@ -326,14 +326,7 @@ export function useTagCategories(options: QueryGate = {}) {
 }
 
 export function useActivity(
-  query: {
-    range?: string;
-    kind?: string;
-    sev?: string;
-    actor?: string;
-    q?: string;
-    limit?: number;
-  } = {},
+  query: ActivityQuery = {},
   options: QueryGate = {},
 ) {
   const scope = folderScope(options);

@@ -189,19 +189,34 @@ describe('useActivity', () => {
   it('passes the activity query params and scopes to default folder', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ items: [], total: 0 }));
     const client = newClient();
-    renderHook(() => useActivity({ kind: 'doc-retagged', limit: 5 }), {
-      wrapper: wrapperForClient(client),
-    });
+    const query = {
+      range: '30d',
+      kind: 'doc-retagged',
+      sev: 'warning',
+      actor: 'claire.benoit',
+      q: 'oracle',
+      resourceId: 'doc-123',
+      limit: 5,
+    };
+    renderHook(() => useActivity(query), { wrapper: wrapperForClient(client) });
     await waitFor(() =>
       expect(
         client.getQueryData([
           'activity',
           'default',
-          { kind: 'doc-retagged', limit: 5 },
+          query,
         ]),
       ).toBeDefined(),
     );
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/activity');
+    const url = new URL(String(fetchMock.mock.calls[0][0]), 'http://test');
+    expect(url.pathname).toContain('/activity');
+    expect(url.searchParams.get('range')).toBe('30d');
+    expect(url.searchParams.get('kind')).toBe('doc-retagged');
+    expect(url.searchParams.get('sev')).toBe('warning');
+    expect(url.searchParams.get('actor')).toBe('claire.benoit');
+    expect(url.searchParams.get('q')).toBe('oracle');
+    expect(url.searchParams.get('resource.id')).toBe('doc-123');
+    expect(url.searchParams.get('limit')).toBe('5');
   });
 });
 

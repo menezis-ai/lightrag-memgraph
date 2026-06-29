@@ -2,8 +2,9 @@
  * Activity feed types — audit trail across source lifecycle, tag mutations,
  * retrievals, pipeline events, auth, settings.
  *
- * Contract template for backend phase 1: `GET /activity?range=&kind=&sev=&actor=&q=`
- * returns `{ items: ActivityEvent[], total }`. CSV export is client-side.
+ * Contract template for backend phase 1:
+ * `GET /activity?range=&kind=&sev=&actor=&q=&resource.id=&limit=`
+ * returns `{ items: ActivityEvent[], total, nowMs }`. CSV export is client-side.
  */
 
 import type { IconName } from '../components/Icon';

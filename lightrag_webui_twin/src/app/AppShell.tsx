@@ -15,7 +15,7 @@
  *   - VITE_AUTH_TOKEN=…    → optional dev/test bearer fallback.
  */
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { DocDetailPanel } from '../components/DocDetailPanel';
 import { DocumentsTab } from '../components/DocumentsTab';
 import { PendingDocsSection } from '../components/PendingDocsSection';
@@ -38,7 +38,7 @@ import {
   useFolders,
 } from '../api/queries';
 import { setActiveFolder } from '../api/client';
-import { api } from '../api/resources';
+import { api, type ActivityQuery } from '../api/resources';
 import { mapTwinQueryResponseForRetrievalTab } from '../api/twinQueryResponse';
 import { FORMAT_CATEGORIES } from '../constants/formatCategories';
 import type { Document } from '../types/document';
@@ -73,6 +73,8 @@ import { type DetailRequest, useAppNavigation } from './useAppNavigation';
 import { useDocumentActions } from './useDocumentActions';
 import { useTagActions } from './useTagActions';
 import { useToasts } from './useToasts';
+
+const ACTIVITY_PAGE_LIMIT = 200;
 
 declare global {
   interface Window {
@@ -196,12 +198,21 @@ export function AppShell() {
   // (documents, graph) preserves the bulk of the perf win.
   const tags = useTags({ enabled: authReady, folderKey: folder });
   const tagCategories = useTagCategories({ enabled: authReady, folderKey: folder });
+  const [activityQuery, setActivityQuery] = useState<ActivityQuery>({
+    range: '7d',
+    limit: ACTIVITY_PAGE_LIMIT,
+  });
+  const handleActivityQueryChange = useCallback((next: ActivityQuery) => {
+    setActivityQuery((current) =>
+      JSON.stringify(current) === JSON.stringify(next) ? current : next,
+    );
+  }, []);
   // Activity stays always-enabled (vs. tab-gated): the feed drives the
   // topbar unread counters cross-tab, and the e2e contract requires
   // `/twin/api/activity` to refire under the new folder header at switch
   // time. Lightweight read (bounded via `limit`), so the perf cost is
   // negligible compared to documents / graph which remain gated.
-  const activity = useActivity({}, { enabled: authReady, folderKey: folder });
+  const activity = useActivity(activityQuery, { enabled: authReady, folderKey: folder });
   const graphEntities = useGraphEntities({
     enabled: authReady && tab === 'graph',
     folderKey: folder,
@@ -413,6 +424,7 @@ export function AppShell() {
   const tagCategoryList = tagCategories.data ?? [];
   const activityEvents = activity.data?.items ?? [];
   const activityNow = activity.data?.nowMs;
+  const activityTotal = activity.data?.total ?? activityEvents.length;
   const graphEntityList = graphEntities.data ?? [];
   const graphRelationList = graphRelations.data ?? [];
 
@@ -616,6 +628,7 @@ export function AppShell() {
           {tab === 'activity' && (
             <ActivityTab
               events={activityEvents}
+              total={activityTotal}
               nowMs={activityNow}
               folderLabel={kbName || folder}
               density="comfortable"
@@ -623,6 +636,8 @@ export function AppShell() {
               onPushToast={pushToast}
               onNavigate={onNavigate}
               onRefresh={() => activity.refetch()}
+              onQueryChange={handleActivityQueryChange}
+              limit={activityQuery.limit ?? ACTIVITY_PAGE_LIMIT}
             />
           )}
           {tab === 'graph' && (

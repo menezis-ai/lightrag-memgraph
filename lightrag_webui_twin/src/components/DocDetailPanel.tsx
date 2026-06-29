@@ -401,7 +401,7 @@ interface AuditTabProps {
 function AuditTab({ docId, nowMs }: Readonly<AuditTabProps>) {
   const { data, isLoading } = useQuery({
     queryKey: ['doc-audit', docId] as const,
-    queryFn: () => api.listActivity({ resourceId: docId }),
+    queryFn: () => api.listActivity({ resourceId: docId, limit: 200 }),
   });
   if (isLoading) {
     return (

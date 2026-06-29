@@ -43,6 +43,8 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
   };
 }
 
+const auditRequests: string[] = [];
+
 const server = setupServer(
   http.get('*/documents/:id/chunks', ({ params }) =>
     HttpResponse.json([
@@ -50,8 +52,9 @@ const server = setupServer(
       { chunk_id: `${String(params.id)}_c1`, order: 1, text: 'Chunk 2 text content with extra details.' },
     ]),
   ),
-  http.get('*/twin/api/activity', () =>
-    HttpResponse.json({
+  http.get('*/twin/api/activity', ({ request }) => {
+    auditRequests.push(request.url);
+    return HttpResponse.json({
       items: [
         {
           id: 'a1',
@@ -68,8 +71,8 @@ const server = setupServer(
       ],
       total: 1,
       nowMs: Date.parse('2026-05-29T16:00:00Z'),
-    }),
-  ),
+    });
+  }),
 );
 
 function wrap(qc: QueryClient) {
@@ -80,6 +83,7 @@ function wrap(qc: QueryClient) {
 
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
+  auditRequests.length = 0;
   (window as Window & typeof globalThis).__twinConfig = undefined;
   server.listen({ onUnhandledRequest: 'bypass' });
 });
@@ -249,6 +253,9 @@ describe('DocDetailPanel — tabs', () => {
     await waitFor(() =>
       expect(screen.getByTestId('doc-detail-audit-list')).toBeInTheDocument(),
     );
+    const url = new URL(auditRequests[0]);
+    expect(url.searchParams.get('resource.id')).toBe('d-test-1');
+    expect(url.searchParams.get('limit')).toBe('200');
   });
 });
 

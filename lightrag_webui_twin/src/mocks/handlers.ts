@@ -27,7 +27,7 @@ import {
   TAG_FIXTURES,
   FOLDER_FIXTURES,
 } from '../fixtures';
-import type { ActivityEvent } from '../types/activity';
+import { ACTIVITY_RANGE_MS, type ActivityEvent } from '../types/activity';
 import type { Document, DocumentStatus } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification } from '../types/topbar';
@@ -727,6 +727,14 @@ function statusCountsFor(docs: readonly Document[]): Record<DocumentStatus, numb
 }
 
 function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean {
+  const range = params.get('range');
+  if (range && range !== 'all') {
+    const windowMs = ACTIVITY_RANGE_MS[range as keyof typeof ACTIVITY_RANGE_MS];
+    if (windowMs !== undefined) {
+      const ts = Date.parse(e.ts);
+      if (Number.isNaN(ts) || ts < ACTIVITY_NOW_MS - windowMs) return false;
+    }
+  }
   const kind = params.get('kind');
   if (kind) {
     const wanted = new Set(kind.split(','));
@@ -737,11 +745,25 @@ function matchActivityQuery(e: ActivityEvent, params: URLSearchParams): boolean 
   const actor = params.get('actor');
   if (actor && actor !== 'any' && e.actor.user !== actor) return false;
   const resourceId = params.get('resource.id');
-  if (resourceId && e.target.id !== resourceId) return false;
+  if (
+    resourceId &&
+    e.target.id !== resourceId &&
+    String(e.meta?.doc_id ?? '') !== resourceId
+  ) {
+    return false;
+  }
   const q = params.get('q');
   if (q) {
     const needle = q.toLowerCase();
-    const hay = (e.summary + ' ' + e.target.label + ' ' + e.actor.user).toLowerCase();
+    const hay = (
+      e.summary +
+      ' ' +
+      e.target.label +
+      ' ' +
+      e.actor.user +
+      ' ' +
+      e.id
+    ).toLowerCase();
     if (!hay.includes(needle)) return false;
   }
   return true;
@@ -1612,8 +1634,12 @@ export const handlers = [
     const filtered = activityState.filter((e) =>
       matchActivityQuery(e, url.searchParams),
     );
+    const limit = Math.max(
+      1,
+      Math.min(Number(url.searchParams.get('limit') ?? 200) || 200, 1000),
+    );
     return HttpResponse.json({
-      items: filtered,
+      items: filtered.slice(0, limit),
       total: filtered.length,
       nowMs: ACTIVITY_NOW_MS,
     });

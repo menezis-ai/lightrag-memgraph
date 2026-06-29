@@ -50,6 +50,16 @@ export interface ListEnvelope<T> {
   next_cursor?: string | null;
 }
 
+export interface ActivityQuery {
+  range?: string;
+  kind?: string;
+  sev?: string;
+  actor?: string;
+  q?: string;
+  limit?: number;
+  resourceId?: string;
+}
+
 export interface DocumentsQuery {
   status?: string;
   q?: string;
@@ -674,15 +684,7 @@ export const twinApi = {
 
   // Activity audit feed (a.k.a. audit-events)
   listActivity: (
-    q: {
-      range?: string;
-      kind?: string;
-      sev?: string;
-      actor?: string;
-      q?: string;
-      limit?: number;
-      resourceId?: string;
-    } = {},
+    q: ActivityQuery = {},
     init?: ApiRequestInit,
   ) => {
     const params: Record<string, string | number | undefined> = { ...q };

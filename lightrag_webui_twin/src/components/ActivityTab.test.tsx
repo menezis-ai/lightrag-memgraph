@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ActivityTab, exportActivityCsv } from './ActivityTab';
 import { ACTIVITY_FIXTURES, ACTIVITY_NOW_MS } from '../fixtures';
@@ -45,16 +45,52 @@ describe('ActivityTab — rendering', () => {
     expect(screen.getByText('Earlier this week')).toBeInTheDocument();
   });
 
-  it('shows the right stats: total / errors / warnings / retrievals', () => {
+  it('shows honest backend-scope stats: total / loaded / limit / filters', () => {
     render(<ActivityTab {...defaultProps()} />);
-    // Within 7d range = all 16 fixtures (the oldest is 2026-05-07 = 4d ago)
-    // 2 errors, 2 warnings, 4 retrievals.
+    // Within 7d range = all 16 fixtures (the oldest is 2026-05-07 = 4d ago).
     const stats = document.querySelector('.activity-stats') as HTMLElement;
     const t = stats.textContent || '';
-    expect(t).toMatch(/16\s*events/);
-    expect(t).toMatch(/2\s*errors/);
-    expect(t).toMatch(/3\s*warnings/);
-    expect(t).toMatch(/4\s*retrievals/);
+    expect(t).toMatch(/16\s*matching events/);
+    expect(t).toMatch(/16\s*loaded/);
+    expect(t).toMatch(/200\s*page limit/);
+    expect(t).toMatch(/1\s*active filters/);
+  });
+
+  it('publishes filter state as backend query params', async () => {
+    const onQueryChange = vi.fn();
+    render(<ActivityTab {...defaultProps()} onQueryChange={onQueryChange} />);
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenLastCalledWith({
+        range: '7d',
+        kind: undefined,
+        sev: undefined,
+        actor: undefined,
+        q: undefined,
+        resourceId: undefined,
+        limit: 200,
+      }),
+    );
+
+    await userEvent.click(screen.getByRole('tab', { name: '30d' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Retrieval' }));
+    await userEvent.selectOptions(screen.getByLabelText('Severity filter'), 'error');
+    await userEvent.selectOptions(
+      screen.getByLabelText('Actor filter'),
+      'marc.berthier',
+    );
+    await userEvent.type(screen.getByLabelText('Search events'), 'oracle');
+
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenLastCalledWith({
+        range: '30d',
+        kind: 'retrieval',
+        sev: 'error',
+        actor: 'marc.berthier',
+        q: 'oracle',
+        resourceId: undefined,
+        limit: 200,
+      }),
+    );
   });
 
   it('shows the folder on every activity row (active folder fallback)', () => {
@@ -83,7 +119,7 @@ describe('ActivityTab — filters', () => {
       'error',
     );
     const stats = document.querySelector('.activity-stats') as HTMLElement;
-    expect(stats.textContent).toMatch(/2\s*events/);
+    expect(stats.textContent).toMatch(/2\s*matching events/);
   });
 
   it('actor filter narrows to one user', async () => {
@@ -94,7 +130,7 @@ describe('ActivityTab — filters', () => {
     );
     const stats = document.querySelector('.activity-stats') as HTMLElement;
     // marc.berthier has 3 events: 2 retrievals + 1 auth.
-    expect(stats.textContent).toMatch(/3\s*events/);
+    expect(stats.textContent).toMatch(/3\s*matching events/);
   });
 
   it('search query filters by substring across summary / target / id / actor', async () => {
@@ -113,7 +149,7 @@ describe('ActivityTab — filters', () => {
     render(<ActivityTab {...defaultProps()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Retrieval' }));
     const stats = document.querySelector('.activity-stats') as HTMLElement;
-    expect(stats.textContent).toMatch(/4\s*events/);
+    expect(stats.textContent).toMatch(/4\s*matching events/);
   });
 
   it('empty state shows "Clear filters" CTA and resets filters', async () => {

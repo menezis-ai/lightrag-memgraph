@@ -29,11 +29,15 @@ import {
   type ActivitySeverity,
 } from '../types/activity';
 import type { Toast } from '../types/toast';
+import type { ActivityQuery } from '../api/resources';
 
 export type ActivityDensity = 'comfortable' | 'compact';
+export const DEFAULT_ACTIVITY_LIMIT = 200;
 
 export interface ActivityTabProps {
   events: readonly ActivityEvent[];
+  /** Backend-filtered total for the current activity query. */
+  total?: number;
   /** Pinned "now" for deterministic ranges. Defaults to `Date.now()`. */
   nowMs?: number;
   folderLabel?: string;
@@ -46,6 +50,12 @@ export interface ActivityTabProps {
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
   /** Host-controlled query refresh. Used by the explicit Refresh affordance. */
   onRefresh?: () => void | Promise<unknown>;
+  /** Publishes UI filters so the host can issue authoritative backend queries. */
+  onQueryChange?: (query: ActivityQuery) => void;
+  /** Page size requested from the backend. */
+  limit?: number;
+  /** Optional resource scope, used by embedded audit views. */
+  resourceId?: string;
 }
 
 const RANGE_IDS = ACTIVITY_RANGES.map((r) => r.id);
@@ -58,6 +68,7 @@ function kindPillStateClass(explicit: boolean, active: boolean): string {
 
 export function ActivityTab({
   events,
+  total,
   nowMs,
   folderLabel = 'default',
   density = 'comfortable',
@@ -66,6 +77,9 @@ export function ActivityTab({
   onPushToast,
   onNavigate,
   onRefresh,
+  onQueryChange,
+  limit = DEFAULT_ACTIVITY_LIMIT,
+  resourceId,
 }: Readonly<ActivityTabProps>) {
   const [range, setRange] = useUrlParam<ActivityRange>('range', '7d', {
     validate: (v) => (RANGE_IDS as readonly string[]).includes(v),
@@ -99,6 +113,34 @@ export function ActivityTab({
     }, 30_000);
     return () => clearInterval(t);
   }, [live, onRefresh]);
+
+  const kindParam = useMemo(
+    () => (kinds.size ? [...kinds].join(',') : undefined),
+    [kinds],
+  );
+  const searchParam = q.trim() || undefined;
+
+  useEffect(() => {
+    onQueryChange?.({
+      range,
+      kind: kindParam,
+      sev: sev === 'any' ? undefined : sev,
+      actor: actor === 'any' ? undefined : actor,
+      q: searchParam,
+      resourceId,
+      limit,
+    });
+  }, [
+    actor,
+    kindParam,
+    limit,
+    onQueryChange,
+    q,
+    range,
+    resourceId,
+    searchParam,
+    sev,
+  ]);
 
   const actors = useMemo(() => {
     const s = new Set<string>(events.map((e) => e.actor.user));
@@ -142,6 +184,15 @@ export function ActivityTab({
   }, [events, range, kinds, sev, actor, q, nowMs, initialNowMs]);
 
   const selected = filtered.find((e) => e.id === selectedId) ?? filtered[0] ?? null;
+  const backendTotal = total ?? filtered.length;
+  const loadedCount = filtered.length;
+  const activeFilterCount =
+    (range !== 'all' ? 1 : 0) +
+    (kinds.size ? 1 : 0) +
+    (sev !== 'any' ? 1 : 0) +
+    (actor !== 'any' ? 1 : 0) +
+    (q.trim() ? 1 : 0) +
+    (resourceId ? 1 : 0);
 
   const grouped = useMemo(() => {
     if (!groupByDay) return [['', filtered] as const];
@@ -178,7 +229,7 @@ export function ActivityTab({
               className={'activity-live ' + (live ? 'is-on' : 'is-paused')}
               title={
                 live
-                  ? 'Polling /activity every 9s'
+                  ? 'Polling /activity every 30s'
                   : 'Polling disabled — new events will not surface until re-enabled in Tweaks'
               }
             >
@@ -300,19 +351,19 @@ export function ActivityTab({
 
         <div className="activity-stats">
           <span className="stat">
-            <b>{filtered.length}</b> events
+            <b>{backendTotal}</b> matching events
           </span>
           <span className="dot-sep">·</span>
           <span className="stat">
-            <b>{filtered.filter((e) => e.sev === 'error').length}</b> errors
+            <b>{loadedCount}</b> loaded
           </span>
           <span className="dot-sep">·</span>
           <span className="stat">
-            <b>{filtered.filter((e) => e.sev === 'warning').length}</b> warnings
+            <b>{limit}</b> page limit
           </span>
           <span className="dot-sep">·</span>
           <span className="stat">
-            <b>{filtered.filter((e) => e.kind === 'retrieval').length}</b> retrievals
+            <b>{activeFilterCount}</b> active filters
           </span>
         </div>
 

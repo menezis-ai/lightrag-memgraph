@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { setupServer } from 'msw/node';
 import { handlers, resetDocumentsState } from './handlers';
 import {
+  ACTIVITY_FIXTURES,
   ACTIVITY_NOW_MS,
   API_VERSION,
   DOCUMENT_FIXTURES,
@@ -178,6 +179,68 @@ describe('MSW handlers — Twin overlay endpoints', () => {
     );
     expect(data.items.length).toBeGreaterThan(0);
     data.items.forEach((e) => expect(e.sev).toBe('error'));
+  });
+
+  it(`GET ${TWIN}/activity?q=event-id matches event ids`, async () => {
+    const data = await getJson<{ items: { id: string }[]; total: number }>(
+      `${TWIN}/activity?q=${ACTIVITY_FIXTURES[0].id}`,
+    );
+    expect(data.total).toBe(1);
+    expect(data.items.map((event) => event.id)).toEqual([
+      ACTIVITY_FIXTURES[0].id,
+    ]);
+  });
+
+  it(`GET ${TWIN}/activity applies range and limit while total stays pre-limit`, async () => {
+    const data = await getJson<{ items: { ts: string }[]; total: number }>(
+      `${TWIN}/activity?range=24h&limit=1`,
+    );
+    const cutoff = ACTIVITY_NOW_MS - 24 * 60 * 60 * 1000;
+    expect(data.items).toHaveLength(1);
+    expect(data.total).toBeGreaterThan(data.items.length);
+    expect(data.total).toBe(
+      ACTIVITY_FIXTURES.filter((event) => Date.parse(event.ts) >= cutoff).length,
+    );
+  });
+
+  it(`GET ${TWIN}/activity?resource.id matches meta doc_id`, async () => {
+    await fetch(BASE + '/__e2e/activity', {
+      method: 'POST',
+      body: JSON.stringify({
+        events: [
+          {
+            id: 'evt_meta_doc',
+            ts: '2026-05-11T09:58:00Z',
+            rel: 'now',
+            day: 'Today',
+            kind: 'doc-approved',
+            sev: 'info',
+            actor: { user: 'system', role: 'operator' },
+            target: { type: 'document', label: 'doc via meta' },
+            summary: 'Document approved',
+            meta: { doc_id: 'doc-456' },
+          },
+          {
+            id: 'evt_without_doc_id',
+            ts: '2026-05-11T09:59:00Z',
+            rel: 'now',
+            day: 'Today',
+            kind: 'doc-approved',
+            sev: 'info',
+            actor: { user: 'system', role: 'operator' },
+            target: { type: 'document', label: 'no document id' },
+            summary: 'Document-less event',
+            meta: {},
+          },
+        ],
+      }),
+    });
+
+    const data = await getJson<{ items: { id: string }[]; total: number }>(
+      `${TWIN}/activity?resource.id=doc-456`,
+    );
+    expect(data.total).toBe(1);
+    expect(data.items.map((event) => event.id)).toEqual(['evt_meta_doc']);
   });
 
   it(`GET ${TWIN}/graph/entities returns the fixture array`, async () => {
