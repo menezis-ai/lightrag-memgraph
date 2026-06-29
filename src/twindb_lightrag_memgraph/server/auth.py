@@ -283,6 +283,98 @@ def _jwt_exp_to_iso(payload: dict[str, Any]) -> str | None:
         return None
 
 
+async def _emit_login_activity(
+    *,
+    username: str,
+    success: bool,
+    reason: str | None = None,
+) -> None:
+    from .activity_events import emit_auth_event
+
+    await emit_auth_event(
+        action="login_success" if success else "login_failure",
+        sev="info" if success else "warning",
+        actor=username or "anonymous",
+        target_type="auth",
+        target_label="login",
+        summary=(
+            f"login succeeded for {username or 'anonymous'}"
+            if success
+            else f"login failed for {username or 'anonymous'}"
+        ),
+        meta={
+            "username": username or "anonymous",
+            "success": success,
+            "reason": reason if reason else None,
+        },
+    )
+
+
+def _actor_from_idp_user(user: dict[str, Any] | None) -> str | None:
+    if not isinstance(user, dict):
+        return None
+    for key in ("sso_subject", "email", "sub", "name"):
+        value = user.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+async def resolve_auth_actor(request: Request | None) -> str | None:
+    """Best-effort actor resolution for auth Activity events.
+
+    Never raises and never returns secrets. The order mirrors auth itself:
+    IdP user first, then local JWT cookie/bearer, then static API key label.
+    """
+    if request is None:
+        return None
+
+    try:
+        from . import idp_jwt
+
+        if idp_jwt.get_active_config() is not None:
+            actor = _actor_from_idp_user(idp_jwt.require_idp_user(request))
+            if actor:
+                return actor
+    except HTTPException:
+        pass
+    except Exception:  # noqa: BLE001 - actor attribution must not break auth.
+        logger.debug("[auth] IdP actor resolution failed", exc_info=True)
+
+    bearer_token: str | None = None
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        bearer_token = auth_header.split(" ", 1)[1].strip() or None
+
+    if _jwt_secret:
+        token = request.cookies.get(_local_jwt_cookie_name) or bearer_token
+        if token:
+            try:
+                payload = _decode_jwt(token)
+                return str(payload.get("sub") or "unknown")
+            except HTTPException:
+                pass
+
+    if _static_api_key and bearer_token and _secret_equal(bearer_token, _static_api_key):
+        return "api_key"
+    return None
+
+
+async def emit_logout_activity(request: Request | None = None) -> None:
+    from .activity_events import emit_auth_event
+
+    actor = await resolve_auth_actor(request) or "unknown"
+    await emit_auth_event(
+        action="logout",
+        sev="info",
+        actor=actor,
+        target_type="auth",
+        target_label="logout",
+        summary=f"logout for {actor}",
+        meta={"success": True},
+    )
+
+
 def _resolve_idp_identity(request, idp_config) -> str | None:
     """IdP JWT resolution (Couche 3 §3.3) — active when JWKS URL is set.
 
@@ -580,9 +672,17 @@ async def auth_status(
 
 
 @auth_router.post("/login")
-async def login(body: LoginRequest, response: Response) -> LoginResponse:  # NOSONAR - async contract.
+async def login(  # NOSONAR - async contract.
+    body: LoginRequest,
+    response: Response,
+) -> LoginResponse:
     """Authenticate with username/password and receive a JWT token."""
     if not _jwt_secret:
+        await _emit_login_activity(
+            username=body.username,
+            success=False,
+            reason="jwt_not_configured",
+        )
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="JWT auth not configured on this server",
@@ -599,6 +699,11 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:  # NOS
     )
     password_matches = _secret_equal(body.password, password_to_check)
     if expected_password is None or not password_matches:
+        await _emit_login_activity(
+            username=body.username,
+            success=False,
+            reason="invalid_credentials",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -616,10 +721,19 @@ async def login(body: LoginRequest, response: Response) -> LoginResponse:  # NOS
         path="/",
     )
 
+    await _emit_login_activity(username=body.username, success=True)
     return LoginResponse(access_token=token, expires_in=expires_in)
 
 
-@auth_router.post("/logout")
-def logout(response: Response) -> dict[str, bool]:
+async def logout(
+    response: Response,
+    request: Request | None = None,
+) -> dict[str, bool]:
     response.delete_cookie(_local_jwt_cookie_name, path="/")
+    await emit_logout_activity(request)
     return {"ok": True}
+
+
+@auth_router.post("/logout")
+async def logout_route(request: Request, response: Response) -> dict[str, bool]:
+    return await logout(response, request)

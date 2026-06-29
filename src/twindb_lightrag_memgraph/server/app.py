@@ -167,6 +167,14 @@ def _record_status_metrics(path: str, status_code: int) -> None:
         increment_metric("ingestion_failures_total")
 
 
+def _access_denied_reason(status_code: int) -> str | None:
+    if status_code == 401:
+        return "unauthorized"
+    if status_code == 403:
+        return "forbidden"
+    return None
+
+
 def _vector_index_check(rag: Any) -> dict[str, Any]:
     """Best-effort vector handle readiness without running a vector search."""
     if rag is None:
@@ -522,6 +530,14 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
 
         response.headers["x-request-id"] = request_id
         _record_status_metrics(path, response.status_code)
+        if response.status_code in {401, 403}:
+            from .activity_events import emit_access_denied_event
+
+            await emit_access_denied_event(
+                request,
+                status_code=response.status_code,
+                reason=_access_denied_reason(response.status_code),
+            )
         _log_request_completed(
             request, request_id, route_group, auth_mode_label, started,
             response.status_code,

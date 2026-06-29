@@ -144,6 +144,12 @@ async def client(monkeypatch, tmp_path, fake_jwks):
 
 
 class TestCreateFolderGating:
+    async def _latest_auth_event(self):
+        store = webui_router.get_store()
+        items, _, _ = await store.list_activity(kind="auth", limit=1)
+        assert items
+        return items[0]
+
     async def test_no_token_returns_401(self, client):
         r = await client.post(
             "/folders",
@@ -151,6 +157,26 @@ class TestCreateFolderGating:
         )
         assert r.status_code == 401
         assert 'error="missing_token"' in r.headers["www-authenticate"]
+
+    async def test_no_token_emits_auth_activity_401(self, client):
+        r = await client.post(
+            "/folders",
+            json={"id": "sandbox", "label": "S", "kind": "sandbox"},
+        )
+        assert r.status_code == 401
+
+        event = await self._latest_auth_event()
+        assert event["kind"] == "auth"
+        assert event["sev"] == "warning"
+        assert event["actor"]["user"] == "anonymous"
+        assert event["target"] == {"type": "route", "label": "/folders"}
+        assert event["meta"] == {
+            "operation": "access_denied",
+            "method": "POST",
+            "path": "/folders",
+            "status_code": 401,
+            "reason": "unauthorized",
+        }
 
     async def test_non_admin_token_returns_403(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-reader"])
@@ -161,6 +187,26 @@ class TestCreateFolderGating:
         )
         assert r.status_code == 403
         assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["detail"]
+
+    async def test_non_admin_emits_auth_activity_403(self, client, rsa_keypair):
+        token = _make_token(rsa_keypair, groups=["twin-reader"])
+        _set_idp_cookie(client, token)
+        r = await client.post(
+            "/folders",
+            json={"id": "sandbox", "label": "S"},
+        )
+        assert r.status_code == 403
+
+        event = await self._latest_auth_event()
+        assert event["kind"] == "auth"
+        assert event["sev"] == "warning"
+        assert event["actor"]["user"] == "user-twin-reader"
+        assert event["target"] == {"type": "route", "label": "/folders"}
+        assert event["meta"]["operation"] == "access_denied"
+        assert event["meta"]["method"] == "POST"
+        assert event["meta"]["path"] == "/folders"
+        assert event["meta"]["status_code"] == 403
+        assert event["meta"]["reason"] == "forbidden"
 
     async def test_admin_token_returns_201(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])

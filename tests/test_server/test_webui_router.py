@@ -312,6 +312,24 @@ class TestActivity:
         assert event["target"]["label"] == "runbook.pdf"
         assert event["meta"]["track_id"] == "upload-track-1"
 
+    async def test_twin_auth_logout_emits_activity(self, client):
+        r = await client.post("/twin/api/auth/logout")
+        assert r.status_code == 200
+        set_cookie = "\n".join(r.headers.get_list("set-cookie"))
+        assert "twin_local_token=" in set_cookie
+        assert "Max-Age=0" in set_cookie
+
+        feed = await client.get("/activity", params={"kind": "auth", "limit": 1})
+        body = feed.json()
+        assert body["total"] >= 1
+        event = body["items"][0]
+        assert event["kind"] == "auth"
+        assert event["sev"] == "info"
+        assert event["actor"]["user"] == "unknown"
+        assert event["target"]["type"] == "auth"
+        assert event["target"]["label"] == "logout"
+        assert event["meta"]["operation"] == "logout"
+
     async def test_total_is_pre_limit(self, client):
         response = await client.get("/activity", params={"kind": "retrieval", "limit": 1})
         body = response.json()

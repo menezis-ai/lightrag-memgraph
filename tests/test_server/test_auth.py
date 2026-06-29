@@ -12,8 +12,10 @@ from twindb_lightrag_memgraph.server.auth import (
     _decode_jwt,
     require_auth,
     login,
+    logout,
     _auth_enabled,
 )
+from twindb_lightrag_memgraph.server import webui_router
 
 HS256_TEST_SECRET = "test-hs256-secret-minimum-32-bytes"
 OTHER_HS256_TEST_SECRET = "other-hs256-secret-minimum-32-bytes"
@@ -261,6 +263,12 @@ class TestRequireAuth:
 
 
 class TestLoginEndpoint:
+    async def _latest_auth_event(self):
+        store = webui_router.get_store()
+        items, _, _ = await store.list_activity(kind="auth", limit=1)
+        assert items
+        return items[0]
+
     async def test_login_success(self):
         from fastapi import Response
 
@@ -273,6 +281,25 @@ class TestLoginEndpoint:
         assert resp.access_token
         assert resp.token_type == "bearer"
         assert resp.expires_in == 4 * 3600
+
+    async def test_login_success_emits_activity(self):
+        from fastapi import Response
+
+        webui_router.reset_store()
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
+        await login(LoginRequest(username="admin", password="pass"), Response())
+
+        event = await self._latest_auth_event()
+        assert event["kind"] == "auth"
+        assert event["sev"] == "info"
+        assert event["actor"]["user"] == "admin"
+        assert event["target"] == {"type": "auth", "label": "login"}
+        assert event["meta"]["operation"] == "login_success"
+        assert event["meta"]["success"] is True
 
     async def test_login_success_with_auth_accounts(self):
         from fastapi import Response
@@ -316,6 +343,7 @@ class TestLoginEndpoint:
     async def test_login_bad_password(self):
         from fastapi import HTTPException
 
+        webui_router.reset_store()
         configure_auth(
             jwt_secret=HS256_TEST_SECRET,
             jwt_username="admin",
@@ -324,6 +352,67 @@ class TestLoginEndpoint:
         with pytest.raises(HTTPException) as exc_info:
             await login(LoginRequest(username="admin", password="wrong"), Response())
         assert exc_info.value.status_code == 401
+
+    async def test_login_bad_password_emits_activity(self):
+        from fastapi import HTTPException
+
+        webui_router.reset_store()
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
+        with pytest.raises(HTTPException):
+            await login(LoginRequest(username="admin", password="wrong"), Response())
+
+        event = await self._latest_auth_event()
+        assert event["kind"] == "auth"
+        assert event["sev"] == "warning"
+        assert event["actor"]["user"] == "admin"
+        assert event["target"] == {"type": "auth", "label": "login"}
+        assert event["meta"]["operation"] == "login_failure"
+        assert event["meta"]["reason"] == "invalid_credentials"
+        assert "password" not in repr(event["meta"]).lower()
+
+    async def test_logout_emits_activity(self):
+        from fastapi import Response
+        from http.cookies import SimpleCookie
+        from starlette.requests import Request
+
+        webui_router.reset_store()
+        configure_auth(
+            jwt_secret=HS256_TEST_SECRET,
+            jwt_username="admin",
+            jwt_password="pass",
+        )
+        login_response = Response()
+        await login(
+            LoginRequest(username="admin", password="pass"),
+            login_response,
+        )
+        cookie = SimpleCookie()
+        cookie.load(login_response.headers["set-cookie"])
+        cookie_header = (
+            f"twin_local_token={cookie['twin_local_token'].value}".encode()
+        )
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/logout",
+                "headers": [(b"cookie", cookie_header)],
+            }
+        )
+        response = Response()
+        result = await logout(response, request)
+
+        assert result == {"ok": True}
+        event = await self._latest_auth_event()
+        assert event["kind"] == "auth"
+        assert event["sev"] == "info"
+        assert event["actor"]["user"] == "admin"
+        assert event["target"] == {"type": "auth", "label": "logout"}
+        assert event["meta"]["operation"] == "logout"
 
     async def test_login_jwt_not_configured(self):
         from fastapi import HTTPException

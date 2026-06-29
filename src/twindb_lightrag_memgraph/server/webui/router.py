@@ -597,7 +597,7 @@ def _get_rag():
 
 
 @router.post("/auth/logout", response_model=AckResponse)
-def logout() -> dict[str, Any]:
+async def logout(request: Request) -> dict[str, Any]:
     """Sign out the current operator.
 
     Under the current Traefik Basic Auth gate, sign-out is mostly a
@@ -611,8 +611,10 @@ def logout() -> dict[str, Any]:
     under the current model.
     """
     from fastapi.responses import JSONResponse
+    from ..auth import logout as auth_logout
 
     response = JSONResponse(content={"ok": True})
+    await auth_logout(response, request)
     # Pre-emptive cookie clear for the future JWT flow. Currently a
     # no-op because Basic Auth uses HTTP headers, not cookies.
     response.delete_cookie("twin_session", path="/")

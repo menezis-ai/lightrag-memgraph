@@ -245,11 +245,6 @@ export function useAuth(): UseAuthResult {
       expiryTimerRef.current = null;
     }
     try {
-      await api.logoutLocal();
-    } catch {
-      // Keep clearing client-side state even if the local endpoint is absent.
-    }
-    try {
       await api.logout();
     } catch {
       // Server reachability errors should still let us cycle the client side.

@@ -532,10 +532,10 @@ def build_native_shims_router(
         return await login(body, response)
 
     @router.post("/logout", response_model=_OkResponse)
-    def logout_shim(response: Response) -> dict[str, bool]:
+    async def logout_shim(response: Response, request: Request) -> dict[str, bool]:
         from .auth import logout
 
-        return logout(response)
+        return await logout(response, request)
 
     @router.get(
         "/documents",

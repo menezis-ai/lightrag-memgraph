@@ -156,7 +156,7 @@ describe('useAuth — dev fallback', () => {
 });
 
 describe('useAuth — signout', () => {
-  it('clears the query cache and redirects to the IdP logout endpoint', async () => {
+  it('calls only the canonical Twin logout, clears cache, and redirects', async () => {
     const qc = new QueryClient();
     qc.setQueryData(['documents'], { items: [], total: 0 });
     window.localStorage.setItem('twin-rag.threads.v3', JSON.stringify([]));
@@ -169,7 +169,7 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
-    expect(logoutLocalMock).toHaveBeenCalledOnce();
+    expect(logoutLocalMock).not.toHaveBeenCalled();
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['documents'])).toBeUndefined();
     expect(window.localStorage.getItem('twin-rag.threads.v3')).toBeNull();
@@ -189,7 +189,7 @@ describe('useAuth — signout', () => {
       await result.current.signout();
     });
 
-    expect(logoutLocalMock).toHaveBeenCalledOnce();
+    expect(logoutLocalMock).not.toHaveBeenCalled();
     expect(logoutMock).toHaveBeenCalledOnce();
     expect(qc.getQueryData(['notifications'])).toBeUndefined();
     expect(window.location.href).toMatch(/realms\/twin/);
