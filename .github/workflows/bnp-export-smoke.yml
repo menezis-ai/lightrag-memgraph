@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 30
     env:
       IMAGE_NAME: twindb-lightrag-memgraph-bnp:ci
-      TWIN_SMOKE_BASE_URL: http://127.0.0.1:9621
+      TWIN_SMOKE_BASE_URL: http://127.0.0.1:18080
       ARTIFACTORY_USERNAME: ci-smoke
       ARTIFACTORY_PASSWORD: ci-smoke-password
       BNP_REGISTRY_USERNAME: ${{ secrets.BNP_REGISTRY_USERNAME }}
@@ -45,7 +45,7 @@ jobs:
           docker run -d \
             --name twin-smoke-runtime \
             --network twin-smoke \
-            -p 9621:9621 \
+            -p 18080:9621 \
             -e MEMGRAPH_URI=bolt://twin-smoke-memgraph:7687 \
             -e LIGHTRAG_PORT=9621 \
             -e LIGHTRAG_HOST=0.0.0.0 \
@@ -68,6 +68,13 @@ jobs:
           done
           docker logs twin-smoke-runtime || true
           exit 1
+
+      - name: Inspect runtime endpoint
+        run: |
+          docker ps --filter name=twin-smoke --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
+          curl -i "${TWIN_SMOKE_BASE_URL}/" | sed -n '1,40p'
+          curl -i "${TWIN_SMOKE_BASE_URL}/webui" | sed -n '1,80p'
+          curl -i "${TWIN_SMOKE_BASE_URL}/auth-status" | sed -n '1,80p'
 
       - name: Run runtime smoke checks
         run: python tests/smoke/run_smoke.py tests/smoke/runtime-smoke-ci-http.json
