@@ -64,10 +64,21 @@ test.describe('Activity filters and event detail', () => {
     return Number(await stat.innerText());
   };
 
+  const activityTotal = async (
+    page: import('@playwright/test').Page,
+    params: Record<string, string>,
+  ) =>
+    page.evaluate(async (query) => {
+      const qs = new URLSearchParams(query);
+      const res = await fetch(`/twin/api/activity?${qs.toString()}`);
+      const body = (await res.json()) as { total: number };
+      return body.total;
+    }, { range: '7d', limit: '200', ...params });
+
   test('@activity @filters severity filter narrows the timeline to matching rows', async ({
     page,
   }) => {
-    const errorCount = await statsCount(page, 'errors');
+    const errorCount = await activityTotal(page, { sev: 'error' });
     expect(errorCount).toBeGreaterThan(0);
 
     await page.getByLabel('Severity filter').selectOption('error');
@@ -84,7 +95,7 @@ test.describe('Activity filters and event detail', () => {
   });
 
   test('@activity @filters kind pill isolates one event kind', async ({ page }) => {
-    const retrievals = await statsCount(page, 'retrievals');
+    const retrievals = await activityTotal(page, { kind: 'retrieval' });
     expect(retrievals).toBeGreaterThan(0);
 
     const retrievalPill = page
