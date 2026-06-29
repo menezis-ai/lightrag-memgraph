@@ -98,10 +98,22 @@ describe('ToastViewport — interactions', () => {
     );
   });
 
+  it('renders the timer progress affordance even when Undo is unavailable', () => {
+    render(<ToastViewport toasts={[propagating]} onUndo={() => {}} onDismiss={() => {}} />);
+    const progress = document.querySelector('.toast-progress') as HTMLElement;
+    expect(progress).toBeInTheDocument();
+    expect(progress).not.toHaveClass('undo-progress');
+    expect(progress.style.getPropertyValue('--toast-auto-dismiss-ms')).toBe(
+      `${TOAST_AUTO_DISMISS_MS}ms`,
+    );
+  });
+
   it('error toast renders Dismiss and propagates onDismiss', async () => {
     const onDismiss = vi.fn();
     render(<ToastViewport toasts={[error]} onUndo={() => {}} onDismiss={onDismiss} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    const dismiss = screen.getByRole('button', { name: 'Dismiss' });
+    expect(dismiss).toHaveClass('toast-dismiss');
+    await userEvent.click(dismiss);
     expect(onDismiss).toHaveBeenCalledWith(error);
   });
 

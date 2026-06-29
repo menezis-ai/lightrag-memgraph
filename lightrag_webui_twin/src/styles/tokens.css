@@ -49,11 +49,11 @@
 }
 
 :root[data-theme="dark"] {
-  --twin-accent: #5A92D0;
-  --twin-accent-hover: #7AABDF;
-  --twin-accent-soft-bg: #1D2D44;
-  --twin-accent-soft-text: #B5D4F4;
-  --twin-accent-soft-border: #2D5A8E;
+  --twin-accent: #3E7CA8;
+  --twin-accent-hover: #4D88B3;
+  --twin-accent-soft-bg: #162635;
+  --twin-accent-soft-text: #9EC7E4;
+  --twin-accent-soft-border: #28445C;
 
   --twin-green-700: #7AB68C;
   --twin-green-50: #1A2C20;
@@ -71,7 +71,7 @@
   --color-text-tertiary: #6B7B8C;
   --color-border-secondary: #3A4756;
   --color-border-tertiary: #2A3340;
-  --color-background-primary: #131A22;
-  --color-background-secondary: #0E141B;
-  --color-background-tertiary: #090E14;
+  --color-background-primary: #16161D;
+  --color-background-secondary: #1B1B23;
+  --color-background-tertiary: #202029;
 }

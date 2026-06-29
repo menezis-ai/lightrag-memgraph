@@ -47,11 +47,11 @@
 }
 
 :root[data-theme="dark"] {
-  --twin-accent: #5A92D0;
-  --twin-accent-hover: #7AABDF;
-  --twin-accent-soft-bg: #1D2D44;
-  --twin-accent-soft-text: #B5D4F4;
-  --twin-accent-soft-border: #2D5A8E;
+  --twin-accent: #3E7CA8;
+  --twin-accent-hover: #4D88B3;
+  --twin-accent-soft-bg: #162635;
+  --twin-accent-soft-text: #9EC7E4;
+  --twin-accent-soft-border: #28445C;
 
   --twin-green-700: #7AB68C;
   --twin-green-50: #1A2C20;
@@ -69,9 +69,9 @@
   --color-text-tertiary: #6B7B8C;
   --color-border-secondary: #3A4756;
   --color-border-tertiary: #2A3340;
-  --color-background-primary: #131A22;
-  --color-background-secondary: #0E141B;
-  --color-background-tertiary: #090E14;
+  --color-background-primary: #16161D;
+  --color-background-secondary: #1B1B23;
+  --color-background-tertiary: #202029;
 }
 
 * { box-sizing: border-box; }
@@ -1881,6 +1881,8 @@ dialog::backdrop {
   pointer-events: none;
 }
 .toast {
+  --toast-progress-start: var(--twin-accent);
+  --toast-progress-end: var(--twin-red-vivid);
   pointer-events: auto;
   display: flex; align-items: center; gap: 12px;
   padding: 12px 14px;
@@ -1889,8 +1891,12 @@ dialog::backdrop {
   border-radius: var(--border-radius-lg);
   max-width: 360px;
   min-width: 280px;
-  animation: slide-up 280ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  animation:
+    slide-up 280ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    toast-expiry-pulse 1s ease-in-out var(--toast-warning-delay-ms, 20s) 5 alternate forwards;
 }
+.toast.done { --toast-progress-start: var(--twin-green-700); }
+.toast.error { --toast-progress-start: var(--twin-red-vivid); }
 .toast.removing { animation: slide-out 200ms ease forwards; }
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(20px); }
@@ -1898,6 +1904,10 @@ dialog::backdrop {
 }
 @keyframes slide-out {
   to { opacity: 0; transform: translateY(8px); }
+}
+@keyframes toast-expiry-pulse {
+  from { opacity: 1; }
+  to { opacity: 0.72; }
 }
 .toast .icon { flex-shrink: 0; }
 .toast .icon.propagating { color: var(--twin-accent); animation: spin 1s linear infinite; }
@@ -1933,13 +1943,42 @@ dialog::backdrop {
   font-weight: 500;
 }
 .toast .undo:hover { background: var(--twin-accent); color: #fff; }
-.toast .undo-progress {
-  position: absolute; bottom: 0; left: 0; height: 2px;
-  background: var(--twin-accent);
-  border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
-  animation: undo-bar var(--toast-undo-progress-ms, 25s) linear forwards;
+.toast .toast-dismiss {
+  animation: toast-dismiss-warning var(--toast-auto-dismiss-ms, 25s) linear forwards;
 }
-@keyframes undo-bar { from { width: 100%; } to { width: 0; } }
+.toast .toast-dismiss:hover {
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-border);
+  color: var(--twin-red-vivid);
+}
+.toast .toast-progress {
+  position: absolute; bottom: 0; left: 0; height: 2px;
+  width: 100%;
+  background: var(--toast-progress-start);
+  border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+  transform-origin: left center;
+  animation:
+    toast-progress-bar var(--toast-auto-dismiss-ms, 25s) linear forwards,
+    toast-progress-warning var(--toast-auto-dismiss-ms, 25s) linear forwards;
+  pointer-events: none;
+}
+@keyframes toast-progress-bar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes toast-progress-warning {
+  0%, 78% { background: var(--toast-progress-start); }
+  100% { background: var(--toast-progress-end); }
+}
+@keyframes toast-dismiss-warning {
+  0%, 68% {
+    background: var(--color-background-primary);
+    border-color: var(--color-border-tertiary);
+    color: var(--color-text-secondary);
+  }
+  100% {
+    background: var(--twin-red-50);
+    border-color: var(--twin-red-border);
+    color: var(--twin-red-vivid);
+  }
+}
 .toast:where(*) { position: relative; overflow: hidden; }
 
 /* ----- Misc ----- */
@@ -8440,9 +8479,18 @@ dialog::backdrop {
   color: #fff;
 }
 
-/* ─── Toasts: auto-dismiss fade-out (no manual ✕) ──────────────────────────── */
+/* ─── Toasts: auto-dismiss timing affordances ─────────────────────────────── */
 .toast.is-fading { opacity: 0; transition: opacity var(--toast-fade-ms, 6000ms) linear; }
-@media (prefers-reduced-motion: reduce) { .toast.is-fading { transition-duration: 1ms; } }
+@media (prefers-reduced-motion: reduce) {
+  .toast:where(*) {
+    animation: slide-up 1ms linear;
+  }
+  .toast .toast-dismiss,
+  .toast .toast-progress {
+    animation: none;
+  }
+  .toast.is-fading { transition-duration: 1ms; }
+}
 
 /* ─── DocDetailPanel — right slide-over (PR #155) ──────────────────────────── */
 .doc-detail-panel:where(*) {
@@ -8643,21 +8691,21 @@ dialog::backdrop {
 }
 
 :root[data-theme="dark"]:where(*):where(*) {
-  --canvas: #14181E;
-  --surface: #1C212A;
-  --surface-warm: #20262F;
-  --panel: #262D38;
-  --border: #2F3742;
-  --border-soft: #262D37;
-  --border-strong: #3C4552;
+  --canvas: #16161D;
+  --surface: #1B1B23;
+  --surface-warm: #202029;
+  --panel: #262632;
+  --border: #30313B;
+  --border-soft: #272832;
+  --border-strong: #3C3D49;
   --ink: #E9EBEF;
   --ink-soft: #B6BEC9;
   --muted: #8892A0;
   --faint: #6B7682;
-  --blue: #62A2D2;
-  --blue-bright: #83BAE2;
-  --blue-soft: #1A2937;
-  --blue-soft-bd: #2E4459;
+  --blue: #3E7CA8;
+  --blue-bright: #4D88B3;
+  --blue-soft: #162635;
+  --blue-soft-bd: #28445C;
   --green: #7CC08F;
   --green-bright: #93D0A3;
   --green-soft: #16241F;
@@ -8669,7 +8717,7 @@ dialog::backdrop {
   --red: #E48D80;
   --red-soft: #2A1A18;
   --red-soft-bd: #4A302C;
-  --bar-bg: rgba(20, 24, 30, 0.82);
+  --bar-bg: rgba(22, 22, 29, 0.9);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.62), 0 6px 14px rgba(0, 0, 0, 0.5);
@@ -8854,11 +8902,10 @@ body:where(*) {
   border-radius: 8px;
 }
 
-.toast .undo-progress:where(*) {
+.toast .toast-progress:where(*) {
   display: block;
   width: 100%;
   height: 3px;
-  background: var(--accent);
   opacity: 0.9;
 }
 

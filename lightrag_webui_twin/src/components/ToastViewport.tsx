@@ -24,6 +24,12 @@ import {
   type Toast,
 } from '../types/toast';
 
+const TOAST_FINAL_WARNING_MS = 5_000;
+const TOAST_WARNING_DELAY_MS = Math.max(
+  0,
+  TOAST_AUTO_DISMISS_MS - TOAST_FINAL_WARNING_MS,
+);
+
 export interface ToastViewportProps {
   toasts: readonly Toast[];
   onUndo: (toast: Toast) => void;
@@ -111,8 +117,14 @@ interface ToastCardProps {
 
 function ToastCard({ toast, onUndo, onDismiss }: Readonly<ToastCardProps>) {
   const kind = toast.kind;
+  const timingStyle = {
+    '--toast-auto-dismiss-ms': `${TOAST_AUTO_DISMISS_MS}ms`,
+    '--toast-final-warning-ms': `${TOAST_FINAL_WARNING_MS}ms`,
+    '--toast-warning-delay-ms': `${TOAST_WARNING_DELAY_MS}ms`,
+    '--toast-undo-progress-ms': `${TOAST_AUTO_DISMISS_MS}ms`,
+  } as CSSProperties;
   return (
-    <div className={kind === 'error' ? 'toast error' : 'toast'}>
+    <div className={`toast ${kind}`} style={timingStyle}>
       <span className={`icon ${kind}`}>
         {kind === 'propagating' && <Icon name="loader-2" size={18} />}
         {kind === 'done' && <Icon name="circle-check" size={18} />}
@@ -133,22 +145,20 @@ function ToastCard({ toast, onUndo, onDismiss }: Readonly<ToastCardProps>) {
       )}
       <button
         type="button"
-        className="icon-btn"
+        className="icon-btn toast-dismiss"
         onClick={() => onDismiss(toast)}
         aria-label="Dismiss"
       >
         <Icon name="x" size={14} />
       </button>
-      {kind === 'done' && toast.undo !== undefined && (
-        <span
-          className="undo-progress"
-          style={
-            {
-              '--toast-undo-progress-ms': `${TOAST_AUTO_DISMISS_MS}ms`,
-            } as CSSProperties
-          }
-        />
-      )}
+      <span
+        className={
+          kind === 'done' && toast.undo !== undefined
+            ? 'toast-progress undo-progress'
+            : 'toast-progress'
+        }
+        style={timingStyle}
+      />
     </div>
   );
 }
