@@ -531,9 +531,9 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
         response.headers["x-request-id"] = request_id
         _record_status_metrics(path, response.status_code)
         if response.status_code in {401, 403}:
-            from .activity_events import emit_access_denied_event
+            from .activity_events import emit_access_denied_event_background
 
-            await emit_access_denied_event(
+            emit_access_denied_event_background(
                 request,
                 status_code=response.status_code,
                 reason=_access_denied_reason(response.status_code),

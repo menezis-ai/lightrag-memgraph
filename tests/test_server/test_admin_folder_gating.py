@@ -16,6 +16,7 @@ The dormant-IdP regression (everything open) is owned by
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -145,10 +146,45 @@ async def client(monkeypatch, tmp_path, fake_jwks):
 
 class TestCreateFolderGating:
     async def _latest_auth_event(self):
+        return await self._wait_for_latest_auth_event()
+
+    async def _wait_for_latest_auth_event(
+        self,
+        *,
+        timeout_s: float = 0.5,
+    ):
         store = webui_router.get_store()
-        items, _, _ = await store.list_activity(kind="auth", limit=1)
-        assert items
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            items, _, _ = await store.list_activity(kind="auth", limit=1)
+            if items:
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError("timeout while waiting for auth activity event")
+            await asyncio.sleep(0.01)
         return items[0]
+
+    async def _wait_for_auth_event_count(
+        self,
+        expected_count: int,
+        *,
+        timeout_s: float = 1.0,
+    ) -> list[dict[str, Any]]:
+        store = webui_router.get_store()
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            items, _, _ = await store.list_activity(kind="auth", limit=20)
+            if len(items) >= expected_count:
+                return items
+            if asyncio.get_running_loop().time() >= deadline:
+                return items
+            await asyncio.sleep(0.01)
+
+    async def _wait_for_new_auth_event(self, previous_count: int):
+        events = await self._wait_for_auth_event_count(previous_count + 1)
+        if len(events) < previous_count + 1:
+            raise AssertionError("timeout while waiting for new auth activity event")
+        return events
 
     async def test_no_token_returns_401(self, client):
         r = await client.post(
@@ -176,7 +212,21 @@ class TestCreateFolderGating:
             "path": "/folders",
             "status_code": 401,
             "reason": "unauthorized",
+            "folder": "not-applicable",
         }
+
+    async def test_no_token_auth_event_is_single_record(self, client):
+        store = webui_router.get_store()
+        before, _, _ = await store.list_activity(kind="auth", limit=10)
+
+        r = await client.post(
+            "/folders",
+            json={"id": "sandbox", "label": "S", "kind": "sandbox"},
+        )
+        assert r.status_code == 401
+
+        after = await self._wait_for_new_auth_event(len(before))
+        assert len(after) - len(before) == 1
 
     async def test_non_admin_token_returns_403(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-reader"])
@@ -207,6 +257,20 @@ class TestCreateFolderGating:
         assert event["meta"]["path"] == "/folders"
         assert event["meta"]["status_code"] == 403
         assert event["meta"]["reason"] == "forbidden"
+        assert event["meta"]["folder"] == "not-applicable"
+
+    async def test_folder_scoped_denial_keeps_folder_in_meta(self, client, rsa_keypair):
+        r = await client.get(
+            "/documents",
+            headers={"x-twin-folder": "default"},
+        )
+        assert r.status_code == 401
+
+        event = await self._latest_auth_event()
+        assert event["target"]["type"] == "route"
+        assert event["target"]["label"] == "/documents"
+        assert event["meta"]["operation"] == "access_denied"
+        assert event["meta"]["folder"] == "default"
 
     async def test_admin_token_returns_201(self, client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["twin-steward"])
