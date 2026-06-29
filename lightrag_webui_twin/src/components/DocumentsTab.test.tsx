@@ -15,7 +15,7 @@
 
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DocumentsTab } from './DocumentsTab';
@@ -215,9 +215,47 @@ describe('DocumentsTab — filters', () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
 
-    expect(screen.getByTestId('tag-filter-count')).toHaveTextContent(
+    const count = screen.getByTestId('tag-filter-count');
+    expect(count).toHaveTextContent(
       '2 documents match',
     );
+    expect(count).not.toHaveClass('pill');
+  });
+
+  it('clears search, status and tag filters from the tag-filter row', async () => {
+    renderTab(<DocumentsTab {...defaultProps()} />);
+    const clear = screen.getByRole('button', {
+      name: 'Clear all tags/filters',
+    });
+    expect(clear).toBeDisabled();
+
+    await userEvent.click(screen.getByTestId('row-tag-d1-rman'));
+    await userEvent.type(screen.getByLabelText('Search source'), 'oracle');
+    await userEvent.click(screen.getByRole('button', { name: /^Failed/ }));
+
+    expect(clear).toBeEnabled();
+    expect(screen.getByTestId('tag-filter-count')).toHaveTextContent(
+      '0 documents match',
+    );
+
+    await userEvent.click(clear);
+
+    expect(screen.getByLabelText('Search source')).toHaveValue('');
+    expect(screen.queryByTestId('tag-filter-count')).toBeNull();
+    expect(screen.getByRole('button', { name: /^All \(7\)/ })).toBeInTheDocument();
+    expect(screen.getByTestId('docs-row-d1')).toBeInTheDocument();
+    expect(screen.getByTestId('docs-row-d4')).toBeInTheDocument();
+    expect(clear).toBeDisabled();
+  });
+
+  it('exposes hidden row tags from the +N overflow chip without opening a modal', () => {
+    renderTab(<DocumentsTab {...defaultProps()} />);
+    const row = screen.getByTestId('docs-row-d5');
+    const overflow = within(row).getByRole('button', {
+      name: /Show 1 more tag/i,
+    });
+    expect(overflow).toHaveTextContent('+1');
+    expect(within(overflow).getByText('production')).toBeInTheDocument();
   });
 
   it('navigates Add-tag suggestions with arrow keys and Enter', async () => {

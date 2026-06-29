@@ -436,14 +436,12 @@ input:focus, textarea:focus, select:focus { outline: none; }
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 0.5px solid var(--color-border-tertiary);
-  border-radius: 999px;
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
+  min-height: 20px;
+  padding-left: 10px;
+  border-left: 1px solid var(--color-border-secondary);
+  color: var(--color-text-tertiary);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
 }
 .tag-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -457,6 +455,26 @@ input:focus, textarea:focus, select:focus { outline: none; }
   font-weight: 500;
 }
 .tag-add-btn:hover { color: var(--twin-accent-hover); text-decoration: underline; }
+.clear-filters-btn {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--twin-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.clear-filters-btn:hover:not(:disabled) {
+  color: var(--twin-accent-hover);
+  text-decoration: underline;
+}
+.clear-filters-btn:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+  opacity: 0.55;
+}
 
 /* tag chip */
 .tag-chip {
@@ -697,7 +715,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--color-text-secondary);
 }
 .cell-summary.failed { color: var(--twin-red-vivid); font-style: italic; }
-.cell-tags { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.cell-tags { display: flex; gap: 4px; flex-wrap: nowrap; overflow: visible; position: relative; }
 .cell-tags .more { font-size: 11px; color: var(--color-text-tertiary); }
 .cell-status .status-text { font-size: 11.5px; }
 .cell-status .status-text.completed { color: var(--twin-green-700); }
@@ -7243,6 +7261,61 @@ dialog::backdrop {
   color: var(--color-text-secondary);
   font-size: 10.5px;
   font-family: var(--font-mono);
+}
+.tag-overflow-button {
+  position: relative;
+  border: 0;
+  cursor: pointer;
+}
+.tag-overflow-button:focus-visible {
+  outline: 2px solid var(--twin-accent);
+  outline-offset: 2px;
+}
+.tag-overflow-popover {
+  position: absolute;
+  z-index: 35;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  display: flex;
+  gap: 5px;
+  max-width: 260px;
+  padding: 7px 8px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  box-shadow: 0 8px 22px rgba(15, 23, 32, 0.16);
+  color: var(--color-text-secondary);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(3px);
+  transition: opacity 120ms, transform 120ms;
+}
+.tag-overflow-popover::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid var(--color-border-secondary);
+  border-bottom: 1px solid var(--color-border-secondary);
+  background: var(--color-background-primary);
+  transform: translateX(-50%) rotate(45deg);
+}
+.tag-overflow-button:hover .tag-overflow-popover,
+.tag-overflow-button:focus .tag-overflow-popover {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tag-overflow-popover-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--twin-green-700) 10%, transparent);
+  color: var(--twin-green-700);
+  white-space: nowrap;
 }
 
 .row-action-danger {

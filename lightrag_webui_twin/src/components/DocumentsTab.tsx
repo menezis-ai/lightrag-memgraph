@@ -527,6 +527,22 @@ export function DocumentsTab({
     (onSourceFiltersChange ?? setLocalSourceFilters)([...next]);
     onFiltersChanged?.();
   };
+  const hasActiveFilters =
+    search.trim().length > 0 ||
+    statusFilter !== 'all' ||
+    tagFilters.length > 0 ||
+    sourceFilters.length > 0;
+  const clearAllFilters = () => {
+    if (!hasActiveFilters) return;
+    (onStatusFilterChange ?? setLocalStatusFilter)('all');
+    (onSearchChange ?? setLocalSearch)('');
+    (onTagFiltersChange ?? setLocalTagFilters)([]);
+    (onSourceFiltersChange ?? setLocalSourceFilters)([]);
+    setTagAddVal('');
+    setTagAddOpen(false);
+    setActiveTagSuggestionIndex(0);
+    onFiltersChanged?.();
+  };
 
   const searchAndTagFiltered = useMemo(() => {
     return docs.filter((doc) =>
@@ -830,6 +846,14 @@ export function DocumentsTab({
             </button>
           )}
         </div>
+        <button
+          type="button"
+          className="clear-filters-btn"
+          onClick={clearAllFilters}
+          disabled={!hasActiveFilters}
+        >
+          Clear all tags/filters
+        </button>
       </div>
 
       {selected.size > 0 && (
@@ -967,6 +991,7 @@ function DocRow({
   const isOptimisticUpload = doc._optimisticUpload === true;
   const canOpenDetail = Boolean(onOpenDetail && !isOptimisticUpload);
   const visibleTags = doc.tags.slice(0, 2);
+  const hiddenTags = doc.tags.slice(2);
   const overflow = doc.tags.length - visibleTags.length;
   const filterStatus = STATUS_TO_FILTER[doc.status];
   return (
@@ -1060,7 +1085,24 @@ function DocRow({
             <TagChip tag={t} />
           </button>
         ))}
-        {overflow > 0 && <span className="tag-overflow">+{overflow}</span>}
+        {overflow > 0 && (
+          <button
+            type="button"
+            className="tag-overflow tag-overflow-button"
+            aria-label={`Show ${overflow} more tag${overflow === 1 ? '' : 's'} for ${doc.file_path}`}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            +{overflow}
+            <span className="tag-overflow-popover" role="tooltip">
+              {hiddenTags.map((tag) => (
+                <span key={tag} className="tag-overflow-popover-chip">
+                  {tag}
+                </span>
+              ))}
+            </span>
+          </button>
+        )}
       </div>
       <div className="cell-status">
         {isDeleting ? (
