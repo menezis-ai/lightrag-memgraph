@@ -1964,11 +1964,11 @@ dialog::backdrop {
 }
 @keyframes toast-progress-bar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @keyframes toast-progress-warning {
-  0%, 78% { background: var(--toast-progress-start); }
+  0%, 38% { background: var(--toast-progress-start); }
   100% { background: var(--toast-progress-end); }
 }
 @keyframes toast-dismiss-warning {
-  0%, 68% {
+  0%, 38% {
     background: var(--color-background-primary);
     border-color: var(--color-border-tertiary);
     color: var(--color-text-secondary);
