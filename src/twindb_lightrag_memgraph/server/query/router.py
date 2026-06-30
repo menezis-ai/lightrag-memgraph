@@ -609,7 +609,14 @@ async def _row_matches_tag_filter(
         return True
     doc_ids = await _doc_ids_for_query_data_row(rag, row)
     if not doc_ids:
-        return False
+        # ``/query/data`` already binds ``tag_filter`` into
+        # ``storage_filter_context`` before LightRAG retrieves candidates. This
+        # post-filter is only a last-line consistency guard for rows that still
+        # carry a document identity. LightRAG 1.4.9.11 can strip both
+        # ``full_doc_id`` and the original chunk ``id`` while converting chunks
+        # to its public ``aquery_data`` format; fail-open here so the guard does
+        # not erase already-filtered chunks from the structured response.
+        return True
     for doc_id in doc_ids:
         # Per-request cache: chunks/references rows often repeat the
         # same doc_id; one Cypher round-trip per unique doc suffices.
