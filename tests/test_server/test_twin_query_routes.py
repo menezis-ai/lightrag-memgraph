@@ -1294,6 +1294,68 @@ class TestQueryEndpoint:
         assert body["data"]["chunks"] == []
         assert body["data"]["references"] == []
 
+    async def test_query_data_tag_filter_keeps_unresolvable_lightrag_chunks(
+        self, make_client, monkeypatch
+    ):
+        """Regression: LightRAG 1.4.9.11's ``aquery_data`` public chunk format
+        can lose both ``full_doc_id`` and the original chunk id. The storage
+        layer has already applied ``tag_filter`` before this payload is built,
+        so the route-level consistency guard must not erase these rows merely
+        because the public row can no longer be re-resolved to ``DocStatus``.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def should_not_fetch(_doc_id, _folder):
+            raise AssertionError("unresolvable chunks must not hit tag lookup")
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", should_not_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query processed successfully",
+                "data": {
+                    "chunks": [
+                        {
+                            "chunk_id": "",
+                            "content": "ATS CFT flow creation",
+                            "file_path": "cft.pdf",
+                            "reference_id": "1",
+                        },
+                    ],
+                    "entities": [],
+                    "relationships": [],
+                    "references": [{"reference_id": "1", "file_path": "cft.pdf"}],
+                },
+                "metadata": {
+                    "query_mode": "hybrid",
+                    "processing_info": {"final_chunks_count": 1},
+                },
+            },
+            chunk_to_doc={},
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "x", "tag_filter": {"all": ["ats"], "any": []}},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["chunks"] == [
+            {
+                "chunk_id": "",
+                "content": "ATS CFT flow creation",
+                "file_path": "cft.pdf",
+                "reference_id": "1",
+            }
+        ]
+        assert body["data"]["references"] == [
+            {"reference_id": "1", "file_path": "cft.pdf"}
+        ]
+        assert body["metadata"]["tag_filter"] == {"all": ["ats"], "any": []}
+
     async def test_query_data_tag_filter_caches_per_request(
         self, make_client, monkeypatch
     ):
