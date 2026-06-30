@@ -52,6 +52,12 @@ class FakeDocStatus:
     async def get_by_id(self, doc_id: str):
         return self.docs.get(doc_id)
 
+    async def get_doc_by_file_path(self, file_path: str):
+        for doc_id, doc in self.docs.items():
+            if doc.get("file_path") == file_path:
+                return {"id": doc_id, **doc}
+        return None
+
 
 class FakeRag:
     """Test double for ``LightRAG`` covering the three APIs the Twin
@@ -574,6 +580,68 @@ class TestQueryEndpoint:
         assert body["answer_status"] == "grounded"
         assert [s["doc_id"] for s in body["sources"]] == ["doc-oracle"]
         assert [s["name"] for s in body["sources"]] == ["/oracle"]
+
+    async def test_filtered_retrieval_sources_survive_file_path_doc_resolution(
+        self, make_client
+    ):
+        """GRA-003: filtered graph/tag/doc retrieval must keep sources even
+        when LightRAG's ``aquery_llm`` envelope dropped ``full_doc_id``.
+
+        The source is still projected from ``data.references``/``data.chunks``;
+        DocStatus only enriches that projected reference with a doc_id. A
+        conflicting chunks_vdb fixture proves the route does not recover sources
+        through a second nominal vector search.
+        """
+        rag = FakeRag(
+            answer="filtered answer [1]",
+            chunks=[
+                {
+                    "id": "chunk-a",
+                    "file_path": "/oracle",
+                    "score": 0.9,
+                },
+            ],
+            chunk_to_doc={},
+            docs={"doc-oracle": {"file_path": "/oracle"}},
+        )
+        rag.chunks_vdb.rows = [
+            {"id": "wrong", "file_path": "/network", "score": 0.99}
+        ]
+        client = await make_client(rag)
+
+        async def fake_tags(doc_id: str, folder: str):
+            assert folder == "default"
+            return {"oracle", "rman"} if doc_id == "doc-oracle" else set()
+
+        with patch(
+            "twindb_lightrag_memgraph.server.twin_query_routes._fetch_doc_graph_tags",
+            AsyncMock(side_effect=fake_tags),
+        ):
+            async with client:
+                r = await client.post(
+                    "/query",
+                    json={
+                        "query": "tagged retrieval",
+                        "tag_filter": {"all": ["oracle"], "any": []},
+                        "doc_filter": {"any": ["doc-oracle"]},
+                    },
+                )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["answer_status"] == "grounded"
+        assert body["sources"] == [
+            {
+                "n": 1,
+                "type": "file",
+                "name": "/oracle",
+                "meta": "1 chunk",
+                "score": 0.9,
+                "doc_id": "doc-oracle",
+                "chunk_id": "chunk-a",
+            }
+        ]
+        assert rag.chunks_vdb.last_query is None
 
     async def test_tag_filter_filters_projected_sources_on_query_stream(
         self, make_client

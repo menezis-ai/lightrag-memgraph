@@ -388,7 +388,12 @@ function BulkActionsBar({
         <Icon name="tags" size={13} /> Retag {selectedCount} sources
       </button>
       {showFolderActions && (
-        <>
+        <span
+          className="bulk-action-group"
+          role="group"
+          aria-label="Folder actions"
+          data-testid="docs-bulk-folder-actions"
+        >
           <button
             type="button"
             className="bulk-action"
@@ -405,7 +410,7 @@ function BulkActionsBar({
           >
             <Icon name="arrow-right" size={13} /> Move {selectedCount}
           </button>
-        </>
+        </span>
       )}
       {onBulkDelete && (
         <button
@@ -780,9 +785,7 @@ export function DocumentsTab({
       )}
 
       <div className="tag-filter-row">
-        <span className="lbl">
-          Filter by tag<em>— Twin</em>
-        </span>
+        <span className="lbl">Filter by tag</span>
         {tagFilterMatchCount !== null && (
           <span
             className="tag-filter-count"
@@ -933,12 +936,7 @@ export function DocumentsTab({
             </div>
             <div>Source</div>
             <div>Indexed preview</div>
-            <div>
-              Tags{' '}
-              <span className="docs-table-subhead">
-                — Twin
-              </span>
-            </div>
+            <div>Tags</div>
             <div>Status</div>
             <div>Chunks</div>
             <div>Updated</div>
@@ -1180,7 +1178,12 @@ function DocRow({
         {doc.chunks_count ?? 0}
       </div>
       <div className="cell-updated">{relativeTime(doc.updated_at, nowMs)}</div>
-      <div className="cell-actions">
+      <div
+        className="cell-actions"
+        role="group"
+        aria-label={`Actions for ${doc.file_path}`}
+        data-testid={`docs-row-actions-${doc.doc_id}`}
+      >
         {!isOptimisticUpload && (
           <>
             <button

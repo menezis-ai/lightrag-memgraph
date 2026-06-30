@@ -839,7 +839,7 @@ def _memgraph_exception_response(exc: BaseException) -> tuple[int, dict[str, Any
     return 503, {"error": payload["message"], **payload}
 
 
-async def _handle_memgraph_exception(
+def _handle_memgraph_exception(
     request: Request, exc: Neo4jError
 ) -> JSONResponse:
     status_code, payload = _memgraph_exception_response(exc)

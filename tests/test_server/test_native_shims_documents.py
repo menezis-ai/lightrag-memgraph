@@ -448,6 +448,222 @@ class TestNativeDeleteFolderGate:
         )
 
 
+class TestNativeListMembershipProjection:
+    """GET /documents must show docs shared into the active folder.
+
+    The native shim backs the React Document Management list. A doc copied or
+    moved into folder B keeps its legacy single-valued ``folder`` property from
+    folder A, so projection must expose the active visible folder after a
+    membership-scoped storage query.
+    """
+
+    async def test_membership_scoped_rows_project_visible_folder(self, monkeypatch):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "A")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [
+                    {"id": "A", "label": "A", "kind": "primary"},
+                    {"id": "B", "label": "B", "kind": "custom"},
+                ]
+            ),
+        )
+
+        class _DocStatus:
+            async def get_docs_paginated(self, **kwargs: Any):
+                folder = kwargs.get("folder")
+                if folder == "B":
+                    return [
+                        (
+                            "doc1",
+                            {
+                                "id": "doc1",
+                                "folder": "A",
+                                "status": "processed",
+                                "file_path": "shared.pdf",
+                                "chunks_count": 2,
+                                "metadata": {"folder": "A"},
+                            },
+                        )
+                    ], 1
+                return [], 0
+
+        class _Rag:
+            def __init__(self) -> None:
+                self.doc_status = _DocStatus()
+
+        async def no_tags(_docs, *, folder: str) -> None:
+            return None
+
+        monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
+        app = FastAPI()
+        app.include_router(build_native_shims_router(lambda: _Rag()))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.get("/documents", headers={"X-Twin-Folder": "B"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["items"][0]["doc_id"] == "doc1"
+        assert body["items"][0]["folder"] == "B"
+
+    async def test_legacy_unscoped_rows_still_filter_by_legacy_folder(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "A")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [
+                    {"id": "A", "label": "A", "kind": "primary"},
+                    {"id": "B", "label": "B", "kind": "custom"},
+                ]
+            ),
+        )
+
+        class _DocStatus:
+            async def get_docs_paginated(
+                self,
+                *,
+                page: int = 1,
+                page_size: int = DEFAULT_PAGE_SIZE,
+                status_filter: Any = None,
+            ):
+                return [
+                    (
+                        "doc1",
+                        {
+                            "id": "doc1",
+                            "folder": "A",
+                            "status": "processed",
+                            "file_path": "legacy.pdf",
+                            "chunks_count": 1,
+                        },
+                    )
+                ], 1
+
+        class _Rag:
+            def __init__(self) -> None:
+                self.doc_status = _DocStatus()
+
+        async def no_tags(_docs, *, folder: str) -> None:
+            return None
+
+        monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
+        app = FastAPI()
+        app.include_router(build_native_shims_router(lambda: _Rag()))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.get("/documents", headers={"X-Twin-Folder": "B"})
+
+        assert r.status_code == 200
+        assert r.json()["items"] == []
+
+
+class TestNativeChunksMembershipGate:
+    async def test_chunks_are_visible_through_membership_not_legacy_folder(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "A")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [
+                    {"id": "A", "label": "A", "kind": "primary"},
+                    {"id": "B", "label": "B", "kind": "custom"},
+                ]
+            ),
+        )
+
+        class _DocStatus:
+            async def get_by_id(self, doc_id: str):
+                return {
+                    "id": doc_id,
+                    "folder": "A",
+                    "chunks_list": ["chunk-1"],
+                    "metadata": {"folder": "A"},
+                }
+
+            async def get_folders_for_doc(self, doc_id: str):
+                return ["B"]
+
+        class _TextChunks:
+            async def get_by_ids(self, ids: list[str]):
+                return [
+                    {
+                        "_id": "chunk-1",
+                        "content": "visible in B",
+                        "chunk_order_index": 0,
+                    }
+                ]
+
+        class _Rag:
+            def __init__(self) -> None:
+                self.doc_status = _DocStatus()
+                self.text_chunks = _TextChunks()
+
+        app = FastAPI()
+        app.include_router(build_native_shims_router(lambda: _Rag()))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            visible = await client.get(
+                "/documents/doc1/chunks", headers={"X-Twin-Folder": "B"}
+            )
+            hidden = await client.get(
+                "/documents/doc1/chunks", headers={"X-Twin-Folder": "A"}
+            )
+
+        assert visible.status_code == 200
+        assert visible.json()[0]["chunk_id"] == "chunk-1"
+        assert hidden.status_code == 404
+
+
+class TestNativeListFilteredStatusCounts:
+    async def test_search_filtered_total_and_status_counts_share_scope(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [{"id": "default", "label": "Default", "kind": "primary"}]
+            ),
+        )
+        docs = {
+            "doc-processed": FakeDocStatus(
+                status="processed",
+                file_path="oracle-runbook.pdf",
+                chunks_count=2,
+            ),
+            "doc-failed": FakeDocStatus(
+                status="failed",
+                file_path="oracle-error.pdf",
+                chunks_count=0,
+            ),
+            "doc-other": FakeDocStatus(
+                status="processed",
+                file_path="postgres-guide.pdf",
+                chunks_count=1,
+            ),
+        }
+
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents", params={"q": "oracle"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 2
+        assert {item["doc_id"] for item in body["items"]} == {
+            "doc-processed",
+            "doc-failed",
+        }
+        assert body["status_counts"] == {"processed": 1, "failed": 1}
+
+
 class _DeleteRouteDocStatus:
     """DocStatus store for the DELETE route: membership is the authority."""
 

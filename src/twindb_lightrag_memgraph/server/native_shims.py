@@ -34,6 +34,7 @@ native routes in the FastAPI router list.
 from __future__ import annotations
 
 import logging
+import inspect
 from typing import Annotated, Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -202,7 +203,23 @@ def _has_local_document_filter(
     return any((q, tag, source, doc_id))
 
 
-def _project_doc_tuples(docs_tuples: list[tuple[str, Any]]) -> list[dict[str, Any]]:
+def _status_counts_for_projected_docs(
+    docs: list[dict[str, Any]],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for doc in docs:
+        status = str(doc.get("status") or "").lower()
+        if not status:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _project_doc_tuples(
+    docs_tuples: list[tuple[str, Any]],
+    *,
+    visible_folder: str | None = None,
+) -> list[dict[str, Any]]:
     """Flatten storage ``(doc_id, DocProcessingStatus)`` rows for the wire model."""
     import dataclasses
 
@@ -220,6 +237,8 @@ def _project_doc_tuples(docs_tuples: list[tuple[str, Any]]) -> list[dict[str, An
         if hasattr(payload.get("status"), "value"):
             payload["status"] = payload["status"].value
         payload["id"] = doc_id
+        if visible_folder is not None:
+            payload["folder"] = visible_folder
         projected.append(_project_doc(payload))
     return projected
 
@@ -331,21 +350,39 @@ async def _get_docs_paginated_for_shim(
     page_size: int,
     status_enum: Any,
     folder: str,
-) -> tuple[list[tuple[str, Any]], int]:
-    """Call DocStatus pagination with folder support when the backend has it."""
+) -> tuple[list[tuple[str, Any]], int, bool]:
+    """Call DocStatus pagination with folder support when the backend has it.
+
+    The boolean tells callers whether the rows are already membership-scoped to
+    ``folder``. When they are, projection must expose the *visible* folder even
+    if the legacy single-valued ``folder`` property still names the original
+    folder.
+    """
+    get_docs_paginated = rag.doc_status.get_docs_paginated
     try:
-        return await rag.doc_status.get_docs_paginated(
+        params = inspect.signature(get_docs_paginated).parameters
+    except (TypeError, ValueError):
+        supports_folder = True
+    else:
+        supports_folder = "folder" in params or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in params.values()
+        )
+    if not supports_folder:
+        docs, total = await get_docs_paginated(
             page=page,
             page_size=page_size,
             status_filter=status_enum,
-            folder=folder,
         )
-    except TypeError:
-        return await rag.doc_status.get_docs_paginated(
-            page=page,
-            page_size=page_size,
-            status_filter=status_enum,
-        )
+        return docs, total, False
+
+    docs, total = await get_docs_paginated(
+        page=page,
+        page_size=page_size,
+        status_filter=status_enum,
+        folder=folder,
+    )
+    return docs, total, True
 
 
 async def _list_filtered_documents_page(
@@ -359,12 +396,12 @@ async def _list_filtered_documents_page(
     tag: str | None,
     source: str | None,
     doc_id: str | None,
-) -> tuple[list[dict[str, Any]], int, str | None]:
+) -> tuple[list[dict[str, Any]], int, str | None, dict[str, int]]:
     all_tuples: list[tuple[str, Any]] = []
     fetch_page = 1
     total = 0
     while True:
-        docs_tuples, total = await _get_docs_paginated_for_shim(
+        docs_tuples, total, scoped_by_membership = await _get_docs_paginated_for_shim(
             rag,
             page=fetch_page,
             page_size=page_size,
@@ -376,7 +413,10 @@ async def _list_filtered_documents_page(
             break
         fetch_page += 1
 
-    projected = _project_doc_tuples(all_tuples)
+    projected = _project_doc_tuples(
+        all_tuples,
+        visible_folder=folder if scoped_by_membership else None,
+    )
     if tag:
         await _attach_tags_via_graph(projected, folder=folder)
     filtered = _filter_docs(
@@ -387,6 +427,7 @@ async def _list_filtered_documents_page(
         source=source,
         doc_id=doc_id,
     )
+    status_counts = _status_counts_for_projected_docs(filtered)
     filtered_total = len(filtered)
     start = (page - 1) * page_size
     end = start + page_size
@@ -394,7 +435,7 @@ async def _list_filtered_documents_page(
     if not tag:
         await _attach_tags_via_graph(page_items, folder=folder)
     next_cursor = str(page + 1) if end < filtered_total else None
-    return page_items, filtered_total, next_cursor
+    return page_items, filtered_total, next_cursor, status_counts
 
 
 async def _list_native_documents_page(
@@ -405,7 +446,7 @@ async def _list_native_documents_page(
     status_enum: Any,
     folder: str,
 ) -> tuple[list[dict[str, Any]], int, str | None]:
-    docs_tuples, total = await _get_docs_paginated_for_shim(
+    docs_tuples, total, scoped_by_membership = await _get_docs_paginated_for_shim(
         rag,
         page=page,
         page_size=page_size,
@@ -416,7 +457,10 @@ async def _list_native_documents_page(
     # number (opaque to the client). The storage call is folder-scoped when
     # supported, so this cursor no longer skips over non-folder rows.
     next_cursor = str(page + 1) if page * page_size < total else None
-    page_items = _project_doc_tuples(docs_tuples)
+    page_items = _project_doc_tuples(
+        docs_tuples,
+        visible_folder=folder if scoped_by_membership else None,
+    )
     # Tags via graph join — single batch Cypher round-trip.
     await _attach_tags_via_graph(page_items, folder=folder)
     page_items = _filter_docs(page_items, q=None, tag=None, folder=folder)
@@ -446,7 +490,12 @@ async def _list_documents_impl(
             logger.warning("twindb shim: unknown status filter %r", status)
 
     if _has_local_document_filter(q, tag, source, doc_id):
-        page_items, filtered_total, next_cursor = await _list_filtered_documents_page(
+        (
+            page_items,
+            filtered_total,
+            next_cursor,
+            filtered_status_counts,
+        ) = await _list_filtered_documents_page(
             rag,
             page=page,
             page_size=page_size,
@@ -457,6 +506,7 @@ async def _list_documents_impl(
             source=source,
             doc_id=doc_id,
         )
+        status_counts = filtered_status_counts
     else:
         page_items, filtered_total, next_cursor = await _list_native_documents_page(
             rag,
@@ -465,14 +515,12 @@ async def _list_documents_impl(
             status_enum=status_enum,
             folder=folder,
         )
-
-    status_counts = None
-    try:
-        status_counts = await rag.doc_status.get_status_counts(folder=folder)
-    except TypeError:
-        status_counts = await rag.doc_status.get_status_counts()
-    except AttributeError:
-        status_counts = None
+        try:
+            status_counts = await rag.doc_status.get_status_counts(folder=folder)
+        except TypeError:
+            status_counts = await rag.doc_status.get_status_counts()
+        except AttributeError:
+            status_counts = None
 
     return _ListEnvelope(
         items=[_DocumentEnvelope(**d) for d in page_items],
@@ -493,7 +541,9 @@ async def _list_document_chunks_impl(
     rag = get_rag()
     folder = resolve_folder_for_request(request)
     doc_status = await rag.doc_status.get_by_id(doc_id)
-    if doc_status is None or not _doc_matches_folder(doc_status, folder):
+    if doc_status is None or not await _doc_visible_in_folder(
+        rag, doc_id, doc_status, folder
+    ):
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
 
     # DocStatus may come back as dict (Memgraph backend) or dataclass

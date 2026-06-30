@@ -122,6 +122,44 @@ describe('useAppNavigation — onNavigate', () => {
       source: 'src-7',
       chunk: undefined,
     });
+    expect(opts.setDocumentsSearch).toHaveBeenCalledWith('');
+    expect(opts.setDocumentsSourceFilters).toHaveBeenCalledWith(['src-7']);
+  });
+
+  it('updates controlled document filters when navigating from entity A to entity B', () => {
+    const opts = makeOptions();
+    const { result } = renderHook(() => useAppNavigation(opts));
+
+    result.current.onNavigate('documents', {
+      source: 'oracle-restart-procedure.pdf',
+      doc: 'd1',
+    });
+    result.current.onNavigate('documents', {
+      source: 'memgraph-mage-3.8-release-notes.md',
+      doc: 'd4',
+    });
+
+    expect(opts.setDocumentsSearch).toHaveBeenLastCalledWith('');
+    expect(opts.setDocumentsTagFilters).toHaveBeenLastCalledWith([]);
+    expect(opts.setDocumentsStatusFilter).toHaveBeenLastCalledWith('all');
+    expect(opts.setDocumentsSourceFilters).toHaveBeenLastCalledWith([
+      'memgraph-mage-3.8-release-notes.md',
+    ]);
+  });
+
+  it('clears a stale source filter when document navigation switches to a text query', () => {
+    const opts = makeOptions();
+    const { result } = renderHook(() => useAppNavigation(opts));
+
+    result.current.onNavigate('documents', {
+      source: 'oracle-restart-procedure.pdf',
+      doc: 'd1',
+    });
+    result.current.onNavigate('documents', { q: 'Memgraph' });
+
+    expect(opts.setDetailRequest).toHaveBeenLastCalledWith(null);
+    expect(opts.setDocumentsSearch).toHaveBeenLastCalledWith('Memgraph');
+    expect(opts.setDocumentsSourceFilters).toHaveBeenLastCalledWith([]);
   });
 
   it('clears the detail request on a non-documents tab', () => {

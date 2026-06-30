@@ -3656,6 +3656,14 @@ header.topbar .notif-popover {
   white-space: nowrap;
 }
 .bulk-action:hover { background: var(--color-background-secondary); }
+.bulk-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  margin-left: 2px;
+  border-left: 1px solid color-mix(in oklab, var(--twin-accent) 24%, var(--color-border-tertiary));
+}
 .bulk-action.primary {
   background: var(--twin-accent);
   color: var(--twin-on-accent, #fff);
@@ -8189,12 +8197,12 @@ header.topbar .notif-popover {
 }
 
 .docs-table:where(*) {
-  min-width: 1040px;
+  min-width: 1120px;
 }
 .docs-row.has-select:where(*) {
   grid-template-columns:
     32px minmax(180px, 1.05fr) minmax(220px, 1.35fr) minmax(112px, 130px)
-    92px 56px 78px 36px;
+    92px 56px 78px minmax(96px, auto);
 }
 .cell-source,
 .cell-summary,
@@ -8348,7 +8356,9 @@ header.topbar .notif-popover {
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
+  padding-left: 10px;
   padding-right: 8px;
+  border-left: 1px solid var(--color-border-tertiary);
 }
 .row-action {
   display: inline-flex;
@@ -11609,5 +11619,358 @@ select {
   .kg-prop-row:where(*),
   .kg-prop-add-row:where(*) {
     min-width: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Section 15 — TAG-V2-003 Tags responsive hardening
+ * ════════════════════════════════════════════════════════════════════════ */
+
+.tags-header > :first-child,
+.tags-sub,
+.tags-search,
+.tags-body,
+.tags-rail,
+.tags-grid-wrap,
+.tag-card,
+.tag-detail {
+  min-width: 0;
+}
+
+.tags-sub,
+.taxonomy-import-status,
+.pending-card,
+.tag-card,
+.tag-detail,
+.tags-empty {
+  overflow-wrap: anywhere;
+}
+
+.tag-card-h,
+.tag-detail-h,
+.pending-card-h,
+.tag-card-footer,
+.hist-item {
+  min-width: 0;
+}
+
+.tag-card-name,
+.tag-detail-name,
+.pending-tagname,
+.rail-label,
+.domain-badge,
+.status-badge,
+.hist-what,
+.hist-who {
+  min-width: 0;
+}
+
+.tag-card-name,
+.tag-detail-name,
+.pending-tagname {
+  overflow-wrap: anywhere;
+}
+
+.domain-badge,
+.status-badge {
+  flex: 0 1 auto;
+}
+
+.tags-header-actions .ghost-btn,
+.tags-header-actions .primary-btn,
+.pending-actions .ghost-btn,
+.pending-actions .primary-btn,
+.detail-actions .ghost-btn,
+.detail-actions .primary-btn,
+.tags-empty-actions .ghost-btn,
+.tags-empty-actions .primary-btn {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .tags-screen:where(*):where(*):where(*):where(*):where(*) {
+    padding: 16px;
+  }
+
+  .tags-header:where(*):where(*) {
+    margin-bottom: 12px;
+  }
+
+  .tags-header-actions:where(*) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    width: 100%;
+  }
+
+  .tags-header-actions .ghost-btn,
+  .tags-header-actions .primary-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .taxonomy-import-status:where(*) {
+    width: 100%;
+    margin: 0 0 12px;
+  }
+
+  .pending-section:where(*) {
+    margin-bottom: 12px;
+  }
+
+  .pending-h:where(*) {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .pending-counts:where(*) {
+    flex-wrap: wrap;
+  }
+
+  .pending-grid:where(*):where(*) {
+    padding: 0 12px 12px;
+  }
+
+  .pending-actions:where(*) {
+    flex-wrap: wrap;
+  }
+
+  .tags-filters:where(*):where(*) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .tags-filters .mini-select {
+    width: 100%;
+  }
+
+  .tags-body:where(*):where(*):where(*):where(*):where(*) {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .tags-rail:where(*):where(*):where(*) {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+  }
+
+  .tags-rail-head:where(*) {
+    flex: 0 0 100%;
+    width: 100%;
+  }
+
+  .tags-rail:not(.is-managing) .rail-item:where(*) {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: min(220px, 70vw);
+  }
+
+  .tags-rail.is-managing:where(*):where(*):where(*) {
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+
+  .domain-rail-row:where(*) {
+    grid-template-columns: 26px minmax(0, 1fr) 24px 28px;
+  }
+
+  .domain-rail-actions:where(*) {
+    flex-wrap: wrap;
+  }
+
+  .domain-rail-actions .ghost-btn,
+  .domain-rail-actions .primary-btn,
+  .domain-rail-add {
+    flex: 1 1 120px;
+    justify-content: center;
+  }
+
+  .tags-grid:where(*):where(*):where(*) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 10px;
+  }
+
+  .tag-card:where(*):where(*) {
+    min-height: 0;
+  }
+
+  .tag-card-h:where(*) {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .tag-card-footer:where(*) {
+    flex-wrap: wrap;
+  }
+
+  .tag-detail:where(*):where(*) {
+    border: 1px solid var(--border);
+    border-radius: 13px;
+  }
+
+  .tag-detail .detail-head:where(*) {
+    padding: 14px 16px 12px;
+  }
+
+  .tag-detail-h:where(*) {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .usage-grid:where(*) {
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  }
+
+  .hist-item:where(*) {
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  }
+
+  .hist-who:where(*) {
+    grid-column: 2;
+  }
+
+  .detail-actions.wrap:where(*) {
+    align-items: stretch;
+  }
+
+  .detail-actions.wrap .ghost-btn,
+  .detail-actions.wrap .primary-btn {
+    flex: 1 1 132px;
+    justify-content: center;
+  }
+
+  .tags-empty-actions:where(*),
+  .tags-empty-suggest-row:where(*) {
+    align-items: stretch;
+  }
+
+  .tags-empty-actions .ghost-btn,
+  .tags-empty-actions .primary-btn,
+  .tags-empty-suggest-chip {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .topbar:where(*):where(*) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs";
+    align-items: center;
+    height: auto;
+    min-height: 0;
+    padding: 8px 10px 0;
+    gap: 6px 8px;
+  }
+
+  .topbar .brand:where(*):where(*):where(*) {
+    grid-area: brand;
+    width: 100%;
+    max-width: none;
+    min-height: 40px;
+    min-width: 0;
+    flex: none;
+  }
+
+  .topbar .brand-name:where(*) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .topbar-right:where(*):where(*) {
+    grid-area: actions;
+    min-width: 0;
+    flex: none;
+    gap: 6px;
+  }
+
+  .topbar-right .folder-pill:where(*) {
+    max-width: 112px;
+  }
+
+  .topbar-right .folder-pill > span:first-of-type {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tabs:where(*):where(*):where(*) {
+    grid-area: tabs;
+    width: 100%;
+    height: 44px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: flex-start;
+  }
+
+  .tab:where(*) {
+    height: 44px;
+    min-height: 44px;
+    padding-inline: 10px;
+  }
+
+  .tags-screen:where(*):where(*):where(*):where(*):where(*) {
+    padding: 12px;
+  }
+
+  .tags-header-actions:where(*) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pending-h:where(*) {
+    gap: 8px;
+  }
+
+  .pending-card:where(*) {
+    padding: 10px;
+  }
+
+  .pending-card-h:where(*) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .pending-card-h > span[style*="auto"] {
+    margin-left: 0 !important;
+  }
+
+  .tags-rail:not(.is-managing) .rail-item:where(*) {
+    max-width: 78vw;
+  }
+
+  .domain-rail-row:where(*) {
+    grid-template-columns: 26px minmax(0, 1fr) 28px;
+  }
+
+  .domain-rail-count:where(*) {
+    display: none;
+  }
+
+  .tag-card-h:where(*),
+  .tag-card-footer:where(*) {
+    gap: 6px;
+  }
+
+  .tag-card-footer .spacer:where(*) {
+    display: none;
+  }
+
+  .detail-section:where(*) {
+    padding-inline: 16px;
   }
 }

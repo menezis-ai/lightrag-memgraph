@@ -828,6 +828,8 @@ function DomainRailEditor({
               type="color"
               value={row.color}
               aria-label={`${row.label || row.id} color`}
+              required
+              aria-required="true"
               onChange={(e) =>
                 onUpdate(row.key, { color: e.target.value.toUpperCase() })
               }
@@ -838,6 +840,8 @@ function DomainRailEditor({
                 value={row.label}
                 aria-label={`${row.id} domain label`}
                 placeholder="Domain name"
+                required
+                aria-required="true"
                 onChange={(e) => onUpdate(row.key, { label: e.target.value })}
               />
               {!row.existing && (
@@ -846,6 +850,8 @@ function DomainRailEditor({
                   value={row.id}
                   aria-label={`${row.label || row.id} domain id`}
                   placeholder="domain-id"
+                  required
+                  aria-required="true"
                   onChange={(e) =>
                     onUpdate(row.key, { id: normalizeDomainId(e.target.value) })
                   }

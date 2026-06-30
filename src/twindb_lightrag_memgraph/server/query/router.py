@@ -92,6 +92,7 @@ def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 logger = logging.getLogger(__name__)
+UNKNOWN_SOURCE_NAME = "unknown source"
 
 class TwinQueryBody(BaseModel):
     query: str
@@ -334,6 +335,31 @@ async def _resolve_doc_for_chunk(rag: Any, chunk_id: str) -> str | None:
     return None
 
 
+async def _resolve_doc_for_file_path(rag: Any, file_path: str) -> str | None:
+    """Best-effort file_path -> doc_id resolution for projected references.
+
+    LightRAG's public ``aquery_llm`` envelope keeps ``file_path`` and
+    ``chunk_id`` but can drop the chunk-vdb ``full_doc_id`` before Twin projects
+    sources. Filtered graph/tag/doc retrieval then looked source-less because
+    the post-filter could not validate the source against document ids. Resolve
+    through DocStatus by file path; this is enrichment of the existing
+    ``aquery_llm`` reference, not a second vector retrieval.
+    """
+    if not file_path:
+        return None
+    try:
+        get_by_file_path = getattr(rag.doc_status, "get_doc_by_file_path", None)
+        if callable(get_by_file_path):
+            result = await get_by_file_path(file_path)
+            if isinstance(result, dict):
+                doc_id = result.get("id") or result.get("doc_id")
+                if isinstance(doc_id, str) and doc_id:
+                    return doc_id
+    except Exception:
+        logger.exception("twin_query: doc lookup failed for file_path %s", file_path)
+    return None
+
+
 async def _resolve_chunk_to_doc_id(
     rag: Any, chunk_ids: list[str]
 ) -> dict[str, str]:
@@ -361,6 +387,54 @@ async def _resolve_chunk_to_doc_id(
         if doc_id:
             out[chunk_id] = doc_id
     return out
+
+
+def _source_file_path_candidate(source: dict[str, Any]) -> str | None:
+    """Return a reliable file_path candidate from a projected source."""
+    name = source.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if source.get("_lightrag_reference_name_fallback"):
+        return None
+    if name == UNKNOWN_SOURCE_NAME:
+        return None
+    return name.strip()
+
+
+async def _enrich_sources_doc_ids_from_file_path(
+    rag: Any,
+    sources: list[dict[str, Any]],
+) -> None:
+    """Fill missing ``doc_id`` values in-place from projected source paths."""
+    file_paths = [
+        candidate
+        for source in sources
+        if not source.get("doc_id")
+        for candidate in [_source_file_path_candidate(source)]
+        if candidate
+    ]
+    if not file_paths:
+        return
+    import asyncio
+
+    unique = list(dict.fromkeys(file_paths))
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_file_path(rag, file_path) for file_path in unique),
+        return_exceptions=False,
+    )
+    file_path_to_doc_id = {
+        file_path: doc_id
+        for file_path, doc_id in zip(unique, resolved)
+        if doc_id
+    }
+    if not file_path_to_doc_id:
+        return
+    for source in sources:
+        if source.get("doc_id"):
+            continue
+        candidate = _source_file_path_candidate(source)
+        if candidate and candidate in file_path_to_doc_id:
+            source["doc_id"] = file_path_to_doc_id[candidate]
 
 
 def _split_source_ids(raw: Any) -> list[str]:
@@ -433,14 +507,13 @@ def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
     # We rely on an explicit marker emitted during projection.
     synthetic_name_marker = "_lightrag_reference_name_fallback"
 
-    ignore_if_unknown = "unknown source"
     out = {
         str(source[key]).strip()
         for key in ("doc_id", "name")
         if isinstance(source.get(key), str) and source.get(key).strip()
     }
-    if ignore_if_unknown in out:
-        out.discard(ignore_if_unknown)
+    if UNKNOWN_SOURCE_NAME in out:
+        out.discard(UNKNOWN_SOURCE_NAME)
     if source.get(synthetic_name_marker):
         out.discard(str(source.get("name") or "").strip())
     return out
@@ -729,7 +802,7 @@ async def _build_sources_legacy_fallback(
             chunk.get("file_path")
             or chunk.get("source")
             or chunk_id
-            or "unknown source"
+            or UNKNOWN_SOURCE_NAME
         )
         doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
         sources.append(
@@ -1036,6 +1109,7 @@ async def _build_envelope_sources(
             exc,
         )
         return [], False
+    await _enrich_sources_doc_ids_from_file_path(rag, sources)
     sources = _filter_sources_by_min_score(sources, body.min_score)
     filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
         sources,

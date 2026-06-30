@@ -1,5 +1,58 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { boot, openTab } from './helpers';
+
+async function expectTagsViewportIsContained(page: Page) {
+  const metrics = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const selectors = [
+      '.tags-screen',
+      '.tags-header',
+      '.tags-header-actions',
+      '.pending-section',
+      '.tags-filters',
+      '.tags-body',
+      '.tags-rail',
+      '.tags-grid-wrap',
+      '.tag-detail',
+    ];
+    const viewportWidth = window.innerWidth;
+    const offenders = selectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll<HTMLElement>(selector))
+        .filter((el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        })
+        .map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            selector,
+            left: Math.floor(rect.left),
+            right: Math.ceil(rect.right),
+            width: Math.ceil(rect.width),
+          };
+        })
+        .filter((rect) => rect.left < -1 || rect.right > viewportWidth + 1),
+    );
+    return {
+      viewportWidth,
+      documentScrollWidth: Math.ceil(doc.scrollWidth),
+      documentClientWidth: Math.floor(doc.clientWidth),
+      bodyScrollWidth: Math.ceil(body.scrollWidth),
+      bodyClientWidth: Math.floor(body.clientWidth),
+      offenders,
+    };
+  });
+
+  expect(metrics.documentScrollWidth, JSON.stringify(metrics)).toBeLessThanOrEqual(
+    metrics.documentClientWidth + 1,
+  );
+  expect(metrics.bodyScrollWidth, JSON.stringify(metrics)).toBeLessThanOrEqual(
+    metrics.bodyClientWidth + 1,
+  );
+  expect(metrics.offenders, JSON.stringify(metrics)).toEqual([]);
+}
 
 test.describe('Twin WebUI tag governance persistence', () => {
   test.beforeEach(async ({ page }) => {
@@ -186,4 +239,34 @@ test.describe('Twin WebUI tag governance persistence', () => {
     expect(styleSnapshot.color).not.toBe(styleSnapshot.backgroundColor);
     expect(styleSnapshot.color).not.toBe(styleSnapshot.modalBackgroundColor);
   });
+});
+
+test.describe('Twin WebUI tag governance responsive layout', () => {
+  for (const viewport of [
+    { name: 'mobile', width: 390, height: 760 },
+    { name: 'tablet', width: 820, height: 900 },
+  ] as const) {
+    test(`@tags @responsive ${viewport.name} stays contained and actions remain reachable`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await boot(page);
+      await openTab(page, 'Tags');
+
+      await expect(page.getByRole('heading', { name: 'Tags' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Request new tag' })).toBeVisible();
+      await expect(page.getByLabel('Search tags')).toBeVisible();
+      await expect(page.getByTestId('rail-all')).toBeVisible();
+      await expect(page.getByTestId('tag-card-oracle')).toBeVisible();
+
+      await expectTagsViewportIsContained(page);
+
+      await page.getByTestId('tag-card-oracle').click();
+      await page.getByRole('button', { name: 'Edit', exact: true }).scrollIntoViewIfNeeded();
+      await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Manage synonyms' })).toBeVisible();
+
+      await expectTagsViewportIsContained(page);
+    });
+  }
 });

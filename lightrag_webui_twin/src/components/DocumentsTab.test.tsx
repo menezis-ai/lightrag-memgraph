@@ -64,6 +64,13 @@ describe('DocumentsTab — rendering', () => {
     });
   });
 
+  it('does not render the legacy Twin suffix beside tag controls', () => {
+    renderTab(<DocumentsTab {...defaultProps()} />);
+
+    expect(screen.getByText('Filter by tag')).toBeInTheDocument();
+    expect(screen.queryByText(/Twin/)).toBeNull();
+  });
+
   it('shows status counts in the filter pills', () => {
     renderTab(<DocumentsTab {...defaultProps()} />);
     // DOCUMENT_FIXTURES = 7 docs: 4 PROCESSED, 1 FAILED, 2 PROCESSING
@@ -426,6 +433,28 @@ describe('DocumentsTab — header actions', () => {
     expect(p.onOpenRetag.mock.calls[0][0].doc_id).toBe('d1');
   });
 
+  it('exposes row tag/folder actions as a separate action group', () => {
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        activeFolder="default"
+        folderList={FOLDER_FIXTURES}
+        canManageFolders
+      />,
+    );
+
+    const actions = screen.getByRole('group', {
+      name: 'Actions for oracle-restart-procedure.pdf',
+    });
+    expect(actions).toHaveAttribute('data-testid', 'docs-row-actions-d1');
+    expect(
+      within(actions).getByLabelText('Retag oracle-restart-procedure.pdf'),
+    ).toBeInTheDocument();
+    expect(
+      within(actions).getByLabelText('Manage folders for oracle-restart-procedure.pdf'),
+    ).toBeInTheDocument();
+  });
+
   it('source filename opens the document detail callback', async () => {
     const p = { ...defaultProps(), onOpenDetail: vi.fn() };
     renderTab(<DocumentsTab {...p} />);
@@ -520,6 +549,12 @@ describe('DocumentsTab — folder membership admin actions', () => {
 
     await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[0].file_path}`));
     await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[1].file_path}`));
+
+    const folderActions = screen.getByRole('group', { name: 'Folder actions' });
+    expect(folderActions).toHaveAttribute('data-testid', 'docs-bulk-folder-actions');
+    expect(within(folderActions).getByTestId('docs-bulk-copy')).toBeInTheDocument();
+    expect(within(folderActions).getByTestId('docs-bulk-move')).toBeInTheDocument();
+
     await userEvent.click(screen.getByTestId('docs-bulk-copy'));
     await userEvent.selectOptions(screen.getByLabelText('Bulk target folder'), 'sandbox');
     await userEvent.click(screen.getByTestId('bulk-folder-copy'));

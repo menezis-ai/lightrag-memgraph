@@ -7,14 +7,21 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { useState } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { DocumentsStatusFilterKey } from '../app/appConstants';
+import { useAppNavigation, type DetailRequest } from '../app/useAppNavigation';
+import type { Document } from '../types/document';
+import { DocumentsTab } from './DocumentsTab';
 import { GraphTab } from './GraphTab';
 import { useGraphRelations } from '../api/queries';
 import {
+  DOCUMENT_FIXTURES,
   GRAPH_ENTITY_FIXTURES,
   GRAPH_RELATION_FIXTURES,
+  TAG_FIXTURES,
 } from '../fixtures';
 
 function defaultProps() {
@@ -30,6 +37,93 @@ function renderWithClient(ui: React.ReactElement) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
+function GraphDocumentsDrilldownHarness() {
+  const [tab, setTab] = useState('graph');
+  const [documentsStatusFilter, setDocumentsStatusFilter] =
+    useState<DocumentsStatusFilterKey>('all');
+  const [documentsSearch, setDocumentsSearch] = useState('');
+  const [documentsTagFilters, setDocumentsTagFilters] = useState<readonly string[]>(
+    [],
+  );
+  const [documentsSourceFilters, setDocumentsSourceFilters] = useState<
+    readonly string[]
+  >([]);
+  const [, setDetailDoc] = useState<Document | null>(null);
+  const [, setDetailChunkId] = useState<string | null>(null);
+  const [, setDetailRequest] = useState<DetailRequest | null>(null);
+  const [, setReadSourceDoc] = useState<Document | null>(null);
+  const [, setRetagDoc] = useState<Document | null>(null);
+  const [, setRetagBulk] = useState<readonly Document[] | null>(null);
+  const [, setFolderState] = useState('default');
+  const [, setReadNotificationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const [, setClearedNotificationIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+
+  const { onNavigate } = useAppNavigation({
+    setClearedNotificationIds,
+    setDetailChunkId,
+    setDetailDoc,
+    setDetailRequest,
+    setDocumentsSearch,
+    setDocumentsSourceFilters,
+    setDocumentsStatusFilter,
+    setDocumentsTagFilters,
+    setFolderState,
+    setReadNotificationIds,
+    setReadSourceDoc,
+    setRetagBulk,
+    setRetagDoc,
+    setTab,
+  });
+
+  const entities = [
+    { ...GRAPH_ENTITY_FIXTURES[0], source_docs: ['d1'] },
+    { ...GRAPH_ENTITY_FIXTURES[8], source_docs: ['d4'] },
+  ];
+  const docLabels = {
+    d1: 'oracle-restart-procedure.pdf',
+    d4: 'memgraph-mage-3.8-release-notes.md',
+  };
+
+  if (tab === 'graph') {
+    return (
+      <GraphTab
+        entities={entities}
+        relations={[]}
+        docLabels={docLabels}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => setTab('graph')}>
+        Back to graph
+      </button>
+      <DocumentsTab
+        docs={DOCUMENT_FIXTURES}
+        tagCatalog={TAG_FIXTURES}
+        statusFilter={documentsStatusFilter}
+        onStatusFilterChange={setDocumentsStatusFilter}
+        search={documentsSearch}
+        onSearchChange={setDocumentsSearch}
+        tagFilters={documentsTagFilters}
+        onTagFiltersChange={setDocumentsTagFilters}
+        sourceFilters={documentsSourceFilters}
+        onSourceFiltersChange={setDocumentsSourceFilters}
+        onOpenAdd={vi.fn()}
+        onOpenRetag={vi.fn()}
+        onOpenBulkRetag={vi.fn()}
+        onAddToast={vi.fn()}
+      />
+    </>
+  );
 }
 
 function renderGraphWithLiveRelations(
@@ -428,6 +522,34 @@ describe('GraphTab — selection + detail', () => {
     const [tabArg, paramsArg] = p.onNavigate.mock.calls[0];
     expect(tabArg).toBe('documents');
     expect(paramsArg).toEqual({ q: GRAPH_ENTITY_FIXTURES[0].name });
+  });
+
+  it('"View documents" refreshes Documents filters when switching from entity A to entity B', async () => {
+    renderWithClient(<GraphDocumentsDrilldownHarness />);
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /View documents mentioning this entity/i,
+      }),
+    );
+    expect(await screen.findByTestId('docs-row-d1')).toBeInTheDocument();
+    expect(screen.getByTestId('source-filter-oracle-restart-procedure.pdf'))
+      .toBeInTheDocument();
+    expect(screen.queryByTestId('docs-row-d4')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Back to graph' }));
+    await userEvent.click(screen.getByTestId('kg-node-e_memgraph'));
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /View documents mentioning this entity/i,
+      }),
+    );
+
+    expect(await screen.findByTestId('docs-row-d4')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('source-filter-memgraph-mage-3.8-release-notes.md'),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('docs-row-d1')).toBeNull();
   });
 
   it('saves Entity type changes through the graph entity PATCH payload', async () => {

@@ -1,7 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { setActiveFolder } from '../api/client';
 import type { Document } from '../types/document';
-import type { DocumentsStatusFilterKey } from './appConstants';
+import {
+  DOCUMENTS_STATUS_FILTERS,
+  type DocumentsStatusFilterKey,
+} from './appConstants';
 import { queryClient } from './queryClient';
 import { FOLDER_STORAGE_KEY, writeUiPreference } from './uiPreferences';
 
@@ -26,6 +29,21 @@ interface UseAppNavigationOptions {
   setRetagBulk: Dispatch<SetStateAction<readonly Document[] | null>>;
   setRetagDoc: Dispatch<SetStateAction<Document | null>>;
   setTab: Dispatch<SetStateAction<string>>;
+}
+
+function splitCsvParam(value: string | undefined): readonly string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function documentsStatusFromParam(
+  value: string | undefined,
+): DocumentsStatusFilterKey {
+  return DOCUMENTS_STATUS_FILTERS.includes(value as DocumentsStatusFilterKey)
+    ? (value as DocumentsStatusFilterKey)
+    : 'all';
 }
 
 export function useAppNavigation({
@@ -60,6 +78,14 @@ export function useAppNavigation({
       });
     } else {
       setDetailRequest(null);
+    }
+    if (nextTab === 'documents') {
+      setDocumentsStatusFilter?.(documentsStatusFromParam(params?.status));
+      setDocumentsSearch?.(params?.q ?? '');
+      setDocumentsTagFilters?.(splitCsvParam(params?.tag));
+      setDocumentsSourceFilters?.(
+        splitCsvParam(params?.source ?? params?.doc),
+      );
     }
     const qs = search.toString();
     globalThis.history.replaceState(

@@ -378,6 +378,12 @@ describe('TagsTab — domain taxonomy editor', () => {
       );
       const editor = screen.getByTestId('domain-rail-editor');
 
+      const existingLabel = within(editor).getByLabelText(
+        'messaging domain label',
+      );
+      expect(existingLabel).toBeRequired();
+      expect(existingLabel).toHaveAttribute('aria-required', 'true');
+
       fireEvent.change(within(editor).getByLabelText('messaging domain label'), {
         target: { value: 'Communication' },
       });
@@ -385,6 +391,9 @@ describe('TagsTab — domain taxonomy editor', () => {
       await userEvent.click(
         within(editor).getByRole('button', { name: 'Add domain' }),
       );
+      const newDomainId = within(editor).getByLabelText('New domain domain id');
+      expect(newDomainId).toBeRequired();
+      expect(newDomainId).toHaveAttribute('aria-required', 'true');
       fireEvent.change(within(editor).getByLabelText('New domain domain id'), {
         target: { value: 'collaboration' },
       });
