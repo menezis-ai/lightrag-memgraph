@@ -160,11 +160,12 @@ export function AppShell() {
       // Explicit empty config = no folder provisioned for this KB → the topbar
       // shows the Twincore empty-state guidance, never live folders.
       if (configuredFolders.length === 0) return [];
+      const liveById = new Map((folders.data ?? []).map((item) => [item.id, item]));
       const mapped: Folder[] = configuredFolders.map((item) => ({
         id: item.id,
         kb: item.label,
         visibility: item.kind === 'sandbox' ? 'private' : 'internal',
-        sources: item.sources ?? 0,
+        sources: liveById.get(item.id)?.sources ?? item.sources ?? 0,
         role: 'admin / steward',
         current: false,
       }));

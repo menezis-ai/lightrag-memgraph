@@ -17,12 +17,42 @@ router = APIRouter()
 
 
 @router.get("/folders", response_model=list[Folder])
-def list_folders() -> list[dict[str, Any]]:
+async def list_folders() -> list[dict[str, Any]]:
     active = current_folder_id()
-    return [
+    folders = [
         folder.as_api(current=folder.id == active)
         for folder in load_folder_catalog().folders
     ]
+    counts = await _folder_source_counts(folders)
+    for folder in folders:
+        if folder["id"] in counts:
+            folder["sources"] = counts[folder["id"]]
+    return folders
+
+
+async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]:
+    """Best-effort DocStatus totals per folder.
+
+    The folder catalog's ``sources`` field is a static provisioning hint. In the
+    live runtime the selector must show actual DocStatus membership counts, or
+    operators see ``0 sources`` while the Documents table is full.
+    """
+    try:
+        from .. import webui_router as legacy
+
+        rag = legacy._get_rag()
+        get_status_counts = getattr(rag.doc_status, "get_status_counts", None)
+        if not callable(get_status_counts):
+            return {}
+        counts: dict[str, int] = {}
+        for folder in folders:
+            by_status = await get_status_counts(folder=folder["id"])
+            counts[folder["id"]] = sum(
+                int(value or 0) for value in by_status.values()
+            )
+        return counts
+    except Exception:
+        return {}
 
 
 @router.post(

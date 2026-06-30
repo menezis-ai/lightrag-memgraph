@@ -270,6 +270,18 @@ describe('uploadDocument', () => {
     expect(headers[0].has('Authorization')).toBe(false);
     expect(headers[0].get('X-API-Key')).toBe('native-upload-token');
   });
+
+  it('keeps JWT bearer auth on the native upload route', async () => {
+    setSessionAuthToken('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig');
+    const { headers } = mockUploadOnce();
+
+    await api.uploadDocument(new File(['payload'], 'plain.md'));
+
+    expect(headers[0].get('Authorization')).toBe(
+      'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig',
+    );
+    expect(headers[0].has('X-API-Key')).toBe(false);
+  });
 });
 
 describe('deleteDocument — per-doc failure must not read as success', () => {

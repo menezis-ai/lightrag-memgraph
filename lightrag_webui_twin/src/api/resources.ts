@@ -217,6 +217,12 @@ function parseMaybeJson(text: string): unknown {
   }
 }
 
+function isLikelyJwtToken(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  return parts.every((part) => part.length > 0);
+}
+
 // ============================================================================
 // LightRAG-native endpoints (NO /twin/api prefix)
 // ============================================================================
@@ -341,11 +347,13 @@ export const lightragApi = {
     const bearer = authorization.startsWith(bearerPrefix)
       ? authorization.slice(bearerPrefix.length).trim()
       : undefined;
-    if (bearer && !headers['X-API-Key']) {
+    if (bearer && !headers['X-API-Key'] && !isLikelyJwtToken(bearer)) {
       // Native LightRAG upload routes validate LIGHTRAG_API_KEY via X-API-Key,
       // while the Twin overlay accepts the same value as Authorization: Bearer.
-      // Do not send both: LightRAG validates OAuth Bearer first and rejects the
-      // static API key value as an invalid token before checking X-API-Key.
+      // Do not send both for opaque static keys: LightRAG validates OAuth Bearer
+      // first and rejects the static API key value as an invalid token before
+      // checking X-API-Key. JWT sessions are different: keep Authorization so
+      // local/IdP login uploads do not turn into 401s on the multipart path.
       headers['X-API-Key'] = bearer;
       delete headers.Authorization;
     }

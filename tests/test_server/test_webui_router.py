@@ -164,6 +164,29 @@ class TestFolders:
         assert r.status_code == 200
         assert [folder["id"] for folder in r.json()] == ["default", "sandbox"]
 
+    async def test_folders_endpoint_uses_live_docstatus_counts(
+        self, monkeypatch, client
+    ):
+        self._configure_folders(monkeypatch)
+
+        class FakeDocStatus:
+            async def get_status_counts(self, folder=None):
+                return {
+                    "default": {"processed": 3, "failed": 1},
+                    "sandbox": {"processed": 2},
+                }.get(folder, {})
+
+        class FakeRag:
+            doc_status = FakeDocStatus()
+
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: FakeRag())
+
+        r = await client.get("/folders")
+        assert r.status_code == 200
+        by_id = {folder["id"]: folder for folder in r.json()}
+        assert by_id["default"]["sources"] == 4
+        assert by_id["sandbox"]["sources"] == 2
+
     async def test_rejects_unknown_folder_header(self, monkeypatch, client):
         self._configure_folders(monkeypatch)
         r = await client.get("/tags", headers={"X-Twin-Folder": "rogue"})

@@ -239,6 +239,11 @@ vi.mock('../components/Topbar', () => ({
       <span data-testid="topbar-folders-count">
         {String((p.folders as unknown[]).length)}
       </span>
+      <span data-testid="topbar-folder-sources">
+        {(p.folders as Folder[])
+          .map((folder) => `${folder.id}:${folder.sources}`)
+          .join('|')}
+      </span>
       <span data-testid="topbar-notif-count">
         {String((p.notifications as unknown[]).length)}
       </span>
@@ -1083,6 +1088,38 @@ describe('AppShell — folders', () => {
     expect(screen.getByTestId('topbar-folders-count')).toHaveTextContent('2');
     // kbName resolves from the current folder
     expect(screen.getByTestId('topbar-kb')).toHaveTextContent('Default KB');
+  });
+
+  it('uses live folder source counts for configured folders', () => {
+    authState.current.config = {
+      defaultFolderId: 'default',
+      folders: [
+        { id: 'default', label: 'Default KB', kind: 'standard', sources: 0 },
+        { id: 'tests', label: 'Tests', kind: 'standard', sources: 0 },
+      ],
+    };
+    queriesState.folders.data = [
+      {
+        id: 'default',
+        kb: 'Default KB',
+        visibility: 'internal',
+        sources: 14,
+        role: 'admin',
+        current: true,
+      },
+      {
+        id: 'tests',
+        kb: 'Tests',
+        visibility: 'internal',
+        sources: 3,
+        role: 'admin',
+        current: false,
+      },
+    ] as Folder[];
+    renderShell();
+    expect(screen.getByTestId('topbar-folder-sources')).toHaveTextContent(
+      'default:14|tests:3',
+    );
   });
 
   it('falls back to folders query data when runtimeConfig has none', () => {
