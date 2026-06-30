@@ -13,6 +13,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from typing import Any
 from urllib.parse import urlparse
 
 from neo4j import AsyncGraphDatabase, TrustAll, TrustSystemCAs
@@ -50,6 +51,54 @@ _read_bound_loop_id = None
 # Enterprise multi-database detection.
 # None = not yet probed, True = USE DATABASE succeeded, False = Community edition.
 _enterprise_supported: bool | None = None
+
+
+def is_sync_replication_error(exc: BaseException) -> bool:
+    """Return True for Memgraph SYNC replication acknowledgement failures.
+
+    In Memgraph ``SYNC`` mode the write can be committed on MAIN even when the
+    client receives an error because one replica did not acknowledge in time.
+    Callers must not blindly translate this class of error to "business write
+    definitely failed".
+    """
+    message = str(exc).lower()
+    if "failed to replicate" not in message:
+        return False
+    return "sync" in message or "replica" in message
+
+
+def memgraph_exception_payload(exc: BaseException) -> dict[str, Any]:
+    """Build a sanitized operator-facing payload for Memgraph exceptions."""
+    if is_sync_replication_error(exc):
+        return {
+            "type": "MemgraphSyncReplicationWarning",
+            "message": (
+                "Memgraph write may have committed on MAIN but was not "
+                "confirmed by every SYNC replica before the driver returned."
+            ),
+            "operator_action": (
+                "Verify the object on MAIN / SHOW REPLICAS before retrying; "
+                "a naive retry may duplicate non-idempotent writes."
+            ),
+            "commit_may_have_succeeded": True,
+            "retry_safe": False,
+            "detail": _short_exception_detail(exc),
+        }
+    return {
+        "type": "MemgraphDependencyError",
+        "message": "Memgraph dependency error.",
+        "operator_action": "Check Memgraph connectivity, role, and replication health.",
+        "commit_may_have_succeeded": False,
+        "retry_safe": None,
+        "detail": _short_exception_detail(exc),
+    }
+
+
+def _short_exception_detail(exc: BaseException, *, max_len: int = 500) -> str:
+    detail = f"{type(exc).__name__}: {exc}"
+    if len(detail) <= max_len:
+        return detail
+    return detail[: max_len - 3] + "..."
 
 
 async def _close_stale_driver(driver, label: str) -> None:

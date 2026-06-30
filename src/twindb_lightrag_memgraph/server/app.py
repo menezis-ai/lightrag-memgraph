@@ -28,11 +28,14 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from lightrag import LightRAG
+from neo4j.exceptions import ClientError as Neo4jClientError
+from neo4j.exceptions import Neo4jError
 from pydantic import BaseModel
 
 from .auth import auth_router, configure_auth, require_auth
@@ -277,6 +280,157 @@ async def _memgraph_readiness_check() -> dict[str, Any]:
             "detail": f"{type(exc).__name__}: {exc}",
         }
     return {"status": "ok"}
+
+
+def _memgraph_routing_check() -> dict[str, Any]:
+    """Report whether the configured driver URI can route writes in HA."""
+    from .._constants import DEFAULT_MEMGRAPH_URI
+
+    uri = os.environ.get("MEMGRAPH_URI", DEFAULT_MEMGRAPH_URI)
+    parsed = urlparse(uri)
+    scheme = parsed.scheme
+    hostname = parsed.hostname or ""
+    if scheme.startswith("neo4j"):
+        return {
+            "status": "ok",
+            "detail": "routing protocol enabled; driver can target MAIN for writes",
+            "scheme": scheme,
+        }
+    if hostname in {"", "localhost", "127.0.0.1", "::1", "memgraph"}:
+        return {
+            "status": "ok",
+            "detail": "direct Bolt endpoint; acceptable for standalone/main service",
+            "scheme": scheme,
+        }
+    return {
+        "status": "degraded",
+        "detail": (
+            "direct Bolt endpoint configured. In Memgraph HA, prefer neo4j:// "
+            "routing or ensure this service only points at MAIN."
+        ),
+        "scheme": scheme,
+    }
+
+
+async def _memgraph_role_check() -> dict[str, Any]:
+    """Best-effort check that the app is not connected to a read-only replica."""
+    result = await _run_optional_memgraph_command("SHOW REPLICATION ROLE;")
+    if result["status"] != "ok":
+        return result
+    rows = result.get("rows") or []
+    role = _first_memgraph_scalar(rows)
+    if role is None:
+        return {"status": "skipped", "detail": "replication role not reported"}
+    role_text = str(role).lower()
+    if any(token in role_text for token in ("replica", "secondary", "read_only")):
+        return {
+            "status": "failed",
+            "detail": (
+                f"connected Memgraph role is {role!r}; writes must target MAIN "
+                "or use neo4j:// routing"
+            ),
+            "role": role,
+        }
+    return {"status": "ok", "detail": f"connected Memgraph role is {role!r}"}
+
+
+async def _memgraph_replication_check() -> dict[str, Any]:
+    """Best-effort replication visibility for Memgraph MAIN nodes."""
+    result = await _run_optional_memgraph_command("SHOW REPLICAS;")
+    if result["status"] != "ok":
+        return result
+    rows = result.get("rows") or []
+    if not rows:
+        return {
+            "status": "ok",
+            "detail": "no replicas reported; standalone or replication not configured",
+            "replicas": [],
+        }
+    degraded = []
+    for row in rows:
+        status = _row_value(row, "status", "state", "health")
+        mode = _row_value(row, "sync_mode", "mode", "replication_mode")
+        status_text = str(status or "").lower()
+        if any(
+            marker in status_text
+            for marker in ("down", "failed", "error", "invalid", "not ready")
+        ):
+            degraded.append(
+                {
+                    "name": _row_value(row, "name", "replica_name", "server") or "?",
+                    "mode": mode,
+                    "status": status,
+                }
+            )
+    if degraded:
+        return {
+            "status": "degraded",
+            "detail": "one or more Memgraph replicas are not healthy",
+            "replicas": degraded,
+        }
+    return {
+        "status": "ok",
+        "detail": f"{len(rows)} replica(s) reported",
+        "replica_count": len(rows),
+    }
+
+
+async def _run_optional_memgraph_command(query: str) -> dict[str, Any]:
+    try:
+        from .. import _pool
+
+        async with _pool.get_read_session() as session:
+            result = await session.run(query)
+            rows = [dict(record) async for record in result]
+            await result.consume()
+    except Neo4jClientError as exc:
+        if _is_optional_memgraph_command_unsupported(exc):
+            return {
+                "status": "skipped",
+                "detail": f"Memgraph command not supported here: {query.rstrip(';')}",
+            }
+        return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - readiness must report dependency state
+        return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
+    return {"status": "ok", "rows": rows}
+
+
+def _is_optional_memgraph_command_unsupported(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "syntax",
+            "unrecognized",
+            "unknown command",
+            "not supported",
+            "does not exist",
+            "unsupported",
+        )
+    )
+
+
+def _first_memgraph_scalar(rows: list[dict[str, Any]]) -> Any:
+    if not rows:
+        return None
+    row = rows[0]
+    for key in ("role", "replication_role", "status"):
+        if key in row:
+            return row[key]
+    if len(row) == 1:
+        return next(iter(row.values()))
+    return None
+
+
+def _row_value(row: dict[str, Any], *keys: str) -> Any:
+    lower = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        if key in row:
+            return row[key]
+        lowered = key.lower()
+        if lowered in lower:
+            return lower[lowered]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +813,9 @@ async def _readiness_response(
             "detail": "initialized" if rag is not None else "not initialized",
         },
         "memgraph": await _memgraph_readiness_check(),
+        "memgraph_routing": _memgraph_routing_check(),
+        "memgraph_role": await _memgraph_role_check(),
+        "memgraph_replication": await _memgraph_replication_check(),
         "vector_index": _vector_index_check(rag),
         "auth_policy": {
             "status": "ok" if auth_ok else "failed",
@@ -673,6 +830,30 @@ async def _readiness_response(
     failed = [name for name, check in checks.items() if check["status"] == "failed"]
     body = {"status": "ready" if not failed else "not_ready", "checks": checks}
     return JSONResponse(body, status_code=200 if not failed else 503)
+
+
+def _memgraph_exception_response(exc: BaseException) -> tuple[int, dict[str, Any]]:
+    from .. import _pool
+
+    payload = _pool.memgraph_exception_payload(exc)
+    return 503, {"error": payload["message"], **payload}
+
+
+async def _handle_memgraph_exception(
+    request: Request, exc: Neo4jError
+) -> JSONResponse:
+    status_code, payload = _memgraph_exception_response(exc)
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        payload["request_id"] = request_id
+    logger.warning(
+        "memgraph_dependency_error path=%s type=%s request_id=%s detail=%s",
+        request.url.path,
+        payload.get("type"),
+        request_id or "-",
+        payload.get("detail"),
+    )
+    return JSONResponse(payload, status_code=status_code)
 
 
 def _register_core_routes(
@@ -785,6 +966,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         version="0.3.0",
         lifespan=lifespan,
     )
+    app.add_exception_handler(Neo4jError, _handle_memgraph_exception)
 
     # -- CORS --
     if settings.cors_allow_credentials and "*" in settings.cors_allowed_origins:

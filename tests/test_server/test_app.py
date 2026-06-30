@@ -364,6 +364,24 @@ class _ReadyVector:
 
 
 class TestReadinessEndpoint:
+    @pytest.fixture(autouse=True)
+    def _patch_optional_memgraph_probes(self, monkeypatch):
+        async def role_skipped():
+            return {"status": "skipped", "detail": "not probed in unit tests"}
+
+        async def replication_skipped():
+            return {"status": "skipped", "detail": "not probed in unit tests"}
+
+        monkeypatch.setattr(
+            app_module,
+            "_memgraph_routing_check",
+            lambda: {"status": "ok", "detail": "unit-test routing"},
+        )
+        monkeypatch.setattr(app_module, "_memgraph_role_check", role_skipped)
+        monkeypatch.setattr(
+            app_module, "_memgraph_replication_check", replication_skipped
+        )
+
     async def test_ready_returns_200_when_dependencies_are_available(
         self, monkeypatch, _mock_rag
     ):
@@ -390,6 +408,9 @@ class TestReadinessEndpoint:
         assert body["checks"]["memgraph"]["status"] == "ok"
         assert body["checks"]["lightrag"]["status"] == "ok"
         assert body["checks"]["vector_index"]["status"] == "ok"
+        assert body["checks"]["memgraph_routing"]["status"] == "ok"
+        assert body["checks"]["memgraph_role"]["status"] == "skipped"
+        assert body["checks"]["memgraph_replication"]["status"] == "skipped"
 
     async def test_ready_returns_503_when_memgraph_is_unreachable(
         self, monkeypatch, _mock_rag
@@ -415,6 +436,87 @@ class TestReadinessEndpoint:
         body = resp.json()
         assert body["status"] == "not_ready"
         assert body["checks"]["memgraph"]["status"] == "failed"
+
+    async def test_ready_keeps_pod_ready_when_replication_is_degraded(
+        self, monkeypatch, _mock_rag
+    ):
+        async def memgraph_ok():
+            return {"status": "ok"}
+
+        async def replication_degraded():
+            return {
+                "status": "degraded",
+                "detail": "one or more Memgraph replicas are not healthy",
+            }
+
+        monkeypatch.setattr(app_module, "_memgraph_readiness_check", memgraph_ok)
+        monkeypatch.setattr(
+            app_module, "_memgraph_replication_check", replication_degraded
+        )
+        _mock_rag.chunks_vdb = _ReadyVector()
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/ready")
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ready"
+        assert body["checks"]["memgraph_replication"]["status"] == "degraded"
+
+    async def test_ready_fails_when_connected_to_replica_role(
+        self, monkeypatch, _mock_rag
+    ):
+        async def memgraph_ok():
+            return {"status": "ok"}
+
+        async def role_failed():
+            return {
+                "status": "failed",
+                "detail": "connected Memgraph role is 'replica'",
+            }
+
+        monkeypatch.setattr(app_module, "_memgraph_readiness_check", memgraph_ok)
+        monkeypatch.setattr(app_module, "_memgraph_role_check", role_failed)
+        _mock_rag.chunks_vdb = _ReadyVector()
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/ready")
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "not_ready"
+        assert body["checks"]["memgraph_role"]["status"] == "failed"
+
+
+class TestMemgraphErrorPayload:
+    def test_sync_replication_error_is_operator_actionable(self):
+        exc = RuntimeError(
+            "Failed to replicate to SYNC replica replica-1 before timeout"
+        )
+
+        status_code, payload = app_module._memgraph_exception_response(exc)
+
+        assert status_code == 503
+        assert payload["type"] == "MemgraphSyncReplicationWarning"
+        assert payload["commit_may_have_succeeded"] is True
+        assert payload["retry_safe"] is False
+        assert "Verify the object on MAIN" in payload["operator_action"]
 
 
 class TestOperationalMiddleware:
