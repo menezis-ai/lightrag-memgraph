@@ -47,9 +47,15 @@ MEMGRAPH_ENCRYPTED           "true" to force TLS on plain bolt://. A WARNING
                              is logged when credentials would transit in
                              clear to a remote host.
 MEMGRAPH_TRUST               Trust policy for TLS certificates.
-MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 10.
-MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 10.
+MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 50.
+MEMGRAPH_READ_POOL_SIZE      Connection pool size (read pool). Default: 20.
+MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 8.
                              Reads are never throttled.
+MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT
+                             Seconds to wait for a pooled connection. Default: 5.
+MEMGRAPH_IDLE_DISCONNECT_SECONDS
+                             Force write/read driver recreation after this many
+                             seconds without pool activity. Default: 3600.
 
 --------------------------------------------------------------------------------
 2. SERVER (FastAPI overlay) — prefix LIGHTRAG_

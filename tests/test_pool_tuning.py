@@ -9,6 +9,7 @@ import twindb_lightrag_memgraph._pool as pool
 from twindb_lightrag_memgraph._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
+    DEFAULT_IDLE_DISCONNECT_SECONDS,
     DEFAULT_READ_POOL_SIZE,
 )
 
@@ -22,6 +23,8 @@ def reset_pool_state():
     pool._read_driver = None
     pool._read_database = None
     pool._read_bound_loop_id = None
+    pool._last_driver_activity = None
+    pool._last_read_driver_activity = None
     pool._write_semaphore = None
     pool._semaphore_loop_id = None
     yield
@@ -31,6 +34,8 @@ def reset_pool_state():
     pool._read_driver = None
     pool._read_database = None
     pool._read_bound_loop_id = None
+    pool._last_driver_activity = None
+    pool._last_read_driver_activity = None
     pool._write_semaphore = None
     pool._semaphore_loop_id = None
 
@@ -99,6 +104,27 @@ class TestReadConnectionAcquireTimeout:
             pool._read_connection_acquire_timeout()
             == DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
         )
+
+
+# ── _read_idle_disconnect_seconds ────────────────────────────────────
+
+
+class TestReadIdleDisconnectSeconds:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", raising=False)
+        assert pool._read_idle_disconnect_seconds() == DEFAULT_IDLE_DISCONNECT_SECONDS
+
+    def test_override_from_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", "7200")
+        assert pool._read_idle_disconnect_seconds() == 7200.0
+
+    def test_invalid_falls_back(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", "nope")
+        assert pool._read_idle_disconnect_seconds() == DEFAULT_IDLE_DISCONNECT_SECONDS
+
+    def test_zero_falls_back(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", "0")
+        assert pool._read_idle_disconnect_seconds() == DEFAULT_IDLE_DISCONNECT_SECONDS
 
 
 # ── _read_read_pool_size ──────────────────────────────────────────────
@@ -189,3 +215,61 @@ class TestConnectionConfig:
         # No await close — sync close on an unopened driver is a no-op
         # for our purpose (no socket was opened by the constructor).
         assert driver is not None
+
+    async def test_write_driver_recreated_after_idle_disconnect(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", "3600")
+        first = object()
+        second = object()
+        closed = []
+
+        class DriverFactory:
+            calls = 0
+
+            @classmethod
+            def driver(cls, *_args, **_kwargs):
+                cls.calls += 1
+                return first if cls.calls == 1 else second
+
+        async def close_stale(driver, label):
+            closed.append((driver, label))
+
+        monkeypatch.setattr(pool, "AsyncGraphDatabase", DriverFactory)
+        monkeypatch.setattr(pool, "_close_stale_driver", close_stale)
+
+        driver, _ = await pool.get_driver()
+        assert driver is first
+        pool._last_driver_activity -= 3601
+
+        driver, _ = await pool.get_driver()
+
+        assert driver is second
+        assert closed == [(first, "write")]
+
+    async def test_read_driver_recreated_after_idle_disconnect(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_IDLE_DISCONNECT_SECONDS", "3600")
+        first = object()
+        second = object()
+        closed = []
+
+        class DriverFactory:
+            calls = 0
+
+            @classmethod
+            def driver(cls, *_args, **_kwargs):
+                cls.calls += 1
+                return first if cls.calls == 1 else second
+
+        async def close_stale(driver, label):
+            closed.append((driver, label))
+
+        monkeypatch.setattr(pool, "AsyncGraphDatabase", DriverFactory)
+        monkeypatch.setattr(pool, "_close_stale_driver", close_stale)
+
+        driver, _ = await pool._get_read_driver()
+        assert driver is first
+        pool._last_read_driver_activity -= 3601
+
+        driver, _ = await pool._get_read_driver()
+
+        assert driver is second
+        assert closed == [(first, "read")]

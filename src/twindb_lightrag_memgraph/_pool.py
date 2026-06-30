@@ -13,6 +13,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from time import monotonic
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,10 +23,12 @@ from neo4j.exceptions import ClientError as Neo4jClientError
 from ._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
+    DEFAULT_IDLE_DISCONNECT_SECONDS,
     DEFAULT_MEMGRAPH_URI,
     DEFAULT_READ_POOL_SIZE,
     DEFAULT_WRITE_CONCURRENCY,
     MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV,
+    MEMGRAPH_IDLE_DISCONNECT_SECONDS_ENV,
     MEMGRAPH_POOL_SIZE_ENV,
     MEMGRAPH_READ_POOL_SIZE_ENV,
     MEMGRAPH_WRITE_CONCURRENCY_ENV,
@@ -40,6 +43,7 @@ _thread_lock = threading.Lock()
 _driver = None
 _database = None
 _bound_loop_id = None
+_last_driver_activity = None
 
 _write_semaphore = None
 _semaphore_loop_id = None
@@ -47,6 +51,7 @@ _semaphore_loop_id = None
 _read_driver = None
 _read_database = None
 _read_bound_loop_id = None
+_last_read_driver_activity = None
 
 # Enterprise multi-database detection.
 # None = not yet probed, True = USE DATABASE succeeded, False = Community edition.
@@ -138,6 +143,23 @@ def _read_connection_acquire_timeout() -> float:
         return DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
 
 
+def _read_idle_disconnect_seconds() -> float:
+    """Read MEMGRAPH_IDLE_DISCONNECT_SECONDS, default 3600s.
+
+    This is intentionally separate from neo4j-driver's
+    ``liveness_check_timeout``. The driver can ping an idle socket before reuse,
+    but BNP SREs asked us to force a disconnect after one hour of inactivity.
+    """
+    raw = os.environ.get(MEMGRAPH_IDLE_DISCONNECT_SECONDS_ENV, "")
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError("must be > 0")
+        return val
+    except (ValueError, TypeError):
+        return DEFAULT_IDLE_DISCONNECT_SECONDS
+
+
 def _read_read_pool_size() -> int:
     """Read MEMGRAPH_READ_POOL_SIZE from env, default 20."""
     raw = os.environ.get(MEMGRAPH_READ_POOL_SIZE_ENV, "")
@@ -223,6 +245,22 @@ def _read_connection_config(*, pool_size_override: int | None = None):
     return uri, database, driver_kwargs
 
 
+def _idle_expired(last_activity: float | None) -> bool:
+    if last_activity is None:
+        return False
+    return monotonic() - last_activity >= _read_idle_disconnect_seconds()
+
+
+def _mark_write_activity() -> None:
+    global _last_driver_activity
+    _last_driver_activity = monotonic()
+
+
+def _mark_read_activity() -> None:
+    global _last_read_driver_activity
+    _last_read_driver_activity = monotonic()
+
+
 async def get_driver():
     """Get or create the shared AsyncGraphDatabase driver.
 
@@ -232,18 +270,26 @@ async def get_driver():
     Returns:
         tuple: (driver, database_name)
     """
-    global _driver, _database, _bound_loop_id
+    global _driver, _database, _bound_loop_id, _last_driver_activity
 
     current_loop_id = id(asyncio.get_running_loop())
 
     # Fast path: driver exists and is bound to the current loop
-    if _driver is not None and _bound_loop_id == current_loop_id:
+    if (
+        _driver is not None
+        and _bound_loop_id == current_loop_id
+        and not _idle_expired(_last_driver_activity)
+    ):
         return _driver, _database
 
     stale_driver = None
     with _thread_lock:
         # Double-check after acquiring lock
-        if _driver is not None and _bound_loop_id == current_loop_id:
+        if (
+            _driver is not None
+            and _bound_loop_id == current_loop_id
+            and not _idle_expired(_last_driver_activity)
+        ):
             return _driver, _database
 
         uri, database, driver_kwargs = _read_connection_config()
@@ -252,6 +298,7 @@ async def get_driver():
         _driver = new_driver
         _database = database
         _bound_loop_id = current_loop_id
+        _last_driver_activity = monotonic()
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
         logger.info(
@@ -282,12 +329,18 @@ async def get_session():
     driver, database = await get_driver()
     if _uses_routing_protocol():
         async with driver.session(database=database) as session:
-            yield session
+            try:
+                yield session
+            finally:
+                _mark_write_activity()
     else:
         async with driver.session() as session:
             if database:
                 await _try_use_database(session, database)
-            yield session
+            try:
+                yield session
+            finally:
+                _mark_write_activity()
 
 
 async def _get_read_driver():
@@ -300,15 +353,24 @@ async def _get_read_driver():
         tuple: (driver, database_name)
     """
     global _read_driver, _read_database, _read_bound_loop_id
+    global _last_read_driver_activity
 
     current_loop_id = id(asyncio.get_running_loop())
 
-    if _read_driver is not None and _read_bound_loop_id == current_loop_id:
+    if (
+        _read_driver is not None
+        and _read_bound_loop_id == current_loop_id
+        and not _idle_expired(_last_read_driver_activity)
+    ):
         return _read_driver, _read_database
 
     stale_driver = None
     with _thread_lock:
-        if _read_driver is not None and _read_bound_loop_id == current_loop_id:
+        if (
+            _read_driver is not None
+            and _read_bound_loop_id == current_loop_id
+            and not _idle_expired(_last_read_driver_activity)
+        ):
             return _read_driver, _read_database
 
         read_pool_size = _read_read_pool_size()
@@ -320,6 +382,7 @@ async def _get_read_driver():
         _read_driver = new_driver
         _read_database = database
         _read_bound_loop_id = current_loop_id
+        _last_read_driver_activity = monotonic()
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
         logger.info(
@@ -344,12 +407,18 @@ async def get_read_session():
     driver, database = await _get_read_driver()
     if _uses_routing_protocol():
         async with driver.session(database=database) as session:
-            yield session
+            try:
+                yield session
+            finally:
+                _mark_read_activity()
     else:
         async with driver.session() as session:
             if database:
                 await _try_use_database(session, database)
-            yield session
+            try:
+                yield session
+            finally:
+                _mark_read_activity()
 
 
 async def _try_use_database(session, database: str) -> None:
@@ -461,12 +530,14 @@ async def acquire_write_slot():
 async def close_driver():
     """Close write and read drivers. Call on application shutdown."""
     global _driver, _bound_loop_id, _write_semaphore, _semaphore_loop_id
+    global _last_driver_activity, _last_read_driver_activity
     global _read_driver, _read_database, _read_bound_loop_id
     global _enterprise_supported
     if _driver is not None:
         await _driver.close()
         _driver = None
         _bound_loop_id = None
+        _last_driver_activity = None
     _write_semaphore = None
     _semaphore_loop_id = None
     _enterprise_supported = None
@@ -475,3 +546,4 @@ async def close_driver():
         _read_driver = None
         _read_database = None
         _read_bound_loop_id = None
+        _last_read_driver_activity = None
