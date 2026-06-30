@@ -335,13 +335,23 @@ export const lightragApi = {
   ): Promise<{ status: string; message: string; track_id: string }> => {
     const formData = new FormData();
     formData.append('file', file);
+    const headers = buildApiHeaders();
+    const bearer = headers.Authorization?.match(/^Bearer\s+(.+)$/)?.[1];
+    if (bearer && !headers['X-API-Key']) {
+      // Native LightRAG upload routes validate LIGHTRAG_API_KEY via X-API-Key,
+      // while the Twin overlay accepts the same value as Authorization: Bearer.
+      // Do not send both: LightRAG validates OAuth Bearer first and rejects the
+      // static API key value as an invalid token before checking X-API-Key.
+      headers['X-API-Key'] = bearer;
+      delete headers.Authorization;
+    }
     const res = await fetch(buildApiUrl('/documents/upload'), {
       method: 'POST',
       // Operator classification rides as an HTTP header (X-Twin-Classification),
       // NOT a multipart field — the backend reads it per-upload and applies it
       // as a floor-raising value. Omitted entirely when unset.
       headers: {
-        ...buildApiHeaders(),
+        ...headers,
         ...(init?.classification
           ? { 'X-Twin-Classification': init.classification }
           : {}),

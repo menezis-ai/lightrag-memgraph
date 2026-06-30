@@ -712,6 +712,173 @@ class TestInsertEndpoint:
         assert resp.status_code == 200
         mock_rag.ainsert.assert_awaited_once_with("Some document content.")
 
+    async def test_insert_forwards_file_path_as_file_paths(self, _client_with_auth):
+        """POST /insert forwards file_path to LightRAG's file_paths argument."""
+        mock_rag = _client_with_auth._test_mock_rag
+
+        resp = await _client_with_auth.post(
+            "/insert",
+            json={"text": "Some document content.", "file_path": "/kb/c2.docx"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+
+        assert resp.status_code == 200
+        mock_rag.ainsert.assert_awaited_once_with(
+            "Some document content.", file_paths="/kb/c2.docx"
+        )
+
+    async def test_insert_strips_blank_file_path(self, _client_with_auth):
+        """Blank file_path is not forwarded as a usable source path."""
+        mock_rag = _client_with_auth._test_mock_rag
+
+        resp = await _client_with_auth.post(
+            "/insert",
+            json={"text": "Some document content.", "file_path": "   "},
+            headers={"Authorization": "Bearer test-key"},
+        )
+
+        assert resp.status_code == 200
+        mock_rag.ainsert.assert_awaited_once_with("Some document content.")
+
+    async def test_insert_rejects_missing_file_path_when_classification_active_prod(
+        self, monkeypatch, tmp_path, _mock_rag
+    ):
+        """Prod + active MIP map must not silently bypass file classification."""
+        label_map = tmp_path / "labels.json"
+        label_map.write_text("{}")
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        monkeypatch.setenv("TWIN_MIP_LABEL_MAP", str(label_map))
+
+        app = create_app(_make_settings(api_key="test-key"))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/insert",
+                    json={"text": "Some document content."},
+                    headers={"Authorization": "Bearer test-key"},
+                )
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 400
+        assert "file_path is required" in resp.json()["detail"]
+        _mock_rag.ainsert.assert_not_awaited()
+
+    async def test_insert_file_path_reaches_classification_hook(
+        self, monkeypatch, tmp_path
+    ):
+        """HTTP /insert lets the MIP hook inspect the source file."""
+        from lightrag import LightRAG
+
+        from twindb_lightrag_memgraph import _classification_hook as hook_mod
+        from twindb_lightrag_memgraph._classification_hook import (
+            install_lightrag_ingestion_hook,
+        )
+        from twindb_lightrag_memgraph.classification import ClassificationResult
+
+        saved = {
+            name: getattr(LightRAG, name, None)
+            for name in (
+                "ainsert",
+                "_twin_classification_hook",
+                "_twin_classification_patched",
+                "_twin_original_ainsert",
+            )
+        }
+        indexed: list[dict] = []
+        seen_paths: list[str] = []
+
+        async def fake_original(
+            self,
+            input,
+            split_by_character=None,
+            split_by_character_only=False,
+            ids=None,
+            file_paths=None,
+            track_id=None,
+        ):
+            indexed.append({"input": input, "file_paths": file_paths})
+            return track_id or "track-original"
+
+        def fake_detect(path, *, label_map=None):
+            seen_paths.append(path)
+            return ClassificationResult(class_id="C1", source_format="test")
+
+        LightRAG.ainsert = fake_original
+        LightRAG._twin_classification_patched = False
+        monkeypatch.setattr(hook_mod, "detect_classification", fake_detect)
+
+        label_map = tmp_path / "labels.json"
+        label_map.write_text("{}")
+        install_lightrag_ingestion_hook(label_map_path=label_map, ceiling="C2")
+
+        class FakeRAG(LightRAG):
+            def __init__(self):
+                self.doc_status = MagicMock()
+                self.doc_status.get_by_id = AsyncMock(return_value=None)
+                self.doc_status.upsert = AsyncMock()
+
+        app = create_app(_make_settings(api_key="test-key"))
+        original_rag = app_module._rag
+        app_module._rag = FakeRAG()
+        source_path = str(tmp_path / "c1.docx")
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/insert",
+                    json={"text": "Some document content.", "file_path": source_path},
+                    headers={"Authorization": "Bearer test-key"},
+                )
+        finally:
+            app_module._rag = original_rag
+            for name, value in saved.items():
+                if value is None:
+                    if hasattr(LightRAG, name):
+                        delattr(LightRAG, name)
+                else:
+                    setattr(LightRAG, name, value)
+
+        assert resp.status_code == 200
+        assert seen_paths == [source_path]
+        assert indexed == [
+            {"input": "Some document content.", "file_paths": source_path}
+        ]
+
+    async def test_insert_falls_back_for_legacy_ainsert_signature(self):
+        """Older LightRAG versions without file_paths keep accepting /insert."""
+        calls: list[str] = []
+
+        class LegacyRAG:
+            async def ainsert(self, text):
+                calls.append(text)
+
+        app = create_app(_make_settings(api_key="test-key"))
+        original_rag = app_module._rag
+        app_module._rag = LegacyRAG()
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/insert",
+                    json={"text": "Some document content.", "file_path": "/kb/c2.docx"},
+                    headers={"Authorization": "Bearer test-key"},
+                )
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 200
+        assert calls == ["Some document content."]
+
     async def test_insert_returns_401_without_auth(self, _client_with_auth):
         """POST /insert without auth header returns 401 when auth enabled."""
         resp = await _client_with_auth.post(

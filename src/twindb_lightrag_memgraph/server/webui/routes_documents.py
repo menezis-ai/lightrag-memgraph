@@ -250,10 +250,10 @@ async def remove_document_from_folder(
             # Last membership: physically delete (node + edge removed together).
             await legacy._delete_doc_from_rag(rag, doc_id)
             physically_deleted = True
-            remaining = 0
+            remaining_folders: list[str] = []
         else:
             await rag.doc_status.remove_from_folder(doc_id, folder_id)
-            remaining = len(folders) - 1
+            remaining_folders = [folder for folder in folders if folder != folder_id]
 
     event = _make_event(
         kind="doc-deleted" if physically_deleted else "doc-folder-removed",
@@ -269,15 +269,17 @@ async def remove_document_from_folder(
             "folder_id": folder_id,
             "operation": "remove-membership",
             "physically_deleted": physically_deleted,
-            "remaining_folders": remaining,
+            "remaining_folders": remaining_folders,
         },
         target_type="document",
         target_id=doc_id,
     )
     await get_store().record_activity(event)
     return {
+        "ok": True,
         "doc_id": doc_id,
-        "remaining_folders": remaining,
+        "removed_folder": folder_id,
+        "remaining_folders": remaining_folders,
         "physically_deleted": physically_deleted,
     }
 

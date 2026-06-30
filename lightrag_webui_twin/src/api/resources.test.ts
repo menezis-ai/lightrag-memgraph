@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setSessionAuthToken } from './client';
 import { api } from './resources';
 
 const originalFetch = globalThis.fetch;
@@ -25,6 +26,7 @@ beforeEach(() => {
   globalThis.fetch = vi.fn();
 });
 afterEach(() => {
+  setSessionAuthToken(null);
   globalThis.fetch = originalFetch;
 });
 
@@ -257,6 +259,16 @@ describe('uploadDocument', () => {
     // Still a header, not a multipart field.
     expect(bodies[0].has('classification')).toBe(false);
     expect(headers[0].get('X-Twin-Classification')).toBe('C3');
+  });
+
+  it('sends the active token as X-API-Key only for the native upload route', async () => {
+    setSessionAuthToken('native-upload-token');
+    const { headers } = mockUploadOnce();
+
+    await api.uploadDocument(new File(['payload'], 'plain.md'));
+
+    expect(headers[0].has('Authorization')).toBe(false);
+    expect(headers[0].get('X-API-Key')).toBe('native-upload-token');
   });
 });
 

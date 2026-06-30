@@ -10,8 +10,11 @@ and call aquery(). Everything else is encapsulated.
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +33,21 @@ from .react.observe import SynthesisEngine
 from .react.reason import ReasoningEngine
 
 logger = logging.getLogger("twin_rag_intelligence")
+_LOG_FINGERPRINT_KEY = secrets.token_bytes(32)
+
+
+def _safe_text_metadata(value: str | None, prefix: str) -> dict[str, int | str]:
+    """Return process-local, non-reversible metadata for sensitive text."""
+    text = value or ""
+    digest = hmac.new(
+        _LOG_FINGERPRINT_KEY,
+        text.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:16]
+    return {
+        f"{prefix}_fingerprint": digest,
+        f"{prefix}_length": len(text),
+    }
 
 
 class TwinRAGEngine:
@@ -120,11 +138,19 @@ class TwinRAGEngine:
             return None
         intent_result = await self.intent_classifier.classify(question)
         trace.intent = intent_result
+        reason_meta = _safe_text_metadata(intent_result.reason, "reason")
         logger.info(
-            "Intent: %s (conf: %.2f) -- %s",
+            "Intent classified: intent=%s confidence=%.2f reason_fingerprint=%s "
+            "reason_length=%d",
             intent_result.intent.value,
             intent_result.confidence,
-            intent_result.reason,
+            reason_meta["reason_fingerprint"],
+            reason_meta["reason_length"],
+            extra={
+                "intent": intent_result.intent.value,
+                "confidence": intent_result.confidence,
+                **reason_meta,
+            },
         )
 
         if (
@@ -149,7 +175,13 @@ class TwinRAGEngine:
             )
 
         if intent_result.intent == IntentType.MALICIOUS:
-            logger.warning("Malicious attempt detected: %s", question)
+            question_meta = _safe_text_metadata(question, "question")
+            logger.warning(
+                "Malicious attempt detected: question_fingerprint=%s question_length=%d",
+                question_meta["question_fingerprint"],
+                question_meta["question_length"],
+                extra=question_meta,
+            )
             trace.stop(early_exit="MALICIOUS")
             return QueryResult(
                 answer=self._scripted_response(IntentType.MALICIOUS),
@@ -210,7 +242,18 @@ class TwinRAGEngine:
             )
             trace.expansion_terms = expanded.added_terms
             search_query = expanded.expanded_query
-            logger.info("Query expansion: +%d terms -> %s", len(expanded.added_terms), search_query)
+            expanded_meta = _safe_text_metadata(search_query, "expanded_query")
+            logger.info(
+                "Query expansion applied: added_terms_count=%d "
+                "expanded_query_fingerprint=%s expanded_query_length=%d",
+                len(expanded.added_terms),
+                expanded_meta["expanded_query_fingerprint"],
+                expanded_meta["expanded_query_length"],
+                extra={
+                    "added_terms_count": len(expanded.added_terms),
+                    **expanded_meta,
+                },
+            )
 
         # ---- STEP 2: ACT (Hybrid Search multi-workspace + Reranking F04) ----
         all_workspaces = await self._resolve_search_folders(

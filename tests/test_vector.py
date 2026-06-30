@@ -63,6 +63,25 @@ class TestMemgraphVectorDBStorage:
         assert result is not None
         assert result["entity_name"] == "greeting"
 
+    async def test_metadata_only_upsert_preserves_existing_embedding(self, vec_store):
+        embedding = [0.1, 0.2, 0.3, 0.4]
+        await vec_store.upsert(
+            {
+                "v1": {
+                    "content": "hello world",
+                    "entity_name": "greeting",
+                    "embedding": embedding,
+                }
+            }
+        )
+
+        await vec_store.upsert({"v1": {"entity_name": "updated"}})
+
+        result = await vec_store.get_by_id("v1")
+        assert result is not None
+        assert result["entity_name"] == "updated"
+        assert result["embedding"] == pytest.approx(embedding)
+
     async def test_get_by_ids(self, vec_store):
         await vec_store.upsert(
             {

@@ -79,6 +79,7 @@ def seed() -> None:
                 MERGE (n:DocStatus_default {id: row.id})
                 SET n.status = row.status,
                     n.file_path = row.file_path,
+                    n.folder = $folder,
                     n.content_summary = row.content_summary,
                     n.content_length = row.content_length,
                     n.chunks_count = row.chunks_count,
@@ -89,6 +90,19 @@ def seed() -> None:
                     n.track_id = row.track_id
                 """,
                 rows=docs,
+                folder=FOLDER_ID,
+            ).consume()
+            session.run(
+                """
+                MERGE (folder:Folder_default {id: $folder})
+                SET folder.label = $folder
+                WITH folder
+                MATCH (doc:DocStatus_default)
+                WHERE doc.id IN $ids
+                MERGE (doc)-[:MEMBER_OF]->(folder)
+                """,
+                folder=FOLDER_ID,
+                ids=[doc["id"] for doc in docs],
             ).consume()
             session.run(
                 """

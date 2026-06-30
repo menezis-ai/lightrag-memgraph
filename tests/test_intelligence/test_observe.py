@@ -81,3 +81,22 @@ class TestSynthesisEngine:
             result = await engine.synthesize("Question", sample_chunks)
         assert "Erreur" in result.answer
         assert result.citations == []
+
+    async def test_synthesize_error_hides_exception_details(
+        self, engine, sample_chunks, caplog
+    ):
+        secret = "SECRET_TOKEN=observe-exception-secret-123"
+        with (
+            caplog.at_level("ERROR", logger="twin_rag_intelligence.observe"),
+            patch(
+                "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+                side_effect=RuntimeError(f"upstream echoed {secret}"),
+            ),
+        ):
+            result = await engine.synthesize("Question", sample_chunks)
+
+        assert "Erreur" in result.answer
+        assert secret not in result.answer
+        assert secret not in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert result.citations == []

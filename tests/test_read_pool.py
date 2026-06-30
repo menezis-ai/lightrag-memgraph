@@ -22,6 +22,18 @@ class _AsyncEmpty:
         raise StopAsyncIteration
 
 
+class _TrackingLock:
+    def __init__(self):
+        self.held = False
+
+    def __enter__(self):
+        self.held = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.held = False
+
+
 @pytest.fixture(autouse=True)
 def reset_all_pool_state():
     """Reset ALL pool state between tests (both write and read)."""
@@ -142,6 +154,50 @@ class TestDualPool:
             d2, _ = await pool._get_read_driver()
             assert d2 is mock_driver_2
             mock_driver_1.close.assert_awaited_once()
+
+    async def test_stale_write_driver_closes_outside_thread_lock(self, monkeypatch):
+        """Replacing a stale write driver must not await close() under the sync lock."""
+        lock = _TrackingLock()
+        stale_driver = MagicMock()
+
+        async def close_stale():
+            assert lock.held is False
+
+        stale_driver.close = AsyncMock(side_effect=close_stale)
+        new_driver = MagicMock()
+        pool._driver = stale_driver
+        pool._database = "memgraph"
+        pool._bound_loop_id = -1
+        monkeypatch.setattr(pool, "_thread_lock", lock)
+
+        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+            mock_agd.driver.return_value = new_driver
+            driver, _ = await pool.get_driver()
+
+        assert driver is new_driver
+        stale_driver.close.assert_awaited_once()
+
+    async def test_stale_read_driver_closes_outside_thread_lock(self, monkeypatch):
+        """Replacing a stale read driver must not await close() under the sync lock."""
+        lock = _TrackingLock()
+        stale_driver = MagicMock()
+
+        async def close_stale():
+            assert lock.held is False
+
+        stale_driver.close = AsyncMock(side_effect=close_stale)
+        new_driver = MagicMock()
+        pool._read_driver = stale_driver
+        pool._read_database = "memgraph"
+        pool._read_bound_loop_id = -1
+        monkeypatch.setattr(pool, "_thread_lock", lock)
+
+        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+            mock_agd.driver.return_value = new_driver
+            driver, _ = await pool._get_read_driver()
+
+        assert driver is new_driver
+        stale_driver.close.assert_awaited_once()
 
 
 # ── close_driver ──────────────────────────────────────────────────────

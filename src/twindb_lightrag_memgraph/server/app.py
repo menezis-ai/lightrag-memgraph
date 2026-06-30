@@ -21,6 +21,7 @@ Architecture
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import time
@@ -28,7 +29,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from lightrag import LightRAG
@@ -109,6 +110,66 @@ class HealthResponse(BaseModel):
 class ReadinessResponse(BaseModel):
     status: str
     checks: dict[str, dict[str, Any]]
+
+
+def _classification_guard_requires_file_path(
+    require_production_auth: bool,
+    env: dict[str, str] | None = None,
+) -> bool:
+    """Fail closed on raw-text /insert in production when MIP gating is active."""
+    env = env if env is not None else os.environ
+    if not require_production_auth:
+        return False
+    if (env.get("TWIN_MIP_LABEL_MAP") or "").strip():
+        return True
+    return getattr(LightRAG, "_twin_classification_hook", None) is not None
+
+
+def _usable_file_path(file_path: str | None) -> str | None:
+    if file_path is None:
+        return None
+    cleaned = file_path.strip()
+    return cleaned or None
+
+
+def _ainsert_accepts_file_paths(ainsert: Any) -> bool:
+    try:
+        signature = inspect.signature(ainsert)
+    except (TypeError, ValueError):
+        return True
+    return any(
+        name == "file_paths" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for name, parameter in signature.parameters.items()
+    )
+
+
+async def _ainsert_with_optional_file_path(
+    rag: Any,
+    text: str,
+    *,
+    file_path: str | None,
+    classification_guard: bool,
+) -> None:
+    ainsert = rag.ainsert
+    if file_path is None:
+        await ainsert(text)
+        return
+    if _ainsert_accepts_file_paths(ainsert):
+        await ainsert(text, file_paths=file_path)
+        return
+    if classification_guard:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "This LightRAG version cannot receive file_paths on ainsert; "
+                "classification-gated /insert would bypass source-file checks."
+            ),
+        )
+    logger.warning(
+        "Ignoring /insert file_path because LightRAG.ainsert does not support "
+        "file_paths in this LightRAG version"
+    )
+    await ainsert(text)
 
 
 def _route_group(path: str) -> str:
@@ -682,7 +743,24 @@ def _register_core_routes(
     )
     async def insert(body: InsertRequest):
         rag = _get_rag()
-        await rag.ainsert(body.text)
+        file_path = _usable_file_path(body.file_path)
+        classification_guard = _classification_guard_requires_file_path(
+            require_production_auth
+        )
+        if classification_guard and file_path is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "file_path is required for /insert when MIP classification "
+                    "is active in production."
+                ),
+            )
+        await _ainsert_with_optional_file_path(
+            rag,
+            body.text,
+            file_path=file_path,
+            classification_guard=classification_guard,
+        )
         return InsertResponse(status="ok")
 
 

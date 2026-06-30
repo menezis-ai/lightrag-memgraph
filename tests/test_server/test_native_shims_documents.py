@@ -45,8 +45,26 @@ class FakeDocStatusStore:
     def __init__(self, docs: dict[str, FakeDocStatus] | None = None) -> None:
         self.docs = docs or {}
 
-    async def get_docs_paginated(self, **_: Any):
-        return list(self.docs.items()), len(self.docs)
+    async def get_docs_paginated(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        status_filter: Any = None,
+        **_: Any,
+    ):
+        rows = list(self.docs.items())
+        if status_filter is not None:
+            status_value = getattr(status_filter, "value", str(status_filter))
+            rows = [
+                (doc_id, doc)
+                for doc_id, doc in rows
+                if doc.status == status_value
+            ]
+        total = len(rows)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return rows[start:end], total
 
 
 class FakeRag:
@@ -65,8 +83,14 @@ def _folder_env(monkeypatch):
     )
 
 
-def _make_client(monkeypatch, docs: dict[str, FakeDocStatus]) -> AsyncClient:
+def _make_client(
+    monkeypatch,
+    docs: dict[str, FakeDocStatus],
+    tags_by_doc: dict[str, list[str]] | None = None,
+) -> AsyncClient:
     async def no_tags(_docs, *, folder: str) -> None:
+        for doc in _docs:
+            doc["tags"] = list((tags_by_doc or {}).get(doc["doc_id"], []))
         return None
 
     monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
@@ -77,6 +101,28 @@ def _make_client(monkeypatch, docs: dict[str, FakeDocStatus]) -> AsyncClient:
         transport=ASGITransport(app=app),
         base_url="http://test",
     )
+
+
+def _docs_with_late_match(
+    *,
+    match_doc_id: str = "doc-target",
+    match_file_path: str = "zz-target-runbook.pdf",
+) -> dict[str, FakeDocStatus]:
+    docs = {
+        f"doc-{idx:02d}": FakeDocStatus(
+            status="processed",
+            file_path=f"boring-{idx:02d}.pdf",
+            chunks_count=idx,
+        )
+        for idx in range(DEFAULT_PAGE_SIZE)
+    }
+    docs[match_doc_id] = FakeDocStatus(
+        status="processed",
+        file_path=match_file_path,
+        chunks_count=99,
+        content_summary="Late target outside the first backend page",
+    )
+    return docs
 
 
 class TestDocumentsFailedProjection:
@@ -245,6 +291,63 @@ class TestDocumentsFailedProjection:
         assert r.status_code == 200
         doc = r.json()["items"][0]
         assert doc["metadata"] == {"sha256": "real-sha256"}
+
+
+class TestDocumentsFilteringBeforePagination:
+    async def test_q_filter_finds_match_outside_first_backend_page(self, monkeypatch):
+        docs = _docs_with_late_match(match_file_path="late-oracle-runbook.pdf")
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents", params={"q": "oracle"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["next_cursor"] is None
+        assert [doc["doc_id"] for doc in body["items"]] == ["doc-target"]
+
+    async def test_tag_filter_finds_match_outside_first_backend_page(self, monkeypatch):
+        docs = _docs_with_late_match()
+        async with _make_client(
+            monkeypatch,
+            docs,
+            tags_by_doc={"doc-target": ["rman"]},
+        ) as client:
+            r = await client.get("/documents", params={"tag": "rman"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["next_cursor"] is None
+        assert [doc["doc_id"] for doc in body["items"]] == ["doc-target"]
+        assert body["items"][0]["tags"] == ["rman"]
+
+    async def test_source_filter_finds_match_outside_first_backend_page(
+        self, monkeypatch
+    ):
+        docs = _docs_with_late_match(match_file_path="/sharepoint/late-source.pdf")
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents", params={"source": "late-source"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["next_cursor"] is None
+        assert [doc["file_path"] for doc in body["items"]] == [
+            "/sharepoint/late-source.pdf"
+        ]
+
+    async def test_doc_id_filter_finds_match_outside_first_backend_page(
+        self, monkeypatch
+    ):
+        docs = _docs_with_late_match(match_doc_id="doc-late-id")
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents", params={"doc_id": "doc-late-id"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["next_cursor"] is None
+        assert [doc["doc_id"] for doc in body["items"]] == ["doc-late-id"]
 
 
 class TestPerDocumentScanContract:

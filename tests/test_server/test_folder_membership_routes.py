@@ -149,14 +149,20 @@ class TestRemoveMembership:
         r = await client.delete("/documents/doc-a/folders/default")
         assert r.status_code == 200
         body = r.json()
+        assert body["ok"] is True
+        assert body["removed_folder"] == "default"
         assert body["physically_deleted"] is False
-        assert body["remaining_folders"] == 1
+        assert body["remaining_folders"] == ["sandbox"]
         assert client._test_rag.deleted == []  # data untouched
 
     async def test_remove_last_membership_physically_deletes(self, client):
         r = await client.delete("/documents/doc-default/folders/default")
         assert r.status_code == 200
-        assert r.json()["physically_deleted"] is True
+        body = r.json()
+        assert body["ok"] is True
+        assert body["removed_folder"] == "default"
+        assert body["physically_deleted"] is True
+        assert body["remaining_folders"] == []
         assert client._test_rag.deleted == ["doc-default"]
 
     async def test_remove_non_member_folder_is_404(self, client):

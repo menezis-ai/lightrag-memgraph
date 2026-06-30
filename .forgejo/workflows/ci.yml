@@ -245,7 +245,9 @@ jobs:
       REAL_E2E_EXPECT_AUTH: "true"
       REAL_E2E_MUTATION_DOC_ID: real-e2e-retag-doc
       REAL_E2E_BULK_DELETE_DOC_ID: real-e2e-delete-doc
-      REAL_E2E_UPLOAD_FOR_DELETE: "true"
+      # Keep real-backend e2e non-LLM: native upload starts indexing and would
+      # hit the intentionally disabled OpenAI credentials in this job.
+      REAL_E2E_UPLOAD_FOR_DELETE: "false"
       REAL_E2E_RETAG_TAG: real_e2e_tag
       TWIN_DEFAULT_FOLDER: default
       TWIN_FOLDERS_JSON: '[{"id":"default","label":"Default","kind":"primary"}]'

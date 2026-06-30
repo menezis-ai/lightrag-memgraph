@@ -129,13 +129,14 @@ def _filter_docs(
     q: str | None,
     tag: str | None,
     folder: str,
+    source: str | None = None,
+    doc_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Apply WebUI-side filters that LightRAG's paginated endpoint doesn't.
 
-    ``q`` matches a substring of file_path (case-insensitive); ``tag``
-    matches against ``metadata.tags`` if present (the overlay tagstore
-    is the authoritative source — but documents already carrying tags
-    on their DocStatus.metadata get filtered here too).
+    ``q`` matches a substring of the source-ish fields (case-insensitive);
+    ``source`` is the explicit alias for file_path/source filtering; ``doc_id``
+    matches the document id. ``tag`` matches the graph-injected ``tags`` field.
     """
     from .folder import load_folder_catalog
 
@@ -152,7 +153,36 @@ def _filter_docs(
     ]
     if q:
         needle = q.lower()
-        out = [d for d in out if needle in (d.get("file_path") or "").lower()]
+        out = [
+            d
+            for d in out
+            if needle
+            in " ".join(
+                str(d.get(key) or "")
+                for key in (
+                    "doc_id",
+                    "id",
+                    "file_path",
+                    "source",
+                    "content_summary",
+                    "summary",
+                )
+            ).lower()
+        ]
+    if source:
+        source_needle = source.lower()
+        out = [
+            d
+            for d in out
+            if source_needle
+            in str(d.get("file_path") or d.get("source") or "").lower()
+        ]
+    if doc_id:
+        out = [
+            d
+            for d in out
+            if doc_id == str(d.get("doc_id") or d.get("id") or "")
+        ]
     if tag:
         # Tags now come from the [:TAGGED_WITH] graph relation and are
         # injected on top of each doc dict by the list endpoint
@@ -160,6 +190,38 @@ def _filter_docs(
         # whichever representation is on the dict.
         out = [d for d in out if tag in (d.get("tags") or [])]
     return out
+
+
+def _has_local_document_filter(
+    q: str | None,
+    tag: str | None,
+    source: str | None,
+    doc_id: str | None,
+) -> bool:
+    """Filters not handled by LightRAG's paginated DocStatus storage call."""
+    return any((q, tag, source, doc_id))
+
+
+def _project_doc_tuples(docs_tuples: list[tuple[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten storage ``(doc_id, DocProcessingStatus)`` rows for the wire model."""
+    import dataclasses
+
+    projected: list[dict[str, Any]] = []
+    for doc_id, dps in docs_tuples:
+        if dataclasses.is_dataclass(dps):
+            payload = dataclasses.asdict(dps)
+        elif isinstance(dps, dict):
+            payload = dict(dps)
+        elif hasattr(dps, "model_dump"):
+            payload = dps.model_dump()
+        else:
+            payload = dict(getattr(dps, "__dict__", {}))
+        # asdict() leaves enums as enums — coerce to their string value.
+        if hasattr(payload.get("status"), "value"):
+            payload["status"] = payload["status"].value
+        payload["id"] = doc_id
+        projected.append(_project_doc(payload))
+    return projected
 
 
 async def _attach_tags_via_graph(docs: list[dict[str, Any]], folder: str) -> None:
@@ -262,12 +324,34 @@ def _doc_matches_folder(doc_status: Any, folder: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _get_docs_paginated_for_shim(
+    rag: Any,
+    *,
+    page: int,
+    page_size: int,
+    status_enum: Any,
+    folder: str,
+) -> tuple[list[tuple[str, Any]], int]:
+    """Call DocStatus pagination with folder support when the backend has it."""
+    try:
+        return await rag.doc_status.get_docs_paginated(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+            folder=folder,
+        )
+    except TypeError:
+        return await rag.doc_status.get_docs_paginated(
+            page=page,
+            page_size=page_size,
+            status_filter=status_enum,
+        )
+
+
 async def _list_documents_impl(
-    get_rag, request, status, q, tag, cursor
+    get_rag, request, status, q, tag, cursor, source=None, doc_id=None
 ) -> _ListEnvelope:
     """Body of the ``GET /documents`` shim (flat paginated envelope)."""
-    import dataclasses
-
     from lightrag.base import DocStatus
     from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
     from .folder import resolve_folder_for_request
@@ -286,38 +370,59 @@ async def _list_documents_impl(
         except ValueError:
             logger.warning("twindb shim: unknown status filter %r", status)
 
-    try:
-        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+    local_filter = _has_local_document_filter(q, tag, source, doc_id)
+    if local_filter:
+        all_tuples: list[tuple[str, Any]] = []
+        fetch_page = 1
+        total = 0
+        while True:
+            docs_tuples, total = await _get_docs_paginated_for_shim(
+                rag,
+                page=fetch_page,
+                page_size=page_size,
+                status_enum=status_enum,
+                folder=folder,
+            )
+            all_tuples.extend(docs_tuples)
+            if not docs_tuples or len(all_tuples) >= total:
+                break
+            fetch_page += 1
+        projected = _project_doc_tuples(all_tuples)
+        if tag:
+            await _attach_tags_via_graph(projected, folder=folder)
+        filtered = _filter_docs(
+            projected,
+            q=q,
+            tag=tag,
+            folder=folder,
+            source=source,
+            doc_id=doc_id,
+        )
+        filtered_total = len(filtered)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_items = filtered[start:end]
+        if not tag:
+            await _attach_tags_via_graph(page_items, folder=folder)
+        next_cursor = str(page + 1) if end < filtered_total else None
+    else:
+        docs_tuples, total = await _get_docs_paginated_for_shim(
+            rag,
             page=page,
             page_size=page_size,
-            status_filter=status_enum,
+            status_enum=status_enum,
             folder=folder,
         )
-    except TypeError:
-        docs_tuples, total = await rag.doc_status.get_docs_paginated(
-            page=page,
-            page_size=page_size,
-            status_filter=status_enum,
-        )
-    # More pages exist when this DB page came back full. Cursor = next page
-    # number (opaque to the client). The storage call is folder-scoped when
-    # supported, so this cursor no longer skips over non-folder rows.
-    next_cursor = str(page + 1) if page * page_size < total else None
+        # More pages exist when this DB page came back full. Cursor = next page
+        # number (opaque to the client). The storage call is folder-scoped when
+        # supported, so this cursor no longer skips over non-folder rows.
+        next_cursor = str(page + 1) if page * page_size < total else None
+        page_items = _project_doc_tuples(docs_tuples)
+        # Tags via graph join — single batch Cypher round-trip.
+        await _attach_tags_via_graph(page_items, folder=folder)
+        page_items = _filter_docs(page_items, q=None, tag=None, folder=folder)
+        filtered_total = total
 
-    # Flatten (doc_id, DocProcessingStatus dataclass) → dict for projection
-    projected: list[dict[str, Any]] = []
-    for doc_id, dps in docs_tuples:
-        payload = dataclasses.asdict(dps)
-        # asdict() leaves enums as enums — coerce to their string value
-        if hasattr(payload.get("status"), "value"):
-            payload["status"] = payload["status"].value
-        payload["id"] = doc_id
-        projected.append(_project_doc(payload))
-
-    # Tags via graph join — single batch Cypher round-trip.
-    await _attach_tags_via_graph(projected, folder=folder)
-
-    filtered = _filter_docs(projected, q=q, tag=tag, folder=folder)
     status_counts = None
     try:
         status_counts = await rag.doc_status.get_status_counts(folder=folder)
@@ -327,8 +432,8 @@ async def _list_documents_impl(
         status_counts = None
 
     return _ListEnvelope(
-        items=[_DocumentEnvelope(**d) for d in filtered],
-        total=total if not q and not tag else len(filtered),
+        items=[_DocumentEnvelope(**d) for d in page_items],
+        total=filtered_total,
         page=page,
         page_size=page_size,
         next_cursor=next_cursor,
@@ -546,6 +651,8 @@ def build_native_shims_router(
         status: Annotated[str | None, Query()] = None,
         q: Annotated[str | None, Query()] = None,
         tag: Annotated[str | None, Query()] = None,
+        source: Annotated[str | None, Query()] = None,
+        doc_id: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,
     ) -> _ListEnvelope:
         """Shadow the native ``GET /documents`` to expose a flat envelope.
@@ -559,7 +666,16 @@ def build_native_shims_router(
         a dict envelope (the native LightRAG paginated HTTP route assembles
         the dict in the route handler).
         """
-        return await _list_documents_impl(get_rag, request, status, q, tag, cursor)
+        return await _list_documents_impl(
+            get_rag,
+            request,
+            status,
+            q,
+            tag,
+            cursor,
+            source=source,
+            doc_id=doc_id,
+        )
 
     @router.get(
         "/documents/{doc_id}/chunks",

@@ -606,18 +606,18 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         label = self._label()
+        computed = await self._compute_missing_embeddings(data)
+        entries = [
+            self._build_entry(eid, item, item.get("embedding") or computed.get(eid))
+            for eid, item in data.items()
+        ]
         async with _pool.acquire_write_slot():
-            computed = await self._compute_missing_embeddings(data)
-            entries = [
-                self._build_entry(eid, item, item.get("embedding") or computed.get(eid))
-                for eid, item in data.items()
-            ]
             async with _pool.get_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
-                    SET n += e.props, n.embedding = e.embedding
+                    SET n += e.props, n.embedding = coalesce(e.embedding, n.embedding)
                     """,
                     entries=entries,
                 )

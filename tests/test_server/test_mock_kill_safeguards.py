@@ -21,8 +21,14 @@ import logging
 
 import pytest
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph import _mount_twin_subapp
+from twindb_lightrag_memgraph import (
+    _mount_twin_subapp,
+    _mount_twin_ui,
+    _replace_webui_mount,
+)
 from twindb_lightrag_memgraph.server import idp_jwt, webui_router
 
 
@@ -112,6 +118,75 @@ class TestStandaloneDefaults:
         assert settings.webui_tag_backend == "memgraph"
         assert settings.webui_activity_backend == "memgraph"
         assert settings.webui_notifications_backend == "memgraph"
+
+
+# ---------------------------------------------------------------------------
+# F7 — runtime never exposes MSW from a polluted Twin dist
+# ---------------------------------------------------------------------------
+
+
+def _write_twin_dist_with_msw(tmp_path):
+    dist = tmp_path / "twin-dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(
+        "<html><head></head><body>__TWIN_CONFIG_JSON__</body></html>",
+        encoding="utf-8",
+    )
+    (dist / "mockServiceWorker.js").write_text(
+        "self.__MSW_PROBE__ = true;",
+        encoding="utf-8",
+    )
+    return dist
+
+
+class TestMockServiceWorkerRuntimeExposure:
+    async def test_twin_ui_mount_does_not_serve_mock_service_worker(self, tmp_path):
+        dist = _write_twin_dist_with_msw(tmp_path)
+        app = FastAPI()
+        _mount_twin_ui(app, str(dist), prefix="/twin")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            root_response = await client.get("/mockServiceWorker.js")
+            mounted_response = await client.get("/twin/mockServiceWorker.js")
+
+        assert root_response.status_code == 404
+        assert mounted_response.status_code == 404
+        assert "MSW_PROBE" not in root_response.text
+        assert "MSW_PROBE" not in mounted_response.text
+
+    async def test_replaced_webui_mount_does_not_serve_mock_service_worker(
+        self, tmp_path
+    ):
+        native_dist = tmp_path / "native-dist"
+        native_dist.mkdir()
+        (native_dist / "index.html").write_text(
+            "<html>native</html>",
+            encoding="utf-8",
+        )
+        dist = _write_twin_dist_with_msw(tmp_path)
+        app = FastAPI()
+        app.mount(
+            "/webui",
+            StaticFiles(directory=str(native_dist), html=True),
+            name="webui",
+        )
+
+        _replace_webui_mount(app, str(dist))
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            root_response = await client.get("/mockServiceWorker.js")
+            mounted_response = await client.get("/webui/mockServiceWorker.js")
+
+        assert root_response.status_code == 404
+        assert mounted_response.status_code == 404
+        assert "MSW_PROBE" not in root_response.text
+        assert "MSW_PROBE" not in mounted_response.text
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,19 @@ _read_bound_loop_id = None
 _enterprise_supported: bool | None = None
 
 
+async def _close_stale_driver(driver, label: str) -> None:
+    """Best-effort close for a driver replaced after an event-loop change.
+
+    This helper is intentionally awaited outside ``_thread_lock``. A synchronous
+    ``threading.Lock`` held across an ``await`` can block the event loop if
+    another coroutine reaches the same lock while the close is suspended.
+    """
+    try:
+        await driver.close()
+    except Exception as e:
+        logger.debug("Error closing stale %s driver: %s", label, e)
+
+
 def _read_pool_size() -> int:
     """Read MEMGRAPH_POOL_SIZE from env, default CONNECTION_POOL_SIZE (50)."""
     raw = os.environ.get(MEMGRAPH_POOL_SIZE_ENV, "")
@@ -178,21 +191,17 @@ async def get_driver():
     if _driver is not None and _bound_loop_id == current_loop_id:
         return _driver, _database
 
+    stale_driver = None
     with _thread_lock:
         # Double-check after acquiring lock
         if _driver is not None and _bound_loop_id == current_loop_id:
             return _driver, _database
 
-        # Close stale driver from a previous event loop
-        if _driver is not None:
-            try:
-                await _driver.close()
-            except Exception as e:
-                logger.debug("Error closing stale driver: %s", e)
-            _driver = None
-
-        uri, _database, driver_kwargs = _read_connection_config()
-        _driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        uri, database, driver_kwargs = _read_connection_config()
+        new_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        stale_driver = _driver
+        _driver = new_driver
+        _database = database
         _bound_loop_id = current_loop_id
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
@@ -201,7 +210,10 @@ async def get_driver():
             _safe_uri,
             _database,
         )
-        return _driver, _database
+        driver, database = _driver, _database
+    if stale_driver is not None:
+        await _close_stale_driver(stale_driver, "write")
+    return driver, database
 
 
 @asynccontextmanager
@@ -245,22 +257,19 @@ async def _get_read_driver():
     if _read_driver is not None and _read_bound_loop_id == current_loop_id:
         return _read_driver, _read_database
 
+    stale_driver = None
     with _thread_lock:
         if _read_driver is not None and _read_bound_loop_id == current_loop_id:
             return _read_driver, _read_database
 
-        if _read_driver is not None:
-            try:
-                await _read_driver.close()
-            except Exception as e:
-                logger.debug("Error closing stale read driver: %s", e)
-            _read_driver = None
-
         read_pool_size = _read_read_pool_size()
-        uri, _read_database, driver_kwargs = _read_connection_config(
+        uri, database, driver_kwargs = _read_connection_config(
             pool_size_override=read_pool_size,
         )
-        _read_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        new_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        stale_driver = _read_driver
+        _read_driver = new_driver
+        _read_database = database
         _read_bound_loop_id = current_loop_id
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
@@ -270,7 +279,10 @@ async def _get_read_driver():
             _read_database,
             read_pool_size,
         )
-        return _read_driver, _read_database
+        driver, database = _read_driver, _read_database
+    if stale_driver is not None:
+        await _close_stale_driver(stale_driver, "read")
+    return driver, database
 
 
 @asynccontextmanager

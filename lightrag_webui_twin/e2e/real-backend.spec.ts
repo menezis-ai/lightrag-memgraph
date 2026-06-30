@@ -57,6 +57,14 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+function nativeUploadHeaders(): Record<string, string> {
+  return {
+    Accept: 'application/json',
+    'X-Twin-Folder': defaultFolder,
+    ...(authToken ? { 'X-API-Key': authToken } : {}),
+  };
+}
+
 function noAuthHeaders(): Record<string, string> {
   return {
     Accept: 'application/json',
@@ -141,7 +149,7 @@ async function uploadTextDocument(page: Page): Promise<string> {
     },
     {
       base: backendUrl,
-      headers: authHeaders(),
+      headers: nativeUploadHeaders(),
       filename,
     },
   );
@@ -155,6 +163,7 @@ async function uploadTextDocument(page: Page): Promise<string> {
     const track = await fetchFromBrowser<TrackStatusEnvelope>(
       page,
       `/documents/track_status/${encodeURIComponent(body.track_id!)}`,
+      { headers: nativeUploadHeaders() },
     );
     expect(track.ok, JSON.stringify(track.body)).toBe(true);
     const doc = track.body.documents.find((item) => item.file_path.includes(filename));

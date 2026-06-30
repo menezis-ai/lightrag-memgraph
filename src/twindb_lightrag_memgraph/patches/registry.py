@@ -1807,18 +1807,6 @@ def _replace_webui_mount(app, webui_dist: str) -> None:
 
             app.get(f"/{fname}", include_in_schema=False)(_serve)
 
-    # Bundle may also reference /mockServiceWorker.js (used by VITE_FORCE_MSW
-    # standalone build). Harmless to expose even in hardened mode — it only
-    # activates if VITE_FORCE_MSW was true at build-time.
-    msw_path = dist_path / "mockServiceWorker.js"
-    if msw_path.is_file():
-        captured_msw = str(msw_path)
-
-        def _serve_msw():
-            return FileResponse(captured_msw, media_type="application/javascript")
-
-        app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
-
     logger.info(
         "twindb: WebUI mount at /webui swapped → %s (with __TWIN_CONFIG_JSON__ substitution)",
         webui_dist,
@@ -1832,6 +1820,7 @@ def _build_twin_static_files(webui_dist: str):
     from pathlib import Path
 
     from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException
     from starlette.responses import HTMLResponse
 
     legacy_hash_guard = (
@@ -1863,6 +1852,9 @@ def _build_twin_static_files(webui_dist: str):
             self._first_serve_logged = False
 
         async def get_response(self, path: str, scope):
+            if Path(path).name == "mockServiceWorker.js":
+                raise HTTPException(status_code=404)
+
             # Starlette normalizes the mount-relative path via os.path.normpath,
             # so GET /twin/ arrives as path == "." (NOT "" or "/"). Explicit
             # GET /twin/index.html arrives as path == "index.html". Both
@@ -1944,15 +1936,6 @@ def _mount_twin_ui(app, webui_dist: str, prefix: str = TWIN_UI_PREFIX) -> None:
                 return FileResponse(path)
 
             app.get(f"/{fname}", include_in_schema=False)(_serve)
-
-    msw_path = dist_path / "mockServiceWorker.js"
-    if msw_path.is_file():
-        captured_msw = str(msw_path)
-
-        def _serve_msw():
-            return FileResponse(captured_msw, media_type="application/javascript")
-
-        app.get("/mockServiceWorker.js", include_in_schema=False)(_serve_msw)
 
     logger.info(
         "twindb: Twin UI mounted at %s → %s (with __TWIN_CONFIG_JSON__ substitution)",

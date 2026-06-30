@@ -168,10 +168,17 @@ class SynthesisEngine:
                 tokens_used=tokens,
             )
 
-        except Exception as e:
-            logger.exception("OBSERVE error: %s", e)
+        except Exception as exc:
+            logger.error(
+                "OBSERVE error: exception_type=%s",
+                type(exc).__name__,
+                extra={"exception_type": type(exc).__name__},
+            )
             return SynthesisResult(
-                answer=f"Erreur lors de la synthese : {e}",
+                answer=(
+                    "Erreur lors de la synthese. Veuillez reessayer ou contacter "
+                    "le support si le probleme persiste."
+                ),
                 citations=[],
             )
 
