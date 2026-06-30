@@ -1637,7 +1637,7 @@ function AddRelationForm({
       data-testid="kg-add-rel-form"
       onSubmit={submit}
     >
-      <label className="kg-form-field kg-form-endpoint">
+      <div className="kg-form-field kg-form-endpoint">
         <span>From</span>
         <span className="kg-form-readonly">
           <span
@@ -1647,7 +1647,7 @@ function AddRelationForm({
           />
           <span className="kg-form-readonly-text">{source.name}</span>
         </span>
-      </label>
+      </div>
       <label className="kg-form-field kg-form-target">
         <span>To</span>
         <div className="kg-target-picker">

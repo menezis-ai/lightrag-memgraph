@@ -169,9 +169,10 @@ class SynthesisEngine:
             )
 
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "OBSERVE error: exception_type=%s",
                 type(exc).__name__,
+                exc_info=False,
                 extra={"exception_type": type(exc).__name__},
             )
             return SynthesisResult(

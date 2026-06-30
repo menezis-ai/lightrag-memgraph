@@ -336,7 +336,11 @@ export const lightragApi = {
     const formData = new FormData();
     formData.append('file', file);
     const headers = buildApiHeaders();
-    const bearer = headers.Authorization?.match(/^Bearer\s+(.+)$/)?.[1];
+    const authorization = headers.Authorization ?? '';
+    const bearerPrefix = 'Bearer ';
+    const bearer = authorization.startsWith(bearerPrefix)
+      ? authorization.slice(bearerPrefix.length).trim()
+      : undefined;
     if (bearer && !headers['X-API-Key']) {
       // Native LightRAG upload routes validate LIGHTRAG_API_KEY via X-API-Key,
       // while the Twin overlay accepts the same value as Authorization: Bearer.

@@ -740,6 +740,14 @@ def _register_core_routes(
         "/insert",
         response_model=InsertResponse,
         dependencies=[Depends(require_auth)],
+        responses={
+            400: {
+                "description": "file_path is required when production MIP classification is active"
+            },
+            501: {
+                "description": "The installed LightRAG ainsert API cannot receive file_paths"
+            },
+        },
     )
     async def insert(body: InsertRequest):
         rag = _get_rag()

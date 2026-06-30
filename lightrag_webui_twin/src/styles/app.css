@@ -1896,7 +1896,11 @@ dialog::backdrop {
     toast-expiry-pulse 1s ease-in-out var(--toast-warning-delay-ms, 20s) 5 alternate forwards;
 }
 .toast.done { --toast-progress-start: var(--twin-green-700); }
-.toast.error { --toast-progress-start: var(--twin-red-vivid); }
+.toast.error {
+  --toast-progress-start: var(--twin-red-vivid);
+  background: var(--twin-red-50);
+  border-color: var(--twin-red-border);
+}
 .toast.removing { animation: slide-out 200ms ease forwards; }
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(20px); }
@@ -1913,7 +1917,6 @@ dialog::backdrop {
 .toast .icon.propagating { color: var(--twin-accent); animation: spin 1s linear infinite; }
 .toast .icon.done { color: var(--twin-green-700); }
 .toast .icon.error { color: var(--twin-red-vivid); }
-.toast.error { background: var(--twin-red-50); border-color: var(--twin-red-border); }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .toast .body { flex: 1; min-width: 0; }
 .toast .title {
@@ -3495,7 +3498,7 @@ dialog::backdrop {
   letter-spacing: 0;
 }
 .icon-btn:where(*) { position: relative; }
-.notif-popover {
+header.topbar .notif-popover {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -9046,7 +9049,7 @@ body:where(*) {
 }
 
 .ws-menu,
-.notif-popover {
+header.topbar .notif-popover {
   top: 42px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -9054,7 +9057,7 @@ body:where(*) {
   box-shadow: var(--shadow-lg);
 }
 
-.notif-popover {
+header.topbar dialog.notif-popover {
   position: fixed;
   top: 52px;
   right: 12px;
@@ -9088,7 +9091,7 @@ body:where(*) {
 }
 
 @media (max-width: 520px) {
-  .notif-popover {
+  header.topbar dialog.notif-popover {
     top: 72px;
     right: 12px;
     left: 12px;
@@ -11074,7 +11077,7 @@ select {
   z-index: 0;
 }
 
-.docs-row.header:where(*) {
+.docs-row.header.has-select:where(*) {
   z-index: 20;
 }
 

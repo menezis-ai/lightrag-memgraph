@@ -348,6 +348,81 @@ async def _get_docs_paginated_for_shim(
         )
 
 
+async def _list_filtered_documents_page(
+    rag: Any,
+    *,
+    page: int,
+    page_size: int,
+    status_enum: Any,
+    folder: str,
+    q: str | None,
+    tag: str | None,
+    source: str | None,
+    doc_id: str | None,
+) -> tuple[list[dict[str, Any]], int, str | None]:
+    all_tuples: list[tuple[str, Any]] = []
+    fetch_page = 1
+    total = 0
+    while True:
+        docs_tuples, total = await _get_docs_paginated_for_shim(
+            rag,
+            page=fetch_page,
+            page_size=page_size,
+            status_enum=status_enum,
+            folder=folder,
+        )
+        all_tuples.extend(docs_tuples)
+        if not docs_tuples or len(all_tuples) >= total:
+            break
+        fetch_page += 1
+
+    projected = _project_doc_tuples(all_tuples)
+    if tag:
+        await _attach_tags_via_graph(projected, folder=folder)
+    filtered = _filter_docs(
+        projected,
+        q=q,
+        tag=tag,
+        folder=folder,
+        source=source,
+        doc_id=doc_id,
+    )
+    filtered_total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = filtered[start:end]
+    if not tag:
+        await _attach_tags_via_graph(page_items, folder=folder)
+    next_cursor = str(page + 1) if end < filtered_total else None
+    return page_items, filtered_total, next_cursor
+
+
+async def _list_native_documents_page(
+    rag: Any,
+    *,
+    page: int,
+    page_size: int,
+    status_enum: Any,
+    folder: str,
+) -> tuple[list[dict[str, Any]], int, str | None]:
+    docs_tuples, total = await _get_docs_paginated_for_shim(
+        rag,
+        page=page,
+        page_size=page_size,
+        status_enum=status_enum,
+        folder=folder,
+    )
+    # More pages exist when this DB page came back full. Cursor = next page
+    # number (opaque to the client). The storage call is folder-scoped when
+    # supported, so this cursor no longer skips over non-folder rows.
+    next_cursor = str(page + 1) if page * page_size < total else None
+    page_items = _project_doc_tuples(docs_tuples)
+    # Tags via graph join — single batch Cypher round-trip.
+    await _attach_tags_via_graph(page_items, folder=folder)
+    page_items = _filter_docs(page_items, q=None, tag=None, folder=folder)
+    return page_items, total, next_cursor
+
+
 async def _list_documents_impl(
     get_rag, request, status, q, tag, cursor, source=None, doc_id=None
 ) -> _ListEnvelope:
@@ -370,58 +445,26 @@ async def _list_documents_impl(
         except ValueError:
             logger.warning("twindb shim: unknown status filter %r", status)
 
-    local_filter = _has_local_document_filter(q, tag, source, doc_id)
-    if local_filter:
-        all_tuples: list[tuple[str, Any]] = []
-        fetch_page = 1
-        total = 0
-        while True:
-            docs_tuples, total = await _get_docs_paginated_for_shim(
-                rag,
-                page=fetch_page,
-                page_size=page_size,
-                status_enum=status_enum,
-                folder=folder,
-            )
-            all_tuples.extend(docs_tuples)
-            if not docs_tuples or len(all_tuples) >= total:
-                break
-            fetch_page += 1
-        projected = _project_doc_tuples(all_tuples)
-        if tag:
-            await _attach_tags_via_graph(projected, folder=folder)
-        filtered = _filter_docs(
-            projected,
+    if _has_local_document_filter(q, tag, source, doc_id):
+        page_items, filtered_total, next_cursor = await _list_filtered_documents_page(
+            rag,
+            page=page,
+            page_size=page_size,
+            status_enum=status_enum,
+            folder=folder,
             q=q,
             tag=tag,
-            folder=folder,
             source=source,
             doc_id=doc_id,
         )
-        filtered_total = len(filtered)
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_items = filtered[start:end]
-        if not tag:
-            await _attach_tags_via_graph(page_items, folder=folder)
-        next_cursor = str(page + 1) if end < filtered_total else None
     else:
-        docs_tuples, total = await _get_docs_paginated_for_shim(
+        page_items, filtered_total, next_cursor = await _list_native_documents_page(
             rag,
             page=page,
             page_size=page_size,
             status_enum=status_enum,
             folder=folder,
         )
-        # More pages exist when this DB page came back full. Cursor = next page
-        # number (opaque to the client). The storage call is folder-scoped when
-        # supported, so this cursor no longer skips over non-folder rows.
-        next_cursor = str(page + 1) if page * page_size < total else None
-        page_items = _project_doc_tuples(docs_tuples)
-        # Tags via graph join — single batch Cypher round-trip.
-        await _attach_tags_via_graph(page_items, folder=folder)
-        page_items = _filter_docs(page_items, q=None, tag=None, folder=folder)
-        filtered_total = total
 
     status_counts = None
     try:

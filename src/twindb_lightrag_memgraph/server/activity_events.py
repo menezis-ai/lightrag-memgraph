@@ -248,7 +248,7 @@ async def emit_access_denied_event(
         try:
             from .auth import resolve_auth_actor
 
-            actor = await resolve_auth_actor(request) or "anonymous"
+            actor = resolve_auth_actor(request) or "anonymous"
         except Exception:  # noqa: BLE001 - attribution must not break auth flow.
             logger.debug("[activity] access-denied actor resolution failed", exc_info=True)
 

@@ -1633,14 +1633,15 @@ export const handlers = [
       category: body.category ?? current.category,
       aliases: body.aliases ?? current.aliases,
     };
-    const proposedFields = ([
-      proposed.def !== current.def ? 'def' : null,
-      proposed.long_description !== current.long_description ? 'long_description' : null,
-      proposed.category !== current.category ? 'category' : null,
-      JSON.stringify(proposed.aliases) !== JSON.stringify(current.aliases)
-        ? 'aliases'
-        : null,
-    ].filter(Boolean)) as string[];
+    const proposedFields: string[] = [];
+    if (proposed.def !== current.def) proposedFields.push('def');
+    if (proposed.long_description !== current.long_description) {
+      proposedFields.push('long_description');
+    }
+    if (proposed.category !== current.category) proposedFields.push('category');
+    if (JSON.stringify(proposed.aliases) !== JSON.stringify(current.aliases)) {
+      proposedFields.push('aliases');
+    }
     if (proposedFields.length === 0) {
       return HttpResponse.json(
         { detail: 'Suggest edit requires at least one changed field' },

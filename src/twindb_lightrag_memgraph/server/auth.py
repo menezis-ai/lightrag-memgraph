@@ -320,7 +320,41 @@ def _actor_from_idp_user(user: dict[str, Any] | None) -> str | None:
     return None
 
 
-async def resolve_auth_actor(request: Request | None) -> str | None:
+def _resolve_idp_actor(request: Request) -> str | None:
+    try:
+        from . import idp_jwt
+
+        if idp_jwt.get_active_config() is None:
+            return None
+        return _actor_from_idp_user(idp_jwt.require_idp_user(request))
+    except HTTPException:
+        return None
+    except Exception:  # noqa: BLE001 - actor attribution must not break auth.
+        logger.debug("[auth] IdP actor resolution failed", exc_info=True)
+        return None
+
+
+def _bearer_token_from_request(request: Request) -> str | None:
+    auth_header = request.headers.get("authorization") or ""
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    return auth_header.split(" ", 1)[1].strip() or None
+
+
+def _resolve_local_jwt_actor(request: Request, bearer_token: str | None) -> str | None:
+    if not _jwt_secret:
+        return None
+    token = request.cookies.get(_local_jwt_cookie_name) or bearer_token
+    if not token:
+        return None
+    try:
+        payload = _decode_jwt(token)
+        return str(payload.get("sub") or "unknown")
+    except HTTPException:
+        return None
+
+
+def resolve_auth_actor(request: Request | None) -> str | None:
     """Best-effort actor resolution for auth Activity events.
 
     Never raises and never returns secrets. The order mirrors auth itself:
@@ -329,31 +363,14 @@ async def resolve_auth_actor(request: Request | None) -> str | None:
     if request is None:
         return None
 
-    try:
-        from . import idp_jwt
+    actor = _resolve_idp_actor(request)
+    if actor:
+        return actor
 
-        if idp_jwt.get_active_config() is not None:
-            actor = _actor_from_idp_user(idp_jwt.require_idp_user(request))
-            if actor:
-                return actor
-    except HTTPException:
-        pass
-    except Exception:  # noqa: BLE001 - actor attribution must not break auth.
-        logger.debug("[auth] IdP actor resolution failed", exc_info=True)
-
-    bearer_token: str | None = None
-    auth_header = request.headers.get("authorization") or ""
-    if auth_header.lower().startswith("bearer "):
-        bearer_token = auth_header.split(" ", 1)[1].strip() or None
-
-    if _jwt_secret:
-        token = request.cookies.get(_local_jwt_cookie_name) or bearer_token
-        if token:
-            try:
-                payload = _decode_jwt(token)
-                return str(payload.get("sub") or "unknown")
-            except HTTPException:
-                pass
+    bearer_token = _bearer_token_from_request(request)
+    actor = _resolve_local_jwt_actor(request, bearer_token)
+    if actor:
+        return actor
 
     if _static_api_key and bearer_token and _secret_equal(bearer_token, _static_api_key):
         return "api_key"
@@ -363,7 +380,7 @@ async def resolve_auth_actor(request: Request | None) -> str | None:
 async def emit_logout_activity(request: Request | None = None) -> None:
     from .activity_events import emit_auth_event
 
-    actor = await resolve_auth_actor(request) or "unknown"
+    actor = resolve_auth_actor(request) or "unknown"
     await emit_auth_event(
         action="logout",
         sev="info",

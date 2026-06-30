@@ -405,7 +405,7 @@ _TAG_PROPOSAL_ID_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 def _proposal_id_base(name: str, actor: str, now: str) -> str:
     safe_name = _TAG_PROPOSAL_ID_RE.sub("-", name).strip("-") or "tag"
     safe_actor = _TAG_PROPOSAL_ID_RE.sub("-", actor).strip("-") or "system"
-    stamp = re.sub(r"[^0-9]", "", now)[:14] or "now"
+    stamp = re.sub(r"\D", "", now)[:14] or "now"
     return f"{safe_name}__edit__{safe_actor}-{stamp}"
 
 
@@ -451,6 +451,60 @@ def _changed_suggested_fields(
         if proposed[field] != current:
             changed.append(field)
     return changed
+
+
+def _approved_edit_fields(
+    entry: dict[str, Any], target: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    changed: list[str] = []
+    proposed_fields = [
+        field
+        for field in entry.get("proposed_fields", [])
+        if field in {"def", "long_description", "category", "aliases"}
+    ]
+    for field in proposed_fields:
+        if field in entry and entry[field] != target.get(field):
+            target[field] = (
+                list(entry[field]) if isinstance(entry[field], list) else entry[field]
+            )
+            changed.append(field)
+    return target, changed
+
+
+async def _approve_tag_edit(
+    *,
+    store: WebuiStore,
+    proposal_name: str,
+    entry: dict[str, Any],
+    actor: str,
+    now: str,
+) -> dict[str, Any]:
+    target_name = str(entry["target_tag"])
+    target = await store.tags.get_tag(target_name)
+    if target is None:
+        raise HTTPException(404, f"Tag '{target_name}' not found")
+
+    target, changed = _approved_edit_fields(entry, target)
+    target["last_edit"] = {"by": actor, "at": now, "action": "edit-approved"}
+    stored = await store.tags.upsert_tag(target)
+    await store.tags.delete_tag(proposal_name)
+    await _emit_tag_audit(
+        store=store,
+        actor=actor,
+        kind="tag-mutation",
+        sev="info",
+        target_label=target_name,
+        summary=f"Tag {target_name} edit approved ({', '.join(changed)})",
+        meta={"proposal_id": proposal_name, "fields": changed},
+        notification=_make_notification(
+            title="Tag",
+            tagname=target_name,
+            suffix="edit approved",
+            sub=", ".join(changed) or "no field change",
+        ),
+        target_id=target_name,
+    )
+    return stored
 
 
 @router.post(
@@ -539,44 +593,13 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
     actor = body.actor or "system"
     now = _utcnow_iso()[:10]
     if entry.get("proposal_kind") == "edit" and entry.get("target_tag"):
-        target_name = str(entry["target_tag"])
-        target = await store.tags.get_tag(target_name)
-        if target is None:
-            raise HTTPException(404, f"Tag '{target_name}' not found")
-        changed: list[str] = []
-        proposed_fields = [
-            field
-            for field in entry.get("proposed_fields", [])
-            if field in {"def", "long_description", "category", "aliases"}
-        ]
-        for field in proposed_fields:
-            if field in entry and entry[field] != target.get(field):
-                target[field] = (
-                    list(entry[field])
-                    if isinstance(entry[field], list)
-                    else entry[field]
-                )
-                changed.append(field)
-        target["last_edit"] = {"by": actor, "at": now, "action": "edit-approved"}
-        stored = await store.tags.upsert_tag(target)
-        await store.tags.delete_tag(name)
-        await _emit_tag_audit(
+        return await _approve_tag_edit(
             store=store,
+            proposal_name=name,
+            entry=entry,
             actor=actor,
-            kind="tag-mutation",
-            sev="info",
-            target_label=target_name,
-            summary=f"Tag {target_name} edit approved ({', '.join(changed)})",
-            meta={"proposal_id": name, "fields": changed},
-            notification=_make_notification(
-                title="Tag",
-                tagname=target_name,
-                suffix="edit approved",
-                sub=", ".join(changed) or "no field change",
-            ),
-            target_id=target_name,
+            now=now,
         )
-        return stored
     entry["tier"] = 3
     entry["status"] = "active"
     entry["last_edit"] = {"by": actor, "at": now, "action": "approved"}

@@ -1299,6 +1299,8 @@ function BulkFolderDialog({
     : '';
   const activeLabel = folderLabel(folderList, activeFolder);
   const actionLabel = action === 'copy' ? 'Copy' : 'Move';
+  const sourceCountLabel = `${docs.length} source${docs.length === 1 ? '' : 's'}`;
+  const submitLabel = isRunning ? `${actionLabel}ing...` : `${actionLabel} ${sourceCountLabel}`;
 
   const runBulkFolderAction = async () => {
     if (!selectedTargetFolder || isRunning) return;
@@ -1410,9 +1412,7 @@ function BulkFolderDialog({
             onClick={() => void runBulkFolderAction()}
             data-testid={`bulk-folder-${action}`}
           >
-            {isRunning
-              ? `${actionLabel}ing...`
-              : `${actionLabel} ${docs.length} source${docs.length === 1 ? '' : 's'}`}
+            {submitLabel}
           </button>
         </div>
       </dialog>

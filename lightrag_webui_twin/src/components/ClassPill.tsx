@@ -40,11 +40,10 @@ export function ClassPill({ cls, docId }: Readonly<ClassPillProps>) {
   const setDate = cls.set_date ? ` · applied ${cls.set_date.slice(0, 10)}` : '';
 
   return (
-    <span
+    <button
+      type="button"
       className={klass}
       title={`${label}${setDate}`}
-      role="img"
-      tabIndex={0}
       aria-label={`Classification: ${label}`}
       data-testid={docId ? `class-pill-${docId}` : 'class-pill'}
       data-class-id={id}
@@ -53,6 +52,6 @@ export function ClassPill({ cls, docId }: Readonly<ClassPillProps>) {
     >
       <Icon name="shield" size={15} strokeWidth={1.8} />
       <span className="class-pill-label">{displayName}</span>
-    </span>
+    </button>
   );
 }
