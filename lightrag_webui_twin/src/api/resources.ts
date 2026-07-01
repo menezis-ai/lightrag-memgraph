@@ -777,6 +777,8 @@ export const twinApi = {
   getDocumentMetadata: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{
       tags: readonly string[];
+      tags_source?: 'tagged_with';
+      tags_status?: 'ok' | 'unavailable';
       folder: string;
       review?: Document['review'];
     }>(`${TWIN}/documents/${encodeURIComponent(docId)}/metadata`, init),

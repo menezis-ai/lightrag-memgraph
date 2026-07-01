@@ -1752,6 +1752,8 @@ export const handlers = [
       const doc = documentsState.find((d) => d.doc_id === id);
       return HttpResponse.json({
         tags: doc?.tags ?? [],
+        tags_source: 'tagged_with',
+        tags_status: 'ok',
         folder: doc?.folder ?? 'cib',
         review: doc?.review,
       });

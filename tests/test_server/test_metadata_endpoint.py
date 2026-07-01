@@ -58,13 +58,13 @@ async def client(monkeypatch):
         ),
     )
 
-    async def graph_tags_unavailable(_doc_id: str) -> list[str] | None:
-        return None
+    async def graph_tags_available(_doc_id: str) -> list[str] | None:
+        return ["oracle", "rman"]
 
     monkeypatch.setattr(
         webui_router,
         "_graph_tags_for_doc_or_none",
-        graph_tags_unavailable,
+        graph_tags_available,
     )
     webui_router.reset_store()
     _twindb_state["rag"] = FakeRag()
@@ -86,10 +86,32 @@ class TestDocumentMetadataEndpoint:
         assert r.status_code == 200
         body = r.json()
         assert body["tags"] == ["oracle", "rman"]
+        assert body["tags_source"] == "tagged_with"
+        assert body["tags_status"] == "ok"
         assert body["folder"] == "default"
         assert body["review"] == {"state": "approved", "actor": "steward"}
         assert body["classification"]["class_id"] == "C2"
         assert body["metadata"]["classification"]["raw_name"] == "C2 Confidentiel"
+
+    async def test_unavailable_graph_tags_do_not_fall_back_to_stale_metadata(
+        self, monkeypatch, client
+    ):
+        async def graph_tags_unavailable(_doc_id: str) -> list[str] | None:
+            return None
+
+        monkeypatch.setattr(
+            webui_router,
+            "_graph_tags_for_doc_or_none",
+            graph_tags_unavailable,
+        )
+
+        r = await client.get("/documents/doc-c2/metadata")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tags"] == []
+        assert body["tags_source"] == "tagged_with"
+        assert body["tags_status"] == "unavailable"
 
     async def test_empty_graph_tags_do_not_fall_back_to_stale_metadata(
         self, monkeypatch, client
@@ -106,7 +128,9 @@ class TestDocumentMetadataEndpoint:
         r = await client.get("/documents/doc-c2/metadata")
 
         assert r.status_code == 200
-        assert r.json()["tags"] == []
+        body = r.json()
+        assert body["tags"] == []
+        assert body["tags_status"] == "ok"
 
     async def test_hides_document_from_another_folder(self, client):
         r = await client.get("/documents/doc-sandbox/metadata")
