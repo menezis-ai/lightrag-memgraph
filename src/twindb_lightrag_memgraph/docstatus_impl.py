@@ -26,6 +26,7 @@ from ._constants import (
     resolve_workspace,
     validate_identifier,
 )
+from ._import_cleanup import cleanup_processed_imports
 
 
 @dataclass
@@ -480,8 +481,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         now = datetime.now(timezone.utc).isoformat()
         entries = []
         duplicate_memberships: list[dict[str, str]] = []
+        cleanup_props: list[dict[str, Any]] = []
         for doc_id, doc_data in data.items():
             props, folder = self._serialize_upsert_props(doc_id, doc_data, now)
+            cleanup_props.append(props)
             original_doc_id = self._duplicate_original_doc_id(props)
             if original_doc_id and folder:
                 duplicate_memberships.append(
@@ -507,6 +510,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 await self._run_upsert_writes(
                     session, label, folder_label, entries, duplicate_memberships
                 )
+        await cleanup_processed_imports(cleanup_props)
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
