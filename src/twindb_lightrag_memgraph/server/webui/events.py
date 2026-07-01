@@ -6,6 +6,10 @@ import datetime
 import secrets
 from typing import Any
 
+from fastapi import Request
+
+from ..auth import resolve_auth_actor
+
 
 def _utcnow_iso() -> str:
     return (
@@ -18,6 +22,16 @@ def _utcnow_iso() -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(6)}"
+
+
+def _request_actor(request: Request | None, *, fallback: str = "operator") -> str:
+    """Resolve the audit actor from authenticated request state.
+
+    Client-supplied ``actor`` fields are intentionally ignored by mutation
+    routes: the audit log must describe who authenticated, not who the caller
+    claimed to be in JSON.
+    """
+    return resolve_auth_actor(request) or fallback
 
 
 def _make_event(

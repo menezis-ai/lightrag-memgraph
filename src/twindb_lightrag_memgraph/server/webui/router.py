@@ -41,7 +41,7 @@ from ..webui_models import (
     OpenApiEnvelope,
     OpenApiGroup,
 )
-from .events import _make_event, _utcnow_iso
+from .events import _make_event, _request_actor, _utcnow_iso
 from .store import WebuiStore, _stores, get_store, reset_store, set_store
 from .routes_activity import router as activity_router
 from .routes_documents import router as documents_router
@@ -708,6 +708,7 @@ async def logout(request: Request) -> dict[str, Any]:
 )
 async def approve_document(
     doc_id: str,
+    request: Request,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark a document as reviewer-approved.
@@ -722,7 +723,7 @@ async def approve_document(
     """
     rag = _get_rag()
     body = body or {}
-    actor = body.get("actor") or "system"
+    actor = _request_actor(request)
     edits = body.get("edits") or {}
 
     doc = await rag.doc_status.get_by_id(doc_id)
@@ -772,6 +773,7 @@ async def approve_document(
 async def reject_document(
     doc_id: str,
     body: dict[str, Any],
+    request: Request,
 ) -> dict[str, Any]:
     """Mark a document as reviewer-rejected.
 
@@ -783,7 +785,7 @@ async def reject_document(
     operator can still see it in the table with the right badge.
     """
     rag = _get_rag()
-    actor = body.get("actor") or "system"
+    actor = _request_actor(request)
     reason = body.get("reason") or ""
     if not reason:
         raise HTTPException(

@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Annotated, Any
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..webui_models import AckResponse, ActivityEnvelope
-from .events import _make_event
+from .events import _make_event, _request_actor
 from .store import get_store
 
 router = APIRouter()
@@ -21,6 +21,7 @@ router = APIRouter()
 )
 async def record_source_uploaded(
     body: dict[str, Any],
+    request: Request,
 ) -> dict[str, bool]:
     """Record Activity for LightRAG-native upload accepts.
 
@@ -35,7 +36,7 @@ async def record_source_uploaded(
             status_code=400,
             detail="record_source_uploaded requires a non-empty source.",
         )
-    actor = str(body.get("actor") or "system").strip() or "system"
+    actor = _request_actor(request)
     track_id = str(body.get("track_id") or "").strip()
     status = str(body.get("status") or "accepted").strip() or "accepted"
     event = _make_event(

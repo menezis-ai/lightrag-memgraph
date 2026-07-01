@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..folder import current_folder_id
 from ..idp_jwt import require_admin_user
@@ -26,7 +26,7 @@ from ..webui_models import (
     ThesaurusEntry,
 )
 from ..webui_tagstore import MemgraphTagStore
-from .events import _make_event, _make_notification, _utcnow_iso
+from .events import _make_event, _make_notification, _request_actor, _utcnow_iso
 from .store import WebuiStore, get_store
 
 router = APIRouter()
@@ -223,6 +223,7 @@ async def _emit_bulk_retag_events(
 )
 async def bulk_retag_documents(
     body: dict[str, Any],
+    request: Request,
 ) -> dict[str, Any]:
     """Apply tag adds/removes to a list of documents as graph edges."""
     from ... import _pool
@@ -231,7 +232,7 @@ async def bulk_retag_documents(
     targets = body.get("targets") or []
     adds = list(body.get("adds") or [])
     removes = list(body.get("removes") or [])
-    actor = body.get("actor") or "system"
+    actor = _request_actor(request)
 
     _validate_bulk_retag(targets, adds, removes)
 
@@ -356,13 +357,13 @@ async def _emit_tag_audit(
     dependencies=[Depends(require_admin_user)],
     responses={409: {"description": "Tag already exists"}},
 )
-async def request_tag(body: TagRequestBody) -> dict[str, Any]:
+async def request_tag(body: TagRequestBody, request: Request) -> dict[str, Any]:
     """Propose a new tag (tier='requested', status='pending-review')."""
     store = get_store()
     existing = await store.tags.get_tag(body.tag)
     if existing is not None:
         raise HTTPException(409, f"Tag '{body.tag}' already exists")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry: dict[str, Any] = {
         "tag": body.tag,
@@ -521,13 +522,15 @@ async def _approve_tag_edit(
         404: {"description": "Tag not found"},
     },
 )
-async def suggest_tag_edit(name: str, body: TagSuggestEditBody) -> dict[str, Any]:
+async def suggest_tag_edit(
+    name: str, body: TagSuggestEditBody, request: Request
+) -> dict[str, Any]:
     """Queue a palier-2 edit proposal for palier-3 review."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now_iso = _utcnow_iso()
     now = now_iso[:10]
     proposed = _suggested_edit_fields(entry, body)
@@ -591,12 +594,14 @@ async def suggest_tag_edit(name: str, body: TagSuggestEditBody) -> dict[str, Any
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
+async def approve_tag(
+    name: str, body: TagApproveBody, request: Request
+) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     if entry.get("proposal_kind") == "edit" and entry.get("target_tag"):
         return await _approve_tag_edit(
@@ -638,12 +643,12 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def reject_tag(name: str, body: TagRejectBody) -> dict[str, Any]:
+async def reject_tag(name: str, body: TagRejectBody, request: Request) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry["status"] = "rejected"
     entry["last_edit"] = {"by": actor, "at": now, "action": "rejected"}
@@ -736,14 +741,14 @@ async def _cascade_tag_rename(store, legacy, renamed_from, new_name, actor) -> i
         409: {"description": "Tag rename conflict"},
     },
 )
-async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
+async def edit_tag(name: str, body: TagEditBody, request: Request) -> dict[str, Any]:
     from .. import webui_router as legacy
 
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
 
     changed: list[str] = []
@@ -791,12 +796,14 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
+async def deprecate_tag(
+    name: str, body: TagDeprecateBody, request: Request
+) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry["status"] = "deprecated"
     entry["last_edit"] = {"by": actor, "at": now, "action": "deprecated"}
@@ -828,12 +835,14 @@ async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def reactivate_tag(name: str, body: TagReactivateBody) -> dict[str, Any]:
+async def reactivate_tag(
+    name: str, body: TagReactivateBody, request: Request
+) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry["status"] = "active"
     entry["last_edit"] = {"by": actor, "at": now, "action": "reactivated"}
@@ -863,12 +872,14 @@ async def reactivate_tag(name: str, body: TagReactivateBody) -> dict[str, Any]:
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
+async def update_synonyms(
+    name: str, body: TagSynonymsBody, request: Request
+) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
         raise HTTPException(404, f"Tag '{name}' not found")
-    actor = body.actor or "system"
+    actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry["aliases"] = list(body.aliases)
     entry["last_edit"] = {"by": actor, "at": now, "action": "synonyms updated"}
@@ -901,7 +912,7 @@ async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
     },
 )
 async def delete_tag(
-    name: str, body: TagDeleteBody | None = None
+    name: str, request: Request, body: TagDeleteBody | None = None
 ) -> dict[str, bool]:
     """Delete a tag and cascade the selected migration strategy to documents."""
     from .. import webui_router as legacy
@@ -919,7 +930,7 @@ async def delete_tag(
         target = await store.tags.get_tag(payload.to)
         if target is None:
             raise HTTPException(404, f"Migration target tag '{payload.to}' not found")
-    actor = payload.actor or "system"
+    actor = _request_actor(request)
 
     seed_affected = legacy._cascade_seed_document_tags(
         store,

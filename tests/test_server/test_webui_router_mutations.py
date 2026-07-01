@@ -275,7 +275,7 @@ class TestRequestTag:
         )
         assert r.status_code == 409
 
-    async def test_emits_activity_event(self, client):
+    async def test_emits_activity_event_without_trusting_client_actor(self, client):
         await client.post(
             "/tags",
             json={
@@ -289,7 +289,7 @@ class TestRequestTag:
         assert events
         assert events[0]["kind"] == "tag-mutation"
         assert "newtag" in events[0]["summary"]
-        assert events[0]["actor"]["user"] == "marc.berthier"
+        assert events[0]["actor"]["user"] == "operator"
 
     async def test_pushes_notification(self, client):
         await client.post(

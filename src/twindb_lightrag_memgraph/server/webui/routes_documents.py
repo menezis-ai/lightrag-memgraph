@@ -11,11 +11,11 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..idp_jwt import require_admin_user
 from ..webui_models import Document, ListEnvelope
-from .events import _make_event
+from .events import _make_event, _request_actor
 from .store import get_store
 
 router = APIRouter()
@@ -167,11 +167,13 @@ async def list_document_folders(doc_id: str) -> dict[str, Any]:
         503: {"description": "LightRAG instance unavailable"},
     },
 )
-async def add_document_to_folder(doc_id: str, body: dict[str, Any]) -> dict[str, Any]:
+async def add_document_to_folder(
+    doc_id: str, body: dict[str, Any], request: Request
+) -> dict[str, Any]:
     from .. import webui_router as legacy
 
     folder_id = _require_known_folder(str(body.get("folder_id") or ""))
-    actor = str(body.get("actor") or "system")
+    actor = _request_actor(request)
 
     rag = legacy._get_rag()
     async with _membership_lock(doc_id):
@@ -211,7 +213,8 @@ async def add_document_to_folder(doc_id: str, body: dict[str, Any]) -> dict[str,
 async def remove_document_from_folder(
     doc_id: str,
     folder_id: str,
-    actor: Annotated[str, Query()] = "system",
+    request: Request,
+    actor: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     """Remove a doc from one folder. When this was its LAST membership, the
     document is physically deleted.
@@ -228,6 +231,7 @@ async def remove_document_from_folder(
     from .. import webui_router as legacy
 
     folder_id = _require_known_folder(folder_id)
+    audit_actor = _request_actor(request)
     rag = legacy._get_rag()
 
     async with _membership_lock(doc_id):
@@ -257,10 +261,10 @@ async def remove_document_from_folder(
     event = _make_event(
         kind="doc-deleted" if physically_deleted else "doc-folder-removed",
         sev="info",
-        actor=actor,
+        actor=audit_actor,
         target_label=doc_id,
         summary=(
-            f"removed from folder {folder_id} by {actor}"
+            f"removed from folder {folder_id} by {audit_actor}"
             + (" (last folder → physically deleted)" if physically_deleted else "")
         ),
         meta={
@@ -283,7 +287,7 @@ async def remove_document_from_folder(
     }
 
 
-def _parse_bulk_delete_body(body: dict[str, Any]) -> tuple[list[Any], str]:
+def _parse_bulk_delete_body(body: dict[str, Any]) -> list[Any]:
     doc_ids = body.get("doc_ids")
     if not isinstance(doc_ids, list) or not doc_ids:
         raise HTTPException(
@@ -295,7 +299,7 @@ def _parse_bulk_delete_body(body: dict[str, Any]) -> tuple[list[Any], str]:
             status_code=413,
             detail="bulk-delete accepts at most 500 target documents.",
         )
-    return doc_ids, str(body.get("actor") or "system")
+    return doc_ids
 
 
 async def _apply_membership_delete(
@@ -435,10 +439,11 @@ async def _emit_bulk_delete_activity(
         503: {"description": "LightRAG instance unavailable"},
     },
 )
-async def bulk_delete_documents(body: dict[str, Any]) -> dict[str, Any]:
+async def bulk_delete_documents(body: dict[str, Any], request: Request) -> dict[str, Any]:
     from .. import webui_router as legacy
 
-    doc_ids, actor = _parse_bulk_delete_body(body)
+    doc_ids = _parse_bulk_delete_body(body)
+    actor = _request_actor(request)
     rag = legacy._get_rag()
     results: list[dict[str, Any]] = []
     failed: list[str] = []

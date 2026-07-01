@@ -312,7 +312,9 @@ class TestActivity:
         assert len(body["items"]) == 1
         assert body["items"][0]["id"] == ACTIVITY[0]["id"]
 
-    async def test_record_source_uploaded_persists_activity(self, client):
+    async def test_record_source_uploaded_persists_activity_without_trusting_client_actor(
+        self, client
+    ):
         r = await client.post(
             "/documents/uploads/activity",
             json={
@@ -330,7 +332,7 @@ class TestActivity:
         body = feed.json()
         assert body["total"] == 1
         event = body["items"][0]
-        assert event["actor"]["user"] == "claire.benoit"
+        assert event["actor"]["user"] == "operator"
         assert event["target"]["type"] == "source"
         assert event["target"]["label"] == "runbook.pdf"
         assert event["meta"]["track_id"] == "upload-track-1"
