@@ -1,0 +1,244 @@
+stages:
+  - packages:build
+  - packages:upload
+  - test
+  - docker:build
+  - docker:security
+  - docker:push
+  - push
+  - deploy
+
+default:
+  interruptible: true
+
+variables:
+  BUILD_ENV: hprd
+  BNP_CODE_AP: "a100575"
+  IMAGE_REGISTRY: "fr2.icr.io"
+  IMAGE_PATH: "a100575-${BUILD_ENV}/twindb-lightrag-pipeline"
+  IMAGE_NAME: "lightrag"
+  IMAGE_TAG: "1.0.0-prepare1"
+  DOCKERFILE_PATH: "${GLOBAL_BUILD_CONTEXT}/Dockerfile"
+  CURL_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt"
+  CI_ENV: hprd
+  DOT_ENV_FILE: ".env"
+  PIP_CONFIG_FILE: "${CI_PROJECT_DIR}/config/build.conf"
+
+.release_rules: &release_rules
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release-.*$/'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+.replace_vault_creds: &replace_vault_creds
+  - |
+    if command -v vault >/dev/null 2>&1 && [ -f "${PIP_CONFIG_FILE}" ]; then
+      secret_path="${VAULT_SECRET_PATH:-secret/common/artifactory-ro}"
+      ARTIFACTORY_USERNAME="$(vault kv get -field=username "${secret_path}")"
+      ARTIFACTORY_PASSWORD="$(vault kv get -field=password "${secret_path}")"
+      sed -i "s/ARTIFACTORY_PASSWORD/${ARTIFACTORY_PASSWORD}/g" "${PIP_CONFIG_FILE}"
+      sed -i "s/ARTIFACTORY_USERNAME/${ARTIFACTORY_USERNAME}/g" "${PIP_CONFIG_FILE}"
+    fi
+
+tests:cve-remediation:
+  <<: *release_rules
+  stage: test
+  image: python:3.12-bookworm
+  script:
+    - python -m pip install --upgrade pip
+    - python -m pip install pytest
+    - python -m pytest tests/test_bnp_cve_remediation.py -q
+
+tests:smoke-runner:
+  <<: *release_rules
+  stage: test
+  image: python:3.12-bookworm
+  script:
+    - python -m pip install --upgrade pip
+    - python -m pip install pytest
+    - python -m pytest tests/test_smoke_runner.py -q
+
+dockerfile:lint:
+  <<: *release_rules
+  stage: test
+  image: python:3.12-bookworm
+  allow_failure: false
+  script:
+    - |
+      python - <<'PY'
+      from pathlib import Path
+
+      dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+      required = [
+          "apt-get install -y --no-install-recommends --only-upgrade",
+          "libcap2",
+          "libssl3t64",
+          "requirements/cve-remediation.txt",
+          'm.version("lightrag-hku") == "1.4.9.11"',
+      ]
+      missing = [item for item in required if item not in dockerfile]
+      if missing:
+          raise SystemExit(f"Dockerfile CVE remediation contract missing: {missing}")
+      PY
+
+image:build:
+  <<: *release_rules
+  extends: .tpl:container:kaniko:build:tar
+  stage: docker:build
+  allow_failure: false
+  needs:
+    - tests:cve-remediation
+    - tests:smoke-runner
+    - dockerfile:lint
+  variables:
+    KANIKO_CUSTOM_ARGS: "true"
+    KANIKO_ARGS: >-
+      --no-push
+      --tar-path image.tar
+      --build-arg ARTIFACTORY_USERNAME=${ARTIFACTORY_USERNAME}
+      --build-arg ARTIFACTORY_PASSWORD=${ARTIFACTORY_PASSWORD}
+  script:
+    - *replace_vault_creds
+    - !reference [.tpl:container:kaniko:build:tar, script]
+  artifacts:
+    when: always
+    expire_in: 1 day
+    paths:
+      - image.tar
+
+image:size-check:
+  <<: *release_rules
+  stage: docker:build
+  image: alpine:3.20
+  allow_failure: false
+  needs:
+    - image:build
+  script:
+    - test -f image.tar
+    - du -h image.tar
+
+image:infos:
+  <<: *release_rules
+  stage: docker:build
+  image: alpine:3.20
+  allow_failure: true
+  needs:
+    - image:build
+  script:
+    - test -f image.tar
+    - ls -lh image.tar
+
+image:security-check:trivy:
+  <<: *release_rules
+  stage: docker:security
+  image:
+    name: aquasec/trivy:0.58.2
+    entrypoint: [""]
+  allow_failure: false
+  needs:
+    - image:build
+  script:
+    - trivy image --input image.tar --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed
+
+image:virus-check:clamav:
+  <<: *release_rules
+  stage: docker:security
+  image: clamav/clamav:1.4
+  allow_failure: true
+  needs:
+    - image:build
+  script:
+    - clamscan --no-summary image.tar
+
+image:virus-check:mcafee:
+  <<: *release_rules
+  stage: docker:security
+  allow_failure: true
+  needs:
+    - image:build
+  script:
+    - echo "McAfee scan is provided by the BNP runner/template when available."
+
+image:push:prod:
+  <<: *release_rules
+  extends: .tpl:container:kaniko:push:tar
+  stage: docker:push
+  needs:
+    - tests:cve-remediation
+    - tests:smoke-runner
+    - dockerfile:lint
+    - image:build
+    - image:size-check
+    - image:security-check:trivy
+    - image:virus-check:clamav
+    - image:virus-check:mcafee
+  environment:
+    name: prod
+    action: prepare
+  variables:
+    IMAGE_PATH: "a100575-prod/twindb-lightrag-pipeline"
+    IMAGE_REGISTRY: "fr2.icr.io"
+    IMAGE_NAME: "lightrag"
+    BUILD_ENV: prod
+    VAULT_ADDR: "https://vault.group.echonet.net.intra"
+    CI_ENV: prod
+  rules:
+    - if: '$CLIENT_ENV == "prod" && $CI_COMMIT_BRANCH =~ /^release-.*$/'
+    - if: '$CLIENT_ENV == "prod" && $CI_PIPELINE_SOURCE == "web"'
+
+image:push:hprd:
+  <<: *release_rules
+  extends: .tpl:container:kaniko:push:tar
+  stage: docker:push
+  needs:
+    - tests:cve-remediation
+    - tests:smoke-runner
+    - dockerfile:lint
+    - image:build
+    - image:size-check
+    - image:security-check:trivy
+    - image:virus-check:clamav
+    - image:virus-check:mcafee
+  environment:
+    name: hprd
+    action: prepare
+  variables:
+    IMAGE_PATH: "a100575-${BUILD_ENV}/twindb-lightrag-pipeline"
+  rules:
+    - if: '$CLIENT_ENV == "hprd" && $CI_COMMIT_BRANCH =~ /^release-.*$/'
+    - if: '$CLIENT_ENV == "hprd" && $CI_PIPELINE_SOURCE == "web"'
+
+image:sign:prod:
+  <<: *release_rules
+  extends: .tpl:container:docker:cosign:sign
+  stage: docker:push
+  needs:
+    - image:push:prod
+    - image:security-check:trivy
+    - image:virus-check:clamav
+    - image:virus-check:mcafee
+  environment:
+    name: $BUILD_ENV
+    action: prepare
+  variables:
+    IMAGE_PATH: "a100575-prod/twindb-lightrag-pipeline"
+  rules:
+    - if: '$CLIENT_ENV == "prod" && $CI_COMMIT_BRANCH =~ /^release-.*$/'
+    - if: '$CLIENT_ENV == "prod" && $CI_PIPELINE_SOURCE == "web"'
+
+image:sign:hprd:
+  <<: *release_rules
+  extends: .tpl:container:docker:cosign:sign
+  stage: docker:push
+  needs:
+    - image:push:hprd
+    - image:security-check:trivy
+    - image:virus-check:clamav
+    - image:virus-check:mcafee
+  environment:
+    name: $BUILD_ENV
+    action: prepare
+  variables:
+    IMAGE_PATH: "a100575-${BUILD_ENV}/twindb-lightrag-pipeline"
+  rules:
+    - if: '$CLIENT_ENV == "hprd" && $CI_COMMIT_BRANCH =~ /^release-.*$/'
+    - if: '$CLIENT_ENV == "hprd" && $CI_PIPELINE_SOURCE == "web"'

@@ -24,6 +24,16 @@ COPY README.md /app/twindb_lightrag_memgraph/README.md
 COPY requirements /app/twindb_lightrag_memgraph/requirements
 COPY src /app/twindb_lightrag_memgraph/src
 
+# BNP scanner remediation for vulnerable packages inherited from the runtime
+# base image. Keep LightRAG itself on the accepted production baseline:
+# requirements/prod-target.txt pins lightrag-hku==1.4.9.11 and the two native
+# LightRAG CVEs are documented in docs/security/lightrag-1.4.9.11-risk-acceptance.md.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade \
+      libcap2 \
+      libssl3t64 \
+ && rm -rf /var/lib/apt/lists/*
+
 # Embed the WebUI dist inside the package source tree BEFORE the editable
 # install so package-data ([tool.setuptools.package-data] in pyproject.toml)
 # picks it up and the runtime _resolve_webui_dist() finds it at
@@ -35,6 +45,11 @@ COPY --from=webui-builder /webui/dist \
 RUN pip install --no-cache-dir \
       -c /app/twindb_lightrag_memgraph/requirements/constraints-prod.txt \
       -e "/app/twindb_lightrag_memgraph/[intelligence,server,tracing]"
+
+RUN python -m pip install --no-cache-dir --upgrade \
+      -c /app/twindb_lightrag_memgraph/requirements/constraints-prod.txt \
+      -r /app/twindb_lightrag_memgraph/requirements/cve-remediation.txt \
+ && python -c 'import importlib.metadata as m; assert m.version("lightrag-hku") == "1.4.9.11"'
 
 COPY src/twindb_lightrag_memgraph /app/twindb_lightrag_memgraph
 
