@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from ..idp_jwt import require_admin_user
 from ..webui_models import (
     GraphEntity,
     GraphEntityCreate,
@@ -217,6 +218,7 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
 @router.patch(
     "/graph/entities/{entity_id}",
     response_model=GraphEntity,
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Graph entity not found"},
         409: {"description": "Entity shared with another folder (mixed provenance)"},
@@ -261,6 +263,7 @@ async def update_graph_entity_endpoint(
     "/graph/entities",
     response_model=GraphEntity,
     status_code=201,
+    dependencies=[Depends(require_admin_user)],
     responses={
         409: {"description": "Graph entity already exists"},
         422: {"description": "Invalid graph entity tags"},
@@ -323,6 +326,7 @@ async def create_graph_entity_endpoint(
 @router.delete(
     "/graph/entities/{entity_id}",
     status_code=204,
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Graph entity not found"},
         409: {"description": "Entity shared with another folder (mixed provenance)"},
@@ -359,6 +363,7 @@ async def delete_graph_entity_endpoint(entity_id: str) -> None:
     "/graph/relations",
     response_model=GraphRelation,
     status_code=201,
+    dependencies=[Depends(require_admin_user)],
     responses={
         409: {"description": "Endpoint shared with another folder (mixed provenance)"},
         422: {"description": "Invalid graph relation"},
@@ -404,6 +409,7 @@ async def create_graph_relation_endpoint(
 @router.delete(
     "/graph/relations/{rel_id}",
     status_code=204,
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Graph relation not found"},
         409: {"description": "Relation shared with another folder (mixed provenance)"},
@@ -442,6 +448,7 @@ async def delete_graph_relation_endpoint(rel_id: str) -> None:
 @router.patch(
     "/graph/relations/{rel_id}",
     response_model=GraphRelation,
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Graph relation not found"},
         409: {"description": "Relation shared with another folder (mixed provenance)"},

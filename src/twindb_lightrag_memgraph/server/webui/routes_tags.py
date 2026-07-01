@@ -6,9 +6,10 @@ import json
 import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..folder import current_folder_id
+from ..idp_jwt import require_admin_user
 from ..webui_models import (
     AckResponse,
     TagApproveBody,
@@ -74,6 +75,7 @@ def get_categories_template():
 @router.post(
     "/tags/categories/_import",
     response_model=AckResponse,
+    dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "Invalid categories payload"},
         503: {"description": "Categories backend unavailable"},
@@ -213,6 +215,7 @@ async def _emit_bulk_retag_events(
 
 @router.post(
     "/documents/_bulk-retag",
+    dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "Invalid bulk retag payload"},
         413: {"description": "Bulk retag payload too large"},
@@ -350,6 +353,7 @@ async def _emit_tag_audit(
     "/tags",
     response_model=TagEntry,
     status_code=201,
+    dependencies=[Depends(require_admin_user)],
     responses={409: {"description": "Tag already exists"}},
 )
 async def request_tag(body: TagRequestBody) -> dict[str, Any]:
@@ -511,6 +515,7 @@ async def _approve_tag_edit(
     "/tags/{name}/suggest-edit",
     response_model=TagEntry,
     status_code=201,
+    dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "No edit provided"},
         404: {"description": "Tag not found"},
@@ -583,6 +588,7 @@ async def suggest_tag_edit(name: str, body: TagSuggestEditBody) -> dict[str, Any
 @router.post(
     "/tags/{name}/approve",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
 async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
@@ -629,6 +635,7 @@ async def approve_tag(name: str, body: TagApproveBody) -> dict[str, Any]:
 @router.post(
     "/tags/{name}/reject",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
 async def reject_tag(name: str, body: TagRejectBody) -> dict[str, Any]:
@@ -722,6 +729,7 @@ async def _cascade_tag_rename(store, legacy, renamed_from, new_name, actor) -> i
 @router.patch(
     "/tags/{name}",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "Invalid tag edit"},
         404: {"description": "Tag not found"},
@@ -780,6 +788,7 @@ async def edit_tag(name: str, body: TagEditBody) -> dict[str, Any]:
 @router.post(
     "/tags/{name}/deprecate",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
 async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
@@ -816,6 +825,7 @@ async def deprecate_tag(name: str, body: TagDeprecateBody) -> dict[str, Any]:
 @router.post(
     "/tags/{name}/reactivate",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
 async def reactivate_tag(name: str, body: TagReactivateBody) -> dict[str, Any]:
@@ -850,6 +860,7 @@ async def reactivate_tag(name: str, body: TagReactivateBody) -> dict[str, Any]:
 @router.post(
     "/tags/{name}/synonyms",
     response_model=TagEntry,
+    dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
 async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
@@ -883,6 +894,7 @@ async def update_synonyms(name: str, body: TagSynonymsBody) -> dict[str, Any]:
 @router.delete(
     "/tags/{name}",
     response_model=AckResponse,
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Tag not found"},
         422: {"description": "Invalid tag deletion strategy"},
