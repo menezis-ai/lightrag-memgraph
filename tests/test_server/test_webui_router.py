@@ -21,6 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.auth import configure_auth
+from twindb_lightrag_memgraph.server.idp_jwt import IdpConfig, configure_idp
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.webui_seed import (
@@ -34,6 +35,9 @@ from twindb_lightrag_memgraph.server.webui_seed import (
     OPENAPI_VERSION,
     TAG_CATEGORIES,
     TAGS,
+)
+from twindb_lightrag_memgraph.server.webui.router import (
+    logout as webui_logout_handler,
 )
 
 
@@ -340,6 +344,16 @@ class TestActivity:
     async def test_twin_auth_logout_emits_activity(self, client):
         r = await client.post("/twin/api/auth/logout")
         assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert body["local_session_cleared"] is True
+        assert body["twin_cookie_cleared"] is True
+        assert body["idp_cookie_cleared"] is False
+        assert "twin_local_token" in body["cleared_cookies"]
+        assert "twin_session" in body["cleared_cookies"]
+        assert "twin_id_token" in body["cleared_cookies"]
+        assert body["sso_logout"] is False
+        assert "SSO session is not terminated" in body["detail"]
         set_cookie = "\n".join(r.headers.get_list("set-cookie"))
         assert "twin_local_token=" in set_cookie
         assert "Max-Age=0" in set_cookie
@@ -354,6 +368,36 @@ class TestActivity:
         assert event["target"]["type"] == "auth"
         assert event["target"]["label"] == "logout"
         assert event["meta"]["operation"] == "logout"
+
+    async def test_twin_auth_logout_clears_local_idp_cookie_without_sso_claim(self):
+        configure_idp(
+            IdpConfig(jwks_url="https://idp.example/jwks", cookie_name="corp_sso")
+        )
+        request = __import__("starlette.requests").requests.Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/twin/api/auth/logout",
+                "headers": [],
+            }
+        )
+        try:
+            r = await webui_logout_handler(request)
+        finally:
+            configure_idp(None)
+
+        assert r.status_code == 200
+        body = json.loads(r.body)
+        assert body["idp_cookie_cleared"] is True
+        assert body["sso_logout"] is False
+        assert "corp_sso" in body["cleared_cookies"]
+        set_cookie = "\n".join(
+            value.decode("latin-1")
+            for name, value in r.raw_headers
+            if name.lower() == b"set-cookie"
+        )
+        assert "corp_sso=" in set_cookie
+        assert "Max-Age=0" in set_cookie
 
     async def test_total_is_pre_limit(self, client):
         response = await client.get("/activity", params={"kind": "retrieval", "limit": 1})

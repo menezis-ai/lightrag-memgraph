@@ -1,20 +1,24 @@
-"""``GET /twin/api/quota`` — instance storage quota snapshot.
+"""``GET /twin/api/quota`` — authenticated instance storage quota snapshot.
 
-Public endpoint (no auth gate). The banner in the WebUI polls it every
-30 s so an anonymous operator browsing the read-only surface still
-sees the warning banner.
+The WebUI banner polls this route after login. It exposes operational
+capacity details, so the app factory mounts it behind ``require_auth``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from . import quota
+from .auth import require_auth
 
-router = APIRouter(prefix="/quota", tags=["quota"])
+router = APIRouter(
+    prefix="/quota",
+    tags=["quota"],
+    dependencies=[Depends(require_auth)],
+)
 
 
 class QuotaSnapshot(BaseModel):

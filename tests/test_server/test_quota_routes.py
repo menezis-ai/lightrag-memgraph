@@ -9,16 +9,21 @@ no real DB needed.
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph.server import quota, webui_router
 from twindb_lightrag_memgraph.server.app import create_app
+from twindb_lightrag_memgraph.server.auth import configure_auth
+from twindb_lightrag_memgraph.server.idp_jwt import configure_idp
+from twindb_lightrag_memgraph.server.quota_routes import router as quota_router
 
 
 @pytest.fixture()
 async def client_factory(monkeypatch):
     """Yields a builder that takes a status fixture and returns the client."""
     webui_router.reset_store()
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "quota-test-key")
     monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "2GiB")
     monkeypatch.setenv("MEMGRAPH_BUDGET_ENFORCE", "reject")
     app = create_app()
@@ -40,16 +45,16 @@ async def client_factory(monkeypatch):
     async def _build():
         return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
-    yield _patch, _build
+    yield _patch, _build, {"Authorization": "Bearer quota-test-key"}
     webui_router.reset_store()
 
 
 class TestQuotaSnapshotEndpoint:
     async def test_ok_state(self, client_factory):
-        patch, build = client_factory
+        patch, build, auth_headers = client_factory
         patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
         async with await build() as c:
-            r = await c.get("/twin/api/quota")
+            r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "ok"
@@ -61,27 +66,61 @@ class TestQuotaSnapshotEndpoint:
         assert body["warn_threshold"] == 0.85
 
     async def test_warning_state(self, client_factory):
-        patch, build = client_factory
+        patch, build, auth_headers = client_factory
         patch("warning", int(0.9 * 2 * 1024 ** 3), 2 * 1024 ** 3)
         async with await build() as c:
-            r = await c.get("/twin/api/quota")
+            r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
         assert r.json()["status"] == "warning"
 
     async def test_blocked_state(self, client_factory):
-        patch, build = client_factory
+        patch, build, auth_headers = client_factory
         patch("blocked", 2 * 1024 ** 3, 2 * 1024 ** 3)
         async with await build() as c:
-            r = await c.get("/twin/api/quota")
+            r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "blocked"
         assert body["used_pct"] >= 1.0
 
 
+    async def test_rejects_anonymous_snapshot(self, client_factory):
+        patch, build, _auth_headers = client_factory
+        patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
+        async with await build() as c:
+            r = await c.get("/twin/api/quota")
+
+        assert r.status_code == 401
+
+    async def test_router_rejects_anonymous_when_mounted_directly(self, monkeypatch):
+        async def _fake_snapshot():
+            return {"status": "ok", "configured": False}
+
+        configure_auth(api_key="quota-direct-key", jwt_secret=None)
+        configure_idp(None)
+        monkeypatch.setattr(quota, "snapshot", _fake_snapshot)
+        app = FastAPI()
+        app.include_router(quota_router, prefix="/twin/api")
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as c:
+                anon = await c.get("/twin/api/quota")
+                authed = await c.get(
+                    "/twin/api/quota",
+                    headers={"Authorization": "Bearer quota-direct-key"},
+                )
+        finally:
+            configure_auth(api_key=None, jwt_secret=None)
+            configure_idp(None)
+
+        assert anon.status_code == 401
+        assert authed.status_code == 200
+
+
 class TestQuotaMiddlewareGate:
     async def test_upload_blocked_returns_507(self, client_factory):
-        patch, build = client_factory
+        patch, build, _auth_headers = client_factory
         patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
         async with await build() as c:
             # The middleware short-circuits BEFORE the native upload
@@ -93,7 +132,7 @@ class TestQuotaMiddlewareGate:
         assert "GiB" in body["detail"]
 
     async def test_reprocess_failed_blocked_returns_507(self, client_factory):
-        patch, build = client_factory
+        patch, build, _auth_headers = client_factory
         patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
         async with await build() as c:
             r = await c.post("/documents/reprocess_failed")
@@ -101,14 +140,14 @@ class TestQuotaMiddlewareGate:
         assert "quota reached" in r.json()["detail"]
 
     async def test_scan_blocked_returns_507(self, client_factory):
-        patch, build = client_factory
+        patch, build, _auth_headers = client_factory
         patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
         async with await build() as c:
             r = await c.post("/documents/abc-123/scan")
         assert r.status_code == 507
 
     async def test_warning_does_not_block(self, client_factory):
-        patch, build = client_factory
+        patch, build, _auth_headers = client_factory
         patch("warning", int(0.9 * 2 * 1024 ** 3), 2 * 1024 ** 3)
         async with await build() as c:
             # Will be 404 or another error from the downstream handler
@@ -117,17 +156,17 @@ class TestQuotaMiddlewareGate:
         assert r.status_code != 507
 
     async def test_ok_does_not_block(self, client_factory):
-        patch, build = client_factory
+        patch, build, _auth_headers = client_factory
         patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
         async with await build() as c:
             r = await c.post("/documents/reprocess_failed")
         assert r.status_code != 507
 
-    async def test_get_endpoints_never_gated(self, client_factory):
-        patch, build = client_factory
+    async def test_snapshot_answers_with_auth_when_blocked(self, client_factory):
+        patch, build, auth_headers = client_factory
         patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
         async with await build() as c:
-            r = await c.get("/twin/api/quota")
+            r = await c.get("/twin/api/quota", headers=auth_headers)
             # Snapshot endpoint must always answer (blocked status is
             # exactly the info the operator needs).
             assert r.status_code == 200
@@ -137,6 +176,7 @@ class TestQuotaUnconfiguredBypass:
     async def test_no_env_var_yields_ok_and_no_gating(self, monkeypatch):
         """Dev posture: no Memgraph/env limit → guard inert."""
         webui_router.reset_store()
+        monkeypatch.setenv("LIGHTRAG_API_KEY", "quota-test-key")
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
         monkeypatch.delenv("MEMGRAPH_BUDGET_ENFORCE", raising=False)
 
@@ -148,7 +188,10 @@ class TestQuotaUnconfiguredBypass:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
-            r = await c.get("/twin/api/quota")
+            r = await c.get(
+                "/twin/api/quota",
+                headers={"Authorization": "Bearer quota-test-key"},
+            )
             assert r.status_code == 200
             body = r.json()
             assert body["configured"] is False

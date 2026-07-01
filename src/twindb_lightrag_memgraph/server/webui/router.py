@@ -673,29 +673,42 @@ def _get_rag():
     return rag
 
 
-@router.post("/auth/logout", response_model=AckResponse)
+@router.post("/auth/logout")
 async def logout(request: Request) -> dict[str, Any]:
     """Sign out the current operator.
 
-    Under the current Traefik Basic Auth gate, sign-out is mostly a
-    client-side concern (clear React Query cache + reload to retrigger
-    the browser's auth prompt). The endpoint exists so the frontend
-    can confirm round-trip before clearing local state — when JWT/IdP
-    arrives (Couche 3 §3.3), this also clears the HttpOnly cookie
-    via Set-Cookie: Max-Age=0.
-
-    Returns {ok: true} always — sign-out cannot fail server-side
-    under the current model.
+    This endpoint clears Twin-owned local cookies and records the audit
+    event. It does not claim to perform global SSO logout: IdP sessions
+    owned by the upstream SSO remain authoritative until the browser is
+    redirected through that provider's own logout flow.
     """
     from fastapi.responses import JSONResponse
     from ..auth import logout as auth_logout
+    from ..idp_jwt import get_active_config
 
-    response = JSONResponse(content={"ok": True})
+    idp_config = get_active_config()
+    idp_cookie_name = idp_config.cookie_name if idp_config is not None else None
+    cleared_cookies = ["twin_local_token", "twin_session", "twin_id_token"]
+    if idp_cookie_name:
+        cleared_cookies.append(idp_cookie_name)
+    content = {
+        "ok": True,
+        "local_session_cleared": True,
+        "twin_cookie_cleared": True,
+        "idp_cookie_cleared": idp_cookie_name is not None,
+        "cleared_cookies": cleared_cookies,
+        "sso_logout": False,
+        "detail": (
+            "Twin local cookies cleared; upstream SSO session is not "
+            "terminated by this endpoint."
+        ),
+    }
+    response = JSONResponse(content=content)
     await auth_logout(response, request)
-    # Pre-emptive cookie clear for the future JWT flow. Currently a
-    # no-op because Basic Auth uses HTTP headers, not cookies.
     response.delete_cookie("twin_session", path="/")
     response.delete_cookie("twin_id_token", path="/")
+    if idp_cookie_name:
+        response.delete_cookie(idp_cookie_name, path="/")
     return response
 
 

@@ -145,6 +145,11 @@ class IdpConfig:
     def enabled(self) -> bool:
         return bool(self.jwks_url)
 
+    @property
+    def strict_claims_configured(self) -> bool:
+        """True when production-relevant issuer and audience checks are both set."""
+        return bool((self.issuer or "").strip() and (self.audience or "").strip())
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "IdpConfig | None":
         """Build an `IdpConfig` from env vars, or return ``None`` if

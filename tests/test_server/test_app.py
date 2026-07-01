@@ -437,6 +437,39 @@ class TestReadinessEndpoint:
         assert body["status"] == "not_ready"
         assert body["checks"]["memgraph"]["status"] == "failed"
 
+    async def test_ready_fails_production_idp_without_strict_claims(
+        self, monkeypatch, _mock_rag
+    ):
+        async def memgraph_ok():
+            return {"status": "ok"}
+
+        monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
+        monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp.example/jwks")
+        monkeypatch.delenv("TWIN_IDP_ISSUER", raising=False)
+        monkeypatch.delenv("TWIN_IDP_AUDIENCE", raising=False)
+        monkeypatch.setattr(app_module, "_memgraph_readiness_check", memgraph_ok)
+        _mock_rag.chunks_vdb = _ReadyVector()
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        original_rag = app_module._rag
+        app_module._rag = _mock_rag
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/ready")
+        finally:
+            app_module._rag = original_rag
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "not_ready"
+        auth_policy = body["checks"]["auth_policy"]
+        assert auth_policy["status"] == "failed"
+        assert auth_policy["production_required"] is True
+        assert auth_policy["strict_claims"] is False
+        assert "TWIN_IDP_ISSUER" in auth_policy["detail"]
+
     async def test_ready_keeps_pod_ready_when_replication_is_degraded(
         self, monkeypatch, _mock_rag
     ):

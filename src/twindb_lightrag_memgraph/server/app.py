@@ -801,12 +801,49 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
     return _operational_middleware
 
 
+def _auth_policy_readiness_check(
+    require_production_auth: bool,
+    auth_backend_configured: bool,
+    idp_strict_claims_configured: bool,
+) -> dict[str, Any]:
+    if not require_production_auth:
+        return {
+            "status": "ok",
+            "detail": "production auth policy not required",
+            "production_required": False,
+        }
+    if not auth_backend_configured:
+        return {
+            "status": "failed",
+            "detail": "production auth policy missing",
+            "production_required": True,
+            "strict_claims": False,
+        }
+    if not idp_strict_claims_configured:
+        return {
+            "status": "failed",
+            "detail": (
+                "production IdP auth requires TWIN_IDP_ISSUER and "
+                "TWIN_IDP_AUDIENCE"
+            ),
+            "production_required": True,
+            "strict_claims": False,
+        }
+    return {
+        "status": "ok",
+        "detail": "production auth policy loaded",
+        "production_required": True,
+        "strict_claims": True,
+    }
+
+
 async def _readiness_response(
-    require_production_auth: bool, auth_backend_configured: bool
+    require_production_auth: bool,
+    auth_backend_configured: bool,
+    idp_strict_claims_configured: bool,
 ) -> JSONResponse:
     """Build the ``GET /ready`` payload + status code from live subsystem checks."""
     rag = _rag
-    auth_ok = not require_production_auth or auth_backend_configured
     checks: dict[str, dict[str, Any]] = {
         "lightrag": {
             "status": "ok" if rag is not None else "failed",
@@ -817,15 +854,11 @@ async def _readiness_response(
         "memgraph_role": await _memgraph_role_check(),
         "memgraph_replication": await _memgraph_replication_check(),
         "vector_index": _vector_index_check(rag),
-        "auth_policy": {
-            "status": "ok" if auth_ok else "failed",
-            "detail": (
-                "production auth policy loaded"
-                if require_production_auth
-                else "production auth policy not required"
-            ),
-            "production_required": require_production_auth,
-        },
+        "auth_policy": _auth_policy_readiness_check(
+            require_production_auth,
+            auth_backend_configured,
+            idp_strict_claims_configured,
+        ),
     }
     failed = [name for name, check in checks.items() if check["status"] == "failed"]
     body = {"status": "ready" if not failed else "not_ready", "checks": checks}
@@ -861,6 +894,7 @@ def _register_core_routes(
     settings: LightRAGServerSettings,
     require_production_auth: bool,
     auth_backend_configured: bool,
+    idp_strict_claims_configured: bool,
 ) -> None:
     """Register the auth-protected core routes (/health, /ready, /query, /insert)."""
 
@@ -885,7 +919,9 @@ def _register_core_routes(
     @app.get("/ready", response_model=ReadinessResponse)
     async def ready():
         return await _readiness_response(
-            require_production_auth, auth_backend_configured
+            require_production_auth,
+            auth_backend_configured,
+            idp_strict_claims_configured,
         )
 
     @app.post(
@@ -1018,7 +1054,11 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
 
     # -- Core routes (auth-protected) --
     _register_core_routes(
-        app, settings, _require_production_auth, _auth_backend_configured
+        app,
+        settings,
+        _require_production_auth,
+        _auth_backend_configured,
+        _idp_cfg.strict_claims_configured if _idp_cfg is not None else True,
     )
 
     # -- Chunk routes (auth-protected) --
@@ -1091,7 +1131,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         TWIN_API_PREFIX,
     )
 
-    # -- Quota snapshot endpoint (public read for the WebUI banner).
+    # -- Quota snapshot endpoint (auth-protected operational read).
     from .quota_routes import router as quota_router
 
     app.include_router(quota_router, prefix=TWIN_API_PREFIX)
