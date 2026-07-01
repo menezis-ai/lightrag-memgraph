@@ -20,7 +20,7 @@ Usage:
 import inspect
 import logging
 from contextlib import asynccontextmanager
-from functools import partial
+from functools import partial, wraps
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
@@ -498,6 +498,30 @@ except Exception:  # pragma: no cover - defensive
 # query context. Not done now to keep the batch reviewable.
 
 
+def _retry_closed_graph_transport(op_name: str):
+    """Retry idempotent graph read batches once on stale Bolt transports."""
+
+    def _decorate(fn):
+        @wraps(fn)
+        async def _wrapped(self, *args, **kwargs):
+            try:
+                return await fn(self, *args, **kwargs)
+            except Exception as exc:
+                from .._pool import _is_closed_transport_error
+
+                if not _is_closed_transport_error(exc):
+                    raise
+                logger.warning(
+                    "Graph batch read %s hit a closed Bolt transport; retrying once",
+                    op_name,
+                )
+                return await fn(self, *args, **kwargs)
+
+        return _wrapped
+
+    return _decorate
+
+
 def _twin_in_folder(var: str) -> str:
     """WHERE-fragment: graph node/edge ``var`` is in the active folder iff one of
     its ``source_id`` chunks is a member chunk (params ``$sep`` + ``$mchunks``)."""
@@ -552,6 +576,7 @@ async def _twin_member_chunks(self):
     return []
 
 
+@_retry_closed_graph_transport("get_nodes_batch")
 async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
     if not node_ids:
         return {}
@@ -586,6 +611,7 @@ async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]
     return result
 
 
+@_retry_closed_graph_transport("node_degrees_batch")
 async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, int]:
     if not node_ids:
         return {}
@@ -619,6 +645,7 @@ async def _patched_node_degrees_batch(self, node_ids: list[str]) -> dict[str, in
     return result
 
 
+@_retry_closed_graph_transport("get_edges_batch")
 async def _patched_get_edges_batch(
     self, pairs: list[dict[str, str]]
 ) -> dict[tuple[str, str], dict]:
@@ -677,6 +704,7 @@ async def _patched_edge_degrees_batch(
     }
 
 
+@_retry_closed_graph_transport("get_nodes_edges_batch")
 async def _patched_get_nodes_edges_batch(
     self, node_ids: list[str]
 ) -> dict[str, list[tuple[str, str]]]:
@@ -721,6 +749,7 @@ async def _patched_get_nodes_edges_batch(
     return result
 
 
+@_retry_closed_graph_transport("get_nodes_with_degrees_batch")
 async def _patched_get_nodes_with_degrees_batch(
     self, node_ids: list[str]
 ) -> tuple[dict[str, dict], dict[str, int]]:
@@ -765,6 +794,7 @@ async def _patched_get_nodes_with_degrees_batch(
     return nodes, degrees
 
 
+@_retry_closed_graph_transport("get_edges_with_degrees_batch")
 async def _patched_get_edges_with_degrees_batch(
     self, pairs: list[dict[str, str]]
 ) -> tuple[dict[tuple[str, str], dict], dict[tuple[str, str], int]]:

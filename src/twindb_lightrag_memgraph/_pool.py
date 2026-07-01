@@ -58,6 +58,17 @@ _last_read_driver_activity = None
 _enterprise_supported: bool | None = None
 
 
+def _is_closed_transport_error(exc: BaseException) -> bool:
+    """Return True for stale/defunct Bolt transport failures worth retrying once."""
+    text = str(exc).lower()
+    return (
+        "tcptransport closed=true" in text
+        or "the handler is closed" in text
+        or "connection reset by peer" in text
+        or "failed to read from defunct connection" in text
+    )
+
+
 def is_sync_replication_error(exc: BaseException) -> bool:
     """Return True for Memgraph SYNC replication acknowledgement failures.
 

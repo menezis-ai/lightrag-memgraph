@@ -172,6 +172,41 @@ class TestGetNodesBatch:
         query = session.run.call_args[0][0]
         assert "UNWIND" in query
 
+    async def test_retries_once_on_closed_transport(self):
+        storage = _make_storage()
+        node_data = {"entity_id": "alice", "type": "person", "labels": ["test_ws"]}
+        driver, session = _mock_session_with_records([])
+        retry_result = _AsyncRecordIterator(
+            [_FakeRecord({"eid": "alice", "n": node_data})]
+        )
+        retry_result.consume = AsyncMock()
+        session.run = AsyncMock(
+            side_effect=[
+                RuntimeError(
+                    "unable to perform operation on <TCPTransport closed=True>; "
+                    "the handler is closed"
+                ),
+                retry_result,
+            ]
+        )
+        storage._driver = driver
+
+        result = await storage.get_nodes_batch(["alice"])
+
+        assert result["alice"]["type"] == "person"
+        assert session.run.await_count == 2
+
+    async def test_does_not_retry_non_transport_errors(self):
+        storage = _make_storage()
+        driver, session = _mock_session_with_records([])
+        session.run = AsyncMock(side_effect=ValueError("bad cypher"))
+        storage._driver = driver
+
+        with pytest.raises(ValueError, match="bad cypher"):
+            await storage.get_nodes_batch(["alice"])
+
+        session.run.assert_awaited_once()
+
 
 class TestNodeDegreesBatch:
     async def test_returns_degrees(self):

@@ -12,20 +12,10 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from ._constants import validate_identifier
-from ._pool import acquire_write_slot, get_session
+from ._pool import _is_closed_transport_error, acquire_write_slot, get_session
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 _T = TypeVar("_T")
-
-
-def _is_closed_transport_error(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return (
-        "tcptransport closed=true" in text
-        or "the handler is closed" in text
-        or "connection reset by peer" in text
-        or "failed to read from defunct connection" in text
-    )
 
 
 class _BufferedGraphProxy:
