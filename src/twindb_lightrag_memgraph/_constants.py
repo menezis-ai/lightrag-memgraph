@@ -102,8 +102,12 @@ class RetrievalFilters:
     - ``doc_*`` hold document ids (case-preserving).
     - ``tag_*`` hold **lower-cased** tag ids (the ``TAGGED_WITH`` graph ids are
       compared case-insensitively, matching the legacy post-filter).
-    - ``min_score`` is a cosine-similarity floor; it is folded into the existing
-      ``cosine_better_than_threshold`` as ``max(threshold, min_score)``.
+    - ``min_score`` is an explicit cosine-similarity floor. Unfiltered /
+      folder-only retrieval keeps the backend's configured
+      ``cosine_better_than_threshold``. Doc/tag filtered retrieval treats the
+      filter as the candidate corpus and applies only an explicit
+      ``min_score`` floor, so the default floor cannot hide an otherwise
+      matching tagged document.
 
     ``all`` vs ``any`` semantics are pinned in
     ``tests/test_retrieval_filters_scoping.py`` — notably ``doc_all`` is strict

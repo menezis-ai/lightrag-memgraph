@@ -48,6 +48,72 @@ async def vec_store(embedding_func):
     await store.drop()
 
 
+class _RecordingEmbed:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    async def func(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        return [[float(len(text)), 0.0, 0.0, 0.0] for text in texts]
+
+
+def _unit_store(embed: _RecordingEmbed, *, batch_num=2):
+    store = MemgraphVectorDBStorage.__new__(MemgraphVectorDBStorage)
+    store.global_config = {"embedding_batch_num": batch_num}
+    store.embedding_func = embed
+    return store
+
+
+class TestComputeMissingEmbeddings:
+    async def test_batches_missing_embeddings_from_global_config(self):
+        embed = _RecordingEmbed()
+        store = _unit_store(embed, batch_num=2)
+
+        result = await store._compute_missing_embeddings(
+            {
+                "a": {"content": "one"},
+                "b": {"content": "two"},
+                "c": {"content": "three"},
+                "d": {"content": "four"},
+                "e": {"content": "five"},
+            }
+        )
+
+        assert embed.calls == [["one", "two"], ["three", "four"], ["five"]]
+        assert set(result) == {"a", "b", "c", "d", "e"}
+
+    async def test_skips_items_with_existing_embedding_or_no_content(self):
+        embed = _RecordingEmbed()
+        store = _unit_store(embed, batch_num=10)
+
+        result = await store._compute_missing_embeddings(
+            {
+                "needs": {"content": "one"},
+                "has": {"content": "two", "embedding": [1.0, 0.0, 0.0, 0.0]},
+                "metadata-only": {"entity_name": "x"},
+            }
+        )
+
+        assert embed.calls == [["one"]]
+        assert set(result) == {"needs"}
+
+    async def test_invalid_batch_size_falls_back_to_default(self):
+        embed = _RecordingEmbed()
+        store = _unit_store(embed, batch_num="nope")
+
+        assert store._embedding_batch_size() == 32
+
+    async def test_mismatched_embedding_count_raises(self):
+        class BadEmbed:
+            async def func(self, texts):
+                return []
+
+        store = _unit_store(BadEmbed(), batch_num=2)  # type: ignore[arg-type]
+
+        with pytest.raises(ValueError, match="returned 0 rows for 1 input"):
+            await store._compute_missing_embeddings({"a": {"content": "one"}})
+
+
 @pytest.mark.integration
 class TestMemgraphVectorDBStorage:
     async def test_upsert_and_get_by_id(self, vec_store):

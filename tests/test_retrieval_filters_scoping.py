@@ -23,8 +23,9 @@ Pinned semantics (the sharp one is ``doc_filter`` ``all``):
 - ``tag_filter`` (doc-level via ``TAGGED_WITH`` → ``WebuiTag_{folder}``):
   ``all`` → doc has every required tag; ``any`` → doc has ≥1 optional tag.
   Entity/relation: ≥1 source-member-doc satisfies the predicate.
-- ``min_score``: folded into the cosine floor
-  (``threshold = max(cosine_better_than_threshold, min_score)``).
+- ``min_score``: unfiltered / folder-only retrieval keeps the configured cosine
+  floor. Doc/tag filtered retrieval treats the filter as the candidate corpus
+  and uses ``min_score`` only when the caller explicitly sends one.
 
 Strict compat (non-negotiable for LightRAG upgrades): a filter fragment is
 emitted *only when that filter is non-empty*. Filters empty ⇒ the folder /
@@ -130,6 +131,22 @@ class TestMinScore:
         )
         assert params["threshold"] == 0.2  # max(0.2, 0.1)
 
+    def test_tag_filter_without_min_score_disables_default_floor(self):
+        st = _store("chunks", {"full_doc_id"})
+        _, params = st._build_search_cypher(
+            20, "f", RetrievalFilters(tag_all=frozenset({"oracle"}))
+        )
+        assert params["threshold"] == 0.0
+
+    def test_tag_filter_with_min_score_respects_explicit_floor(self):
+        st = _store("chunks", {"full_doc_id"})
+        _, params = st._build_search_cypher(
+            20,
+            "f",
+            RetrievalFilters(tag_all=frozenset({"oracle"}), min_score=0.5),
+        )
+        assert params["threshold"] == 0.5
+
 
 # ── doc_filter on chunks ───────────────────────────────────────────────────
 
@@ -140,8 +157,12 @@ class TestDocFilterChunks:
         cypher, params = st._build_search_cypher(
             20, "f", RetrievalFilters(doc_any=frozenset({"A", "B"}))
         )
+        assert "CALL vector_search.search" not in cypher
+        assert "MATCH (node:`Vec_ws_chunks`)" in cypher
+        assert "reduce(__dot" in cypher
         assert "d.id IN $doc_any" in cypher
         assert set(params["doc_any"]) == {"A", "B"}
+        assert "overfetch" not in params
 
     def test_doc_all_is_strict_not_union(self):
         st = _store("chunks", {"full_doc_id"})
@@ -164,9 +185,13 @@ class TestTagFilter:
         cypher, params = st._build_search_cypher(
             20, "folderX", RetrievalFilters(tag_all=frozenset({"oracle"}))
         )
+        assert "CALL vector_search.search" not in cypher
+        assert "MATCH (node:`Vec_ws_chunks`)" in cypher
+        assert "reduce(__dot" in cypher
         assert "TAGGED_WITH" in cypher
         assert "WebuiTag_folderX" in cypher
         assert set(params["tag_all"]) == {"oracle"}
+        assert "overfetch" not in params
 
     def test_tag_all_and_any_both_emitted(self):
         st = _store("chunks", {"full_doc_id"})
@@ -192,9 +217,13 @@ class TestEntityRelationFilters:
         cypher, params = st._build_search_cypher(
             20, "f", RetrievalFilters(doc_all=frozenset({"A", "B"}))
         )
+        assert "CALL vector_search.search" not in cypher
+        assert "MATCH (node:`Vec_ws_entities`)" in cypher
+        assert "reduce(__dot" in cypher
         assert "collect" in cypher.lower()
         assert "$doc_all" in cypher
         assert set(params["doc_all"]) == {"A", "B"}
+        assert "overfetch" not in params
 
     def test_doc_any_intersection(self):
         st = _store("relationships", {"source_id", "content"})
@@ -203,6 +232,19 @@ class TestEntityRelationFilters:
         )
         assert "$doc_any" in cypher
         assert set(params["doc_any"]) == {"A"}
+
+    def test_tag_filter_exact_scans_entity_candidates(self):
+        st = _store("entities", {"source_id", "content"})
+        cypher, params = st._build_search_cypher(
+            20, "folderX", RetrievalFilters(tag_all=frozenset({"oracle"}))
+        )
+        assert "CALL vector_search.search" not in cypher
+        assert "MATCH (node:`Vec_ws_entities`)" in cypher
+        assert "WebuiTag_folderX" in cypher
+        assert "any(__di IN __docinfos WHERE" in cypher
+        assert "reduce(__dot" in cypher
+        assert set(params["tag_all"]) == {"oracle"}
+        assert "overfetch" not in params
 
 
 # ── Live contract (real Memgraph) — out-of-filter rows are actually dropped ─

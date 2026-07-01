@@ -51,9 +51,17 @@ _CYPHER_AND = " AND "
 # dropping non-member candidates still leaves ~top_k members. A folder that is a
 # very thin slice of a large corpus can still under-return — a documented
 # limitation of the cheap single-pass approach (no escalation loop).
+#
+# That cheap path is NOT used when doc/tag filters are active. A tag-filtered
+# query must mean "search inside the tagged corpus", not "search globally then
+# discard the first N untagged hits". For those filtered paths we do an exact
+# cosine scan over the pre-filtered candidate set. It is more expensive, but it
+# gives the product contract operators expect. The global cosine floor is also
+# bypassed there unless the caller explicitly sends ``min_score``.
 _FOLDER_SCOPE_OVERFETCH_ENV = "TWIN_QUERY_FOLDER_SCOPE_OVERFETCH"
 _FOLDER_SCOPE_OVERFETCH_DEFAULT = 4
 _FOLDER_SCOPE_OVERFETCH_CAP = 500
+_DEFAULT_EMBEDDING_BATCH_NUM = 32
 
 
 def _folder_scope_overfetch(top_k: int) -> int:
@@ -137,6 +145,40 @@ def _tag_conditions(
         params["tag_any"] = sorted(filters.tag_any)
         conds.append(f"any(__ot IN $tag_any WHERE __ot IN {tags_expr})")
     return conds
+
+
+def _exact_cosine_projection() -> str:
+    """Cypher fragment that scores the already-filtered candidate nodes.
+
+    ``vector_search.search`` cannot receive a pre-filter, so using it before a
+    tag/doc predicate makes the filter non-exhaustive. This fragment computes
+    cosine similarity in Cypher over the candidate rows that survived the
+    membership/doc/tag joins.
+    """
+    return """
+            WITH DISTINCT node
+            WHERE node.embedding IS NOT NULL
+              AND size(node.embedding) = size($embedding)
+            WITH node,
+                 reduce(__dot = 0.0, __i IN range(0, size($embedding) - 1) |
+                     __dot + node.embedding[__i] * $embedding[__i]
+                 ) AS __dot,
+                 sqrt(reduce(__n = 0.0, __v IN node.embedding |
+                     __n + __v * __v
+                 )) AS __node_norm,
+                 sqrt(reduce(__q = 0.0, __v IN $embedding |
+                     __q + __v * __v
+                 )) AS __query_norm
+            WITH node,
+                 CASE
+                   WHEN __node_norm = 0.0 OR __query_norm = 0.0 THEN 0.0
+                   ELSE __dot / (__node_norm * __query_norm)
+                 END AS similarity
+            WHERE similarity >= $threshold
+            RETURN node.id AS id, similarity, properties(node) AS props
+            ORDER BY similarity DESC
+            LIMIT $top_k
+            """
 
 
 @dataclass
@@ -322,9 +364,11 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         the LLM had already grounded on the unfiltered context. A filter
         contributes Cypher *only when non-empty*: an empty/None filter set leaves
         the folder/legacy Cypher byte-for-byte identical (required for LightRAG
-        upgrades). ``min_score`` is folded into the cosine floor; doc/tag
-        predicates require an active folder (the Twin query path always binds
-        one) — the tag label is folder-scoped (``WebuiTag_{folder}``).
+        upgrades). ``min_score`` is an explicit floor; doc/tag filtered search
+        disables the backend's implicit floor unless ``min_score`` is set, so a
+        tagged document is not hidden by a default similarity threshold.
+        Doc/tag predicates require an active folder (the Twin query path always
+        binds one) — the tag label is folder-scoped (``WebuiTag_{folder}``).
 
         Two membership join shapes, detected from ``meta_fields`` (robust — no
         namespace-string hardcoding):
@@ -348,7 +392,9 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if filters is not None and filters.is_empty:
             filters = None
         threshold = self.cosine_better_than_threshold
-        if filters is not None and filters.min_score > threshold:
+        if filters is not None and (filters.has_doc or filters.has_tag):
+            threshold = max(0.0, filters.min_score)
+        elif filters is not None and filters.min_score > threshold:
             threshold = filters.min_score
 
         index_name = self._index_name()
@@ -378,6 +424,25 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             "folder": folder,
         }
 
+        # Product contract: doc/tag filters define the candidate corpus. Running
+        # ANN first and filtering afterwards can miss a tagged document entirely
+        # when untagged neighbours occupy the initial vector window. Use exact
+        # cosine over the filtered candidate set for those paths. The default
+        # cosine floor is not applied here; callers can opt back into a floor via
+        # min_score.
+        if filters is not None and (filters.has_doc or filters.has_tag):
+            params.pop("overfetch", None)
+            if "full_doc_id" in self.meta_fields:
+                return self._build_exact_chunks_search(
+                    doc_label, folder_label, folder, filters, params
+                )
+            if "source_id" in self.meta_fields:
+                params["sep"] = GRAPH_FIELD_SEP
+                return self._build_exact_graph_search(
+                    ws, doc_label, folder_label, folder, filters, params
+                )
+            return None, params
+
         if "full_doc_id" in self.meta_fields:
             join = self._chunks_membership_join(
                 doc_label, folder_label, folder, filters, params
@@ -406,6 +471,72 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             LIMIT $top_k
             """
         return cypher, params
+
+    def _build_exact_chunks_search(
+        self,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters,
+        params: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Exact cosine search over chunks after folder/doc/tag pre-filtering."""
+        label = self._label()
+        base = f"""
+            MATCH (node:`{label}`)
+            MATCH (d:`{doc_label}` {{id: node.full_doc_id}})
+                  -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
+        conds = _doc_conditions_single(filters, params, "d.id")
+        if filters.has_tag:
+            tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
+            base += f"""
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
+            WITH node, d, collect(DISTINCT toLower(__t.id)) AS __dtags"""
+            conds += _tag_conditions(filters, params, "__dtags")
+        if conds:
+            base += "\n            WHERE " + _CYPHER_AND.join(conds)
+        return base + _exact_cosine_projection(), params
+
+    def _build_exact_graph_search(
+        self,
+        ws: str,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters,
+        params: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Exact cosine search over entity/relation rows after pre-filtering."""
+        label = self._label()
+        chunk_label = f"Vec_{ws}_chunks"
+        base = f"""
+            MATCH (node:`{label}`)
+            WITH node, split(coalesce(node.source_id, ''), $sep) AS cids
+            UNWIND cids AS cid
+            MATCH (c:`{chunk_label}` {{id: cid}})
+            MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
+                  -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
+        if filters.has_tag:
+            tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
+            base += f"""
+            OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
+            WITH node, d, collect(DISTINCT toLower(__t.id)) AS __dtags
+            WITH node, collect(DISTINCT {{doc: d.id, tags: __dtags}}) AS __docinfos"""
+            conds = _doc_conditions_set(
+                filters, params, "[__di IN __docinfos | __di.doc]"
+            )
+            tag_inner = _tag_conditions(filters, params, "__di.tags")
+            if tag_inner:
+                conds.append(
+                    "any(__di IN __docinfos WHERE " + _CYPHER_AND.join(tag_inner) + ")"
+                )
+        else:
+            base += """
+            WITH node, collect(DISTINCT d.id) AS __docids"""
+            conds = _doc_conditions_set(filters, params, "__docids")
+        if conds:
+            base += "\n            WHERE " + _CYPHER_AND.join(conds)
+        return base + _exact_cosine_projection(), params
 
     def _chunks_membership_join(
         self,
@@ -574,22 +705,48 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
     ) -> dict[str, list[float]]:
         """Batch-compute embeddings for items without a pre-computed one."""
         needs_embed = [
-            eid
+            (eid, item["content"])
             for eid, item in data.items()
             if item.get("embedding") is None and "content" in item
         ]
         if not needs_embed:
             return {}
-        contents = [data[eid]["content"] for eid in needs_embed]
-        emb_results = await self.embedding_func.func(contents)
-        return {
-            eid: (
-                emb_results[i].tolist()
-                if hasattr(emb_results[i], "tolist")
-                else list(emb_results[i])
-            )
-            for i, eid in enumerate(needs_embed)
-        }
+        batch_size = self._embedding_batch_size()
+        out: dict[str, list[float]] = {}
+        for start in range(0, len(needs_embed), batch_size):
+            batch = needs_embed[start : start + batch_size]
+            eids = [eid for eid, _ in batch]
+            contents = [content for _, content in batch]
+            emb_results = await self.embedding_func.func(contents)
+            rows = list(emb_results)
+            if len(rows) != len(eids):
+                raise ValueError(
+                    "Embedding function returned "
+                    f"{len(rows)} rows for {len(eids)} input texts"
+                )
+            for eid, embedding in zip(eids, rows):
+                out[eid] = (
+                    embedding.tolist()
+                    if hasattr(embedding, "tolist")
+                    else list(embedding)
+                )
+        return out
+
+    def _embedding_batch_size(self) -> int:
+        """Batch size for storage-side embedding calls.
+
+        LightRAG passes ``embedding_batch_num`` in ``global_config``. Respect it
+        here so ingestion does not send hundreds of chunks through a single
+        60-second-wrapped embedding call.
+        """
+        raw = (self.global_config or {}).get(
+            "embedding_batch_num", _DEFAULT_EMBEDDING_BATCH_NUM
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return _DEFAULT_EMBEDDING_BATCH_NUM
+        return max(1, value)
 
     @staticmethod
     def _build_entry(eid: str, item: dict, embedding: list[float] | None) -> dict:
