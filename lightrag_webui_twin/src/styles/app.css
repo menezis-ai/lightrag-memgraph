@@ -9774,6 +9774,134 @@ header.topbar dialog.notif-popover {
   border-color: var(--border);
 }
 
+/* Retrieval was still visually close to the old proto: three flat white
+ * columns and a mostly empty canvas. Bring it back into the Twin KMS tool
+ * theme without changing the component contract. */
+.retrieval.has-history:where(*):where(*):where(*):where(*) {
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  gap: 16px;
+  padding: 16px;
+  background: var(--canvas);
+}
+
+.retrieval .history-panel,
+.retrieval .params-panel,
+.retrieval .retrieval-conv,
+.retrieval .querybar {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.retrieval .history-panel,
+.retrieval .params-panel {
+  overflow: hidden;
+}
+
+.retrieval .history-list,
+.retrieval .params-panel {
+  overflow-y: auto;
+}
+
+.retrieval .retrieval-main {
+  min-height: 0;
+  gap: 12px;
+  background: transparent;
+}
+
+.retrieval .retrieval-conv {
+  padding: clamp(22px, 2vw, 30px);
+}
+
+.retrieval .empty-state {
+  gap: 12px;
+  color: var(--faint);
+}
+
+.retrieval .empty-state > svg {
+  padding: 12px;
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-warm);
+  color: var(--blue);
+  stroke: var(--blue);
+}
+
+.retrieval .empty-state .title {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.retrieval .querybar {
+  flex-shrink: 0;
+  padding: 10px;
+}
+
+.retrieval .querybar textarea,
+.retrieval .field select,
+.retrieval .field input[type=number],
+.retrieval .field textarea,
+.retrieval .retrieval-filter-input-row .mini-input,
+.retrieval .retrieval-filter-mode {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-warm);
+}
+
+.retrieval .querybar textarea:focus,
+.retrieval .field select:focus,
+.retrieval .field input[type=number]:focus,
+.retrieval .field textarea:focus,
+.retrieval .retrieval-filter-input-row .mini-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.retrieval .params-panel {
+  padding: 16px;
+}
+
+.retrieval .params-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.retrieval .params-header h3 {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.retrieval .field-label,
+.retrieval .history-head {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.retrieval .history-head {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.retrieval .history-new {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.retrieval .history-empty {
+  padding: 22px 14px;
+}
+
 .modal,
 .detail-panel,
 .doc-detail-panel {
