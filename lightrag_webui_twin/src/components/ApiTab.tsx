@@ -3,9 +3,9 @@
  *
  * Ported from Desktop/UI/api.jsx. Twin overlay extends the LightRAG
  * OpenAPI surface with `/twin/api/*` routes. `tag_filter` is honored
- * server-side only on `/twin/api/query/data` via `TAGGED_WITH`.
- * `/twin/api/query` and `/twin/api/query/stream` reject `tag_filter`
- * with 422. Native LightRAG routes pass through unchanged. The
+ * server-side on Twin query routes via `TAGGED_WITH`; `/query/data`
+ * also has a filtered graph-mode fallback to `mix`. Native LightRAG
+ * routes pass through unchanged. The
  * previous claim about "transparent injection of `tag_filter` /
  * `visibility` scoping" was incorrect and was retracted by audit C8.
  *
@@ -614,6 +614,8 @@ const QUERY_ENDPOINTS = new Set([
 export function requestBodyFor(ep: OpenApiEndpoint): string {
   if (QUERY_ENDPOINTS.has(ep.p)) {
     const dataEndpoint = ep.p.endsWith('/query/data');
+    const twinEndpoint = ep.p.startsWith('/twin/api/query');
+    const supportsTagFilter = twinEndpoint || dataEndpoint;
     return JSON.stringify(
       {
         query: 'Ask a question about the indexed knowledge base',
@@ -621,12 +623,9 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
         top_k: 60,
         ...(dataEndpoint ? { chunk_top_k: 20 } : {}),
         response_type: 'Multiple Paragraphs',
-        // Audit C8: ``tag_filter`` is honored server-side only on
-        // ``/query/data``. ``/query`` and ``/query/stream`` (twin and
-        // native) reject it (twin: 422; native: silently ignored).
-        // Showing it in the sample for those paths would suggest a
-        // scoping capability the backend doesn't provide.
-        ...(dataEndpoint ? { tag_filter: { all: ['tag-name'], any: [] } } : {}),
+        // Twin query routes honor tag_filter server-side via TAGGED_WITH.
+        // Plain native routes keep the unfiltered upstream sample.
+        ...(supportsTagFilter ? { tag_filter: { all: ['tag-name'], any: [] } } : {}),
       },
       null,
       2,

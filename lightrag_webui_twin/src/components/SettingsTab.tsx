@@ -135,11 +135,12 @@ function ApiSection() {
             <code>/twin/api/*</code> routes
           </span>
           <span>
-            <code>tag_filter</code> only on <code>/twin/api/query/data</code> via{' '}
+            <code>tag_filter</code> on Twin query routes via{' '}
             <code>TAGGED_WITH</code>
           </span>
           <span>
-            <code>/query</code> rejects it with <code>422</code>
+            <code>/query/data</code> falls back to <code>mix</code> when filtered{' '}
+            <code>hybrid</code> has no KG hit
           </span>
         </span>
       </div>

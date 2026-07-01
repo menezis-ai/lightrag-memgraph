@@ -264,10 +264,9 @@ describe('ApiTab — Authorize dialog', () => {
 });
 
 describe('Helpers — requestBodyFor', () => {
-  it('builds a /query payload with hybrid mode and NO tag_filter (audit C8)', () => {
-    // ``/query`` and ``/query/stream`` reject tag_filter (twin: 422,
-    // native: silently ignored). The Try-it-out sample must not
-    // suggest a scoping capability the backend does not provide.
+  it('builds a native /query payload with hybrid mode and no Twin tag_filter', () => {
+    // Plain native routes keep the upstream-shaped sample. Twin-prefixed routes
+    // below advertise the overlay's server-side tag_filter support.
     const b = JSON.parse(requestBodyFor({ m: 'POST', p: '/query', s: '' }));
     expect(b.mode).toBe('hybrid');
     expect(b).not.toHaveProperty('tag_filter');
@@ -284,7 +283,7 @@ describe('Helpers — requestBodyFor', () => {
     expect(requestBodyFor({ m: 'POST', p: '/whatever', s: '' })).toBe('{}');
   });
 
-  it('also matches the Twin-prefixed /twin/api/query path without tag_filter', () => {
+  it('also matches the Twin-prefixed /twin/api/query path with tag_filter', () => {
     // OpenAPI under the plugin / standalone topology exposes
     // /twin/api/query — without this matcher the Try-it-out body
     // defaults to `{}` and round-trips a 422 instead of a real call.
@@ -292,18 +291,18 @@ describe('Helpers — requestBodyFor', () => {
       requestBodyFor({ m: 'POST', p: '/twin/api/query', s: '' }),
     );
     expect(b.mode).toBe('hybrid');
-    expect(b).not.toHaveProperty('tag_filter');
+    expect(b.tag_filter.all).toEqual(['tag-name']);
   });
 
-  it('also matches /twin/api/query/stream without tag_filter', () => {
+  it('also matches /twin/api/query/stream with tag_filter', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/stream', s: '' }),
     );
     expect(b.query).toMatch(/indexed knowledge base/);
-    expect(b).not.toHaveProperty('tag_filter');
+    expect(b.tag_filter.all).toEqual(['tag-name']);
   });
 
-  it('keeps tag_filter on /twin/api/query/data (the one path that honors it)', () => {
+  it('keeps tag_filter on /twin/api/query/data', () => {
     const b = JSON.parse(
       requestBodyFor({ m: 'POST', p: '/twin/api/query/data', s: '' }),
     );
@@ -354,7 +353,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     expect(JSON.parse(r.body).detail).toMatch(/Bearer token/);
   });
 
-  it('mockResponseFor /query returns sources but NO tag_filter (audit C8)', () => {
+  it('mockResponseFor native /query returns sources but no Twin tag_filter echo', () => {
     const r = mockResponseFor(
       { m: 'POST', p: '/query', s: '' },
       '{}',
@@ -364,12 +363,11 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     const body = JSON.parse(r.body);
     expect(body.sources).toHaveLength(2);
     expect(body.mode).toBe('hybrid');
-    // /query never honors tag_filter — the mock response must not
-    // echo a value to suggest otherwise.
+    // Native /query samples stay upstream-shaped; Twin routes carry tag_filter.
     expect(body).not.toHaveProperty('tag_filter');
   });
 
-  it('mockResponseFor /query/stream also omits tag_filter', () => {
+  it('mockResponseFor /query/stream also omits tag_filter in the response body', () => {
     const r = mockResponseFor(
       { m: 'POST', p: '/twin/api/query/stream', s: '' },
       '{}',

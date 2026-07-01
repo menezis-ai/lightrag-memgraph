@@ -2,9 +2,9 @@
  * OpenAPI tab types — Swagger-style endpoint browser for the LightRAG surface.
  *
  * Twin overlay extends the LightRAG OpenAPI surface with `/twin/api/*`
- * routes. `tag_filter` is honored server-side only on
- * `/twin/api/query/data` via `TAGGED_WITH`. `/twin/api/query` and
- * `/twin/api/query/stream` reject `tag_filter` with 422. Native
+ * routes. `tag_filter` is honored server-side on Twin query routes via
+ * `TAGGED_WITH`; `/twin/api/query/data` also falls back from filtered
+ * graph-only modes to `mix` when chunks exist but KG rows do not. Native
  * LightRAG routes pass through unchanged. The previous claim about
  * "gateway injects `tag_filter` / `visibility` scoping" was incorrect
  * and was retracted by audit C8. These types mirror what the

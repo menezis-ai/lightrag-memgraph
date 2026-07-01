@@ -170,9 +170,10 @@ describe('SettingsTab — API', () => {
     expect(blurb.textContent).toContain('Contract');
     expect(blurb.textContent).toContain('/twin/api/*');
     expect(blurb.textContent).toContain('tag_filter');
-    expect(blurb.textContent).toContain('/twin/api/query/data');
     expect(blurb.textContent).toContain('TAGGED_WITH');
-    expect(blurb.textContent).toContain('422');
+    expect(blurb.textContent).toContain('/query/data');
+    expect(blurb.textContent).toContain('mix');
+    expect(blurb.textContent).toContain('hybrid');
     expect(blurb.querySelectorAll('dt')).toHaveLength(0);
     // No more "gateway transparently injects tag_filter / visibility".
     expect(blurb.textContent).not.toMatch(/transparently injects/i);
