@@ -45,8 +45,11 @@ class FakeRag:
     def __init__(self) -> None:
         self.doc_status = FakeDocStatus()
         self.deleted: list[str] = []
+        self.fail_delete_for: set[str] = set()
 
     async def adelete_by_doc_id(self, doc_id: str) -> None:
+        if doc_id in self.fail_delete_for:
+            raise RuntimeError("backend refused delete")
         self.deleted.append(doc_id)
         await self.doc_status.delete([doc_id])
 
@@ -126,7 +129,7 @@ class TestBulkDeleteEndpoint:
             json={"doc_ids": ["doc-a", "doc-sandbox", "missing"]},
         )
 
-        assert r.status_code == 200
+        assert r.status_code == 207
         assert r.json() == {
             "deleted": 1,
             "failed": ["doc-sandbox", "missing"],
@@ -140,6 +143,19 @@ class TestBulkDeleteEndpoint:
         assert deletes[0]["target"]["id"] == "doc-a"
         assert deletes[0]["meta"]["doc_id"] == "doc-a"
         assert deletes[0]["meta"]["failed"] == ["doc-sandbox", "missing"]
+
+    async def test_backend_delete_error_returns_503_not_failed_success(self, client):
+        client._test_rag.fail_delete_for.add("doc-a")
+
+        r = await client.post(
+            "/documents/bulk-delete",
+            json={"doc_ids": ["doc-a"]},
+        )
+
+        assert r.status_code == 503
+        assert "doc-a" in r.json()["detail"]
+        assert "backend refused delete" in r.json()["detail"]
+        assert client._test_rag.deleted == []
 
     async def test_rejects_empty_target_list(self, client):
         r = await client.post("/documents/bulk-delete", json={"doc_ids": []})

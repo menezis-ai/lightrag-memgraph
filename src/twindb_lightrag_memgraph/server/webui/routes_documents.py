@@ -12,6 +12,7 @@ import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from ..idp_jwt import require_admin_user
 from ..webui_models import Document, ListEnvelope
@@ -309,24 +310,23 @@ async def _apply_membership_delete(
 
     Returns ``True`` when the node was physically deleted, ``False`` when it was
     only removed from the active folder, or ``None`` when the delete must be
-    skipped (doc not in the active folder, or any backend error). The physical
-    delete runs while the membership edge still exists (ordering guard)."""
+    skipped (doc not in the active folder). Backend errors deliberately bubble
+    to the route so the API never reports a successful bulk operation while the
+    storage layer failed. The physical delete runs while the membership edge
+    still exists (ordering guard)."""
     get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
-    try:
-        if get_folders is None:
+    if get_folders is None:
+        await legacy._delete_doc_from_rag(rag, doc_id)
+        return True
+    async with _membership_lock(doc_id):
+        folders = await get_folders(doc_id)
+        if folders is None or active not in folders:
+            return None
+        if folders == [active]:
             await legacy._delete_doc_from_rag(rag, doc_id)
             return True
-        async with _membership_lock(doc_id):
-            folders = await get_folders(doc_id)
-            if folders is None or active not in folders:
-                return None
-            if folders == [active]:
-                await legacy._delete_doc_from_rag(rag, doc_id)
-                return True
-            await rag.doc_status.remove_from_folder(doc_id, active)
-            return False
-    except Exception:
-        return None
+        await rag.doc_status.remove_from_folder(doc_id, active)
+        return False
 
 
 async def _delete_one_document(
@@ -347,8 +347,6 @@ async def _delete_one_document(
     except HTTPException as exc:
         if exc.status_code != 404:
             raise
-        return None
-    except Exception:
         return None
 
     physically_deleted = await _apply_membership_delete(legacy, rag, doc_id, active)
@@ -433,13 +431,16 @@ async def _emit_bulk_delete_activity(
 
 @router.post(
     "/documents/bulk-delete",
+    response_model=None,
     responses={
         400: {"description": "Invalid bulk delete payload"},
         413: {"description": "Bulk delete payload too large"},
         503: {"description": "LightRAG instance unavailable"},
     },
 )
-async def bulk_delete_documents(body: dict[str, Any], request: Request) -> dict[str, Any]:
+async def bulk_delete_documents(
+    body: dict[str, Any], request: Request
+) -> Any:
     from .. import webui_router as legacy
 
     doc_ids = _parse_bulk_delete_body(body)
@@ -448,11 +449,22 @@ async def bulk_delete_documents(body: dict[str, Any], request: Request) -> dict[
     results: list[dict[str, Any]] = []
     failed: list[str] = []
     for doc_id in doc_ids:
-        result = await _delete_one_document(legacy, rag, doc_id)
+        try:
+            result = await _delete_one_document(legacy, rag, doc_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Bulk delete failed while deleting '{doc_id}': {exc}",
+            ) from exc
         if result is not None:
             results.append(result)
         else:
             failed.append(str(doc_id))
 
     await _emit_bulk_delete_activity(actor=actor, results=results, failed=failed)
-    return {"deleted": len(results), "failed": failed}
+    payload = {"deleted": len(results), "failed": failed}
+    if failed:
+        return JSONResponse(payload, status_code=207)
+    return payload
