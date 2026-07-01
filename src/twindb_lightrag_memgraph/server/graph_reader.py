@@ -125,11 +125,25 @@ _TYPE_MAP: dict[str, str] = {
     "tool": "PRODUCT",
     # TECHNOLOGY
     "technology": "TECHNOLOGY",
+    "technologies": "TECHNOLOGY",
     "tech": "TECHNOLOGY",
+    "technical": "TECHNOLOGY",
+    "technique": "TECHNOLOGY",
+    "technologie": "TECHNOLOGY",
     "protocol": "TECHNOLOGY",
+    "protocols": "TECHNOLOGY",
     "standard": "TECHNOLOGY",
+    "standards": "TECHNOLOGY",
     "framework": "TECHNOLOGY",
+    "frameworks": "TECHNOLOGY",
+    "technical framework": "TECHNOLOGY",
     "language": "TECHNOLOGY",
+    "programming language": "TECHNOLOGY",
+    "library": "TECHNOLOGY",
+    "runtime": "TECHNOLOGY",
+    "platform": "TECHNOLOGY",
+    "api": "TECHNOLOGY",
+    "interface": "TECHNOLOGY",
     # CONCEPT — also the fallback bucket
     "concept": "CONCEPT",
     "category": "CONCEPT",
@@ -153,7 +167,7 @@ def map_entity_type(raw: str | None) -> str:
     """
     if not raw:
         return _DEFAULT_TYPE
-    key = raw.strip().lower()
+    key = " ".join(raw.strip().lower().replace("_", " ").replace("-", " ").split())
     if not key:
         return _DEFAULT_TYPE
     return _TYPE_MAP.get(key, _DEFAULT_TYPE)

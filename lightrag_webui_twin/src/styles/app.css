@@ -9,6 +9,8 @@
 /* ========================= legacy.css ========================= */
 /* ----- Twin KMS tokens ----- */
 :root {
+  color-scheme: light;
+
   /* Tier accent (default Twin KMS = blue) */
   --twin-accent: #3871B4;
   --twin-accent-hover: #2D5A8E;
@@ -47,6 +49,8 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
+
   --twin-accent: #3E7CA8;
   --twin-accent-hover: #4D88B3;
   --twin-accent-soft-bg: #162635;
@@ -11594,7 +11598,7 @@ select {
 
 @media (max-width: 900px) {
   .tags-screen:where(*):where(*):where(*):where(*):where(*) {
-    height: calc(100vh - 62px);
+    height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
   }
@@ -11817,6 +11821,7 @@ select {
 
 @media (max-width: 900px) {
   .tags-screen:where(*):where(*):where(*):where(*):where(*) {
+    height: 100%;
     padding: 16px;
   }
 

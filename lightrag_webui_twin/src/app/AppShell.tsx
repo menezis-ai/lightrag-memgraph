@@ -655,7 +655,7 @@ export function AppShell() {
                   min_score: params.minScore,
                   tag_filter: params.tagFilter,
                   doc_filter: params.docFilter,
-                });
+                }, { signal: params.signal });
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
               onStreamQuery={async (params, onChunk) => {
@@ -678,6 +678,7 @@ export function AppShell() {
                     doc_filter: params.docFilter,
                   },
                   onChunk,
+                  { signal: params.signal },
                 );
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}

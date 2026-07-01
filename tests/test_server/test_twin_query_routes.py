@@ -6,6 +6,7 @@ response with a structured `sources` list pulled from `chunks_vdb`.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,8 @@ from httpx import ASGITransport, AsyncClient
 from twindb_lightrag_memgraph.server.auth import configure_auth, require_auth
 from twindb_lightrag_memgraph.server.folder import load_folder_catalog
 from twindb_lightrag_memgraph.server.twin_query_routes import (
+    ClientDisconnectedDuringQuery,
+    _await_query_or_disconnect,
     build_twin_query_router,
 )
 from twindb_lightrag_memgraph.server.webui import router as webui_router
@@ -201,6 +204,16 @@ class MalformedRefsRag(FakeRag):
         return envelope
 
 
+class FakeDisconnectRequest:
+    def __init__(self, sequence: list[bool]):
+        self.sequence = list(sequence)
+
+    async def is_disconnected(self) -> bool:
+        if not self.sequence:
+            return False
+        return self.sequence.pop(0)
+
+
 @pytest.fixture()
 async def make_client():
     async def _make(rag: FakeRag):
@@ -210,6 +223,34 @@ async def make_client():
         return AsyncClient(transport=transport, base_url="http://test")
 
     return _make
+
+
+class TestAwaitQueryOrDisconnect:
+    async def test_returns_query_result_when_client_stays_connected(self):
+        async def query():
+            return {"ok": True}
+
+        request = FakeDisconnectRequest([False])
+
+        assert await _await_query_or_disconnect(query(), request) == {"ok": True}
+
+    async def test_cancels_query_when_client_disconnects(self):
+        cancelled = False
+
+        async def query():
+            nonlocal cancelled
+            try:
+                while True:
+                    await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        request = FakeDisconnectRequest([True])
+
+        with pytest.raises(ClientDisconnectedDuringQuery):
+            await _await_query_or_disconnect(query(), request)
+        assert cancelled is True
 
 
 class TestQueryEndpoint:

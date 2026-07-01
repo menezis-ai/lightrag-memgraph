@@ -226,6 +226,42 @@ describe('RetrievalTab — send', () => {
       finish({ response: 'owner-only-token', sources: [] });
     });
   });
+
+  it('aborts a pending stream when its thread is deleted and does not recreate it', async () => {
+    let finish!: (value: { response: string; sources: [] }) => void;
+    let observedSignal: AbortSignal | undefined;
+    const onStreamQuery = vi.fn(
+      async (params) => {
+        observedSignal = params.signal;
+        return new Promise<{ response: string; sources: [] }>((resolve) => {
+          finish = resolve;
+        });
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'delete owner');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+    await waitFor(() => expect(onStreamQuery).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByLabelText('Delete delete owner'));
+    expect(observedSignal?.aborted).toBe(true);
+
+    act(() => {
+      finish({ response: 'late answer', sources: [] });
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText('delete owner')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('late answer')).not.toBeInTheDocument();
+  });
 });
 
 describe('RetrievalTab — localStorage persistence', () => {

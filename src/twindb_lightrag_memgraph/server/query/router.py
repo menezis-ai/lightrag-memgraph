@@ -49,6 +49,7 @@ found nothing usable). See :func:`_is_no_retrieval_mode`.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -93,6 +94,38 @@ def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 logger = logging.getLogger(__name__)
 UNKNOWN_SOURCE_NAME = "unknown source"
+
+
+class ClientDisconnectedDuringQuery(Exception):
+    """Raised when the HTTP client drops a query while retrieval is running."""
+
+
+async def _await_query_or_disconnect(awaitable, request: Request):
+    """Await a costly query call while polling for client disconnect.
+
+    FastAPI does not automatically cancel an in-flight Python coroutine when
+    the browser aborts a fetch. Filtered retrieval can be expensive because the
+    storage layer performs exact cosine scoring over the pre-filtered corpus; if
+    the operator abandons the thread, stop waiting and cancel the underlying
+    task instead of letting it run to a late response.
+    """
+    task = asyncio.ensure_future(awaitable)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=0.25)
+            if task in done:
+                return task.result()
+            if await request.is_disconnected():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                raise ClientDisconnectedDuringQuery
+    except Exception:
+        if not task.done():
+            task.cancel()
+        raise
 
 class TwinQueryBody(BaseModel):
     query: str
@@ -1016,7 +1049,13 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         # aquery_llm (chunks + entity/relation vdb) is filtered to the active
         # folder's membership at the storage layer (batch-2 cloisonnement).
         with _retrieval_scope(folder, body):
-            envelope = await rag.aquery_llm(body.query, param=param)
+            envelope = await _await_query_or_disconnect(
+                rag.aquery_llm(body.query, param=param),
+                request,
+            )
+    except ClientDisconnectedDuringQuery as exc:
+        logger.info("twin_query: client disconnected while aquery_llm was running")
+        raise HTTPException(499, "Client closed request") from exc
     except Exception as exc:
         logger.exception("twin_query: aquery_llm failed")
         raise HTTPException(500, f"Query failed: {exc}") from exc
@@ -1265,9 +1304,17 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
             # route boundary). Retrieval completes inside aquery_llm before the
             # envelope is returned; token streaming below touches no vdb.
             with _retrieval_scope(folder, body):
-                envelope = await rag.aquery_llm(body.query, param=param)
+                envelope = await _await_query_or_disconnect(
+                    rag.aquery_llm(body.query, param=param),
+                    request,
+                )
             async for line in _emit_answer_tokens(envelope, stripper):
                 yield line
+        except ClientDisconnectedDuringQuery:
+            logger.info(
+                "twin_query stream: client disconnected while aquery_llm was running"
+            )
+            return
         except Exception as exc:
             logger.exception("twin_query: streaming aquery_llm failed")
             yield json.dumps(

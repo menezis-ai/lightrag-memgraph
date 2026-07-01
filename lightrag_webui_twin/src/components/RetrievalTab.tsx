@@ -120,6 +120,7 @@ export interface RetrievalTabProps {
     userPrompt: string;
     enableRerank: boolean;
     minScore: number;
+    signal?: AbortSignal;
     tagFilter?: RetrievalAdvancedFilter;
     docFilter?: RetrievalAdvancedFilter;
   }) => Promise<{
@@ -144,6 +145,7 @@ export interface RetrievalTabProps {
       userPrompt: string;
       enableRerank: boolean;
       minScore: number;
+      signal?: AbortSignal;
       tagFilter?: RetrievalAdvancedFilter;
       docFilter?: RetrievalAdvancedFilter;
     },
@@ -257,6 +259,12 @@ function filterPayload(
   return mode === 'all' ? { all: selected } : { any: selected };
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException
+    ? err.name === 'AbortError'
+    : err instanceof Error && err.name === 'AbortError';
+}
+
 function sourceDrilldownParams(source: RetrievalSource): Record<string, string> {
   const looksLikePath = source.type === 'file' && source.name.includes('.');
   const params: Record<string, string> = looksLikePath
@@ -317,6 +325,11 @@ export function RetrievalTab({
   const [enableRerank, setEnableRerank] = useState(true);
 
   const convRef = useRef<HTMLDivElement>(null);
+  const activeRequestRef = useRef<{
+    threadId: string;
+    controller: AbortController;
+  } | null>(null);
+  const streamTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Latest-value ref holding the current folder's key, synced in an effect (not
   // during render). The persist effect fires on `threads` change only and reads
   // this — so it never fires on a key change alone, which would persist the
@@ -343,11 +356,28 @@ export function RetrievalTab({
   // persist effect, which writes B's threads under B's key.
   useEffect(() => {
     if (loadedKeyRef.current === threadsKey) return;
+    activeRequestRef.current?.controller.abort();
+    activeRequestRef.current = null;
+    if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+    streamTimerRef.current = null;
+    setStreaming(false);
+    setStreamingThreadId(null);
+    setStreamedTokens([]);
     loadedKeyRef.current = threadsKey;
     const loaded = loadThreads(threadsKey, []);
     setThreads(loaded);
     setActiveThreadId(loaded[0]?.id ?? null);
   }, [threadsKey]);
+
+  useEffect(
+    () => () => {
+      activeRequestRef.current?.controller.abort();
+      activeRequestRef.current = null;
+      if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+      streamTimerRef.current = null;
+    },
+    [],
+  );
 
   // Persist threads under the active folder's key. Deliberately keyed on
   // `threads` only (not `threadsKey`): on a switch render `threads` is still
@@ -403,7 +433,46 @@ export function RetrievalTab({
     );
   };
 
+  const appendToExistingThread = (
+    id: string,
+    updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
+  ) => {
+    setThreads((ts) =>
+      ts.map((thread) =>
+        updateThreadMessages(thread, id, updater),
+      ),
+    );
+  };
+
+  const abortActiveRequest = () => {
+    activeRequestRef.current?.controller.abort();
+    activeRequestRef.current = null;
+    if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+    streamTimerRef.current = null;
+    setStreamedTokens([]);
+    setStreamingThreadId(null);
+    setStreaming(false);
+  };
+
+  const isCurrentRequest = (
+    threadId: string,
+    controller: AbortController,
+  ): boolean =>
+    activeRequestRef.current?.threadId === threadId &&
+    activeRequestRef.current.controller === controller &&
+    !controller.signal.aborted;
+
+  const finishRequest = (threadId: string, controller: AbortController) => {
+    if (!isCurrentRequest(threadId, controller)) return false;
+    activeRequestRef.current = null;
+    setStreaming(false);
+    setStreamingThreadId(null);
+    setStreamedTokens([]);
+    return true;
+  };
+
   const newThread = () => {
+    abortActiveRequest();
     const id = makeThreadId();
     setThreads((ts) => [
       {
@@ -422,6 +491,9 @@ export function RetrievalTab({
   };
 
   const deleteThread = (id: string) => {
+    if (activeRequestRef.current?.threadId === id) {
+      abortActiveRequest();
+    }
     setThreads((ts) => {
       const next = ts.filter((t) => t.id !== id);
       if (id === activeThreadId) {
@@ -437,11 +509,16 @@ export function RetrievalTab({
     sources: readonly RetrievalSource[],
     answerStatus: AnswerStatus = 'grounded',
     requestedTopK?: number,
+    controller?: AbortController,
   ) => {
+    if (controller && !isCurrentRequest(threadId, controller)) return;
     if (tokens.length === 0) {
-      setStreaming(false);
-      setStreamingThreadId(null);
-      appendToThread(threadId, (c) => [
+      if (controller) finishRequest(threadId, controller);
+      else {
+        setStreaming(false);
+        setStreamingThreadId(null);
+      }
+      appendToExistingThread(threadId, (c) => [
         ...c,
         { role: 'assistant', tokens: [], sources, answerStatus, requestedTopK },
       ]);
@@ -449,19 +526,29 @@ export function RetrievalTab({
     }
     let i = 0;
     const interval = setInterval(() => {
+      if (controller && !isCurrentRequest(threadId, controller)) {
+        clearInterval(interval);
+        if (streamTimerRef.current === interval) streamTimerRef.current = null;
+        return;
+      }
       i++;
       setStreamedTokens(tokens.slice(0, i));
       if (i >= tokens.length) {
         clearInterval(interval);
-        setStreaming(false);
-        setStreamingThreadId(null);
-        appendToThread(threadId, (c) => [
+        if (streamTimerRef.current === interval) streamTimerRef.current = null;
+        if (controller) finishRequest(threadId, controller);
+        else {
+          setStreaming(false);
+          setStreamingThreadId(null);
+        }
+        appendToExistingThread(threadId, (c) => [
           ...c,
           { role: 'assistant', tokens, sources, answerStatus, requestedTopK },
         ]);
         setStreamedTokens([]);
       }
     }, STREAM_TICK_MS);
+    streamTimerRef.current = interval;
   };
 
   const conversationHistoryFor = (
@@ -488,6 +575,7 @@ export function RetrievalTab({
   const activeParams = (
     q: string,
     conversationHistory: readonly ConversationHistoryMessage[],
+    signal?: AbortSignal,
   ) => ({
     query: q,
     mode: queryMode,
@@ -501,11 +589,13 @@ export function RetrievalTab({
     userPrompt,
     enableRerank,
     minScore,
+    signal,
     tagFilter: filterPayload(tagFilter, tagFilterMode),
     docFilter: filterPayload(docFilter, docFilterMode),
   });
 
   const send = (text?: string) => {
+    if (streaming) return;
     const q = (text ?? query).trim();
     if (!q) return;
     setQuery('');
@@ -514,6 +604,8 @@ export function RetrievalTab({
       threads.find((t) => t.id === threadId)?.messages ?? [];
     const conversationHistory = conversationHistoryFor(currentMessages);
     const requestedTopK = topK;
+    const controller = new AbortController();
+    activeRequestRef.current = { threadId, controller };
     appendToThread(threadId, (c) => [...c, { role: 'user', text: q }]);
     setStreamedTokens([]);
     setStreamingThreadId(threadId);
@@ -521,12 +613,13 @@ export function RetrievalTab({
 
     if (onStreamQuery) {
       const streamed: string[] = [];
-      onStreamQuery(activeParams(q, conversationHistory), (chunk) => {
+      onStreamQuery(activeParams(q, conversationHistory, controller.signal), (chunk) => {
+        if (!isCurrentRequest(threadId, controller)) return;
         streamed.push(chunk);
         setStreamedTokens([...streamed]);
       })
         .then(({ sources, answer_status }) => {
-          setStreaming(false);
+          if (!finishRequest(threadId, controller)) return;
           const finalTokens = streamed.join('')
             .split(/(\s+)/)
             .filter((t) => t.length > 0);
@@ -538,7 +631,7 @@ export function RetrievalTab({
           // surface or navigate to them — defends against a future backend
           // regression.
           const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
-          appendToThread(threadId, (c) => [
+          appendToExistingThread(threadId, (c) => [
             ...c,
             {
               role: 'assistant',
@@ -548,20 +641,27 @@ export function RetrievalTab({
               requestedTopK,
             },
           ]);
-          setStreamedTokens([]);
-          setStreamingThreadId(null);
         })
         .catch((err: unknown) => {
+          if (isAbortError(err) || !isCurrentRequest(threadId, controller)) return;
           const msg = err instanceof Error ? err.message : 'Query failed';
-          streamTokens(threadId, [`⚠ ${msg}`], [], 'query_failed', requestedTopK);
+          streamTokens(
+            threadId,
+            [`⚠ ${msg}`],
+            [],
+            'query_failed',
+            requestedTopK,
+            controller,
+          );
         });
       return;
     }
 
     const sendQuery = onSendQuery ?? missingRetrievalBackend;
 
-    sendQuery(activeParams(q, conversationHistory))
+    sendQuery(activeParams(q, conversationHistory, controller.signal))
       .then(({ response, sources, answer_status }) => {
+        if (!isCurrentRequest(threadId, controller)) return;
         const tokens = response
           .split(/(\s+)/)
           .filter((t) => t.length > 0);
@@ -577,14 +677,30 @@ export function RetrievalTab({
             effectiveSources,
             status,
             requestedTopK,
+            controller,
           );
           return;
         }
-        streamTokens(threadId, tokens, effectiveSources, status, requestedTopK);
+        streamTokens(
+          threadId,
+          tokens,
+          effectiveSources,
+          status,
+          requestedTopK,
+          controller,
+        );
       })
       .catch((err: unknown) => {
+        if (isAbortError(err) || !isCurrentRequest(threadId, controller)) return;
         const msg = err instanceof Error ? err.message : 'Query failed';
-        streamTokens(threadId, [`⚠ ${msg}`], [], 'query_failed', requestedTopK);
+        streamTokens(
+          threadId,
+          [`⚠ ${msg}`],
+          [],
+          'query_failed',
+          requestedTopK,
+          controller,
+        );
       });
   };
 
