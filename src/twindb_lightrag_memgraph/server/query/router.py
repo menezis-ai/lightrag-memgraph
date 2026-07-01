@@ -918,6 +918,55 @@ def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:
     )
 
 
+def _has_advanced_filter(body: TwinQueryBody) -> bool:
+    filters = _retrieval_filters_from_body(body)
+    return filters.has_doc or filters.has_tag
+
+
+def _query_data_failure_reason(result: dict[str, Any]) -> str | None:
+    if result.get("status") != "failure":
+        return None
+    metadata = result.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    reason = metadata.get("failure_reason")
+    return str(reason) if reason else None
+
+
+def _query_data_fallback_mode(body: TwinQueryBody) -> str | None:
+    """Chunk-inclusive fallback for filtered structured retrieval.
+
+    Upstream LightRAG's ``aquery_data(mode="hybrid")`` goes through ``kg_query``.
+    In that path, no entities/relations means ``no_results`` unless the mode is
+    ``mix``. For tag/doc-filtered API calls this reads as a broken filter: the
+    caller asked for the tagged corpus, not specifically for "only KG rows".
+    Retrying as ``mix`` preserves KG data when it exists and lets filtered chunks
+    surface when the graph side is empty.
+    """
+    if body.only_need_context or body.only_need_prompt:
+        return None
+    if not _has_advanced_filter(body):
+        return None
+    if body.mode in {"local", "global", "hybrid"}:
+        return "mix"
+    return None
+
+
+def _annotate_query_data_fallback(
+    result: dict[str, Any],
+    *,
+    requested_mode: str,
+    fallback_mode: str,
+) -> dict[str, Any]:
+    annotated = dict(result)
+    metadata = dict(result.get("metadata") or {})
+    metadata.setdefault("requested_mode", requested_mode)
+    metadata["fallback_mode"] = fallback_mode
+    metadata["fallback_reason"] = "filtered_graph_mode_no_results"
+    annotated["metadata"] = metadata
+    return annotated
+
+
 async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[str, Any]:
     """Body of ``POST /twin/api/query`` (non-streaming, answer + sources)."""
     try:
@@ -1071,6 +1120,27 @@ async def _twin_query_data(
             "data": {},
             "metadata": {},
         }
+
+    fallback_mode = _query_data_fallback_mode(body)
+    if (
+        fallback_mode is not None
+        and _query_data_failure_reason(result) == "no_results"
+    ):
+        fallback_kwargs = _query_param_kwargs(body)
+        fallback_kwargs["mode"] = fallback_mode
+        fallback_param = _make_query_param(QueryParam, fallback_kwargs)
+        try:
+            with _retrieval_scope(folder, body):
+                fallback = await rag.aquery_data(body.query, param=fallback_param)
+        except Exception as exc:
+            logger.exception("twin_query: fallback aquery_data failed")
+            raise HTTPException(500, f"Query data fallback failed: {exc}") from exc
+        if isinstance(fallback, dict):
+            result = _annotate_query_data_fallback(
+                fallback,
+                requested_mode=body.mode,
+                fallback_mode=fallback_mode,
+            )
 
     result = await _filter_query_data_by_tags(rag, result, body.tag_filter, folder)
     return {

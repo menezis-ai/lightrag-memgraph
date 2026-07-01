@@ -77,6 +77,7 @@ class FakeRag:
         *,
         answer: str = "synthesised answer",
         query_data: dict[str, Any] | None = None,
+        query_data_sequence: list[dict[str, Any]] | None = None,
         stream_chunks: list[Any] | None = None,
         chunks: list[dict[str, Any]] | None = None,
         chunk_to_doc: dict[str, str] | None = None,
@@ -91,6 +92,7 @@ class FakeRag:
             "data": {},
             "metadata": {},
         }
+        self.query_data_sequence = list(query_data_sequence or [])
         self.stream_chunks = stream_chunks
         self.calls: list[tuple[str, Any]] = []
         self.llm_calls: list[tuple[str, Any]] = []
@@ -175,6 +177,8 @@ class FakeRag:
 
     async def aquery_data(self, query: str, *, param):
         self.data_calls.append((query, param))
+        if self.query_data_sequence:
+            return self.query_data_sequence.pop(0)
         return self.query_data
 
 
@@ -1175,6 +1179,123 @@ class TestQueryEndpoint:
         assert param.user_prompt == "return concise evidence"
         assert param.enable_rerank is False
         assert param.tag_filter == {"all": ["rman"], "any": []}
+
+    @pytest.mark.parametrize("graph_mode", ["local", "global", "hybrid"])
+    async def test_query_data_filtered_graph_mode_no_results_falls_back_to_mix(
+        self, make_client, monkeypatch, graph_mode
+    ):
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, folder):
+            return {"cft-vm"} if doc_id == "doc-cft" and folder == "default" else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        no_results = {
+            "status": "failure",
+            "message": "Query returned no results",
+            "data": {},
+            "metadata": {"failure_reason": "no_results", "mode": graph_mode},
+        }
+        fallback = {
+            "status": "success",
+            "message": "Query executed successfully",
+            "data": {
+                "chunks": [
+                    {
+                        "chunk_id": "chunk-cft",
+                        "full_doc_id": "doc-cft",
+                        "content": "CFT virtual machine operations",
+                        "reference_id": "1",
+                    }
+                ],
+                "references": [{"reference_id": "1", "file_path": "cft.pdf"}],
+            },
+            "metadata": {"query_mode": "mix"},
+        }
+        rag = FakeRag(query_data_sequence=[no_results, fallback])
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "Ask a question about the indexed knowledge base",
+                    "mode": graph_mode,
+                    "top_k": 60,
+                    "chunk_top_k": 20,
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "success"
+        assert body["data"]["chunks"][0]["full_doc_id"] == "doc-cft"
+        assert body["metadata"]["query_mode"] == "mix"
+        assert body["metadata"]["requested_mode"] == graph_mode
+        assert body["metadata"]["fallback_mode"] == "mix"
+        assert body["metadata"]["fallback_reason"] == "filtered_graph_mode_no_results"
+        assert [param.mode for _query, param in rag.data_calls] == [graph_mode, "mix"]
+
+    @pytest.mark.parametrize("mode", ["mix", "naive", "bypass"])
+    async def test_query_data_filtered_non_graph_modes_do_not_fallback(
+        self, make_client, mode
+    ):
+        no_results = {
+            "status": "failure",
+            "message": "Query returned no results",
+            "data": {},
+            "metadata": {"failure_reason": "no_results", "mode": mode},
+        }
+        rag = FakeRag(query_data_sequence=[no_results])
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "Ask a question about the indexed knowledge base",
+                    "mode": mode,
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "failure"
+        assert body["message"] == "Query returned no results"
+        assert body["data"] == {}
+        assert body["metadata"]["failure_reason"] == "no_results"
+        assert body["metadata"]["mode"] == mode
+        assert body["metadata"]["tag_filter"] == {"all": ["cft-vm"], "any": []}
+        assert "fallback_mode" not in body["metadata"]
+        assert [param.mode for _query, param in rag.data_calls] == [mode]
+
+    async def test_query_data_unfiltered_hybrid_no_results_does_not_fallback(
+        self, make_client
+    ):
+        no_results = {
+            "status": "failure",
+            "message": "Query returned no results",
+            "data": {},
+            "metadata": {"failure_reason": "no_results", "mode": "hybrid"},
+        }
+        rag = FakeRag(query_data_sequence=[no_results])
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "Ask a question about the indexed knowledge base",
+                    "mode": "hybrid",
+                },
+            )
+
+        assert r.status_code == 200
+        assert r.json() == no_results
+        assert [param.mode for _query, param in rag.data_calls] == ["hybrid"]
 
     async def test_query_data_tag_filter_filters_chunks_and_references(
         self, make_client, monkeypatch
