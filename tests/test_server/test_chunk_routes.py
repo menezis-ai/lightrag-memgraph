@@ -1,5 +1,6 @@
 """Tests for chunk routes (unit tests with mocked LightRAG)."""
 
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,7 +19,7 @@ def _make_rag():
     rag.text_chunks = MagicMock()
     rag.text_chunks.get_by_id = AsyncMock()
     rag.text_chunks.get_by_ids = AsyncMock()
-    rag.doc_status = MagicMock()
+    rag.doc_status = MagicMock(spec=["get_by_id"])
     rag.doc_status.get_by_id = AsyncMock()
     return rag
 
@@ -693,3 +694,92 @@ class TestHTTPDocumentChunks:
         assert "file_path" in chunk
         assert "chunk_order_index" in chunk
         assert "tokens" in chunk
+
+
+class TestHTTPFolderScoping:
+    """Folder guards for chunk/document expansion routes."""
+
+    @staticmethod
+    def _folder_env(monkeypatch):
+        monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "A")
+        monkeypatch.setenv(
+            "TWIN_FOLDERS_JSON",
+            json.dumps(
+                [
+                    {"id": "A", "label": "Folder A", "kind": "primary"},
+                    {"id": "B", "label": "Folder B", "kind": "secondary"},
+                ]
+            ),
+        )
+
+    async def test_membership_is_authoritative_for_all_chunk_routes(self, monkeypatch):
+        self._folder_env(monkeypatch)
+        chunk_ids = ["c0", "c1", "c2"]
+        rag = _make_rag_with_anchor(chunk_ids, "c1")
+        rag.doc_status.get_by_id.return_value = {
+            "chunks_list": chunk_ids,
+            "folder": "A",
+            "metadata": {"folder": "A"},
+        }
+        rag.doc_status.get_folders_for_doc = AsyncMock(return_value=["B"])
+        app = _make_chunk_app(rag)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            hidden_context = await client.get(
+                "/chunks/c1/context",
+                headers={"X-Twin-Folder": "A"},
+            )
+            hidden_document = await client.get(
+                "/chunks/c1/document",
+                headers={"X-Twin-Folder": "A"},
+            )
+            hidden_doc_chunks = await client.get(
+                "/documents/doc-1/chunks",
+                headers={"X-Twin-Folder": "A"},
+            )
+            visible_context = await client.get(
+                "/chunks/c1/context",
+                headers={"X-Twin-Folder": "B"},
+            )
+            visible_document = await client.get(
+                "/chunks/c1/document",
+                headers={"X-Twin-Folder": "B"},
+            )
+            visible_doc_chunks = await client.get(
+                "/documents/doc-1/chunks",
+                headers={"X-Twin-Folder": "B"},
+            )
+
+        assert hidden_context.status_code == 404
+        assert hidden_document.status_code == 404
+        assert hidden_doc_chunks.status_code == 404
+        assert visible_context.status_code == 200
+        assert visible_document.status_code == 200
+        assert visible_doc_chunks.status_code == 200
+
+    async def test_legacy_folder_metadata_scopes_backends_without_membership(
+        self, monkeypatch
+    ):
+        self._folder_env(monkeypatch)
+        chunk_ids = ["c0", "c1"]
+        rag = _make_rag_with_anchor(chunk_ids, "c0")
+        rag.doc_status.get_by_id.return_value = {
+            "chunks_list": chunk_ids,
+            "metadata": {"folder": "B"},
+        }
+        app = _make_chunk_app(rag)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            hidden = await client.get(
+                "/documents/doc-1/chunks",
+                headers={"X-Twin-Folder": "A"},
+            )
+            visible = await client.get(
+                "/documents/doc-1/chunks",
+                headers={"X-Twin-Folder": "B"},
+            )
+
+        assert hidden.status_code == 404
+        assert visible.status_code == 200
