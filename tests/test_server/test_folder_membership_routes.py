@@ -25,8 +25,16 @@ class FakeDocStatus:
     def __init__(self) -> None:
         self.docs: dict[str, dict[str, Any]] = {
             "doc-a": {"id": "doc-a", "file_path": "/kb/a.pdf", "metadata": {}},
-            "doc-default": {"id": "doc-default", "file_path": "/kb/d.pdf", "metadata": {}},
-            "doc-sandbox": {"id": "doc-sandbox", "file_path": "/kb/s.pdf", "metadata": {}},
+            "doc-default": {
+                "id": "doc-default",
+                "file_path": "/kb/d.pdf",
+                "metadata": {},
+            },
+            "doc-sandbox": {
+                "id": "doc-sandbox",
+                "file_path": "/kb/s.pdf",
+                "metadata": {},
+            },
         }
         # membership: doc_id -> set of folder ids
         self.members: dict[str, set[str]] = {
@@ -98,9 +106,7 @@ async def client(monkeypatch):
 
 class TestAddMembership:
     async def test_add_shares_doc_into_a_second_folder(self, client):
-        r = await client.post(
-            "/documents/doc-a/folders", json={"folder_id": "sandbox"}
-        )
+        r = await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
         assert r.status_code == 200
         assert r.json()["folders"] == ["default", "sandbox"]
         # one physical doc, no copy

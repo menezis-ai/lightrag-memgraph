@@ -7,6 +7,28 @@ on:
     branches: [main, "stable/**"]
 
 jobs:
+  python-lint:
+    runs-on: [self-hosted, docker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Python lint and format checks
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$PWD:/work" \
+            -w /work \
+            python:3.12-bookworm \
+            sh -lc '
+              python -m venv /tmp/venv &&
+              . /tmp/venv/bin/activate &&
+              python -m pip install --upgrade pip &&
+              python -m pip install -c requirements/constraints-dev.txt black ruff &&
+              black --check --diff src tests &&
+              ruff check src tests
+            '
+
   unit-tests:
     runs-on: [self-hosted, docker]
     strategy:

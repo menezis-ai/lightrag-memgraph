@@ -162,9 +162,7 @@ def _apply_app_overlays(
             twin_api_prefix=twin_api_prefix if mount_server else None,
             shim_native_routes=shim_native_routes,
             webui_stores=webui_stores if mount_server else "seed",
-            webui_categories_config=(
-                webui_categories_config if mount_server else None
-            ),
+            webui_categories_config=(webui_categories_config if mount_server else None),
         )
 
 
@@ -538,10 +536,7 @@ def _degree_expr(mchunks) -> str:
     in-folder edges) when ``mchunks`` carries the active folder's member set."""
     if mchunks is None:
         return "count(r)"
-    return (
-        f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} "
-        f"THEN r END)"
-    )
+    return f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} " f"THEN r END)"
 
 
 async def _twin_member_chunks(self):
@@ -603,9 +598,7 @@ async def _patched_get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]
         async for record in records:
             node_dict = dict(record["n"])
             if "labels" in node_dict:
-                node_dict["labels"] = [
-                    lbl for lbl in node_dict["labels"] if lbl != ws
-                ]
+                node_dict["labels"] = [lbl for lbl in node_dict["labels"] if lbl != ws]
             result[record["eid"]] = node_dict
         await records.consume()
     return result
@@ -699,8 +692,7 @@ async def _patched_edge_degrees_batch(
     unique_ids = list({nid for pair in edge_pairs for nid in pair})
     degrees = await self.node_degrees_batch(unique_ids)
     return {
-        (src, tgt): degrees.get(src, 0) + degrees.get(tgt, 0)
-        for src, tgt in edge_pairs
+        (src, tgt): degrees.get(src, 0) + degrees.get(tgt, 0) for src, tgt in edge_pairs
     }
 
 
@@ -782,9 +774,7 @@ async def _patched_get_nodes_with_degrees_batch(
         async for record in records:
             node_dict = dict(record["n"])
             if "labels" in node_dict:
-                node_dict["labels"] = [
-                    lbl for lbl in node_dict["labels"] if lbl != ws
-                ]
+                node_dict["labels"] = [lbl for lbl in node_dict["labels"] if lbl != ws]
             nodes[record["eid"]] = node_dict
             degrees[record["eid"]] = record["degree"]
         await records.consume()
@@ -925,7 +915,9 @@ async def _fused_get_node_data(
         f"cosine:{entities_vdb.cosine_better_than_threshold})"
     )
     results = await entities_vdb.query(
-        query, top_k=query_param.top_k, query_embedding=query_embedding,
+        query,
+        top_k=query_param.top_k,
+        query_embedding=query_embedding,
     )
     if not len(results):
         return [], []
@@ -1021,9 +1013,7 @@ async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
             }
         )
 
-    return sorted(
-        all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True
-    )
+    return sorted(all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True)
 
 
 def _patch_operate_hot_paths():
@@ -1180,8 +1170,10 @@ async def _refuse_runtime_install_async(*args, **kwargs):  # NOSONAR - async con
 def _block_pipmaster_classes(pm) -> None:
     """Replace install*/ensure* methods on every pipmaster manager class."""
     for cls_name in (
-        "PackageManager", "AsyncPackageManager",
-        "UvPackageManager", "CondaPackageManager",
+        "PackageManager",
+        "AsyncPackageManager",
+        "UvPackageManager",
+        "CondaPackageManager",
     ):
         cls = getattr(pm, cls_name, None)
         if cls is None:
@@ -1191,7 +1183,9 @@ def _block_pipmaster_classes(pm) -> None:
             if not method_name.startswith(("install", "ensure")):
                 continue
             replacement = (
-                _refuse_runtime_install_async if is_async_cls else _refuse_runtime_install
+                _refuse_runtime_install_async
+                if is_async_cls
+                else _refuse_runtime_install
             )
             setattr(cls, method_name, replacement)
 
@@ -1211,18 +1205,28 @@ def _disable_pipmaster_runtime_install() -> None:
         return
 
     _sync_targets = (
-        "install", "install_edit", "install_if_missing", "install_multiple",
-        "install_multiple_if_not_installed", "install_or_update",
-        "install_or_update_multiple", "install_requirements", "install_version",
-        "ensure_packages", "ensure_requirements",
+        "install",
+        "install_edit",
+        "install_if_missing",
+        "install_multiple",
+        "install_multiple_if_not_installed",
+        "install_or_update",
+        "install_or_update_multiple",
+        "install_requirements",
+        "install_version",
+        "ensure_packages",
+        "ensure_requirements",
     )
     for name in _sync_targets:
         if hasattr(pm, name):
             setattr(pm, name, _refuse_runtime_install)
 
     _async_targets = (
-        "async_install", "async_install_if_missing", "async_install_multiple",
-        "async_ensure_packages", "async_ensure_requirements",
+        "async_install",
+        "async_install_if_missing",
+        "async_install_multiple",
+        "async_ensure_packages",
+        "async_ensure_requirements",
     )
     for name in _async_targets:
         if hasattr(pm, name):
@@ -1253,6 +1257,7 @@ def _disable_lightrag_dependency_autoinstall() -> None:
     of a boot crash.
     """
     import sys
+
     srv = sys.modules.get(LIGHTRAG_SERVER_MODULE)
     if srv is None:
         return  # not yet imported — will be patched lazily via the create_app hook
@@ -1735,7 +1740,9 @@ def _build_runtime_config() -> dict[str, object]:
     folder_catalog = load_folder_catalog()
     runtime_folder_config = build_runtime_folder_config()
     debug_user = {
-        "sso_subject": os.environ.get("TWIN_DEBUG_USER_EMAIL", DEFAULT_DEBUG_USER_EMAIL),
+        "sso_subject": os.environ.get(
+            "TWIN_DEBUG_USER_EMAIL", DEFAULT_DEBUG_USER_EMAIL
+        ),
         "email": os.environ.get("TWIN_DEBUG_USER_EMAIL", DEFAULT_DEBUG_USER_EMAIL),
         # Neutral anonymous-operator label — must never look like a real
         # colleague (activity events carry this name in open-access mode).
@@ -2008,9 +2015,7 @@ def _kill_native_webui(app, twin_prefix: str = TWIN_UI_PREFIX) -> None:
 
     # Head-insert so these win over any companion native registration.
     for path in ("/webui/{path:path}", "/webui", "/"):
-        app.router.routes.insert(
-            0, Route(path, _to_twin, include_in_schema=False)
-        )
+        app.router.routes.insert(0, Route(path, _to_twin, include_in_schema=False))
 
     logger.info(
         "twindb: native /webui killed (%d route(s) removed) → / and /webui "
@@ -2102,9 +2107,7 @@ async def _overlay_instance_quota_middleware(request, call_next):
             try:
                 await enforce_instance_quota()
             except HTTPException as exc:
-                return JSONResponse(
-                    {"detail": exc.detail}, status_code=exc.status_code
-                )
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     return await call_next(request)
 
 
@@ -2165,8 +2168,7 @@ async def _init_overlay_memgraph_stores(
         )
     except Exception:
         logger.exception(
-            "twindb: FAILED to switch stores to Memgraph; "
-            "keeping in-memory seed.",
+            "twindb: FAILED to switch stores to Memgraph; " "keeping in-memory seed.",
         )
         raise
 
@@ -2299,8 +2301,7 @@ def _mount_twin_subapp(
         # notifications visible from the very first request.
         set_store(WebuiStore.from_seed())
         logger.info(
-            "twindb: Twin overlay router included at %s "
-            "(in-memory seed; %d routes)",
+            "twindb: Twin overlay router included at %s " "(in-memory seed; %d routes)",
             prefix,
             len(webui_router.routes),
         )

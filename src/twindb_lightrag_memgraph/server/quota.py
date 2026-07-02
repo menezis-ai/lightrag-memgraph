@@ -66,11 +66,11 @@ _UNIT_FACTORS: Final[dict[str, int]] = {
     "KB": 1_000,
     "KIB": 1024,
     "MB": 1_000_000,
-    "MIB": 1024 ** 2,
+    "MIB": 1024**2,
     "GB": 1_000_000_000,
-    "GIB": 1024 ** 3,
+    "GIB": 1024**3,
     "TB": 1_000_000_000_000,
-    "TIB": 1024 ** 4,
+    "TIB": 1024**4,
 }
 
 # ``SHOW STORAGE INFO`` keys, newest name first, older name(s) after.
@@ -99,7 +99,10 @@ _AI_PLATFORM = "ai-platform"
 
 
 def _vectors_are_billed() -> bool:
-    return os.environ.get(_LICENSE_PLAN_ENV, "graph-analytics").strip().lower() != _AI_PLATFORM
+    return (
+        os.environ.get(_LICENSE_PLAN_ENV, "graph-analytics").strip().lower()
+        != _AI_PLATFORM
+    )
 
 
 def budget_enforce_mode() -> str:
@@ -110,7 +113,10 @@ def budget_enforce_mode() -> str:
     instance limit is configured, while making the env contract explicit
     in the quota payload.
     """
-    return os.environ.get(_BUDGET_ENFORCE_ENV, _BUDGET_REJECT).strip().lower() or _BUDGET_REJECT
+    return (
+        os.environ.get(_BUDGET_ENFORCE_ENV, _BUDGET_REJECT).strip().lower()
+        or _BUDGET_REJECT
+    )
 
 
 def _parse_size(value: Any) -> int | None:
@@ -177,7 +183,11 @@ def _index_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
     indexed: dict[str, int] = {}
     for row in rows:
         key = next(
-            (row[c] for c in ("storage info", "storage_info", "name", "key") if c in row),
+            (
+                row[c]
+                for c in ("storage info", "storage_info", "name", "key")
+                if c in row
+            ),
             None,
         )
         if key is None:

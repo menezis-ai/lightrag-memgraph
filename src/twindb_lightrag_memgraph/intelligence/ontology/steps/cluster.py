@@ -18,9 +18,7 @@ from ..steps.extract import ExtractionResult
 
 logger = logging.getLogger("twin_rag_intelligence.ontology.cluster")
 
-_PROMPT_PATH = (
-    Path(__file__).parent.parent.parent / "prompts" / "ontology_cluster.txt"
-)
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "ontology_cluster.txt"
 
 
 @dataclass

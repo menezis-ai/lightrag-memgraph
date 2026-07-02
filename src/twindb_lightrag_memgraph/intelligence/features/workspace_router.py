@@ -57,9 +57,7 @@ class FolderRoutingResult:
     ) -> None:
         self.folders = folders if folders is not None else workspaces or []
         self.public_folders = (
-            public_folders
-            if public_folders is not None
-            else workspaces_publics or []
+            public_folders if public_folders is not None else workspaces_publics or []
         )
         self.strategy = strategy
         self.confidence = confidence

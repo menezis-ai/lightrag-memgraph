@@ -112,8 +112,12 @@ def _schedule_activity_task(
         if hasattr(coro, "close"):
             try:
                 coro.close()
-            except Exception:  # noqa: BLE001 - task close may fail on already-awaited path.
-                logger.exception("[activity] failed to close unscheduled auth event coroutine")
+            except (
+                Exception
+            ):  # noqa: BLE001 - task close may fail on already-awaited path.
+                logger.exception(
+                    "[activity] failed to close unscheduled auth event coroutine"
+                )
         logger.exception("[activity] failed to schedule async auth event")
         return
 
@@ -250,7 +254,9 @@ async def emit_access_denied_event(
 
             actor = resolve_auth_actor(request) or "anonymous"
         except Exception:  # noqa: BLE001 - attribution must not break auth flow.
-            logger.debug("[activity] access-denied actor resolution failed", exc_info=True)
+            logger.debug(
+                "[activity] access-denied actor resolution failed", exc_info=True
+            )
 
     await emit_auth_event(
         action="access_denied",

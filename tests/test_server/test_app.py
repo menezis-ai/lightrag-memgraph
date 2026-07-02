@@ -553,9 +553,7 @@ class TestMemgraphErrorPayload:
 
 
 class TestOperationalMiddleware:
-    async def test_request_id_header_and_access_log_do_not_include_body(
-        self, caplog
-    ):
+    async def test_request_id_header_and_access_log_do_not_include_body(self, caplog):
         app = create_app(_make_settings(api_key=None, jwt_secret=None))
         caplog.set_level(logging.INFO, logger=app_module.__name__)
 
@@ -569,8 +567,7 @@ class TestOperationalMiddleware:
                     "x-request-id": "rid-123",
                     "authorization": "Bearer secret",
                     "traceparent": (
-                        "00-4bf92f3577b34da6a3ce929d0e0e4736-"
-                        "00f067aa0ba902b7-01"
+                        "00-4bf92f3577b34da6a3ce929d0e0e4736-" "00f067aa0ba902b7-01"
                     ),
                 },
             )
@@ -1364,8 +1361,12 @@ class TestLifespan:
                     assert await sandbox_store.list_tags() == []
                     assert await default_store.list_notifications() == []
                     assert await sandbox_store.list_notifications() == []
-                    default_activity, default_total, _ = await default_store.list_activity()
-                    sandbox_activity, sandbox_total, _ = await sandbox_store.list_activity()
+                    default_activity, default_total, _ = (
+                        await default_store.list_activity()
+                    )
+                    sandbox_activity, sandbox_total, _ = (
+                        await sandbox_store.list_activity()
+                    )
                     assert default_total == 0
                     assert sandbox_total == 0
                     assert default_activity == []

@@ -83,11 +83,22 @@ _MSIP_PROP_RE: Final = re.compile(
 )
 
 # OOXML container extensions we handle natively (no extra dependency).
-_OOXML_EXTS: Final = frozenset({
-    ".docx", ".docm", ".dotx", ".dotm",
-    ".xlsx", ".xlsm", ".xltx", ".xltm",
-    ".pptx", ".pptm", ".potx", ".potm",
-})
+_OOXML_EXTS: Final = frozenset(
+    {
+        ".docx",
+        ".docm",
+        ".dotx",
+        ".dotm",
+        ".xlsx",
+        ".xlsm",
+        ".xltx",
+        ".xltm",
+        ".pptx",
+        ".pptm",
+        ".potx",
+        ".potm",
+    }
+)
 
 # Legacy OLE binary extensions (need olefile). Outlook `.msg` is also an OLE
 # container and can carry MSIP custom properties.
@@ -340,10 +351,12 @@ def _detect_ooxml(
             source_format="ooxml",
             reason="no-msip-label",
         )
+
     # Practice: only one MSIP label per document. If multiple, pick the most
     # recently set (highest SetDate ISO string) for safety.
     def set_date_of(entry: tuple[str, dict[str, str]]) -> str:
         return entry[1].get("SetDate", "")
+
     guid, fields = max(labels.items(), key=set_date_of)
     return _result_from_msip_fields("ooxml", guid, fields, label_map)
 
@@ -487,7 +500,13 @@ _CLASS_ALIASES: Final[dict[str, str]] = {
     "private": "Private",
 }
 
-_DEFAULT_CLASS_LADDER: Final = ("Public", "Internal", "Private", "Confidential", "Secret")
+_DEFAULT_CLASS_LADDER: Final = (
+    "Public",
+    "Internal",
+    "Private",
+    "Confidential",
+    "Secret",
+)
 
 
 def _normalize_class_id(class_id: str | None) -> str | None:

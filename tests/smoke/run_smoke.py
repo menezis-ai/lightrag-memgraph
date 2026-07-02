@@ -46,7 +46,9 @@ def _env_required(name: str) -> str:
     return value
 
 
-def _build_opener(base_url: str, ca_bundle: str | None) -> urllib.request.OpenerDirector:
+def _build_opener(
+    base_url: str, ca_bundle: str | None
+) -> urllib.request.OpenerDirector:
     cookie_jar = http.cookiejar.CookieJar()
     handlers: list[urllib.request.BaseHandler] = [
         urllib.request.HTTPCookieProcessor(cookie_jar)
@@ -130,7 +132,9 @@ def _contains(actual: Any, expected: Any) -> bool:
     if isinstance(expected, list):
         if not isinstance(actual, list):
             return False
-        return all(any(_contains(candidate, item) for candidate in actual) for item in expected)
+        return all(
+            any(_contains(candidate, item) for candidate in actual) for item in expected
+        )
     return actual == expected
 
 
@@ -149,11 +153,15 @@ def _set_cookie_values(headers: Message) -> list[str]:
     return [value] if value else []
 
 
-def _assert_response(check: dict[str, Any], response: SmokeResponse) -> dict[str, Any] | None:
+def _assert_response(
+    check: dict[str, Any], response: SmokeResponse
+) -> dict[str, Any] | None:
     name = check.get("name", check.get("path", "<unnamed>"))
     expected_status = check.get("expect_status")
     if expected_status is not None and response.status != expected_status:
-        raise SmokeFailure(f"{name}: expected HTTP {expected_status}, got {response.status}")
+        raise SmokeFailure(
+            f"{name}: expected HTTP {expected_status}, got {response.status}"
+        )
 
     expected_body = check.get("expect_body_contains")
     if expected_body is not None and expected_body not in _decode_body(response.body):
@@ -173,7 +181,9 @@ def _assert_response(check: dict[str, Any], response: SmokeResponse) -> dict[str
         if parsed_json is None or field not in parsed_json:
             raise SmokeFailure(f"{name}: response JSON is missing field {field!r}")
 
-    for header_name, expected_fragment in check.get("expect_header_contains", {}).items():
+    for header_name, expected_fragment in check.get(
+        "expect_header_contains", {}
+    ).items():
         value = _header_value(response.headers, header_name)
         if expected_fragment.lower() not in value.lower():
             raise SmokeFailure(
@@ -190,7 +200,9 @@ def _assert_response(check: dict[str, Any], response: SmokeResponse) -> dict[str
     return parsed_json
 
 
-def _check_payload(check: dict[str, Any], auth: dict[str, Any]) -> dict[str, Any] | None:
+def _check_payload(
+    check: dict[str, Any], auth: dict[str, Any]
+) -> dict[str, Any] | None:
     if not check.get("login"):
         return check.get("json")
 
@@ -213,7 +225,9 @@ def run_manifest(manifest_path: str) -> dict[str, Any]:
     target = manifest.get("target", {})
     auth = manifest.get("auth", {})
     artifacts = manifest.get("artifacts", {})
-    base_url = _env_required(target.get("base_url_env", "TWIN_SMOKE_BASE_URL")).rstrip("/")
+    base_url = _env_required(target.get("base_url_env", "TWIN_SMOKE_BASE_URL")).rstrip(
+        "/"
+    )
     timeout = float(target.get("timeout_seconds", 30))
     opener = _build_opener(base_url, target.get("ca_bundle"))
     bearer_token: str | None = None
@@ -240,7 +254,11 @@ def run_manifest(manifest_path: str) -> dict[str, Any]:
             headers = dict(check.get("headers", {}))
             if check.get("after_login") and not logged_in:
                 raise SmokeFailure(f"{name}: check requires a successful prior login")
-            if check.get("after_login") and auth.get("attach_bearer_after_login") and bearer_token:
+            if (
+                check.get("after_login")
+                and auth.get("attach_bearer_after_login")
+                and bearer_token
+            ):
                 headers["Authorization"] = f"Bearer {bearer_token}"
             payload = _check_payload(check, auth)
             response = _request(

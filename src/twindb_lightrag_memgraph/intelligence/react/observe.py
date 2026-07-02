@@ -188,9 +188,11 @@ class SynthesisEngine:
         lines = []
         for i, chunk in enumerate(chunks):
             source = escape(chunk.source_workspace, quote=True)
-            doc = escape(chunk.document_path or chunk.document_id or "inconnu", quote=True)
+            doc = escape(
+                chunk.document_path or chunk.document_id or "inconnu", quote=True
+            )
             lines.append(
-                f"<UNTRUSTED_PASSAGE id=\"{i}\" source=\"{source}\" doc=\"{doc}\">\n"
+                f'<UNTRUSTED_PASSAGE id="{i}" source="{source}" doc="{doc}">\n'
                 f"{neutralize_reserved_tags(chunk.text[:1200])}\n"
                 "</UNTRUSTED_PASSAGE>\n"
             )

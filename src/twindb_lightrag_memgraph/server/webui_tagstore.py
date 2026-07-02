@@ -48,8 +48,12 @@ class TagStore(Protocol):
 
     def list_tags(self) -> list[dict[str, Any]]: ...
     def list_categories(self) -> list[dict[str, Any]]: ...
-    async def get_tag(self, tag: str) -> dict[str, Any] | None: ...  # NOSONAR - async contract.
-    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]: ...  # NOSONAR - async contract.
+    async def get_tag(
+        self, tag: str
+    ) -> dict[str, Any] | None: ...  # NOSONAR - async contract.
+    async def upsert_tag(
+        self, entry: dict[str, Any]
+    ) -> dict[str, Any]: ...  # NOSONAR - async contract.
     async def delete_tag(self, tag: str) -> bool: ...  # NOSONAR - async contract.
 
 
@@ -77,13 +81,17 @@ class InMemoryTagStore:
     def list_categories(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._categories)
 
-    async def get_tag(self, tag: str) -> dict[str, Any] | None:  # NOSONAR - async contract.
+    async def get_tag(
+        self, tag: str
+    ) -> dict[str, Any] | None:  # NOSONAR - async contract.
         for entry in self._tags:
             if entry["tag"] == tag:
                 return copy.deepcopy(entry)
         return None
 
-    async def upsert_tag(self, entry: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
+    async def upsert_tag(
+        self, entry: dict[str, Any]
+    ) -> dict[str, Any]:  # NOSONAR - async contract.
         name = entry["tag"]
         for i, existing in enumerate(self._tags):
             if existing["tag"] == name:
@@ -135,13 +143,9 @@ class MemgraphTagStore:
             async with _pool.get_session() as session:
                 for label in (self._tag_label, self._cat_label):
                     try:
-                        result = await session.run(
-                            f"CREATE INDEX ON :`{label}`(id)"
-                        )
+                        result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
                         await result.consume()
-                        logger.info(
-                            "[WebuiTagStore] Index on :%s(id) ensured", label
-                        )
+                        logger.info("[WebuiTagStore] Index on :%s(id) ensured", label)
                     except Exception as e:  # noqa: BLE001 — narrow check below
                         if "already exists" in str(e).lower():
                             logger.debug(
@@ -299,8 +303,7 @@ class MemgraphTagStore:
         for i, entry in enumerate(raw):
             if not isinstance(entry, dict):
                 raise ValueError(
-                    f"{source}[{i}]: must be an object, "
-                    f"got {type(entry).__name__}."
+                    f"{source}[{i}]: must be an object, " f"got {type(entry).__name__}."
                 )
             for required in ("id", "label", "color"):
                 if required not in entry:
@@ -311,13 +314,10 @@ class MemgraphTagStore:
             cat_id = entry["id"]
             if not isinstance(cat_id, str) or not cat_id:
                 raise ValueError(
-                    f"{source}[{i}].id must be a non-empty string, "
-                    f"got {cat_id!r}."
+                    f"{source}[{i}].id must be a non-empty string, " f"got {cat_id!r}."
                 )
             if cat_id in seen_ids:
-                raise ValueError(
-                    f"{source}[{i}]: duplicate id {cat_id!r}."
-                )
+                raise ValueError(f"{source}[{i}]: duplicate id {cat_id!r}.")
             seen_ids.add(cat_id)
             normalized.append(
                 {
@@ -366,9 +366,7 @@ class MemgraphTagStore:
         Returns True if a bootstrap happened, False if categories were
         already present.
         """
-        seed_cats = (
-            categories if categories is not None else webui_seed.TAG_CATEGORIES
-        )
+        seed_cats = categories if categories is not None else webui_seed.TAG_CATEGORIES
 
         async with _pool.get_read_session() as session:
             res = await session.run(
@@ -406,15 +404,13 @@ class MemgraphTagStore:
         folder_label = f"Folder_{doc_workspace}"
         folder = self._workspace
         async with _pool.get_read_session() as session:
-            result = await session.run(
-                f"""
+            result = await session.run(f"""
                 MATCH (t:`{self._tag_label}`)
                 RETURN
                   t.id AS id,
                   t.data AS data
                 ORDER BY t.`__created_at`, t.id
-                """
-            )
+                """)
             rows = await result.data()
             await result.consume()
 

@@ -30,7 +30,6 @@ from httpx import ASGITransport, AsyncClient
 from twindb_lightrag_memgraph.server import idp_jwt, folder_store, webui_router
 from twindb_lightrag_memgraph.server.app import create_app
 
-
 # ---------------------------------------------------------------------------
 # Local copies of the test helpers from test_idp_jwt.py. Duplicating keeps
 # this file self-contained — the shared bits are tiny (~30 lines) and would
@@ -117,9 +116,7 @@ async def client(monkeypatch, tmp_path, fake_jwks):
         ),
     )
     monkeypatch.setenv("TWIN_MAX_FOLDERS", "3")
-    monkeypatch.setenv(
-        "TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json")
-    )
+    monkeypatch.setenv("TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json"))
     folder_store.reset_runtime_store()
     webui_router.reset_store()
 
@@ -312,9 +309,7 @@ class TestUpdateFolderGating:
         await self._provision_runtime_folder(client, rsa_keypair)
         # Re-issue without cookie:
         client.cookies.clear()
-        r = await client.patch(
-            "/folders/sandbox", json={"label": "x"}
-        )
+        r = await client.patch("/folders/sandbox", json={"label": "x"})
         assert r.status_code == 401
 
     async def test_non_admin_returns_403(self, client, rsa_keypair):
@@ -434,9 +429,7 @@ class TestCustomAdminGroupsEnv:
         )
         assert r.status_code == 403
 
-    async def test_custom_admin_group_allowed(
-        self, custom_client, rsa_keypair
-    ):
+    async def test_custom_admin_group_allowed(self, custom_client, rsa_keypair):
         token = _make_token(rsa_keypair, groups=["corp.kb-admin"])
         _set_idp_cookie(custom_client, token)
         r = await custom_client.post(

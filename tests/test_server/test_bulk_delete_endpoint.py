@@ -108,12 +108,8 @@ class TestBulkDeleteEndpoint:
         assert event["meta"]["unshared_count"] == 0
         assert event["meta"]["failed"] == []
 
-        doc_a_activity = await client.get(
-            "/activity", params={"resource.id": "doc-a"}
-        )
-        doc_b_activity = await client.get(
-            "/activity", params={"resource.id": "doc-b"}
-        )
+        doc_a_activity = await client.get("/activity", params={"resource.id": "doc-a"})
+        doc_b_activity = await client.get("/activity", params={"resource.id": "doc-b"})
         missing_activity = await client.get(
             "/activity", params={"resource.id": "missing"}
         )

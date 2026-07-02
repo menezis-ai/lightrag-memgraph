@@ -13,9 +13,17 @@ from twindb_lightrag_memgraph.intelligence.ontology.schema import (
 class TestNodeTypes:
     def test_all_11_node_types_defined(self):
         expected = {
-            "Term", "Role", "Team", "Tool", "Process",
-            "Domain", "Document", "Methodology", "Environment",
-            "SLA", "Asset",
+            "Term",
+            "Role",
+            "Team",
+            "Tool",
+            "Process",
+            "Domain",
+            "Document",
+            "Methodology",
+            "Environment",
+            "SLA",
+            "Asset",
         }
         assert set(NODE_TYPES.keys()) == expected
 

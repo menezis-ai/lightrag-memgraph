@@ -24,10 +24,12 @@ def mock_session():
 @pytest.fixture
 def mock_driver(mock_session):
     driver = AsyncMock()
-    driver.session = MagicMock(return_value=AsyncMock(
-        __aenter__=AsyncMock(return_value=mock_session),
-        __aexit__=AsyncMock(return_value=False),
-    ))
+    driver.session = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_session),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
     return driver
 
 
@@ -51,10 +53,12 @@ class TestOntologyStorage:
         mock_session.run = AsyncMock(return_value=mock_result)
 
         mock_driver = AsyncMock()
-        mock_driver.session = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_session),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_driver.session = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_session),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
 
         mock_pool.get_driver = AsyncMock(return_value=(mock_driver, "memgraph"))
 
@@ -184,9 +188,7 @@ class TestOntologyStorage:
         await storage._seed_normative(mock_session, "Onto_test_ws")
 
         expected_calls = (
-            len(SEED_METHODOLOGIES)
-            + len(SEED_SLAS)
-            + len(SEED_ENVIRONMENTS)
+            len(SEED_METHODOLOGIES) + len(SEED_SLAS) + len(SEED_ENVIRONMENTS)
         )
         assert mock_session.run.call_count == expected_calls
 
@@ -224,9 +226,7 @@ class TestOntologyStorageCypherInjection:
         with pytest.raises(ValueError):
             OntologyStorage("ws with space")
 
-    async def test_malicious_relation_type_is_dropped(
-        self, storage, mock_session
-    ):
+    async def test_malicious_relation_type_is_dropped(self, storage, mock_session):
         edges = [
             OntologyEdge(
                 source_name="alpha",
@@ -242,9 +242,7 @@ class TestOntologyStorageCypherInjection:
 
         mock_session.run.assert_not_called()
 
-    async def test_safe_relation_type_still_runs(
-        self, storage, mock_session
-    ):
+    async def test_safe_relation_type_still_runs(self, storage, mock_session):
         edges = [
             OntologyEdge(
                 source_name="alpha",
@@ -263,9 +261,7 @@ class TestOntologyStorageCypherInjection:
         assert "`RELATED_TO`" in query
         assert "DETACH DELETE" not in query
 
-    async def test_mixed_edges_only_safe_one_runs(
-        self, storage, mock_session
-    ):
+    async def test_mixed_edges_only_safe_one_runs(self, storage, mock_session):
         edges = [
             OntologyEdge(
                 source_name="alpha",

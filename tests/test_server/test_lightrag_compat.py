@@ -138,11 +138,7 @@ class TestAnswerMarkerStripper:
         # Defensive: if a future LightRAG appends a paragraph after
         # the marker, we want that paragraph to make it to the UI.
         stripper = AnswerMarkerStripper()
-        out = _collect(
-            stripper.feed(
-                f"head {LIGHTRAG_NO_CONTEXT_MARKER} tail"
-            )
-        )
+        out = _collect(stripper.feed(f"head {LIGHTRAG_NO_CONTEXT_MARKER} tail"))
         out += _collect(stripper.flush())
         assert "head" in out
         assert "tail" in out
@@ -216,9 +212,7 @@ def _envelope(
             "chunks": chunks if chunks is not None else [],
             "references": references if references is not None else [],
         },
-        "metadata": (
-            {"failure_reason": failure_reason} if failure_reason else {}
-        ),
+        "metadata": ({"failure_reason": failure_reason} if failure_reason else {}),
         "llm_response": {
             "content": content,
             "response_iterator": response_iterator,
@@ -275,8 +269,7 @@ class TestClassifyAqueryLlmResult:
         # marker (older code paths), we still mark insufficient.
         result = _envelope(
             content=(
-                "Sorry, I'm not able to provide an answer."
-                + LIGHTRAG_NO_CONTEXT_MARKER
+                "Sorry, I'm not able to provide an answer." + LIGHTRAG_NO_CONTEXT_MARKER
             ),
         )
         cleaned, status = classify_aquery_llm_result(result)
@@ -300,8 +293,16 @@ class TestBuildSourcesFromRawData:
                 {"reference_id": "2", "file_path": "/cib/runbooks/rhel.pdf"},
             ],
             chunks=[
-                {"reference_id": "1", "chunk_id": "c-aa", "file_path": "/cib/runbooks/oracle.pdf"},
-                {"reference_id": "2", "chunk_id": "c-bb", "file_path": "/cib/runbooks/rhel.pdf"},
+                {
+                    "reference_id": "1",
+                    "chunk_id": "c-aa",
+                    "file_path": "/cib/runbooks/oracle.pdf",
+                },
+                {
+                    "reference_id": "2",
+                    "chunk_id": "c-bb",
+                    "file_path": "/cib/runbooks/rhel.pdf",
+                },
             ],
         )
         sources = build_sources_from_raw_data(result)
@@ -477,9 +478,7 @@ class TestCollectChunkIds:
 
 class TestIsStreamingEnvelope:
     def test_true_when_is_streaming_and_iterator_present(self):
-        result = _envelope(
-            is_streaming=True, response_iterator=iter(["chunk"])
-        )
+        result = _envelope(is_streaming=True, response_iterator=iter(["chunk"]))
         assert is_streaming_envelope(result) is True
 
     def test_false_when_is_streaming_false(self):

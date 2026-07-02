@@ -44,19 +44,51 @@ SAMPLE_DOC = (
 # Entities and relations the mock LLM will "extract"
 MOCK_ENTITIES = [
     ("Paris", "location", "Paris is the capital and most populous city of France."),
-    ("France", "country", "France is a country in Western Europe known for wine and cuisine."),
-    ("Eiffel Tower", "landmark", "The Eiffel Tower is an iconic landmark built in 1889 in Paris."),
+    (
+        "France",
+        "country",
+        "France is a country in Western Europe known for wine and cuisine.",
+    ),
+    (
+        "Eiffel Tower",
+        "landmark",
+        "The Eiffel Tower is an iconic landmark built in 1889 in Paris.",
+    ),
     ("Seine River", "location", "The Seine River flows through Paris."),
-    ("Napoleon Bonaparte", "person", "Napoleon Bonaparte was a French military leader."),
+    (
+        "Napoleon Bonaparte",
+        "person",
+        "Napoleon Bonaparte was a French military leader.",
+    ),
     ("Louvre Museum", "landmark", "The Louvre Museum in Paris houses the Mona Lisa."),
 ]
 
 MOCK_RELATIONS = [
     ("Paris", "France", "capital city, geography", "Paris is the capital of France."),
-    ("Eiffel Tower", "Paris", "located in, landmark", "The Eiffel Tower is located in Paris."),
-    ("Seine River", "Paris", "flows through, geography", "The Seine River flows through Paris."),
-    ("Napoleon Bonaparte", "France", "military leader, history", "Napoleon was a leader of France."),
-    ("Louvre Museum", "Paris", "located in, culture", "The Louvre Museum is located in Paris."),
+    (
+        "Eiffel Tower",
+        "Paris",
+        "located in, landmark",
+        "The Eiffel Tower is located in Paris.",
+    ),
+    (
+        "Seine River",
+        "Paris",
+        "flows through, geography",
+        "The Seine River flows through Paris.",
+    ),
+    (
+        "Napoleon Bonaparte",
+        "France",
+        "military leader, history",
+        "Napoleon was a leader of France.",
+    ),
+    (
+        "Louvre Museum",
+        "Paris",
+        "located in, culture",
+        "The Louvre Museum is located in Paris.",
+    ),
 ]
 
 
@@ -197,9 +229,7 @@ async def _cleanup_e2e_data():
                 except Exception:
                     pass
             # Also clean graph nodes
-            result = await session.run(
-                f"MATCH (n:`{E2E_WORKSPACE}`) DETACH DELETE n"
-            )
+            result = await session.run(f"MATCH (n:`{E2E_WORKSPACE}`) DETACH DELETE n")
             await result.consume()
     except Exception:
         pass
@@ -224,9 +254,7 @@ async def _count_nodes(label_pattern: str) -> int:
 async def _count_graph_nodes(workspace: str) -> int:
     """Count nodes in the graph storage (entity nodes)."""
     async with _pool.get_read_session() as session:
-        result = await session.run(
-            f"MATCH (n:`{workspace}`) RETURN count(n) AS cnt"
-        )
+        result = await session.run(f"MATCH (n:`{workspace}`) RETURN count(n) AS cnt")
         record = await result.single()
         await result.consume()
         return record["cnt"] if record else 0
@@ -307,9 +335,9 @@ class TestE2EPipeline:
 
         for doc_id in processed:
             deletion_result = await rag.adelete_by_doc_id(doc_id)
-            assert deletion_result.status == "success", (
-                f"Deletion failed for {doc_id}: {deletion_result.message}"
-            )
+            assert (
+                deletion_result.status == "success"
+            ), f"Deletion failed for {doc_id}: {deletion_result.message}"
 
         # ════════════════════════════════════════════════════
         # PHASE 4: Verify cleanup
@@ -319,24 +347,24 @@ class TestE2EPipeline:
         post_docstatus = await _count_nodes(f"DocStatus_{E2E_WORKSPACE}")
 
         # Graph should be cleaned (entities from this doc only)
-        assert post_graph_nodes < pre_delete["graph_nodes"], (
-            f"Graph nodes not cleaned: {post_graph_nodes} >= {pre_delete['graph_nodes']}"
-        )
-        assert post_graph_edges < pre_delete["graph_edges"], (
-            f"Graph edges not cleaned: {post_graph_edges} >= {pre_delete['graph_edges']}"
-        )
+        assert (
+            post_graph_nodes < pre_delete["graph_nodes"]
+        ), f"Graph nodes not cleaned: {post_graph_nodes} >= {pre_delete['graph_nodes']}"
+        assert (
+            post_graph_edges < pre_delete["graph_edges"]
+        ), f"Graph edges not cleaned: {post_graph_edges} >= {pre_delete['graph_edges']}"
 
         # DocStatus should be empty (single doc was deleted)
-        assert post_docstatus == 0, (
-            f"DocStatus should be empty after deletion, got {post_docstatus}"
-        )
+        assert (
+            post_docstatus == 0
+        ), f"DocStatus should be empty after deletion, got {post_docstatus}"
 
         # Verify doc is gone from doc_status API
         remaining_counts = await rag.doc_status.get_status_counts()
         total_remaining = sum(remaining_counts.values())
-        assert total_remaining == 0, (
-            f"No documents should remain, got {remaining_counts}"
-        )
+        assert (
+            total_remaining == 0
+        ), f"No documents should remain, got {remaining_counts}"
 
     async def test_query_after_delete_returns_no_crash(self, rag):
         """Query on an empty store should not crash, just return a response."""

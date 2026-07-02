@@ -82,9 +82,7 @@ async def non_admin_client(monkeypatch, tmp_path, fake_jwks, rsa_keypair):
         json.dumps([{"id": "default", "label": "Default", "kind": "primary"}]),
     )
     monkeypatch.setenv("TWIN_MAX_FOLDERS", "3")
-    monkeypatch.setenv(
-        "TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json")
-    )
+    monkeypatch.setenv("TWIN_FOLDERS_RUNTIME_FILE", str(tmp_path / "twin-folders.json"))
     folder_store.reset_runtime_store()
     webui_router.reset_store()
 

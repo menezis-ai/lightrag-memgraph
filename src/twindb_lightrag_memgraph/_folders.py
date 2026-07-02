@@ -134,10 +134,7 @@ def _parse_configured_folders(raw: str, max_folders: int) -> list[TwinFolder]:
 def _default_folder_entry(default_folder: str) -> TwinFolder:
     return TwinFolder(
         id=default_folder,
-        label=(
-            os.environ.get(TWIN_DEFAULT_FOLDER_LABEL_ENV)
-            or "Default folder"
-        ),
+        label=(os.environ.get(TWIN_DEFAULT_FOLDER_LABEL_ENV) or "Default folder"),
         kind="primary",
         description="SRE-provisioned default folder for this KB.",
         sources=0,
@@ -154,11 +151,7 @@ def load_folder_catalog() -> TwinFolderCatalog:
     max_folders = _parse_max_folders()
     folders_raw = os.environ.get("TWIN_FOLDERS_JSON")
     explicit = bool(folders_raw)
-    folders = (
-        _parse_configured_folders(folders_raw, max_folders)
-        if folders_raw
-        else []
-    )
+    folders = _parse_configured_folders(folders_raw, max_folders) if folders_raw else []
 
     if not folders:
         folders = [_default_folder_entry(default_folder)]

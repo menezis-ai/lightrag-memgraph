@@ -146,7 +146,9 @@ class TestInMemoryActivityStore:
 
     async def test_range_uses_store_now_ms_not_wall_clock(self):
         now_ms = int(
-            datetime.datetime(2026, 6, 1, 12, 0, tzinfo=datetime.timezone.utc).timestamp()
+            datetime.datetime(
+                2026, 6, 1, 12, 0, tzinfo=datetime.timezone.utc
+            ).timestamp()
             * 1000
         )
         now_iso = datetime.datetime(2026, 6, 1, 12, 0, tzinfo=datetime.timezone.utc)
@@ -156,9 +158,9 @@ class TestInMemoryActivityStore:
             events=[
                 {
                     "id": "evt_recent",
-                    "ts": (now_iso - datetime.timedelta(hours=1)).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    "ts": (now_iso - datetime.timedelta(hours=1))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "rel": "now",
                     "day": "Today",
                     "kind": "retrieval",
@@ -170,9 +172,9 @@ class TestInMemoryActivityStore:
                 },
                 {
                     "id": "evt_old",
-                    "ts": (now_iso - datetime.timedelta(days=10)).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    "ts": (now_iso - datetime.timedelta(days=10))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "rel": "today",
                     "day": "Yesterday",
                     "kind": "retrieval",
@@ -353,9 +355,9 @@ class TestMemgraphActivityStore:
             await store.append(
                 {
                     "id": "evt_mg_range_recent",
-                    "ts": (now - datetime.timedelta(hours=1)).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    "ts": (now - datetime.timedelta(hours=1))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "rel": "now",
                     "day": "Today",
                     "kind": "retrieval",
@@ -369,9 +371,9 @@ class TestMemgraphActivityStore:
             await store.append(
                 {
                     "id": "evt_mg_range_old",
-                    "ts": (now - datetime.timedelta(days=2)).isoformat().replace(
-                        "+00:00", "Z"
-                    ),
+                    "ts": (now - datetime.timedelta(days=2))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "rel": "today",
                     "day": "Yesterday",
                     "kind": "retrieval",
@@ -383,9 +385,7 @@ class TestMemgraphActivityStore:
                 }
             )
 
-            events, total, _ = await store.list(
-                actor="mg-range-tester", range="24h"
-            )
+            events, total, _ = await store.list(actor="mg-range-tester", range="24h")
             assert total == 1
             assert len(events) == 1
             assert events[0]["id"] == "evt_mg_range_recent"

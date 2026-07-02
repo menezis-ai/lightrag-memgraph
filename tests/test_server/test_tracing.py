@@ -29,7 +29,9 @@ class TestExtractTraceParent:
         assert result == {"langsmith_trace_id": "trace-xyz"}
 
     def test_w3c_traceparent(self):
-        headers = {"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
+        headers = {
+            "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        }
         result = extract_trace_parent(headers)
         assert result["trace_id"] == "0af7651916cd43dd8448eb211c80319c"
         assert result["parent_span_id"] == "b7ad6b7169203331"
@@ -150,26 +152,25 @@ class TestCheckLangsmithConfig:
 
 class TestIsTracingEnabled:
     def test_true_when_both_flags(self):
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", True),
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
         ):
             assert is_tracing_enabled() is True
 
     def test_false_when_langsmith_unavailable(self):
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", False
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing._langsmith_available", False
+            ),
         ):
             assert is_tracing_enabled() is False
 
     def test_false_when_not_enabled(self):
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", False
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", False),
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
         ):
             assert is_tracing_enabled() is False
 
@@ -179,12 +180,13 @@ class TestWrapWithLangsmith:
 
     async def test_wrap_llm_returns_different_func(self):
         original = AsyncMock(return_value="llm-response")
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             wrapped = _wrap_llm_func(original)
         assert wrapped is not original
@@ -192,12 +194,13 @@ class TestWrapWithLangsmith:
 
     async def test_wrap_llm_preserves_behavior(self):
         original = AsyncMock(return_value="llm-response")
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             wrapped = _wrap_llm_func(original)
         result = await wrapped("prompt")
@@ -205,12 +208,13 @@ class TestWrapWithLangsmith:
 
     async def test_wrap_embedding_preserves_behavior(self):
         original = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             wrapped = _wrap_embedding_func(original)
         result = await wrapped(["text"])
@@ -218,12 +222,13 @@ class TestWrapWithLangsmith:
 
     async def test_wrap_rerank_preserves_behavior(self):
         original = AsyncMock(return_value=[2, 0, 1])
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             wrapped = _wrap_rerank_func(original)
         result = await wrapped("query", ["a", "b", "c"])
@@ -256,12 +261,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         rag = self._make_rag()
         original_llm = rag.llm_model_func
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             apply_lang_with_tracing(rag)
         assert rag.llm_model_func is not original_llm
@@ -270,12 +276,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         rag = self._make_rag()
         original_embed = rag.embedding_func
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             apply_lang_with_tracing(rag)
         # embedding_func on rag itself is replaced.
@@ -290,12 +297,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         original_rerank = AsyncMock(return_value=[1, 0])
         rag = self._make_rag(rerank_func=original_rerank)
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             apply_lang_with_tracing(rag)
         assert rag.rerank_func is not original_rerank
@@ -304,12 +312,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         original_reranking = AsyncMock(return_value=[0, 1])
         rag = self._make_rag(reranking_func=original_reranking)
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             apply_lang_with_tracing(rag)
         # reranking_func should have been wrapped.
@@ -319,12 +328,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         rag = self._make_rag()
         # No rerank_func / reranking_func / _rerank_func at all.
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             # Should not raise.
             apply_lang_with_tracing(rag)
@@ -333,12 +343,13 @@ class TestApplyTracingWithMocks:
         monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
         rag = self._make_rag()
         rag.entities_vdb = None
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             # Should not raise even though entities_vdb is None.
             apply_lang_with_tracing(rag)
@@ -351,12 +362,13 @@ class TestApplyTracingWithMocks:
         # Replace one storage with an object that has no embedding_func attr.
         plain_storage = MagicMock(spec=[])  # spec=[] means no attributes
         rag.chunks_vdb = plain_storage
-        with patch(
-            "twindb_lightrag_memgraph.server.tracing._langsmith_available", True
-        ), patch(
-            "twindb_lightrag_memgraph.server.tracing.traceable",
-            _mock_traceable,
-            create=True,
+        with (
+            patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+            patch(
+                "twindb_lightrag_memgraph.server.tracing.traceable",
+                _mock_traceable,
+                create=True,
+            ),
         ):
             # Should not raise.
             apply_lang_with_tracing(rag)

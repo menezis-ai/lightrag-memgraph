@@ -160,9 +160,7 @@ def _build_app(rag: LightRAG, ready: bool = True) -> FastAPI:
         return {
             "track_id": track_id,
             "count": len(docs),
-            "documents": [
-                {"id": k, "status": v.status.value} for k, v in docs.items()
-            ],
+            "documents": [{"id": k, "status": v.status.value} for k, v in docs.items()],
         }
 
     @app.exception_handler(Exception)
@@ -193,9 +191,7 @@ async def _cleanup(workspace: str):
                 except Exception:
                     pass
             try:
-                result = await session.run(
-                    f"MATCH (n:`{workspace}`) DETACH DELETE n"
-                )
+                result = await session.run(f"MATCH (n:`{workspace}`) DETACH DELETE n")
                 await result.consume()
             except Exception:
                 pass
@@ -272,9 +268,7 @@ async def http_client(rag):
     # transport. This matches real-world behaviour (uvicorn never re-raises
     # to the network) and is what we need to test the JSON-only contract.
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
 
@@ -336,9 +330,7 @@ class TestPaginatedHTTP:
 class TestErrorResponsesAreJson:
     """The frontend crash root cause — guarantee JSON on every status code."""
 
-    async def test_500_via_storage_failure_returns_json(
-        self, http_client, monkeypatch
-    ):
+    async def test_500_via_storage_failure_returns_json(self, http_client, monkeypatch):
         """Force the storage layer to raise — handler must intercept and JSON-ify."""
         from twindb_lightrag_memgraph.docstatus_impl import (
             MemgraphDocStatusStorage,
@@ -409,9 +401,7 @@ async def http_client_not_ready(rag):
     """ASGI client where the app reports not_ready — simulates pod warm-up."""
     app = _build_app(rag, ready=False)
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
 
@@ -424,14 +414,12 @@ class TestStartupRace503:
     own HTML error page (which crashed the production frontend).
     """
 
-    async def test_health_returns_503_json_when_not_ready(
-        self, http_client_not_ready
-    ):
+    async def test_health_returns_503_json_when_not_ready(self, http_client_not_ready):
         resp = await http_client_not_ready.get("/health")
         assert resp.status_code == 503
-        assert resp.headers["content-type"].startswith("application/json"), (
-            "Without explicit JSONResponse, FastAPI's default 503 page is HTML"
-        )
+        assert resp.headers["content-type"].startswith(
+            "application/json"
+        ), "Without explicit JSONResponse, FastAPI's default 503 page is HTML"
         body = resp.json()
         assert body["status"] == "not_ready"
 
@@ -465,9 +453,7 @@ class TestStartupRace503:
         assert body["error"] == "service not ready"
         assert body["type"] == "NotReady"
 
-    async def test_paginated_503_during_memgraph_outage(
-        self, http_client, monkeypatch
-    ):
+    async def test_paginated_503_during_memgraph_outage(self, http_client, monkeypatch):
         """Memgraph driver fails (replica reconnect, network blip).
 
         Even when the storage layer raises a connection error, the response
@@ -493,9 +479,9 @@ class TestStartupRace503:
         )
         # Our generic exception handler maps to 500. Both 500 and 503 are
         # acceptable — what matters is JSON, not HTML.
-        assert resp.headers["content-type"].startswith("application/json"), (
-            "Memgraph connection failure must NOT return HTML to the frontend"
-        )
+        assert resp.headers["content-type"].startswith(
+            "application/json"
+        ), "Memgraph connection failure must NOT return HTML to the frontend"
         assert resp.status_code in (500, 503)
         body = resp.json()
         assert "ServiceUnavailable" in body.get("type", "") or "error" in body

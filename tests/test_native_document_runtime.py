@@ -213,7 +213,11 @@ def _doc_status_value(doc_status) -> str:
 
 
 def _doc_field(doc_status, field: str):
-    return doc_status[field] if isinstance(doc_status, dict) else getattr(doc_status, field)
+    return (
+        doc_status[field]
+        if isinstance(doc_status, dict)
+        else getattr(doc_status, field)
+    )
 
 
 @pytest.mark.integration

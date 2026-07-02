@@ -44,9 +44,7 @@ def should_cleanup_import(props: dict[str, Any]) -> bool:
 async def cleanup_processed_imports(props_list: list[dict[str, Any]]) -> None:
     """Delete uploaded sources for processed DocStatus rows, best effort."""
     file_paths = [
-        str(props["file_path"])
-        for props in props_list
-        if should_cleanup_import(props)
+        str(props["file_path"]) for props in props_list if should_cleanup_import(props)
     ]
     if not file_paths:
         return

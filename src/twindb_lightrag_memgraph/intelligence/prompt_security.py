@@ -11,4 +11,3 @@ def neutralize_reserved_tags(text: object) -> str:
     """Prevent user/document text from closing or forging prompt boundary tags."""
     value = "" if text is None else str(text)
     return _RESERVED_TAG_RE.sub(lambda match: match.group(0).replace("<", "< "), value)
-

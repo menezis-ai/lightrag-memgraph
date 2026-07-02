@@ -206,8 +206,7 @@ async def stores(monkeypatch):
             ):
                 await (
                     await s.run(
-                        f"MATCH (n:`{lbl}`) REMOVE n:`{lbl}` "
-                        f"WITH n DETACH DELETE n"
+                        f"MATCH (n:`{lbl}`) REMOVE n:`{lbl}` " f"WITH n DETACH DELETE n"
                     )
                 ).consume()
             for lbl in (f"DocStatus_{_WS}", f"Folder_{_WS}"):
@@ -265,7 +264,12 @@ async def _seed(ds, chunks, entities, rels):
     )
     await rels.upsert(
         {
-            "rel-a": {"src_id": "A", "tgt_id": "X", "source_id": "chunk-a", "embedding": qv},
+            "rel-a": {
+                "src_id": "A",
+                "tgt_id": "X",
+                "source_id": "chunk-a",
+                "embedding": qv,
+            },
             "rel-mixed": {
                 "src_id": "A",
                 "tgt_id": "B",

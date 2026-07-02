@@ -26,7 +26,11 @@ import secrets
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from twindb_lightrag_memgraph.server import api_key_store, auth as auth_module, webui_router
+from twindb_lightrag_memgraph.server import (
+    api_key_store,
+    auth as auth_module,
+    webui_router,
+)
 from twindb_lightrag_memgraph.server.app import create_app
 
 
@@ -158,9 +162,7 @@ class TestOpenAccessTwkOptIn:
         r = await open_access_client.get("/twin/api/health")
         assert r.status_code == 200
 
-    async def test_minted_twk_authenticates_in_open_access(
-        self, open_access_client
-    ):
+    async def test_minted_twk_authenticates_in_open_access(self, open_access_client):
         # In open-access mode, create a key (admin gate is dormant).
         created = (
             await open_access_client.post(

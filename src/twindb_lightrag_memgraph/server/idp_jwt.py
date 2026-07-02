@@ -189,9 +189,7 @@ class IdpConfig:
             # admin gating denies everyone". Useful for paranoid deploys
             # that wire admin via JWT scope directly and never via group.
             admin_groups = frozenset(
-                part.strip()
-                for part in admin_groups_raw.split(",")
-                if part.strip()
+                part.strip() for part in admin_groups_raw.split(",") if part.strip()
             )
         return cls(
             jwks_url=jwks_url,
@@ -239,9 +237,7 @@ class JwksCache:
     def _is_fresh(self) -> bool:
         if self._client is None:
             return False
-        return (time.time() - self._fetched_at) < max(
-            1, self._config.jwks_cache_ttl
-        )
+        return (time.time() - self._fetched_at) < max(1, self._config.jwks_cache_ttl)
 
     def refresh(self, *, force: bool = False) -> None:
         with self._lock:
@@ -387,9 +383,7 @@ def _coerce_list(value: Any) -> list[str]:
     return []
 
 
-def claims_to_user(
-    claims: dict[str, Any], config: IdpConfig
-) -> dict[str, Any]:
+def claims_to_user(claims: dict[str, Any], config: IdpConfig) -> dict[str, Any]:
     """Project the verified claim dict into the ``AuthenticatedUser``
     shape the React port consumes (mirrors
     ``lightrag_webui_twin/src/types/auth.ts``)."""
@@ -416,9 +410,7 @@ def claims_to_user(
     exp = claims.get("exp")
     session_expires: str
     if isinstance(exp, (int, float)):
-        session_expires = (
-            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(exp)))
-        )
+        session_expires = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(exp)))
     else:
         session_expires = ""
 
@@ -444,9 +436,7 @@ def _resolve_palier_level(
     groups: Iterable[str], group_to_palier: dict[str, int]
 ) -> int:
     """Highest palier from any matching group; defaults to 1 (Reader)."""
-    levels = [
-        group_to_palier[g] for g in groups if g in group_to_palier
-    ]
+    levels = [group_to_palier[g] for g in groups if g in group_to_palier]
     if not levels:
         return 1
     return max(levels)

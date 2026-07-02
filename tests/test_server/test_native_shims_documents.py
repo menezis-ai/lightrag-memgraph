@@ -56,11 +56,7 @@ class FakeDocStatusStore:
         rows = list(self.docs.items())
         if status_filter is not None:
             status_value = getattr(status_filter, "value", str(status_filter))
-            rows = [
-                (doc_id, doc)
-                for doc_id, doc in rows
-                if doc.status == status_value
-            ]
+            rows = [(doc_id, doc) for doc_id, doc in rows if doc.status == status_value]
         total = len(rows)
         start = (page - 1) * page_size
         end = start + page_size
@@ -77,9 +73,7 @@ def _folder_env(monkeypatch):
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
-        json.dumps(
-            [{"id": "default", "label": "Default folder", "kind": "primary"}]
-        ),
+        json.dumps([{"id": "default", "label": "Default folder", "kind": "primary"}]),
     )
 
 
@@ -153,10 +147,7 @@ class TestDocumentsFailedProjection:
         # The three operator-facing fields must round-trip verbatim.
         assert doc["status"] == "failed"
         assert doc["chunks_count"] == 327
-        assert (
-            doc["error_msg"]
-            == "LLM extractor: invalid JSON response on chunk 14"
-        )
+        assert doc["error_msg"] == "LLM extractor: invalid JSON response on chunk 14"
 
     async def test_documents_envelope_exposes_page_and_page_size(self, monkeypatch):
         docs = {
@@ -174,9 +165,7 @@ class TestDocumentsFailedProjection:
         assert body["page"] == 2
         assert body["page_size"] == DEFAULT_PAGE_SIZE
 
-    async def test_failed_doc_without_error_msg_keeps_field_as_null(
-        self, monkeypatch
-    ):
+    async def test_failed_doc_without_error_msg_keeps_field_as_null(self, monkeypatch):
         """A FAILED doc may legitimately lack an error message (older
         ingestion paths). The contract must still expose the field as
         ``null`` — not drop it — so the React port branches consistently.
@@ -197,9 +186,7 @@ class TestDocumentsFailedProjection:
         assert items[0]["error_msg"] is None
         assert items[0]["status"] == "failed"
 
-    async def test_chunks_count_zero_does_not_collapse_with_none(
-        self, monkeypatch
-    ):
+    async def test_chunks_count_zero_does_not_collapse_with_none(self, monkeypatch):
         """Regression guard for the previous ``or 0`` projection.
 
         The old code mapped ``chunks_count=None`` and ``chunks_count=0``
@@ -629,9 +616,7 @@ class TestNativeListFilteredStatusCounts:
         monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
             "TWIN_FOLDERS_JSON",
-            json.dumps(
-                [{"id": "default", "label": "Default", "kind": "primary"}]
-            ),
+            json.dumps([{"id": "default", "label": "Default", "kind": "primary"}]),
         )
         docs = {
             "doc-processed": FakeDocStatus(

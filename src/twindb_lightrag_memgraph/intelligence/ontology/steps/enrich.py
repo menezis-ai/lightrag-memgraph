@@ -21,9 +21,7 @@ from ..steps.extract import ExtractedRelation
 
 logger = logging.getLogger("twin_rag_intelligence.ontology.enrich")
 
-_PROMPT_PATH = (
-    Path(__file__).parent.parent.parent / "prompts" / "ontology_enrich.txt"
-)
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "ontology_enrich.txt"
 
 
 @dataclass

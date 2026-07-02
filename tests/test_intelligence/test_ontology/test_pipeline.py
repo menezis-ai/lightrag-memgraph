@@ -15,7 +15,9 @@ from twindb_lightrag_memgraph.intelligence.ontology.steps.extract import (
     ExtractionResult,
     extract,
 )
-from twindb_lightrag_memgraph.intelligence.ontology.steps.validate import ValidationResult
+from twindb_lightrag_memgraph.intelligence.ontology.steps.validate import (
+    ValidationResult,
+)
 
 
 class TestExtractStep:
@@ -493,12 +495,16 @@ class TestDualPass:
         global_result = ExtractionResult(
             entities=[
                 ExtractedEntity(
-                    name="PGA", entity_type="Term",
-                    definition="from global", confidence=0.80,
+                    name="PGA",
+                    entity_type="Term",
+                    definition="from global",
+                    confidence=0.80,
                 ),
                 ExtractedEntity(
-                    name="Infrastructure", entity_type="Domain",
-                    definition="global only", confidence=0.90,
+                    name="Infrastructure",
+                    entity_type="Domain",
+                    definition="global only",
+                    confidence=0.90,
                 ),
             ],
             relations=[],
@@ -506,12 +512,16 @@ class TestDualPass:
         local_result = ExtractionResult(
             entities=[
                 ExtractedEntity(
-                    name="PGA", entity_type="Term",
-                    definition="from local", confidence=0.95,
+                    name="PGA",
+                    entity_type="Term",
+                    definition="from local",
+                    confidence=0.95,
                 ),
                 ExtractedEntity(
-                    name="ORA-04030", entity_type="Term",
-                    definition="local only", confidence=0.92,
+                    name="ORA-04030",
+                    entity_type="Term",
+                    definition="local only",
+                    confidence=0.92,
                 ),
             ],
             relations=[],
@@ -605,9 +615,7 @@ class TestDualPass:
                     "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich.AsyncOpenAI",
                     return_value=mock_openai_client(mock_enrich_response),
                 ):
-                    result = await pipeline.run(
-                        ["full document"], "ws", chunks=chunks
-                    )
+                    result = await pipeline.run(["full document"], "ws", chunks=chunks)
 
         # 1 global + 3 local = 4 extract calls
         assert call_count == 4
@@ -647,9 +655,7 @@ class TestDualPass:
                     "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich.AsyncOpenAI",
                     return_value=mock_openai_client(mock_enrich_response),
                 ):
-                    result = await pipeline.run(
-                        ["doc1", "doc2"], "ws"
-                    )
+                    result = await pipeline.run(["doc1", "doc2"], "ws")
 
         # 2 global (2 docs) + 2 local (2 docs, no chunks) = 4 calls
         assert call_count == 4

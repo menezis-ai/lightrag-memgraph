@@ -93,9 +93,7 @@ class TestStrictCompat:
     def test_folder_only_unchanged_by_empty_filters(self):
         st = _store("chunks", {"full_doc_id", "content"})
         base_cypher, base_params = st._build_search_cypher(20, "folderX")
-        f_cypher, f_params = st._build_search_cypher(
-            20, "folderX", RetrievalFilters()
-        )
+        f_cypher, f_params = st._build_search_cypher(20, "folderX", RetrievalFilters())
         assert f_cypher == base_cypher
         assert f_params == base_params
 
@@ -119,16 +117,12 @@ class TestStrictCompat:
 class TestMinScore:
     def test_min_score_raises_floor(self):
         st = _store("chunks", {"full_doc_id"})
-        _, params = st._build_search_cypher(
-            20, "f", RetrievalFilters(min_score=0.5)
-        )
+        _, params = st._build_search_cypher(20, "f", RetrievalFilters(min_score=0.5))
         assert params["threshold"] == 0.5
 
     def test_min_score_below_cosine_floor_is_ignored(self):
         st = _store("chunks", {"full_doc_id"})
-        _, params = st._build_search_cypher(
-            20, "f", RetrievalFilters(min_score=0.1)
-        )
+        _, params = st._build_search_cypher(20, "f", RetrievalFilters(min_score=0.1))
         assert params["threshold"] == 0.2  # max(0.2, 0.1)
 
     def test_tag_filter_without_min_score_disables_default_floor(self):
@@ -355,7 +349,11 @@ async def _seed(ds, chunks, entities):
     await chunks.upsert(
         {
             "chunk-a": {"full_doc_id": "doc-a", "content": "a", "embedding": _qvec()},
-            "chunk-b": {"full_doc_id": "doc-b", "content": "b", "embedding": _vec_low()},
+            "chunk-b": {
+                "full_doc_id": "doc-b",
+                "content": "b",
+                "embedding": _vec_low(),
+            },
         }
     )
     sep = GRAPH_FIELD_SEP

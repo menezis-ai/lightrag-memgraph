@@ -344,11 +344,7 @@ def _node_record_to_entity(
     # LightRAG joins per-chunk descriptions with `<SEP>` when an entity
     # is mentioned in multiple chunks. Replace with a visible separator
     # so the WebUI summary reads cleanly instead of leaking the marker.
-    summary = (
-        (record.get("description") or "")
-        .replace(_GRAPH_FIELD_SEP, " · ")
-        .strip()
-    )
+    summary = (record.get("description") or "").replace(_GRAPH_FIELD_SEP, " · ").strip()
     source_id = record.get("source_id") or ""
     all_chunks = {
         c.strip()
@@ -747,9 +743,7 @@ async def _load_one_rel_override(
             await result.consume()
         return ov
     except Exception:
-        logger.exception(
-            "graph_reader: one-rel override load failed (%s→%s)", src, tgt
-        )
+        logger.exception("graph_reader: one-rel override load failed (%s→%s)", src, tgt)
         return None
 
 
@@ -921,9 +915,7 @@ async def _load_manual_relation_rows(workspace: str) -> list[dict[str, Any]]:
                 )
             await result.consume()
     except Exception:
-        logger.exception(
-            "graph_reader: manual relation load failed (ws=%s)", workspace
-        )
+        logger.exception("graph_reader: manual relation load failed (ws=%s)", workspace)
         return []
     await _persist_relation_ids(workspace, rows)
     return rows
@@ -1029,9 +1021,7 @@ async def _entity_mutation_gate(
         return _GATE_ABSENT
     all_chunks = {
         c.strip()
-        for c in str(row["source_id"] or "")
-        .replace(_GRAPH_FIELD_SEP, ",")
-        .split(",")
+        for c in str(row["source_id"] or "").replace(_GRAPH_FIELD_SEP, ",").split(",")
         if c.strip()
     }
     scope = _resolve_entity_scope(all_chunks, chunk_to_doc, member_docs)
@@ -1173,8 +1163,10 @@ _GRAPH_NATIVE_OVERFETCH_CAP = 8000
 
 
 def _native_overfetch(max_nodes: int) -> int:
-    return min(max(max_nodes, max_nodes * _GRAPH_NATIVE_OVERFETCH_FACTOR),
-               _GRAPH_NATIVE_OVERFETCH_CAP)
+    return min(
+        max(max_nodes, max_nodes * _GRAPH_NATIVE_OVERFETCH_FACTOR),
+        _GRAPH_NATIVE_OVERFETCH_CAP,
+    )
 
 
 def _resolve_source_docs(
@@ -1370,8 +1362,7 @@ async def _lookup_relation_endpoints_from_store(
         return workspace, src, tgt
     except Exception:
         logger.exception(
-            "graph_reader: relation endpoint lookup by id failed "
-            "(ws=%s, rel_id=%s)",
+            "graph_reader: relation endpoint lookup by id failed " "(ws=%s, rel_id=%s)",
             workspace,
             rel_id,
         )
@@ -1817,7 +1808,9 @@ async def read_graph_native(
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder) if folder else None
     entity_overrides = await _load_folder_overrides(workspace, folder) if folder else {}
-    rel_overrides = await _load_folder_rel_overrides(workspace, folder) if folder else {}
+    rel_overrides = (
+        await _load_folder_rel_overrides(workspace, folder) if folder else {}
+    )
 
     # #1a: operator-created entities have no chunk provenance and the native
     # degree-ranked read won't return an isolated manual node — load them
@@ -1902,9 +1895,7 @@ async def _search_labels_scoped(
     if not folder:
         return out
     overrides = await _load_folder_overrides(workspace, folder)
-    tombstoned = {
-        eid for eid, override in overrides.items() if override.get("deleted")
-    }
+    tombstoned = {eid for eid, override in overrides.items() if override.get("deleted")}
     out = [eid for eid in out if eid not in tombstoned]
     await _append_direct_label_matches(
         workspace=workspace,
@@ -2052,9 +2043,7 @@ async def search_graph_labels(
     (``workspace`` None / unbound) it delegates to LightRAG's native fuzzy
     ``search_labels`` over the whole KB (legacy global behaviour).
     """
-    member_chunks = (
-        await _active_member_chunks(workspace) if workspace else None
-    )
+    member_chunks = await _active_member_chunks(workspace) if workspace else None
     if member_chunks is not None:
         return await _search_labels_scoped(workspace, q, member_chunks, limit)
     try:
@@ -2240,7 +2229,9 @@ async def _scoped_entity_update_result(
     chunk_to_doc: dict[str, str],
     member_docs: set[str],
 ) -> dict[str, Any] | None | object:
-    verdict = await _entity_mutation_gate(workspace, entity_id, chunk_to_doc, member_docs)
+    verdict = await _entity_mutation_gate(
+        workspace, entity_id, chunk_to_doc, member_docs
+    )
     if verdict == _GATE_ABSENT:
         return None
     if verdict != _GATE_MIXED:
@@ -2314,10 +2305,10 @@ async def update_graph_entity(
             return scoped
     if not props:
         # Nothing to write — still return the current state if the node exists.
-        return await _read_one_entity(
-            workspace, entity_id, chunk_to_doc, member_docs
-        )
-    if not await _write_entity_props(workspace=workspace, entity_id=entity_id, props=props):
+        return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
+    if not await _write_entity_props(
+        workspace=workspace, entity_id=entity_id, props=props
+    ):
         return None
     return await _read_one_entity(workspace, entity_id, chunk_to_doc, member_docs)
 
@@ -2346,9 +2337,7 @@ async def _scoped_relation_update_result(
     folder = active_folder_id()
     if not folder:
         raise MixedProvenanceError(rel_id)
-    ok = await _upsert_rel_override(
-        workspace, folder, src, tgt, props, deleted=False
-    )
+    ok = await _upsert_rel_override(workspace, folder, src, tgt, props, deleted=False)
     if not ok:
         return None
     return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
@@ -2367,9 +2356,7 @@ async def _write_relation_props(
                 "RETURN s.entity_id AS source_id"
             )
             try:
-                result = await session.run(
-                    update_query, src=src, tgt=tgt, props=props
-                )
+                result = await session.run(update_query, src=src, tgt=tgt, props=props)
                 rows = [record async for record in result]
                 await result.consume()
             except Exception:
@@ -2419,10 +2406,10 @@ async def update_graph_relation(
         if scoped is not _BASE_WRITE:
             return scoped
     if not props:
-        return await _read_one_relation(
-            workspace, src, tgt, chunk_to_doc, member_docs
-        )
-    if not await _write_relation_props(workspace=workspace, src=src, tgt=tgt, props=props):
+        return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
+    if not await _write_relation_props(
+        workspace=workspace, src=src, tgt=tgt, props=props
+    ):
         return None
     return await _read_one_relation(workspace, src, tgt, chunk_to_doc, member_docs)
 
@@ -2475,9 +2462,7 @@ async def _read_one_entity(
                 break
             await result.consume()
     except Exception:
-        logger.exception(
-            "graph_reader._read_one_entity: read failed for %s", entity_id
-        )
+        logger.exception("graph_reader._read_one_entity: read failed for %s", entity_id)
         return None
     if not row or not row.get("entity_id"):
         return None
@@ -2546,9 +2531,7 @@ async def _read_one_relation(
         return None
     await _persist_relation_ids(workspace, [row])
     override = await _load_one_rel_override(workspace, folder, src, tgt)
-    return _edge_record_to_relation(
-        row, 0, chunk_to_doc, member_docs, folder, override
-    )
+    return _edge_record_to_relation(row, 0, chunk_to_doc, member_docs, folder, override)
 
 
 # ----------------------------------------------------------------------
@@ -2559,9 +2542,7 @@ async def _read_one_relation(
 async def entity_exists(workspace: str, entity_id: str) -> bool:
     """Cheap existence probe used by the POST/DELETE routes."""
     label = _sanitize_workspace(workspace)
-    query = (
-        f"MATCH (n:`{label}` {{entity_id: $eid}}) RETURN n.entity_id AS eid LIMIT 1"
-    )
+    query = f"MATCH (n:`{label}` {{entity_id: $eid}}) RETURN n.entity_id AS eid LIMIT 1"
     try:
         async with get_read_session() as session:
             result = await session.run(query, eid=entity_id)
@@ -2572,9 +2553,7 @@ async def entity_exists(workspace: str, entity_id: str) -> bool:
             await result.consume()
         return found
     except Exception:
-        logger.exception(
-            "graph_reader.entity_exists: probe failed for %s", entity_id
-        )
+        logger.exception("graph_reader.entity_exists: probe failed for %s", entity_id)
         return False
 
 
@@ -2704,10 +2683,7 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
 
     async with acquire_write_slot():
         async with get_session() as session:
-            query = (
-                f"MATCH (n:`{label}` {{entity_id: $eid}}) "
-                "DETACH DELETE n"
-            )
+            query = f"MATCH (n:`{label}` {{entity_id: $eid}}) " "DETACH DELETE n"
             try:
                 result = await session.run(query, eid=entity_id)
                 await result.consume()
@@ -2741,7 +2717,9 @@ async def _relation_endpoints_allowed(
     chunk_to_doc: dict[str, str] | None,
 ) -> bool:
     if member_docs is None:
-        return await entity_exists(workspace, src) and await entity_exists(workspace, tgt)
+        return await entity_exists(workspace, src) and await entity_exists(
+            workspace, tgt
+        )
     for endpoint in (src, tgt):
         verdict = await _entity_mutation_gate(
             workspace, endpoint, chunk_to_doc, member_docs
@@ -2753,7 +2731,9 @@ async def _relation_endpoints_allowed(
     return True
 
 
-def _create_relation_props(payload: dict[str, Any], folder: str | None) -> dict[str, Any] | None:
+def _create_relation_props(
+    payload: dict[str, Any], folder: str | None
+) -> dict[str, Any] | None:
     label_kw = (payload.get("label") or "").strip()
     if not label_kw:
         return None

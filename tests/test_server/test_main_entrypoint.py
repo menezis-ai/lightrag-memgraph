@@ -13,9 +13,7 @@ def test_module_entrypoint_invokes_uvicorn_with_settings(monkeypatch):
     monkeypatch.setenv("LIGHTRAG_PORT", "8123")
 
     with patch("uvicorn.run") as run:
-        runpy.run_module(
-            "twindb_lightrag_memgraph.server", run_name="__main__"
-        )
+        runpy.run_module("twindb_lightrag_memgraph.server", run_name="__main__")
 
     assert run.call_count == 1
     args, kwargs = run.call_args

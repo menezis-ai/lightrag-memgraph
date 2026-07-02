@@ -8,7 +8,10 @@ import pytest
 from twindb_lightrag_memgraph.intelligence.config import TwinRAGConfig
 from twindb_lightrag_memgraph.intelligence.engine import TwinRAGEngine
 from twindb_lightrag_memgraph.intelligence.features.workspace_router import (
-    RoutingResult, TopologyContext, WorkspaceRouter)
+    RoutingResult,
+    TopologyContext,
+    WorkspaceRouter,
+)
 from twindb_lightrag_memgraph.intelligence.models.schemas import IntentType
 
 
@@ -142,5 +145,3 @@ class TestWorkspaceRouter:
         result = await router.route("Probleme RMAN sur RHEL 8")
         assert "RMAN" in result.matched_keywords
         assert "RHEL" in result.matched_keywords
-
-

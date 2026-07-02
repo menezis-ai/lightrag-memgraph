@@ -66,9 +66,7 @@ def _runtime_folder_from_item(path: str, item: dict[str, Any]) -> TwinFolder | N
 
 def _runtime_folders_from_payload(path: str, data: Any) -> dict[str, TwinFolder]:
     if not isinstance(data, list):
-        logger.warning(
-            "Twin folder runtime file %s: not a JSON list, ignored", path
-        )
+        logger.warning("Twin folder runtime file %s: not a JSON list, ignored", path)
         return {}
 
     folders: dict[str, TwinFolder] = {}
@@ -109,9 +107,7 @@ def _persist_to_disk_if_configured() -> None:
         return
     try:
         os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-        payload = [
-            folder.as_runtime_config() for folder in _runtime_folders.values()
-        ]
+        payload = [folder.as_runtime_config() for folder in _runtime_folders.values()]
         # Atomic write: temp file in the same directory, then rename.
         dir_ = os.path.dirname(os.path.abspath(path)) or "."
         fd, tmp = tempfile.mkstemp(prefix=".twin-folders-", dir=dir_)
@@ -189,9 +185,9 @@ def update_runtime_folder(
             id=current.id,
             label=label.strip() if label is not None else current.label,
             kind=kind.strip() if kind is not None else current.kind,
-            description=description.strip()
-            if description is not None
-            else current.description,
+            description=(
+                description.strip() if description is not None else current.description
+            ),
             sources=current.sources,
         )
         _runtime_folders[folder_id] = updated

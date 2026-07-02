@@ -48,7 +48,9 @@ class TwinRAGConfig(BaseSettings):
     enable_cognitive_reranking: bool = True
     enable_feedback: bool = True
     enable_folder_routing: bool = True
-    enable_workspace_routing: Optional[bool] = None  # Deprecated: use enable_folder_routing.
+    enable_workspace_routing: Optional[bool] = (
+        None  # Deprecated: use enable_folder_routing.
+    )
 
     # --- F06 Folder Router ---
     folder_routing_rules_path: str = (

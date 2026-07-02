@@ -52,14 +52,14 @@ async def client_factory(monkeypatch):
 class TestQuotaSnapshotEndpoint:
     async def test_ok_state(self, client_factory):
         patch, build, auth_headers = client_factory
-        patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
+        patch("ok", 100 * 1024**2, 2 * 1024**3)
         async with await build() as c:
             r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "ok"
-        assert body["used_bytes"] == 100 * 1024 ** 2
-        assert body["limit_bytes"] == 2 * 1024 ** 3
+        assert body["used_bytes"] == 100 * 1024**2
+        assert body["limit_bytes"] == 2 * 1024**3
         assert 0 < body["used_pct"] < 0.85
         assert body["configured"] is True
         assert body["budget_enforce"] == "reject"
@@ -67,7 +67,7 @@ class TestQuotaSnapshotEndpoint:
 
     async def test_warning_state(self, client_factory):
         patch, build, auth_headers = client_factory
-        patch("warning", int(0.9 * 2 * 1024 ** 3), 2 * 1024 ** 3)
+        patch("warning", int(0.9 * 2 * 1024**3), 2 * 1024**3)
         async with await build() as c:
             r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
@@ -75,7 +75,7 @@ class TestQuotaSnapshotEndpoint:
 
     async def test_blocked_state(self, client_factory):
         patch, build, auth_headers = client_factory
-        patch("blocked", 2 * 1024 ** 3, 2 * 1024 ** 3)
+        patch("blocked", 2 * 1024**3, 2 * 1024**3)
         async with await build() as c:
             r = await c.get("/twin/api/quota", headers=auth_headers)
         assert r.status_code == 200
@@ -83,10 +83,9 @@ class TestQuotaSnapshotEndpoint:
         assert body["status"] == "blocked"
         assert body["used_pct"] >= 1.0
 
-
     async def test_rejects_anonymous_snapshot(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
+        patch("ok", 100 * 1024**2, 2 * 1024**3)
         async with await build() as c:
             r = await c.get("/twin/api/quota")
 
@@ -121,7 +120,7 @@ class TestQuotaSnapshotEndpoint:
 class TestQuotaMiddlewareGate:
     async def test_upload_blocked_returns_507(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
+        patch("blocked", 2 * 1024**3 + 1, 2 * 1024**3)
         async with await build() as c:
             # The middleware short-circuits BEFORE the native upload
             # handler runs, so the multipart body shape is irrelevant.
@@ -133,7 +132,7 @@ class TestQuotaMiddlewareGate:
 
     async def test_reprocess_failed_blocked_returns_507(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
+        patch("blocked", 2 * 1024**3 + 1, 2 * 1024**3)
         async with await build() as c:
             r = await c.post("/documents/reprocess_failed")
         assert r.status_code == 507
@@ -141,14 +140,14 @@ class TestQuotaMiddlewareGate:
 
     async def test_scan_blocked_returns_507(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
+        patch("blocked", 2 * 1024**3 + 1, 2 * 1024**3)
         async with await build() as c:
             r = await c.post("/documents/abc-123/scan")
         assert r.status_code == 507
 
     async def test_warning_does_not_block(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("warning", int(0.9 * 2 * 1024 ** 3), 2 * 1024 ** 3)
+        patch("warning", int(0.9 * 2 * 1024**3), 2 * 1024**3)
         async with await build() as c:
             # Will be 404 or another error from the downstream handler
             # — the only thing we assert is NOT 507.
@@ -157,14 +156,14 @@ class TestQuotaMiddlewareGate:
 
     async def test_ok_does_not_block(self, client_factory):
         patch, build, _auth_headers = client_factory
-        patch("ok", 100 * 1024 ** 2, 2 * 1024 ** 3)
+        patch("ok", 100 * 1024**2, 2 * 1024**3)
         async with await build() as c:
             r = await c.post("/documents/reprocess_failed")
         assert r.status_code != 507
 
     async def test_snapshot_answers_with_auth_when_blocked(self, client_factory):
         patch, build, auth_headers = client_factory
-        patch("blocked", 2 * 1024 ** 3 + 1, 2 * 1024 ** 3)
+        patch("blocked", 2 * 1024**3 + 1, 2 * 1024**3)
         async with await build() as c:
             r = await c.get("/twin/api/quota", headers=auth_headers)
             # Snapshot endpoint must always answer (blocked status is

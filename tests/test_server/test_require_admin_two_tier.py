@@ -39,8 +39,7 @@ def _make_request(
     scope: dict[str, Any] = {
         "type": "http",
         "headers": [
-            (k.lower().encode(), v.encode())
-            for k, v in (headers or {}).items()
+            (k.lower().encode(), v.encode()) for k, v in (headers or {}).items()
         ],
     }
     request = Request(scope)
@@ -92,7 +91,8 @@ def test_palier1_dormant_logs_info_once_per_process(caplog):
     require_admin_user(request)
 
     info_hits = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelname == "INFO" and "palier 1" in r.getMessage()
     ]
     assert len(info_hits) == 1
@@ -150,9 +150,7 @@ def test_palier2_active_with_scope_returns_user(monkeypatch):
         "gateway_scopes": ["twin:read", ADMIN_FOLDERS_SCOPE],
         "folders": ["default"],
     }
-    monkeypatch.setattr(
-        idp_jwt, "require_idp_user", lambda req: expected
-    )
+    monkeypatch.setattr(idp_jwt, "require_idp_user", lambda req: expected)
 
     result = require_admin_user(_make_request())
     assert result is expected

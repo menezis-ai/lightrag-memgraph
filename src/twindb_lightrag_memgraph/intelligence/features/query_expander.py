@@ -123,10 +123,14 @@ class QueryExpander:
 
             if domain_hint:
                 domain_terms = await storage.get_domain_terms(domain_hint)
-                graph_terms = [t for t in graph_terms if t in domain_terms] or graph_terms
+                graph_terms = [
+                    t for t in graph_terms if t in domain_terms
+                ] or graph_terms
 
             if graph_terms:
-                unique = list(dict.fromkeys(graph_terms))[: self.config.max_total_synonyms]
+                unique = list(dict.fromkeys(graph_terms))[
+                    : self.config.max_total_synonyms
+                ]
                 expanded = f"{query} {' '.join(unique)}"
                 return ExpansionResult(
                     original_query=query,

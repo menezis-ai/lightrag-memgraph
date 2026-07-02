@@ -326,14 +326,18 @@ class TestRequestTag:
         )
         assert r.status_code == 201
 
-        default_tags = (await client.get(
-            "/tags",
-            headers={"X-Twin-Folder": "default"},
-        )).json()
-        sandbox_tags = (await client.get(
-            "/tags",
-            headers={"X-Twin-Folder": "sandbox"},
-        )).json()
+        default_tags = (
+            await client.get(
+                "/tags",
+                headers={"X-Twin-Folder": "default"},
+            )
+        ).json()
+        sandbox_tags = (
+            await client.get(
+                "/tags",
+                headers={"X-Twin-Folder": "sandbox"},
+            )
+        ).json()
         assert any(tag["tag"] == "folderonly" for tag in default_tags)
         assert all(tag["tag"] != "folderonly" for tag in sandbox_tags)
 
@@ -380,9 +384,7 @@ class TestApproveTag:
         assert approved.json().get("reject_reason") is None
 
     async def test_emits_event_and_notification(self, client):
-        await client.post(
-            "/tags/argocd/approve", json={"actor": "claire.benoit"}
-        )
+        await client.post("/tags/argocd/approve", json={"actor": "claire.benoit"})
         events = await _get_activity(client)
         notifs = await _get_notifications(client)
         assert events[0]["summary"].startswith("Tag argocd approved")
@@ -417,9 +419,7 @@ class TestRejectTag:
         assert "scope creep" in events[0]["summary"]
 
     async def test_missing_reason_is_422(self, client):
-        r = await client.post(
-            "/tags/argocd/reject", json={"actor": "claire.benoit"}
-        )
+        r = await client.post("/tags/argocd/reject", json={"actor": "claire.benoit"})
         assert r.status_code == 422
 
 
@@ -468,9 +468,7 @@ class TestEditTag:
         assert stale_docs["total"] == 0
 
     async def test_no_op_is_still_successful(self, client):
-        r = await client.patch(
-            "/tags/rman", json={"actor": "claire.benoit"}
-        )
+        r = await client.patch("/tags/rman", json={"actor": "claire.benoit"})
         assert r.status_code == 200
 
     async def test_rename_conflict_returns_409(self, client):
@@ -515,7 +513,9 @@ class TestSuggestTagEdit:
         notifications = await _get_notifications(client)
         assert notifications[0]["title"] == "Tag"
 
-    async def test_approve_applies_proposal_to_target_and_removes_proposal(self, client):
+    async def test_approve_applies_proposal_to_target_and_removes_proposal(
+        self, client
+    ):
         proposal = (
             await client.post(
                 "/tags/rman/suggest-edit",

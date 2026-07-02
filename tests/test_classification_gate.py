@@ -62,6 +62,7 @@ def _build_docx_with_label(tmp_path: Path, label_name: str, guid: str) -> Path:
 def test_classifier_exception_becomes_unknown_extraction_failed(monkeypatch, tmp_path):
     """A classifier that throws must not propagate — it yields an UNKNOWN
     'extraction-failed' payload (which the ceiling then fail-closes on)."""
+
     def boom(*_a, **_k):
         raise RuntimeError("corrupt zip")
 

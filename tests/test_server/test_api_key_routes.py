@@ -124,10 +124,10 @@ class TestApiKeyRoutes:
 
     async def test_create_emits_activity_event(self, client):
         before = (await client.get("/twin/api/activity")).json()
-        before_count = len(before.get("items", before if isinstance(before, list) else []))
-        await client.post(
-            "/twin/api/settings/api-keys", json={"name": "trace-test"}
+        before_count = len(
+            before.get("items", before if isinstance(before, list) else [])
         )
+        await client.post("/twin/api/settings/api-keys", json={"name": "trace-test"})
         after_raw = (await client.get("/twin/api/activity")).json()
         after = after_raw.get("items", after_raw if isinstance(after_raw, list) else [])
         assert len(after) == before_count + 1
@@ -157,14 +157,10 @@ class TestApiKeyRoutes:
         assert revoke_evt["sev"] == "warning"
 
     async def test_create_rejects_blank_name(self, client):
-        r = await client.post(
-            "/twin/api/settings/api-keys", json={"name": ""}
-        )
+        r = await client.post("/twin/api/settings/api-keys", json={"name": ""})
         # Pydantic min_length=1 → 422
         assert r.status_code == 422
 
     async def test_create_rejects_long_name(self, client):
-        r = await client.post(
-            "/twin/api/settings/api-keys", json={"name": "x" * 200}
-        )
+        r = await client.post("/twin/api/settings/api-keys", json={"name": "x" * 200})
         assert r.status_code == 422

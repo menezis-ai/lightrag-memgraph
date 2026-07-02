@@ -64,8 +64,7 @@ async def test_malicious_relation_type_is_downgraded(
     client = mock_openai_client(payload)
 
     with patch(
-        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich."
-        "AsyncOpenAI",
+        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich." "AsyncOpenAI",
         return_value=client,
     ):
         result = await enrich(cluster_result, config)
@@ -94,8 +93,7 @@ async def test_unknown_relation_type_is_downgraded(
     client = mock_openai_client(payload)
 
     with patch(
-        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich."
-        "AsyncOpenAI",
+        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich." "AsyncOpenAI",
         return_value=client,
     ):
         result = await enrich(cluster_result, config)
@@ -122,8 +120,7 @@ async def test_valid_relation_type_preserved(
     client = mock_openai_client(payload)
 
     with patch(
-        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich."
-        "AsyncOpenAI",
+        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich." "AsyncOpenAI",
         return_value=client,
     ):
         result = await enrich(cluster_result, config)
@@ -132,9 +129,7 @@ async def test_valid_relation_type_preserved(
     assert result.new_relations[0].relation_type == "CO_OCCURS"
 
 
-async def test_unknown_node_type_normalised(
-    config, cluster_result, mock_openai_client
-):
+async def test_unknown_node_type_normalised(config, cluster_result, mock_openai_client):
     payload = _enrich_payload(
         [
             {
@@ -150,8 +145,7 @@ async def test_unknown_node_type_normalised(
     client = mock_openai_client(payload)
 
     with patch(
-        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich."
-        "AsyncOpenAI",
+        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich." "AsyncOpenAI",
         return_value=client,
     ):
         result = await enrich(cluster_result, config)
@@ -176,8 +170,7 @@ async def test_relation_missing_source_is_dropped(
     client = mock_openai_client(payload)
 
     with patch(
-        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich."
-        "AsyncOpenAI",
+        "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich." "AsyncOpenAI",
         return_value=client,
     ):
         result = await enrich(cluster_result, config)

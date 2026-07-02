@@ -643,7 +643,9 @@ async def approve_tag(
     dependencies=[Depends(require_admin_user)],
     responses={404: {"description": "Tag not found"}},
 )
-async def reject_tag(name: str, body: TagRejectBody, request: Request) -> dict[str, Any]:
+async def reject_tag(
+    name: str, body: TagRejectBody, request: Request
+) -> dict[str, Any]:
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -698,9 +700,8 @@ def _apply_scalar_tag_edits(entry, body) -> list[str]:
     if body.def_ is not None and body.def_ != entry.get("def"):
         entry["def"] = body.def_
         changed.append("def")
-    if (
-        body.long_description is not None
-        and body.long_description != entry.get("long_description", "")
+    if body.long_description is not None and body.long_description != entry.get(
+        "long_description", ""
     ):
         entry["long_description"] = body.long_description
         changed.append("long_description")
@@ -716,7 +717,9 @@ def _apply_scalar_tag_edits(entry, body) -> list[str]:
     return changed
 
 
-async def _cascade_tag_rename(store, legacy, renamed_from, new_name, actor) -> int | None:
+async def _cascade_tag_rename(
+    store, legacy, renamed_from, new_name, actor
+) -> int | None:
     """Migrate seed + graph tag edges from ``renamed_from`` to ``new_name``."""
     seed_affected = legacy._cascade_seed_document_tags(
         store, name=renamed_from, strategy="migrate", to=new_name
@@ -816,8 +819,7 @@ async def deprecate_tag(
         kind="tag-mutation",
         sev="warning",
         target_label=name,
-        summary=f"Tag {name} deprecated"
-        + (f" — {body.reason}" if body.reason else ""),
+        summary=f"Tag {name} deprecated" + (f" — {body.reason}" if body.reason else ""),
         meta={"reason": body.reason},
         notification=_make_notification(
             title="Tag",

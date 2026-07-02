@@ -22,7 +22,6 @@ from starlette.responses import JSONResponse
 
 from twindb_lightrag_memgraph.server import idp_jwt
 
-
 # ---------------------------------------------------------------------------
 # Test scaffolding
 # ---------------------------------------------------------------------------
@@ -259,23 +258,17 @@ class TestClaimsMapping:
 
     def test_string_scope_split_on_folder(self):
         cfg = self._cfg()
-        user = idp_jwt.claims_to_user(
-            {"sub": "u", "scope": "a b c"}, cfg
-        )
+        user = idp_jwt.claims_to_user({"sub": "u", "scope": "a b c"}, cfg)
         assert user["gateway_scopes"] == ["a", "b", "c"]
 
     def test_groups_supports_string_list(self):
         cfg = self._cfg()
-        user = idp_jwt.claims_to_user(
-            {"sub": "u", "groups": "twin-contributor"}, cfg
-        )
+        user = idp_jwt.claims_to_user({"sub": "u", "groups": "twin-contributor"}, cfg)
         assert user["palier"]["level"] == 2
 
     def test_falls_back_through_email_then_subject(self):
         cfg = self._cfg()
-        user = idp_jwt.claims_to_user(
-            {"sub": "u-99", "email": "a@b"}, cfg
-        )
+        user = idp_jwt.claims_to_user({"sub": "u-99", "email": "a@b"}, cfg)
         assert user["sso_subject"] == "u-99"
         assert user["name"] == "a@b"  # name → email fallback
 
@@ -321,9 +314,7 @@ class TestClaimsMapping:
             jwks_url="https://idp/jwks",
             admin_groups=frozenset(),
         )
-        user = idp_jwt.claims_to_user(
-            {"sub": "u", "groups": ["twin-admin"]}, cfg
-        )
+        user = idp_jwt.claims_to_user({"sub": "u", "groups": ["twin-admin"]}, cfg)
         assert idp_jwt.ADMIN_FOLDERS_SCOPE not in user["gateway_scopes"]
 
 
@@ -387,9 +378,7 @@ class TestDecode:
         claims = idp_jwt.decode_idp_token(token, cfg, cache)
         assert claims["sub"] == "user-42"
 
-    def test_expired_token_raises_with_expired_marker(
-        self, rsa_keypair, fake_jwks
-    ):
+    def test_expired_token_raises_with_expired_marker(self, rsa_keypair, fake_jwks):
         cfg = _config_for(fake_jwks)
         cache = idp_jwt.JwksCache(cfg, fetcher=lambda _u: fake_jwks)
         now = int(time.time())
@@ -450,9 +439,7 @@ class TestJwksCache:
         assert calls == ["https://idp.example/jwks"]
 
     def test_no_refetch_within_ttl(self, fake_jwks):
-        cfg = idp_jwt.IdpConfig(
-            jwks_url="https://idp/jwks", jwks_cache_ttl=600
-        )
+        cfg = idp_jwt.IdpConfig(jwks_url="https://idp/jwks", jwks_cache_ttl=600)
         calls = []
 
         def fetcher(url):
@@ -535,9 +522,7 @@ class TestRequireIdpUser:
         assert r.status_code == 401
         assert 'error="missing_token"' in r.headers["www-authenticate"]
 
-    async def test_expired_token_401_with_marker(
-        self, rsa_keypair, fake_jwks
-    ):
+    async def test_expired_token_401_with_marker(self, rsa_keypair, fake_jwks):
         cfg = _config_for(fake_jwks)
         _activate(cfg, fake_jwks)
         now = int(time.time())
@@ -629,14 +614,9 @@ class TestRequireAdminUser:
             _set_idp_cookie(c, token)
             r = await c.get("/admin/ping")
         assert r.status_code == 200
-        assert (
-            idp_jwt.ADMIN_FOLDERS_SCOPE
-            in r.json()["user"]["gateway_scopes"]
-        )
+        assert idp_jwt.ADMIN_FOLDERS_SCOPE in r.json()["user"]["gateway_scopes"]
 
-    async def test_admin_via_explicit_admin_group_env(
-        self, rsa_keypair, fake_jwks
-    ):
+    async def test_admin_via_explicit_admin_group_env(self, rsa_keypair, fake_jwks):
         # Re-config with custom admin_groups: twin-steward no longer
         # admin, only corp.kb-admin is.
         cfg = idp_jwt.IdpConfig(
@@ -772,9 +752,7 @@ class TestRequireAuthIntegration:
         assert r.status_code == 401
         assert 'error="expired"' in r.headers["www-authenticate"]
 
-    async def test_static_key_still_works_when_no_idp_cookie(
-        self, fake_jwks
-    ):
+    async def test_static_key_still_works_when_no_idp_cookie(self, fake_jwks):
         cfg = _config_for(fake_jwks)
         _activate(cfg, fake_jwks)
         from twindb_lightrag_memgraph.server.auth import (

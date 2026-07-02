@@ -30,12 +30,16 @@ def load_json_object(content: str | None, *, context: str) -> dict[str, Any]:
             return {}
 
     if not isinstance(data, dict):
-        logger.warning("%s returned JSON %s, expected object", context, type(data).__name__)
+        logger.warning(
+            "%s returned JSON %s, expected object", context, type(data).__name__
+        )
         return {}
     return data
 
 
-def clamp_float(value: Any, default: float = 0.0, low: float = 0.0, high: float = 1.0) -> float:
+def clamp_float(
+    value: Any, default: float = 0.0, low: float = 0.0, high: float = 1.0
+) -> float:
     """Coerce a numeric LLM field into a bounded float."""
     try:
         number = float(value)
@@ -51,4 +55,3 @@ def coerce_str(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
-

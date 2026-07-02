@@ -47,9 +47,7 @@ async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]
         counts: dict[str, int] = {}
         for folder in folders:
             by_status = await get_status_counts(folder=folder["id"])
-            counts[folder["id"]] = sum(
-                int(value or 0) for value in by_status.values()
-            )
+            counts[folder["id"]] = sum(int(value or 0) for value in by_status.values())
         return counts
     except Exception:
         return {}
@@ -97,9 +95,7 @@ async def create_folder(body: FolderCreate) -> dict[str, Any]:
             description=body.description,
         )
     except KeyError as exc:
-        raise HTTPException(
-            409, f"Folder '{exc.args[0]}' already exists"
-        ) from exc
+        raise HTTPException(409, f"Folder '{exc.args[0]}' already exists") from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     store = get_store()
@@ -135,7 +131,7 @@ async def update_folder(folder_id: str, body: FolderPatch) -> dict[str, Any]:
         raise HTTPException(
             403,
             f"Folder '{folder_id}' is env-seeded and cannot be edited via the API.",
-    )
+        )
     patch = body.model_dump(exclude_unset=True)
     folder = folder_store.update_runtime_folder(
         folder_id,

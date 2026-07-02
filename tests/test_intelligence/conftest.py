@@ -10,7 +10,9 @@ import pytest
 
 from twindb_lightrag_memgraph.intelligence.config import TwinRAGConfig
 from twindb_lightrag_memgraph.intelligence.features.workspace_router import (
-    TopologyContext, WorkspaceRouter)
+    TopologyContext,
+    WorkspaceRouter,
+)
 from twindb_lightrag_memgraph.intelligence.react.act import ChunkResult
 
 

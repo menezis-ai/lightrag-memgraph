@@ -141,8 +141,11 @@ class ReasoningEngine:
             return ReasoningResult(
                 thought=coerce_str(data.get("t", data.get("thought")), ""),
                 search_query=search_query or question,
-                domain_hint=coerce_str(data.get("d", data.get("domain_hint")), "") or None,
-                coreference_resolved=bool(data.get("cr", data.get("coreference_resolved", False))),
+                domain_hint=coerce_str(data.get("d", data.get("domain_hint")), "")
+                or None,
+                coreference_resolved=bool(
+                    data.get("cr", data.get("coreference_resolved", False))
+                ),
                 original_question=question,
             )
 
@@ -161,5 +164,7 @@ class ReasoningEngine:
         lines = []
         for msg in recent:
             role = "Utilisateur" if msg.get("role") == "user" else "Assistant"
-            lines.append(f"{role}: {neutralize_reserved_tags(msg.get('content', '')[:500])}")
+            lines.append(
+                f"{role}: {neutralize_reserved_tags(msg.get('content', '')[:500])}"
+            )
         return "\n".join(lines)

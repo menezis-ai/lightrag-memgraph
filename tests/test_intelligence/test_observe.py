@@ -14,13 +14,18 @@ class TestSynthesisEngine:
     def engine(self, config):
         return SynthesisEngine(config)
 
-    async def test_synthesize_with_chunks(self, engine, sample_chunks, mock_openai_client):
+    async def test_synthesize_with_chunks(
+        self, engine, sample_chunks, mock_openai_client
+    ):
         answer_text = (
             "La memoire PGA est insuffisante [Passage 0]. "
             "Utilisez V$PROCESS_MEMORY pour diagnostiquer [Passage 1]."
         )
         client = mock_openai_client(answer_text, total_tokens=300)
-        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+            return_value=client,
+        ):
             result = await engine.synthesize("Pourquoi ORA-04030 ?", sample_chunks)
 
         assert result.answer != ""
@@ -34,10 +39,15 @@ class TestSynthesisEngine:
         assert "aucune information" in result.answer.lower()
         assert result.citations == []
 
-    async def test_synthesize_citations_extraction(self, engine, sample_chunks, mock_openai_client):
+    async def test_synthesize_citations_extraction(
+        self, engine, sample_chunks, mock_openai_client
+    ):
         answer_text = "Info from [Passage 0] and [Passage 2] and again [Passage 0]."
         client = mock_openai_client(answer_text)
-        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+            return_value=client,
+        ):
             result = await engine.synthesize("Question", sample_chunks)
         # Should deduplicate: Passage 0 and Passage 2 only
         assert len(result.citations) == 2
@@ -50,27 +60,42 @@ class TestSynthesisEngine:
     ):
         answer_text = "Unsupported claim [Passage 99]. Real fact [Passage 1]."
         client = mock_openai_client(answer_text)
-        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+            return_value=client,
+        ):
             result = await engine.synthesize("Question", sample_chunks)
         assert [c.passage_index for c in result.citations] == [1]
         assert "[Passage" not in result.answer
 
-    async def test_synthesize_cleans_passage_refs(self, engine, sample_chunks, mock_openai_client):
+    async def test_synthesize_cleans_passage_refs(
+        self, engine, sample_chunks, mock_openai_client
+    ):
         answer_text = "La reponse est X [Passage 0]."
         client = mock_openai_client(answer_text)
-        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+            return_value=client,
+        ):
             result = await engine.synthesize("Question", sample_chunks)
         assert "[Passage" not in result.answer
 
-    async def test_synthesize_with_conversation_history(self, engine, sample_chunks, mock_openai_client):
+    async def test_synthesize_with_conversation_history(
+        self, engine, sample_chunks, mock_openai_client
+    ):
         history = [
             {"role": "user", "content": "Previous question about Oracle"},
             {"role": "assistant", "content": "Previous answer about PGA"},
         ]
         answer_text = "Based on context [Passage 0]."
         client = mock_openai_client(answer_text)
-        with patch("twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI", return_value=client):
-            result = await engine.synthesize("Follow-up question", sample_chunks, history)
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.AsyncOpenAI",
+            return_value=client,
+        ):
+            result = await engine.synthesize(
+                "Follow-up question", sample_chunks, history
+            )
         assert result.answer != ""
 
     async def test_synthesize_fallback_on_error(self, engine, sample_chunks):

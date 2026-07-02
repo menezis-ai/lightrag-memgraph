@@ -59,7 +59,9 @@ class _BufferedGraphProxy:
 
     # ── Intercepted write methods (buffered) ──────────────────────────
 
-    async def upsert_node(self, node_id: str, node_data: dict[str, str]):  # NOSONAR - async contract.
+    async def upsert_node(
+        self, node_id: str, node_data: dict[str, str]
+    ):  # NOSONAR - async contract.
         """Buffer node upsert instead of firing a Bolt query."""
         if node_id in self._node_buffer:
             self._node_buffer[node_id].update(node_data)
@@ -176,9 +178,7 @@ class _BufferedGraphProxy:
                     by_type.setdefault(node_type, []).append(name)
                 for node_type, names in by_type.items():
                     try:
-                        safe_type = validate_identifier(
-                            str(node_type), "entity_type"
-                        )
+                        safe_type = validate_identifier(str(node_type), "entity_type")
                     except ValueError:
                         logger.warning(
                             "Skipping unsafe buffered entity_type label: %r",

@@ -26,7 +26,6 @@ from twindb_lightrag_memgraph.server.twin_query_routes import (
     build_twin_query_router,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESOURCES_TS = REPO_ROOT / "lightrag_webui_twin/src/api/resources.ts"
 MSW_HANDLERS_TS = REPO_ROOT / "lightrag_webui_twin/src/mocks/handlers.ts"
@@ -119,9 +118,7 @@ def _frontend_routes_from_resources_ts() -> set[Route]:
                 r"\n  [A-Za-z_][A-Za-z0-9_]*:",
                 text[match.end() :],
             )
-            snippet_end = (
-                match.end() + next_entry.start() if next_entry else len(text)
-            )
+            snippet_end = match.end() + next_entry.start() if next_entry else len(text)
             snippet = text[match.end() : snippet_end]
             method_match = re.search(r"method:\s*['\"]([A-Z]+)['\"]", snippet)
             method = method_match.group(1) if method_match else "GET"
@@ -268,8 +265,7 @@ def test_frontend_routes_are_real_backend_or_known_gap():
     stale_known_gaps = KNOWN_BACKEND_GAPS - missing
     assert not stale_known_gaps, (
         "Known route gap(s) are now covered; remove them from "
-        "KNOWN_BACKEND_GAPS and update WEBUI-WIRING-PLAN.md:\n"
-        + _fmt(stale_known_gaps)
+        "KNOWN_BACKEND_GAPS and update WEBUI-WIRING-PLAN.md:\n" + _fmt(stale_known_gaps)
     )
 
 
@@ -279,7 +275,8 @@ def test_msw_routes_do_not_exceed_backend_by_accident():
         route for route in _msw_routes() if not route.path.startswith("/__e2e/")
     }
     extra = production_msw - covered - KNOWN_BACKEND_GAPS
-    assert not extra, (
-        "MSW route(s) have no backend implementation and no known-gap entry:\n"
-        + _fmt(extra)
+    assert (
+        not extra
+    ), "MSW route(s) have no backend implementation and no known-gap entry:\n" + _fmt(
+        extra
     )

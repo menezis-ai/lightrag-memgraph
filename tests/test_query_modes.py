@@ -209,7 +209,10 @@ class TestQueryEmbeddingForwarding:
 
         # Call the patched function directly with query_embedding kwarg
         node_datas, relations = await operate._get_node_data(
-            "test", graph, entities_vdb, QueryParam(mode="local"),
+            "test",
+            graph,
+            entities_vdb,
+            QueryParam(mode="local"),
             query_embedding=fake_embedding,
         )
 

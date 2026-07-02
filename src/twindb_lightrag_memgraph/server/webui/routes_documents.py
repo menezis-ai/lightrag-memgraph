@@ -438,9 +438,7 @@ async def _emit_bulk_delete_activity(
         503: {"description": "LightRAG instance unavailable"},
     },
 )
-async def bulk_delete_documents(
-    body: dict[str, Any], request: Request
-) -> Any:
+async def bulk_delete_documents(body: dict[str, Any], request: Request) -> Any:
     from .. import webui_router as legacy
 
     doc_ids = _parse_bulk_delete_body(body)

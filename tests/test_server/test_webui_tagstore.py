@@ -33,12 +33,22 @@ class TestInMemoryTagStore:
 
     def test_custom_data_overrides_seed(self):
         custom_tags = [
-            {"tag": "alpha", "tier": 1, "category": "infra", "status": "active",
-             "def": "...", "aliases": [], "deprecates": [],
-             "sources_count": 0, "chunks_count": 0, "query_freq_30d": 0,
-             "created": {"by": "x", "at": "2026-01-01"},
-             "last_edit": {"by": "x", "at": "2026-01-01"},
-             "related": [], "examples": []},
+            {
+                "tag": "alpha",
+                "tier": 1,
+                "category": "infra",
+                "status": "active",
+                "def": "...",
+                "aliases": [],
+                "deprecates": [],
+                "sources_count": 0,
+                "chunks_count": 0,
+                "query_freq_30d": 0,
+                "created": {"by": "x", "at": "2026-01-01"},
+                "last_edit": {"by": "x", "at": "2026-01-01"},
+                "related": [],
+                "examples": [],
+            },
         ]
         custom_cats = [{"id": "infra", "label": "Infra", "color": "#000"}]
         store = InMemoryTagStore(tags=custom_tags, categories=custom_cats)

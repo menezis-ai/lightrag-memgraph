@@ -27,9 +27,7 @@ async def test_cleanup_processed_import_removes_input_and_parsed_artifacts(
     assert not parsed_artifact.exists()
 
 
-async def test_cleanup_processed_import_is_confined_to_input_dir(
-    monkeypatch, tmp_path
-):
+async def test_cleanup_processed_import_is_confined_to_input_dir(monkeypatch, tmp_path):
     input_dir = tmp_path / "inputs"
     outside = tmp_path / "outside.txt"
     input_dir.mkdir()

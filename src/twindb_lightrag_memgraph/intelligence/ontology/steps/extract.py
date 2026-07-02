@@ -183,9 +183,7 @@ async def extract(
             context=ws_config.context,
         )
     else:
-        mode_template = _MODE_INSTRUCTIONS.get(
-            mode, _MODE_INSTRUCTIONS["emergence"]
-        )
+        mode_template = _MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["emergence"])
         mode_instruction = mode_template.format(
             subject=ws_config.subject,
             context=ws_config.context,
@@ -288,15 +286,21 @@ def _parse_relations(raw_relations: object) -> list[ExtractedRelation]:
         target = coerce_str(item.get("o", item.get("target")))
         if not source or not target:
             continue
-        relation_type = coerce_str(item.get("rt", item.get("relation_type")), "RELATED_TO")
+        relation_type = coerce_str(
+            item.get("rt", item.get("relation_type")), "RELATED_TO"
+        )
         if relation_type not in RELATION_TYPES:
             relation_type = "RELATED_TO"
         relations.append(
             ExtractedRelation(
                 source=source,
-                source_type=_normalise_node_type(item.get("st", item.get("source_type"))),
+                source_type=_normalise_node_type(
+                    item.get("st", item.get("source_type"))
+                ),
                 target=target,
-                target_type=_normalise_node_type(item.get("ot", item.get("target_type"))),
+                target_type=_normalise_node_type(
+                    item.get("ot", item.get("target_type"))
+                ),
                 relation_type=relation_type,
                 confidence=clamp_float(item.get("c", item.get("confidence")), 0.8),
             )

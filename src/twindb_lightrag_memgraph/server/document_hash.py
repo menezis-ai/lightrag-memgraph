@@ -11,7 +11,6 @@ from __future__ import annotations
 from string import hexdigits
 from typing import Any
 
-
 HASH_METADATA_KEYS = (
     "content_hash",
     "contentHash",

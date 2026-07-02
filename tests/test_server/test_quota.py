@@ -12,8 +12,8 @@ import pytest
 
 from twindb_lightrag_memgraph.server import quota
 
-GIB = 1024 ** 3
-MIB = 1024 ** 2
+GIB = 1024**3
+MIB = 1024**2
 
 
 def _rows(pairs: list[tuple[str, object]]) -> list[dict[str, object]]:
@@ -77,8 +77,8 @@ class TestParseMemgraphLimit:
             ("2 GiB", 2 * GIB),
             ("2048MiB", 2048 * MIB),
             ("1.5GiB", int(1.5 * GIB)),
-            ("2GB", 2 * 10 ** 9),
-            ("2000000000", 2 * 10 ** 9),
+            ("2GB", 2 * 10**9),
+            ("2000000000", 2 * 10**9),
             ("512KiB", 512 * 1024),
         ],
     )
@@ -136,9 +136,13 @@ class TestStatusMapping:
     @pytest.mark.parametrize(
         "pct,expected",
         [
-            (None, "ok"), (0.0, "ok"), (0.84, "ok"),
-            (0.85, "warning"), (0.999, "warning"),
-            (1.0, "blocked"), (1.5, "blocked"),
+            (None, "ok"),
+            (0.0, "ok"),
+            (0.84, "ok"),
+            (0.85, "warning"),
+            (0.999, "warning"),
+            (1.0, "blocked"),
+            (1.5, "blocked"),
         ],
     )
     def test_thresholds(self, pct, expected):
@@ -148,6 +152,7 @@ class TestStatusMapping:
 def _patch_storage(monkeypatch, indexed):
     async def _fake():
         return indexed
+
     monkeypatch.setattr(quota, "_read_storage_info", _fake)
 
 
@@ -222,7 +227,7 @@ class TestSnapshotLicenseWall:
         "global_memory_tracked": int(1.1 * GIB),
         "global_runtime_allocation_limit": 4 * GIB,
         "global_license_allocation_limit": GIB,
-        "db_storage_memory_tracked": 800 * MIB,   # graph
+        "db_storage_memory_tracked": 800 * MIB,  # graph
         "db_embedding_memory_tracked": 200 * MIB,  # vectors
     }
 
@@ -250,13 +255,16 @@ class TestSnapshotLicenseWall:
 
     async def test_ram_binds_when_closer_than_license(self, monkeypatch):
         monkeypatch.delenv("TWIN_MEMGRAPH_LICENSE_PLAN", raising=False)
-        _patch_storage(monkeypatch, {
-            "global_memory_tracked": int(3.5 * GIB),
-            "global_runtime_allocation_limit": 4 * GIB,  # ram 87.5%
-            "global_license_allocation_limit": 10 * GIB,
-            "db_storage_memory_tracked": 800 * MIB,
-            "db_embedding_memory_tracked": 200 * MIB,    # billed 1G/10G = 10%
-        })
+        _patch_storage(
+            monkeypatch,
+            {
+                "global_memory_tracked": int(3.5 * GIB),
+                "global_runtime_allocation_limit": 4 * GIB,  # ram 87.5%
+                "global_license_allocation_limit": 10 * GIB,
+                "db_storage_memory_tracked": 800 * MIB,
+                "db_embedding_memory_tracked": 200 * MIB,  # billed 1G/10G = 10%
+            },
+        )
         snap = await quota.snapshot()
         assert snap["binding"] == "ram"
         assert snap["used_bytes"] == int(3.5 * GIB)
@@ -267,6 +275,7 @@ class TestEnforceDependency:
     async def test_ok_passes(self, monkeypatch):
         async def _snap():
             return {"status": "ok", "used_bytes": 100, "limit_bytes": 1000}
+
         monkeypatch.setattr(quota, "snapshot", _snap)
         await quota.enforce_instance_quota()
 
@@ -280,6 +289,7 @@ class TestEnforceDependency:
                 "limit_bytes": 2 * GIB,
                 "budget_enforce": "reject",
             }
+
         monkeypatch.setattr(quota, "snapshot", _snap)
         with pytest.raises(HTTPException) as exc:
             await quota.enforce_instance_quota()
@@ -294,5 +304,6 @@ class TestEnforceDependency:
                 "limit_bytes": 2 * GIB,
                 "budget_enforce": "warn",
             }
+
         monkeypatch.setattr(quota, "snapshot", _snap)
         await quota.enforce_instance_quota()

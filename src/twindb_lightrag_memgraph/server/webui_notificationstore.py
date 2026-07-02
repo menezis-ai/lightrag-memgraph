@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 class InMemoryNotificationStore:
     def __init__(self, items: list[dict[str, Any]] | None = None) -> None:
-        self._items = copy.deepcopy(items if items is not None else webui_seed.NOTIFICATIONS)
+        self._items = copy.deepcopy(
+            items if items is not None else webui_seed.NOTIFICATIONS
+        )
 
     async def list(self) -> list[dict[str, Any]]:  # NOSONAR - async contract.
         return copy.deepcopy(self._items)
@@ -42,7 +44,9 @@ class InMemoryNotificationStore:
     async def clear(self) -> None:  # NOSONAR - async contract.
         self._items.clear()
 
-    async def push(self, notification: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
+    async def push(
+        self, notification: dict[str, Any]
+    ) -> dict[str, Any]:  # NOSONAR - async contract.
         stored = copy.deepcopy(notification)
         # Newest-first: prepend.
         self._items.insert(0, stored)
@@ -67,9 +71,7 @@ class MemgraphNotificationStore:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 try:
-                    result = await session.run(
-                        f"CREATE INDEX ON :`{self._label}`(id)"
-                    )
+                    result = await session.run(f"CREATE INDEX ON :`{self._label}`(id)")
                     await result.consume()
                 except Exception as e:  # noqa: BLE001
                     if "already exists" not in str(e).lower():
@@ -89,9 +91,7 @@ class MemgraphNotificationStore:
             return False
         for n in reversed(seed):
             await self.push(n)
-        logger.info(
-            "[WebuiNotificationStore] Bootstrapped %d notifications", len(seed)
-        )
+        logger.info("[WebuiNotificationStore] Bootstrapped %d notifications", len(seed))
         return True
 
     async def list(self) -> list[dict[str, Any]]:
@@ -130,9 +130,7 @@ class MemgraphNotificationStore:
     async def clear(self) -> None:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{self._label}`) DETACH DELETE n"
-                )
+                result = await session.run(f"MATCH (n:`{self._label}`) DETACH DELETE n")
                 await result.consume()
 
     async def push(self, notification: dict[str, Any]) -> dict[str, Any]:

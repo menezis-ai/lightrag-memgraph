@@ -72,16 +72,12 @@ class OntologyStorage:
         async with self._driver.session(database=self._database) as session:
             # Index on name + node_type
             try:
-                await session.run(
-                    f"CREATE INDEX ON :`{label}`(name)"
-                )
+                await session.run(f"CREATE INDEX ON :`{label}`(name)")
             except Exception:
                 pass
 
             try:
-                await session.run(
-                    f"CREATE INDEX ON :`{label}`(node_type)"
-                )
+                await session.run(f"CREATE INDEX ON :`{label}`(node_type)")
             except Exception:
                 pass
 
@@ -215,9 +211,7 @@ class OntologyStorage:
         async with self._driver.session(database=self._database) as session:
             for rel_type, entries in groups.items():
                 try:
-                    safe_rel_type = validate_identifier(
-                        str(rel_type), "relation_type"
-                    )
+                    safe_rel_type = validate_identifier(str(rel_type), "relation_type")
                 except ValueError:
                     logger.warning(
                         "[Ontology:%s] Dropping %d edge(s) with unsafe "
@@ -260,9 +254,7 @@ class OntologyStorage:
             await result.consume()
             return record["cnt"] > 0 if record else False
 
-    async def query_expansion(
-        self, term: str, max_hops: int = 2
-    ) -> list[str]:
+    async def query_expansion(self, term: str, max_hops: int = 2) -> list[str]:
         """Traverse SYNONYM/RELATED_TO/CO_OCCURS to expand a term.
 
         Returns list of related term names.
@@ -307,9 +299,7 @@ class OntologyStorage:
         label = self._label()
         try:
             async with self._driver.session(database=self._database) as session:
-                result = await session.run(
-                    f"MATCH (n:`{label}`) DETACH DELETE n"
-                )
+                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
                 await result.consume()
             return {"status": "success", "message": f"Ontology {label} dropped"}
         except Exception as e:

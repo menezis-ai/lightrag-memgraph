@@ -107,8 +107,22 @@ class TestFetchChunksByIds:
     async def test_preserves_order(self):
         rag = _make_rag()
         rag.text_chunks.get_by_ids.return_value = [
-            {"_id": "c2", "content": "two", "full_doc_id": "d1", "file_path": "f.txt", "chunk_order_index": 1, "tokens": 10},
-            {"_id": "c1", "content": "one", "full_doc_id": "d1", "file_path": "f.txt", "chunk_order_index": 0, "tokens": 5},
+            {
+                "_id": "c2",
+                "content": "two",
+                "full_doc_id": "d1",
+                "file_path": "f.txt",
+                "chunk_order_index": 1,
+                "tokens": 10,
+            },
+            {
+                "_id": "c1",
+                "content": "one",
+                "full_doc_id": "d1",
+                "file_path": "f.txt",
+                "chunk_order_index": 0,
+                "tokens": 5,
+            },
         ]
         items = await _fetch_chunks_by_ids(rag, ["c1", "c2"])
         assert len(items) == 2
@@ -118,7 +132,14 @@ class TestFetchChunksByIds:
     async def test_missing_chunks_skipped(self):
         rag = _make_rag()
         rag.text_chunks.get_by_ids.return_value = [
-            {"_id": "c1", "content": "one", "full_doc_id": "d1", "file_path": "f.txt", "chunk_order_index": 0, "tokens": 5},
+            {
+                "_id": "c1",
+                "content": "one",
+                "full_doc_id": "d1",
+                "file_path": "f.txt",
+                "chunk_order_index": 0,
+                "tokens": 5,
+            },
         ]
         items = await _fetch_chunks_by_ids(rag, ["c1", "c_missing"])
         assert len(items) == 1
@@ -135,7 +156,14 @@ class TestFetchChunksByIds:
         rag = _make_rag()
         rag.text_chunks.get_by_ids.return_value = [
             None,
-            {"_id": "c1", "content": "one", "full_doc_id": "d1", "file_path": "f.txt", "chunk_order_index": 0, "tokens": 5},
+            {
+                "_id": "c1",
+                "content": "one",
+                "full_doc_id": "d1",
+                "file_path": "f.txt",
+                "chunk_order_index": 0,
+                "tokens": 5,
+            },
         ]
         items = await _fetch_chunks_by_ids(rag, ["c1"])
         assert len(items) == 1
@@ -146,7 +174,14 @@ class TestFetchChunksByIds:
         """Raw dict has 'chunk_id' but no '_id' -- uses 'chunk_id' as fallback."""
         rag = _make_rag()
         rag.text_chunks.get_by_ids.return_value = [
-            {"chunk_id": "c1", "content": "fallback", "full_doc_id": "d1", "file_path": "g.txt", "chunk_order_index": 0, "tokens": 8},
+            {
+                "chunk_id": "c1",
+                "content": "fallback",
+                "full_doc_id": "d1",
+                "file_path": "g.txt",
+                "chunk_order_index": 0,
+                "tokens": 8,
+            },
         ]
         items = await _fetch_chunks_by_ids(rag, ["c1"])
         assert len(items) == 1
@@ -201,6 +236,7 @@ class TestFetchChunksByIds:
 # ---------------------------------------------------------------------------
 # Windowing / range logic -- integration through the helper chain
 # ---------------------------------------------------------------------------
+
 
 def _make_rag_with_doc(chunk_ids: list[str]):
     """Create a rag mock whose doc_status returns the given ordered chunk IDs

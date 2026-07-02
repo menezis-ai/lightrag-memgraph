@@ -15,6 +15,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+lint = [
+    "black>=24.10.0",
+    "ruff>=0.8.0",
+]
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
@@ -76,6 +80,33 @@ where = ["src"]
 # Tell setuptools to ship a python-multipart dependency for /documents/upload
 # (LightRAG natif uses Form upload — was a runtime hazard surfaced during M2
 # smoke test). Required when [server] extra is installed.
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.venv
+  | \.scannerwork
+  | lightrag_webui_twin
+  | src/twindb_lightrag_memgraph/webui_dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = [
+    ".venv",
+    ".scannerwork",
+    "lightrag_webui_twin",
+    "src/twindb_lightrag_memgraph/webui_dist",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

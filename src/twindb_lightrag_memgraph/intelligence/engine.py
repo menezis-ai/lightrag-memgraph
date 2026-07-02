@@ -72,7 +72,9 @@ class TwinRAGEngine:
         self.synthesis = SynthesisEngine(self.config)
         self.reranker = CognitiveReranker(self.config)
         self.expander = QueryExpander(self.config)
-        self.feedback = FeedbackStore(self.config) if self.config.enable_feedback else None
+        self.feedback = (
+            FeedbackStore(self.config) if self.config.enable_feedback else None
+        )
         self.folder_router = self._build_folder_router()
 
         # Ontology config (opt-in via ontology.json)
@@ -265,7 +267,9 @@ class TwinRAGEngine:
         search_tasks = []
         for ws in all_workspaces:
             rag = self._get_rag(ws)
-            search_tasks.append(self.search.hybrid_search(rag, search_query, self.config))
+            search_tasks.append(
+                self.search.hybrid_search(rag, search_query, self.config)
+            )
         workspace_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Fusion and deduplication

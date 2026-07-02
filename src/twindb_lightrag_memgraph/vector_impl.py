@@ -948,14 +948,12 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         label = self._label()
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+                result = await session.run(f"""
                     MATCH (n:`{label}`)
                     REMOVE n:`{label}`
                     WITH n
                     DETACH DELETE n
-                    """
-                )
+                    """)
                 await result.consume()
                 try:
                     result = await session.run(

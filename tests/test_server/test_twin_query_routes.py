@@ -58,11 +58,7 @@ class FakeDocStatus:
         self.docs = docs or {}
 
     async def get_docs_by_chunks(self, chunk_ids):
-        return {
-            self.mapping[cid]: object()
-            for cid in chunk_ids
-            if cid in self.mapping
-        }
+        return {self.mapping[cid]: object() for cid in chunk_ids if cid in self.mapping}
 
     async def get_by_id(self, doc_id: str):
         return self.docs.get(doc_id)
@@ -122,6 +118,7 @@ class FakeRag:
     async def aquery(self, query: str, *, param):
         self.calls.append((query, param))
         if getattr(param, "stream", False) and self.stream_chunks is not None:
+
             async def gen():
                 for chunk in self.stream_chunks or []:
                     yield chunk
@@ -137,9 +134,7 @@ class FakeRag:
             ref_id = str(i)
             file_path = chunk.get("file_path") or ""
             chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
-            references.append(
-                {"reference_id": ref_id, "file_path": file_path}
-            )
+            references.append({"reference_id": ref_id, "file_path": file_path})
             envelope_chunk = {
                 "reference_id": ref_id,
                 "content": chunk.get("content", ""),
@@ -168,6 +163,7 @@ class FakeRag:
             ),
         }
         if is_streaming and self.stream_chunks is not None:
+
             async def gen():
                 for chunk in self.stream_chunks or []:
                     yield chunk
@@ -187,9 +183,7 @@ class FakeRag:
 
     async def aquery_llm(self, query: str, *, param):
         self.llm_calls.append((query, param))
-        return self._build_envelope(
-            is_streaming=bool(getattr(param, "stream", False))
-        )
+        return self._build_envelope(is_streaming=bool(getattr(param, "stream", False)))
 
     async def aquery_data(self, query: str, *, param):
         self.data_calls.append((query, param))
@@ -570,6 +564,7 @@ class TestQueryEndpoint:
             chunk_to_doc={"chunk-a": "doc-oracle", "chunk-b": "doc-network"},
         )
         client = await make_client(rag)
+
         async def fake_tags(doc_id: str, folder: str):
             assert folder == "default"
             return {
@@ -662,9 +657,7 @@ class TestQueryEndpoint:
             chunk_to_doc={},
             docs={"doc-oracle": {"file_path": "/oracle"}},
         )
-        rag.chunks_vdb.rows = [
-            {"id": "wrong", "file_path": "/network", "score": 0.99}
-        ]
+        rag.chunks_vdb.rows = [{"id": "wrong", "file_path": "/network", "score": 0.99}]
         client = await make_client(rag)
 
         async def fake_tags(doc_id: str, folder: str):
@@ -713,6 +706,7 @@ class TestQueryEndpoint:
             chunk_to_doc={"chunk-a": "doc-oracle", "chunk-b": "doc-network"},
         )
         client = await make_client(rag)
+
         async def fake_tags(doc_id: str, folder: str):
             return {
                 "doc-oracle": {"oracle"},
@@ -874,7 +868,9 @@ class TestQueryEndpoint:
         assert len(body["sources"]) == 1
         assert body["sources"][0]["name"] == "reference-architecture.pdf"
 
-    async def test_doc_filter_keeps_real_reference_hyphen_numeric_name(self, make_client):
+    async def test_doc_filter_keeps_real_reference_hyphen_numeric_name(
+        self, make_client
+    ):
         # A short real document name can start like ``reference-1``.
         rag = FakeRag(
             answer="x",
@@ -1017,9 +1013,7 @@ class TestQueryEndpoint:
         assert '"value": "no_retrieval"' in status_event
         assert '"value": []' in sources_event
 
-    async def test_chunks_vdb_is_never_called_even_when_broken(
-        self, make_client
-    ):
+    async def test_chunks_vdb_is_never_called_even_when_broken(self, make_client):
         """Audit C3 guard: the nominal /query path must never touch
         chunks_vdb, even as a defensive fallback. The previous behaviour
         called chunks_vdb.query and caught the failure to return empty
@@ -1070,14 +1064,14 @@ class TestQueryEndpoint:
         rag = FakeRag(answer=None)  # type: ignore[arg-type]
         client = await make_client(rag)
         async with client:
-            r = await client.post("/query", json={"query": "quel est le rôle de LIP6 ?"})
+            r = await client.post(
+                "/query", json={"query": "quel est le rôle de LIP6 ?"}
+            )
 
         assert r.status_code == 200
         assert r.json()["response"] == ""
 
-    async def test_stream_endpoint_emits_ndjson_tokens_then_sources(
-        self, make_client
-    ):
+    async def test_stream_endpoint_emits_ndjson_tokens_then_sources(self, make_client):
         import json as _json
 
         rag = FakeRag(
@@ -1128,7 +1122,9 @@ class TestQueryEndpoint:
         # Audit C3 guard on the stream path: chunks_vdb stays cold.
         assert rag.chunks_vdb.last_query is None
 
-    async def test_stream_sources_event_does_not_leak_internal_markers(self, make_client):
+    async def test_stream_sources_event_does_not_leak_internal_markers(
+        self, make_client
+    ):
         import json as _json
 
         rag = FakeRag(
@@ -1150,9 +1146,7 @@ class TestQueryEndpoint:
         source = source_events[0]["value"][0]
         assert "_lightrag_reference_name_fallback" not in source
 
-    async def test_query_data_returns_structured_lightrag_payload(
-        self, make_client
-    ):
+    async def test_query_data_returns_structured_lightrag_payload(self, make_client):
         payload = {
             "status": "success",
             "message": "Query executed successfully",
@@ -1186,9 +1180,7 @@ class TestQueryEndpoint:
         assert param.mode == "mix"
         assert param.stream is False
 
-    async def test_query_data_forwards_extended_query_params(
-        self, make_client
-    ):
+    async def test_query_data_forwards_extended_query_params(self, make_client):
         rag = FakeRag()
         client = await make_client(rag)
         async with client:
@@ -1425,9 +1417,7 @@ class TestQueryEndpoint:
                         {
                             "src_id": "BP2I",
                             "tgt_id": "ICPE Regulation",
-                            "description": (
-                                "BP2I complies with the ICPE regulation"
-                            ),
+                            "description": ("BP2I complies with the ICPE regulation"),
                             "source_id": "chunk-cft",
                             "file_path": "CFT Classic v1.1.13 (1).pdf",
                         }
@@ -1689,9 +1679,7 @@ class TestQueryEndpoint:
         async def cleanup():
             async with _pool.get_session() as session:
                 for label in (kv_label, doc_label, tag_label):
-                    result = await session.run(
-                        f"MATCH (n:`{label}`) DETACH DELETE n"
-                    )
+                    result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
                     await result.consume()
 
         await cleanup()
@@ -1707,14 +1695,12 @@ class TestQueryEndpoint:
                 }
             )
             async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+                result = await session.run(f"""
                     MERGE (d:`{doc_label}` {{id: 'doc-it'}})
                     SET d.file_path = 'it-cft.pdf'
                     MERGE (t:`{tag_label}` {{id: 'cft-vm'}})
                     MERGE (d)-[:TAGGED_WITH]->(t)
-                    """
-                )
+                    """)
                 await result.consume()
 
             rag = FakeRag(
@@ -2098,9 +2084,7 @@ class TestQueryEndpoint:
         assert [row["file_path"] for row in body["data"]["chunks"]] == [
             "tarte-fraise.pdf"
         ]
-        assert [row["entity_name"] for row in body["data"]["entities"]] == [
-            "Fraise"
-        ]
+        assert [row["entity_name"] for row in body["data"]["entities"]] == ["Fraise"]
         assert body["data"]["references"] == [
             {"reference_id": "1", "file_path": "tarte-fraise.pdf"},
             {"reference_id": "4", "file_path": "tarte-fraise.pdf"},
@@ -2110,7 +2094,10 @@ class TestQueryEndpoint:
     @pytest.mark.parametrize(
         ("tag_filter", "expected_files"),
         [
-            ({"any": ["fraise", "chocolat"], "all": []}, {"tarte-fraise.pdf", "tarte-chocolat.pdf"}),
+            (
+                {"any": ["fraise", "chocolat"], "all": []},
+                {"tarte-fraise.pdf", "tarte-chocolat.pdf"},
+            ),
             ({"all": ["dessert", "fraise"], "any": []}, {"tarte-fraise.pdf"}),
             ({"all": ["dessert"], "any": ["chocolat"]}, {"tarte-chocolat.pdf"}),
             ({"all": ["dessert"], "any": ["sale"]}, set()),
@@ -2147,9 +2134,21 @@ class TestQueryEndpoint:
                 "data": {
                     "chunks": rows,
                     "entities": [
-                        {"entity_name": "Fraise", "file_path": "tarte-fraise.pdf", "reference_id": "1"},
-                        {"entity_name": "Chocolat", "file_path": "tarte-chocolat.pdf", "reference_id": "2"},
-                        {"entity_name": "Quiche", "file_path": "quiche.pdf", "reference_id": "3"},
+                        {
+                            "entity_name": "Fraise",
+                            "file_path": "tarte-fraise.pdf",
+                            "reference_id": "1",
+                        },
+                        {
+                            "entity_name": "Chocolat",
+                            "file_path": "tarte-chocolat.pdf",
+                            "reference_id": "2",
+                        },
+                        {
+                            "entity_name": "Quiche",
+                            "file_path": "quiche.pdf",
+                            "reference_id": "3",
+                        },
                     ],
                     "relationships": [],
                     "references": [
@@ -2176,9 +2175,7 @@ class TestQueryEndpoint:
         assert r.status_code == 200
         body = r.json()
         assert {row["file_path"] for row in body["data"]["chunks"]} == expected_files
-        assert {
-            row["file_path"] for row in body["data"]["entities"]
-        } == expected_files
+        assert {row["file_path"] for row in body["data"]["entities"]} == expected_files
         assert {
             row["file_path"] for row in body["data"]["references"]
         } == expected_files
@@ -2210,7 +2207,11 @@ class TestQueryEndpoint:
                     # Four rows pointing at the same doc — must
                     # trigger ONE Cypher call, not four.
                     "chunks": [
-                        {"chunk_id": f"c{i}", "full_doc_id": "doc-A", "reference_id": "1"}
+                        {
+                            "chunk_id": f"c{i}",
+                            "full_doc_id": "doc-A",
+                            "reference_id": "1",
+                        }
                         for i in range(4)
                     ],
                     "entities": [
@@ -2319,9 +2320,7 @@ class TestQueryEndpoint:
         assert r.status_code == 200
         assert r.json() == payload
 
-    async def test_query_data_aquery_data_failure_returns_500(
-        self, make_client
-    ):
+    async def test_query_data_aquery_data_failure_returns_500(self, make_client):
         rag = FakeRag()
 
         async def boom(*_a, **_kw):
@@ -2346,9 +2345,7 @@ class TestQueryEndpoint:
         )
         client = await make_client(rag)
         async with client:
-            r = await client.post(
-                "/query", json={"query": "x", "top_k": 3}
-            )
+            r = await client.post("/query", json={"query": "x", "top_k": 3})
         scores = [s["score"] for s in r.json()["sources"]]
         assert scores == [0.82, 0.74, 0.5]
 
@@ -2407,13 +2404,10 @@ class TestAnswerStatusContract:
     """
 
     LIGHTRAG_FAIL = (
-        "Sorry, I'm not able to provide an answer to that question."
-        "[no-context]"
+        "Sorry, I'm not able to provide an answer to that question." "[no-context]"
     )
 
-    async def test_non_stream_insufficient_via_failure_reason(
-        self, make_client
-    ):
+    async def test_non_stream_insufficient_via_failure_reason(self, make_client):
         # Structured signal: aquery_llm envelope reports
         # ``status=failure`` with ``failure_reason=no_results``. The
         # route maps this to ``answer_status=insufficient_information``
@@ -2433,9 +2427,7 @@ class TestAnswerStatusContract:
         )
         client = await make_client(rag)
         async with client:
-            r = await client.post(
-                "/query", json={"query": "completely off topic"}
-            )
+            r = await client.post("/query", json={"query": "completely off topic"})
 
         assert r.status_code == 200
         body = r.json()
@@ -2465,9 +2457,7 @@ class TestAnswerStatusContract:
         )
         client = await make_client(rag)
         async with client:
-            r = await client.post(
-                "/query", json={"query": "off topic"}
-            )
+            r = await client.post("/query", json={"query": "off topic"})
 
         assert r.status_code == 200
         body = r.json()
@@ -2504,9 +2494,7 @@ class TestAnswerStatusContract:
         )
         client = await make_client(rag)
         async with client:
-            r = await client.post(
-                "/query", json={"query": "real question"}
-            )
+            r = await client.post("/query", json={"query": "real question"})
 
         assert r.status_code == 200
         body = r.json()
@@ -2542,19 +2530,14 @@ class TestAnswerStatusContract:
             )
 
         assert r.status_code == 200
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         token_events = [e for e in events if e["type"] == "token"]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
 
         joined = "".join(e["value"] for e in token_events)
         assert "[no-context]" not in joined
-        assert (
-            joined
-            == "Sorry, I'm not able to provide an answer to that question."
-        )
+        assert joined == "Sorry, I'm not able to provide an answer to that question."
         assert len(status_events) == 1
         assert status_events[0]["value"] == "insufficient_information"
         assert len(source_events) == 1
@@ -2584,14 +2567,10 @@ class TestAnswerStatusContract:
         )
         client = await make_client(rag)
         async with client:
-            r = await client.post(
-                "/query/stream", json={"query": "x"}
-            )
+            r = await client.post("/query/stream", json={"query": "x"})
 
         assert r.status_code == 200
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         token_events = [e for e in events if e["type"] == "token"]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
@@ -2614,9 +2593,7 @@ class TestAnswerStatusContract:
         # the failure path.
         assert rag.chunks_vdb.last_query is None
 
-    async def test_stream_aquery_llm_exception_emits_query_failed(
-        self, make_client
-    ):
+    async def test_stream_aquery_llm_exception_emits_query_failed(self, make_client):
         """When aquery_llm raises mid-stream the HTTP 200 is already
         committed, so the failure is reported via a [query failed: …]
         token + a query_failed status, never a grounded lie.
@@ -2634,9 +2611,7 @@ class TestAnswerStatusContract:
             r = await client.post("/query/stream", json={"query": "x"})
 
         assert r.status_code == 200
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         token_events = [e for e in events if e["type"] == "token"]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
@@ -2666,9 +2641,7 @@ class TestAnswerStatusContract:
             )
 
         assert r.status_code == 200
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
         token_events = [e for e in events if e["type"] == "token"]
@@ -2751,9 +2724,7 @@ class TestAnswerStatusContract:
         BAD_REFS_CASES,
         ids=[c[0] for c in BAD_REFS_CASES],
     )
-    async def test_stream_source_projection_failed(
-        self, make_client, label, bad_refs
-    ):
+    async def test_stream_source_projection_failed(self, make_client, label, bad_refs):
         import json as _json
 
         rag = MalformedRefsRag(
@@ -2764,9 +2735,7 @@ class TestAnswerStatusContract:
             r = await client.post("/query/stream", json={"query": "real question"})
 
         assert r.status_code == 200, label
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         token_events = [e for e in events if e["type"] == "token"]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]
@@ -2804,9 +2773,7 @@ class TestAnswerStatusContract:
             )
 
         assert r.status_code == 200
-        events = [
-            _json.loads(line) for line in r.text.splitlines() if line.strip()
-        ]
+        events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
         token_events = [e for e in events if e["type"] == "token"]
         status_events = [e for e in events if e["type"] == "status"]
         source_events = [e for e in events if e["type"] == "sources"]

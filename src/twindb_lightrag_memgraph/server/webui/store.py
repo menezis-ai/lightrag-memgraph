@@ -38,9 +38,9 @@ class WebuiStore:
         graph_relations: list[dict[str, Any]],
         tag_backend: InMemoryTagStore | MemgraphTagStore | None = None,
         activity_backend: InMemoryActivityStore | MemgraphActivityStore | None = None,
-        notification_backend: InMemoryNotificationStore
-        | MemgraphNotificationStore
-        | None = None,
+        notification_backend: (
+            InMemoryNotificationStore | MemgraphNotificationStore | None
+        ) = None,
         mode: str = "seed",
     ) -> None:
         self._documents = documents
@@ -178,7 +178,9 @@ class WebuiStore:
         items = [
             d
             for d in self._documents
-            if (d.get("folder") or d.get("metadata", {}).get("folder") or default_folder)
+            if (
+                d.get("folder") or d.get("metadata", {}).get("folder") or default_folder
+            )
             == active_folder
         ]
         if status and status != "all":
@@ -206,9 +208,7 @@ class WebuiStore:
     async def clear_notifications(self) -> None:
         await self._notification_backend.clear()
 
-    async def push_notification(
-        self, notification: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def push_notification(self, notification: dict[str, Any]) -> dict[str, Any]:
         return await self._notification_backend.push(notification)
 
     # -- Thesaurus + tags ---------------------------------------------

@@ -749,7 +749,9 @@ def _log_request_completed(
     )
 
 
-def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_label: str):
+def _make_operational_middleware(
+    settings: LightRAGServerSettings, auth_mode_label: str
+):
     """Build the request-logging / body-limit / metrics middleware dispatch."""
 
     async def _operational_middleware(request: Request, call_next):
@@ -768,7 +770,13 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
         limit = _body_limit_for_path(path, settings)
         body_bytes = _content_length(request.headers)
         oversized = _oversized_response(
-            request, request_id, route_group, auth_mode_label, started, limit, body_bytes
+            request,
+            request_id,
+            route_group,
+            auth_mode_label,
+            started,
+            limit,
+            body_bytes,
         )
         if oversized is not None:
             return oversized
@@ -793,7 +801,11 @@ def _make_operational_middleware(settings: LightRAGServerSettings, auth_mode_lab
                 reason=_access_denied_reason(response.status_code),
             )
         _log_request_completed(
-            request, request_id, route_group, auth_mode_label, started,
+            request,
+            request_id,
+            route_group,
+            auth_mode_label,
+            started,
             response.status_code,
         )
         return response
@@ -823,8 +835,7 @@ def _auth_policy_readiness_check(
         return {
             "status": "failed",
             "detail": (
-                "production IdP auth requires TWIN_IDP_ISSUER and "
-                "TWIN_IDP_AUDIENCE"
+                "production IdP auth requires TWIN_IDP_ISSUER and " "TWIN_IDP_AUDIENCE"
             ),
             "production_required": True,
             "strict_claims": False,
@@ -872,9 +883,7 @@ def _memgraph_exception_response(exc: BaseException) -> tuple[int, dict[str, Any
     return 503, {"error": payload["message"], **payload}
 
 
-def _handle_memgraph_exception(
-    request: Request, exc: Neo4jError
-) -> JSONResponse:
+def _handle_memgraph_exception(request: Request, exc: Neo4jError) -> JSONResponse:
     status_code, payload = _memgraph_exception_response(exc)
     request_id = getattr(request.state, "request_id", None)
     if request_id:
@@ -1031,8 +1040,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         jwt_secret=_resolved_jwt_secret,
         jwt_algorithm=settings.jwt_algorithm,
         jwt_expiration_hours=int(
-            os.environ.get("TOKEN_EXPIRE_HOURS")
-            or settings.jwt_expiration_hours
+            os.environ.get("TOKEN_EXPIRE_HOURS") or settings.jwt_expiration_hours
         ),
         jwt_username=settings.jwt_username,
         jwt_password=settings.jwt_password,
@@ -1100,9 +1108,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     def _get_rag_for_twin_query():
         rag = _get_rag()
         if rag is None:
-            raise RuntimeError(
-                "twindb twin_query: RAG instance not initialised yet."
-            )
+            raise RuntimeError("twindb twin_query: RAG instance not initialised yet.")
         return rag
 
     app.include_router(

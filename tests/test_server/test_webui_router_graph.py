@@ -253,9 +253,7 @@ class TestGraphSeedFallbackGate:
         Regression guard against a future refactor that loses the
         propagation between constructor argument and instance state."""
 
-        store = webui_router.WebuiStore.for_folder(
-            "default", mode="memgraph"
-        )
+        store = webui_router.WebuiStore.for_folder("default", mode="memgraph")
         assert store.mode == "memgraph"
 
 
@@ -401,9 +399,7 @@ class TestGraphPatchPersistence:
 
 
 class TestGraphLifecycle:
-    async def test_post_entity_created_201_with_projection(
-        self, monkeypatch, client
-    ):
+    async def test_post_entity_created_201_with_projection(self, monkeypatch, client):
         async def fake_create(workspace, payload, *, actor="operator"):
             return {
                 "id": "kg_NewEntity",
@@ -489,17 +485,13 @@ class TestGraphLifecycle:
         )
         assert r.status_code == 422
 
-    async def test_post_entity_503_on_backend_create_failure(
-        self, monkeypatch, client
-    ):
+    async def test_post_entity_503_on_backend_create_failure(self, monkeypatch, client):
         """Memgraph CREATE fails → honest 503, not a misleading 409
         (TR-KG-01). The detail tells the operator to check server
         logs; the underlying driver message is not leaked."""
 
         async def fake_create_backend_fail(workspace, payload, *, actor="operator"):
-            raise gr.EntityCreateBackendError(
-                "Bolt driver: session closed"
-            )
+            raise gr.EntityCreateBackendError("Bolt driver: session closed")
 
         monkeypatch.setattr(gr, "create_graph_entity", fake_create_backend_fail)
 
@@ -512,17 +504,13 @@ class TestGraphLifecycle:
         assert "could not be created" in detail
         assert "Bolt driver" not in detail  # raw driver detail stays in logs
 
-    async def test_post_entity_500_on_projection_failure(
-        self, monkeypatch, client
-    ):
+    async def test_post_entity_500_on_projection_failure(self, monkeypatch, client):
         """Half-success: write committed, post-CREATE projection
         failed. We tell the operator to refresh
         ``/twin/api/graph/entities`` rather than pretending the create
         failed (TR-KG-01)."""
 
-        async def fake_create_projection_fail(
-            workspace, payload, *, actor="operator"
-        ):
+        async def fake_create_projection_fail(workspace, payload, *, actor="operator"):
             raise gr.EntityProjectionError(payload["name"])
 
         monkeypatch.setattr(gr, "create_graph_entity", fake_create_projection_fail)
@@ -601,9 +589,7 @@ class TestGraphLifecycle:
         ]
         assert len(creates) == 1
 
-    async def test_post_relation_422_when_endpoint_missing(
-        self, monkeypatch, client
-    ):
+    async def test_post_relation_422_when_endpoint_missing(self, monkeypatch, client):
         async def fake_create_rel_missing(workspace, payload):
             return None
 
@@ -641,15 +627,15 @@ class TestGraphLifecycle:
         async def fake_delete_rel_missing(workspace, rel_id):
             return False
 
-        monkeypatch.setattr(
-            gr, "delete_graph_relation", fake_delete_rel_missing
-        )
+        monkeypatch.setattr(gr, "delete_graph_relation", fake_delete_rel_missing)
 
         r = await client.delete("/graph/relations/kr_phantom")
         assert r.status_code == 404
         assert "refresh" in r.json()["detail"].lower()
 
-    async def test_post_relation_created_then_visible_in_graph_relations(self, monkeypatch, client):
+    async def test_post_relation_created_then_visible_in_graph_relations(
+        self, monkeypatch, client
+    ):
         entities = [
             {
                 "id": "kg_A",
@@ -799,9 +785,7 @@ class TestGraphEntityTagThesaurusBinding:
     "known" values and a deliberately fake string as the "unknown".
     """
 
-    async def test_patch_entity_with_known_tag_passes(
-        self, monkeypatch, client
-    ):
+    async def test_patch_entity_with_known_tag_passes(self, monkeypatch, client):
         captured: dict[str, object] = {}
 
         async def fake_update(workspace, entity_id, patch):
@@ -828,13 +812,9 @@ class TestGraphEntityTagThesaurusBinding:
         assert r.status_code == 200
         assert captured["patch"]["tags"] == ["rman", "oracle"]
 
-    async def test_patch_entity_with_unknown_tag_returns_422(
-        self, monkeypatch, client
-    ):
+    async def test_patch_entity_with_unknown_tag_returns_422(self, monkeypatch, client):
         async def fake_update_never_called(workspace, entity_id, patch):
-            raise AssertionError(
-                "graph_reader.update_graph_entity must not be reached"
-            )
+            raise AssertionError("graph_reader.update_graph_entity must not be reached")
 
         monkeypatch.setattr(gr, "update_graph_entity", fake_update_never_called)
 
@@ -852,9 +832,7 @@ class TestGraphEntityTagThesaurusBinding:
         # catalog so the caller knows what to type instead.
         assert "Allowed (active catalog):" in detail
 
-    async def test_post_entity_with_known_tag_passes(
-        self, monkeypatch, client
-    ):
+    async def test_post_entity_with_known_tag_passes(self, monkeypatch, client):
         captured: dict[str, object] = {}
 
         async def fake_create(workspace, payload, *, actor="operator"):
@@ -880,13 +858,9 @@ class TestGraphEntityTagThesaurusBinding:
         assert r.status_code == 201
         assert captured["payload"]["tags"] == ["oracle"]
 
-    async def test_post_entity_with_unknown_tag_returns_422(
-        self, monkeypatch, client
-    ):
+    async def test_post_entity_with_unknown_tag_returns_422(self, monkeypatch, client):
         async def fake_create_never_called(workspace, payload, *, actor="operator"):
-            raise AssertionError(
-                "graph_reader.create_graph_entity must not be reached"
-            )
+            raise AssertionError("graph_reader.create_graph_entity must not be reached")
 
         monkeypatch.setattr(gr, "create_graph_entity", fake_create_never_called)
 
@@ -908,6 +882,7 @@ class TestGraphEntityTagThesaurusBinding:
     ):
         """``tags: []`` means "clear all node tags"; that's a
         legitimate intent and must not be treated as an unknown tag."""
+
         async def fake_update(workspace, entity_id, patch):
             return {
                 "id": entity_id,
@@ -939,9 +914,7 @@ class TestGraphNativeDelegation:
     finding (200 arbitrary nodes of a 17k-entity KB; searched entities absent).
     """
 
-    async def test_search_delegates_to_native_search_labels(
-        self, monkeypatch, client
-    ):
+    async def test_search_delegates_to_native_search_labels(self, monkeypatch, client):
         async def fake_search(rag, q, *, workspace=None, limit=50):
             assert q == "schizo"
             return ["Schizophrenia", "Schizoaffective Disorder"]
@@ -953,9 +926,7 @@ class TestGraphNativeDelegation:
         assert r.status_code == 200
         assert r.json() == ["Schizophrenia", "Schizoaffective Disorder"]
 
-    async def test_entities_forwards_focus_label_to_native(
-        self, monkeypatch, client
-    ):
+    async def test_entities_forwards_focus_label_to_native(self, monkeypatch, client):
         seen: dict[str, object] = {}
 
         async def fake_native(

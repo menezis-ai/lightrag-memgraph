@@ -83,7 +83,7 @@ class CognitiveReranker:
 
         passages_text = "\n".join(
             (
-                f"<UNTRUSTED_PASSAGE id=\"{i}\">\n"
+                f'<UNTRUSTED_PASSAGE id="{i}">\n'
                 f"{neutralize_reserved_tags(chunk.text[:800])}\n"
                 "</UNTRUSTED_PASSAGE>"
             )
@@ -137,7 +137,9 @@ class CognitiveReranker:
 
             # Filter: keep only >= threshold
             filtered = [
-                c for c in chunks if (c.rerank_score or 0) >= self.config.reranking_score_threshold
+                c
+                for c in chunks
+                if (c.rerank_score or 0) >= self.config.reranking_score_threshold
             ]
 
             # If filtering is too aggressive, fallback to top-K by raw score

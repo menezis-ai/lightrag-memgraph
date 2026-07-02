@@ -95,7 +95,9 @@ def _coerce_doc_metadata(raw: Any) -> dict[str, Any]:
 def _doc_matches_active_folder(doc: dict[str, Any]) -> bool:
     metadata = doc.get("metadata") or {}
     default_folder = load_folder_catalog().default_folder_id
-    return (doc.get("folder") or metadata.get("folder") or default_folder) == current_folder_id()
+    return (
+        doc.get("folder") or metadata.get("folder") or default_folder
+    ) == current_folder_id()
 
 
 async def _get_doc_for_active_folder(doc_id: str) -> dict[str, Any]:
@@ -313,7 +315,8 @@ def _filter_doc_status_rows(
             doc
             for doc in filtered
             if needle in str(doc.get("file_path") or doc.get("source") or "").lower()
-            or needle in str(doc.get("content_summary") or doc.get("summary") or "").lower()
+            or needle
+            in str(doc.get("content_summary") or doc.get("summary") or "").lower()
         ]
     if tag:
         filtered = [doc for doc in filtered if tag in (doc.get("tags") or [])]
@@ -331,9 +334,7 @@ def _doc_status_get_docs_paginated_supports_folder(storage: Any) -> bool:
         return False
     if "folder" in params:
         return True
-    return any(
-        param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
-    )
+    return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
 
 
 def _doc_row_has_active_folder_hint(doc: dict[str, Any], folder: str) -> bool:
@@ -413,8 +414,7 @@ async def _list_documents_from_doc_status(
     if folder is not None:
         doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
     docs = [
-        _project_doc_status_for_webui(doc, visible_folder=folder)
-        for doc in doc_rows
+        _project_doc_status_for_webui(doc, visible_folder=folder) for doc in doc_rows
     ]
     await _attach_graph_tags_for_documents(docs)
     return _filter_doc_status_rows(
@@ -538,6 +538,7 @@ async def _cascade_graph_tag_edges(
     try:
         from ... import _pool
         from ..._constants import resolve_workspace
+
         workspace = resolve_workspace()
         folder = current_folder_id()
         doc_label = f"DocStatus_{workspace}"
@@ -763,9 +764,7 @@ async def approve_document(
         sev="info",
         actor=actor,
         target_label=doc.get("file_path") or doc_id,
-        summary=(
-            f"approved by {actor}" + (" with edits" if edits else "")
-        ),
+        summary=(f"approved by {actor}" + (" with edits" if edits else "")),
         meta={"doc_id": doc_id, "edits": edits},
         target_type="document",
         target_id=doc_id,
@@ -843,7 +842,6 @@ async def reject_document(
 def get_openapi_groups() -> dict[str, Any]:
     groups, version = get_store().openapi()
     return {"groups": groups, "version": version}
-
 
 
 __all__ = [

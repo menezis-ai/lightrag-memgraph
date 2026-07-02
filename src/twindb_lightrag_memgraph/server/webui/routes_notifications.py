@@ -25,4 +25,3 @@ async def mark_all_notifications_read() -> dict[str, bool]:
 async def clear_notifications() -> dict[str, bool]:
     await get_store().clear_notifications()
     return {"ok": True}
-

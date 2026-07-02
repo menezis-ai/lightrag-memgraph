@@ -183,9 +183,13 @@ class TestOoxmlDetection:
         target = tmp_path / "two_labels.docx"
         with zipfile.ZipFile(target, "w") as z:
             z.writestr("docProps/custom.xml", custom_xml)
-        result = detect_classification(target, label_map={
-            old_guid: "C1", new_guid: "C3",
-        })
+        result = detect_classification(
+            target,
+            label_map={
+                old_guid: "C1",
+                new_guid: "C3",
+            },
+        )
         assert result.class_id == "C3"
         assert result.label_guid == new_guid
         assert result.set_date == "2026-01-01T00:00:00Z"
@@ -216,6 +220,7 @@ class TestOoxmlDetection:
 
 def _has_module(name: str) -> bool:
     import importlib.util
+
     return importlib.util.find_spec(name) is not None
 
 
@@ -290,18 +295,26 @@ class TestLabelMap:
     def test_loads_long_form_with_human_name(self, tmp_path):
         _LABEL_NAMES.clear()
         path = tmp_path / "longform.json"
-        path.write_text(json.dumps({
-            DEMO_GUID: {"id": "C2", "name": "C2 Confidentiel"},
-        }))
+        path.write_text(
+            json.dumps(
+                {
+                    DEMO_GUID: {"id": "C2", "name": "C2 Confidentiel"},
+                }
+            )
+        )
         loaded = load_label_map(path)
         assert loaded[DEMO_GUID] == "C2"
         assert _LABEL_NAMES.get(DEMO_GUID) == "C2 Confidentiel"
 
     def test_normalizes_guids_on_load(self, tmp_path):
         path = tmp_path / "uppercase.json"
-        path.write_text(json.dumps({
-            "{" + DEMO_GUID.upper() + "}": "C2",
-        }))
+        path.write_text(
+            json.dumps(
+                {
+                    "{" + DEMO_GUID.upper() + "}": "C2",
+                }
+            )
+        )
         loaded = load_label_map(path)
         assert loaded[DEMO_GUID] == "C2"
 
@@ -310,9 +323,13 @@ class TestLabelMap:
         raw Microsoft label name embedded in the document."""
         _LABEL_NAMES.clear()
         map_path = tmp_path / "named.json"
-        map_path.write_text(json.dumps({
-            DEMO_GUID: {"id": "C2", "name": "C2 — Confidentiel groupe"},
-        }))
+        map_path.write_text(
+            json.dumps(
+                {
+                    DEMO_GUID: {"id": "C2", "name": "C2 — Confidentiel groupe"},
+                }
+            )
+        )
         load_label_map(map_path)
         doc = _build_docx_with_label(tmp_path, label_name="Anything")
         result = detect_classification(doc, label_map={DEMO_GUID: "C2"})
@@ -326,19 +343,22 @@ class TestLabelMap:
 
 
 class TestIsAbove:
-    @pytest.mark.parametrize("class_id,threshold,expected", [
-        ("C1", "C2", False),
-        ("C2", "C2", False),
-        ("C3", "C2", True),
-        ("C4", "C2", True),
-        ("C4", "C3", True),
-        ("C1", "C1", False),
-        ("Public", "Internal", False),
-        ("Internal", "Internal", False),
-        ("Private", "Internal", True),
-        ("Confidential", "Internal", True),
-        ("Secret", "Confidential", True),
-    ])
+    @pytest.mark.parametrize(
+        "class_id,threshold,expected",
+        [
+            ("C1", "C2", False),
+            ("C2", "C2", False),
+            ("C3", "C2", True),
+            ("C4", "C2", True),
+            ("C4", "C3", True),
+            ("C1", "C1", False),
+            ("Public", "Internal", False),
+            ("Internal", "Internal", False),
+            ("Private", "Internal", True),
+            ("Confidential", "Internal", True),
+            ("Secret", "Confidential", True),
+        ],
+    )
     def test_known_classes(self, class_id, threshold, expected):
         assert is_above(class_id, threshold) is expected
 
@@ -360,13 +380,16 @@ class TestIsAbove:
 
 
 class TestNormalizeGuid:
-    @pytest.mark.parametrize("raw,expected", [
-        (DEMO_GUID, DEMO_GUID),
-        (DEMO_GUID.upper(), DEMO_GUID),
-        ("{" + DEMO_GUID + "}", DEMO_GUID),
-        ("{" + DEMO_GUID.upper() + "}", DEMO_GUID),
-        ("  " + DEMO_GUID + "  ", DEMO_GUID),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (DEMO_GUID, DEMO_GUID),
+            (DEMO_GUID.upper(), DEMO_GUID),
+            ("{" + DEMO_GUID + "}", DEMO_GUID),
+            ("{" + DEMO_GUID.upper() + "}", DEMO_GUID),
+            ("  " + DEMO_GUID + "  ", DEMO_GUID),
+        ],
+    )
     def test_normalize(self, raw, expected):
         assert _normalize_guid(raw) == expected
 

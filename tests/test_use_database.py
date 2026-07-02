@@ -35,6 +35,7 @@ def _make_mock_session(*, enterprise=True):
     if enterprise:
         session.run = AsyncMock(return_value=AsyncMock())
     else:
+
         async def _run_side_effect(query, *args, **kwargs):
             if query.startswith("USE DATABASE"):
                 raise Neo4jClientError(

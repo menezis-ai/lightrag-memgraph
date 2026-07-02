@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -89,7 +90,18 @@ class TestDocuments:
         assert len(body["items"]) == len(DOCUMENTS)
         # Shape spot-check on the first doc
         first = body["items"][0]
-        for key in ("id", "type", "source", "summary", "tags", "status", "chunks", "updated", "visibility", "folder"):
+        for key in (
+            "id",
+            "type",
+            "source",
+            "summary",
+            "tags",
+            "status",
+            "chunks",
+            "updated",
+            "visibility",
+            "folder",
+        ):
             assert key in first
 
     async def test_status_filter_narrows(self, client):
@@ -160,9 +172,7 @@ class TestFolders:
         assert [folder["id"] for folder in body] == ["default", "sandbox"]
         assert next(folder for folder in body if folder["id"] == "sandbox")["current"]
 
-    async def test_folders_endpoint_uses_configured_folders(
-        self, monkeypatch, client
-    ):
+    async def test_folders_endpoint_uses_configured_folders(self, monkeypatch, client):
         self._configure_folders(monkeypatch)
         r = await client.get("/folders")
         assert r.status_code == 200
@@ -266,7 +276,14 @@ class TestTags:
         body = r.json()
         assert len(body) == len(TAG_CATEGORIES)
         ids = [c["id"] for c in body]
-        for required in ("oracle", "infra", "messaging", "lifecycle", "governance", "network"):
+        for required in (
+            "oracle",
+            "infra",
+            "messaging",
+            "lifecycle",
+            "governance",
+            "network",
+        ):
             assert required in ids
 
 
@@ -400,7 +417,9 @@ class TestActivity:
         assert "Max-Age=0" in set_cookie
 
     async def test_total_is_pre_limit(self, client):
-        response = await client.get("/activity", params={"kind": "retrieval", "limit": 1})
+        response = await client.get(
+            "/activity", params={"kind": "retrieval", "limit": 1}
+        )
         body = response.json()
         assert body["total"] >= len(body["items"])
         assert body["total"] >= 2
@@ -410,9 +429,7 @@ class TestActivity:
         now = datetime.datetime.fromtimestamp(
             ACTIVITY_NOW_MS / 1000, tz=datetime.timezone.utc
         ).replace(microsecond=0)
-        recent = (now - datetime.timedelta(hours=1)).isoformat().replace(
-            "+00:00", "Z"
-        )
+        recent = (now - datetime.timedelta(hours=1)).isoformat().replace("+00:00", "Z")
         old = (now - datetime.timedelta(days=2)).isoformat().replace("+00:00", "Z")
         store = webui_router.get_store()
         await store.record_activity(
@@ -573,7 +590,9 @@ class TestJsonInvariant:
         assert r.headers["content-type"].startswith("application/json")
 
     async def test_wrong_method_is_json_405(self, client):
-        r = await client.post("/documents")  # /documents is GET-only on the WebUI router
+        r = await client.post(
+            "/documents"
+        )  # /documents is GET-only on the WebUI router
         assert r.status_code == 405
         assert r.headers["content-type"].startswith("application/json")
 
@@ -678,6 +697,7 @@ class TestForFolderMode:
 
     def _default_folder(self) -> str:
         from twindb_lightrag_memgraph.server.folder import load_folder_catalog
+
         return load_folder_catalog().default_folder_id
 
     def _configure_default_plus_sandbox_folders(self, monkeypatch):
@@ -850,8 +870,7 @@ class TestForFolderMode:
                 == "abcdef0123456789abcdef0123456789"
             )
             assert (
-                body["items"][0]["metadata"]["content_hash_source"]
-                == "lightrag_doc_id"
+                body["items"][0]["metadata"]["content_hash_source"] == "lightrag_doc_id"
             )
 
             filtered = await client.get("/documents", params={"status": "PROCESSED"})
@@ -881,18 +900,12 @@ class TestForFolderMode:
             assert sandbox_docs.status_code == 200
 
             assert default_docs.json()["total"] == 2
-            assert [
-                doc["doc_id"]
-                for doc in default_docs.json()["items"]
-            ] == [
+            assert [doc["doc_id"] for doc in default_docs.json()["items"]] == [
                 "doc-abcdef0123456789abcdef0123456789",
                 "doc-mlops",
             ]
             assert sandbox_docs.json()["total"] == 2
-            assert {
-                doc["doc_id"]
-                for doc in sandbox_docs.json()["items"]
-            } == {
+            assert {doc["doc_id"] for doc in sandbox_docs.json()["items"]} == {
                 "doc-abcdef0123456789abcdef0123456789",
                 "doc-sandbox",
             }
@@ -947,9 +960,7 @@ class TestForFolderMode:
                 ]
                 if folder:
                     rows = [
-                        row
-                        for row in rows
-                        if row[1]["metadata"]["folder"] == folder
+                        row for row in rows if row[1]["metadata"]["folder"] == folder
                     ]
                 return rows, len(rows)
 
@@ -967,7 +978,9 @@ class TestForFolderMode:
         rag = FakeRag()
         _twindb_state["rag"] = rag
         self._configure_default_plus_sandbox_folders(monkeypatch)
-        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        monkeypatch.setattr(
+            webui_router, "_attach_graph_tags_for_documents", no_graph_tags
+        )
         try:
             sandbox_docs = await client.get(
                 "/documents",
@@ -1044,7 +1057,9 @@ class TestForFolderMode:
         rag = FakeRag()
         _twindb_state["rag"] = rag
         self._configure_default_plus_sandbox_folders(monkeypatch)
-        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        monkeypatch.setattr(
+            webui_router, "_attach_graph_tags_for_documents", no_graph_tags
+        )
         try:
             sandbox_docs = await client.get(
                 "/documents",
@@ -1172,7 +1187,9 @@ class TestForFolderMode:
         finally:
             _twindb_state.pop("rag", None)
 
-    async def test_destination_folder_visible_after_copy_to_folder(self, client, monkeypatch):
+    async def test_destination_folder_visible_after_copy_to_folder(
+        self, client, monkeypatch
+    ):
         """Copying a doc into another folder makes it appear there in list queries."""
 
         class FakeDocStatus:
@@ -1232,7 +1249,9 @@ class TestForFolderMode:
         webui_router.set_store(empty_store)
         _twindb_state["rag"] = FakeRag()
         self._configure_default_plus_sandbox_folders(monkeypatch)
-        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        monkeypatch.setattr(
+            webui_router, "_attach_graph_tags_for_documents", no_graph_tags
+        )
         try:
             copy_response = await client.post(
                 "/documents/doc-a/folders",
@@ -1250,7 +1269,9 @@ class TestForFolderMode:
         finally:
             _twindb_state.pop("rag", None)
 
-    async def test_destination_folder_visible_after_move_to_folder(self, client, monkeypatch):
+    async def test_destination_folder_visible_after_move_to_folder(
+        self, client, monkeypatch
+    ):
         """Moving a doc removes it from source and keeps it visible in destination."""
 
         class FakeDocStatus:
@@ -1314,14 +1335,18 @@ class TestForFolderMode:
         webui_router.set_store(empty_store)
         _twindb_state["rag"] = FakeRag()
         self._configure_default_plus_sandbox_folders(monkeypatch)
-        monkeypatch.setattr(webui_router, "_attach_graph_tags_for_documents", no_graph_tags)
+        monkeypatch.setattr(
+            webui_router, "_attach_graph_tags_for_documents", no_graph_tags
+        )
         try:
             move_to_b = await client.post(
                 "/documents/doc-a/folders",
                 json={"folder_id": "sandbox"},
             )
             assert move_to_b.status_code == 200
-            remove_from_default = await client.delete("/documents/doc-a/folders/default")
+            remove_from_default = await client.delete(
+                "/documents/doc-a/folders/default"
+            )
             assert remove_from_default.status_code == 200
 
             default_docs = await client.get("/documents")

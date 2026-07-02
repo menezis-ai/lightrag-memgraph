@@ -272,9 +272,9 @@ class GraphEntityPatch(_Base):
     only the keys present in the request body are applied."""
 
     name: str | None = None
-    type: Literal[
-        "PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"
-    ] | None = None
+    type: (
+        Literal["PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"] | None
+    ) = None
     summary: str | None = None
     tags: list[str] | None = None
     properties: dict[str, str] | None = None
@@ -299,9 +299,7 @@ class GraphEntityCreate(_Base):
     """
 
     name: str = Field(..., max_length=255)
-    type: Literal[
-        "PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"
-    ]
+    type: Literal["PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"]
     summary: str | None = None
     tags: list[str] | None = None
     properties: dict[str, str] | None = None

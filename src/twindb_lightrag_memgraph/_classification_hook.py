@@ -190,7 +190,8 @@ def install_classification_hook(
 
     log.info(
         "Classification hook installed (ceiling=%s, label_map_size=%d)",
-        resolved_ceiling, len(label_map),
+        resolved_ceiling,
+        len(label_map),
     )
     return _hook
 
@@ -288,7 +289,11 @@ async def _merge_classification_metadata(
         else:
             import dataclasses
 
-            doc = dataclasses.asdict(existing) if dataclasses.is_dataclass(existing) else {}
+            doc = (
+                dataclasses.asdict(existing)
+                if dataclasses.is_dataclass(existing)
+                else {}
+            )
         metadata = dict(doc.get("metadata") or {})
         metadata["classification"] = payload
         doc["metadata"] = metadata
@@ -388,7 +393,9 @@ async def _reinsert_accepted(
         accepted_paths if isinstance(file_paths, list) else accepted_paths[0],
         resolved_track_id,
     )
-    await _apply_classification_metadata(self, accepted, inputs, explicit_ids, ids is not None)
+    await _apply_classification_metadata(
+        self, accepted, inputs, explicit_ids, ids is not None
+    )
     return result_track_id
 
 

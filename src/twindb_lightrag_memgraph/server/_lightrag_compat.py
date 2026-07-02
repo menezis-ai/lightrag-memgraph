@@ -141,11 +141,7 @@ class AnswerMarkerStripper:
     def status(self) -> AnswerStatus:
         """``"insufficient_information"`` iff the marker was seen, else
         ``"grounded"``."""
-        return (
-            ANSWER_STATUS_INSUFFICIENT
-            if self._detected
-            else ANSWER_STATUS_GROUNDED
-        )
+        return ANSWER_STATUS_INSUFFICIENT if self._detected else ANSWER_STATUS_GROUNDED
 
     def feed(self, chunk: str) -> Iterator[str]:
         """Consume the next chunk and yield the safe-to-emit slice.
@@ -163,7 +159,7 @@ class AnswerMarkerStripper:
             self._detected = True
             if idx > 0:
                 yield combined[:idx]
-            self._buffer = combined[idx + len(LIGHTRAG_NO_CONTEXT_MARKER):]
+            self._buffer = combined[idx + len(LIGHTRAG_NO_CONTEXT_MARKER) :]
             return
         keep = self._BUFFER_KEEP
         if len(combined) > keep:
@@ -186,7 +182,7 @@ class AnswerMarkerStripper:
             self._detected = True
             if idx > 0:
                 yield self._buffer[:idx]
-            trailing = self._buffer[idx + len(LIGHTRAG_NO_CONTEXT_MARKER):]
+            trailing = self._buffer[idx + len(LIGHTRAG_NO_CONTEXT_MARKER) :]
             if trailing:
                 yield trailing
         else:
@@ -279,9 +275,9 @@ def classify_aquery_llm_result(
     answer: str = raw_content if isinstance(raw_content, str) else ""
 
     metadata = result.get("metadata") or {}
-    failure_reason = metadata.get("failure_reason") if isinstance(
-        metadata, dict
-    ) else None
+    failure_reason = (
+        metadata.get("failure_reason") if isinstance(metadata, dict) else None
+    )
 
     envelope_status = result.get("status")
     if envelope_status == "failure":
@@ -406,9 +402,7 @@ def _build_source_entry(
     matching_chunks = chunks_by_ref.get(str(ref_id_raw), [])
     chunk_id = _first_chunk_id(matching_chunks)
     doc_id = _first_doc_id(matching_chunks) or (
-        chunk_id_to_doc_id.get(chunk_id)
-        if (chunk_id and chunk_id_to_doc_id)
-        else None
+        chunk_id_to_doc_id.get(chunk_id) if (chunk_id and chunk_id_to_doc_id) else None
     )
     source_name = file_path or (chunk_id or f"reference-{n_value}")
     source_name_is_fallback = not file_path and not chunk_id

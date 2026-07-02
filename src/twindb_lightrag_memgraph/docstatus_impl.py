@@ -193,15 +193,13 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         reads be membership-authoritative without a separate migration step.
         """
         flabel = self._folder_label()
-        result = await session.run(
-            f"""
+        result = await session.run(f"""
             MATCH (n:`{label}`)
             WHERE n.folder IS NOT NULL
               AND NOT EXISTS((n)-[:MEMBER_OF]->(:`{flabel}`))
             MERGE (f:`{flabel}` {{id: n.folder}})
             MERGE (n)-[:MEMBER_OF]->(f)
-            """
-        )
+            """)
         await result.consume()
 
     async def finalize(self):  # NOSONAR - async contract.
@@ -216,14 +214,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         """Populate top-level ``folder`` on legacy DocStatus nodes."""
         default_folder = default_twin_folder()
         while True:
-            result = await session.run(
-                f"""
+            result = await session.run(f"""
                 MATCH (n:`{label}`)
                 WHERE n.folder IS NULL AND n.id IS NOT NULL
                 RETURN n.id AS id, n.metadata AS metadata
                 LIMIT 1000
-                """
-            )
+                """)
             rows = []
             async for record in result:
                 metadata_folder = self._folder_from_metadata(record["metadata"])
@@ -749,9 +745,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             # Membership is authoritative (backfilled at initialize); the legacy
             # `folder` property is written for rollback only, never read.
             flabel = self._folder_label()
-            filters.append(
-                f"EXISTS((n)-[:MEMBER_OF]->(:`{flabel}` {{id: $folder}}))"
-            )
+            filters.append(f"EXISTS((n)-[:MEMBER_OF]->(:`{flabel}` {{id: $folder}}))")
             params["folder"] = validate_identifier(folder, "folder")
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 

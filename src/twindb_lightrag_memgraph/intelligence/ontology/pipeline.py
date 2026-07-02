@@ -26,9 +26,7 @@ logger = logging.getLogger("twin_rag_intelligence.ontology.pipeline")
 class OntologyPipeline:
     """4-step ontology pipeline: Extract -> Cluster -> Enrich -> Validate."""
 
-    def __init__(
-        self, config: TwinRAGConfig, onto_config: OntologyConfig
-    ) -> None:
+    def __init__(self, config: TwinRAGConfig, onto_config: OntologyConfig) -> None:
         self.config = config
         self.onto_config = onto_config
 
@@ -53,9 +51,7 @@ class OntologyPipeline:
         """
         ws_config = self.onto_config.workspaces.get(workspace)
         if ws_config is None:
-            logger.warning(
-                "No ontology config for workspace '%s', skipping", workspace
-            )
+            logger.warning("No ontology config for workspace '%s', skipping", workspace)
             return ValidationResult()
 
         logger.info(
@@ -89,9 +85,7 @@ class OntologyPipeline:
 
         return validated
 
-    async def approve(
-        self, result: ValidationResult, workspace: str
-    ) -> None:
+    async def approve(self, result: ValidationResult, workspace: str) -> None:
         """Persist a validated result to Memgraph after human review.
 
         Args:
@@ -110,9 +104,7 @@ class OntologyPipeline:
             len(result.edges),
         )
 
-    async def _extract(
-        self, documents: list[str], workspace: str
-    ) -> ExtractionResult:
+    async def _extract(self, documents: list[str], workspace: str) -> ExtractionResult:
         """Run EXTRACT step across all documents and merge results."""
         ws_config = self.onto_config.workspaces[workspace]
         merged = ExtractionResult()
@@ -233,9 +225,7 @@ class OntologyPipeline:
     async def _cluster(self, extraction: ExtractionResult) -> ClusterResult:
         """Run CLUSTER step."""
         result = await cluster(extraction, self.config)
-        logger.info(
-            "[Pipeline] Clustered into %d domains", len(result.domains)
-        )
+        logger.info("[Pipeline] Clustered into %d domains", len(result.domains))
         return result
 
     async def _enrich(self, cluster_result: ClusterResult) -> EnrichmentResult:

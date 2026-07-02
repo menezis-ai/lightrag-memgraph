@@ -294,7 +294,9 @@ class InMemoryActivityStore:
         events: list[dict[str, Any]] | None = None,
         now_ms: int = webui_seed.ACTIVITY_NOW_MS,
     ) -> None:
-        self._events = copy.deepcopy(events if events is not None else webui_seed.ACTIVITY)
+        self._events = copy.deepcopy(
+            events if events is not None else webui_seed.ACTIVITY
+        )
         self._now_ms = now_ms
 
     async def list(  # NOSONAR - async contract.
@@ -326,7 +328,9 @@ class InMemoryActivityStore:
         total = len(filtered)
         return filtered[: _bounded_limit(limit)], total, now_ms
 
-    async def append(self, event: dict[str, Any]) -> dict[str, Any]:  # NOSONAR - async contract.
+    async def append(
+        self, event: dict[str, Any]
+    ) -> dict[str, Any]:  # NOSONAR - async contract.
         stored = copy.deepcopy(event)
         self._events.insert(0, stored)
         return copy.deepcopy(stored)
@@ -465,9 +469,7 @@ class MemgraphActivityStore:
         # Insert oldest first so newest-first read order matches creation order.
         for ev in reversed(seed):
             await self.append(ev)
-        logger.info(
-            "[WebuiActivityStore] Bootstrapped %d events", len(seed)
-        )
+        logger.info("[WebuiActivityStore] Bootstrapped %d events", len(seed))
         return True
 
     async def list(
@@ -511,7 +513,9 @@ class MemgraphActivityStore:
             await result.consume()
         events = _decode_rows(rows, fallback_created_at=now_ms)
         async with _pool.get_read_session() as session:
-            count_query = f"MATCH (n:`{self._label}`) {where_scalar} RETURN count(n) AS c"
+            count_query = (
+                f"MATCH (n:`{self._label}`) {where_scalar} RETURN count(n) AS c"
+            )
             result = await session.run(count_query, **params)
             count_record = await result.single()
             await result.consume()
@@ -593,7 +597,9 @@ class MemgraphActivityStore:
         return copy.deepcopy(event)
 
 
-async def make_memgraph_activity_store(workspace: str = "default") -> MemgraphActivityStore:
+async def make_memgraph_activity_store(
+    workspace: str = "default",
+) -> MemgraphActivityStore:
     store = MemgraphActivityStore(workspace=workspace)
     await store.initialize()
     await store.bootstrap_if_empty()

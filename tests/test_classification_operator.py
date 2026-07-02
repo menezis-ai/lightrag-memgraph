@@ -28,7 +28,6 @@ from twindb_lightrag_memgraph.classification import (
     apply_operator_classification,
 )
 
-
 # --------------------------------------------------------------------------
 # Policy helper — apply_operator_classification
 # --------------------------------------------------------------------------

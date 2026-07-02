@@ -93,7 +93,9 @@ async def test_failing_activity_write_does_not_change_auth_status(client, monkey
     assert response.status_code == 401
 
 
-async def test_access_denied_event_emission_is_deduplicated_on_same_request(monkeypatch):
+async def test_access_denied_event_emission_is_deduplicated_on_same_request(
+    monkeypatch,
+):
     store = webui_router.get_store()
     calls: list[dict] = []
 

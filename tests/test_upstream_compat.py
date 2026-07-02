@@ -35,9 +35,7 @@ STORAGE_CLASSES = [
 ]
 
 
-@pytest.mark.parametrize(
-    "storage_cls", STORAGE_CLASSES, ids=lambda c: c.__name__
-)
+@pytest.mark.parametrize("storage_cls", STORAGE_CLASSES, ids=lambda c: c.__name__)
 def test_storage_class_is_concrete(storage_cls):
     """Every Memgraph storage backend must implement all abstract methods
     declared by the installed LightRAG base class.

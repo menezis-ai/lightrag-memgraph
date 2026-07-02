@@ -23,7 +23,6 @@ import pytest
 
 from twindb_lightrag_memgraph.server import graph_reader
 
-
 # ── pure projectors ───────────────────────────────────────────────────────
 
 
@@ -90,7 +89,9 @@ class TestEntityProjectorScoping:
         # Manual create (#1a): no real chunk provenance, but id ∈ direct_members
         # → visible as a pure, operator-owned node.
         row = {
-            "entity_id": "e1", "source_id": "manual:operator", "description": "M",
+            "entity_id": "e1",
+            "source_id": "manual:operator",
+            "description": "M",
         }
         ent = graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, {"e1"})
         assert ent is not None
@@ -101,9 +102,7 @@ class TestEntityProjectorScoping:
     def test_direct_member_dropped_when_not_in_set(self):
         row = {"entity_id": "e1", "source_id": "manual:operator"}
         # member_docs bound, no chunk membership, id NOT a direct member → hidden.
-        assert (
-            graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, set()) is None
-        )
+        assert graph_reader._node_record_to_entity(row, _CTD, {"doc-a"}, set()) is None
 
     def test_mixed_entity_overlay_replaces_masked_fields(self):
         row = {
@@ -192,8 +191,11 @@ class TestRelationProjectorScoping:
     def test_manual_relation_visible_via_folder_stamp(self):
         # Manual edge (#1a): no chunk provenance, stamped twin_folder_json=[A].
         row = {
-            "source_id": "e1", "target_id": "e2", "chunk_source_id": None,
-            "keywords": "uses", "twin_folder_json": json.dumps(["A"]),
+            "source_id": "e1",
+            "target_id": "e2",
+            "chunk_source_id": None,
+            "keywords": "uses",
+            "twin_folder_json": json.dumps(["A"]),
         }
         rel = graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A")
         assert rel is not None
@@ -201,13 +203,14 @@ class TestRelationProjectorScoping:
 
     def test_manual_relation_hidden_for_other_folder(self):
         row = {
-            "source_id": "e1", "target_id": "e2", "chunk_source_id": None,
+            "source_id": "e1",
+            "target_id": "e2",
+            "chunk_source_id": None,
             "twin_folder_json": json.dumps(["B"]),
         }
         # active folder A, edge stamped only for B → not visible.
         assert (
-            graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A")
-            is None
+            graph_reader._edge_record_to_relation(row, 0, _CTD, {"doc-a"}, "A") is None
         )
 
     def test_mixed_relation_overlay_replaces_masked_fields(self):
@@ -460,9 +463,7 @@ class TestDeleteEntityFolderGate:
 
 
 class TestRelationFolderGate:
-    async def test_startup_relation_id_backfill_batches_until_empty(
-        self, monkeypatch
-    ):
+    async def test_startup_relation_id_backfill_batches_until_empty(self, monkeypatch):
         read = _QueuedRecordingSession(
             [
                 [{"source_id": "e1", "target_id": "e2"}],
@@ -573,7 +574,8 @@ class TestRelationFolderGate:
     async def test_patch_b_only_relation_is_refused(self, folder_a, monkeypatch):
         # relation provenance chunk-b (doc-b) → invisible in folder A.
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         read = _RecordingSession([_rel_row("chunk-b")])
@@ -589,7 +591,8 @@ class TestRelationFolderGate:
 
     async def test_delete_b_only_relation_is_refused(self, folder_a, monkeypatch):
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         read = _RecordingSession([_rel_row("chunk-b")])
@@ -603,7 +606,8 @@ class TestRelationFolderGate:
 
     async def test_patch_member_relation_writes(self, folder_a, monkeypatch):
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         read = _RecordingSession([_rel_row("chunk-a")])
@@ -611,9 +615,7 @@ class TestRelationFolderGate:
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        out = await graph_reader.update_graph_relation(
-            "ws", "kr_x", {"label": "uses"}
-        )
+        out = await graph_reader.update_graph_relation("ws", "kr_x", {"label": "uses"})
         assert out is not None
         assert any("SET r +=" in q for q in write.queries)
 
@@ -621,7 +623,8 @@ class TestRelationFolderGate:
         self, folder_a, monkeypatch
     ):
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         # edge provenance spans chunk-a (member) + chunk-b (non-member) → mixed.
@@ -647,7 +650,8 @@ class TestRelationFolderGate:
         self, folder_a, monkeypatch
     ):
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         read = _RecordingSession([_rel_row("chunk-a<SEP>chunk-b")])
@@ -723,12 +727,8 @@ class TestCreateRelationFolderGate:
         assert out is None  # 422 to the caller — no link to a B-only entity
         assert not any("MERGE" in q for q in write.queries)
 
-    async def test_create_with_mixed_endpoint_is_refused(
-        self, folder_a, monkeypatch
-    ):
-        read = _PerEntityReadSession(
-            {"e1": "chunk-a", "em": "chunk-a<SEP>chunk-b"}
-        )
+    async def test_create_with_mixed_endpoint_is_refused(self, folder_a, monkeypatch):
+        read = _PerEntityReadSession({"e1": "chunk-a", "em": "chunk-a<SEP>chunk-b"})
         write = _RecordingSession([{"source_id": "e1"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
@@ -747,8 +747,12 @@ class TestCreateRelationFolderGate:
 
         async def fake_proj(_ws, _src, _tgt, *_a, **_k):
             return {
-                "id": "kr_x", "source": "kg_e1", "target": "kg_e1b",
-                "label": "USES", "strength": 0.5, "properties": {},
+                "id": "kr_x",
+                "source": "kg_e1",
+                "target": "kg_e1b",
+                "label": "USES",
+                "strength": 0.5,
+                "properties": {},
             }
 
         monkeypatch.setattr(graph_reader, "_read_one_relation", fake_proj)
@@ -774,8 +778,12 @@ class TestCreateRelationFolderGate:
 
         async def fake_proj(_ws, _src, _tgt, *_a, **_k):
             return {
-                "id": "kr_x", "source": "kg_e1", "target": "kg_e2",
-                "label": "USES", "strength": 0.5, "properties": {},
+                "id": "kr_x",
+                "source": "kg_e1",
+                "target": "kg_e2",
+                "label": "USES",
+                "strength": 0.5,
+                "properties": {},
             }
 
         monkeypatch.setattr(graph_reader, "_read_one_relation", fake_proj)
@@ -843,28 +851,23 @@ class TestManualRecordGate:
 
     async def test_manual_relation_is_mutable(self, folder_a, monkeypatch):
         monkeypatch.setattr(
-            graph_reader, "lookup_relation_endpoints",
+            graph_reader,
+            "lookup_relation_endpoints",
             lambda rid: ("ws", "e1", "e2"),
         )
         # Manual edge: no chunk provenance, stamped twin_folder_json=[A].
-        read = _RecordingSession(
-            [_rel_row(None, twin_folder_json=json.dumps(["A"]))]
-        )
+        read = _RecordingSession([_rel_row(None, twin_folder_json=json.dumps(["A"]))])
         write = _RecordingSession([{"source_id": "e1"}])
         monkeypatch.setattr(graph_reader, "get_read_session", _cm(read))
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
-        out = await graph_reader.update_graph_relation(
-            "ws", "kr_x", {"label": "x"}
-        )
+        out = await graph_reader.update_graph_relation("ws", "kr_x", {"label": "x"})
         assert out is not None
         assert any("SET r +=" in q for q in write.queries)
 
 
 class TestManualCreateStamping:
-    async def test_create_entity_stamps_folder_membership(
-        self, folder_a, monkeypatch
-    ):
+    async def test_create_entity_stamps_folder_membership(self, folder_a, monkeypatch):
         async def absent(_ws, _eid):
             return False
 
@@ -874,8 +877,14 @@ class TestManualCreateStamping:
 
         async def proj(_ws, _eid, *_a, **_k):
             return {
-                "id": "kg_X", "name": "X", "type": "CONCEPT", "x": 0, "y": 0,
-                "mentions": 0, "sources": 0, "summary": "",
+                "id": "kg_X",
+                "name": "X",
+                "type": "CONCEPT",
+                "x": 0,
+                "y": 0,
+                "mentions": 0,
+                "sources": 0,
+                "summary": "",
             }
 
         monkeypatch.setattr(graph_reader, "_read_one_entity", proj)
@@ -888,14 +897,11 @@ class TestManualCreateStamping:
         assert any("GRAPH_MEMBER_OF" in q for q in write.queries)
         # And the Folder node id is the active folder.
         stamp_params = next(
-            p for q, p in zip(write.queries, write.params)
-            if "GRAPH_MEMBER_OF" in q
+            p for q, p in zip(write.queries, write.params) if "GRAPH_MEMBER_OF" in q
         )
         assert stamp_params.get("folder") == "A"
 
-    async def test_create_relation_stamps_folder_on_edge(
-        self, folder_a, monkeypatch
-    ):
+    async def test_create_relation_stamps_folder_on_edge(self, folder_a, monkeypatch):
         # Both endpoints pure-member so the #2 gate passes.
         read = _PerEntityReadSession({"e1": "chunk-a", "e2": "chunk-a"})
         write = _RecordingSession([{"source_id": "e1"}])
@@ -904,8 +910,12 @@ class TestManualCreateStamping:
 
         async def proj(_ws, _src, _tgt, *_a, **_k):
             return {
-                "id": "kr_x", "source": "kg_e1", "target": "kg_e2",
-                "label": "USES", "strength": 0.5, "properties": {},
+                "id": "kr_x",
+                "source": "kg_e1",
+                "target": "kg_e2",
+                "label": "USES",
+                "strength": 0.5,
+                "properties": {},
             }
 
         monkeypatch.setattr(graph_reader, "_read_one_relation", proj)
@@ -1055,9 +1065,12 @@ async def test_native_unions_direct_member_entities(patched_loaders, monkeypatch
     async def _direct(_ws, _folder):
         return [
             {
-                "entity_id": "manualX", "entity_type": "CONCEPT",
-                "description": "M", "source_id": "manual:operator",
-                "display_name": "manualX", "twin_tags_json": None,
+                "entity_id": "manualX",
+                "entity_type": "CONCEPT",
+                "description": "M",
+                "source_id": "manual:operator",
+                "display_name": "manualX",
+                "twin_tags_json": None,
                 "twin_props_json": None,
             }
         ]

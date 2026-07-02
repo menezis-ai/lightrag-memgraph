@@ -68,7 +68,9 @@ def _new_id() -> str:
     return f"{_now_ms():x}-{secrets.token_hex(4)}"
 
 
-def _public_entry(entry: dict[str, Any], *, last_used_at_ms: int | None) -> dict[str, Any]:
+def _public_entry(
+    entry: dict[str, Any], *, last_used_at_ms: int | None
+) -> dict[str, Any]:
     out = dict(entry)
     out.pop("hash", None)
     out["last_used_at"] = last_used_at_ms
@@ -88,13 +90,9 @@ async def initialize(workspace: str) -> None:
         async with _pool.get_session() as session:
             for field in ("id", "hash"):
                 try:
-                    result = await session.run(
-                        f"CREATE INDEX ON :`{label}`({field})"
-                    )
+                    result = await session.run(f"CREATE INDEX ON :`{label}`({field})")
                     await result.consume()
-                    logger.info(
-                        "[ApiKeyStore] Index on :%s(%s) ensured", label, field
-                    )
+                    logger.info("[ApiKeyStore] Index on :%s(%s) ensured", label, field)
                 except Exception as exc:  # noqa: BLE001 — narrow check below
                     if "already exists" in str(exc).lower():
                         continue
@@ -293,8 +291,7 @@ async def mark_used(workspace: str, key_id: str) -> None:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 res = await session.run(
-                    f"MATCH (n:`{label}` {{id: $id}}) "
-                    f"SET n.last_used_at_ms = $now",
+                    f"MATCH (n:`{label}` {{id: $id}}) " f"SET n.last_used_at_ms = $now",
                     id=key_id,
                     now=now,
                 )

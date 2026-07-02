@@ -216,9 +216,7 @@ def extract_trace_parent(headers: dict[str, str]) -> dict[str, Any] | None:
     - ``x-trace-id`` header (custom fallback)
     """
     # LangSmith native header
-    langsmith_trace = headers.get("langsmith-trace") or headers.get(
-        "x-langsmith-trace"
-    )
+    langsmith_trace = headers.get("langsmith-trace") or headers.get("x-langsmith-trace")
     if langsmith_trace:
         return {"langsmith_trace_id": langsmith_trace}
 

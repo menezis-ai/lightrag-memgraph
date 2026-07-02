@@ -81,8 +81,10 @@ class TestClassifyForIngestion:
     def test_audit_emit_called_on_detection_and_rejection(self, tmp_path):
         path = _build_docx_with_label(tmp_path, "C3 Strict", C3_GUID)
         events = []
+
         def emit(kind, payload):
             events.append((kind, payload))
+
         with pytest.raises(ClassificationRejection):
             classify_for_ingestion(
                 path,

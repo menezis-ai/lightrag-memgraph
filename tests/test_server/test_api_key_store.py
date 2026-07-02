@@ -82,9 +82,7 @@ class TestApiKeyStore:
     async def test_revoke_unknown_returns_none(self, _ws):
         try:
             await api_key_store.initialize(_ws)
-            assert (
-                await api_key_store.revoke_key(_ws, "no-such-id")
-            ) is None
+            assert (await api_key_store.revoke_key(_ws, "no-such-id")) is None
         finally:
             await api_key_store.reset_workspace(_ws)
 
@@ -128,9 +126,7 @@ class TestApiKeyStore:
 
             await api_key_store.revoke_key(_ws, a["id"])
             # 'a' is revoked but 'b' still matches
-            assert (
-                await api_key_store.validate_bearer(_ws, a["full_value"])
-            ) is None
+            assert (await api_key_store.validate_bearer(_ws, a["full_value"])) is None
             assert (
                 await api_key_store.validate_bearer(_ws, b["full_value"])
             ) is not None
@@ -141,9 +137,7 @@ class TestApiKeyStore:
         try:
             await api_key_store.initialize(_ws)
             long_name = "x" * 500
-            entry = await api_key_store.create_key(
-                _ws, name=long_name, created_by="z"
-            )
+            entry = await api_key_store.create_key(_ws, name=long_name, created_by="z")
             assert len(entry["name"]) == 120
         finally:
             await api_key_store.reset_workspace(_ws)

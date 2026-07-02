@@ -24,7 +24,9 @@ def _response(
         body = payload.encode("utf-8")
     else:
         body = json.dumps(payload).encode("utf-8")
-    return run_smoke.SmokeResponse(status=status, headers=_headers(headers or {}), body=body)
+    return run_smoke.SmokeResponse(
+        status=status, headers=_headers(headers or {}), body=body
+    )
 
 
 def test_runtime_smoke_runner_executes_manifest(tmp_path, monkeypatch):
@@ -34,7 +36,9 @@ def test_runtime_smoke_runner_executes_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(
         run_smoke,
         "_build_opener",
-        lambda base_url, ca_bundle: SimpleNamespace(cookie_jar=SimpleNamespace(clear=lambda: None)),
+        lambda base_url, ca_bundle: SimpleNamespace(
+            cookie_jar=SimpleNamespace(clear=lambda: None)
+        ),
     )
 
     def fake_request(opener, url, method, payload, headers, timeout):
@@ -52,7 +56,9 @@ def test_runtime_smoke_runner_executes_manifest(tmp_path, monkeypatch):
                 },
             )
         if path == "/twin/api/documents" and not authenticated:
-            return _response(401, {"detail": "Not authenticated"}, {"WWW-Authenticate": "Bearer"})
+            return _response(
+                401, {"detail": "Not authenticated"}, {"WWW-Authenticate": "Bearer"}
+            )
         if path == "/login":
             if payload != {"username": "fixture-user", "password": "fixture-pass"}:
                 return _response(401, {"detail": "bad credentials"})
@@ -63,7 +69,9 @@ def test_runtime_smoke_runner_executes_manifest(tmp_path, monkeypatch):
                     "token_type": "bearer",
                     "expires_in": 3600,
                 },
-                {"Set-Cookie": "twin_local_token=fixture; HttpOnly; Secure; SameSite=lax"},
+                {
+                    "Set-Cookie": "twin_local_token=fixture; HttpOnly; Secure; SameSite=lax"
+                },
             )
         if path in {
             "/documents",
@@ -189,4 +197,6 @@ def test_runtime_smoke_runner_executes_manifest(tmp_path, monkeypatch):
     assert report["ok"] is True
     assert len(report["checks"]) == len(manifest["checks"])
     assert report_path.exists()
-    assert trace_path.read_text(encoding="utf-8").count("PASS") == len(manifest["checks"])
+    assert trace_path.read_text(encoding="utf-8").count("PASS") == len(
+        manifest["checks"]
+    )

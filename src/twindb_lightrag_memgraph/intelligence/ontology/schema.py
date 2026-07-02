@@ -9,8 +9,8 @@ Schema is defined in code. Content emerges from the pipeline.
 
 from dataclasses import dataclass, field
 
-
 # --- Node type definitions ---
+
 
 @dataclass(frozen=True)
 class NodeType:

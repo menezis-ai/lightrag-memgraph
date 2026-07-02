@@ -7,6 +7,8 @@ Integration coverage (real Memgraph) lives in
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from twindb_lightrag_memgraph.server.graph_reader import (
@@ -67,10 +69,7 @@ class TestLayoutPosition:
     def test_different_ids_get_different_positions(self):
         # Probabilistic but the hash space is huge — for 4 distinct ids
         # we shouldn't see a collision.
-        positions = {
-            layout_position(eid, "PRODUCT")
-            for eid in ("a", "b", "c", "d")
-        }
+        positions = {layout_position(eid, "PRODUCT") for eid in ("a", "b", "c", "d")}
         assert len(positions) == 4
 
     def test_different_types_use_different_centroids(self):
@@ -527,9 +526,7 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
 
         with pytest.raises(gr.EntityExistsError):
-            await gr.create_graph_entity(
-                "cib", {"name": "Existing", "type": "PRODUCT"}
-            )
+            await gr.create_graph_entity("cib", {"name": "Existing", "type": "PRODUCT"})
 
     async def test_raises_backend_error_on_empty_name(self):
         from twindb_lightrag_memgraph.server import graph_reader as gr
@@ -546,9 +543,7 @@ class TestCreateGraphEntityContract:
             return False
 
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
-        monkeypatch.setattr(
-            gr, "acquire_write_slot", _fake_write_slot()
-        )
+        monkeypatch.setattr(gr, "acquire_write_slot", _fake_write_slot())
         monkeypatch.setattr(
             gr,
             "get_session",
@@ -556,9 +551,7 @@ class TestCreateGraphEntityContract:
         )
 
         with pytest.raises(gr.EntityCreateBackendError):
-            await gr.create_graph_entity(
-                "cib", {"name": "FreshOne", "type": "PRODUCT"}
-            )
+            await gr.create_graph_entity("cib", {"name": "FreshOne", "type": "PRODUCT"})
 
     async def test_raises_projection_error_when_reread_fails(self, monkeypatch):
         from twindb_lightrag_memgraph.server import graph_reader as gr
@@ -570,9 +563,7 @@ class TestCreateGraphEntityContract:
             raise RuntimeError("read session timeout")
 
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
-        monkeypatch.setattr(
-            gr, "acquire_write_slot", _fake_write_slot()
-        )
+        monkeypatch.setattr(gr, "acquire_write_slot", _fake_write_slot())
         monkeypatch.setattr(
             gr,
             "get_session",
@@ -581,9 +572,7 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(gr, "_read_one_entity", fake_reread_fails)
 
         with pytest.raises(gr.EntityProjectionError):
-            await gr.create_graph_entity(
-                "cib", {"name": "FreshOne", "type": "PRODUCT"}
-            )
+            await gr.create_graph_entity("cib", {"name": "FreshOne", "type": "PRODUCT"})
 
     async def test_returns_dict_on_success_never_none(self, monkeypatch):
         """The success path must return the projected dict — not ``None``.
@@ -608,9 +597,7 @@ class TestCreateGraphEntityContract:
             }
 
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
-        monkeypatch.setattr(
-            gr, "acquire_write_slot", _fake_write_slot()
-        )
+        monkeypatch.setattr(gr, "acquire_write_slot", _fake_write_slot())
         monkeypatch.setattr(
             gr,
             "get_session",

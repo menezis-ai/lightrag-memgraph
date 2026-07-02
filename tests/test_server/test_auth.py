@@ -81,7 +81,9 @@ class TestAuthAccounts:
         }
 
     def test_parse_trims_operator_spacing_around_credentials(self):
-        assert _parse_auth_accounts(" operator : expected-password , admin : secret ") == {
+        assert _parse_auth_accounts(
+            " operator : expected-password , admin : secret "
+        ) == {
             "operator": "expected-password",
             "admin": "secret",
         }
@@ -241,9 +243,7 @@ class TestRequireAuth:
         from fastapi.security import HTTPAuthorizationCredentials
 
         configure_auth(api_key="my-key", jwt_secret=None)
-        creds = HTTPAuthorizationCredentials(
-            scheme="Bearer", credentials="wrong-key"
-        )
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="wrong-key")
         with pytest.raises(HTTPException) as exc_info:
             await require_auth(credentials=creds)
         assert exc_info.value.status_code == 401
@@ -321,7 +321,9 @@ class TestLoginEndpoint:
             jwt_password="non-default-pwd",
             auth_accounts=" operator : expected-password ",
         )
-        resp = await login(LoginRequest(username="operator", password="expected-password"), Response())
+        resp = await login(
+            LoginRequest(username="operator", password="expected-password"), Response()
+        )
         payload = _decode_jwt(resp.access_token)
         assert payload["sub"] == "operator"
 
@@ -392,9 +394,7 @@ class TestLoginEndpoint:
         )
         cookie = SimpleCookie()
         cookie.load(login_response.headers["set-cookie"])
-        cookie_header = (
-            f"twin_local_token={cookie['twin_local_token'].value}".encode()
-        )
+        cookie_header = f"twin_local_token={cookie['twin_local_token'].value}".encode()
         request = Request(
             {
                 "type": "http",

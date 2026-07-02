@@ -84,6 +84,7 @@ from .._lightrag_compat import (
 
 _PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
 
+
 def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Strip internal source markers before returning public responses."""
     return [
@@ -124,6 +125,7 @@ async def _await_query_or_disconnect(awaitable, request: Request):
             task.cancel()
         raise
 
+
 class TwinQueryBody(BaseModel):
     query: str
     actor: str | None = Field(default=None, max_length=200)
@@ -157,9 +159,7 @@ class TwinQueryBody(BaseModel):
         allowed_keys = {"all", "any"}
         unknown_keys = set(value) - allowed_keys
         if unknown_keys:
-            raise ValueError(
-                "advanced filter keys must be a subset of {'all', 'any'}"
-            )
+            raise ValueError("advanced filter keys must be a subset of {'all', 'any'}")
         return value
 
 
@@ -391,9 +391,7 @@ async def _resolve_doc_for_file_path(rag: Any, file_path: str) -> str | None:
     return None
 
 
-async def _resolve_chunk_to_doc_id(
-    rag: Any, chunk_ids: list[str]
-) -> dict[str, str]:
+async def _resolve_chunk_to_doc_id(rag: Any, chunk_ids: list[str]) -> dict[str, str]:
     """Batch chunk_id -> doc_id resolution for the aquery_llm path.
 
     LightRAG's ``get_docs_by_chunks`` signature returns
@@ -734,9 +732,7 @@ async def _enrich_sources_doc_ids_from_file_path(
         return_exceptions=False,
     )
     file_path_to_doc_id = {
-        file_path: doc_id
-        for file_path, doc_id in zip(unique, resolved)
-        if doc_id
+        file_path: doc_id for file_path, doc_id in zip(unique, resolved) if doc_id
     }
     if not file_path_to_doc_id:
         return
@@ -752,9 +748,7 @@ def _split_source_ids(raw: Any) -> list[str]:
     if not isinstance(raw, str):
         return []
     return [
-        item.strip()
-        for item in raw.replace("<SEP>", ",").split(",")
-        if item.strip()
+        item.strip() for item in raw.replace("<SEP>", ",").split(",") if item.strip()
     ]
 
 
@@ -885,12 +879,7 @@ async def _filter_sources_by_advanced_filters(
 ) -> tuple[list[dict[str, Any]], bool]:
     tag_required, tag_optional = _tag_filter_terms(tag_filter)
     doc_required, doc_optional = _doc_filter_terms(doc_filter)
-    if (
-        not tag_required
-        and not tag_optional
-        and not doc_required
-        and not doc_optional
-    ):
+    if not tag_required and not tag_optional and not doc_required and not doc_optional:
         return sources, False
 
     tags_cache: dict[str, set[str]] = {}
@@ -901,9 +890,7 @@ async def _filter_sources_by_advanced_filters(
             if not _source_doc_candidates(source):
                 has_unverified = True
             continue
-        if not await _source_matches_tag_filter(
-            source, tag_filter, folder, tags_cache
-        ):
+        if not await _source_matches_tag_filter(source, tag_filter, folder, tags_cache):
             if not source.get("doc_id"):
                 has_unverified = True
             continue
@@ -1010,7 +997,9 @@ async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
 
 async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
     doc_ids = _direct_doc_ids_for_query_data_row(row)
-    doc_ids.update(await _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row)))
+    doc_ids.update(
+        await _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row))
+    )
     doc_ids.update(
         await _doc_ids_from_file_paths(
             rag,
@@ -1246,8 +1235,9 @@ def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
     chunk/entity never enters the prompt. The downstream Sources post-filter
     becomes a guard-rail that removes nothing in the nominal case.
     """
-    with storage_folder_context(folder), storage_filter_context(
-        _retrieval_filters_from_body(body)
+    with (
+        storage_folder_context(folder),
+        storage_filter_context(_retrieval_filters_from_body(body)),
     ):
         yield
 
@@ -1261,9 +1251,7 @@ def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:
     not a failure -- so they report ``answer_status = no_retrieval`` rather than
     falsely claiming ``grounded``.
     """
-    return (
-        body.mode == "bypass" or body.only_need_context or body.only_need_prompt
-    )
+    return body.mode == "bypass" or body.only_need_context or body.only_need_prompt
 
 
 def _has_advanced_filter(body: TwinQueryBody) -> bool:
@@ -1478,10 +1466,7 @@ async def _twin_query_data(
         }
 
     fallback_mode = _query_data_fallback_mode(body)
-    if (
-        fallback_mode is not None
-        and _query_data_failure_reason(result) == "no_results"
-    ):
+    if fallback_mode is not None and _query_data_failure_reason(result) == "no_results":
         fallback_kwargs = _query_param_kwargs(body)
         fallback_kwargs["mode"] = fallback_mode
         fallback_param = _make_query_param(QueryParam, fallback_kwargs)
@@ -1509,9 +1494,7 @@ async def _twin_query_data(
         "message": result.get("message", "Query executed successfully"),
         "data": result.get("data") if isinstance(result.get("data"), dict) else {},
         "metadata": (
-            result.get("metadata")
-            if isinstance(result.get("metadata"), dict)
-            else {}
+            result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
         ),
     }
 
@@ -1675,7 +1658,9 @@ async def _generate_twin_query_stream(
     stripper = AnswerMarkerStripper()
     envelope: dict[str, Any] | None = None
     try:
-        param = _make_query_param(query_param_cls, _query_param_kwargs(body, stream=True))
+        param = _make_query_param(
+            query_param_cls, _query_param_kwargs(body, stream=True)
+        )
         with _retrieval_scope(folder, body):
             envelope = await _await_query_or_disconnect(
                 rag.aquery_llm(body.query, param=param),
@@ -1695,7 +1680,9 @@ async def _generate_twin_query_stream(
 
     status, fatal_reason = _determine_stream_status(envelope, stripper)
     if fatal_reason is not None:
-        async for line in _query_stream_fatal_events(body, request, folder, fatal_reason):
+        async for line in _query_stream_fatal_events(
+            body, request, folder, fatal_reason
+        ):
             yield line
         return
 
@@ -1703,7 +1690,9 @@ async def _generate_twin_query_stream(
     if no_retrieval:
         status = ANSWER_STATUS_NO_RETRIEVAL
     if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
-        async for line in _query_stream_empty_sources_events(body, request, folder, status):
+        async for line in _query_stream_empty_sources_events(
+            body, request, folder, status
+        ):
             yield line
         return
 
@@ -1748,9 +1737,7 @@ def build_twin_query_router(get_rag) -> APIRouter:
             500: {"description": "Query backend error"},
         },
     )
-    async def query_endpoint(
-        body: TwinQueryBody, request: Request
-    ) -> dict[str, Any]:
+    async def query_endpoint(body: TwinQueryBody, request: Request) -> dict[str, Any]:
         return await _twin_query(get_rag, body, request)
 
     @router.post(

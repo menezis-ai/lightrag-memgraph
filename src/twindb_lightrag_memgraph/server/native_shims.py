@@ -146,9 +146,7 @@ def _filter_docs(
         d
         for d in items
         if (
-            d.get("folder")
-            or (d.get("metadata") or {}).get("folder")
-            or default_folder
+            d.get("folder") or (d.get("metadata") or {}).get("folder") or default_folder
         )
         == folder
     ]
@@ -175,15 +173,10 @@ def _filter_docs(
         out = [
             d
             for d in out
-            if source_needle
-            in str(d.get("file_path") or d.get("source") or "").lower()
+            if source_needle in str(d.get("file_path") or d.get("source") or "").lower()
         ]
     if doc_id:
-        out = [
-            d
-            for d in out
-            if doc_id == str(d.get("doc_id") or d.get("id") or "")
-        ]
+        out = [d for d in out if doc_id == str(d.get("doc_id") or d.get("id") or "")]
     if tag:
         # Tags now come from the [:TAGGED_WITH] graph relation and are
         # injected on top of each doc dict by the list endpoint
@@ -365,8 +358,7 @@ async def _get_docs_paginated_for_shim(
         supports_folder = True
     else:
         supports_folder = "folder" in params or any(
-            param.kind == inspect.Parameter.VAR_KEYWORD
-            for param in params.values()
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
         )
     if not supports_folder:
         docs, total = await get_docs_paginated(
@@ -605,7 +597,9 @@ async def _delete_or_unshare(rag, doc_id: str, folder: str) -> None:
             await rag.doc_status.remove_from_folder(doc_id, folder)
 
 
-async def _doc_visible_in_folder(rag, doc_id: str, doc_status: Any, folder: str) -> bool:
+async def _doc_visible_in_folder(
+    rag, doc_id: str, doc_status: Any, folder: str
+) -> bool:
     """Membership-first folder visibility for the native shim gate.
 
     Authority is the MEMBER_OF graph (``get_folders_for_doc``) when the backend

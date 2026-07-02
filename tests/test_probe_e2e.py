@@ -31,7 +31,9 @@ from twindb_lightrag_memgraph import _pool
 from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
 
-def _make_status(i: int, status: DocStatus = DocStatus.PROCESSED) -> DocProcessingStatus:
+def _make_status(
+    i: int, status: DocStatus = DocStatus.PROCESSED
+) -> DocProcessingStatus:
     """Build a DocProcessingStatus with a varied updated_at for sort testing."""
     # Use a monotonic timestamp so sort order is predictable (i=99 is most recent).
     ts = datetime.now(timezone.utc).replace(microsecond=i * 10 % 1_000_000).isoformat()
@@ -51,10 +53,13 @@ async def probe_store():
     """DocStatus store with a unique workspace per test run (isolation)."""
     # Unique workspace avoids collisions when integration tests run in parallel.
     import os
+
     suffix = uuid.uuid4().hex[:8]
     os.environ["MEMGRAPH_WORKSPACE"] = f"probe_{suffix}"
     store = MemgraphDocStatusStorage(
-        namespace="doc_status", global_config={}, embedding_func=None,
+        namespace="doc_status",
+        global_config={},
+        embedding_func=None,
     )
     await store.initialize()
     yield store
@@ -82,9 +87,7 @@ class TestPaginatedIndexes:
             return p[0] if isinstance(p, list) and p else p
 
         found = {
-            _norm(rec.get("property"))
-            for rec in records
-            if rec.get("label") == label
+            _norm(rec.get("property")) for rec in records if rec.get("label") == label
         }
         missing = expected - found
         assert not missing, f"Missing indexes on :{label}: {missing}"
@@ -102,9 +105,9 @@ class TestPaginatedCorrectness:
         assert total == 30
         assert len(docs) == 10
         ts_list = [d[1].updated_at for d in docs]
-        assert ts_list == sorted(ts_list, reverse=True), (
-            "DESC sort on updated_at violated"
-        )
+        assert ts_list == sorted(
+            ts_list, reverse=True
+        ), "DESC sort on updated_at violated"
 
     async def test_pagination_no_overlap(self, probe_store):
         """Consecutive pages must not overlap."""
@@ -133,10 +136,14 @@ class TestPaginatedCorrectness:
         await probe_store.upsert(data)
 
         docs_proc, total_proc = await probe_store.get_docs_paginated(
-            status_filter=DocStatus.PROCESSED, page=1, page_size=50,
+            status_filter=DocStatus.PROCESSED,
+            page=1,
+            page_size=50,
         )
         docs_pend, total_pend = await probe_store.get_docs_paginated(
-            status_filter=DocStatus.PENDING, page=1, page_size=50,
+            status_filter=DocStatus.PENDING,
+            page=1,
+            page_size=50,
         )
 
         assert total_proc == 20

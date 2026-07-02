@@ -92,8 +92,7 @@ class TestCreateFolder:
         folder_events = [
             e
             for e in events
-            if e["kind"] == "settings"
-            and e["meta"].get("operation") == "create"
+            if e["kind"] == "settings" and e["meta"].get("operation") == "create"
         ]
         assert len(folder_events) == 1
         assert folder_events[0]["meta"]["folder_id"] == "sandbox"
@@ -170,8 +169,7 @@ class TestDeleteFolder:
         deletes = [
             e
             for e in events
-            if e["kind"] == "settings"
-            and e["meta"].get("operation") == "delete"
+            if e["kind"] == "settings" and e["meta"].get("operation") == "delete"
         ]
         assert len(deletes) == 1
 

@@ -51,17 +51,13 @@ class TestSeedStoresWarningUnderActiveIdp:
     live.
     """
 
-    def test_warn_emitted_when_idp_active_and_seed_mode(
-        self, monkeypatch, caplog
-    ):
+    def test_warn_emitted_when_idp_active_and_seed_mode(self, monkeypatch, caplog):
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp.example/jwks")
         app = FastAPI()
         with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
             _mount_twin_subapp(app, prefix="/twin/api", webui_stores="seed")
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        relevant = [
-            r for r in warnings if "DEMO STORES IN PROD" in r.getMessage()
-        ]
+        relevant = [r for r in warnings if "DEMO STORES IN PROD" in r.getMessage()]
         assert relevant, (
             "Expected DEMO STORES IN PROD warning when IdP is active and "
             "webui_stores='seed'; saw: "
@@ -75,13 +71,9 @@ class TestSeedStoresWarningUnderActiveIdp:
         app = FastAPI()
         with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
             _mount_twin_subapp(app, prefix="/twin/api", webui_stores="seed")
-        assert not any(
-            "DEMO STORES IN PROD" in r.getMessage() for r in caplog.records
-        )
+        assert not any("DEMO STORES IN PROD" in r.getMessage() for r in caplog.records)
 
-    def test_no_warn_when_idp_active_but_memgraph_mode(
-        self, monkeypatch, caplog
-    ):
+    def test_no_warn_when_idp_active_but_memgraph_mode(self, monkeypatch, caplog):
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp.example/jwks")
         app = FastAPI()
         with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
@@ -90,14 +82,10 @@ class TestSeedStoresWarningUnderActiveIdp:
             # exercise here — we only assert no WARN about DEMO STORES.
             # An exception or error log unrelated to F5 is acceptable.
             try:
-                _mount_twin_subapp(
-                    app, prefix="/twin/api", webui_stores="memgraph"
-                )
+                _mount_twin_subapp(app, prefix="/twin/api", webui_stores="memgraph")
             except Exception:
                 pass
-        assert not any(
-            "DEMO STORES IN PROD" in r.getMessage() for r in caplog.records
-        )
+        assert not any("DEMO STORES IN PROD" in r.getMessage() for r in caplog.records)
 
     def test_register_default_webui_stores_is_memgraph(self):
         import inspect

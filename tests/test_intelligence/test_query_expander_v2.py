@@ -77,9 +77,7 @@ class TestExpandV2:
                 "twindb_lightrag_memgraph._pool.get_driver",
                 mock_get_driver,
             ):
-                result = await expander.expand_v2(
-                    "ORA-04030", workspace="oracle_ws"
-                )
+                result = await expander.expand_v2("ORA-04030", workspace="oracle_ws")
 
         # Falls back to v1 thesaurus
         assert result.original_query == "ORA-04030"

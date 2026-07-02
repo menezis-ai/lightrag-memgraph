@@ -74,9 +74,9 @@ def test_protected_routes_reject_anonymous(method, path):
     app = _build_app(with_auth=True)
     client = TestClient(app)
     response = client.request(method, path, json={})
-    assert response.status_code == 401, (
-        f"{method} {path} returned {response.status_code} for anonymous"
-    )
+    assert (
+        response.status_code == 401
+    ), f"{method} {path} returned {response.status_code} for anonymous"
 
 
 @pytest.mark.parametrize("method,path", PUBLIC_PATHS)

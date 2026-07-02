@@ -123,8 +123,7 @@ def _warn_default_passwords(
     )
     if offenders:
         logger.warning(
-            "SECURITY: AUTH_ACCOUNTS uses the default password "
-            "'changeme' for: %s",
+            "SECURITY: AUTH_ACCOUNTS uses the default password " "'changeme' for: %s",
             ", ".join(offenders),
         )
 
@@ -232,7 +231,9 @@ def _validate_production_auth_config(
         )
 
     offenders = sorted(
-        user for user, password in auth_accounts.items() if password == DEFAULT_JWT_PASSWORD
+        user
+        for user, password in auth_accounts.items()
+        if password == DEFAULT_JWT_PASSWORD
     )
     if offenders:
         raise AuthConfigurationError(
@@ -372,7 +373,11 @@ def resolve_auth_actor(request: Request | None) -> str | None:
     if actor:
         return actor
 
-    if _static_api_key and bearer_token and _secret_equal(bearer_token, _static_api_key):
+    if (
+        _static_api_key
+        and bearer_token
+        and _secret_equal(bearer_token, _static_api_key)
+    ):
         return "api_key"
     return None
 
@@ -553,7 +558,9 @@ async def require_auth(
     )
 
 
-async def _operator_key_status(token: str, auth_enabled: bool) -> AuthStatusResponse | None:
+async def _operator_key_status(
+    token: str, auth_enabled: bool
+) -> AuthStatusResponse | None:
     """Return an authenticated status for a valid ``twk_`` bearer, else None.
 
     None means the token is not operator-prefixed, the store rejected it, or
@@ -599,9 +606,11 @@ def _auth_status_idp(request, credentials, idp_config) -> AuthStatusResponse | N
     return AuthStatusResponse(
         auth_enabled=True,
         authenticated=True,
-        user=str(user.get("sso_subject") or user.get("sub") or "idp_user")
-        if user
-        else "idp_user",
+        user=(
+            str(user.get("sso_subject") or user.get("sub") or "idp_user")
+            if user
+            else "idp_user"
+        ),
         login_required=False,
     )
 

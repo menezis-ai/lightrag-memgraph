@@ -137,5 +137,9 @@ class SearchEngine:
 
         fused.sort(key=lambda c: c.score, reverse=True)
 
-        logger.info("Fusion: %d unique chunks across %d workspaces", len(fused), len(workspace_names))
+        logger.info(
+            "Fusion: %d unique chunks across %d workspaces",
+            len(fused),
+            len(workspace_names),
+        )
         return fused

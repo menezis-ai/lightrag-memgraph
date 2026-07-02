@@ -116,8 +116,8 @@ async def _emit_event(*, action: str, key_id: str, prefix: str, actor: str) -> N
 def _actor_from_user(user: dict[str, Any] | None) -> str:
     if not isinstance(user, dict):
         return "operator"
-    return (
-        str(user.get("sso_subject") or user.get("email") or user.get("sub") or "operator")
+    return str(
+        user.get("sso_subject") or user.get("email") or user.get("sub") or "operator"
     )
 
 
