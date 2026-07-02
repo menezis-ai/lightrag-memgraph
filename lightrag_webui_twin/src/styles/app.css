@@ -8983,15 +8983,17 @@ body:where(*) {
   color: var(--blue);
 }
 
-.tab.active::after {
+.topbar .tabs .tab.active::after {
   content: "";
   position: absolute;
-  left: 13px;
-  right: 13px;
+  left: 50%;
+  right: auto;
   bottom: 0;
+  width: min(32px, calc(100% - 16px));
   height: 3px;
   border-radius: 2px 2px 0 0;
   background: var(--blue);
+  transform: translateX(-50%);
 }
 
 .topbar-right:where(*):where(*) {
