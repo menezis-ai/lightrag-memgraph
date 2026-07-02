@@ -337,6 +337,109 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             entry[field_name] = self._parse_meta_field(val) if val is not None else None
         return entry
 
+    def _effective_search_threshold(
+        self,
+        filters: RetrievalFilters | None,
+    ) -> float:
+        threshold = self.cosine_better_than_threshold
+        if filters is None:
+            return threshold
+        if filters.has_doc or filters.has_tag:
+            return max(0.0, filters.min_score)
+        return max(threshold, filters.min_score)
+
+    def _legacy_search_cypher(
+        self,
+        index_name: str,
+        top_k: int,
+        threshold: float,
+    ) -> tuple[str, dict[str, Any]]:
+        cypher = f"""
+                CALL vector_search.search("{index_name}", $top_k, $embedding)
+                YIELD node, similarity
+                WITH node, similarity
+                WHERE similarity >= $threshold
+                RETURN node.id AS id, similarity, properties(node) AS props
+                """
+        return cypher, {
+            "embedding": None,  # filled by caller
+            "top_k": top_k,
+            "threshold": threshold,
+        }
+
+    def _folder_search_context(
+        self,
+        top_k: int,
+        folder: str,
+        threshold: float,
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        ws = self.workspace
+        params: dict[str, Any] = {
+            "embedding": None,  # filled by caller
+            "top_k": top_k,
+            "overfetch": _folder_scope_overfetch(top_k),
+            "threshold": threshold,
+            "folder": folder,
+        }
+        return ws, f"DocStatus_{ws}", f"Folder_{ws}", params
+
+    def _build_exact_filtered_search(
+        self,
+        ws: str,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters,
+        params: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        params.pop("overfetch", None)
+        if "full_doc_id" in self.meta_fields:
+            return self._build_exact_chunks_search(
+                doc_label, folder_label, folder, filters, params
+            )
+        if "source_id" in self.meta_fields:
+            params["sep"] = GRAPH_FIELD_SEP
+            return self._build_exact_graph_search(
+                ws, doc_label, folder_label, folder, filters, params
+            )
+        return None, params
+
+    def _membership_join(
+        self,
+        ws: str,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters | None,
+        params: dict[str, Any],
+    ) -> str | None:
+        if "full_doc_id" in self.meta_fields:
+            return self._chunks_membership_join(
+                doc_label, folder_label, folder, filters, params
+            )
+        if "source_id" in self.meta_fields:
+            params["sep"] = GRAPH_FIELD_SEP
+            return self._graph_membership_join(
+                ws, doc_label, folder_label, folder, filters, params
+            )
+        return None
+
+    def _scoped_vector_search_cypher(
+        self,
+        index_name: str,
+        join: str,
+    ) -> str:
+        return f"""
+            CALL vector_search.search("{index_name}", $overfetch, $embedding)
+            YIELD node, similarity
+            WITH node, similarity
+            WHERE similarity >= $threshold
+            {join}
+            RETURN node.id AS id, similarity, properties(node) AS props
+            ORDER BY similarity DESC
+            LIMIT $top_k
+            """
+
     def _build_search_cypher(
         self,
         top_k: int,
@@ -391,38 +494,15 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # and native LightRAG paths stay byte-for-byte identical.
         if filters is not None and filters.is_empty:
             filters = None
-        threshold = self.cosine_better_than_threshold
-        if filters is not None and (filters.has_doc or filters.has_tag):
-            threshold = max(0.0, filters.min_score)
-        elif filters is not None and filters.min_score > threshold:
-            threshold = filters.min_score
+        threshold = self._effective_search_threshold(filters)
 
         index_name = self._index_name()
         if not folder:
-            cypher = f"""
-                CALL vector_search.search("{index_name}", $top_k, $embedding)
-                YIELD node, similarity
-                WITH node, similarity
-                WHERE similarity >= $threshold
-                RETURN node.id AS id, similarity, properties(node) AS props
-                """
-            return cypher, {
-                "embedding": None,  # filled by caller
-                "top_k": top_k,
-                "threshold": threshold,
-            }
+            return self._legacy_search_cypher(index_name, top_k, threshold)
 
-        ws = self.workspace
-        doc_label = f"DocStatus_{ws}"
-        folder_label = f"Folder_{ws}"
-        overfetch = _folder_scope_overfetch(top_k)
-        params: dict[str, Any] = {
-            "embedding": None,  # filled by caller
-            "top_k": top_k,
-            "overfetch": overfetch,
-            "threshold": threshold,
-            "folder": folder,
-        }
+        ws, doc_label, folder_label, params = self._folder_search_context(
+            top_k, folder, threshold
+        )
 
         # Product contract: doc/tag filters define the candidate corpus. Running
         # ANN first and filtering afterwards can miss a tagged document entirely
@@ -431,28 +511,14 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # cosine floor is not applied here; callers can opt back into a floor via
         # min_score.
         if filters is not None and (filters.has_doc or filters.has_tag):
-            params.pop("overfetch", None)
-            if "full_doc_id" in self.meta_fields:
-                return self._build_exact_chunks_search(
-                    doc_label, folder_label, folder, filters, params
-                )
-            if "source_id" in self.meta_fields:
-                params["sep"] = GRAPH_FIELD_SEP
-                return self._build_exact_graph_search(
-                    ws, doc_label, folder_label, folder, filters, params
-                )
-            return None, params
-
-        if "full_doc_id" in self.meta_fields:
-            join = self._chunks_membership_join(
-                doc_label, folder_label, folder, filters, params
-            )
-        elif "source_id" in self.meta_fields:
-            params["sep"] = GRAPH_FIELD_SEP
-            join = self._graph_membership_join(
+            return self._build_exact_filtered_search(
                 ws, doc_label, folder_label, folder, filters, params
             )
-        else:
+
+        join = self._membership_join(
+            ws, doc_label, folder_label, folder, filters, params
+        )
+        if join is None:
             # Unknown vdb category WITH an active folder: we cannot prove
             # membership, so we MUST NOT silently fall back to the global search
             # (that would leak cross-folder context the moment a future LightRAG
@@ -460,17 +526,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             # Fail closed — signal the caller to return no results — and log loud.
             return None, params
 
-        cypher = f"""
-            CALL vector_search.search("{index_name}", $overfetch, $embedding)
-            YIELD node, similarity
-            WITH node, similarity
-            WHERE similarity >= $threshold
-            {join}
-            RETURN node.id AS id, similarity, properties(node) AS props
-            ORDER BY similarity DESC
-            LIMIT $top_k
-            """
-        return cypher, params
+        return self._scoped_vector_search_cypher(index_name, join), params
 
     def _build_exact_chunks_search(
         self,

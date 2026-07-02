@@ -117,10 +117,7 @@ async def _await_query_or_disconnect(awaitable, request: Request):
                 return task.result()
             if await request.is_disconnected():
                 task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                await asyncio.gather(task, return_exceptions=True)
                 raise ClientDisconnectedDuringQuery
     except Exception:
         if not task.done():
@@ -525,6 +522,39 @@ def _next_query_data_reference_id(data: dict[str, Any]) -> int:
     return max(numeric_ids, default=0) + 1
 
 
+def _query_data_record_id(raw: dict[str, Any], requested_id: str) -> str | None:
+    record_id = raw.get("chunk_id") or raw.get("id") or raw.get("_id") or requested_id
+    if isinstance(record_id, str) and record_id:
+        return record_id
+    return None
+
+
+async def _fetch_chunk_records_from_store(
+    rag: Any,
+    attr: str,
+    chunk_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    store = getattr(rag, attr, None)
+    get_by_ids = getattr(store, "get_by_ids", None)
+    if not callable(get_by_ids):
+        return {}
+    try:
+        raw_list = await get_by_ids(chunk_ids)
+    except Exception:
+        logger.exception("twin_query: %s.get_by_ids failed for query/data", attr)
+        return {}
+    if not isinstance(raw_list, list):
+        return {}
+    records: dict[str, dict[str, Any]] = {}
+    for requested_id, raw in zip(chunk_ids, raw_list):
+        if not isinstance(raw, dict):
+            continue
+        record_id = _query_data_record_id(raw, requested_id)
+        if record_id is not None:
+            records.setdefault(record_id, dict(raw))
+    return records
+
+
 async def _fetch_chunk_records_by_id(
     rag: Any,
     chunk_ids: list[str],
@@ -536,28 +566,8 @@ async def _fetch_chunk_records_by_id(
     out: dict[str, dict[str, Any]] = {}
 
     for attr in ("text_chunks", "chunks_vdb"):
-        store = getattr(rag, attr, None)
-        get_by_ids = getattr(store, "get_by_ids", None)
-        if not callable(get_by_ids):
-            continue
-        try:
-            raw_list = await get_by_ids(unique)
-        except Exception:
-            logger.exception("twin_query: %s.get_by_ids failed for query/data", attr)
-            continue
-        if not isinstance(raw_list, list):
-            continue
-        for requested_id, raw in zip(unique, raw_list):
-            if not isinstance(raw, dict):
-                continue
-            record_id = (
-                raw.get("chunk_id")
-                or raw.get("id")
-                or raw.get("_id")
-                or requested_id
-            )
-            if isinstance(record_id, str) and record_id:
-                out.setdefault(record_id, dict(raw))
+        records = await _fetch_chunk_records_from_store(rag, attr, unique)
+        out.update({key: value for key, value in records.items() if key not in out})
         if len(out) == len(unique):
             break
     return out
@@ -581,6 +591,34 @@ async def _doc_file_path(rag: Any, doc_id: str | None) -> str | None:
     return None
 
 
+async def _query_data_row_doc_id(
+    rag: Any,
+    row: dict[str, Any],
+    chunk_id: str,
+) -> str | None:
+    doc_id = row.get("full_doc_id") or row.get("doc_id")
+    if isinstance(doc_id, str) and doc_id:
+        return doc_id
+    resolved = await _resolve_doc_for_chunk(rag, chunk_id)
+    if resolved:
+        row["full_doc_id"] = resolved
+    return resolved
+
+
+async def _query_data_row_file_path(
+    rag: Any,
+    row: dict[str, Any],
+    doc_id: str | None,
+) -> str | None:
+    file_path = row.get("file_path") or row.get("source")
+    if isinstance(file_path, str) and file_path:
+        return file_path
+    resolved = await _doc_file_path(rag, doc_id)
+    if resolved:
+        row["file_path"] = resolved
+    return resolved
+
+
 async def _query_data_chunk_row(
     rag: Any,
     chunk_id: str,
@@ -592,18 +630,8 @@ async def _query_data_chunk_row(
     row["chunk_id"] = str(
         row.get("chunk_id") or row.get("id") or row.get("_id") or chunk_id
     )
-    doc_id = row.get("full_doc_id") or row.get("doc_id")
-    if not isinstance(doc_id, str) or not doc_id:
-        doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
-        if doc_id:
-            row["full_doc_id"] = doc_id
-    file_path = row.get("file_path") or row.get("source")
-    if not isinstance(file_path, str) or not file_path:
-        file_path = await _doc_file_path(
-            rag, doc_id if isinstance(doc_id, str) else None
-        )
-        if file_path:
-            row["file_path"] = file_path
+    doc_id = await _query_data_row_doc_id(rag, row, chunk_id)
+    file_path = await _query_data_row_file_path(rag, row, doc_id)
     row["reference_id"] = reference_id
     if score is not None and not isinstance(row.get("score"), (int, float)):
         row["score"] = score
@@ -935,30 +963,60 @@ async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
     }
 
 
-async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
-    doc_ids = {
+def _direct_doc_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
+    return {
         str(row[key])
         for key in ("doc_id", "full_doc_id")
         if isinstance(row.get(key), str) and row.get(key)
     }
-    chunk_ids = set()
-    for key in ("chunk_id", "id"):
-        if isinstance(row.get(key), str) and row.get(key):
-            chunk_ids.add(str(row[key]))
+
+
+def _chunk_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
+    chunk_ids = {
+        str(row[key])
+        for key in ("chunk_id", "id")
+        if isinstance(row.get(key), str) and row.get(key)
+    }
     chunk_ids.update(_split_source_ids(row.get("source_id")))
+    return chunk_ids
+
+
+def _file_path_candidates_for_query_data_row(row: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("file_path", "source", "name"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip() and value != UNKNOWN_SOURCE_NAME:
+            candidates.append(value.strip())
+    return candidates
+
+
+async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
+    doc_ids = set()
     for chunk_id in chunk_ids:
         doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
         if doc_id:
             doc_ids.add(doc_id)
-    for key in ("file_path", "source", "name"):
-        value = row.get(key)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        if value == UNKNOWN_SOURCE_NAME:
-            continue
-        doc_id = await _resolve_doc_for_file_path(rag, value.strip())
+    return doc_ids
+
+
+async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
+    doc_ids = set()
+    for file_path in file_paths:
+        doc_id = await _resolve_doc_for_file_path(rag, file_path)
         if doc_id:
             doc_ids.add(doc_id)
+    return doc_ids
+
+
+async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
+    doc_ids = _direct_doc_ids_for_query_data_row(row)
+    doc_ids.update(await _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row)))
+    doc_ids.update(
+        await _doc_ids_from_file_paths(
+            rag,
+            _file_path_candidates_for_query_data_row(row),
+        )
+    )
     return doc_ids
 
 
@@ -1544,6 +1602,117 @@ def _determine_stream_status(envelope, stripper) -> tuple[AnswerStatus, str | No
     return status, fatal_reason
 
 
+async def _query_stream_failure_events(exc: Exception) -> AsyncIterator[str]:
+    logger.exception("twin_query: streaming aquery_llm failed")
+    yield json.dumps({"type": "token", "value": f"\n[query failed: {exc}]"}) + "\n"
+    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
+    yield json.dumps({"type": "sources", "value": []}) + "\n"
+
+
+async def _query_stream_fatal_events(
+    body: TwinQueryBody,
+    request: Request,
+    folder: str,
+    fatal_reason: str,
+) -> AsyncIterator[str]:
+    logger.error(
+        "twin_query stream: aquery_llm envelope failure surfaced as "
+        "in-stream error token: %s",
+        fatal_reason,
+    )
+    yield json.dumps(
+        {"type": "token", "value": f"\n[query failed: {fatal_reason}]"}
+    ) + "\n"
+    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
+    await _record_retrieval_activity(
+        body, request, folder=folder, sources_count=0, stream=True
+    )
+    yield json.dumps({"type": "sources", "value": []}) + "\n"
+
+
+async def _query_stream_empty_sources_events(
+    body: TwinQueryBody,
+    request: Request,
+    folder: str,
+    status: AnswerStatus,
+) -> AsyncIterator[str]:
+    yield json.dumps({"type": "status", "value": status}) + "\n"
+    await _record_retrieval_activity(
+        body, request, folder=folder, sources_count=0, stream=True
+    )
+    yield json.dumps({"type": "sources", "value": []}) + "\n"
+
+
+async def _query_stream_grounded_events(
+    rag: Any,
+    body: TwinQueryBody,
+    request: Request,
+    folder: str,
+    envelope: dict[str, Any] | None,
+    status: AnswerStatus,
+) -> AsyncIterator[str]:
+    with _retrieval_scope(folder, body):
+        sources, projection_ok = await _build_envelope_sources(
+            rag, body, folder, envelope
+        )
+    if not projection_ok:
+        status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
+        sources = []
+    yield json.dumps({"type": "status", "value": status}) + "\n"
+    await _record_retrieval_activity(
+        body, request, folder=folder, sources_count=len(sources), stream=True
+    )
+    yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
+
+
+async def _generate_twin_query_stream(
+    rag: Any,
+    body: TwinQueryBody,
+    request: Request,
+    folder: str,
+    query_param_cls: Any,
+) -> AsyncIterator[str]:
+    stripper = AnswerMarkerStripper()
+    envelope: dict[str, Any] | None = None
+    try:
+        param = _make_query_param(query_param_cls, _query_param_kwargs(body, stream=True))
+        with _retrieval_scope(folder, body):
+            envelope = await _await_query_or_disconnect(
+                rag.aquery_llm(body.query, param=param),
+                request,
+            )
+        async for line in _emit_answer_tokens(envelope, stripper):
+            yield line
+    except ClientDisconnectedDuringQuery:
+        logger.info(
+            "twin_query stream: client disconnected while aquery_llm was running"
+        )
+        return
+    except Exception as exc:
+        async for line in _query_stream_failure_events(exc):
+            yield line
+        return
+
+    status, fatal_reason = _determine_stream_status(envelope, stripper)
+    if fatal_reason is not None:
+        async for line in _query_stream_fatal_events(body, request, folder, fatal_reason):
+            yield line
+        return
+
+    no_retrieval = _is_no_retrieval_mode(body)
+    if no_retrieval:
+        status = ANSWER_STATUS_NO_RETRIEVAL
+    if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
+        async for line in _query_stream_empty_sources_events(body, request, folder, status):
+            yield line
+        return
+
+    async for line in _query_stream_grounded_events(
+        rag, body, request, folder, envelope, status
+    ):
+        yield line
+
+
 def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
     """Body of ``POST /twin/api/query/stream`` (NDJSON tokens + sources event)."""
     try:
@@ -1555,94 +1724,10 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
     from ..folder import resolve_folder_for_request
 
     folder = resolve_folder_for_request(request)
-
-    async def generate() -> AsyncIterator[str]:
-        stripper = AnswerMarkerStripper()
-        envelope: dict[str, Any] | None = None
-        try:
-            param = _make_query_param(
-                QueryParam, _query_param_kwargs(body, stream=True)
-            )
-            # Folder-scoped grounding inside the generator (it runs after the
-            # handler returns, so the ContextVar must be bound here, not at the
-            # route boundary). Retrieval completes inside aquery_llm before the
-            # envelope is returned; token streaming below touches no vdb.
-            with _retrieval_scope(folder, body):
-                envelope = await _await_query_or_disconnect(
-                    rag.aquery_llm(body.query, param=param),
-                    request,
-                )
-            async for line in _emit_answer_tokens(envelope, stripper):
-                yield line
-        except ClientDisconnectedDuringQuery:
-            logger.info(
-                "twin_query stream: client disconnected while aquery_llm was running"
-            )
-            return
-        except Exception as exc:
-            logger.exception("twin_query: streaming aquery_llm failed")
-            yield json.dumps(
-                {"type": "token", "value": f"\n[query failed: {exc}]"}
-            ) + "\n"
-            yield json.dumps(
-                {"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}
-            ) + "\n"
-            yield json.dumps({"type": "sources", "value": []}) + "\n"
-            return
-
-        status, fatal_reason = _determine_stream_status(envelope, stripper)
-
-        if fatal_reason is not None:
-            logger.error(
-                "twin_query stream: aquery_llm envelope failure surfaced as "
-                "in-stream error token: %s",
-                fatal_reason,
-            )
-            yield json.dumps(
-                {"type": "token", "value": f"\n[query failed: {fatal_reason}]"}
-            ) + "\n"
-            yield json.dumps(
-                {"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}
-            ) + "\n"
-            await _record_retrieval_activity(
-                body, request, folder=folder, sources_count=0, stream=True
-            )
-            yield json.dumps({"type": "sources", "value": []}) + "\n"
-            return
-
-        no_retrieval = _is_no_retrieval_mode(body)
-        if no_retrieval:
-            # Sourceless by design (bypass / only_need_context / only_need_prompt):
-            # the tokens already streamed are the answer/context, but there is no
-            # grounding -- report no_retrieval rather than the grounded default.
-            status = ANSWER_STATUS_NO_RETRIEVAL
-
-        if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
-            yield json.dumps({"type": "status", "value": status}) + "\n"
-            await _record_retrieval_activity(
-                body, request, folder=folder, sources_count=0, stream=True
-            )
-            yield json.dumps({"type": "sources", "value": []}) + "\n"
-            return
-
-        # Grounded path: build sources first so the emitted status reflects a
-        # projection failure (answer tokens already streamed). Contract: tokens,
-        # then status (source_projection_failed when projection broke), then the
-        # sources event (empty on failure).
-        with _retrieval_scope(folder, body):
-            sources, projection_ok = await _build_envelope_sources(
-                rag, body, folder, envelope
-            )
-        if not projection_ok:
-            status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
-            sources = []
-        yield json.dumps({"type": "status", "value": status}) + "\n"
-        await _record_retrieval_activity(
-            body, request, folder=folder, sources_count=len(sources), stream=True
-        )
-        yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
-
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        _generate_twin_query_stream(rag, body, request, folder, QueryParam),
+        media_type="application/x-ndjson",
+    )
 
 
 def build_twin_query_router(get_rag) -> APIRouter:
@@ -1658,7 +1743,10 @@ def build_twin_query_router(get_rag) -> APIRouter:
     @router.post(
         "/query",
         response_model=TwinQueryResponse,
-        responses={500: {"description": "Query backend error"}},
+        responses={
+            499: {"description": "Client closed request"},
+            500: {"description": "Query backend error"},
+        },
     )
     async def query_endpoint(
         body: TwinQueryBody, request: Request

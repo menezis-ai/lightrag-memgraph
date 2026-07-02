@@ -7385,17 +7385,6 @@ header.topbar .notif-popover {
   min-width: 0;
 }
 
-/* Retrieval — proto grid reserves 320px right column but `.params-panel`
- * renders 224px → 96px dead stripe. Match the grid cell to the panel
- * width and let the panel fill its cell. */
-.retrieval.has-history:where(*):where(*):where(*):where(*) {
-  grid-template-columns: 240px minmax(0, 1fr) 240px;
-}
-.retrieval .params-panel {
-  width: 100%;
-  box-sizing: border-box;
-}
-
 /* ========================= polish.css ========================= */
 /* Polish layer — styles for components added during the React port sprint
  * (Settings, PendingDocs, Onboarding, DocDetailPanel, Topbar additions).
@@ -9867,6 +9856,8 @@ header.topbar dialog.notif-popover {
 }
 
 .retrieval .params-panel {
+  width: 100%;
+  box-sizing: border-box;
   padding: 16px;
 }
 
