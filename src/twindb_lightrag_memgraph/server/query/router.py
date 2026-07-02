@@ -700,6 +700,15 @@ async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]
         doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
         if doc_id:
             doc_ids.add(doc_id)
+    for key in ("file_path", "source", "name"):
+        value = row.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if value == UNKNOWN_SOURCE_NAME:
+            continue
+        doc_id = await _resolve_doc_for_file_path(rag, value.strip())
+        if doc_id:
+            doc_ids.add(doc_id)
     return doc_ids
 
 
@@ -715,14 +724,12 @@ async def _row_matches_tag_filter(
         return True
     doc_ids = await _doc_ids_for_query_data_row(rag, row)
     if not doc_ids:
-        # ``/query/data`` already binds ``tag_filter`` into
-        # ``storage_filter_context`` before LightRAG retrieves candidates. This
-        # post-filter is only a last-line consistency guard for rows that still
-        # carry a document identity. LightRAG 1.4.9.11 can strip both
-        # ``full_doc_id`` and the original chunk ``id`` while converting chunks
-        # to its public ``aquery_data`` format; fail-open here so the guard does
-        # not erase already-filtered chunks from the structured response.
-        return True
+        # Active tag filters are an inclusion contract. If a row cannot be tied
+        # back to a DocStatus node (direct doc id, source chunk, or file path),
+        # we cannot prove it belongs to the tagged corpus, so reject it. The
+        # previous fail-open path made the API claim "Tag Filter Applied" while
+        # returning unrelated entities/references from the broader graph.
+        return False
     for doc_id in doc_ids:
         # Per-request cache: chunks/references rows often repeat the
         # same doc_id; one Cypher round-trip per unique doc suffices.

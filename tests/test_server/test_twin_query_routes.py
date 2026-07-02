@@ -1524,14 +1524,12 @@ class TestQueryEndpoint:
         assert body["data"]["chunks"] == []
         assert body["data"]["references"] == []
 
-    async def test_query_data_tag_filter_keeps_unresolvable_lightrag_chunks(
+    async def test_query_data_tag_filter_rejects_unresolvable_lightrag_chunks(
         self, make_client, monkeypatch
     ):
-        """Regression: LightRAG 1.4.9.11's ``aquery_data`` public chunk format
-        can lose both ``full_doc_id`` and the original chunk id. The storage
-        layer has already applied ``tag_filter`` before this payload is built,
-        so the route-level consistency guard must not erase these rows merely
-        because the public row can no longer be re-resolved to ``DocStatus``.
+        """A tag-filtered API response must fail closed when row provenance is
+        gone. Returning the row would make ``Tag Filter Applied`` a lie because
+        the route cannot prove the chunk belongs to a tagged document.
         """
         from twindb_lightrag_memgraph.server import twin_query_routes as tqr
 
@@ -1573,18 +1571,185 @@ class TestQueryEndpoint:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["data"]["chunks"] == [
-            {
-                "chunk_id": "",
-                "content": "ATS CFT flow creation",
-                "file_path": "cft.pdf",
-                "reference_id": "1",
-            }
+        assert body["data"]["chunks"] == []
+        assert body["data"]["references"] == []
+        assert body["metadata"]["tag_filter"] == {"all": ["ats"], "any": []}
+
+    async def test_query_data_tag_filter_resolves_rows_by_file_path(
+        self, make_client, monkeypatch
+    ):
+        """Regression: a filtered query returned files outside the requested tag
+        because public ``aquery_data`` rows had no reliable doc id. If a row
+        still carries ``file_path``, resolve it through DocStatus and apply the
+        graph tag check instead of letting it through.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        graph_tags = {
+            "doc-tarte-fraise": {"dessert", "fraise"},
+            "doc-tarte-chocolat": {"dessert", "chocolat"},
+            "doc-quiche": {"sale"},
+            "doc-salade": {"sale", "froid"},
+        }
+
+        async def fake_fetch(doc_id, folder):
+            return graph_tags.get(doc_id, set())
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query processed successfully",
+                "data": {
+                    "chunks": [
+                        {
+                            "chunk_id": "",
+                            "content": "Tarte aux fraises avec creme patissiere",
+                            "file_path": "tarte-fraise.pdf",
+                            "reference_id": "1",
+                        },
+                        {
+                            "chunk_id": "",
+                            "content": "Tarte au chocolat noir",
+                            "file_path": "tarte-chocolat.pdf",
+                            "reference_id": "2",
+                        },
+                        {
+                            "chunk_id": "",
+                            "content": "Quiche lorraine salee",
+                            "file_path": "quiche.pdf",
+                            "reference_id": "3",
+                        },
+                    ],
+                    "entities": [
+                        {
+                            "entity_name": "Fraise",
+                            "file_path": "tarte-fraise.pdf",
+                            "reference_id": "4",
+                        },
+                        {
+                            "entity_name": "Salade",
+                            "file_path": "salade.pdf",
+                            "reference_id": "2",
+                        },
+                    ],
+                    "relationships": [],
+                    "references": [
+                        {
+                            "reference_id": "1",
+                            "file_path": "tarte-fraise.pdf",
+                        },
+                        {"reference_id": "2", "file_path": "tarte-chocolat.pdf"},
+                        {"reference_id": "3", "file_path": "quiche.pdf"},
+                        {"reference_id": "4", "file_path": "tarte-fraise.pdf"},
+                    ],
+                },
+                "metadata": {"query_mode": "hybrid"},
+            },
+            docs={
+                "doc-tarte-fraise": {"file_path": "tarte-fraise.pdf"},
+                "doc-tarte-chocolat": {"file_path": "tarte-chocolat.pdf"},
+                "doc-quiche": {"file_path": "quiche.pdf"},
+                "doc-salade": {"file_path": "salade.pdf"},
+            },
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "x", "tag_filter": {"all": ["fraise"], "any": []}},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [row["file_path"] for row in body["data"]["chunks"]] == [
+            "tarte-fraise.pdf"
+        ]
+        assert [row["entity_name"] for row in body["data"]["entities"]] == [
+            "Fraise"
         ]
         assert body["data"]["references"] == [
-            {"reference_id": "1", "file_path": "cft.pdf"}
+            {"reference_id": "1", "file_path": "tarte-fraise.pdf"},
+            {"reference_id": "4", "file_path": "tarte-fraise.pdf"},
         ]
-        assert body["metadata"]["tag_filter"] == {"all": ["ats"], "any": []}
+        assert body["metadata"]["tag_filter"] == {"all": ["fraise"], "any": []}
+
+    @pytest.mark.parametrize(
+        ("tag_filter", "expected_files"),
+        [
+            ({"any": ["fraise", "chocolat"], "all": []}, {"tarte-fraise.pdf", "tarte-chocolat.pdf"}),
+            ({"all": ["dessert", "fraise"], "any": []}, {"tarte-fraise.pdf"}),
+            ({"all": ["dessert"], "any": ["chocolat"]}, {"tarte-chocolat.pdf"}),
+            ({"all": ["dessert"], "any": ["sale"]}, set()),
+        ],
+    )
+    async def test_query_data_tag_filter_all_any_contract_on_final_payload(
+        self, make_client, monkeypatch, tag_filter, expected_files
+    ):
+        """The visible API payload must obey all/any semantics, independent of
+        whatever mixed rows LightRAG returned before the route guard.
+        """
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        graph_tags = {
+            "doc-tarte-fraise": {"dessert", "fraise"},
+            "doc-tarte-chocolat": {"dessert", "chocolat"},
+            "doc-quiche": {"sale"},
+        }
+
+        async def fake_fetch(doc_id, folder):
+            return graph_tags.get(doc_id, set())
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rows = [
+            {"chunk_id": "", "file_path": "tarte-fraise.pdf", "reference_id": "1"},
+            {"chunk_id": "", "file_path": "tarte-chocolat.pdf", "reference_id": "2"},
+            {"chunk_id": "", "file_path": "quiche.pdf", "reference_id": "3"},
+        ]
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "chunks": rows,
+                    "entities": [
+                        {"entity_name": "Fraise", "file_path": "tarte-fraise.pdf", "reference_id": "1"},
+                        {"entity_name": "Chocolat", "file_path": "tarte-chocolat.pdf", "reference_id": "2"},
+                        {"entity_name": "Quiche", "file_path": "quiche.pdf", "reference_id": "3"},
+                    ],
+                    "relationships": [],
+                    "references": [
+                        {"reference_id": "1", "file_path": "tarte-fraise.pdf"},
+                        {"reference_id": "2", "file_path": "tarte-chocolat.pdf"},
+                        {"reference_id": "3", "file_path": "quiche.pdf"},
+                    ],
+                },
+                "metadata": {},
+            },
+            docs={
+                "doc-tarte-fraise": {"file_path": "tarte-fraise.pdf"},
+                "doc-tarte-chocolat": {"file_path": "tarte-chocolat.pdf"},
+                "doc-quiche": {"file_path": "quiche.pdf"},
+            },
+        )
+        client = await make_client(rag)
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={"query": "x", "tag_filter": tag_filter},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert {row["file_path"] for row in body["data"]["chunks"]} == expected_files
+        assert {
+            row["file_path"] for row in body["data"]["entities"]
+        } == expected_files
+        assert {
+            row["file_path"] for row in body["data"]["references"]
+        } == expected_files
 
     async def test_query_data_tag_filter_caches_per_request(
         self, make_client, monkeypatch
