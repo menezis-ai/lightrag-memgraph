@@ -1,0 +1,302 @@
+/**
+ * Unit tests for `apiFetch` — the thin typed fetch wrapper.
+ *
+ * Covers: runtime-config URL resolution, GET path with query params, POST JSON
+ * body, folder + bearer header injection, ApiError on 4xx/5xx including
+ * non-JSON 502 (the nginx pattern that crashed the production front in v0.5.2).
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ApiError,
+  apiFetch,
+  onUnauthorized,
+  setActiveFolder,
+  setSessionAuthToken,
+} from './client';
+import { api } from './resources';
+
+type FetchMock = ReturnType<typeof vi.fn>;
+let originalFetch: typeof fetch;
+let fetchMock: FetchMock;
+const originalConfig = window.__twinConfig;
+const originalE2eConfig = window.__twinE2eRuntimeConfig;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+  fetchMock = vi.fn();
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  setActiveFolder(null);
+  setSessionAuthToken(null);
+  window.sessionStorage.clear();
+  window.__twinConfig = {
+    apiBaseUrl: '/twin/api',
+    lightragBaseUrl: '',
+    idpLogoutUrl: 'https://idp.example.com/logout',
+  };
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  setActiveFolder(null);
+  setSessionAuthToken(null);
+  window.sessionStorage.clear();
+  window.__twinConfig = originalConfig;
+  window.__twinE2eRuntimeConfig = originalE2eConfig;
+});
+
+describe('apiFetch', () => {
+  it('GET request returns parsed JSON', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, items: [1, 2] }));
+    const data = await apiFetch<{ ok: boolean; items: number[] }>('/health');
+    expect(data).toEqual({ ok: true, items: [1, 2] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/health');
+    expect((init as RequestInit).method).toBe('GET');
+    expect((init as RequestInit).credentials).toBe('include');
+  });
+
+  it('routes Twin overlay paths through runtime apiBaseUrl', async () => {
+    window.__twinConfig = {
+      apiBaseUrl: '/custom/twin',
+      lightragBaseUrl: '',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    await apiFetch('/twin/api/tags');
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/custom/twin/tags');
+  });
+
+  it('routes LightRAG-native paths through runtime lightragBaseUrl', async () => {
+    window.__twinConfig = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '/api',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    await apiFetch('/documents');
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/api/documents');
+  });
+
+  it('serializes query params via URLSearchParams (skipping null/undefined)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    await apiFetch('/documents', {
+      query: { status: 'completed', q: 'oracle', tag: null, cursor: undefined },
+    });
+    const [url] = fetchMock.mock.calls[0];
+    const u = new URL(String(url), 'http://localhost');
+    expect(u.searchParams.get('status')).toBe('completed');
+    expect(u.searchParams.get('q')).toBe('oracle');
+    expect(u.searchParams.has('tag')).toBe(false);
+    expect(u.searchParams.has('cursor')).toBe(false);
+  });
+
+  it('POST request sends JSON body and Content-Type header', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'doc_1' }));
+    await apiFetch('/documents/text', {
+      method: 'POST',
+      body: { text: 'hello', tags: ['twin'] },
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as RequestInit).method).toBe('POST');
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['Content-Type']).toBe('application/json');
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ text: 'hello', tags: ['twin'] }),
+    );
+  });
+
+  it('attaches bearer token from per-call override', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    await apiFetch('/secure', { token: 'eyJtest' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer eyJtest');
+  });
+
+  it('attaches bearer token from the local login session', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setSessionAuthToken('session-jwt');
+    await apiFetch('/secure');
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer session-jwt');
+  });
+
+  it('attaches X-Twin-Folder from the active folder', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
+    await apiFetch('/twin/api/tags');
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('default');
+    expect(headers['X-Twin-Folder']).toBe('default');
+    expect(headers['X-Twin-Folder']).toBe('default');
+  });
+
+  it('allows a per-call folder override', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+  });
+
+  it('keeps the legacy folder override during the migration window', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+  });
+
+  it('keeps the legacy folder override during the migration window', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
+    await apiFetch('/twin/api/tags', { folder: 'sandbox' });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+    expect(headers['X-Twin-Folder']).toBe('sandbox');
+  });
+
+  it('allows disabling the folder header for a per-call request', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
+    setActiveFolder('default');
+    await apiFetch('/health', { folder: null });
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Twin-Folder']).toBeUndefined();
+    expect(headers['X-Twin-Folder']).toBeUndefined();
+    expect(headers['X-Twin-Folder']).toBeUndefined();
+  });
+
+  it('throws ApiError with parsed JSON body on 4xx', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: 'forbidden' }, 403),
+    );
+    await expect(apiFetch('/secure')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 403,
+      body: { detail: 'forbidden' },
+    });
+  });
+
+  it('throws ApiError with raw text body on non-JSON 502 (nginx pattern)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 502,
+        statusText: 'Bad Gateway',
+      }),
+    );
+    let err: ApiError | null = null;
+    try {
+      await apiFetch('/documents/paginated');
+    } catch (e) {
+      err = e as ApiError;
+    }
+    expect(err).not.toBeNull();
+    expect(err!.status).toBe(502);
+    expect(typeof err!.body).toBe('string');
+    expect(err!.body).toMatch(/502/);
+  });
+});
+
+describe('apiFetch — onUnauthorized', () => {
+  it('notifies subscribers on a mid-session 401 (expired/revoked token)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Token expired' }, 401));
+
+    await expect(apiFetch('/documents')).rejects.toMatchObject({ status: 401 });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledWith({ path: '/documents', status: 401 });
+    unsubscribe();
+  });
+
+  it('does NOT notify on a 401 from the /login handshake (wrong password)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'bad creds' }, 401));
+
+    await expect(apiFetch('/login', { method: 'POST' })).rejects.toMatchObject({
+      status: 401,
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('does NOT notify on non-401 errors (403/502)', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'forbidden' }, 403));
+
+    await expect(apiFetch('/secure')).rejects.toMatchObject({ status: 403 });
+
+    expect(handler).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('stops notifying after unsubscribe', async () => {
+    const handler = vi.fn();
+    const unsubscribe = onUnauthorized(handler);
+    unsubscribe();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Token expired' }, 401));
+
+    await expect(apiFetch('/documents')).rejects.toMatchObject({ status: 401 });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('api resource facade', () => {
+  it('queryData posts to the Twin-prefixed data endpoint', async () => {
+    window.__twinConfig = {
+      apiBaseUrl: '/custom/twin',
+      lightragBaseUrl: '',
+      idpLogoutUrl: 'https://idp.example.com/logout',
+    };
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: 'success',
+        message: 'ok',
+        data: { chunks: [] },
+        metadata: {},
+      }),
+    );
+
+    await api.queryData({
+      query: 'structured retrieval',
+      tag_filter: { all: ['rman'] },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/custom/twin/query/data');
+    expect((init as RequestInit).method).toBe('POST');
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({
+        query: 'structured retrieval',
+        tag_filter: { all: ['rman'] },
+      }),
+    );
+  });
+});

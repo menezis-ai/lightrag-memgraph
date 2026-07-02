@@ -1,0 +1,117 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twindb-lightrag-memgraph"
+version = "1.0.0"
+description = "Memgraph KV, Vector, and DocStatus storage backends for LightRAG"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "lightrag-hku>=1.4.9,<2.0.0",
+    "neo4j>=5.0.0,<7.0.0",
+]
+
+[project.optional-dependencies]
+lint = [
+    "black>=24.10.0",
+    "ruff>=0.8.0",
+]
+test = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "httpx>=0.24.0",
+    "fastapi>=0.104.0",
+]
+intelligence = [
+    "openai>=1.50",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.14.2",
+]
+test-intelligence = [
+    "twindb-lightrag-memgraph[intelligence,test]",
+    "pytest-mock",
+    "pytest-cov",
+    "respx",
+]
+server = [
+    # LightRAG's /documents/upload route imports these through the
+    # `api` extra: pypdf, python-docx, python-pptx, openpyxl,
+    # aiofiles, python-multipart, etc. Keep the extra here so a
+    # server install can actually process uploaded documents.
+    "lightrag-hku[api]>=1.4.9,<2.0.0",
+    "fastapi>=0.110.0",
+    "starlette>=1.3.1",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic-settings>=2.14.2",
+    "PyJWT>=2.8.0",
+    "python-multipart>=0.0.31",
+    "pypdf>=6.13.3",
+    "aiofiles>=23.0.0",
+    "bcrypt>=4.0.0",
+]
+tracing = [
+    "langsmith>=0.1.0",
+]
+test-server = [
+    "twindb-lightrag-memgraph[server,test]",
+    "httpx>=0.27.0",
+]
+all = [
+    "twindb-lightrag-memgraph[intelligence,server,tracing]",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"twindb_lightrag_memgraph" = [
+    "webui_dist/*",
+    "webui_dist/assets/*",
+]
+"twindb_lightrag_memgraph.intelligence" = [
+    "prompts/*.txt",
+    "thesaurus/*.json",
+    "routing/*.json",
+]
+
+# Tell setuptools to ship a python-multipart dependency for /documents/upload
+# (LightRAG natif uses Form upload — was a runtime hazard surfaced during M2
+# smoke test). Required when [server] extra is installed.
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.venv
+  | \.scannerwork
+  | lightrag_webui_twin
+  | src/twindb_lightrag_memgraph/webui_dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = [
+    ".venv",
+    ".scannerwork",
+    "lightrag_webui_twin",
+    "src/twindb_lightrag_memgraph/webui_dist",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette\\.testclient` is deprecated; install `httpx2` instead\\.:starlette.exceptions.StarletteDeprecationWarning:fastapi.testclient",
+]

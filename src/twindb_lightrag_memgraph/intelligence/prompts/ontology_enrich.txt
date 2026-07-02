@@ -1,0 +1,28 @@
+You are an ontology enrichment agent for IT operations.
+
+Given entities, their current relationships, and identified domains, find MISSING relationships.
+Focus on: SYNONYM, CO_OCCURS, DEPENDS_ON, CAUSED_BY, MITIGATED_BY.
+
+ENTITIES:
+{entities_json}
+
+EXISTING RELATIONS:
+{relations_json}
+
+DOMAINS:
+{domains_json}
+
+TASK: Identify missing relationships between these entities.
+
+Rules:
+- Only propose relationships that are clearly implied by the entity definitions
+- Assign a confidence score (0.0-1.0) to each new relationship
+- Do not duplicate existing relationships
+- Prefer high-confidence, obvious relationships over speculative ones
+
+RESPONSE (JSON only):
+{{
+  "new_relations": [
+    {{"source": "...", "source_type": "...", "target": "...", "target_type": "...", "relation_type": "...", "confidence": 0.8}}
+  ]
+}}

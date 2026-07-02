@@ -1,0 +1,1 @@
+var e={second:1e3,minute:6e4,hour:36e5,day:864e5};function t(t,n=Date.now()){let r=Date.parse(t);if(Number.isNaN(r))return t;let i=Math.max(0,n-r);return i<e.minute?`just now`:i<e.hour?`${Math.floor(i/e.minute)}m ago`:i<e.day?`${Math.floor(i/e.hour)}h ago`:`${Math.floor(i/e.day)}d ago`}export{t};

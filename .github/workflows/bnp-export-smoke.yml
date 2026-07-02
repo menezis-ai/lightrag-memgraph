@@ -1,0 +1,96 @@
+name: bnp-export-smoke
+
+on:
+  push:
+    branches: [export-1.0.0]
+  workflow_dispatch:
+
+jobs:
+  docker-smoke:
+    name: build BNP image and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_NAME: twindb-lightrag-memgraph-bnp:ci
+      TWIN_SMOKE_BASE_URL: http://127.0.0.1:18080
+      ARTIFACTORY_USERNAME: ci-smoke
+      ARTIFACTORY_PASSWORD: ci-smoke-password
+      BNP_REGISTRY_USERNAME: ${{ secrets.BNP_REGISTRY_USERNAME }}
+      BNP_REGISTRY_PASSWORD: ${{ secrets.BNP_REGISTRY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to BNP base registry when credentials are provided
+        run: |
+          if [ -n "${BNP_REGISTRY_USERNAME}" ]; then
+            echo "${BNP_REGISTRY_PASSWORD}" | docker login fr2.icr.io \
+              --username "${BNP_REGISTRY_USERNAME}" \
+              --password-stdin
+          fi
+
+      - name: Build BNP runtime image
+        run: docker build --pull -t "${IMAGE_NAME}" .
+
+      - name: Start Memgraph
+        run: |
+          docker network create twin-smoke
+          docker run -d \
+            --name twin-smoke-memgraph \
+            --network twin-smoke \
+            memgraph/memgraph-mage:3.9.0
+
+      - name: Start Twin runtime
+        run: |
+          docker run -d \
+            --name twin-smoke-runtime \
+            --network twin-smoke \
+            -p 18080:9621 \
+            -e MEMGRAPH_URI=bolt://twin-smoke-memgraph:7687 \
+            -e LIGHTRAG_PORT=9621 \
+            -e LIGHTRAG_HOST=0.0.0.0 \
+            -e LIGHTRAG_WORKING_DIR=/tmp/lightrag \
+            -e LIGHTRAG_JWT_USERNAME="${ARTIFACTORY_USERNAME}" \
+            -e LIGHTRAG_JWT_PASSWORD="${ARTIFACTORY_PASSWORD}" \
+            -e LIGHTRAG_JWT_SECRET=ci-smoke-secret-at-least-thirty-two-bytes \
+            -e TOKEN_SECRET=ci-smoke-secret-at-least-thirty-two-bytes \
+            -e OPENAI_API_KEY=ci-smoke-placeholder \
+            "${IMAGE_NAME}"
+
+      - name: Wait for runtime
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS "${TWIN_SMOKE_BASE_URL}/webui" >/dev/null; then
+              exit 0
+            fi
+            docker logs --tail 80 twin-smoke-runtime || true
+            sleep 2
+          done
+          docker logs twin-smoke-runtime || true
+          exit 1
+
+      - name: Inspect runtime endpoint
+        run: |
+          docker ps --filter name=twin-smoke --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
+          curl -i "${TWIN_SMOKE_BASE_URL}/" | sed -n '1,40p'
+          curl -i "${TWIN_SMOKE_BASE_URL}/webui" | sed -n '1,80p'
+          curl -i "${TWIN_SMOKE_BASE_URL}/auth-status" | sed -n '1,80p'
+
+      - name: Run runtime smoke checks
+        run: python tests/smoke/run_smoke.py tests/smoke/runtime-smoke-ci-http.json
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnp-runtime-smoke
+          path: |
+            /tmp/twin-smoke-report.json
+            /tmp/twin-smoke-http.log
+          if-no-files-found: ignore
+
+      - name: Dump container logs
+        if: always()
+        run: |
+          docker logs twin-smoke-runtime || true
+          docker logs twin-smoke-memgraph || true

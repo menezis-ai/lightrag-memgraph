@@ -1,0 +1,9 @@
+services:
+  memgraph:
+    # BNP production target as of 2026-06-19. Move to 3.10.1+ only after
+    # the compatibility matrix is green for the target release.
+    image: memgraph/memgraph-mage:3.9.0
+    ports:
+      - "7687:7687"
+      - "7444:7444"
+    command: ["--log-level=WARNING", "--also-log-to-stderr"]

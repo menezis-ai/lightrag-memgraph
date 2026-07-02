@@ -1,0 +1,27 @@
+You are an ontology validation agent.
+
+Review the following ontology data for quality and consistency.
+
+NODES:
+{nodes_json}
+
+EDGES:
+{edges_json}
+
+TASK: Identify issues and suggest corrections.
+
+Check for:
+- Duplicate entities (same concept, different names)
+- Contradictory relationships
+- Missing confidence scores
+- Circular dependencies that indicate errors
+
+RESPONSE (JSON only):
+{{
+  "issues": [
+    {{"type": "duplicate|contradiction|missing|circular", "description": "...", "entities": ["..."]}}
+  ],
+  "suggestions": [
+    {{"action": "merge|remove|add", "description": "..."}}
+  ]
+}}

@@ -1,0 +1,113 @@
+{
+  "target": {
+    "base_url_env": "TWIN_SMOKE_BASE_URL",
+    "webui_path": "/webui",
+    "ca_bundle": "/etc/ssl/certs/ca-certificates.crt",
+    "timeout_seconds": 30
+  },
+  "auth": {
+    "mode": "local_jwt",
+    "username_env": "ARTIFACTORY_USERNAME",
+    "password_env": "ARTIFACTORY_PASSWORD",
+    "expect_cookie": "twin_local_token",
+    "attach_bearer_after_login": false
+  },
+  "artifacts": {
+    "write_json_report": "/tmp/twin-smoke-report.json",
+    "write_http_trace": "/tmp/twin-smoke-http.log"
+  },
+  "checks": [
+    {
+      "name": "webui is served",
+      "method": "GET",
+      "path": "/webui",
+      "expect_status": 200,
+      "expect_body_contains": "Twin"
+    },
+    {
+      "name": "auth status requires login before session",
+      "method": "GET",
+      "path": "/auth-status",
+      "expect_status": 200,
+      "expect_json": {
+        "auth_enabled": true,
+        "authenticated": false,
+        "login_required": true
+      }
+    },
+    {
+      "name": "protected twin route rejects missing auth",
+      "method": "GET",
+      "path": "/twin/api/documents",
+      "expect_status": 401,
+      "expect_header_contains": {
+        "www-authenticate": "Bearer"
+      }
+    },
+    {
+      "name": "local login succeeds and sets secure cookie",
+      "method": "POST",
+      "path": "/login",
+      "login": true,
+      "expect_status": 200,
+      "expect_json_fields": ["access_token", "token_type", "expires_in"],
+      "expect_set_cookie_contains": ["twin_local_token=", "HttpOnly", "Secure", "SameSite=lax"]
+    },
+    {
+      "name": "auth status is authenticated after login",
+      "method": "GET",
+      "path": "/auth-status",
+      "after_login": true,
+      "expect_status": 200,
+      "expect_json": {
+        "authenticated": true,
+        "login_required": false
+      }
+    },
+    {
+      "name": "native documents are readable after login",
+      "method": "GET",
+      "path": "/documents",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
+      "name": "twin health is readable after login",
+      "method": "GET",
+      "path": "/twin/api/health",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
+      "name": "twin documents are readable after login",
+      "method": "GET",
+      "path": "/twin/api/documents",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
+      "name": "graph entities are readable after login",
+      "method": "GET",
+      "path": "/twin/api/graph/entities",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
+      "name": "logout clears local session",
+      "method": "POST",
+      "path": "/logout",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
+      "name": "auth status requires login after logout",
+      "method": "GET",
+      "path": "/auth-status",
+      "expect_status": 200,
+      "expect_json": {
+        "authenticated": false,
+        "login_required": true
+      }
+    }
+  ]
+}

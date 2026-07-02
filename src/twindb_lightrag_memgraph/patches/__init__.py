@@ -1,0 +1,1 @@
+"""LightRAG patch registry modules."""

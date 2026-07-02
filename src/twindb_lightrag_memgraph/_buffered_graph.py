@@ -1,0 +1,222 @@
+"""Buffered graph proxy for batching upsert_node/upsert_edge into UNWIND queries.
+
+Instead of 130+ individual Bolt round-trips per document (50 entities + 80 relations),
+this proxy buffers all upserts and flushes them as 2-3 UNWIND queries.
+
+Read operations (get_node, has_edge, get_edge) support read-your-own-writes
+from the buffer, falling back to the real graph for data not yet buffered.
+"""
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
+from ._constants import validate_identifier
+from ._pool import _is_closed_transport_error, acquire_write_slot, get_session
+
+logger = logging.getLogger("twindb_lightrag_memgraph")
+_T = TypeVar("_T")
+
+
+class _BufferedGraphProxy:
+    """Wraps a MemgraphStorage, buffering upsert_node/upsert_edge calls.
+
+    Reads (get_node, has_edge, get_edge) pass through to the real graph
+    with read-your-own-writes from the buffer.
+    All other attribute access delegates to the real graph via __getattr__.
+    """
+
+    def __init__(self, real_graph):
+        self._real = real_graph
+        self._node_buffer = {}  # entity_name -> node_data dict
+        self._node_types = {}  # entity_name -> entity_type label
+        self._edge_buffer = {}  # (src, tgt) -> edge_data dict
+
+    async def _read_with_retry(
+        self,
+        op_name: str,
+        fn: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Retry native graph reads once on stale Bolt transports.
+
+        LightRAG's Memgraph graph backend owns an independent Neo4j
+        driver. In long-lived UI runtimes that driver can hand out an
+        idle pooled connection whose underlying TCP transport has already
+        been closed by Memgraph. The failure is transient; a second call
+        gets a fresh connection from the driver's pool. Without this
+        guard a single stale read aborts the whole buffered merge.
+        """
+        try:
+            return await fn()
+        except Exception as exc:
+            if not _is_closed_transport_error(exc):
+                raise
+            logger.warning(
+                "Buffered graph read %s hit a closed Bolt transport; retrying once",
+                op_name,
+            )
+            return await fn()
+
+    # ── Intercepted write methods (buffered) ──────────────────────────
+
+    async def upsert_node(
+        self, node_id: str, node_data: dict[str, str]
+    ):  # NOSONAR - async contract.
+        """Buffer node upsert instead of firing a Bolt query."""
+        if node_id in self._node_buffer:
+            self._node_buffer[node_id].update(node_data)
+        else:
+            self._node_buffer[node_id] = dict(node_data)
+        if "entity_type" in node_data:
+            self._node_types[node_id] = node_data["entity_type"]
+
+    async def upsert_edge(  # NOSONAR - async contract.
+        self, source_node_id: str, target_node_id: str, edge_data: dict[str, str]
+    ):
+        """Buffer edge upsert instead of firing a Bolt query."""
+        key = (source_node_id, target_node_id)
+        if key in self._edge_buffer:
+            self._edge_buffer[key].update(edge_data)
+        else:
+            self._edge_buffer[key] = dict(edge_data)
+
+    # ── Read-your-own-writes passthrough ──────────────────────────────
+
+    async def get_node(self, entity_name: str):
+        """Check buffer first, then delegate to real graph."""
+        if entity_name in self._node_buffer:
+            return self._node_buffer[entity_name]
+        return await self._read_with_retry(
+            "get_node",
+            lambda: self._real.get_node(entity_name),
+        )
+
+    async def has_node(self, entity_name: str) -> bool:
+        if entity_name in self._node_buffer:
+            return True
+        return await self._read_with_retry(
+            "has_node",
+            lambda: self._real.has_node(entity_name),
+        )
+
+    async def has_edge(self, src: str, tgt: str) -> bool:
+        if (src, tgt) in self._edge_buffer:
+            return True
+        return await self._read_with_retry(
+            "has_edge",
+            lambda: self._real.has_edge(src, tgt),
+        )
+
+    async def get_edge(self, src: str, tgt: str):
+        if (src, tgt) in self._edge_buffer:
+            return self._edge_buffer[(src, tgt)]
+        return await self._read_with_retry(
+            "get_edge",
+            lambda: self._real.get_edge(src, tgt),
+        )
+
+    # ── Delegate everything else ──────────────────────────────────────
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    # ── Flush ─────────────────────────────────────────────────────────
+
+    async def flush(self):
+        """Flush buffered nodes then edges as UNWIND queries.
+
+        Nodes must flush before edges because upsert_edge uses MATCH
+        (not MERGE) for source/target nodes.
+        """
+        node_count = len(self._node_buffer)
+        edge_count = len(self._edge_buffer)
+        try:
+            if self._node_buffer:
+                await self._flush_nodes()
+            if self._edge_buffer:
+                await self._flush_edges()
+        except Exception:
+            logger.error(
+                "Buffered flush FAILED: %d nodes, %d edges",
+                node_count,
+                edge_count,
+            )
+            raise
+        self._node_buffer.clear()
+        self._node_types.clear()
+        self._edge_buffer.clear()
+        logger.debug(
+            "Buffered flush: %d nodes, %d edges",
+            node_count,
+            edge_count,
+        )
+
+    async def _flush_nodes(self):
+        """Single UNWIND query for all buffered nodes + per-type label queries."""
+        workspace = validate_identifier(self._real.workspace, "workspace")
+        entries = [
+            {"entity_id": name, "properties": data}
+            for name, data in self._node_buffer.items()
+        ]
+
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    f"""
+                    UNWIND $entries AS e
+                    MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
+                    SET n += e.properties
+                    """,
+                    entries=entries,
+                )
+                await result.consume()
+
+                # Set additional type labels — group by type to minimize queries.
+                # Cypher can't do SET n:$dynamic, so one query per distinct type.
+                by_type: dict[str, list[str]] = {}
+                for name, node_type in self._node_types.items():
+                    by_type.setdefault(node_type, []).append(name)
+                for node_type, names in by_type.items():
+                    try:
+                        safe_type = validate_identifier(str(node_type), "entity_type")
+                    except ValueError:
+                        logger.warning(
+                            "Skipping unsafe buffered entity_type label: %r",
+                            node_type,
+                        )
+                        continue
+                    result = await session.run(
+                        f"""
+                        UNWIND $names AS name
+                        MATCH (n:`{workspace}` {{entity_id: name}})
+                        SET n:`{safe_type}`
+                        """,
+                        names=names,
+                    )
+                    await result.consume()
+
+    async def _flush_edges(self):
+        """Single UNWIND query for all buffered edges."""
+        workspace = validate_identifier(self._real.workspace, "workspace")
+        entries = [
+            {
+                "source_entity_id": src,
+                "target_entity_id": tgt,
+                "properties": data,
+            }
+            for (src, tgt), data in self._edge_buffer.items()
+        ]
+
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    f"""
+                    UNWIND $entries AS e
+                    MATCH (source:`{workspace}` {{entity_id: e.source_entity_id}})
+                    MATCH (target:`{workspace}` {{entity_id: e.target_entity_id}})
+                    MERGE (source)-[r:DIRECTED]-(target)
+                    SET r += e.properties
+                    """,
+                    entries=entries,
+                )
+                await result.consume()

@@ -1,0 +1,31 @@
+__pycache__/
+*.pyc
+*.egg-info/
+# uv.lock is not versioned — the project pins deps via `pip install -e` (CLAUDE.md §5)
+uv.lock
+dist/
+build/
+.pytest_cache/
+.scannerwork/
+.vscode/
+.coverage
+coverage.xml
+.menezis/
+proto/
+
+# Secrets & local configuration
+.env
+.env.*
+config.ini
+*.pem
+*.key
+*.crt
+SITREP-TwinRAG.md
+
+# macOS noise
+.DS_Store
+
+# Committed in the BNP export so runtime builds do not need Bun/Node.
+
+# Local OVH deploy assets (Dockerfile/stack/.env live on the server, not versioned)
+deploy/ovh-twin/

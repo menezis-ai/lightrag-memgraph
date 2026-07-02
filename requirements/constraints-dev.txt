@@ -1,0 +1,9 @@
+# CI/dev security floor constraints.
+# Keep LightRAG unpinned here so the CI matrix can install and test
+# 1.4.9.11, 1.4.11, and 1.4.12 explicitly.
+black>=24.10.0
+pydantic-settings>=2.14.2
+pypdf>=6.13.3
+python-multipart>=0.0.31
+ruff>=0.8.0
+starlette>=1.3.1
