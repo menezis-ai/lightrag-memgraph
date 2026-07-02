@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -29,11 +30,22 @@ class FakeChunksVdb:
         self.rows = rows
         self.last_query: str | None = None
         self.last_top_k: int | None = None
+        self.get_by_ids_calls: list[list[str]] = []
 
     async def query(self, query: str, top_k: int) -> list[dict[str, Any]]:
         self.last_query = query
         self.last_top_k = top_k
         return self.rows
+
+    async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any] | None]:
+        self.get_by_ids_calls.append(list(ids))
+        by_id = {
+            row_id: row
+            for row in self.rows
+            for row_id in (row.get("chunk_id"), row.get("id"), row.get("_id"))
+            if isinstance(row_id, str) and row_id
+        }
+        return [by_id.get(chunk_id) for chunk_id in ids]
 
 
 class FakeDocStatus:
@@ -101,6 +113,7 @@ class FakeRag:
         self.llm_calls: list[tuple[str, Any]] = []
         self.data_calls: list[tuple[str, Any]] = []
         self.chunks_vdb = FakeChunksVdb(chunks or [])
+        self.text_chunks = FakeChunksVdb(chunks or [])
         self.doc_status = FakeDocStatus(chunk_to_doc or {}, docs)
         self._chunks_fixture = chunks or []
         self._envelope_status = envelope_status
@@ -1150,6 +1163,7 @@ class TestQueryEndpoint:
                         "full_doc_id": "doc-oracle",
                         "content": "Oracle RMAN restart",
                         "reference_id": "1",
+                        "score": 0.95,
                     }
                 ],
                 "references": [{"reference_id": "1", "file_path": "oracle.pdf"}],
@@ -1228,7 +1242,9 @@ class TestQueryEndpoint:
         from twindb_lightrag_memgraph.server import twin_query_routes as tqr
 
         async def fake_fetch(doc_id, folder):
-            return {"cft-vm"} if doc_id == "doc-cft" and folder == "default" else set()
+            if doc_id == "doc-cft" and folder == "default":
+                return {"cft-vm"}
+            return set()
 
         monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
 
@@ -1313,6 +1329,54 @@ class TestQueryEndpoint:
         assert "fallback_mode" not in body["metadata"]
         assert [param.mode for _query, param in rag.data_calls] == [mode]
 
+    async def test_query_data_fallback_to_mix_false_disables_filtered_retry(
+        self, make_client
+    ):
+        no_results = {
+            "status": "failure",
+            "message": "Query returned no results",
+            "data": {},
+            "metadata": {"failure_reason": "no_results", "mode": "hybrid"},
+        }
+        fallback = {
+            "status": "success",
+            "message": "Query executed successfully",
+            "data": {
+                "chunks": [
+                    {
+                        "chunk_id": "chunk-cft",
+                        "full_doc_id": "doc-cft",
+                        "content": "CFT virtual machine operations",
+                        "reference_id": "1",
+                    }
+                ],
+                "references": [{"reference_id": "1", "file_path": "cft.pdf"}],
+            },
+            "metadata": {"query_mode": "mix"},
+        }
+        rag = FakeRag(query_data_sequence=[no_results, fallback])
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "Ask a question about the indexed knowledge base",
+                    "mode": "hybrid",
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                    "fallback_to_mix": False,
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "failure"
+        assert body["metadata"]["failure_reason"] == "no_results"
+        assert body["metadata"]["mode"] == "hybrid"
+        assert body["metadata"]["tag_filter"] == {"all": ["cft-vm"], "any": []}
+        assert "fallback_mode" not in body["metadata"]
+        assert [param.mode for _query, param in rag.data_calls] == ["hybrid"]
+
     async def test_query_data_unfiltered_hybrid_no_results_does_not_fallback(
         self, make_client
     ):
@@ -1337,6 +1401,374 @@ class TestQueryEndpoint:
         assert r.status_code == 200
         assert r.json() == no_results
         assert [param.mode for _query, param in rag.data_calls] == ["hybrid"]
+
+    async def test_query_data_filtered_hybrid_enriches_chunks_from_kg_source_ids(
+        self, make_client, monkeypatch
+    ):
+        """Hybrid KG results can carry source chunks without a chunks block."""
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, folder):
+            if doc_id == "doc-cft" and folder == "default":
+                return {"cft-vm"}
+            return set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "entities": [],
+                    "relationships": [
+                        {
+                            "src_id": "BP2I",
+                            "tgt_id": "ICPE Regulation",
+                            "description": (
+                                "BP2I complies with the ICPE regulation"
+                            ),
+                            "source_id": "chunk-cft",
+                            "file_path": "CFT Classic v1.1.13 (1).pdf",
+                        }
+                    ],
+                    "chunks": [],
+                    "references": [],
+                },
+                "metadata": {"query_mode": "hybrid"},
+            },
+            chunks=[
+                {
+                    "id": "chunk-cft",
+                    "content": "CFT Classic compliance and ICPE regulation",
+                    "full_doc_id": "doc-cft",
+                    "file_path": "CFT Classic v1.1.13 (1).pdf",
+                    "chunk_order_index": 1,
+                }
+            ],
+            chunk_to_doc={"chunk-cft": "doc-cft"},
+        )
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "CFT compliance",
+                    "mode": "hybrid",
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [param.mode for _query, param in rag.data_calls] == ["hybrid"]
+        assert body["data"]["relationships"][0]["source_id"] == "chunk-cft"
+        assert body["data"]["chunks"] == [
+            {
+                "id": "chunk-cft",
+                "content": "CFT Classic compliance and ICPE regulation",
+                "full_doc_id": "doc-cft",
+                "file_path": "CFT Classic v1.1.13 (1).pdf",
+                "chunk_order_index": 1,
+                "chunk_id": "chunk-cft",
+                "reference_id": "1",
+                "score": 0.95,
+            }
+        ]
+        assert body["data"]["references"] == [
+            {
+                "reference_id": "1",
+                "file_path": "CFT Classic v1.1.13 (1).pdf",
+            }
+        ]
+        assert body["metadata"]["tag_filter"] == {"all": ["cft-vm"], "any": []}
+
+    async def test_query_data_enriched_chunk_score_uses_kg_similarity(
+        self, make_client, monkeypatch
+    ):
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, _folder):
+            return {"cft-vm"} if doc_id == "doc-cft" else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "entities": [],
+                    "relationships": [
+                        {
+                            "src_id": "BP2I",
+                            "tgt_id": "ICPE Regulation",
+                            "source_id": "chunk-cft",
+                            "similarity": 0.84,
+                        }
+                    ],
+                    "chunks": [],
+                    "references": [],
+                },
+                "metadata": {"query_mode": "hybrid"},
+            },
+            chunks=[
+                {
+                    "id": "chunk-cft",
+                    "content": "CFT compliance chunk",
+                    "full_doc_id": "doc-cft",
+                    "file_path": "cft.pdf",
+                }
+            ],
+            chunk_to_doc={"chunk-cft": "doc-cft"},
+        )
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "CFT compliance",
+                    "mode": "hybrid",
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["chunks"][0]["score"] == 0.84
+
+    async def test_query_data_source_id_enrichment_dedupes_existing_chunks(
+        self, make_client, monkeypatch
+    ):
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, _folder):
+            return {"cft-vm"} if doc_id in {"doc-a", "doc-b"} else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "entities": [
+                        {
+                            "entity_name": "CFT",
+                            "source_id": "chunk-a<SEP>chunk-b<SEP>chunk-b",
+                        }
+                    ],
+                    "relationships": [],
+                    "chunks": [
+                        {
+                            "chunk_id": "chunk-a",
+                            "full_doc_id": "doc-a",
+                            "content": "already projected",
+                            "reference_id": "7",
+                        }
+                    ],
+                    "references": [{"reference_id": "7", "file_path": "a.pdf"}],
+                },
+                "metadata": {"query_mode": "hybrid"},
+            },
+            chunks=[
+                {
+                    "id": "chunk-a",
+                    "content": "already projected",
+                    "full_doc_id": "doc-a",
+                    "file_path": "a.pdf",
+                },
+                {
+                    "id": "chunk-b",
+                    "content": "materialized from source_id",
+                    "full_doc_id": "doc-b",
+                    "file_path": "b.pdf",
+                },
+            ],
+            chunk_to_doc={"chunk-a": "doc-a", "chunk-b": "doc-b"},
+        )
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "CFT compliance",
+                    "mode": "hybrid",
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [row["chunk_id"] for row in body["data"]["chunks"]] == [
+            "chunk-a",
+            "chunk-b",
+        ]
+        assert body["data"]["chunks"][1]["reference_id"] == "8"
+        assert body["data"]["references"] == [
+            {"reference_id": "7", "file_path": "a.pdf"},
+            {"reference_id": "8", "file_path": "b.pdf"},
+        ]
+
+    async def test_query_data_source_id_enrichment_falls_back_to_chunks_vdb(
+        self, make_client, monkeypatch
+    ):
+        from twindb_lightrag_memgraph.server import twin_query_routes as tqr
+
+        async def fake_fetch(doc_id, _folder):
+            return {"cft-vm"} if doc_id == "doc-cft" else set()
+
+        monkeypatch.setattr(tqr, "_fetch_doc_graph_tags", fake_fetch)
+
+        rag = FakeRag(
+            query_data={
+                "status": "success",
+                "message": "Query executed successfully",
+                "data": {
+                    "entities": [
+                        {"entity_name": "CFT", "source_id": "chunk-cft"},
+                    ],
+                    "relationships": [],
+                    "chunks": [],
+                    "references": [],
+                },
+                "metadata": {"query_mode": "hybrid"},
+            },
+            chunks=[
+                {
+                    "id": "chunk-cft",
+                    "content": "CFT chunk from chunks_vdb",
+                    "full_doc_id": "doc-cft",
+                    "file_path": "cft.pdf",
+                }
+            ],
+            chunk_to_doc={"chunk-cft": "doc-cft"},
+        )
+        rag.text_chunks = FakeChunksVdb([])
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post(
+                "/query/data",
+                json={
+                    "query": "CFT compliance",
+                    "mode": "hybrid",
+                    "tag_filter": {"all": ["cft-vm"], "any": []},
+                },
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["chunks"][0]["chunk_id"] == "chunk-cft"
+        assert rag.text_chunks.get_by_ids_calls == [["chunk-cft"]]
+        assert rag.chunks_vdb.get_by_ids_calls == [["chunk-cft"]]
+
+    @pytest.mark.integration
+    async def test_query_data_enrichment_uses_real_memgraph_chunks_and_tags(
+        self, make_client, monkeypatch
+    ):
+        from twindb_lightrag_memgraph import _pool
+        from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+
+        workspace = f"query_data_it_{uuid4().hex[:8]}"
+        monkeypatch.setenv("MEMGRAPH_WORKSPACE", workspace)
+        text_chunks = MemgraphKVStorage(
+            namespace="text_chunks",
+            global_config={"workspace": workspace},
+            embedding_func=None,
+        )
+        await text_chunks.initialize()
+
+        kv_label = text_chunks._label()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = "WebuiTag_default"
+
+        async def cleanup():
+            async with _pool.get_session() as session:
+                for label in (kv_label, doc_label, tag_label):
+                    result = await session.run(
+                        f"MATCH (n:`{label}`) DETACH DELETE n"
+                    )
+                    await result.consume()
+
+        await cleanup()
+        try:
+            await text_chunks.upsert(
+                {
+                    "chunk-it": {
+                        "content": "CFT Classic compliance via real KV chunk",
+                        "full_doc_id": "doc-it",
+                        "file_path": "it-cft.pdf",
+                        "chunk_order_index": 4,
+                    }
+                }
+            )
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    MERGE (d:`{doc_label}` {{id: 'doc-it'}})
+                    SET d.file_path = 'it-cft.pdf'
+                    MERGE (t:`{tag_label}` {{id: 'cft-vm'}})
+                    MERGE (d)-[:TAGGED_WITH]->(t)
+                    """
+                )
+                await result.consume()
+
+            rag = FakeRag(
+                query_data={
+                    "status": "success",
+                    "message": "Query executed successfully",
+                    "data": {
+                        "entities": [],
+                        "relationships": [
+                            {
+                                "src_id": "BP2I",
+                                "tgt_id": "ICPE Regulation",
+                                "source_id": "chunk-it",
+                            }
+                        ],
+                        "chunks": [],
+                        "references": [],
+                    },
+                    "metadata": {"query_mode": "hybrid"},
+                },
+                chunk_to_doc={"chunk-it": "doc-it"},
+            )
+            rag.text_chunks = text_chunks
+            rag.chunks_vdb = FakeChunksVdb([])
+            client = await make_client(rag)
+
+            async with client:
+                r = await client.post(
+                    "/query/data",
+                    json={
+                        "query": "CFT compliance",
+                        "mode": "hybrid",
+                        "tag_filter": {"all": ["cft-vm"], "any": []},
+                    },
+                )
+
+            assert r.status_code == 200
+            body = r.json()
+            assert body["data"]["chunks"] == [
+                {
+                    "content": "CFT Classic compliance via real KV chunk",
+                    "full_doc_id": "doc-it",
+                    "file_path": "it-cft.pdf",
+                    "chunk_order_index": 4,
+                    "chunk_id": "chunk-it",
+                    "reference_id": "1",
+                    "score": 0.95,
+                }
+            ]
+            assert body["data"]["references"] == [
+                {"reference_id": "1", "file_path": "it-cft.pdf"}
+            ]
+        finally:
+            await cleanup()
 
     async def test_query_data_tag_filter_filters_chunks_and_references(
         self, make_client, monkeypatch
@@ -1866,6 +2298,7 @@ class TestQueryEndpoint:
                         "chunk_id": "chunk-without-doc-map",
                         "content": "still visible",
                         "reference_id": "1",
+                        "score": 0.95,
                     }
                 ],
                 "references": [{"reference_id": "1", "file_path": "loose.txt"}],

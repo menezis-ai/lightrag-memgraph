@@ -387,6 +387,7 @@ describe('Helpers — mockResponseFor / mockUnauthorized', () => {
     const body = JSON.parse(r.body);
     expect(body.status).toBe('success');
     expect(body.data.chunks).toHaveLength(1);
+    expect(body.data.chunks[0].score).toBe(0.91);
     // /query/data is the one endpoint that legitimately echoes
     // tag_filter in metadata (audit C2 wired it via TAGGED_WITH).
     expect(body.metadata.tag_filter.all).toEqual(['tag-name']);

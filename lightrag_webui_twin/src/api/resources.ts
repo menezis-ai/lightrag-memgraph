@@ -138,6 +138,7 @@ export interface TwinQueryRequest {
     all?: readonly string[];
     any?: readonly string[];
   };
+  fallback_to_mix?: boolean;
 }
 
 export interface TwinQuerySource {

@@ -1,16 +1,16 @@
-# Runbook d'installation — `twindb-lightrag-memgraph` v1.1.0
+# Runbook d'installation — `twindb-lightrag-memgraph` v1.0.0
 
 | Champ | Valeur |
 |---|---|
 | **Document** | `docs/operations/install-runbook.md` |
-| **Version cible du package** | `1.1.0` |
+| **Version cible du package** | `1.0.0` |
 | **Version cible de LightRAG** | `1.4.9.11` (= version BNP prod) |
 | **Version cible de Memgraph** | `3.9.0` (MAGE), `3.10.1` en forward-compat |
 | **Audience** | Opérateur BNP qui installe le wheel ; auditeur IG/BCE qui vérifie le processus |
 | **Statut** | Draft pour review (sera figé en cas de release) |
 | **Owner produit** | Julien |
 | **Owner technique BNP** | À définir (escalation Fabrice) |
-| **Période de validité** | À chaque release `1.1.x`, ce document est révisé |
+| **Période de validité** | À chaque release `1.0.x`, ce document est révisé |
 
 > **Lecture rapide pour un auditeur IG** : sections §1 (Prérequis), §3 (Procédure), §4 (Vérification), §6 (Rollback) — environ 5 minutes. Le reste est opérationnel pour les ops BNP.
 
@@ -34,7 +34,7 @@
 |---|---|---|
 | **Memgraph 3.9.0 ou 3.10.1** | `bolt://<host>:7687` (TLS recommandé) | Graph + KV + Vector + DocStatus |
 | **LLM provider interne** | URL configurable par env | Chat (`chat_llm`) et indexation (`indexing_llm`) — peuvent être identiques |
-| **SSO BNPP** | URL JWKS BNPP | Validation des JWT (à la sortie v1.2 ; en v1.1 mode legacy-fallback documenté) |
+| **SSO BNPP** | URL JWKS BNPP | Validation des JWT quand l'IdP est disponible ; en `1.0.0`, le mode legacy-fallback reste documenté |
 | **MyAccess** | API d'introspection (futur) | Source des claims `role` / `palier` |
 | **Log-as-a-Service** (Splunk / ELK / Datadog) | URL d'ingestion | Sink optionnel pour l'audit trail |
 
@@ -63,8 +63,8 @@
 ### 1.4 — Caractéristiques du wheel
 
 - **Hermétique** : aucune dépendance n'est téléchargée au runtime. Le wheel embarque le WebUI Twin (fichiers statiques) et toutes les deps Python sont déclarées et résolues à `pip install`.
-- **Signé** (à partir de la v1.1.0) : tag Git `v1.1.0` signé via GPG ; signature Sigstore sur l'artefact PyPI/Forgejo.
-- **SBOM** : un fichier `docs/sbom-1.1.0.json` (CycloneDX) accompagne chaque release. **L'auditeur peut le récupérer depuis le tag de release Forgejo.**
+- **Signature de release** : le tag Git et les artefacts de release `1.0.0` sont vérifiés selon la procédure de livraison en vigueur.
+- **SBOM** : le SBOM associé à la release `1.0.0`, lorsqu'il est produit, accompagne les artefacts de livraison. **L'auditeur le récupère depuis le tag ou le paquet de release Forgejo.**
 - **Pas d'install dynamique** : la fonction `_patch_security_baseline()` neutralise `pipmaster.install` au démarrage. Toute tentative d'installation runtime de la part de LightRAG natif est bloquée et journalisée. C'est documenté dans `docs/audits/lightrag-1.4.9.11/prisme-G-vulnerabilities.md`.
 
 ---
@@ -108,7 +108,7 @@ sudo -u twinrag python3.12 -m venv /opt/twinrag/venv
 sudo -u twinrag /opt/twinrag/venv/bin/pip install --no-index \
     --find-links /chemin/vers/le/wheel \
     -c /chemin/vers/requirements/constraints-prod.txt \
-    "twindb-lightrag-memgraph[server,intelligence,tracing]==1.1.0"
+    "twindb-lightrag-memgraph[server,intelligence,tracing]==1.0.0"
 ```
 
 **Notes** :
@@ -226,7 +226,7 @@ Lignes attendues dans le journal (extrait) :
 ```
 twindb_lightrag_memgraph: twindb: pipmaster runtime install blocked (security baseline)
 twindb_lightrag_memgraph: twindb: lightrag check_and_install_dependencies neutralized
-twindb-lightrag-memgraph v1.1.0 — PATCH APPLIED SUCCESSFULLY
+twindb-lightrag-memgraph v1.0.0 — PATCH APPLIED SUCCESSFULLY
   Graph DB ........ Memgraph (MemgraphStorage, patched for TLS + multi-db)
   Vector DB ....... Memgraph native vector_search (MemgraphVectorDBStorage)
   KV Storage ...... Memgraph (MemgraphKVStorage)
@@ -336,7 +336,7 @@ Voir le runbook Memgraph dédié — Twin KMS n'a pas de spécificité au-delà 
 
 ### 5.4 — Métriques
 
-À partir de la milestone M8 (livraison post-1.1.0), un endpoint Prometheus sera exposé à `/twin/api/metrics`. En 1.1.0, observer via les logs JSON ECS.
+En `1.0.0`, observer via les logs applicatifs et les compteurs opérationnels exposés par `/twin/api/ops/metrics` lorsque l'overlay est actif.
 
 ---
 
@@ -363,7 +363,7 @@ sudo systemctl restart twinrag
 
 **Effet** : LightRAG sert son `/webui` natif et expose ses routes natives ; aucune route `/twin/api` ; aucun mount swap ; storages Memgraph **restent en place** (= les données restent accessibles via les endpoints natifs LightRAG).
 
-### 6.2 — Cas 2 : downgrade complet vers v1.0.x (storage uniquement, pas d'UI/server étendu)
+### 6.2 — Cas 2 : réinstallation de la release `1.0.0`
 
 ```bash
 sudo -u twinrag /opt/twinrag/venv/bin/pip install --no-index --find-links /chemin/wheels/v1.0 \
@@ -371,7 +371,7 @@ sudo -u twinrag /opt/twinrag/venv/bin/pip install --no-index --find-links /chemi
 sudo systemctl restart twinrag
 ```
 
-**Effet** : retour à la version qui tourne aujourd'hui en prod. `register()` sans flags. Aucune perte de données — schémas Memgraph sont compatibles ascendants.
+**Effet** : retour au wheel `1.0.0` de référence. Les flags `register()` restent ceux du wrapper de démarrage en place. Aucune perte de données attendue — les schémas Memgraph de la ligne `1.0.0` restent compatibles avec cette réinstallation.
 
 ### 6.3 — Cas 3 : désinstallation totale du package twindb (retour à LightRAG vanilla)
 
@@ -390,7 +390,7 @@ Puis modifier `register_and_serve.py` pour supprimer l'import `twindb_lightrag_m
 |---|---|
 | Le `/twin/api/health` répond `500` mais `/health` natif répond | §6.1 (désactiver Twin, garder le service) |
 | Pipmaster bloque un boot légitime (cas exceptionnel — vérifier la cause) | `register(security_baseline=False)` temporairement, **escalation immédiate** |
-| Régression fonctionnelle sur le retrieval natif LightRAG | §6.2 (downgrade vers 1.0.x) |
+| Régression fonctionnelle sur le retrieval natif LightRAG | §6.2 (réinstaller le wheel `1.0.0` de référence) |
 | Découverte de vulnérabilité sécu post-déploiement | §6.1 ou §6.3 selon gravité |
 
 ---
@@ -402,20 +402,20 @@ Puis modifier `register_and_serve.py` pour supprimer l'import `twindb_lightrag_m
 **Symptôme** : un boot du service échoue en relayant ce message.
 **Cause** : LightRAG natif (ou une lib appelée) tente un install runtime via `pipmaster`. La baseline a fait son travail.
 **Diagnostic** : journaliser le stack trace ; identifier la lib coupable (souvent `lightrag.llm.ollama`, `lightrag.llm.jina` ou un nouveau binding).
-**Résolution** : ajouter cette lib en dépendance pinned dans `pyproject.toml` côté package twindb (suivre la procédure de release 1.1.x).
+**Résolution** : ajouter cette lib en dépendance pinned dans `pyproject.toml` côté package twindb (suivre la procédure de release de la ligne `1.0.x`).
 **Contournement temporaire** : `register(security_baseline=False)` + alerte sécu interne BNP. Ne pas laisser en production plus de 24h.
 
 ### 7.2 — `FileNotFoundError: register(replace_ui=True): no WebUI dist found`
 
 **Symptôme** : le boot échoue à résoudre le `webui_dist`.
-**Cause** : le wheel installé ne contient pas le répertoire `webui_dist/` (artefact pré-1.1.0 ou build script non exécuté avant `python -m build`).
-**Résolution** : vérifier le wheel avec `python -c "import zipfile; z=zipfile.ZipFile('twindb_lightrag_memgraph-1.1.0-py3-none-any.whl'); print([n for n in z.namelist() if 'webui_dist' in n])"`. Si vide, reconstruire avec `scripts/build_webui.sh` puis `python -m build`.
+**Cause** : le wheel installé ne contient pas le répertoire `webui_dist/` (artefact incomplet ou build script non exécuté avant `python -m build`).
+**Résolution** : vérifier le wheel avec `python -c "import zipfile; z=zipfile.ZipFile('twindb_lightrag_memgraph-1.0.0-py3-none-any.whl'); print([n for n in z.namelist() if 'webui_dist' in n])"`. Si vide, reconstruire avec `scripts/build_webui.sh` puis `python -m build`.
 
 ### 7.3 — `Memgraph.ClientError ... Trying to get a property from a deleted object`
 
 **Symptôme** : erreur sporadique sur `aquery` ou `adelete_by_doc_id`.
 **Cause connue** : race condition dans le pipeline buffered writes / read cache sous charge concurrente. Identifié sur le test `test_multiple_documents_partial_delete` en suite e2e.
-**Résolution v1.1.0** : retry au niveau applicatif. v1.2.x prévoit un audit du `_BufferedGraphProxy`.
+**Résolution `1.0.0`** : retry au niveau applicatif. Un audit dédié du `_BufferedGraphProxy` reste à planifier avant une future montée de version.
 
 ### 7.4 — Twin sub-app monte mais retourne 500 sur toutes les routes
 
@@ -427,9 +427,9 @@ Puis modifier `register_and_serve.py` pour supprimer l'import `twindb_lightrag_m
 
 ## §8 — Audit trail et conformité
 
-### 8.1 — Ce qui est journalisé par défaut (v1.1.0)
+### 8.1 — Ce qui est journalisé par défaut (`1.0.0`)
 
-Le middleware audit (M3, livraison v1.1.0 en cours) loggue en JSON ECS-compatible vers le sink configuré par `TWIN_LOG_SINK` :
+Le runtime `1.0.0` journalise les événements applicatifs et l'access log FastAPI vers le sink configuré par `TWIN_LOG_SINK` lorsqu'il est disponible :
 
 - `auth.login.success` / `auth.login.failure`
 - `retrieval.query.submitted` / `retrieval.query.completed` / `retrieval.query.failed`
@@ -466,7 +466,7 @@ Selon DORA art. 9 et EBA/GL/2019/04 : minimum 5 ans pour les events relatifs aux
 | Exigence | Configuration |
 |---|---|
 | DORA art. 9 (chiffrement at-rest et in-transit) | `MEMGRAPH_USE_TLS=true` + chiffrement disque côté Memgraph (responsabilité BNP) |
-| DORA art. 9 (supply chain integrity) | `security_baseline=True` (défaut) ; SBOM v1.1.0 conservé |
+| DORA art. 9 (supply chain integrity) | `security_baseline=True` (défaut) ; artefacts de release `1.0.0` conservés |
 | EBA/GL/2019/04 (audit log) | `TWIN_LOG_SINK` configuré vers sink durable |
 | RGPD art. 17 (droit à l'effacement) | TTL DocStatus + purge physique KV au delete (livraison M5) |
 | AI Act art. 4 (AI literacy) | Disclaimer "système IA" dans le footer WebUI (livraison M9) |
@@ -482,7 +482,7 @@ rationale et date de revue sont versionnés dans
 
 ## §9 — Procédures de release (interne au projet)
 
-### 9.1 — Avant chaque release `1.1.x`
+### 9.1 — Avant chaque release `1.0.x`
 
 1. Mettre à jour la version dans `pyproject.toml`.
 2. Mettre à jour `changelog.md`.
@@ -490,7 +490,7 @@ rationale et date de revue sont versionnés dans
 4. Exécuter `python -m build --wheel --sdist`.
 5. Vérifier que le wheel contient bien `webui_dist/index.html` et **PAS** `webui_dist/mockServiceWorker.js`.
 6. Générer le SBOM : `cyclonedx-py environment --of json --output-file docs/sbom-<version>.json`.
-7. Tagger Git : `git tag -s -a v1.1.x` (signature GPG obligatoire).
+7. Tagger Git : `git tag -s -a v1.0.x` (signature GPG obligatoire).
 8. Pousser le tag et créer une release Forgejo avec les artefacts attachés.
 
 ### 9.2 — Communication aux opérateurs BNP

@@ -726,6 +726,7 @@ export function mockResponseFor(
                   chunk_id: 'chunk_4a12',
                   file_path: 'source-document.pdf',
                   reference_id: '1',
+                  score: 0.91,
                 },
               ],
               references: [
