@@ -8,28 +8,28 @@ on:
 
 jobs:
   python-lint:
-    runs-on: [self-hosted, docker]
+    runs-on: [self-hosted, low, lint]
     steps:
       - uses: actions/checkout@v4
 
       - name: Run Python lint and format checks
         run: |
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD:/work" \
-            -w /work \
-            python:3.12-bookworm \
-            sh -lc '
-              python -m venv /tmp/venv &&
-              . /tmp/venv/bin/activate &&
-              python -m pip install --upgrade pip &&
-              python -m pip install -c requirements/constraints-dev.txt black ruff &&
-              black --check --diff src tests &&
-              ruff check src tests
-            '
+          venv="/tmp/twin-python-lint-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          rm -rf "$venv"
+          cleanup() {
+            rm -rf "$venv"
+          }
+          trap cleanup EXIT
+
+          python3 -m venv "$venv"
+          . "$venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install -c requirements/constraints-dev.txt black ruff
+          black --check --diff src tests
+          ruff check src tests
 
   unit-tests:
+    needs: [python-lint, webui-lint]
     runs-on: [self-hosted, docker]
     strategy:
       matrix:
@@ -74,6 +74,7 @@ jobs:
             '
 
   integration-tests:
+    needs: [python-lint, webui-lint]
     runs-on: [self-hosted, docker]
     strategy:
       # Own Docker network per matrix job; keep one Memgraph-heavy job per
@@ -161,9 +162,8 @@ jobs:
 
   webui-lint:
     # ESLint gate (low-cost: no install of Playwright / heavyweight deps
-    # beyond `bun install`). Runs in parallel with the heavier WebUI
-    # jobs so a style/error regression fails fast without waiting for
-    # vitest / build / e2e.
+    # beyond `bun install`). Runs at pipeline start with python-lint and the
+    # long Playwright e2e job. The remaining jobs wait for both lint gates.
     # Doctrine: lint = light job → low/lint pool, NOT docker. (Was
     # [self-hosted, docker]: mislabelled, landed on docker CTs and tripped
     # setup-bun's unzip dependency.)
@@ -186,6 +186,7 @@ jobs:
         run: bun run lint
 
   webui-tests:
+    needs: [python-lint, webui-lint]
     # Typecheck, run Vitest, and build the Twin WebUI frontend.
     # Bun is pre-installed on the bunker runners (Forgejo Actions self-hosted).
     runs-on: [self-hosted, docker]
@@ -255,6 +256,7 @@ jobs:
             sh -lc 'npm ci --prefer-offline --no-audit --no-fund && npm run test:e2e'
 
   webui-e2e-real:
+    needs: [python-lint, webui-lint]
     # Browser smoke + real Twin backend mutation coverage against Memgraph.
     # The LLM-backed retrieval UI case remains opt-in because CI has no model
     # credentials; all non-LLM real-backend cases run here.
@@ -440,6 +442,7 @@ jobs:
           fi
 
   webui-e2e-keygen:
+    needs: [python-lint, webui-lint]
     # Same adversarial API-coverage protocol as webui-e2e-real, but every
     # request is authenticated with a key MINTED THROUGH the Settings -> API
     # keys endpoint (api_key_store), proving generated keys are real
@@ -579,3 +582,39 @@ jobs:
           if [ -f .ci-keygen-network ]; then
             docker network rm "$(cat .ci-keygen-network)" || true
           fi
+
+  ci-success:
+    name: CI success
+    runs-on: [self-hosted, low, lint]
+    needs:
+      - python-lint
+      - webui-lint
+      - webui-e2e
+      - unit-tests
+      - integration-tests
+      - webui-tests
+      - webui-e2e-real
+      - webui-e2e-keygen
+    if: always()
+    steps:
+      - name: Check aggregate CI result
+        run: |
+          cat <<'RESULTS'
+          python-lint=${{ needs.python-lint.result }}
+          webui-lint=${{ needs.webui-lint.result }}
+          webui-e2e=${{ needs.webui-e2e.result }}
+          unit-tests=${{ needs.unit-tests.result }}
+          integration-tests=${{ needs.integration-tests.result }}
+          webui-tests=${{ needs.webui-tests.result }}
+          webui-e2e-real=${{ needs.webui-e2e-real.result }}
+          webui-e2e-keygen=${{ needs.webui-e2e-keygen.result }}
+          RESULTS
+
+          test "${{ needs.python-lint.result }}" = "success"
+          test "${{ needs.webui-lint.result }}" = "success"
+          test "${{ needs.webui-e2e.result }}" = "success"
+          test "${{ needs.unit-tests.result }}" = "success"
+          test "${{ needs.integration-tests.result }}" = "success"
+          test "${{ needs.webui-tests.result }}" = "success"
+          test "${{ needs.webui-e2e-real.result }}" = "success"
+          test "${{ needs.webui-e2e-keygen.result }}" = "success"
