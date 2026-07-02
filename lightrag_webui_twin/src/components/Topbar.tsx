@@ -6,14 +6,14 @@
  *     read from window.MOCK_FOLDERS / window.MOCK_NOTIFICATIONS, so the
  *     component is fully testable with fixtures and ready to wire to a
  *     real fetcher later.
- *   - FolderMenu and NotificationsPopover stay internal to this file
- *     (private sub-components, not exported) — they're tightly coupled to
- *     the popover open/close state owned by Topbar.
+ *   - FolderSwitcher owns the folder popover so the topbar composition has
+ *     one live implementation instead of a duplicated private menu.
  *   - Click-outside + Escape handling preserved 1-for-1.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon, type IconName } from './Icon';
+import { FolderSwitcher } from './Topbar/FolderSwitcher';
 import {
   DEFAULT_TABS,
   type Notification,
@@ -66,21 +66,17 @@ export function Topbar({
   tabs,
 }: Readonly<TopbarProps>) {
   const TABS = tabs ?? DEFAULT_TABS;
-  const [wsOpen, setWsOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const wsRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (wsRef.current && !wsRef.current.contains(target)) setWsOpen(false);
       if (notifRef.current && !notifRef.current.contains(target))
         setNotifOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setWsOpen(false);
         setNotifOpen(false);
       }
     };
@@ -125,47 +121,22 @@ export function Topbar({
         ))}
       </nav>
       <div className="topbar-right">
-        <div ref={wsRef} style={{ position: 'relative' }}>
-          <button
-            type="button"
-            className={`folder-pill${wsOpen ? ' is-open' : ''}`}
-            onClick={() => {
-              setWsOpen((o) => !o);
-              setNotifOpen(false);
-            }}
-            title="Switch folder"
-            aria-expanded={wsOpen}
-            aria-haspopup="menu"
-          >
-            <Icon name="folder" size={12} />
-            <span style={{ fontFamily: 'var(--font-mono)' }}>{folder}</span>
-            <Icon name="chevron-down" size={11} />
-          </button>
-          {wsOpen && (
-            <FolderMenu
-              current={folder}
-              folders={folders}
-              onPick={(ws) => {
-                setWsOpen(false);
-                onSwitchFolder(ws);
-              }}
-              onManageFolders={() => {
-                setWsOpen(false);
-                onManageFolders?.();
-              }}
-            />
-          )}
-        </div>
-        <div ref={notifRef} style={{ position: 'relative' }}>
+        <FolderSwitcher
+          active={folder}
+          folders={folders}
+          onPick={(id) => {
+            const nextFolder = folders.find((item) => item.id === id);
+            if (nextFolder) onSwitchFolder(nextFolder);
+          }}
+          onManageFolders={onManageFolders}
+        />
+        <div ref={notifRef} className="topbar-popover-anchor">
           <button
             type="button"
             className="icon-btn"
             aria-label={notificationsButtonLabel(unreadCount)}
             aria-expanded={notifOpen}
-            onClick={() => {
-              setNotifOpen((o) => !o);
-              setWsOpen(false);
-            }}
+            onClick={() => setNotifOpen((o) => !o)}
           >
             <Icon name="bell" size={16} />
             {unreadCount > 0 && (
@@ -194,91 +165,6 @@ export function Topbar({
         </button>
       </div>
     </header>
-  );
-}
-
-interface FolderMenuProps {
-  current: string;
-  folders: readonly Folder[];
-  onPick: (w: Folder) => void;
-  onManageFolders: () => void;
-}
-
-function FolderMenu({
-  current,
-  folders,
-  onPick,
-  onManageFolders,
-}: Readonly<FolderMenuProps>) {
-  return (
-    <div className="ws-menu" role="menu" aria-label="Switch folder">
-      <div className="ws-menu-h">Folders</div>
-      <ul className="ws-menu-list">
-        {folders.length === 0 && (
-          <li>
-            <div
-              className="muted"
-              style={{ padding: 12 }}
-              data-testid="topbar-folder-empty"
-            >
-              No folder available for this KB. Please contact Twincore Team
-            </div>
-          </li>
-        )}
-        {folders.map((w) => {
-          const active = w.id === current;
-          return (
-            <li key={w.id}>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={active}
-                className={`ws-row${active ? ' is-active' : ''}`}
-                onClick={() => !active && onPick(w)}
-                disabled={active}
-              >
-                <span className="ws-row-l">
-                  <Icon
-                    name="folder"
-                    size={12}
-                    color="var(--color-text-secondary)"
-                  />
-                  <span className="ws-row-id">{w.id}</span>
-                  {active && (
-                    <Icon
-                      name="circle-check"
-                      size={12}
-                      color="var(--twin-accent)"
-                    />
-                  )}
-                </span>
-                <span className="ws-row-r">
-                  <span className="ws-row-kb">{w.kb}</span>
-                  <span className="ws-row-meta">
-                    <span className="ws-vis">
-                      <Icon
-                        name={w.visibility === 'private' ? 'lock' : 'world'}
-                        size={10}
-                      />
-                      {w.visibility}
-                    </span>
-                    <span className="ws-sep">·</span>
-                    <span>{w.sources.toLocaleString()} sources</span>
-                    <span className="ws-sep">·</span>
-                    <span className="ws-role">{w.role}</span>
-                  </span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="ws-menu-f">
-        <button type="button" className="link-btn" onClick={onManageFolders}>
-          Manage folders →
-        </button>
-      </div>
-    </div>
   );
 }
 

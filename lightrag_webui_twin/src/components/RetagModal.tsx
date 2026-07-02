@@ -315,8 +315,7 @@ function RetagModalBody({
       <dialog
         open
         ref={modalRef}
-        className="modal"
-        style={{ width: 500 }}
+        className="modal modal-md"
         aria-modal="true"
         aria-labelledby="retag-title"
         tabIndex={-1}

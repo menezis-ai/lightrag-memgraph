@@ -34,7 +34,10 @@ export function LoginScreen({
         <div className="login-brand">
           <div className="brand-mark" aria-hidden="true" />
           <div>
-            <h1 id="login-title">Twin KMS</h1>
+            <h1 id="login-title" aria-label="Twin KMS">
+              <span>Twin </span>
+              <span className="login-brand-accent">KMS</span>
+            </h1>
             <p>Knowledge console</p>
           </div>
         </div>

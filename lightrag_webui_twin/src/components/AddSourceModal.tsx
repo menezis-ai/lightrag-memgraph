@@ -420,8 +420,7 @@ export function AddSourceModal({
       <dialog
         open
         ref={modalRef}
-        className="modal"
-        style={{ width: 480 }}
+        className="modal modal-md"
         aria-modal="true"
         aria-labelledby="addsource-title"
         tabIndex={-1}

@@ -14,12 +14,14 @@ export interface FolderSwitcherProps {
   active: string;
   folders: readonly Folder[];
   onPick: (id: string) => void;
+  onManageFolders?: () => void;
 }
 
 export function FolderSwitcher({
   active,
   folders,
   onPick,
+  onManageFolders,
 }: Readonly<FolderSwitcherProps>) {
   // The corporate IdP gates the parent KB. Folders are scoped inside
   // that KB, so dev/prod both show the configured folder list by default.
@@ -32,22 +34,30 @@ export function FolderSwitcher({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="topbar-popover-anchor">
       <button
         type="button"
         className={`folder-pill${open ? ' is-open' : ''}`}
         onClick={() => setOpen((o) => !o)}
+        title="Switch folder"
         aria-expanded={open}
         aria-haspopup="menu"
         data-testid="topbar-folder-switcher"
       >
         <Icon name="folder" size={12} />
-        <span style={{ fontFamily: 'var(--font-mono)' }}>{active}</span>
+        <span className="topbar-mono">{active}</span>
         <Icon name="chevron-down" size={11} />
       </button>
       {open && (
@@ -115,8 +125,7 @@ export function FolderSwitcher({
             {visible.length === 0 && (
               <li>
                 <div
-                  className="muted"
-                  style={{ padding: 12 }}
+                  className="muted topbar-empty-state"
                   data-testid="topbar-folder-empty"
                 >
                   No folder available for this KB. Please contact Twincore Team
@@ -124,6 +133,20 @@ export function FolderSwitcher({
               </li>
             )}
           </ul>
+          {onManageFolders && (
+            <div className="ws-menu-f">
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setOpen(false);
+                  onManageFolders();
+                }}
+              >
+                Manage folders →
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

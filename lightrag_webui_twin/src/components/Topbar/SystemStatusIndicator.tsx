@@ -110,7 +110,7 @@ export function SystemStatusIndicator({
   const pillClass = meta.pillVariant ? `sys-pill ${meta.pillVariant}` : 'sys-pill';
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="topbar-popover-anchor">
       <button
         type="button"
         className={pillClass}

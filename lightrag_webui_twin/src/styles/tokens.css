@@ -1,77 +1,134 @@
-/* Twin KMS design tokens — ported verbatim from the design proto (Desktop/UI/styles.css).
- * Kept as plain CSS variables (no compile step). Tailwind references them via tailwind.config.js.
- * Light mode defaults; [data-theme="dark"] overrides below.
+/* Twin KMS design tokens.
+ * This is the canonical source for global CSS variables. Component selectors
+ * and historical compatibility layers belong in app.css, not here.
  */
 
 :root {
-  /* Tier accent (default Twin KMS = blue) */
-  --twin-accent: #3871B4;
-  --twin-accent-hover: #2D5A8E;
-  --twin-accent-strong: #1B5BAE;
-  --twin-accent-soft-bg: #E6EFF8;
-  --twin-accent-soft-text: #2D5A8E;
-  --twin-accent-soft-border: #B5D4F4;
+  color-scheme: light;
+
+  /* Maquette primitives */
+  --canvas: #F1EEE6;
+  --surface: #FFFFFF;
+  --surface-warm: #FBFAF5;
+  --panel: #F7F5EF;
+  --border: #E6E1D6;
+  --border-soft: #EDE9DF;
+  --border-strong: #D8D2C5;
+  --ink: #222A33;
+  --ink-soft: #46505A;
+  --muted: #7C8590;
+  --faint: #A0A6AE;
+  --blue: #2D5A8E;
+  --blue-bright: #3F8EBF;
+  --blue-soft: #EAF1F7;
+  --blue-soft-bd: #CCE0EF;
+  --green: #3D7A4E;
+  --green-bright: #569C6A;
+  --green-soft: #E9F2EB;
+  --green-soft-bd: #CBE3D1;
+  --amber: #946312;
+  --amber-vivid: #C7891C;
+  --amber-soft: #FAF1DA;
+  --amber-soft-bd: #EDDFBA;
+  --red: #B23A2F;
+  --red-soft: #FBECE9;
+  --red-soft-bd: #F1D4CE;
+  --bar-bg: rgba(255, 255, 255, 0.86);
+  --code-bg: #23252B;
+
+  /* Typography */
+  --serif: "Spectral", Georgia, serif;
+  --font-sans: "Hanken Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Semantic surface aliases */
+  --color-text-primary: var(--ink);
+  --color-text-secondary: var(--ink-soft);
+  --color-text-tertiary: var(--muted);
+  --color-border-default: var(--border);
+  --color-border-secondary: var(--border-strong);
+  --color-border-tertiary: var(--border-soft);
+  --color-border-soft: var(--border-soft);
+  --color-background-primary: var(--surface);
+  --color-background-secondary: var(--surface-warm);
+  --color-background-tertiary: var(--canvas);
+
+  /* Product accent aliases */
+  --twin-accent: var(--blue);
+  --twin-accent-hover: #234C7A;
+  --twin-accent-strong: #234C7A;
+  --twin-accent-soft-bg: var(--blue-soft);
+  --twin-accent-soft-text: var(--blue);
+  --twin-accent-soft-border: var(--blue-soft-bd);
+  --twin-accent-soft: color-mix(in oklab, var(--blue) 32%, transparent);
   --twin-on-accent: #FFFFFF;
 
-  --twin-green-500: #569C6A;
-  --twin-green-700: #3D7A4E;
-  --twin-green-50: #EBF5ED;
+  --twin-green-500: var(--green-bright);
+  --twin-green-700: var(--green);
+  --twin-green-50: var(--green-soft);
+  --twin-green-200: var(--green-soft-bd);
 
-  --twin-amber-vivid: #D97706;
-  --twin-amber-700: #8A5C0E;
-  --twin-amber-50: #FEF3CD;
+  --twin-amber-500: var(--amber-vivid);
+  --twin-amber-vivid: var(--amber-vivid);
+  --twin-amber-700: var(--amber);
+  --twin-amber-50: var(--amber-soft);
 
-  --twin-red-vivid: #DC2626;
-  --twin-red-50: #FCEBEB;
-  --twin-red-border: #F09595;
+  --twin-red-vivid: var(--red);
+  --twin-red-700: var(--red);
+  --twin-red-200: var(--red-soft-bd);
+  --twin-red-50: var(--red-soft);
+  --twin-red-soft: var(--red-soft);
+  --twin-red-border: var(--red-soft-bd);
 
-  /* Neutrals — light mode */
-  --color-text-primary: #2C3E50;
-  --color-text-secondary: #5A6878;
-  --color-text-tertiary: #8A98A8;
-  --color-border-default: #C4CFD9;
-  --color-border-secondary: #B8C8D8;
-  --color-border-tertiary: #DEE2E6;
-  --color-background-primary: #FFFFFF;
-  --color-background-secondary: #FAFCFE;
-  --color-background-tertiary: #F4F8FC;
+  --color-status-completed: var(--green);
+  --color-status-processing: var(--amber-vivid);
+  --color-status-failed: var(--red);
 
-  --color-status-completed: #3D7A4E;
-  --color-status-processing: #D97706;
-  --color-status-failed: #DC2626;
+  --border-radius-sm: 5px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
 
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --shadow-sm: 0 1px 2px rgba(34, 42, 51, 0.05), 0 1px 1px rgba(34, 42, 51, 0.04);
+  --shadow-md: 0 4px 16px rgba(34, 42, 51, 0.07), 0 1px 3px rgba(34, 42, 51, 0.05);
+  --shadow-lg: 0 18px 48px rgba(34, 42, 51, 0.16), 0 4px 12px rgba(34, 42, 51, 0.07);
 
-  --border-radius-sm: 4px;
-  --border-radius-md: 6px;
-  --border-radius-lg: 8px;
+  --toast-auto-dismiss-ms: 25000ms;
+  --toast-warning-delay-ms: 20000ms;
+  --toast-fade-ms: 6000ms;
 }
 
 :root[data-theme="dark"] {
-  --twin-accent: #3E7CA8;
-  --twin-accent-hover: #4D88B3;
-  --twin-accent-soft-bg: #162635;
-  --twin-accent-soft-text: #9EC7E4;
-  --twin-accent-soft-border: #28445C;
+  color-scheme: dark;
 
-  --twin-green-700: #7AB68C;
-  --twin-green-50: #1A2C20;
+  --canvas: #16161D;
+  --surface: #1B1B23;
+  --surface-warm: #202029;
+  --panel: #262632;
+  --border: #30313B;
+  --border-soft: #272832;
+  --border-strong: #3C3D49;
+  --ink: #E9EBEF;
+  --ink-soft: #B6BEC9;
+  --muted: #8892A0;
+  --faint: #6B7682;
+  --blue: #3E7CA8;
+  --blue-bright: #4D88B3;
+  --blue-soft: #162635;
+  --blue-soft-bd: #28445C;
+  --green: #7CC08F;
+  --green-bright: #93D0A3;
+  --green-soft: #16241F;
+  --green-soft-bd: #2A4533;
+  --amber: #DAA957;
+  --amber-vivid: #E6B569;
+  --amber-soft: #262014;
+  --amber-soft-bd: #473C23;
+  --red: #E48D80;
+  --red-soft: #2A1A18;
+  --red-soft-bd: #4A302C;
+  --bar-bg: rgba(22, 22, 29, 0.9);
 
-  --twin-amber-vivid: #F0A12B;
-  --twin-amber-700: #D89B3A;
-  --twin-amber-50: #2B2310;
-
-  --twin-red-vivid: #F47171;
-  --twin-red-50: #2C1818;
-  --twin-red-border: #6B2C2C;
-
-  --color-text-primary: #E6ECF2;
-  --color-text-secondary: #A0AEC0;
-  --color-text-tertiary: #6B7B8C;
-  --color-border-secondary: #3A4756;
-  --color-border-tertiary: #2A3340;
-  --color-background-primary: #16161D;
-  --color-background-secondary: #1B1B23;
-  --color-background-tertiary: #202029;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.62), 0 6px 14px rgba(0, 0, 0, 0.5);
 }

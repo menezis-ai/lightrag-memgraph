@@ -125,6 +125,32 @@ function documentMatchesStatus(doc: Document, statusFilter: StatusFilterKey) {
   );
 }
 
+function failedDocumentSummary(doc: Document): string {
+  const summary = doc.content_summary.trim();
+  const error = doc.error_msg?.trim() ?? '';
+
+  if (!error) {
+    return summary || 'Indexing failed.';
+  }
+
+  if (!summary) {
+    return `Indexing failed: ${error}`;
+  }
+
+  const lowerSummary = summary.toLowerCase();
+  const lowerError = error.toLowerCase();
+  if (lowerSummary.includes(lowerError)) {
+    return summary;
+  }
+
+  const failurePrefix = summary.match(/^(failed ingest|indexing failed)\b/i)?.[0];
+  if (failurePrefix) {
+    return `${failurePrefix} — ${error}`;
+  }
+
+  return `${summary} — ${error}`;
+}
+
 function pipelineHistoryMessages(
   pipelineStatus: PipelineStatusResponse | null | undefined,
 ): string[] {
@@ -335,7 +361,7 @@ function RetryFailedButton({
       onClick={retry}
     >
       <Icon name="refresh" size={14} />
-      Re-process failed (workspace)
+      Re-process failed (current folder)
       {failedCount > 0 && (
         <span className="pipeline-badge" aria-label={`${failedCount} failed`}>
           {failedCount}
@@ -352,7 +378,7 @@ function retryButtonTitle(failedCount: number, ingestionDisabled: boolean) {
   if (failedCount === 0) return 'No failed sources to re-process';
   return `Re-process all ${failedCount} failed source${
     failedCount > 1 ? 's' : ''
-  } across the workspace — LightRAG's global failed queue, NOT folder-scoped (POST /documents/reprocess_failed)`;
+  } visible in the current folder view (POST /documents/reprocess_failed)`;
 }
 
 function BulkActionsBar({
@@ -1047,6 +1073,9 @@ function DocRow({
   const hiddenTags = doc.tags.slice(2);
   const overflow = doc.tags.length - visibleTags.length;
   const filterStatus = STATUS_TO_FILTER[doc.status];
+  const summaryText = isFail
+    ? failedDocumentSummary(doc)
+    : doc.content_summary || 'No indexed preview available.';
   return (
     <div
       className={`docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`}
@@ -1113,18 +1142,13 @@ function DocRow({
         <span
           className="summary-text"
           style={isFail ? { marginLeft: 6 } : undefined}
-          title={doc.content_summary}
+          title={summaryText}
+          data-testid={
+            isFail && doc.error_msg ? `docs-row-error-${doc.doc_id}` : undefined
+          }
         >
-          {doc.content_summary || 'No indexed preview available.'}
+          {summaryText}
         </span>
-        {isFail && doc.error_msg && (
-          <div
-            className="summary-error"
-            data-testid={`docs-row-error-${doc.doc_id}`}
-          >
-            Indexing failed: {doc.error_msg}
-          </div>
-        )}
       </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (

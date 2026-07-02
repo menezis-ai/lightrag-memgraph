@@ -176,10 +176,9 @@ export function DocDetailPanel({
           />
           <dialog
             open
-            className="modal"
+            className="modal modal-sm"
             aria-modal="true"
             aria-label="View raw notice"
-            style={{ width: 420 }}
           >
             <div className="modal-header">
               <h2>View raw</h2>
