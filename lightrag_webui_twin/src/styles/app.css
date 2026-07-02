@@ -6216,7 +6216,7 @@ header.topbar .notif-popover {
 @media (min-width: 1600px) {
   /* On very wide screens, cap content widths so lines don't get unreadable */
   .settings-body { max-width: 920px; }
-  .retrieval-conv { max-width: 1100px; margin: 0 auto; }
+  .retrieval-conv { max-width: none; margin: 0; }
 }
 
 /* ===== Ontology Studio · n8n-style visual editor =================== */
@@ -8351,7 +8351,6 @@ header.topbar .notif-popover {
   gap: 6px;
   padding-left: 10px;
   padding-right: 8px;
-  border-left: 1px solid var(--color-border-tertiary);
 }
 .row-action {
   display: inline-flex;
@@ -9331,8 +9330,8 @@ header.topbar dialog.notif-popover {
 .docs-row.has-select:where(*):where(*) {
   min-height: 46px;
   grid-template-columns:
-    26px minmax(160px, 1.05fr) minmax(190px, 1.3fr) minmax(112px, 0.9fr)
-    82px 50px 74px 64px;
+    26px minmax(160px, 1.05fr) minmax(190px, 1.3fr) minmax(150px, 240px)
+    108px 64px 96px 112px;
   gap: 9px;
   padding: 7px 14px;
   border-bottom-color: var(--border-soft);
@@ -9418,7 +9417,8 @@ header.topbar dialog.notif-popover {
 
 .cell-actions:where(*):where(*) {
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  padding-left: 16px;
 }
 
 .row-action:where(*) {
@@ -9806,6 +9806,9 @@ header.topbar dialog.notif-popover {
 }
 
 .retrieval .retrieval-conv {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
   padding: clamp(22px, 2vw, 30px);
 }
 

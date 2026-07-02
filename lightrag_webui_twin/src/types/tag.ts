@@ -82,6 +82,7 @@ export type TagActionKind =
 export interface TagAction {
   kind: TagActionKind;
   tag?: TagEntry;
+  category?: string;
 }
 
 export interface TagCurrentUser {

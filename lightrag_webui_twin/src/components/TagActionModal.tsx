@@ -112,7 +112,9 @@ export function TagActionModal({
   const [longDescription, setLongDescription] = useState(
     tag?.long_description ?? '',
   );
-  const [category, setCategory] = useState(tag?.category ?? categories[0]?.id ?? '');
+  const [category, setCategory] = useState(
+    tag?.category ?? action.category ?? categories[0]?.id ?? '',
+  );
   const [migrateTo, setMigrateTo] = useState('');
   const [migrateStrategy, setMigrateStrategy] = useState<'migrate' | 'untag'>('migrate');
   const [newSyn, setNewSyn] = useState('');

@@ -558,6 +558,16 @@ describe('TagsTab — modal dispatch', () => {
     });
   });
 
+  it('Request modal inherits the selected domain from the rail', async () => {
+    render(<TagsTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('rail-governance'));
+    await userEvent.click(
+      screen.getByRole('button', { name: /Request new tag/ }),
+    );
+    const dialog = await screen.findByRole('dialog', { name: 'Request new tag' });
+    expect(within(dialog).getByLabelText('Domain')).toHaveValue('governance');
+  });
+
   it('clicking the modal backdrop closes the modal without committing', async () => {
     const p = defaultProps();
     render(<TagsTab {...p} />);

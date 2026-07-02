@@ -349,6 +349,10 @@ export function TagsTab({
   const canEdit = currentUser.palier >= 3;
   const canSuggest = currentUser.palier >= 2;
   const totalActive = counts.all;
+  const requestCategory = knownCategories.has(selectedCat) ? selectedCat : undefined;
+  const openRequestModal = () => {
+    setModal({ kind: 'request', category: requestCategory });
+  };
 
   const clearFilters = () => {
     setSelectedCat('all');
@@ -415,7 +419,7 @@ export function TagsTab({
     tagsGridContent = (
       <TagsEmptyZero
         canSuggest={canSuggest}
-        onRequest={() => setModal({ kind: 'request' })}
+        onRequest={openRequestModal}
       />
     );
   } else {
@@ -429,7 +433,7 @@ export function TagsTab({
         canSuggest={canSuggest}
         onClear={clearFilters}
         onPickTag={(name) => setSelectedTag(name)}
-        onRequest={() => setModal({ kind: 'request' })}
+        onRequest={openRequestModal}
       />
     );
   }
@@ -503,7 +507,7 @@ export function TagsTab({
           )}
           <button
             className="primary-btn"
-            onClick={() => setModal({ kind: 'request' })}
+            onClick={openRequestModal}
           >
             <Icon name="plus" size={12} /> Request new tag
           </button>
