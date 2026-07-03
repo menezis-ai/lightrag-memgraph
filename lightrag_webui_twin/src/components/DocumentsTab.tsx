@@ -21,6 +21,7 @@ import { TagChip } from './TagChip';
 import { ClassPill } from './ClassPill';
 import { QuotaBanner } from './QuotaBanner';
 import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
+import { statusCountFor } from '../lib/docStatus';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
@@ -91,14 +92,16 @@ function statusCountsFor(
   allDocumentsCount: number | undefined,
 ): Record<StatusFilterKey, number> {
   if (statusCounts) {
+    // Dual-cased bucket reads (native lowercase / twin UPPERCASE) are owned
+    // by the shared vocabulary module — audit 2026-07-02, DUP-1.
     return {
       all:
         allDocumentsCount ??
         Object.values(statusCounts).reduce((a, b) => a + b, 0),
-      completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
-      processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
-      pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
-      failed: statusCounts.failed ?? statusCounts.FAILED ?? 0,
+      completed: statusCountFor(statusCounts, 'PROCESSED'),
+      processing: statusCountFor(statusCounts, 'PROCESSING'),
+      pending: statusCountFor(statusCounts, 'PENDING'),
+      failed: statusCountFor(statusCounts, 'FAILED'),
     };
   }
   const counts: Record<StatusFilterKey, number> = {
@@ -123,6 +126,32 @@ function documentMatchesStatus(doc: Document, statusFilter: StatusFilterKey) {
     statusFilter === 'all' ||
     doc.status === FILTER_TO_STATUS[statusFilter]
   );
+}
+
+function failedDocumentSummary(doc: Document): string {
+  const summary = doc.content_summary.trim();
+  const error = doc.error_msg?.trim() ?? '';
+
+  if (!error) {
+    return summary || 'Indexing failed.';
+  }
+
+  if (!summary) {
+    return `Indexing failed: ${error}`;
+  }
+
+  const lowerSummary = summary.toLowerCase();
+  const lowerError = error.toLowerCase();
+  if (lowerSummary.includes(lowerError)) {
+    return summary;
+  }
+
+  const failurePrefix = /^(failed ingest|indexing failed)\b/i.exec(summary)?.[0];
+  if (failurePrefix) {
+    return `${failurePrefix} — ${error}`;
+  }
+
+  return `${summary} — ${error}`;
 }
 
 function pipelineHistoryMessages(
@@ -335,7 +364,7 @@ function RetryFailedButton({
       onClick={retry}
     >
       <Icon name="refresh" size={14} />
-      Re-process failed (workspace)
+      Re-process failed (current folder)
       {failedCount > 0 && (
         <span className="pipeline-badge" aria-label={`${failedCount} failed`}>
           {failedCount}
@@ -352,7 +381,7 @@ function retryButtonTitle(failedCount: number, ingestionDisabled: boolean) {
   if (failedCount === 0) return 'No failed sources to re-process';
   return `Re-process all ${failedCount} failed source${
     failedCount > 1 ? 's' : ''
-  } across the workspace — LightRAG's global failed queue, NOT folder-scoped (POST /documents/reprocess_failed)`;
+  } visible in the current folder view (POST /documents/reprocess_failed)`;
 }
 
 function BulkActionsBar({
@@ -1028,6 +1057,22 @@ interface DocRowProps {
   nowMs?: number;
 }
 
+function docRowClassName(checked: boolean, isFail: boolean): string {
+  return `docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`;
+}
+
+function rowCheckAriaLabel(doc: Document, isOptimisticUpload: boolean): string {
+  return isOptimisticUpload
+    ? `${doc.file_path} is waiting for ingestion`
+    : `Select ${doc.file_path}`;
+}
+
+function chunksCellTitle(doc: Document, isFail: boolean): string | undefined {
+  return isFail && (doc.chunks_count ?? 0) > 0
+    ? `${doc.chunks_count} chunks created before failure`
+    : undefined;
+}
+
 function DocRow({
   doc,
   checked,
@@ -1047,9 +1092,12 @@ function DocRow({
   const hiddenTags = doc.tags.slice(2);
   const overflow = doc.tags.length - visibleTags.length;
   const filterStatus = STATUS_TO_FILTER[doc.status];
+  const summaryText = isFail
+    ? failedDocumentSummary(doc)
+    : doc.content_summary || 'No indexed preview available.';
   return (
     <div
-      className={`docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`}
+      className={docRowClassName(checked, isFail)}
       data-testid={`docs-row-${doc.doc_id}`}
     >
       <div className="cell-select">
@@ -1060,11 +1108,7 @@ function DocRow({
             checked={checked}
             disabled={isOptimisticUpload}
             onChange={() => onToggle(doc.doc_id)}
-            aria-label={
-              isOptimisticUpload
-                ? `${doc.file_path} is waiting for ingestion`
-                : `Select ${doc.file_path}`
-            }
+            aria-label={rowCheckAriaLabel(doc, isOptimisticUpload)}
           />
         </label>
       </div>
@@ -1113,18 +1157,13 @@ function DocRow({
         <span
           className="summary-text"
           style={isFail ? { marginLeft: 6 } : undefined}
-          title={doc.content_summary}
+          title={summaryText}
+          data-testid={
+            isFail && doc.error_msg ? `docs-row-error-${doc.doc_id}` : undefined
+          }
         >
-          {doc.content_summary || 'No indexed preview available.'}
+          {summaryText}
         </span>
-        {isFail && doc.error_msg && (
-          <div
-            className="summary-error"
-            data-testid={`docs-row-error-${doc.doc_id}`}
-          >
-            Indexing failed: {doc.error_msg}
-          </div>
-        )}
       </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
@@ -1168,11 +1207,7 @@ function DocRow({
       </div>
       <div
         className="cell-chunks"
-        title={
-          isFail && (doc.chunks_count ?? 0) > 0
-            ? `${doc.chunks_count} chunks created before failure`
-            : undefined
-        }
+        title={chunksCellTitle(doc, isFail)}
         data-testid={`docs-row-chunks-${doc.doc_id}`}
       >
         {doc.chunks_count ?? 0}

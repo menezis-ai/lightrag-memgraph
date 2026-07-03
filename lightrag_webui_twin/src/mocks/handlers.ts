@@ -299,6 +299,180 @@ let uploadSeq = 0;
 const uploadedTrackDocs = new Map<string, string>();
 const uploadedDocText = new Map<string, string>();
 
+/**
+ * Async-ingestion marker (audit 2026-07-02, DUP-2a). The real upload path is
+ * asynchronous: `POST /documents/upload` only ENQUEUES (LightRAG
+ * `document_routes.py` → `apipeline_enqueue_documents`, returning
+ * `{status, message, track_id}`) and the DocStatus row starts PENDING, then
+ * the pipeline flips it to PROCESSED. The mock mirrors that: an uploaded doc
+ * carries this metadata counter and transitions PENDING → PROCESSED
+ * deterministically on the SECOND `GET /documents` after the upload (no
+ * timers, no randomness). Persisted inside doc.metadata so the state machine
+ * survives an e2e page reload like the sessionStorage-backed stores do.
+ */
+const INGEST_POLLS_KEY = 'e2e_ingest_polls_remaining';
+
+function advanceMockIngestion(): void {
+  let changed = false;
+  documentsState = documentsState.map((doc) => {
+    const remaining = doc.metadata?.[INGEST_POLLS_KEY];
+    if (typeof remaining !== 'number') return doc;
+    changed = true;
+    if (remaining > 0) {
+      return {
+        ...doc,
+        metadata: { ...doc.metadata, [INGEST_POLLS_KEY]: remaining - 1 },
+      };
+    }
+    const metadata = { ...doc.metadata };
+    delete metadata[INGEST_POLLS_KEY];
+    return {
+      ...doc,
+      status: 'PROCESSED',
+      chunks_count: 1,
+      metadata,
+    };
+  });
+  if (changed) persistDocumentsState();
+}
+
+/**
+ * Active-folder resolution for the delete surfaces. The real backend binds
+ * the folder from the `X-Twin-Folder` header (`server/folder.py`
+ * `resolve_folder_for_request`, falling back to the catalog default). The
+ * mock falls back to the doc's own primary folder so raw `fetch()` tests
+ * without the header keep the historical single-folder semantics.
+ */
+function activeFolderFor(request: Request, doc: Document): string {
+  return request.headers.get('X-Twin-Folder') ?? doc.folder ?? 'default';
+}
+
+/**
+ * Ref-counted delete shared by the three delete surfaces (audit 2026-07-02,
+ * DUP-2b), mirroring the real backend: `native_shims._delete_or_unshare`
+ * (native_shims.py:567-597) and `routes_documents._apply_membership_delete`
+ * (routes_documents.py:306-329). Deleting from `activeFolder` only UN-SHARES
+ * the doc there; the physical record disappears ONLY when that was its last
+ * membership. Returns true on physical delete. The graph cascade is the
+ * caller's job so bulk-delete can cascade the whole physically-deleted set in
+ * one pass (shared-entity semantics).
+ */
+function removeDocFromFolderOrDelete(doc: Document, activeFolder: string): boolean {
+  const folders = foldersForDoc(doc);
+  if (folders.length === 1 && folders[0] === activeFolder) {
+    documentsState = documentsState.filter((d) => d.doc_id !== doc.doc_id);
+    delete documentMemberships[doc.doc_id];
+    persistDocumentsState();
+    return true;
+  }
+  documentMemberships[doc.doc_id] = folders.filter(
+    (folder) => folder !== activeFolder,
+  );
+  return false;
+}
+
+/** One bulk-delete target that was actually processed (found + in-folder). */
+interface BulkDeleteOutcome {
+  doc: Document;
+  physicallyDeleted: boolean;
+  folder: string;
+}
+
+/**
+ * Per-doc bulk-delete decision (mirrors
+ * `routes_documents._delete_one_document`): resolve the doc, check the
+ * active-folder membership, then apply the shared ref-counted delete.
+ * Returns null when the target must be reported in `failed`.
+ */
+function applyBulkDeleteForDoc(
+  request: Request,
+  id: string,
+): BulkDeleteOutcome | null {
+  const doc = documentsState.find((d) => d.doc_id === id);
+  if (!doc) return null;
+  const active = activeFolderFor(request, doc);
+  if (!foldersForDoc(doc).includes(active)) return null;
+  const physicallyDeleted = removeDocFromFolderOrDelete(doc, active);
+  return { doc, physicallyDeleted, folder: active };
+}
+
+/** Summary variants mirror routes_documents._emit_bulk_delete_activity. */
+function bulkDeleteSummary(
+  actor: string,
+  affectedCount: number,
+  physicalCount: number,
+  unsharedCount: number,
+  activeFolder: string,
+  cascade: string,
+): string {
+  if (physicalCount && unsharedCount) {
+    return (
+      `Bulk delete by ${actor}: ${affectedCount} documents affected ` +
+      `(${physicalCount} physically deleted with cascade, ` +
+      `${unsharedCount} unshared from folder ${activeFolder})`
+    );
+  }
+  if (physicalCount) {
+    return `Bulk delete by ${actor}: ${affectedCount} documents physically deleted; ${cascade}`;
+  }
+  return (
+    `Bulk delete by ${actor}: ${affectedCount} documents unshared ` +
+    `from folder ${activeFolder}; no physical cascade`
+  );
+}
+
+/** Activity-ledger shaping for a non-empty bulk-delete batch. */
+function recordBulkDeleteActivity(
+  rawActor: string | undefined,
+  affected: readonly BulkDeleteOutcome[],
+  failed: readonly string[],
+): void {
+  const actor = rawActor ?? 'operator.demo';
+  const docIds = affected.map((entry) => entry.doc.doc_id);
+  const physicalCount = affected.filter((e) => e.physicallyDeleted).length;
+  const unsharedCount = affected.length - physicalCount;
+  const activeFolder = affected[0].folder;
+  const cascade =
+    'physical delete cascades document data, chunks, vectors and graph links';
+  recordActivity({
+    id: `evt_doc_bulk_delete_${Date.now()}`,
+    ts: new Date().toISOString(),
+    rel: 'now',
+    day: 'Today',
+    kind: physicalCount ? 'doc-deleted' : 'doc-folder-removed',
+    sev: 'info',
+    actor: { user: actor, role: 'KB Steward' },
+    target:
+      affected.length === 1
+        ? {
+            type: 'document',
+            label: affected[0].doc.file_path,
+            id: affected[0].doc.doc_id,
+          }
+        : { type: 'bulk', label: `${affected.length} documents` },
+    summary: bulkDeleteSummary(
+      actor,
+      affected.length,
+      physicalCount,
+      unsharedCount,
+      activeFolder,
+      cascade,
+    ),
+    meta: {
+      operation: 'bulk-delete',
+      folder: activeFolder,
+      doc_count: affected.length,
+      doc_ids: docIds,
+      ...(affected.length === 1 ? { doc_id: docIds[0] } : {}),
+      failed,
+      failed_count: failed.length,
+      physically_deleted_count: physicalCount,
+      unshared_count: unsharedCount,
+      cascade,
+    },
+  });
+}
+
 // Folders — admin CRUD mirror of the backend. The first folder fixture
 // is treated as the SRE-provisioned default (env-seeded) and
 // rejects mutations with 403; the remaining ones are seeded as
@@ -1031,6 +1205,9 @@ export const handlers = [
     // Skip Twin overlay paths so this generic /documents handler does not
     // shadow /twin/api/documents/* routes.
     if (url.pathname.startsWith(TWIN)) return undefined;
+    // Mirror the real async pipeline: uploaded docs land PENDING and flip to
+    // PROCESSED on the second poll (audit DUP-2a; see advanceMockIngestion).
+    advanceMockIngestion();
     const filtered = documentsState.filter((d) =>
       matchDocumentsQuery(d, url.searchParams),
     );
@@ -1116,6 +1293,11 @@ export const handlers = [
         ? await file.text()
         : '';
     if (text.trim()) uploadedDocText.set(docId, text);
+    // Real contract (audit DUP-2a): upload ENQUEUES. The response is the
+    // enqueue receipt; the DocStatus row starts PENDING (chunks not counted
+    // yet) and reaches PROCESSED only on a later documents poll — the UI
+    // already polls (`refreshDocumentsUntilUploadsLand` + the 2s
+    // useDocuments refetchInterval), so no app change is needed.
     documentsState = [
       {
         doc_id: docId,
@@ -1123,14 +1305,15 @@ export const handlers = [
         file_path: name,
         content_summary: `${name} uploaded by e2e`,
         content_length: file instanceof File ? file.size : 0,
-        status: 'PROCESSED',
-        chunks_count: 1,
+        status: 'PENDING',
+        chunks_count: null,
         created_at: '2026-06-02T00:00:00Z',
         updated_at: '2026-06-02T00:00:00Z',
         error_msg: null,
         metadata: {
           mime: file instanceof File ? file.type : 'text/plain',
           uploader: 'e2e',
+          [INGEST_POLLS_KEY]: 1,
           ...classificationMeta,
         },
         type: 'file',
@@ -1168,9 +1351,27 @@ export const handlers = [
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
     const id = String(params.id);
-    documentsState = documentsState.filter((d) => d.doc_id !== id);
-    persistDocumentsState();
-    cascadeDocsFromGraph(new Set([id]));
+    // Real contract (audit DUP-2b): the native shim 404s unknown/invisible
+    // docs and applies the ref-counted delete — unshare from the active
+    // folder unless it was the doc's LAST membership
+    // (`native_shims._delete_document_impl` + `_delete_or_unshare`,
+    // native_shims.py:567-634).
+    const doc = documentsState.find((d) => d.doc_id === id);
+    if (!doc) {
+      return HttpResponse.json(
+        { detail: `Document ${id} not found` },
+        { status: 404 },
+      );
+    }
+    const active = activeFolderFor(request, doc);
+    if (!foldersForDoc(doc).includes(active)) {
+      return HttpResponse.json(
+        { detail: `Document ${id} not found` },
+        { status: 404 },
+      );
+    }
+    const physicallyDeleted = removeDocFromFolderOrDelete(doc, active);
+    if (physicallyDeleted) cascadeDocsFromGraph(new Set([id]));
     return HttpResponse.json({ ok: true });
   }),
   http.get(`${ANY}/health`, ({ request }) => {
@@ -1773,21 +1974,32 @@ export const handlers = [
       };
       const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
-      const updated = updateDoc(id, {
-        ...body.edits,
-        status: 'PROCESSED',
-        review: { ...doc.review!, state: 'approved' as const },
-      });
+      // Real contract (audit DUP-2d): approve ONLY writes
+      // `metadata.review = {state:'approved', actor, at, edits?}` — it does
+      // NOT flip `status` and does NOT merge `edits` into the document
+      // fields, and it returns `{doc_id, review}` (webui/router.py
+      // approve_document, router.py:716-774). Operator edits are recorded
+      // inside the review audit payload only.
+      const actor = body.actor ?? 'operator.demo';
+      const edits = body.edits ?? {};
+      const review: Document['review'] = {
+        ...doc.review,
+        state: 'approved' as const,
+        actor,
+        at: new Date().toISOString(),
+        ...(Object.keys(edits).length > 0 ? { edits } : {}),
+      };
+      const updated = updateDoc(id, { review });
       if (updated) {
         recordDocumentActivity(
           'doc-approved',
           updated,
-          `approved by ${body.actor ?? 'operator.demo'}${body.edits ? ' with edits' : ''}`,
-          { edits: body.edits ?? {} },
+          `approved by ${actor}${body.edits ? ' with edits' : ''}`,
+          { edits },
           { actor: body.actor },
         );
       }
-      return HttpResponse.json(updated);
+      return HttpResponse.json({ doc_id: id, review });
     },
   ),
   http.post(
@@ -1798,13 +2010,19 @@ export const handlers = [
       const doc = documentsState.find((d) => d.doc_id === id);
       if (!doc) return HttpResponse.json({ error: 'not found' }, { status: 404 });
       const reason = body.reason?.trim() || 'rejected';
-      const updated = updateDoc(id, {
-        review: {
-          ...doc.review!,
-          state: 'rejected' as const,
-          justification: reason,
-        },
-      });
+      // Real contract (audit DUP-2d): reject writes `metadata.review =
+      // {state:'rejected', actor, at, justification}` and returns
+      // `{doc_id, review}` — the doc row itself is untouched
+      // (webui/router.py reject_document, router.py:777-838).
+      const actor = body.actor ?? 'operator.demo';
+      const review: Document['review'] = {
+        ...doc.review,
+        state: 'rejected' as const,
+        actor,
+        at: new Date().toISOString(),
+        justification: reason,
+      };
+      const updated = updateDoc(id, { review });
       if (updated) {
         recordDocumentActivity(
           'doc-rejected',
@@ -1814,7 +2032,7 @@ export const handlers = [
           { actor: body.actor, sev: 'warning' },
         );
       }
-      return HttpResponse.json(updated);
+      return HttpResponse.json({ doc_id: id, review });
     },
   ),
   http.get(`${ANY}${TWIN}/documents/:id/folders`, ({ params }) => {
@@ -1854,87 +2072,54 @@ export const handlers = [
       if (!folders.includes(folderId)) {
         return HttpResponse.json({ detail: 'folder not found' }, { status: 404 });
       }
-      if (folders.length === 1 && folders[0] === folderId) {
-        documentsState = documentsState.filter((d) => d.doc_id !== id);
-        delete documentMemberships[id];
-        persistDocumentsState();
-        cascadeDocsFromGraph(new Set([id]));
-        return HttpResponse.json({
-          ok: true,
-          doc_id: id,
-          removed_folder: folderId,
-          physically_deleted: true,
-          remaining_folders: [],
-        });
-      }
-      documentMemberships[id] = folders.filter((folder) => folder !== folderId);
+      // Same ref-counted semantics as the two delete surfaces above —
+      // one shared helper so the three paths cannot diverge (audit DUP-2b;
+      // real route: routes_documents.remove_document_from_folder).
+      const physicallyDeleted = removeDocFromFolderOrDelete(doc, folderId);
+      if (physicallyDeleted) cascadeDocsFromGraph(new Set([id]));
       return HttpResponse.json({
         ok: true,
         doc_id: id,
         removed_folder: folderId,
-        physically_deleted: false,
-        remaining_folders: documentMemberships[id],
+        physically_deleted: physicallyDeleted,
+        remaining_folders: documentMemberships[id] ?? [],
       });
     },
   ),
   http.post(`${ANY}${TWIN}/documents/bulk-delete`, async ({ request }) => {
+    // Real contract (audit DUP-2b/2c): per-doc ref-counted delete
+    // (`routes_documents._delete_one_document` + `_apply_membership_delete`),
+    // `{deleted, failed}` payload, and HTTP **207** when any target failed
+    // (`routes_documents.bulk_delete_documents`, routes_documents.py:441-468).
     const body = (await request.json()) as { actor?: string; doc_ids: string[] };
-    const ids = new Set(body.doc_ids);
-    const deletedDocs = documentsState.filter((d) => ids.has(d.doc_id));
-    documentsState = documentsState.filter((d) => !ids.has(d.doc_id));
-    deletedDocs.forEach((doc) => {
-      delete documentMemberships[doc.doc_id];
-    });
-    ids.forEach((id) => {
-      delete documentMemberships[id];
-    });
-    persistDocumentsState();
-    cascadeDocsFromGraph(ids);
+    const affected: BulkDeleteOutcome[] = [];
+    const failed: string[] = [];
+    const physicallyDeletedIds = new Set<string>();
+    for (const rawId of body.doc_ids) {
+      const id = String(rawId);
+      const outcome = applyBulkDeleteForDoc(request, id);
+      if (!outcome) {
+        failed.push(id);
+        continue;
+      }
+      if (outcome.physicallyDeleted) physicallyDeletedIds.add(id);
+      affected.push(outcome);
+    }
+    // Cascade the whole physically-deleted set at once — an entity shared by
+    // two docs deleted in the same batch must orphan (graph doctrine).
+    cascadeDocsFromGraph(physicallyDeletedIds);
     if (e2eScenario.bulkDeleteDelayMs && e2eScenario.bulkDeleteDelayMs > 0) {
       await new Promise((res) =>
         setTimeout(res, e2eScenario.bulkDeleteDelayMs),
       );
     }
-    const failed = body.doc_ids.filter(
-      (id) => !deletedDocs.some((doc) => doc.doc_id === id),
-    );
-    if (deletedDocs.length > 0) {
-      const actor = body.actor ?? 'operator.demo';
-      const docIds = deletedDocs.map((doc) => doc.doc_id);
-      const cascade =
-        'physical delete cascades document data, chunks, vectors and graph links';
-      recordActivity({
-        id: `evt_doc_bulk_delete_${Date.now()}`,
-        ts: new Date().toISOString(),
-        rel: 'now',
-        day: 'Today',
-        kind: 'doc-deleted',
-        sev: 'info',
-        actor: { user: actor, role: 'KB Steward' },
-        target:
-          deletedDocs.length === 1
-            ? {
-                type: 'document',
-                label: deletedDocs[0].file_path,
-                id: deletedDocs[0].doc_id,
-              }
-            : { type: 'bulk', label: `${deletedDocs.length} documents` },
-        summary: `Bulk delete by ${actor}: ${deletedDocs.length} documents physically deleted; ${cascade}`,
-        meta: {
-          operation: 'bulk-delete',
-          folder: deletedDocs[0].folder,
-          doc_count: deletedDocs.length,
-          doc_ids: docIds,
-          ...(deletedDocs.length === 1 ? { doc_id: docIds[0] } : {}),
-          failed,
-          failed_count: failed.length,
-          physically_deleted_count: deletedDocs.length,
-          unshared_count: 0,
-          cascade,
-        },
-      });
+    if (affected.length > 0) {
+      recordBulkDeleteActivity(body.actor, affected, failed);
     }
-    return HttpResponse.json({ deleted: deletedDocs.length, failed });
+    return HttpResponse.json(
+      { deleted: affected.length, failed },
+      failed.length > 0 ? { status: 207 } : undefined,
+    );
   }),
   http.post(`${ANY}${TWIN}/documents/_bulk-retag`, async ({ request }) => {
     if (e2eScenario.bulkRetagStatus) {

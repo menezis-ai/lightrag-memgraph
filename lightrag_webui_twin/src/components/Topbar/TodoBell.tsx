@@ -57,7 +57,7 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
   }, []);
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="topbar-popover-anchor">
       <button
         type="button"
         className="icon-btn"
@@ -69,15 +69,8 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
         <Icon name="bell" size={16} />
         {todoCount > 0 && (
           <span
-            className="notif-badge"
+            className={`notif-badge${todoCount >= 10 ? ' is-warn' : ''}`}
             data-testid="topbar-todo-count"
-            style={
-              todoCount >= 10
-                ? {
-                    background: 'var(--twin-amber-vivid, #9C7000)',
-                  }
-                : undefined
-            }
           >
             {todoCount > 9 ? '9+' : todoCount}
           </span>
@@ -86,9 +79,8 @@ export function TodoBell({ pollMs = 20_000, onOpenActivity }: Readonly<TodoBellP
       {open && (
         <dialog
           open
-          className="notif-popover"
+          className="notif-popover notif-popover-narrow"
           aria-label="To-do list"
-          style={{ width: 320 }}
         >
           <header className="notif-h">
             <span className="notif-title">To-do</span>

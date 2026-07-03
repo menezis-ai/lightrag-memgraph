@@ -123,7 +123,7 @@ def _warn_default_passwords(
     )
     if offenders:
         logger.warning(
-            "SECURITY: AUTH_ACCOUNTS uses the default password " "'changeme' for: %s",
+            "SECURITY: AUTH_ACCOUNTS uses the default password 'changeme' for: %s",
             ", ".join(offenders),
         )
 

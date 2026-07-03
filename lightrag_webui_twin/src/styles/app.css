@@ -7,76 +7,8 @@
  * ============================================================ */
 
 /* ========================= legacy.css ========================= */
-/* ----- Twin KMS tokens ----- */
-:root {
-  color-scheme: light;
-
-  /* Tier accent (default Twin KMS = blue) */
-  --twin-accent: #3871B4;
-  --twin-accent-hover: #2D5A8E;
-  --twin-accent-soft-bg: #E6EFF8;
-  --twin-accent-soft-text: #2D5A8E;
-  --twin-accent-soft-border: #B5D4F4;
-
-  --twin-green-500: #569C6A;
-  --twin-green-700: #3D7A4E;
-  --twin-green-50: #EBF5ED;
-
-  --twin-amber-vivid: #D97706;
-  --twin-amber-700: #8A5C0E;
-  --twin-amber-50: #FEF3CD;
-
-  --twin-red-vivid: #DC2626;
-  --twin-red-50: #FCEBEB;
-  --twin-red-border: #F09595;
-
-  /* Neutrals — light mode */
-  --color-text-primary: #2C3E50;
-  --color-text-secondary: #5A6878;
-  --color-text-tertiary: #8A98A8;
-  --color-border-secondary: #B8C8D8;
-  --color-border-tertiary: #DEE2E6;
-  --color-background-primary: #FFFFFF;
-  --color-background-secondary: #FAFCFE;
-  --color-background-tertiary: #F4F8FC;
-
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-
-  --border-radius-sm: 4px;
-  --border-radius-md: 6px;
-  --border-radius-lg: 8px;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --twin-accent: #3E7CA8;
-  --twin-accent-hover: #4D88B3;
-  --twin-accent-soft-bg: #162635;
-  --twin-accent-soft-text: #9EC7E4;
-  --twin-accent-soft-border: #28445C;
-
-  --twin-green-700: #7AB68C;
-  --twin-green-50: #1A2C20;
-
-  --twin-amber-vivid: #F0A12B;
-  --twin-amber-700: #D89B3A;
-  --twin-amber-50: #2B2310;
-
-  --twin-red-vivid: #F47171;
-  --twin-red-50: #2C1818;
-  --twin-red-border: #6B2C2C;
-
-  --color-text-primary: #E6ECF2;
-  --color-text-secondary: #A0AEC0;
-  --color-text-tertiary: #6B7B8C;
-  --color-border-secondary: #3A4756;
-  --color-border-tertiary: #2A3340;
-  --color-background-primary: #16161D;
-  --color-background-secondary: #1B1B23;
-  --color-background-tertiary: #202029;
-}
+/* Global design variables live in tokens.css. Keep app.css for selectors,
+ * component surfaces and historical overlay layers only. */
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -95,6 +27,18 @@ input, textarea, select {
   font-family: inherit;
   color: var(--color-text-primary);
 }
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
 input:focus, textarea:focus, select:focus { outline: none; }
 
 /* ----- App shell ----- */
@@ -168,6 +112,10 @@ input:focus, textarea:focus, select:focus { outline: none; }
   margin: 0;
   font-size: 20px;
   font-weight: 650;
+}
+
+.login-brand-accent {
+  color: var(--twin-accent);
 }
 
 .login-brand p {
@@ -1708,7 +1656,8 @@ dialog::backdrop {
 .btn.active { background: var(--color-background-secondary); border-color: var(--twin-accent); }
 .btn-retry { border-color: color-mix(in oklab, var(--color-status-failed, #B42318) 35%, var(--color-border-default)); color: var(--color-status-failed, #B42318); }
 .btn-retry:hover { background: color-mix(in oklab, var(--color-status-failed, #B42318) 8%, transparent); }
-.btn-retry .pipeline-badge { background: var(--color-status-failed, #B42318); }
+/* .btn-retry .pipeline-badge lives in the danger-button repair section
+ * further down (its background there fully shadowed the one set here). */
 
 .pipeline-popover {
   position: absolute;
@@ -7015,6 +6964,10 @@ header.topbar .notif-popover {
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   padding: 10px 12px;
+  max-height: min(560px, calc(100vh - 210px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .kg-form-field {
   display: flex;
@@ -7108,6 +7061,20 @@ header.topbar .notif-popover {
   flex-wrap: wrap;
   min-width: 0;
 }
+.kg-add-relation .kg-form-actions {
+  position: sticky;
+  bottom: -10px;
+  z-index: 2;
+  margin: 4px -12px -10px;
+  padding: 9px 12px 10px;
+  border-top: 0.5px solid var(--color-border-tertiary);
+  background: color-mix(
+    in oklab,
+    var(--color-background-secondary) 92%,
+    transparent
+  );
+  backdrop-filter: blur(8px);
+}
 .kg-form-error {
   flex: 1 0 100%;
   font-size: 11px;
@@ -7124,7 +7091,7 @@ header.topbar .notif-popover {
   min-width: 0;
 }
 .kg-target-list {
-  max-height: 188px;
+  max-height: min(150px, 28vh);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -7178,6 +7145,11 @@ header.topbar .notif-popover {
 }
 .kg-target-empty { padding: 6px; }
 .kg-target-result-count { padding: 0 2px; }
+.kg-add-relation .kg-target-result-count {
+  min-height: 0;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
 
 .kg-prop-count {
   margin-left: auto;
@@ -8304,6 +8276,27 @@ header.topbar .notif-popover {
   max-height: calc(100vh - 32px);
   overflow: hidden;
 }
+
+.modal-sm:where(*) {
+  width: 420px;
+  max-width: min(420px, calc(100vw - 40px));
+}
+
+.modal-md:where(*) {
+  width: 500px;
+  max-width: min(500px, calc(100vw - 40px));
+}
+
+.modal-lg:where(*) {
+  width: 620px;
+  max-width: min(620px, calc(100vw - 40px));
+}
+
+.modal-xl:where(*) {
+  width: 760px;
+  max-width: min(760px, 94vw);
+}
+
 .modal-body:where(*):where(*):where(*) {
   overscroll-behavior: contain;
 }
@@ -8584,17 +8577,8 @@ header.topbar .notif-popover {
 
 /* ─── Red harmonization (review 2026-05-30) ────────────────────────────────
  * The "Failed N" filter pill and the "Re-process failed sources" button (with
- * its N badge) both surface a
- * failure count, so their count badges should read as the SAME red. Legacy
- * renders the pill badge as a 14% tint and the retry badge as solid → mismatch.
- * Make the Failed pill badge solid red + white text to match the retry badge.
- * Also remap the status tokens in dark mode so --color-status-failed (retry)
- * and --twin-red-vivid (pill) resolve to one value in both themes. */
-:root[data-theme="dark"]:where(*) {
-  --color-status-failed: var(--twin-red-vivid);
-  --color-status-completed: var(--twin-green-700);
-  --color-status-processing: var(--twin-amber-vivid);
-}
+ * its N badge) both surface a failure count, so their count badges should read
+ * as the same red. Status token aliases are centralized in tokens.css. */
 .pill.failed .pill-badge,
 .pill.failed.active .pill-badge {
   background: var(--twin-red-vivid);
@@ -8749,102 +8733,6 @@ header.topbar .notif-popover {
  * the live data hooks, test ids and modal behavior stay owned by components.
  */
 
-:root:where(*) {
-  --canvas: #F1EEE6;
-  --surface: #FFFFFF;
-  --surface-warm: #FBFAF5;
-  --panel: #F7F5EF;
-  --border: #E6E1D6;
-  --border-soft: #EDE9DF;
-  --border-strong: #D8D2C5;
-  --ink: #222A33;
-  --ink-soft: #46505A;
-  --muted: #7C8590;
-  --faint: #A0A6AE;
-  --blue: #2D5A8E;
-  --blue-bright: #3F8EBF;
-  --blue-soft: #EAF1F7;
-  --blue-soft-bd: #CCE0EF;
-  --green: #3D7A4E;
-  --green-bright: #569C6A;
-  --green-soft: #E9F2EB;
-  --green-soft-bd: #CBE3D1;
-  --amber: #946312;
-  --amber-vivid: #C7891C;
-  --amber-soft: #FAF1DA;
-  --amber-soft-bd: #EDDFBA;
-  --red: #B23A2F;
-  --red-soft: #FBECE9;
-  --red-soft-bd: #F1D4CE;
-  --bar-bg: rgba(255, 255, 255, 0.86);
-  --code-bg: #23252B;
-  --serif: "Spectral", Georgia, serif;
-  --font-sans: "Hanken Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --color-text-primary: var(--ink);
-  --color-text-secondary: var(--ink-soft);
-  --color-text-tertiary: var(--muted);
-  --color-border-default: var(--border);
-  --color-border-secondary: var(--border-strong);
-  --color-border-tertiary: var(--border-soft);
-  --color-background-primary: var(--surface);
-  --color-background-secondary: var(--surface-warm);
-  --color-background-tertiary: var(--canvas);
-  --twin-accent: var(--blue);
-  --twin-accent-hover: #234C7A;
-  --twin-accent-soft-bg: var(--blue-soft);
-  --twin-accent-soft-text: var(--blue);
-  --twin-accent-soft-border: var(--blue-soft-bd);
-  --twin-green-700: var(--green);
-  --twin-green-500: var(--green-bright);
-  --twin-green-50: var(--green-soft);
-  --twin-amber-vivid: var(--amber-vivid);
-  --twin-amber-700: var(--amber);
-  --twin-amber-50: var(--amber-soft);
-  --twin-red-vivid: var(--red);
-  --twin-red-50: var(--red-soft);
-  --twin-red-border: var(--red-soft-bd);
-  --border-radius-sm: 5px;
-  --border-radius-md: 8px;
-  --border-radius-lg: 12px;
-  --shadow-sm: 0 1px 2px rgba(34, 42, 51, 0.05), 0 1px 1px rgba(34, 42, 51, 0.04);
-  --shadow-md: 0 4px 16px rgba(34, 42, 51, 0.07), 0 1px 3px rgba(34, 42, 51, 0.05);
-  --shadow-lg: 0 18px 48px rgba(34, 42, 51, 0.16), 0 4px 12px rgba(34, 42, 51, 0.07);
-}
-
-:root[data-theme="dark"]:where(*):where(*) {
-  --canvas: #16161D;
-  --surface: #1B1B23;
-  --surface-warm: #202029;
-  --panel: #262632;
-  --border: #30313B;
-  --border-soft: #272832;
-  --border-strong: #3C3D49;
-  --ink: #E9EBEF;
-  --ink-soft: #B6BEC9;
-  --muted: #8892A0;
-  --faint: #6B7682;
-  --blue: #3E7CA8;
-  --blue-bright: #4D88B3;
-  --blue-soft: #162635;
-  --blue-soft-bd: #28445C;
-  --green: #7CC08F;
-  --green-bright: #93D0A3;
-  --green-soft: #16241F;
-  --green-soft-bd: #2A4533;
-  --amber: #DAA957;
-  --amber-vivid: #E6B569;
-  --amber-soft: #262014;
-  --amber-soft-bd: #473C23;
-  --red: #E48D80;
-  --red-soft: #2A1A18;
-  --red-soft-bd: #4A302C;
-  --bar-bg: rgba(22, 22, 29, 0.9);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
-  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.62), 0 6px 14px rgba(0, 0, 0, 0.5);
-}
-
 html:where(*),
 body:where(*),
 #root:where(*) {
@@ -8990,6 +8878,23 @@ body:where(*) {
   gap: 9px;
 }
 
+.topbar-popover-anchor:where(*) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.topbar-mono:where(*) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.topbar-empty-state:where(*) {
+  padding: 12px;
+}
+
 .folder-pill,
 .icon-btn {
   border: 1px solid var(--border);
@@ -9052,6 +8957,10 @@ body:where(*) {
   justify-content: center;
 }
 
+.notif-badge.is-warn:where(*) {
+  background: var(--amber-vivid);
+}
+
 .ws-menu,
 header.topbar .notif-popover {
   top: 42px;
@@ -9069,6 +8978,10 @@ header.topbar dialog.notif-popover {
   width: min(380px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 76px);
+}
+
+header.topbar dialog.notif-popover-narrow:where(*) {
+  width: min(320px, calc(100vw - 24px));
 }
 
 .ws-menu-h:where(*) {
@@ -9144,6 +9057,62 @@ header.topbar dialog.notif-popover {
   border-color: var(--red-soft-bd);
   background: var(--red-soft);
   color: var(--red);
+}
+
+.btn.danger.danger-primary,
+.btn-retry,
+.primary-btn.danger,
+.bulk-action.danger {
+  border-color: transparent;
+  background: linear-gradient(
+    150deg,
+    var(--red),
+    color-mix(in oklab, var(--red) 72%, var(--amber-vivid))
+  );
+  color: #fff;
+  box-shadow: 0 3px 10px color-mix(in oklab, var(--red) 34%, transparent);
+}
+
+.btn.danger.danger-primary:hover,
+.btn-retry:hover,
+.primary-btn.danger:hover,
+.bulk-action.danger:hover {
+  background: linear-gradient(
+    150deg,
+    var(--red),
+    color-mix(in oklab, var(--red) 72%, var(--amber-vivid))
+  );
+  color: #fff;
+  filter: brightness(0.97);
+}
+
+.btn-retry .pipeline-badge {
+  /* Dark tint (not white) so #fff text stays WCAG AA over the danger
+     gradient: composed ≈ 8.4:1 vs ≈ 3.9:1 with the white tint. */
+  background: rgba(0, 0, 0, 0.22);
+  color: #fff;
+  border-color: rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="dark"] .btn.danger.danger-primary,
+:root[data-theme="dark"] .btn-retry,
+:root[data-theme="dark"] .primary-btn.danger,
+:root[data-theme="dark"] .bulk-action.danger {
+  background: linear-gradient(150deg, #B85F55, #C97967);
+  box-shadow: 0 3px 10px rgba(184, 95, 85, 0.22);
+}
+
+:root[data-theme="dark"] .btn.danger.danger-primary:hover,
+:root[data-theme="dark"] .btn-retry:hover,
+:root[data-theme="dark"] .primary-btn.danger:hover,
+:root[data-theme="dark"] .bulk-action.danger:hover {
+  background: linear-gradient(150deg, #B85F55, #C97967);
+  filter: brightness(1.02);
+}
+
+:root[data-theme="dark"] .btn-retry .pipeline-badge {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 .docs,
@@ -11025,84 +10994,42 @@ header.topbar dialog.notif-popover {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * Section 9 — Global type comfort
+ * Section 9 — Targeted type repair
  * ════════════════════════════════════════════════════════════════════════ */
 
-body,
-.app {
-  font-size: 14px;
-}
-
 .topbar .brand-name:where(*):where(*) {
-  font-size: 16px;
+  font-size: 16.5px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
-.topbar .brand-kb,
-.tab {
-  font-size: 14px;
+.topbar .brand-kb:where(*):where(*) {
+  font-size: 12.5px;
+  letter-spacing: 0;
+}
+
+.topbar .tabs .tab:where(*) {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.topbar-right .folder-pill:where(*) {
+  font-size: 12.5px;
 }
 
 .btn,
 .ghost-btn,
 .primary-btn,
 .bulk-action,
-.row-action,
-input,
-textarea,
-select {
+.row-action {
   font-size: 13.5px;
 }
 
-.docs-header h1::after,
-.tags-header h1::after,
-.activity-header h1::after,
-.settings-section > p,
-.muted {
-  font-size: 14px;
-}
-
-.docs-filters,
-.tag-filter-row,
-.filter-label,
-.docs-row.has-select,
-.docs-table,
-.activity-row,
-.settings-section,
-.settings-dl,
-.settings-api-keys-table {
-  font-size: 14px;
-}
-
-.settings-api-keys-table th,
-.docs-row.header,
-.pill,
-.tag-chip,
-.status-pill,
-.pending-pill {
-  font-size: 12px;
-}
-
-.pending-title,
-.pending-counts,
-.pending-card-title,
-.pending-body,
-.api-key-modal .warning-banner,
-.api-key-reveal-name,
-.settings-api-keys-reveal-value {
-  font-size: 14px;
-}
-
-.pending-meta,
-.pbtn,
-.quota-banner-sub,
-.api-key-modal-header .ctx,
-.api-key-modal-body input[type="text"],
-.api-key-modal .inline-error {
-  font-size: 13px;
-}
-
-.api-key-modal-body .field-label:where(*) {
-  font-size: 12px;
+input:where(*),
+textarea:where(*),
+select:where(*) {
+  font-size: 13.5px;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -11363,10 +11290,15 @@ select {
   text-align: center;
 }
 
-.summary-error {
-  margin-top: 4px;
-  color: var(--twin-red-vivid);
-  font-size: 11px;
+.docs-row.is-failed .cell-summary svg {
+  flex: 0 0 auto;
+}
+
+.docs-row.is-failed .cell-summary .summary-text {
+  flex: 1 1 auto;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: inherit;
 }
 
 .tag-filter-input {

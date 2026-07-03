@@ -10,6 +10,10 @@ import {
 import { api, type UploadDocumentInput } from '../api/resources';
 import type { AddSourceAction } from '../components/AddSourceModal';
 import type { RetagAction } from '../components/RetagModal';
+import {
+  isProcessedTrackStatus,
+  isTerminalTrackStatus,
+} from '../lib/docStatus';
 import type { Document } from '../types/document';
 import type { Folder } from '../types/topbar';
 import type { Toast } from '../types/toast';
@@ -32,12 +36,6 @@ type UploadResponse = { status: string; message: string; track_id: string };
 type UploadResult = PromiseSettledResult<UploadResponse>;
 type TrackStatus = Awaited<ReturnType<typeof api.trackStatus>>;
 type PushToast = (toast: Omit<Toast, 'id'>) => void;
-const TERMINAL_TRACK_STATUSES = new Set([
-  'processed',
-  'PROCESSED',
-  'failed',
-  'FAILED',
-]);
 
 function summarizeUploadResults(results: readonly UploadResult[]) {
   const ok = results.filter((result) => result.status === 'fulfilled').length;
@@ -221,14 +219,16 @@ function trackStatusErrorMessage(trackId: string, err: unknown): string {
 }
 
 function processedDocIdsIfTerminal(status: TrackStatus): string[] | null {
+  // Dual-cased status reads are owned by the shared vocabulary module
+  // (audit 2026-07-02, DUP-1).
   const terminalDocs = status.documents.filter((doc) =>
-    TERMINAL_TRACK_STATUSES.has(doc.status),
+    isTerminalTrackStatus(doc.status),
   );
   if (terminalDocs.length === 0 || terminalDocs.length !== status.documents.length) {
     return null;
   }
   return terminalDocs
-    .filter((doc) => doc.status.toLowerCase() === 'processed')
+    .filter((doc) => isProcessedTrackStatus(doc.status))
     .map((doc) => doc.id);
 }
 

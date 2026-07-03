@@ -974,14 +974,16 @@ describe('DocumentsTab — folder membership admin actions', () => {
 });
 
 describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
-  it('renders the indexing failure reason inline on a FAILED row', () => {
+  it('renders one non-duplicated failure reason inline on a FAILED row', () => {
     // d3 = the FAILED fixture with error_msg='Unsupported MIME type: …'.
     // Before this PR the row went red without ever exposing the reason —
     // the operator's exact complaint from QA.
     renderTab(<DocumentsTab {...defaultProps()} />);
     const err = screen.getByTestId('docs-row-error-d3');
-    expect(err.textContent).toMatch(/indexing failed/i);
-    expect(err.textContent).toContain('Unsupported MIME type: application/zip');
+    expect(err.textContent).toBe(
+      'Failed ingest — Unsupported MIME type: application/zip',
+    );
+    expect(err.textContent?.match(/unsupported MIME/gi)).toHaveLength(1);
   });
 
   it('omits the error line on a row that has no error_msg', () => {

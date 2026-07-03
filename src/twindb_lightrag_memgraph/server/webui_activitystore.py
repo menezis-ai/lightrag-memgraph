@@ -328,9 +328,9 @@ class InMemoryActivityStore:
         total = len(filtered)
         return filtered[: _bounded_limit(limit)], total, now_ms
 
-    async def append(
+    async def append(  # NOSONAR - async contract.
         self, event: dict[str, Any]
-    ) -> dict[str, Any]:  # NOSONAR - async contract.
+    ) -> dict[str, Any]:
         stored = copy.deepcopy(event)
         self._events.insert(0, stored)
         return copy.deepcopy(stored)

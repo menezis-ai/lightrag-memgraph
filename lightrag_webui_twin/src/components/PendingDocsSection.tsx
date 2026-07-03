@@ -420,10 +420,9 @@ function EditApproveModal({ doc, onClose, onSubmit }: Readonly<EditApproveModalP
       />
       <dialog
         open
-        className="modal edit-approve-modal"
+        className="modal modal-lg edit-approve-modal"
         aria-modal="true"
         aria-label="Edit & approve document"
-        style={{ width: 620 }}
       >
         <div className="modal-header ea-header">
           <div className="ea-title">
@@ -552,10 +551,9 @@ function RejectModal({
       />
       <dialog
         open
-        className="modal"
+        className="modal modal-md"
         aria-modal="true"
         aria-label="Reject document"
-        style={{ width: 480 }}
       >
         <div className="modal-header">
           <h2>Reject source</h2>

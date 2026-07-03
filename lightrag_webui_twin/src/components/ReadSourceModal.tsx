@@ -67,10 +67,9 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
       />
       <dialog
         open
-        className="modal read-source"
+        className="modal modal-xl read-source"
         aria-modal="true"
         aria-label="Indexed chunks"
-        style={{ width: 760, maxWidth: '94vw' }}
       >
         <div className="modal-header rs-header">
           <div className="rs-title">

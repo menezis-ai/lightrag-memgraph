@@ -57,6 +57,17 @@ export interface DocumentReview {
   requested_by?: string;
   requested_at?: string;
   justification?: string;
+  /** Reviewer identity written by the server on approve/reject
+   *  (`webui/router.py` approve_document / reject_document). */
+  actor?: string;
+  /** ISO timestamp of the review decision, written by the server. */
+  at?: string;
+  /**
+   * Operator-supplied corrections recorded WITH the approval. The backend
+   * keeps them inside `metadata.review.edits` as an audit payload — it does
+   * NOT merge them into the document fields (audit 2026-07-02, DUP-2d).
+   */
+  edits?: Record<string, unknown>;
   /** Set when state === 'modified' — describes the upstream change. */
   update?: DocumentReviewUpdate;
 }

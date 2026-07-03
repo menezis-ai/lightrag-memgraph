@@ -449,8 +449,7 @@ export function ActivityTab({
           <dialog
             open
             ref={clearModalRef}
-            className="modal"
-            style={{ width: 480 }}
+            className="modal modal-md"
             aria-modal="true"
             aria-labelledby="clear-title"
             tabIndex={-1}

@@ -567,7 +567,9 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(
             gr,
             "get_session",
-            _fake_session_cm(_FakeSession(rows=[{"entity_id": "FreshOne"}])),
+            _fake_session_cm(
+                _FakeSession(rows=[{"entity_id": "FreshOne", "created": True}])
+            ),
         )
         monkeypatch.setattr(gr, "_read_one_entity", fake_reread_fails)
 
@@ -601,7 +603,9 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(
             gr,
             "get_session",
-            _fake_session_cm(_FakeSession(rows=[{"entity_id": "FreshOne"}])),
+            _fake_session_cm(
+                _FakeSession(rows=[{"entity_id": "FreshOne", "created": True}])
+            ),
         )
         monkeypatch.setattr(gr, "_read_one_entity", fake_reread_ok)
 

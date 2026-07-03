@@ -105,7 +105,7 @@ export function ProfileSection({ onSignOut }: Readonly<ProfileSectionProps>) {
             <>
               <button
                 type="button"
-                className="btn"
+                className="btn danger danger-primary"
                 data-testid="settings-signout"
                 onClick={() => onSignOut?.()}
               >

@@ -97,7 +97,7 @@ def _make_settings(*, api_key="test-key", jwt_secret=None, **overrides):
 def _make_mock_rag():
     """Build a mock LightRAG instance with async methods."""
     mock_rag = MagicMock()
-    mock_rag.initialize = AsyncMock()
+    mock_rag.initialize_storages = AsyncMock()
     mock_rag.aquery = AsyncMock(return_value="mocked answer")
     mock_rag.ainsert = AsyncMock()
     mock_rag.text_chunks = MagicMock()
@@ -1094,30 +1094,41 @@ class TestGetRag:
 
 class TestBuildEmbeddingFunc:
     def test_build_embedding_func_attributes(self):
-        """_build_embedding_func sets .embedding_dim and .max_token_size."""
+        """_build_embedding_func returns an EmbeddingFunc with dim/token size.
+
+        LightRAG's ``__post_init__`` requires the ``EmbeddingFunc`` dataclass
+        wrapper (it reads ``.func`` and calls ``dataclasses.replace``) — a
+        bare function crashes construction on every supported version.
+        """
+        from lightrag.utils import EmbeddingFunc
+
         settings = _make_settings(embedding_dim=768, max_embed_tokens=512)
 
-        # openai_embedding may not exist as a top-level attr in the installed
-        # lightrag version; use create=True so the patch adds it.
+        # No create=True: openai_embed must exist in the installed lightrag —
+        # the mocked-into-existence openai_embedding was the false-green that
+        # hid COMPAT-1 (audit 2026-07-02).
         with patch(
-            "lightrag.llm.openai.openai_embedding",
+            "lightrag.llm.openai.openai_embed",
             new_callable=AsyncMock,
-            create=True,
         ):
             func = _build_embedding_func(settings, api_key="fake")
 
+        assert isinstance(func, EmbeddingFunc)
         assert func.embedding_dim == 768
         assert func.max_token_size == 512
 
     async def test_build_embedding_func_delegates(self):
-        """The returned embedding function calls openai_embedding."""
-        settings = _make_settings()
-        mock_openai_embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+        """The returned embedding function calls openai_embed."""
+        import numpy as np
+
+        # embedding_dim must match the mocked vector: EmbeddingFunc.__call__
+        # validates result.size against embedding_dim (both 1.4.x and 1.5.x).
+        settings = _make_settings(embedding_dim=3)
+        mock_openai_embed = AsyncMock(return_value=np.array([[0.1, 0.2, 0.3]]))
 
         with patch(
-            "lightrag.llm.openai.openai_embedding",
+            "lightrag.llm.openai.openai_embed",
             mock_openai_embed,
-            create=True,
         ):
             func = _build_embedding_func(settings, api_key="embed-key")
             result = await func(["hello"])
@@ -1128,7 +1139,7 @@ class TestBuildEmbeddingFunc:
             base_url=settings.embedding_binding_host,
             api_key="embed-key",
         )
-        assert result == [[0.1, 0.2, 0.3]]
+        assert result.tolist() == [[0.1, 0.2, 0.3]]
 
 
 class TestBuildLlmFunc:
@@ -1201,8 +1212,12 @@ class TestLifespan:
             async with app.router.lifespan_context(app):
                 mock_register.assert_called_once()
 
-    async def test_rag_initialize_called(self, _mock_rag):
-        """LightRAG.initialize() is awaited during lifespan startup."""
+    async def test_rag_initialize_storages_called(self, _mock_rag):
+        """LightRAG.initialize_storages() is awaited during lifespan startup.
+
+        ``initialize_storages()`` is the real upstream API (``initialize()``
+        does not exist on any supported LightRAG — audit 2026-07-02 COMPAT-2).
+        """
         settings = _make_settings()
 
         with ExitStack() as stack:
@@ -1210,7 +1225,7 @@ class TestLifespan:
             app = create_app(settings)
 
             async with app.router.lifespan_context(app):
-                _mock_rag.initialize.assert_awaited_once()
+                _mock_rag.initialize_storages.assert_awaited_once()
 
     async def test_relation_id_backfill_runs_during_startup(self, _mock_rag):
         settings = _make_settings(

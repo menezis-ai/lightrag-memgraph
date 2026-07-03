@@ -37,6 +37,7 @@ import type { QuotaSnapshot } from '../types/quota';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
+import { normalizeDocumentStatus } from '../lib/docStatus';
 
 const TWIN = '/twin/api';
 
@@ -85,6 +86,17 @@ export interface RemoveDocumentFolderResponse {
   removed_folder: string;
   physically_deleted: boolean;
   remaining_folders: readonly string[];
+}
+
+/**
+ * Receipt returned by the review endpoints. The backend approve/reject
+ * routes return `{doc_id, review}` — NOT the full Document
+ * (`webui/router.py` approve_document / reject_document). The review payload
+ * is what was persisted into `DocStatus.metadata.review`.
+ */
+export interface DocumentReviewReceipt {
+  doc_id: string;
+  review: NonNullable<Document['review']>;
 }
 
 /**
@@ -228,24 +240,9 @@ function isLikelyJwtToken(token: string): boolean {
 // LightRAG-native endpoints (NO /twin/api prefix)
 // ============================================================================
 
-/** LightRAG's DocStatus.value is lowercase (`'pending'`, `'processing'`,
- *  `'processed'`, `'failed'`), but our `DocumentStatus` type and every
- *  consumer in this codebase expects uppercase. Normalize at ingress so
- *  the UI mapping/counters work regardless of which end of the contract
- *  shifts later. Unknown values fall back to `PENDING` (same as the
- *  Python `MemgraphDocStatusStorage._deserialize_status` does). */
-const ALLOWED_DOC_STATUS = new Set([
-  'PENDING',
-  'PROCESSING',
-  'PROCESSED',
-  'FAILED',
-]);
-function normalizeDocumentStatus(raw: unknown): Document['status'] {
-  const s = typeof raw === 'string' ? raw.toUpperCase() : '';
-  return (
-    ALLOWED_DOC_STATUS.has(s) ? s : 'PENDING'
-  ) as Document['status'];
-}
+// Status normalization at ingress (lowercase LightRAG wire → UPPERCASE UI
+// enum, unknown → PENDING) lives in the shared vocabulary module — audit
+// 2026-07-02, DUP-1. Behaviour is unchanged; see lib/docStatus.ts.
 
 export const lightragApi = {
   authStatus: (init?: ApiRequestInit) =>
@@ -788,7 +785,7 @@ export const twinApi = {
     body: { actor?: string; edits?: Partial<Document> } = {},
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Document>(
+    apiFetch<DocumentReviewReceipt>(
       `${TWIN}/documents/${encodeURIComponent(docId)}/approve`,
       { ...init, method: 'POST', body },
     ),
@@ -797,7 +794,7 @@ export const twinApi = {
     body: { reason: string; actor?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<Document>(
+    apiFetch<DocumentReviewReceipt>(
       `${TWIN}/documents/${encodeURIComponent(docId)}/reject`,
       { ...init, method: 'POST', body },
     ),

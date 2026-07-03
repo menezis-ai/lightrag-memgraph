@@ -1002,6 +1002,14 @@ describe('GraphTab — lifecycle: Add relation', () => {
     expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
   });
 
+  it('Escape closes the Add relation form', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+    await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
+    expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByTestId('kg-add-rel-form')).toBeNull();
+  });
+
   it('switching entity disarms a pending Add relation form', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     await userEvent.click(screen.getByTestId('kg-add-rel-btn'));

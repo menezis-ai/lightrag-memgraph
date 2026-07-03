@@ -1555,6 +1555,14 @@ function AddRelationForm({
   const [label, setLabel] = useState('');
   const [strength, setStrength] = useState(0.7);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
   const filteredTargetOptions = useMemo(() => {
     const query = targetQuery.trim().toLocaleLowerCase();
     if (!query) return targetOptions;

@@ -17,13 +17,13 @@ from typing import Any
 
 from lightrag.utils import logger
 
-try:  # LightRAG 1.4.9.11+
+try:  # LightRAG 1.5.x only — utils_pipeline does NOT exist in the 1.4.x line
     from lightrag.utils_pipeline import (
         PARSED_DIR_NAME,
         canonicalize_parser_hinted_basename,
         configured_input_dir,
     )
-except ImportError:  # pragma: no cover - compatibility fallback
+except ImportError:  # pragma: no cover - 1.4.x (incl. BNP pin 1.4.9.11) fallback
     PARSED_DIR_NAME = "__parsed__"
 
     def configured_input_dir() -> Path:
