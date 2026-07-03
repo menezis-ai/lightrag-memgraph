@@ -1,5 +1,10 @@
 # Changelog — twindb-lightrag-memgraph
 
+> **v1.0.0 is the version officially deployed in BNP production since
+> 2026-07-03** (GitHub delivery `export-1.0.0` @ `7132f6f`, built from `main`
+> @ `89a446b`, frozen on the protected branch `stable/1.0.x`). The `main`
+> development line is now **1.1.0**.
+
 ## v1.0.0 — 2026-06-11
 
 First complete release: the package now ships the full Twin runtime on top of
