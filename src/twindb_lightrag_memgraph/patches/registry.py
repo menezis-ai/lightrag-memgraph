@@ -1072,6 +1072,55 @@ def _swap_merge_graph_inst(args, kwargs, graph_inst, proxy):
     return tuple(args), kwargs
 
 
+async def _signal_empty_extraction_merge(graph_inst, merge_kwargs) -> None:
+    """Operator signal for a document whose extraction produced an empty graph.
+
+    LightRAG marks a document PROCESSED even when the extraction LLM returned
+    nothing parseable — zero entities, zero relations (audit 2026-07-02
+    addendum, finding B). The status transition is upstream's contract and is
+    deliberately left untouched; this emits the missing operator signal
+    instead: a WARNING log always, plus a best-effort ``pipeline-warning``
+    activity event when the overlay store is importable and available.
+    Never raises into the ingestion pipeline.
+    """
+    doc_id = merge_kwargs.get("doc_id")
+    file_path = merge_kwargs.get("file_path")
+    workspace = getattr(graph_inst, "workspace", None)
+    logger.warning(
+        "Extraction produced an EMPTY graph for doc %s (file=%s, workspace=%s): "
+        "0 entities / 0 relations — the document will still be marked "
+        "PROCESSED but contributes nothing to the knowledge graph",
+        doc_id or "<unknown>",
+        file_path or "<unknown>",
+        workspace or "<unknown>",
+    )
+    try:
+        from ..server.webui_router import _make_event, get_store
+
+        event = _make_event(
+            kind="pipeline-warning",
+            sev="warning",
+            actor="system",
+            target_label=str(file_path or doc_id or "unknown document"),
+            summary=(
+                "Extraction produced no entities or relations; document is "
+                "PROCESSED with an empty knowledge-graph contribution"
+            ),
+            meta={
+                "doc_id": doc_id,
+                "path": file_path,
+                "workspace": workspace,
+                "entities": 0,
+                "relations": 0,
+            },
+            target_type="document",
+            target_id=doc_id,
+        )
+        await get_store().record_activity(event)
+    except Exception as exc:  # store absent/unreachable — log-only signal
+        logger.debug("empty-extraction activity event skipped: %s", exc)
+
+
 def _patch_merge_write_path():
     """Replace merge_nodes_and_edges with a buffered version.
 
@@ -1105,7 +1154,11 @@ def _patch_merge_write_path():
         proxy = _BufferedGraphProxy(graph_inst)
         args, kwargs = _swap_merge_graph_inst(args, kwargs, graph_inst, proxy)
         await _original_merge(*args, **kwargs)
+        buffered_nodes = len(proxy._node_buffer)
+        buffered_edges = len(proxy._edge_buffer)
         await proxy.flush()
+        if buffered_nodes == 0 and buffered_edges == 0:
+            await _signal_empty_extraction_merge(graph_inst, kwargs)
 
     _buffered_merge_nodes_and_edges.__name__ = "buffered_merge_nodes_and_edges"
 
