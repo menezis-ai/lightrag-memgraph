@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from .auth import LoginRequest, LoginResponse
 from .document_hash import enrich_metadata_with_document_hash
+from .status_vocab import to_native_count_key, to_native_lowercase
 
 logger = logging.getLogger(__name__)
 _security = HTTPBearer(auto_error=False)
@@ -201,7 +202,8 @@ def _status_counts_for_projected_docs(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for doc in docs:
-        status = str(doc.get("status") or "").lower()
+        # Count-key casing is owned by status_vocab (audit DUP-1).
+        status = to_native_count_key(doc.get("status"))
         if not status:
             continue
         counts[status] = counts.get(status, 0) + 1
@@ -226,9 +228,9 @@ def _project_doc_tuples(
             payload = dps.model_dump()
         else:
             payload = dict(getattr(dps, "__dict__", {}))
-        # asdict() leaves enums as enums — coerce to their string value.
-        if hasattr(payload.get("status"), "value"):
-            payload["status"] = payload["status"].value
+        # asdict() leaves enums as enums — coerce to the native (lowercase)
+        # wire spelling via the shared vocabulary (audit DUP-1).
+        payload["status"] = to_native_lowercase(payload.get("status"))
         payload["id"] = doc_id
         if visible_folder is not None:
             payload["folder"] = visible_folder
@@ -298,7 +300,9 @@ def _project_doc(doc: dict[str, Any]) -> dict[str, Any]:
     return {
         "doc_id": doc_id,
         "file_path": doc.get("file_path") or "",
-        "status": doc.get("status") or "",
+        # Native shim emits the LightRAG-native lowercase spelling; the
+        # projection is owned by status_vocab (audit DUP-1).
+        "status": to_native_lowercase(doc.get("status")),
         "chunks_count": raw_chunks_count if raw_chunks_count is not None else 0,
         "content_summary": doc.get("content_summary"),
         "content_length": doc.get("content_length"),

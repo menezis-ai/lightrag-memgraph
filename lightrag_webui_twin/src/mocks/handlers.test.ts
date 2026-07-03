@@ -464,3 +464,175 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
     expect((sources[0].value as unknown[]).length).toBe(2);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Real-backend state machine parity (audit 2026-07-02, DUP-2). These pin the
+// mock to the REAL contracts so e2e can no longer go green against an
+// imaginary backend:
+//   (a) upload is async  — native LightRAG upload only ENQUEUES; the row
+//       lands PENDING and flips PROCESSED on a later poll;
+//   (b) delete is ref-counted — native_shims._delete_or_unshare /
+//       routes_documents._apply_membership_delete;
+//   (c) bulk-delete returns 207 on partial failure —
+//       routes_documents.bulk_delete_documents;
+//   (d) approve only writes metadata.review — webui/router.approve_document.
+// ───────────────────────────────────────────────────────────────────────────
+describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () => {
+  async function uploadFile(name: string): Promise<string> {
+    const form = new FormData();
+    form.append('file', new File(['# body'], name, { type: 'text/markdown' }));
+    const res = await fetch(`${BASE}/documents/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    expect(res.ok).toBe(true);
+    const body = (await res.json()) as { status: string; track_id: string };
+    expect(body.status).toBe('success');
+    return body.track_id;
+  }
+
+  it('upload is asynchronous: PENDING on the first poll, PROCESSED on the second', async () => {
+    await uploadFile('async-upload.md');
+
+    type Envelope = {
+      items: Array<{
+        doc_id: string;
+        status: string;
+        chunks_count: number | null;
+      }>;
+    };
+    const first = await getJson<Envelope>('/documents?q=async-upload');
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0].status).toBe('PENDING');
+    expect(first.items[0].chunks_count).toBeNull();
+
+    const second = await getJson<Envelope>('/documents?q=async-upload');
+    expect(second.items[0].status).toBe('PROCESSED');
+    expect(second.items[0].chunks_count).toBe(1);
+
+    // Terminal state is stable on subsequent polls.
+    const third = await getJson<Envelope>('/documents?q=async-upload');
+    expect(third.items[0].status).toBe('PROCESSED');
+  });
+
+  it('single DELETE un-shares a multi-folder doc and only physically deletes on the last membership', async () => {
+    // Share d1 into a second folder first (memberships: default + cib).
+    const share = await fetch(`${BASE}${TWIN}/documents/d1/folders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_id: 'cib' }),
+    });
+    expect(share.ok).toBe(true);
+
+    // Delete from the active folder 'default' → un-share only.
+    const unshare = await fetch(`${BASE}/documents/d1`, {
+      method: 'DELETE',
+      headers: { 'X-Twin-Folder': 'default' },
+    });
+    expect(unshare.status).toBe(200);
+    const folders = await getJson<{ folders: string[] }>(
+      `${TWIN}/documents/d1/folders`,
+    );
+    expect(folders.folders).toEqual(['cib']);
+    const docs = await getJson<{ items: Array<{ doc_id: string }> }>(
+      '/documents',
+    );
+    expect(docs.items.some((d) => d.doc_id === 'd1')).toBe(true);
+
+    // Doc is no longer visible in 'default' → real shim 404s there.
+    const notVisible = await fetch(`${BASE}/documents/d1`, {
+      method: 'DELETE',
+      headers: { 'X-Twin-Folder': 'default' },
+    });
+    expect(notVisible.status).toBe(404);
+
+    // Delete from its LAST folder → physical delete.
+    const last = await fetch(`${BASE}/documents/d1`, {
+      method: 'DELETE',
+      headers: { 'X-Twin-Folder': 'cib' },
+    });
+    expect(last.status).toBe(200);
+    const after = await getJson<{ items: Array<{ doc_id: string }> }>(
+      '/documents',
+    );
+    expect(after.items.some((d) => d.doc_id === 'd1')).toBe(false);
+  });
+
+  it(`POST ${TWIN}/documents/bulk-delete returns 207 with {deleted, failed} on partial failure`, async () => {
+    const res = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc_ids: ['d1', 'does-not-exist'] }),
+    });
+    expect(res.status).toBe(207);
+    expect(await res.json()).toEqual({
+      deleted: 1,
+      failed: ['does-not-exist'],
+    });
+  });
+
+  it(`POST ${TWIN}/documents/bulk-delete un-shares (not deletes) a doc shared into another folder`, async () => {
+    await fetch(`${BASE}${TWIN}/documents/d2/folders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_id: 'cib' }),
+    });
+    const res = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Twin-Folder': 'default',
+      },
+      body: JSON.stringify({ doc_ids: ['d2'] }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 1, failed: [] });
+    // The physical record survives — it was only un-shared from 'default'.
+    const docs = await getJson<{ items: Array<{ doc_id: string }> }>(
+      '/documents',
+    );
+    expect(docs.items.some((d) => d.doc_id === 'd2')).toBe(true);
+    const folders = await getJson<{ folders: string[] }>(
+      `${TWIN}/documents/d2/folders`,
+    );
+    expect(folders.folders).toEqual(['cib']);
+  });
+
+  it(`POST ${TWIN}/documents/:id/approve only writes review — no status flip, no edits merge`, async () => {
+    const res = await fetch(`${BASE}${TWIN}/documents/d6/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actor: 'claire.benoit',
+        edits: { content_summary: 'edited summary that must NOT be merged' },
+      }),
+    });
+    expect(res.ok).toBe(true);
+    const receipt = (await res.json()) as {
+      doc_id: string;
+      review: { state: string; actor: string; edits?: Record<string, unknown> };
+    };
+    expect(receipt.doc_id).toBe('d6');
+    expect(receipt.review.state).toBe('approved');
+    expect(receipt.review.actor).toBe('claire.benoit');
+    expect(receipt.review.edits).toEqual({
+      content_summary: 'edited summary that must NOT be merged',
+    });
+
+    const docs = await getJson<{
+      items: Array<{
+        doc_id: string;
+        status: string;
+        content_summary: string;
+        review?: { state: string };
+      }>;
+    }>('/documents');
+    const d6 = docs.items.find((d) => d.doc_id === 'd6');
+    // Status untouched (fixture value), summary untouched, review persisted.
+    expect(d6?.status).toBe('PROCESSING');
+    expect(d6?.content_summary).toBe(
+      'Vendor-provided spec — needs sign-off by a reviewer before retrieval. Confidence sourcing uncertain.',
+    );
+    expect(d6?.review?.state).toBe('approved');
+  });
+});

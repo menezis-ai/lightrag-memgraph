@@ -24,6 +24,8 @@ from functools import partial, wraps
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
+from . import canary
+
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
 LIGHTRAG_SERVER_MODULE = "lightrag.api.lightrag_server"
@@ -74,6 +76,11 @@ def _resolve_overlay_flags(replace_ui, mount_server, shim_native_routes):
 def _patch_storage_registries() -> None:
     """Register the 3 Memgraph backends in lightrag.kg's registry dicts."""
     import lightrag.kg as kg_registry
+
+    # REQUIRED-class canary: without these 3 dicts register() cannot plug the
+    # storage backends at all — fail loud with an actionable message instead
+    # of the bare AttributeError/KeyError this block used to raise.
+    canary.assert_storage_registries(kg_registry)
 
     # 1. STORAGE_IMPLEMENTATIONS - declare our classes as valid implementations
     _new_impls = {
@@ -1024,6 +1031,12 @@ def _patch_operate_hot_paths():
     """
     import lightrag.operate as operate
 
+    # Drift canary (warning-only): the two functions below are PRIVATE COPIES
+    # of upstream bodies — flag any upstream body we have never reviewed
+    # before overwriting it (audit 2026-07-02 COMPAT-3).
+    canary.warn_on_private_copy_drift(operate, "_get_node_data")
+    canary.warn_on_private_copy_drift(operate, "_find_most_related_edges_from_entities")
+
     operate._get_node_data = _fused_get_node_data
     operate._find_most_related_edges_from_entities = _fused_find_edges
 
@@ -1075,7 +1088,15 @@ def _patch_merge_write_path():
 
     from .._buffered_graph import _BufferedGraphProxy
 
-    _original_merge = operate.merge_nodes_and_edges
+    # DEGRADABLE canary: an upstream rename must not crash the boot — warn
+    # and keep the native (unbuffered) write path (audit 2026-07-02 COMPAT-4).
+    _original_merge = canary.degradable_symbol(
+        operate,
+        "merge_nodes_and_edges",
+        patch_name="buffered-merge UNWIND write batching",
+    )
+    if _original_merge is None:
+        return
 
     async def _buffered_merge_nodes_and_edges(*args, **kwargs):
         graph_inst = _resolve_merge_graph_inst(args, kwargs)
@@ -1108,7 +1129,18 @@ def _patch_insert_done():
 
     from .._hooks import _run_post_index_hooks
 
-    _original = LightRAG._insert_done
+    # DEGRADABLE canary: the wrapper below hardcodes the
+    # (self, pipeline_status, pipeline_status_lock) call shape — skip loudly
+    # on rename OR signature break instead of crashing the boot / every
+    # ingestion (audit 2026-07-02 COMPAT-4).
+    _original = canary.degradable_symbol(
+        LightRAG,
+        "_insert_done",
+        patch_name="post-indexation hooks",
+        call_args=(object(), None, None),
+    )
+    if _original is None:
+        return
 
     async def _hooked_insert_done(
         self, pipeline_status=None, pipeline_status_lock=None
@@ -1329,7 +1361,17 @@ def _patch_capture_rag() -> None:
     if getattr(dr, "_twindb_capture_rag_patched", False):
         return
 
-    orig_factory = dr.create_document_routes
+    # DEGRADABLE canary: without the factory the rag capture is impossible —
+    # warn and skip; the shim routes then 500 with their own explicit
+    # "not captured" message instead of the whole boot crashing
+    # (audit 2026-07-02 COMPAT-4).
+    orig_factory = canary.degradable_symbol(
+        dr,
+        "create_document_routes",
+        patch_name="native-shim LightRAG instance capture",
+    )
+    if orig_factory is None:
+        return
 
     def wrapped_factory(rag, *args, **kwargs):
         _twindb_state["rag"] = rag
@@ -1353,11 +1395,36 @@ def _patch_capture_rag() -> None:
     dr._twindb_capture_rag_patched = True
 
 
+# Faithful fallbacks for two document_routes symbols that only exist in
+# LightRAG 1.5.x (absent from the 1.4.x line, incl. the BNP-pinned 1.4.9.11).
+# The patch below is only applied when ``find_existing_file_by_file_path``
+# exists, but that co-presence is a heuristic, not a contract — a build could
+# ship the lookup without these helpers (audit 2026-07-02 COMPAT-5). Semantics
+# replicate lightrag 1.5.4 ``api/routers/document_routes.py:95-110``.
+_UNKNOWN_FILE_SOURCE_FALLBACK = "unknown_source"
+_LEGACY_EMPTY_FILE_PATH_SENTINELS = frozenset({"", "no-file-path"})
+
+
+def _fallback_normalize_file_path(file_path) -> str:
+    """Minimal replica of 1.5.x ``document_routes.normalize_file_path``."""
+    from .._import_cleanup import canonicalize_parser_hinted_basename
+
+    if file_path is None:
+        return _UNKNOWN_FILE_SOURCE_FALLBACK
+    normalized = str(file_path).strip()
+    if normalized in _LEGACY_EMPTY_FILE_PATH_SENTINELS:
+        return _UNKNOWN_FILE_SOURCE_FALLBACK
+    return (
+        canonicalize_parser_hinted_basename(normalized) or _UNKNOWN_FILE_SOURCE_FALLBACK
+    )
+
+
 def _build_input_dir_index(dr, index, input_dir) -> dict[str, str]:
     """mtime-keyed canonical-name → on-disk-path index for ``input_dir``.
 
     ``index`` is the per-patch cache (``{key: (mtime_ns, mapping)}``); a stamp
     match returns the cached mapping, otherwise the dir is re-scanned once."""
+    normalize = getattr(dr, "normalize_file_path", _fallback_normalize_file_path)
     try:
         stamp = input_dir.stat().st_mtime_ns
     except FileNotFoundError:
@@ -1371,7 +1438,7 @@ def _build_input_dir_index(dr, index, input_dir) -> dict[str, str]:
     try:
         for entry in input_dir.iterdir():
             if entry.is_file():
-                candidate = dr.normalize_file_path(entry.name)
+                candidate = normalize(entry.name)
                 if candidate and candidate not in mapping:
                     mapping[candidate] = str(entry)
     except FileNotFoundError:
@@ -1398,7 +1465,8 @@ def _find_existing_file_cached(dr, index, lock, input_dir, file_path) -> Path | 
     one, or a non-canonical/whitespace ``file_path`` would match where upstream
     returns ``None``. A stale hit (file moved/removed after mtime sampling)
     refreshes the index once and retries."""
-    if not file_path or file_path == dr.UNKNOWN_FILE_SOURCE:
+    unknown = getattr(dr, "UNKNOWN_FILE_SOURCE", _UNKNOWN_FILE_SOURCE_FALLBACK)
+    if not file_path or file_path == unknown:
         return None
     with lock:
         mapping = _build_input_dir_index(dr, index, input_dir)
@@ -1491,7 +1559,16 @@ def _patch_lightrag_server_create_app(
     # neutralization which had to skip earlier if the module was not yet loaded.
     _disable_lightrag_dependency_autoinstall()
 
-    orig_create_app = srv.create_app
+    # DEGRADABLE canary: no create_app → no overlay surface to wrap. Warn and
+    # skip (native LightRAG UI/routes only) instead of crashing the boot
+    # (audit 2026-07-02 COMPAT-4).
+    orig_create_app = canary.degradable_symbol(
+        srv,
+        "create_app",
+        patch_name="create_app overlay (WebUI swap / Twin mount / shims)",
+    )
+    if orig_create_app is None:
+        return
 
     def wrapped_create_app(args):
         app = orig_create_app(args)

@@ -154,9 +154,12 @@ async def native_runtime(monkeypatch, runtime_dirs):
         create_document_routes,
     )
 
+    from tests.conftest import ensure_fresh_native_document_router
+
     doc_manager = DocumentManager(runtime_dirs["input"], workspace=WORKSPACE)
     app = FastAPI()
     _install_storage_folder_capture(app)
+    ensure_fresh_native_document_router()
     app.include_router(create_document_routes(rag, doc_manager, api_key=None))
 
     try:

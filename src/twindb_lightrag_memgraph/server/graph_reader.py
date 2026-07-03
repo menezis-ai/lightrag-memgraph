@@ -41,6 +41,22 @@ try:  # version-skew guard (see feedback_lightrag_version_skew)
 except Exception:  # pragma: no cover - defensive
     _GRAPH_FIELD_SEP = "<SEP>"
 
+# Vector-storage namespaces of the two vdbs the entity/relation delete
+# cascade (MG-2, audit 2026-07-02) must clean. Identical string values on
+# LightRAG 1.4.9.11 and 1.5.x (`lightrag/namespace.py:16-17` on both);
+# guarded like _GRAPH_FIELD_SEP above so a future rename degrades to the
+# known literals instead of crashing the import.
+try:  # version-skew guard (see feedback_lightrag_version_skew)
+    from lightrag.namespace import NameSpace as _NameSpace
+
+    _VDB_ENTITIES_NS = str(getattr(_NameSpace, "VECTOR_STORE_ENTITIES", "entities"))
+    _VDB_RELATIONSHIPS_NS = str(
+        getattr(_NameSpace, "VECTOR_STORE_RELATIONSHIPS", "relationships")
+    )
+except Exception:  # pragma: no cover - defensive
+    _VDB_ENTITIES_NS = "entities"
+    _VDB_RELATIONSHIPS_NS = "relationships"
+
 
 # ----------------------------------------------------------------------
 # Exceptions raised by the write helpers (M12 batch 3 contract)
@@ -2609,26 +2625,27 @@ async def create_graph_entity(
     folder = active_folder_id()
     async with acquire_write_slot():
         async with get_session() as session:
+            # MG-1 (audit 2026-07-02): this used to be a check-then-CREATE —
+            # the `entity_exists` probe above, then a bare CREATE. Two
+            # concurrent POSTs (or a client retry after a timeout whose write
+            # had landed) could both pass the probe and mint two nodes with
+            # the same entity_id, turning every downstream MATCH multi-row.
+            # The atomic MERGE keyed on entity_id closes that window: ON
+            # CREATE-only SET guarantees an existing node's properties are
+            # never rewritten by a duplicate request. The transient marker
+            # distinguishes created-vs-matched and is removed in the same
+            # statement (single implicit transaction — no residue possible).
             query = (
-                f"CREATE (n:`{label}`) "
-                "SET n = $props "
-                "RETURN n.entity_id AS entity_id"
+                f"MERGE (n:`{label}` {{entity_id: $eid}}) "
+                "ON CREATE SET n = $props, n.`__twin_create_marker` = true "
+                "WITH n, coalesce(n.`__twin_create_marker`, false) AS created "
+                "REMOVE n.`__twin_create_marker` "
+                "RETURN n.entity_id AS entity_id, created AS created"
             )
             try:
-                result = await session.run(query, props=props)
+                result = await session.run(query, eid=entity_id, props=props)
                 rows = [record async for record in result]
                 await result.consume()
-                if folder:
-                    # #1a: stamp explicit folder membership so this chunk-less
-                    # manual entity survives a folder-scoped refresh.
-                    stamp = (
-                        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
-                        f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
-                        f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
-                    )
-                    await (
-                        await session.run(stamp, eid=entity_id, folder=folder)
-                    ).consume()
             except Exception as exc:
                 logger.exception(
                     "graph_reader.create_graph_entity: insert failed for %s",
@@ -2637,8 +2654,35 @@ async def create_graph_entity(
                 raise EntityCreateBackendError(str(exc)) from exc
             if not rows:
                 raise EntityCreateBackendError(
-                    f"CREATE returned no rows for {entity_id!r}"
+                    f"MERGE returned no rows for {entity_id!r}"
                 )
+            if not rows[0]["created"]:
+                # Lost the check-then-write race: the probe missed but the
+                # MERGE matched an existing node — ON CREATE did not fire,
+                # nothing was written. Same observable contract as the
+                # sequential duplicate (route maps to 409), but no second
+                # node can be minted.
+                raise EntityExistsError(entity_id)
+            if folder:
+                # #1a: stamp explicit folder membership so this chunk-less
+                # manual entity survives a folder-scoped refresh. Only on a
+                # genuine create — a matched pre-existing node raised above.
+                stamp = (
+                    f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+                    f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
+                    f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
+                )
+                try:
+                    await (
+                        await session.run(stamp, eid=entity_id, folder=folder)
+                    ).consume()
+                except Exception as exc:
+                    logger.exception(
+                        "graph_reader.create_graph_entity: folder stamp "
+                        "failed for %s",
+                        entity_id,
+                    )
+                    raise EntityCreateBackendError(str(exc)) from exc
     try:
         projected = await _read_one_entity(workspace, entity_id)
     except Exception as exc:
@@ -2652,9 +2696,135 @@ async def create_graph_entity(
     return projected
 
 
+def _vec_label(workspace: str, namespace: str) -> str:
+    """Vector-storage label for ``workspace``/``namespace``.
+
+    Must mirror ``MemgraphVectorDBStorage._label()`` (``Vec_{ws}_{ns}``,
+    ``vector_impl.py``) — that is where the rows the delete cascade cleans
+    are written. Both parts go through the canonical ``_constants``
+    validator because they are interpolated as a Cypher label.
+
+    Raises ``ValueError`` when either part is not a safe identifier.
+    """
+    from .._constants import validate_identifier
+
+    return (
+        f"Vec_{validate_identifier(workspace, 'workspace')}"
+        f"_{validate_identifier(namespace, 'namespace')}"
+    )
+
+
+async def _cascade_entity_vdb_rows(workspace: str, entity_id: str) -> bool:
+    """MG-2 (audit 2026-07-02): delete the vector-storage rows that keep
+    retrieval grounding on ``entity_id`` after its graph node is removed —
+    the ``Vec_{ws}_entities`` row (matched on ``entity_name``, the property
+    LightRAG stamps on every entity vdb upsert, 1.4.9.11 and 1.5.x alike)
+    and every ``Vec_{ws}_relationships`` row touching it (``src_id`` /
+    ``tgt_id``), mirroring ``vector_impl.delete_entity`` /
+    ``delete_entity_relation`` and LightRAG's own ``adelete_by_entity``
+    semantics.
+
+    Called BEFORE the graph ``DETACH DELETE`` so a mid-flow failure leaves
+    a visible, re-deletable graph node without vector rows (retrieval just
+    stops vector-matching it) — never the reverse: an invisible node whose
+    vector rows keep grounding answers, the exact MG-2 symptom.
+
+    ``REMOVE`` the label before ``DETACH DELETE`` is mandatory: these rows
+    are vector-indexed vertices and Memgraph 3.10+ keeps stale vector-index
+    entries for plainly deleted vertices, which later 50N42-errors on
+    ``vector_search`` (see ``reference_memgraph_310_vector_delete`` and the
+    identical dance in ``vector_impl.py``).
+
+    Returns ``False`` after logging on backend failure — the caller aborts
+    before touching the graph node, matching the route's existing
+    "backend failure → 404, state untouched" behaviour.
+    """
+    try:
+        ent_label = _vec_label(workspace, _VDB_ENTITIES_NS)
+        rel_label = _vec_label(workspace, _VDB_RELATIONSHIPS_NS)
+    except ValueError:
+        # A workspace that fails identifier validation can never have had
+        # vector rows written for it (MemgraphVectorDBStorage resolves its
+        # workspace through the same validator) — nothing to cascade.
+        logger.warning(
+            "graph_reader: skipping vdb cascade for non-identifier workspace %r",
+            workspace,
+        )
+        return True
+    try:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{ent_label}`) WHERE n.entity_name = $name "
+                    f"REMOVE n:`{ent_label}` "
+                    "WITH n DETACH DELETE n",
+                    name=entity_id,
+                )
+                await result.consume()
+                result = await session.run(
+                    f"MATCH (n:`{rel_label}`) "
+                    "WHERE n.src_id = $name OR n.tgt_id = $name "
+                    f"REMOVE n:`{rel_label}` "
+                    "WITH n DETACH DELETE n",
+                    name=entity_id,
+                )
+                await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: vdb cascade failed for entity %s (ws=%s)",
+            entity_id,
+            workspace,
+        )
+        return False
+    return True
+
+
+async def _cascade_relation_vdb_row(workspace: str, src: str, tgt: str) -> bool:
+    """MG-2 companion for a single edge delete: remove the
+    ``Vec_{ws}_relationships`` row for the endpoint pair. LightRAG keys that
+    row on the *sorted* pair (``compute_mdhash_id(src + tgt, prefix="rel-")``
+    after a ``src > tgt`` swap — identical on 1.4.9.11 and 1.5.x), so the
+    match is direction-agnostic on the ``src_id``/``tgt_id`` properties
+    rather than recomputing the hash. Same REMOVE-label mitigation and
+    failure contract as :func:`_cascade_entity_vdb_rows`.
+    """
+    try:
+        rel_label = _vec_label(workspace, _VDB_RELATIONSHIPS_NS)
+    except ValueError:
+        logger.warning(
+            "graph_reader: skipping vdb cascade for non-identifier workspace %r",
+            workspace,
+        )
+        return True
+    try:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{rel_label}`) "
+                    "WHERE (n.src_id = $src AND n.tgt_id = $tgt) "
+                    "OR (n.src_id = $tgt AND n.tgt_id = $src) "
+                    f"REMOVE n:`{rel_label}` "
+                    "WITH n DETACH DELETE n",
+                    src=src,
+                    tgt=tgt,
+                )
+                await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: vdb cascade failed for relation %s→%s (ws=%s)",
+            src,
+            tgt,
+            workspace,
+        )
+        return False
+    return True
+
+
 async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
-    """Remove the entity and cascade its edges. Returns ``True`` if a
-    node was deleted, ``False`` if nothing matched."""
+    """Remove the entity, cascade its edges AND its vector-storage rows
+    (``Vec_{ws}_entities`` / ``Vec_{ws}_relationships`` — MG-2). Returns
+    ``True`` if a node was deleted, ``False`` if nothing matched or the
+    backend rejected a step (state untouched in that case)."""
     entity_id = _strip_node_prefix(webui_id)
     label = _sanitize_workspace(workspace)
 
@@ -2679,6 +2849,13 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
                 workspace, folder, entity_id, {}, deleted=True
             )
     elif not await entity_exists(workspace, entity_id):
+        return False
+
+    # MG-2: clean the entity's vector rows BEFORE the graph node goes —
+    # see _cascade_entity_vdb_rows for the ordering + mitigation rationale.
+    # Only the physical-delete paths reach here; the mixed-provenance
+    # tombstone above never touches the shared rows.
+    if not await _cascade_entity_vdb_rows(workspace, entity_id):
         return False
 
     async with acquire_write_slot():
@@ -2826,8 +3003,9 @@ async def create_graph_relation(
 
 
 async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
-    """Remove the relation identified by ``rel_id``. Returns ``True``
-    on success, ``False`` when the id cannot be resolved to an edge in
+    """Remove the relation identified by ``rel_id`` and cascade its
+    ``Vec_{ws}_relationships`` vector row (MG-2). Returns ``True`` on
+    success, ``False`` when the id cannot be resolved to an edge in
     Memgraph or no edge matches at delete time."""
     endpoints = await _resolve_relation_endpoints(workspace, rel_id)
     if endpoints is None:
@@ -2854,6 +3032,12 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
             return await _upsert_rel_override(
                 workspace, folder, src, tgt, {}, deleted=True
             )
+
+    # MG-2: clean the pair's vector row BEFORE the edge goes — see
+    # _cascade_relation_vdb_row. Tombstoned (mixed) relations never reach
+    # this point, so shared rows are untouched.
+    if not await _cascade_relation_vdb_row(workspace, src, tgt):
+        return False
 
     label = _sanitize_workspace(workspace)
     async with acquire_write_slot():

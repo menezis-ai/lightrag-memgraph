@@ -124,7 +124,18 @@ test.describe('Documents RC-1 persistence', () => {
     await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
     await expect(page.getByTestId('pending-doc-d6')).toBeHidden();
     await page.getByLabel('Search source').fill('cft-vendor-api-spec');
-    await expect(page.getByTestId('docs-row-d6')).toContainText('reviewed and approved');
+    // Real contract (audit 2026-07-02, DUP-2d): the approval persists as
+    // review.state='approved' (pending card stays gone after reload) and the
+    // operator edits are recorded in metadata.review.edits — the backend
+    // does NOT merge them into the document fields, so the row keeps its
+    // ORIGINAL summary. Asserting the edited text here would validate an
+    // imaginary backend.
+    await expect(page.getByTestId('docs-row-d6')).toContainText(
+      'cft-vendor-api-spec-draft.pdf',
+    );
+    await expect(page.getByTestId('docs-row-d6')).not.toContainText(
+      'reviewed and approved',
+    );
   });
 
   test('@documents @rc1 reject decision is committed and survives reload', async ({ page }) => {

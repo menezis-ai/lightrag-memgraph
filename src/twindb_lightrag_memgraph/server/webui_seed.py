@@ -15,6 +15,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from .status_vocab import CanonicalDocStatus, to_seed_legacy
+
+# Seed-legacy status spellings ("completed"/"failed"/"processing") are wire
+# contract for the demo/seed surface; they are now DERIVED from the shared
+# vocabulary (audit 2026-07-02, DUP-1) instead of hand-spelled per document.
+SEED_STATUS_COMPLETED = to_seed_legacy(CanonicalDocStatus.PROCESSED)
+SEED_STATUS_PROCESSING = to_seed_legacy(CanonicalDocStatus.PROCESSING)
+SEED_STATUS_FAILED = to_seed_legacy(CanonicalDocStatus.FAILED)
+
 ORACLE_RESTART_SOURCE = "oracle-restart-procedure.pdf"
 MEMGRAPH_MAGE_SOURCE = "memgraph-mage-3.8-release-notes.md"
 VMWARE_BEST_PRACTICES_SOURCE = "vmware-best-practices-2026.pdf"
@@ -40,7 +49,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": ORACLE_RESTART_SOURCE,
         "summary": "Step-by-step guide for restarting Oracle DB on RHEL 9 in CIB prod",
         "tags": ["rman", "oracle"],
-        "status": "completed",
+        "status": SEED_STATUS_COMPLETED,
         "chunks": 418,
         "updated": "2h ago",
         "visibility": "private",
@@ -52,7 +61,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": "/cib/runbooks/oracle-pga-tuning",
         "summary": "Oracle PGA memory tuning recommendations and worked examples",
         "tags": ["rman"],
-        "status": "completed",
+        "status": SEED_STATUS_COMPLETED,
         "chunks": 54,
         "updated": "1d ago",
         "visibility": "private",
@@ -64,7 +73,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": "huge-archive.zip",
         "summary": "Failed ingest — unsupported MIME",
         "tags": [],
-        "status": "failed",
+        "status": SEED_STATUS_FAILED,
         "chunks": 0,
         "updated": REL_30M_AGO,
         "visibility": "private",
@@ -76,7 +85,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": MEMGRAPH_MAGE_SOURCE,
         "summary": "Memgraph MAGE 3.8 release notes — vector_search improvements",
         "tags": ["memgraph", "mage"],
-        "status": "completed",
+        "status": SEED_STATUS_COMPLETED,
         "chunks": 42,
         "updated": REL_25M_AGO,
         "visibility": "private",
@@ -88,7 +97,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": "/cib/incidents/2026-04-prod-outage",
         "summary": "Postmortem: 2026-04 prod outage, Oracle PGA OOM cascade",
         "tags": ["incident", "oracle", "production"],
-        "status": "completed",
+        "status": SEED_STATUS_COMPLETED,
         "chunks": 156,
         "updated": REL_3D_AGO,
         "visibility": "private",
@@ -100,7 +109,7 @@ DOCUMENTS: list[dict[str, Any]] = [
         "source": "pending-review-doc.pdf",
         "summary": "Awaiting palier-2 review before publication",
         "tags": ["pending-review"],
-        "status": "processing",
+        "status": SEED_STATUS_PROCESSING,
         "chunks": 21,
         "updated": "5h ago",
         "visibility": "private",

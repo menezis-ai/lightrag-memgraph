@@ -599,7 +599,13 @@ def _build_lifespan(settings: LightRAGServerSettings):
         # -- Instantiate LightRAG --
         rag_kwargs = _build_rag_kwargs(settings, embedding_func, llm_func)
         _rag = LightRAG(**rag_kwargs)
-        await _rag.initialize()
+        # Mirror the upstream server boot (lightrag.api.lightrag_server
+        # lifespan): initialize_storages() is the real API — LightRAG has no
+        # initialize() — and it auto-initializes pipeline_status for
+        # rag.workspace on every supported version (1.4.9.11 wheel
+        # lightrag.py:684-687, 1.5.4 lightrag.py:1287-1289), so no separate
+        # initialize_pipeline_status() call is needed.
+        await _rag.initialize_storages()
         logger.info(
             "LightRAG initialized (workspace=%s, kv=%s, vec=%s, graph=%s)",
             settings.workspace or "(default)",
@@ -1182,21 +1188,35 @@ def _extract_doc_ids(result: Any) -> list[str]:
 
 
 def _build_embedding_func(settings: LightRAGServerSettings, api_key: str):
-    """Build the async embedding function from settings."""
-    from lightrag.llm.openai import openai_embedding
+    """Build the async embedding function from settings.
+
+    Two upstream contracts this must honor (audit 2026-07-02 COMPAT-1, plus a
+    third break found while fixing it):
+
+    * the upstream symbol is ``openai_embed`` on every supported LightRAG
+      (1.4.9.11 wheel ``llm/openai.py:717``, 1.5.4 ``llm/openai.py:896``);
+      ``openai_embedding`` never existed there;
+    * ``LightRAG.__post_init__`` requires an ``EmbeddingFunc`` dataclass
+      instance — it reads ``.func`` and calls ``dataclasses.replace`` on it
+      (1.4.9.11 wheel ``lightrag.py:549-551``, 1.5.4 ``lightrag.py:1089-1091``)
+      — so a bare function with attributes crashes LightRAG construction.
+    """
+    from lightrag.llm.openai import openai_embed
+    from lightrag.utils import EmbeddingFunc
 
     async def embedding_func(texts: list[str]) -> list[list[float]]:
-        return await openai_embedding(
+        return await openai_embed(
             texts,
             model=settings.embedding_model,
             base_url=settings.embedding_binding_host,
             api_key=api_key,
         )
 
-    embedding_func.embedding_dim = settings.embedding_dim
-    embedding_func.max_token_size = settings.max_embed_tokens
-
-    return embedding_func
+    return EmbeddingFunc(
+        embedding_dim=settings.embedding_dim,
+        max_token_size=settings.max_embed_tokens,
+        func=embedding_func,
+    )
 
 
 def _build_llm_func(settings: LightRAGServerSettings, api_key: str):

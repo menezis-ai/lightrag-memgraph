@@ -872,7 +872,9 @@ class TestManualCreateStamping:
             return False
 
         monkeypatch.setattr(graph_reader, "entity_exists", absent)
-        write = _RecordingSession([{"entity_id": "X"}])
+        # MG-1: create is now MERGE-based; the write session reports the
+        # created-vs-matched flag alongside the entity id.
+        write = _RecordingSession([{"entity_id": "X", "created": True}])
         monkeypatch.setattr(graph_reader, "get_session", _cm(write))
 
         async def proj(_ws, _eid, *_a, **_k):

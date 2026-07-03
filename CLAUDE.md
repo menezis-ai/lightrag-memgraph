@@ -42,7 +42,7 @@ The global directive §7 ("push to all remotes") does **not** apply here.
 
 `docs/audits/<area>/audit-<date>.md` is the convention for honest cross-cutting reviews. `docs/audits/lightrag-interactions/audit-2026-06-13.md` is the reference review for `/twin/api/query` and retrieval. Both of its priorities are now **closed** (keep this in mind so you don't "re-fix" them): (1) the nominal `/query` path no longer reconstructs sources via a second vector search — it grounds through `aquery_llm()` and projects sources from `data.references` (the chunks LightRAG actually used); (2) the WebUI `tag_filter` / `doc_filter` / `min_score` are no longer a retrieval no-op — they are enforced at the Memgraph storage layer (`vector_impl._build_search_cypher`, bound via `storage_filter_context`), so an excluded chunk/entity never enters the prompt rather than being trimmed from the Sources panel afterwards. **Known residual:** `tag_filter`/`doc_filter` on the entity/relation vdb scope the *selection*, not the LLM-aggregated `content` of a kept record (same residual as folder scoping — see `test_retrieval_filters_scoping.py` and `vector_impl._build_search_cypher`). Read the relevant audit before claiming a fix in those areas.
 
-Other open audit areas under `docs/audits/`: `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `retrieval-tuning/`, `sonarqube/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
+Other open audit areas under `docs/audits/`: `activity/` (Activity-ledger event coverage baseline — literal emitted-vs-missing map), `ingestion-reindex/` (2026-07-02 cross-cutting: MIP gate bypass on native upload routes, Memgraph write safety, LightRAG compat inventory, real CI ingestion coverage, cross-surface duplication), `intelligence-layer/`, `lightrag-1.4.9.11/`, `process-install-bnp/`, `production-hardening/`, `retrieval-tuning/`, `sonarqube/`. Same `audit-<date>.md` convention. Consult the relevant area before claiming a fix in code it covers.
 
 Three release/ops docs added for the 1.0.0 cut (merged to `main`; the `production-readiness-p0-risk-accept-lightrag-cves` branch is retired):
 - `docs/security/lightrag-1.4.9.11-risk-acceptance.md` — documented risk-acceptance for the LightRAG CVEs in the pinned `1.4.9.11`. Read before raising a CVE on that dependency.
@@ -133,6 +133,17 @@ coverage run -m pytest tests/ --ignore=tests/test_bench.py
 coverage xml  # produces coverage.xml for SonarQube
 ```
 
+### Python lint / format
+
+CI gates on these (job `python-lint`, added 2026-07-01) — run them locally before any push:
+
+```bash
+black --check --diff src tests
+ruff check src tests
+```
+
+Config lives in `pyproject.toml` (`[tool.black]`, `[tool.ruff]`); pinned versions in `requirements/constraints-dev.txt`.
+
 `tests/conftest.py` auto-skips `@pytest.mark.integration` tests when `MEMGRAPH_URI` is unset, so no need to filter manually for offline runs.
 
 Test layout: storage tests live directly under `tests/` (`test_kv.py`, `test_vector.py`, `test_docstatus.py`, `test_buffered_writes.py`, `test_batch_patch.py`, `test_e2e.py`, …); intelligence and server suites live in `tests/test_intelligence/` and `tests/test_server/` respectively. `pytest tests/` collects all three trees.
@@ -158,11 +169,15 @@ Scanner config lives in `sonar-project.properties` at the repo root: `sonar.sour
 
 ### CI matrix
 
-CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions. Two runner pools:
-- `[self-hosted, docker]` — Python + WebUI lint/unit jobs (docker squad 310-314 post-2026-06-11 OOM incident, bumped to 4096M).
+CI (`.forgejo/workflows/ci.yml`) runs on Forgejo Actions. Three runner pools:
+- `[self-hosted, low, lint]` — the two lint gates (`python-lint`, `webui-lint`). Doctrine: lint = light job → low/lint pool, NOT docker.
+- `[self-hosted, docker]` — Python + WebUI unit/build jobs (docker squad 310-314 post-2026-06-11 OOM incident, bumped to 4096M).
 - `[self-hosted, high]` — Playwright e2e jobs (`webui-e2e`, `webui-e2e-real`). The `high:host` pool can NOT run `setup-python` actions — see `reference_ci_runner_pools.md`. Python jobs use `docker run python:X-bookworm` against a mounted workdir instead of `setup-python`, which is why `unit-tests` / `integration-tests` look containerized inside the workflow.
 
+**Scheduling (2026-07-01):** the two lint gates start immediately; `unit-tests`, `integration-tests`, and `webui-tests` all carry `needs: [python-lint, webui-lint]`, so a lint failure fails fast without burning the heavy matrix. The long Playwright e2e jobs also start at pipeline head (parallel to lint) so the `high` pool is saturated early.
+
 Jobs:
+- **python-lint**: `black --check --diff src tests` + `ruff check src tests` in a throwaway venv (versions pinned via `requirements/constraints-dev.txt`).
 - **unit-tests**: Python 3.10/3.11/3.12/3.13 × LightRAG 1.4.9.11 / 1.4.11 / 1.4.12 (no Memgraph). Runs `pytest tests/ --ignore=tests/test_bench.py` inside a `python:${ver}-bookworm` container — `conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset.
 - **integration-tests**: LightRAG matrix × Memgraph **3.9.0 + 3.10.1** (3.9.0 = BNP prod target after the 2026-06-19 rollback; 3.10.1 kept as forward-compat, 3.11 imminent; both pinned so `latest` can't drift the coverage point). `max-parallel: 1` — each matrix job spins its own isolated docker network + Memgraph container to avoid cross-job contention. URI inside the network: `bolt://memgraph:7687`.
 - **webui-lint**: cheap ESLint gate on `lightrag_webui_twin/` (parallel to the heavier WebUI jobs).
@@ -176,6 +191,8 @@ Matrix exclusions (don't re-add without checking):
 - Memgraph `3.7.2` / `3.8.0` / `latest` dropped — never deployed at BNP. `3.9.0` is the prod target after BNP's 2026-06-19 rollback from `3.10.1`; `3.10.1` retained as forward-compat coverage (3.11 imminent). e2e jobs run on `3.9.0` only (single BNP target — Playwright jobs aren't matrixed across versions to spare the `high` pool).
 
 Branch protection on `main`, `stable/0.5.x`, `stable/0.3.2-lts` requires the `CI / unit-tests*`, `CI / integration-tests*`, `CI / webui-lint`, `CI / webui-tests`, `CI / webui-e2e*` checks to be green before merge.
+
+`.gitlab-ci.yml` at the repo root is **not** this repo's CI — it is the BNP-side GitLab CVE-remediation/delivery pipeline (packages build/upload, docker build/security/push, deploy) that runs inside BNP infrastructure. Don't edit it as part of Forgejo CI work.
 
 A push triggers 1–15 min of CI (global directive §6). Run unit + integration locally first; do not push speculatively.
 

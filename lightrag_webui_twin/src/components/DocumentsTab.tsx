@@ -21,6 +21,7 @@ import { TagChip } from './TagChip';
 import { ClassPill } from './ClassPill';
 import { QuotaBanner } from './QuotaBanner';
 import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
+import { statusCountFor } from '../lib/docStatus';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
@@ -91,14 +92,16 @@ function statusCountsFor(
   allDocumentsCount: number | undefined,
 ): Record<StatusFilterKey, number> {
   if (statusCounts) {
+    // Dual-cased bucket reads (native lowercase / twin UPPERCASE) are owned
+    // by the shared vocabulary module — audit 2026-07-02, DUP-1.
     return {
       all:
         allDocumentsCount ??
         Object.values(statusCounts).reduce((a, b) => a + b, 0),
-      completed: statusCounts.processed ?? statusCounts.PROCESSED ?? 0,
-      processing: statusCounts.processing ?? statusCounts.PROCESSING ?? 0,
-      pending: statusCounts.pending ?? statusCounts.PENDING ?? 0,
-      failed: statusCounts.failed ?? statusCounts.FAILED ?? 0,
+      completed: statusCountFor(statusCounts, 'PROCESSED'),
+      processing: statusCountFor(statusCounts, 'PROCESSING'),
+      pending: statusCountFor(statusCounts, 'PENDING'),
+      failed: statusCountFor(statusCounts, 'FAILED'),
     };
   }
   const counts: Record<StatusFilterKey, number> = {

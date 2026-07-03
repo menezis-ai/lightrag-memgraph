@@ -100,6 +100,19 @@ def test_doc_id_for_insert_computes_deterministic_id_when_absent():
     assert a.startswith("doc-")
 
 
+def test_doc_id_for_insert_falls_back_to_file_path_on_blank_content():
+    """1.5.x pending_parse enqueues blank content — ids must not collide on
+    the md5 of the empty string across distinct files."""
+    a = _doc_id_for_insert("", None, file_path="report-a.docx")
+    b = _doc_id_for_insert("", None, file_path="report-b.docx")
+    assert a != b
+    assert a.startswith("doc-") and b.startswith("doc-")
+    # Non-blank content keeps the historical content-keyed id.
+    assert _doc_id_for_insert("body", None, file_path="report-a.docx") == (
+        _doc_id_for_insert("body", None)
+    )
+
+
 def test_failed_status_for_rejection_shape():
     from lightrag.base import DocStatus
 
@@ -118,6 +131,28 @@ def test_failed_status_for_rejection_shape():
     assert status["metadata"]["classification_rejected"] is True
     assert status["metadata"]["classification_ceiling"] == "C2"
     assert status["metadata"]["classification"]["class_id"] == "C3"
+
+
+def test_failed_status_for_rejection_redacts_content_summary():
+    """PIPE-6b: the FAILED row must not persist an excerpt of the very
+    content the gate refused — the summary is a fixed redaction placeholder
+    naming the rejected class and the ceiling."""
+    result = ClassificationResult(class_id="C3", source_format="ooxml")
+    exc = ClassificationRejection("/data/secret.docx", result, "C2")
+    over_classified_body = "TOP-SECRET payroll data that must never leak"
+    status = _failed_status_for_rejection(
+        content=over_classified_body,
+        file_path="/data/secret.docx",
+        track_id="track-1",
+        exc=exc,
+    )
+    assert over_classified_body not in status["content_summary"]
+    assert "payroll" not in status["content_summary"]
+    assert status["content_summary"] == (
+        "[content withheld: classification C3 exceeds ceiling C2]"
+    )
+    # Length metadata (a size, not content) is preserved for operators.
+    assert status["content_length"] == len(over_classified_body)
 
 
 # ── metadata merge (best-effort, swallows errors) ───────────────────────────
@@ -186,9 +221,12 @@ def gate(monkeypatch, tmp_path):
         name: getattr(LightRAG, name, None)
         for name in (
             "ainsert",
+            "apipeline_enqueue_documents",
             "_twin_classification_hook",
             "_twin_classification_patched",
             "_twin_original_ainsert",
+            "_twin_original_enqueue",
+            "_twin_enqueue_patched",
         )
     }
 

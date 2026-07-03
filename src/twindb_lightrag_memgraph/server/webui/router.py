@@ -36,6 +36,7 @@ from ..folder import (
     current_folder_id,
     load_folder_catalog,
 )
+from ..status_vocab import storage_status_filter, to_twin_uppercase
 from ..webui_models import (
     AckResponse,
     OpenApiEnvelope,
@@ -197,25 +198,16 @@ async def _attach_graph_tags_for_documents(docs: list[dict[str, Any]]) -> None:
 
 
 def _webui_doc_status(raw: Any) -> str:
-    status = raw.value if hasattr(raw, "value") else str(raw or "")
-    return status.upper()
+    # Twin overlay emits the UPPERCASE spelling; the projection is owned by
+    # server.status_vocab (audit 2026-07-02, DUP-1).
+    return to_twin_uppercase(raw)
 
 
 def _status_filter_for_doc_status(status: str | None) -> str | None:
-    if not status or status.lower() == "all":
-        return None
-    normalized = status.lower()
-    if normalized in ("completed", "processed"):
-        return "processed"
-    if normalized in ("pending", "processing", "failed"):
-        return normalized
-    upper_map = {
-        "processed": "processed",
-        "pending": "pending",
-        "processing": "processing",
-        "failed": "failed",
-    }
-    return upper_map.get(status.upper().removeprefix("DOCSTATUS.").lower())
+    # Filter-string → DocStatus-value mapping is owned by server.status_vocab
+    # (audit 2026-07-02, DUP-1). Kept as a module-level function because the
+    # webui_router compat shim and tests import it by this name.
+    return storage_status_filter(status)
 
 
 def _infer_document_type(file_path: str, metadata: dict[str, Any]) -> str:
