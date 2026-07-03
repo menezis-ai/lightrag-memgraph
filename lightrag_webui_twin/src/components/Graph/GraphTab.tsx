@@ -470,6 +470,13 @@ export function GraphTab({
           pinnedIds={pinnedIds}
           onTogglePinned={togglePinned}
           onNavigate={onNavigate}
+          onMutationError={(message) =>
+            onToast?.({
+              kind: 'error',
+              title: 'Graph update failed',
+              sub: message,
+            })
+          }
         />
       </div>
     </div>

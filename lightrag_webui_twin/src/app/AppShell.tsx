@@ -45,6 +45,7 @@ import type { Document } from '../types/document';
 import type { Theme, Folder } from '../types/topbar';
 import { dedupeDocumentsBySource } from '../utils/documents';
 import { tagCatalogForSuggestions } from '../utils/tags';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import { formatBackendError, resourceError } from './appErrors';
 import {
   CURRENT_USER,
@@ -799,10 +800,13 @@ export function AppShell() {
                 sub: `${r.message ?? 'LightRAG is retrying all FAILED docs'} · ${d.file_path} included`,
               });
             } catch (err) {
+              logTechnicalError('reprocess', err);
               pushToast({
                 kind: 'error',
                 title: 'Re-process failed',
-                sub: err instanceof Error ? err.message : String(err),
+                sub: userErrorMessage(err, {
+                  action: 're-processing failed sources',
+                }),
               });
             }
           })();

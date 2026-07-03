@@ -68,7 +68,7 @@ test.describe('Add source validation', () => {
     ]);
 
     await expect(page.getByText('unsupported.zip')).toBeVisible();
-    await expect(page.getByText('unsupported type')).toBeVisible();
+    await expect(page.getByText('ZIP format is not supported')).toBeVisible();
     await expect(page.getByText('oversized.pdf')).toBeVisible();
     await expect(page.getByText('Exceeds 50 MB')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
@@ -92,7 +92,7 @@ test.describe('Add source validation', () => {
     ]);
 
     await expect(page.getByText('invalid-archive.zip')).toBeVisible();
-    await expect(page.getByText('unsupported type')).toBeVisible();
+    await expect(page.getByText('ZIP format is not supported')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Add 1 source' })).toBeEnabled({
       timeout: 12_000,
     });

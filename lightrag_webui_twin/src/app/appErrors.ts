@@ -1,4 +1,4 @@
-import { ApiError } from '../api/client';
+import { userErrorMessage } from '../lib/errorMessages';
 
 export type QueryLike<T> = {
   data?: T;
@@ -22,8 +22,11 @@ export function resourceError<T>(
   return { label, message: formatBackendError(query.error) };
 }
 
+/**
+ * Reduce any thrown value to operator-facing copy. Since the error-UX
+ * pass (2026-07-03) this delegates to the shared mapping layer — the
+ * raw `status METHOD /path → status` string never reaches a banner.
+ */
 export function formatBackendError(error: unknown): string {
-  if (error instanceof ApiError) return `${error.status} ${error.message}`;
-  if (error instanceof Error) return error.message;
-  return 'Backend request failed';
+  return userErrorMessage(error, { action: 'loading data from the backend' });
 }

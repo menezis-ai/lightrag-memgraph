@@ -7,6 +7,7 @@ import {
   useUpdateGraphEntity,
   useUpdateGraphRelation,
 } from '../../api/queries';
+import { logTechnicalError, userErrorMessage } from '../../lib/errorMessages';
 import {
   GRAPH_TYPE_LABEL,
   type GraphEntity,
@@ -37,6 +38,10 @@ interface GraphDetailPanelProps {
   pinnedIds: readonly string[];
   onTogglePinned: (id: string) => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  /** Error-UX pass 2026-07-03: graph mutations used to fail silently
+   *  (optimistic rollback only). The host surfaces this as an error
+   *  toast with mapped, operator-facing copy. */
+  onMutationError?: (message: string) => void;
 }
 
 export function GraphDetailPanel({
@@ -56,6 +61,7 @@ export function GraphDetailPanel({
   pinnedIds,
   onTogglePinned,
   onNavigate,
+  onMutationError,
 }: Readonly<GraphDetailPanelProps>) {
   // Relation editor takes priority when an edge is selected.
   if (selectedRel) {
@@ -73,6 +79,7 @@ export function GraphDetailPanel({
             onSelect(id);
           }}
           onBack={onClearRelation}
+          onMutationError={onMutationError}
         />
       </aside>
     );
@@ -104,6 +111,7 @@ export function GraphDetailPanel({
         isPinned={pinnedIds.includes(entity.id)}
         onTogglePinned={() => onTogglePinned(entity.id)}
         onNavigate={onNavigate}
+        onMutationError={onMutationError}
       />
     </aside>
   );
@@ -131,6 +139,7 @@ interface EntityEditorProps {
   isPinned: boolean;
   onTogglePinned: () => void;
   onNavigate?: (tab: string, params?: Record<string, string>) => void;
+  onMutationError?: (message: string) => void;
 }
 
 interface EntityDraft {
@@ -625,6 +634,7 @@ function EntityEditor({
   isPinned,
   onTogglePinned,
   onNavigate,
+  onMutationError,
 }: Readonly<EntityEditorProps>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EntityDraft | null>(null);
@@ -676,7 +686,17 @@ function EntityEditor({
       tags: draft.tags,
       properties: draft.properties,
     };
-    updateEntity.mutate({ id: entity.id, patch });
+    updateEntity.mutate(
+      { id: entity.id, patch },
+      {
+        onError: (err) => {
+          logTechnicalError('graph-entity-update', err);
+          onMutationError?.(
+            userErrorMessage(err, { action: 'updating the entity' }),
+          );
+        },
+      },
+    );
     setEditing(false);
     setDraft(null);
   };
@@ -775,6 +795,12 @@ function EntityEditor({
                 onSubmit={(payload) => {
                   createRelation.mutate(payload, {
                     onSuccess: () => setAddRelOpen(false),
+                    onError: (err) => {
+                      logTechnicalError('graph-relation-create', err);
+                      onMutationError?.(
+                        userErrorMessage(err, { action: 'creating the relation' }),
+                      );
+                    },
                   });
                 }}
               />
@@ -839,7 +865,14 @@ function EntityEditor({
             testId="kg-entity-delete"
             onArm={() => setArmedDelete(true)}
             onConfirm={() => {
-              deleteEntity.mutate(entity.id);
+              deleteEntity.mutate(entity.id, {
+                onError: (err) => {
+                  logTechnicalError('graph-entity-delete', err);
+                  onMutationError?.(
+                    userErrorMessage(err, { action: 'deleting the entity' }),
+                  );
+                },
+              });
               setArmedDelete(false);
             }}
             onCancel={() => setArmedDelete(false)}
@@ -858,6 +891,7 @@ interface RelationEditorProps {
   colors: Record<GraphEntityType, string>;
   onSelectNode: (id: string) => void;
   onBack: () => void;
+  onMutationError?: (message: string) => void;
 }
 
 interface RelationDraft {
@@ -873,6 +907,7 @@ function RelationEditor({
   colors,
   onSelectNode,
   onBack,
+  onMutationError,
 }: Readonly<RelationEditorProps>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<RelationDraft | null>(null);
@@ -913,7 +948,17 @@ function RelationEditor({
       strength: Math.max(0, Math.min(1, draft.strength)),
       properties: draft.properties,
     };
-    updateRelation.mutate({ id: rel.id, patch });
+    updateRelation.mutate(
+      { id: rel.id, patch },
+      {
+        onError: (err) => {
+          logTechnicalError('graph-relation-update', err);
+          onMutationError?.(
+            userErrorMessage(err, { action: 'updating the relation' }),
+          );
+        },
+      },
+    );
     setEditing(false);
     setDraft(null);
   };
@@ -1084,6 +1129,12 @@ function RelationEditor({
           onConfirm={() => {
             deleteRelation.mutate(rel.id, {
               onSuccess: () => onBack(),
+              onError: (err) => {
+                logTechnicalError('graph-relation-delete', err);
+                onMutationError?.(
+                  userErrorMessage(err, { action: 'deleting the relation' }),
+                );
+              },
             });
             setArmedDelete(false);
           }}

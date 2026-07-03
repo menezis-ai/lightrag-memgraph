@@ -16,6 +16,7 @@
  */
 
 import { ApiError } from './client';
+import { userErrorMessage } from '../lib/errorMessages';
 
 export type CreateEntityErrorKind =
   | 'duplicate'
@@ -66,13 +67,12 @@ export function mapCreateEntityError(
       default:
         return {
           kind: 'unknown',
-          message: err.message || 'Entity creation failed.',
+          message: userErrorMessage(err, { action: 'creating the entity' }),
         };
     }
   }
   return {
     kind: 'unknown',
-    message:
-      err instanceof Error ? err.message : 'Entity creation failed.',
+    message: userErrorMessage(err, { action: 'creating the entity' }),
   };
 }

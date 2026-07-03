@@ -24,6 +24,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from './Icon';
 import { api } from '../api/resources';
+import { userErrorMessage } from '../lib/errorMessages';
 import type { Document } from '../types/document';
 
 export interface ReadSourceModalProps {
@@ -129,7 +130,10 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
               data-testid="rs-chunks-error"
             >
               Could not load chunks
-              {error instanceof Error ? ` — ${error.message}` : ''}.
+              {error === undefined || error === null
+                ? ''
+                : ` — ${userErrorMessage(error)}`}
+              .
             </div>
           )}
           {!isLoading && !isError && (!data || data.length === 0) && (

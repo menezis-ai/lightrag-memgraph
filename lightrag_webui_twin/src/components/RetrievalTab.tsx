@@ -25,6 +25,7 @@ import {
   useUrlNumberParam,
   useUrlParam,
 } from '../hooks/useUrlParam';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import {
   parseAnswer,
   QUERY_MODES,
@@ -644,7 +645,8 @@ export function RetrievalTab({
         })
         .catch((err: unknown) => {
           if (isAbortError(err) || !isCurrentRequest(threadId, controller)) return;
-          const msg = err instanceof Error ? err.message : 'Query failed';
+          logTechnicalError('retrieval-stream', err);
+          const msg = userErrorMessage(err, { action: 'answering your question' });
           streamTokens(
             threadId,
             [`⚠ ${msg}`],
@@ -692,7 +694,8 @@ export function RetrievalTab({
       })
       .catch((err: unknown) => {
         if (isAbortError(err) || !isCurrentRequest(threadId, controller)) return;
-        const msg = err instanceof Error ? err.message : 'Query failed';
+        logTechnicalError('retrieval-query', err);
+        const msg = userErrorMessage(err, { action: 'answering your question' });
         streamTokens(
           threadId,
           [`⚠ ${msg}`],

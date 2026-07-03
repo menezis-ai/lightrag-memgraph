@@ -240,7 +240,7 @@ describe('onRetagSubmit', () => {
     );
   });
 
-  it('error → "Tag mutation failed" toast with Error message', async () => {
+  it('error → "Tag update failed" toast with mapped copy (no raw message)', async () => {
     bulkRetagDocumentsMock.mockRejectedValueOnce(new Error('db down'));
     const { result, pushToast } = setup();
     await act(async () => {
@@ -249,13 +249,13 @@ describe('onRetagSubmit', () => {
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'error',
-        title: 'Tag mutation failed',
-        sub: 'db down',
+        title: 'Tag update failed',
+        sub: 'Something went wrong while updating tags on 1 source. Please retry or contact Twincore Team.',
       }),
     );
   });
 
-  it('error non-Error → builds "Could not persist tags on N sources"', async () => {
+  it('error non-Error → generic mapped copy with the source count', async () => {
     bulkRetagDocumentsMock.mockRejectedValueOnce('weird');
     const a = makeDoc({ doc_id: 'd1' });
     const b = makeDoc({ doc_id: 'd2' });
@@ -272,7 +272,7 @@ describe('onRetagSubmit', () => {
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'error',
-        sub: 'Could not persist tags on 2 sources',
+        sub: 'Something went wrong while updating tags on 2 sources. Please retry or contact Twincore Team.',
       }),
     );
   });
@@ -322,7 +322,7 @@ describe('onToastUndo', () => {
     expect(bulkRetagDocumentsMock).not.toHaveBeenCalled();
   });
 
-  it('error → "Undo failed" toast', async () => {
+  it('error → "Undo failed" toast with mapped copy', async () => {
     bulkRetagDocumentsMock.mockRejectedValueOnce(new Error('nope'));
     const { result, pushToast } = setup();
     await act(async () => {
@@ -332,19 +332,21 @@ describe('onToastUndo', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Undo failed',
-        sub: 'nope',
+        sub: 'Something went wrong while undoing the tag change. Please retry or contact Twincore Team.',
       }),
     );
   });
 
-  it('error non-Error → "Mutation rejected" fallback', async () => {
+  it('error non-Error → same mapped fallback copy', async () => {
     bulkRetagDocumentsMock.mockRejectedValueOnce('x');
     const { result, pushToast } = setup();
     await act(async () => {
       await result.current.onToastUndo(undoToast);
     });
     expect(pushToast).toHaveBeenCalledWith(
-      expect.objectContaining({ sub: 'Mutation rejected' }),
+      expect.objectContaining({
+        sub: 'Something went wrong while undoing the tag change. Please retry or contact Twincore Team.',
+      }),
     );
   });
 });
@@ -365,7 +367,7 @@ describe('onDeleteSingle', () => {
     );
   });
 
-  it('error Error → message in sub', async () => {
+  it('error Error → mapped copy naming the file in sub', async () => {
     deleteDocumentMock.mockRejectedValueOnce(new Error('locked'));
     const { result, pushToast } = setup();
     await act(async () => {
@@ -378,12 +380,12 @@ describe('onDeleteSingle', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Delete failed',
-        sub: 'locked',
+        sub: 'Something went wrong while deleting a.pdf. Please retry or contact Twincore Team.',
       }),
     );
   });
 
-  it('error non-Error → "Could not delete <path>" fallback', async () => {
+  it('error non-Error → same mapped fallback copy', async () => {
     deleteDocumentMock.mockRejectedValueOnce('x');
     const { result, pushToast } = setup();
     await act(async () => {
@@ -393,7 +395,9 @@ describe('onDeleteSingle', () => {
       });
     });
     expect(pushToast).toHaveBeenCalledWith(
-      expect.objectContaining({ sub: 'Could not delete a.pdf' }),
+      expect.objectContaining({
+        sub: 'Something went wrong while deleting a.pdf. Please retry or contact Twincore Team.',
+      }),
     );
   });
 });
@@ -439,7 +443,7 @@ describe('onDeleteBulk', () => {
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'propagating',
-        sub: expect.stringContaining('1 source →'),
+        sub: expect.stringContaining('1 source being removed'),
       }),
     );
     expect(pushToast).toHaveBeenCalledWith(
@@ -457,7 +461,7 @@ describe('onDeleteBulk', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Bulk delete failed',
-        sub: 'cascade boom',
+        sub: 'Something went wrong while deleting the selected sources. Please retry or contact Twincore Team.',
       }),
     );
   });
@@ -507,7 +511,10 @@ describe('onScanRetry', () => {
     });
     await waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Reprocess request sent', sub: 'failed_count=7' }),
+        expect.objectContaining({
+          title: 'Reprocess request sent',
+          sub: '7 failed sources queued for retry',
+        }),
       ),
     );
   });
@@ -526,7 +533,7 @@ describe('onScanRetry', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Re-process failed',
-          sub: 'endpoint 500',
+          sub: 'Something went wrong while re-processing failed sources. Please retry or contact Twincore Team.',
         }),
       ),
     );
@@ -747,6 +754,36 @@ describe('onAddSourceSubmit — file upload path', () => {
     );
   });
 
+  it('backend unsupported-type 400 → summary names the file and the format', async () => {
+    // Error-UX pass 2026-07-03: the summary explains WHY the upload failed
+    // ("ZIP format is not supported"), never LightRAG's raw detail or the
+    // transport string.
+    uploadDocumentMock.mockRejectedValueOnce(
+      new ApiError('POST /documents/upload → 400 Bad Request', 400, {
+        detail: "Unsupported file type. Supported types: ('.pdf', '.docx')",
+      }),
+    );
+    const { result, pushToast } = setup();
+    await act(async () => {
+      await result.current.onAddSourceSubmit({
+        files: [],
+        rawFiles: [new File(['z'], 'archive.zip', { type: 'application/zip' })],
+        fileOptions: [],
+        urls: [],
+        tags: [],
+        readyCount: 1,
+      });
+      await Promise.resolve();
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: '1 upload failed',
+        sub: '0 uploaded · 1 failed — archive.zip: ZIP format is not supported',
+      }),
+    );
+  });
+
   it('duplicated upload surfaces the "(N already present)" suffix', async () => {
     uploadDocumentMock.mockResolvedValueOnce({
       status: 'duplicated',
@@ -883,7 +920,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
         expect.objectContaining({
           kind: 'error',
           title: 'Initial tags failed',
-          sub: 'retag boom',
+          sub: 'Something went wrong while applying initial tags. Please retry or contact Twincore Team.',
         }),
       ),
     );
@@ -917,7 +954,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
     );
   });
 
-  it('initial tags failed with a non-Error → "bulk-retag returned an error" fallback', async () => {
+  it('initial tags failed with a non-Error → mapped fallback copy', async () => {
     uploadDocumentMock.mockResolvedValue({
       status: 'success',
       message: 'queued',
@@ -940,7 +977,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
         expect.objectContaining({
           kind: 'error',
           title: 'Initial tags failed',
-          sub: 'bulk-retag returned an error',
+          sub: 'Something went wrong while applying initial tags. Please retry or contact Twincore Team.',
         }),
       ),
     );

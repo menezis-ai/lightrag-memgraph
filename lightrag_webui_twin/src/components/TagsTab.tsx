@@ -22,6 +22,7 @@ import { useUrlParam } from '../hooks/useUrlParam';
 import { useImportCategories } from '../api/queries';
 import { api } from '../api/resources';
 import { ApiError } from '../api/client';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import type {
   TagAction,
   TagCategory,
@@ -115,9 +116,10 @@ function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError && typeof err.body === 'object' && err.body) {
-    return (err.body as { detail?: string }).detail ?? err.message;
+    const detail = (err.body as { detail?: string }).detail;
+    if (detail) return detail;
   }
-  if (err instanceof Error) return err.message;
+  if (err !== undefined && err !== null) return userErrorMessage(err);
   return fallback;
 }
 
@@ -267,12 +269,12 @@ export function TagsTab({
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
+      logTechnicalError('categories-template', err);
       setImportStatus({
         kind: 'error',
-        message:
-          err instanceof Error
-            ? `Template download failed: ${err.message}`
-            : 'Template download failed.',
+        message: `Template download failed: ${userErrorMessage(err, {
+          action: 'downloading the template',
+        })}`,
       });
     }
   };
@@ -284,11 +286,11 @@ export function TagsTab({
       const text = await file.text();
       parsed = JSON.parse(text);
     } catch (err) {
+      logTechnicalError('categories-import', err);
       setImportStatus({
         kind: 'error',
-        message: `Invalid JSON file: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        message:
+          'This file is not valid JSON. Fix the file and retry (the template is a valid starting point).',
       });
       return;
     }

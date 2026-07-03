@@ -791,12 +791,13 @@ describe('AppShell — documents tab derivations', () => {
     expect(screen.getByTestId('dt-total')).toHaveTextContent('0');
   });
 
-  it('pipeline error is surfaced when pipelineStatus.isError', () => {
+  it('pipeline error is surfaced with mapped operator copy', () => {
     queriesState.pipelineStatus.isError = true;
     queriesState.pipelineStatus.error = new Error('pipeline down');
     renderShell();
+    // Error-UX pass 2026-07-03: technical messages are mapped, not echoed.
     expect(screen.getByTestId('dt-pipeline-error')).toHaveTextContent(
-      'pipeline down',
+      'Something went wrong while loading data from the backend',
     );
   });
 

@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { unsupportedFileMessage } from '../lib/errorMessages';
 import type { FormatCategory } from '../types/format';
 import type { TagEntry } from '../types/tag';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
@@ -190,7 +191,7 @@ function unsupportedFileType(file: File): boolean {
 function validateFile(file: File): string | null {
   const errors: string[] = [];
   if (file.size > MAX_FILE_MB * 1024 * 1024) errors.push('Exceeds 50 MB');
-  if (unsupportedFileType(file)) errors.push('unsupported type');
+  if (unsupportedFileType(file)) errors.push(unsupportedFileMessage(file.name));
   return errors.length ? errors.join(' · ') : null;
 }
 

@@ -23,6 +23,7 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '../../api/queries';
+import { userErrorMessage } from '../../lib/errorMessages';
 import type { ApiKeyCreated, ApiKeyPublic } from '../../types/apiKey';
 import { relativeTime } from '../../utils/relativeTime';
 
@@ -40,7 +41,7 @@ function errorMessage(err: unknown, fallback: string): string {
     const detail = (err.body as { detail?: string }).detail;
     if (detail) return detail;
   }
-  if (err instanceof Error) return err.message;
+  if (err !== undefined && err !== null) return userErrorMessage(err);
   return fallback;
 }
 
@@ -174,7 +175,10 @@ export function ApiKeysSection({
           data-testid="settings-api-keys-error"
         >
           Could not load API keys
-          {error instanceof Error ? ` — ${error.message}` : ''}.{' '}
+          {error === undefined || error === null
+            ? ''
+            : ` — ${userErrorMessage(error)}`}
+          .{' '}
           <button
             type="button"
             className="ghost-btn"

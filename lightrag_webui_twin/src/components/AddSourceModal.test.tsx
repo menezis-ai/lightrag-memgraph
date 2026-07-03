@@ -34,7 +34,7 @@ const sampleError: FileUpload = {
   name: 'huge-archive.zip',
   size: 68,
   state: 'error',
-  error: 'Exceeds 50 MB · unsupported type',
+  error: 'Exceeds 50 MB · ZIP format is not supported',
 };
 const sampleConfluence: LinkedSource = {
   url: 'confluence.corp/cib/runbooks',
@@ -166,7 +166,7 @@ describe('AddSourceModal — files', () => {
       new File(['zip payload'], 'unsupported.zip', { type: 'application/zip' }),
     );
     expect(screen.getByText('unsupported.zip')).toBeInTheDocument();
-    expect(screen.getByText('unsupported type')).toBeInTheDocument();
+    expect(screen.getByText('ZIP format is not supported')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
   });
 

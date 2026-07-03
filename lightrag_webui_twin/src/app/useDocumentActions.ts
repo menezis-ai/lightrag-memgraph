@@ -14,6 +14,11 @@ import {
   isProcessedTrackStatus,
   isTerminalTrackStatus,
 } from '../lib/docStatus';
+import {
+  logTechnicalError,
+  uploadFailureMessage,
+  userErrorMessage,
+} from '../lib/errorMessages';
 import type { Document } from '../types/document';
 import type { Folder } from '../types/topbar';
 import type { Toast } from '../types/toast';
@@ -161,8 +166,28 @@ function maybeApplyInitialTags(
   void applyInitialTagsAfterIngestion(trackIds, tags);
 }
 
+/** Human reason for the first rejected upload — e.g. "archive.zip: ZIP
+ *  format is not supported" — so the failure toast explains itself
+ *  instead of only counting. Remaining failures are summarized. */
+function firstUploadFailureReason(
+  results: readonly UploadResult[],
+  fileNames: readonly string[],
+): string | null {
+  const index = results.findIndex((result) => result.status === 'rejected');
+  if (index === -1) return null;
+  const rejected = results[index] as PromiseRejectedResult;
+  logTechnicalError('upload', rejected.reason);
+  const fileName = fileNames[index];
+  const reason = uploadFailureMessage(rejected.reason, fileName);
+  const prefix = fileName ? `${fileName}: ` : '';
+  const moreFailures = results.filter((r) => r.status === 'rejected').length - 1;
+  const moreSuffix = moreFailures > 0 ? ` (+${moreFailures} more)` : '';
+  return `${prefix}${reason}${moreSuffix}`;
+}
+
 function pushUploadSummaryToast(
   results: readonly UploadResult[],
+  fileNames: readonly string[],
   tags: readonly string[],
   pushToast: PushToast,
 ) {
@@ -180,10 +205,12 @@ function pushUploadSummaryToast(
     return;
   }
   const duplicateErrorSuffix = dup > 0 ? ` · ${dup} already present` : '';
+  const reason = firstUploadFailureReason(results, fileNames);
+  const reasonSuffix = reason ? ` — ${reason}` : '';
   pushToast({
     kind: 'error',
     title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
-    sub: `${ok} ok · ${ko} ko${duplicateErrorSuffix}`,
+    sub: `${ok} uploaded · ${ko} failed${duplicateErrorSuffix}${reasonSuffix}`,
   });
 }
 
@@ -203,8 +230,10 @@ function retagTitleSuffix(
 }
 
 function retagErrorMessage(err: unknown, targetCount: number): string {
-  if (err instanceof Error) return err.message;
-  return `Could not persist tags on ${sourceCountLabel(targetCount)}`;
+  logTechnicalError('retag', err);
+  return userErrorMessage(err, {
+    action: `updating tags on ${sourceCountLabel(targetCount)}`,
+  });
 }
 
 function undoTitleSuffix(updated: number, failedCount: number): string {
@@ -212,10 +241,9 @@ function undoTitleSuffix(updated: number, failedCount: number): string {
   return `${sourceCountLabel(updated)}${skippedSuffix}`;
 }
 
-function trackStatusErrorMessage(trackId: string, err: unknown): string {
-  return err instanceof Error
-    ? `${trackId}: ${err.message}`
-    : `${trackId}: track_status unavailable`;
+function trackStatusErrorMessage(err: unknown): string {
+  logTechnicalError('track-status', err);
+  return userErrorMessage(err, { action: 'checking ingestion status' });
 }
 
 function processedDocIdsIfTerminal(status: TrackStatus): string[] | null {
@@ -245,7 +273,7 @@ function shouldRetryTrackStatus(
   pushToast({
     kind: 'error',
     title: 'Initial tag polling failed',
-    sub: trackStatusErrorMessage(trackId, err),
+    sub: trackStatusErrorMessage(err),
   });
   return false;
 }
@@ -308,9 +336,7 @@ export function useDocumentActions({
     pushToast({
       kind: 'propagating',
       title: 'Re-processing failed sources',
-      sub: `POST /documents/reprocess_failed · ${failedCount} failed source${
-        failedCount > 1 ? 's' : ''
-      }`,
+      sub: `${failedCount} failed source${failedCount > 1 ? 's' : ''} queued for retry`,
     });
     void (async () => {
       try {
@@ -318,13 +344,18 @@ export function useDocumentActions({
         pushToast({
           kind: 'done',
           title: 'Reprocess request sent',
-          sub: r.message ?? `failed_count=${r.failed_count ?? failedCount}`,
+          sub:
+            r.message ??
+            `${r.failed_count ?? failedCount} failed source${
+              (r.failed_count ?? failedCount) === 1 ? '' : 's'
+            } queued for retry`,
         });
       } catch (err) {
+        logTechnicalError('reprocess', err);
         pushToast({
           kind: 'error',
           title: 'Re-process failed',
-          sub: err instanceof Error ? err.message : String(err),
+          sub: userErrorMessage(err, { action: 're-processing failed sources' }),
         });
       } finally {
         void queryClient.invalidateQueries({ queryKey: ['documents'] });
@@ -365,7 +396,7 @@ export function useDocumentActions({
     } catch (err) {
       pushToast({
         kind: 'error',
-        title: 'Tag mutation failed',
+        title: 'Tag update failed',
         sub: retagErrorMessage(err, action.targets.length),
       });
     }
@@ -391,11 +422,12 @@ export function useDocumentActions({
         sub: toast.sub,
       });
     } catch (err) {
+      logTechnicalError('retag-undo', err);
       pushToast({
         kind: 'error',
         title: 'Undo failed',
         tagname: toast.tagname,
-        sub: err instanceof Error ? err.message : 'Mutation rejected',
+        sub: userErrorMessage(err, { action: 'undoing the tag change' }),
       });
     }
   };
@@ -457,13 +489,11 @@ export function useDocumentActions({
         sub: `${doc.file_path} — removed from the active folder (kept in any other folders it is shared into; fully deleted only if this was its last folder)`,
       });
     } catch (err) {
+      logTechnicalError('delete-document', err);
       pushToast({
         kind: 'error',
         title: 'Delete failed',
-        sub:
-          err instanceof Error
-            ? err.message
-            : `Could not delete ${doc.file_path}`,
+        sub: userErrorMessage(err, { action: `deleting ${doc.file_path}` }),
       });
     }
   };
@@ -475,7 +505,7 @@ export function useDocumentActions({
     pushToast({
       kind: 'propagating',
       title: 'Deleting sources…',
-      sub: `${docsToDelete.length} source${docsToDelete.length === 1 ? '' : 's'} → DELETE /documents/bulk-delete`,
+      sub: `${docsToDelete.length} source${docsToDelete.length === 1 ? '' : 's'} being removed`,
     });
     try {
       const result = await bulkDeleteDocs.mutateAsync({
@@ -488,10 +518,11 @@ export function useDocumentActions({
         sub: 'Cascade removal successful',
       });
     } catch (err) {
+      logTechnicalError('bulk-delete', err);
       pushToast({
         kind: 'error',
         title: 'Bulk delete failed',
-        sub: err instanceof Error ? err.message : String(err),
+        sub: userErrorMessage(err, { action: 'deleting the selected sources' }),
       });
     }
   };
@@ -525,7 +556,7 @@ export function useDocumentActions({
     pushToast({
       kind: 'propagating',
       title: 'Uploading sources…',
-      sub: `${uploadInputs.length} file${uploadInputs.length === 1 ? '' : 's'} → LightRAG /documents/upload`,
+      sub: `${uploadInputs.length} file${uploadInputs.length === 1 ? '' : 's'} being sent for ingestion`,
     });
 
     const results: readonly UploadResult[] = await uploadDocs.mutateAsync(uploadInputs);
@@ -546,7 +577,12 @@ export function useDocumentActions({
       ),
     );
 
-    pushUploadSummaryToast(results, action.tags, pushToast);
+    pushUploadSummaryToast(
+      results,
+      uploadInputs.map((input) => input.file.name),
+      action.tags,
+      pushToast,
+    );
     dispatchUploadAudit(results, uploadInputs, currentActor, activity);
     maybeApplyInitialTags(results, action.tags, applyInitialTagsAfterIngestion);
     void refreshDocumentsUntilUploadsLand(acceptedTrackIds);
@@ -588,11 +624,11 @@ export function useDocumentActions({
         sub: `${resolvedDocIds.size} doc${resolvedDocIds.size === 1 ? '' : 's'} · tags: ${tags.join(', ')}`,
       });
     } catch (err) {
+      logTechnicalError('initial-tags', err);
       pushToast({
         kind: 'error',
         title: 'Initial tags failed',
-        sub:
-          err instanceof Error ? err.message : 'bulk-retag returned an error',
+        sub: userErrorMessage(err, { action: 'applying initial tags' }),
       });
     }
   };

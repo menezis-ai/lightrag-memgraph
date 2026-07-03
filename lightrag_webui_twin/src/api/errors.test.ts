@@ -65,11 +65,14 @@ describe('mapCreateEntityError', () => {
     expect(out.message).toBeTruthy();
   });
 
-  it('falls back to the unknown kind for non-ApiError throws', () => {
+  it('falls back to the unknown kind with mapped copy for non-ApiError throws', () => {
     const err = new Error('network down');
     const out = mapCreateEntityError(err, 'X');
     expect(out.kind).toBe('unknown');
-    expect(out.message).toBe('network down');
+    // Error-UX pass 2026-07-03: raw technical messages no longer leak.
+    expect(out.message).toBe(
+      'Something went wrong while creating the entity. Please retry or contact Twincore Team.',
+    );
   });
 
   it('falls back to a default message when the throw has no message', () => {
