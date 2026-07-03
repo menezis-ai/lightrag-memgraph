@@ -6,15 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This package provides Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**. LightRAG ships a graph backend; this package fills the remaining 3 slots so an entire instance runs on a single Memgraph DB.
 
-### Branch policy (updated 2026-06-28)
+### Branch policy (updated 2026-07-03)
 
-- `main` — **active full-runtime line** (storage backends + intelligence + server overlay + WebUI fork + doctrine docs). The **default working branch**; day-to-day dev merges here, and it carries `pyproject` version `1.0.0`. It is ~130 commits ahead of `stable/0.6.x`.
-- `stable/0.6.x` — **superseded by `main`.** Was the active dev line through mid-2026; now trails `main` and is no longer the working branch. Kept for history.
+**v1.0.0 is officially deployed in BNP production (2026-07-03).** The `main`
+development line is now **1.1.0** — every future change on `main` targets the
+next BNP delivery, not the deployed one.
+
+- `main` — **active full-runtime line, version 1.1.0** (storage backends + intelligence + server overlay + WebUI fork + doctrine docs). The **default working branch**; day-to-day dev merges here.
+- `stable/1.0.x` — **frozen 1.0.0 = the BNP production deployment** (cut 2026-07-03 from `main` @ `89a446b`, delivered via GitHub `export-1.0.0` @ `7132f6f`). Protected on bunker (no direct push, full CI checks). Only destination for a hotfix that must ship to the deployed BNP 1.0.0 — via PR, then a fresh `export-1.0.0` rebuild from that branch.
+- `stable/0.6.x` — **superseded by `main`.** Was the active dev line through mid-2026; kept for history.
 - `stable/0.5.x` — **LTS, storage backends only** (intent). WebUI/runtime work is pollution here. NB: the branch currently still carries `lightrag_webui_twin/` + `server/` paths despite the PR #30 (2026-05-20) revert — branch-hygiene cleanup pending, not yet done.
 - `stable/0.3.2-lts` — frozen LTS = 0.3.2 + auto-create vector index.
 - `0.4.x` was abandoned.
 
-`pyproject.toml` reports version `1.0.0` and `register()` patches `lightrag.__version__` to `vX.Y.Z+memgraph-1.0.0` so the WebUI shows the composite version. See `changelog.md` for what's in vs. out of stable.
+`pyproject.toml` reports version `1.1.0` and `register()` patches `lightrag.__version__` to `vX.Y.Z+memgraph-{version}` so the WebUI shows the composite version (BNP prod shows `+memgraph-1.0.0`). See `changelog.md` for what's in vs. out of each release.
 
 ## Distribution
 
