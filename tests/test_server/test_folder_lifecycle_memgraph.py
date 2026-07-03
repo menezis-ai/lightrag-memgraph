@@ -221,6 +221,23 @@ async def client(catalog_env, quiet_backend_init):
 
 
 class TestDeleteGuardMemgraphMode:
+    @pytest.fixture(autouse=True)
+    def quiet_activity_writes(self, monkeypatch):
+        """Stub the audit-activity write path for these unit tests.
+
+        With a memgraph-mode template registered, folder create/delete
+        records activity through a real ``MemgraphActivityStore.append``,
+        i.e. a live Bolt connection. The guard logic under test mocks its
+        probes explicitly; the activity write must not reach a database
+        either (CI unit jobs run without Memgraph — the local default
+        ``bolt://localhost:7687`` answering was a false green).
+        """
+
+        async def _noop_record(self_store, event):
+            return event
+
+        monkeypatch.setattr(store_module.WebuiStore, "record_activity", _noop_record)
+
     async def _provision(self, client, folder_id: str = "sandbox") -> None:
         r = await client.post("/folders", json={"id": folder_id, "label": "S"})
         assert r.status_code == 201
