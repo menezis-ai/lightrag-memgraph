@@ -63,3 +63,22 @@ Extension produit visée (post-pilotes, cf. audit L3) : le **Curateur nocturne**
 1. **Persistance de dérivés LLM** (résumés, tags proposés, descriptions d'images) vs doctrine de stockage actuelle « chunks+vecteurs » — cadrage compliance unique qui débloque UC2 et l'extension Curateur.
 2. **Rétention des traces de requêtes** utilisées par UC1/UC3 (anonymisation par empreinte déjà disponible côté code).
 3. Folder pilote pour les prototypes UC2/UC4.
+
+## 8. Ce que propose l'intelligence layer (déjà dans le code)
+
+Les use cases ci-dessus ne partent pas de zéro : le package `intelligence/` (couche L3, livré avec Twin mais **non activé en production** — les dépendances sont dans l'image, le code n'est appelé par aucun point d'entrée) contient déjà :
+
+**Pipeline de requête** — 4 étapes séquentielles, ~4 appels LLM par question :
+
+| Étape | Ce qu'elle fait | Intérêt opérateur |
+|---|---|---|
+| Intent (F05) | Classe la question : in-scope / hors-scope / salutation / malveillante — avec pré-filtre regex anti-injection sans LLM | Réponses instantanées aux questions hors sujet, blocage des tentatives d'injection avant tout appel modèle |
+| Reason | Résout les coréférences (« et sur la version 12 ? ») avec l'historique de conversation, reformule en requête de recherche optimale | L'utilisateur pose ses questions naturellement, en fil de discussion |
+| Act | Expansion de synonymes (thesaurus IT ops : Oracle, ITIL, réseau, Linux, middleware, sécurité…), routage automatique vers les bons folders, recherche parallèle multi-folders, rerank cognitif des passages | Trouve les docs qui emploient un autre vocabulaire que la question ; l'utilisateur ne choisit plus où chercher |
+| Observe | Synthèse finale avec citations `[Passage X]` validées (index vérifiés, citations invalides filtrées) | Réponses sourcées, traçables |
+
+**Pipeline ontologie (DSEP)** — extraction d'entités/relations guidée par profil métier, clustering par domaine, enrichissement (synonymes, dépendances), validation. **Dry-run par défaut : rien ne se persiste sans approbation explicite.** C'est le socle direct de l'UC4.
+
+**Sécurité et robustesse intégrées** — neutralisation des balises forgées dans les textes non fiables (anti prompt-injection au niveau des documents), dégradation gracieuse à chaque étage (un échec LLM ne casse jamais la réponse : repli sur la question brute, le classement brut, etc.), journalisation sans contenu sensible (empreinte HMAC des utilisateurs).
+
+**Ce qu'il faut retenir côté SRE** : activer cette couche en production est un chantier d'intégration identifié (streaming de la synthèse + affichage du mode dégradé en prérequis — audit L3 du 2026-07-03), et son serving cible sera **LLMaaS**, pas les L40S. Les GPU servent à déboguer, bencher et durcir cette couche avant de demander la capacité de prod.
