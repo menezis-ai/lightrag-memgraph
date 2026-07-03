@@ -121,6 +121,26 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function plural(count: number): string {
+  return count === 1 ? '' : 's';
+}
+
+/** Empty grid body: zero-tags onboarding vs filtered-to-nothing state. */
+function TagsGridEmpty({
+  totalActive,
+  ...filteredProps
+}: Readonly<TagsEmptyFilteredProps & { totalActive: number }>) {
+  if (totalActive === 0) {
+    return (
+      <TagsEmptyZero
+        canSuggest={filteredProps.canSuggest}
+        onRequest={filteredProps.onRequest}
+      />
+    );
+  }
+  return <TagsEmptyFiltered {...filteredProps} />;
+}
+
 export function TagsTab({
   tags,
   categories,
@@ -296,7 +316,7 @@ export function TagsTab({
     () => tags.filter((t) => t.tier === 'requested' && t.status === 'pending-review'),
     [tags],
   );
-  const pendingLabel = requested.length === 1 ? 'pending item' : 'pending items';
+  const pendingLabel = `pending item${plural(requested.length)}`;
   const knownCategories = useMemo(
     () => new Set(categories.map((cat) => cat.id)),
     [categories],
@@ -415,16 +435,10 @@ export function TagsTab({
         })}
       </div>
     );
-  } else if (totalActive === 0) {
-    tagsGridContent = (
-      <TagsEmptyZero
-        canSuggest={canSuggest}
-        onRequest={openRequestModal}
-      />
-    );
   } else {
     tagsGridContent = (
-      <TagsEmptyFiltered
+      <TagsGridEmpty
+        totalActive={totalActive}
         q={q}
         selectedCat={selectedCat}
         selectedStatus={selectedStatus}
@@ -524,7 +538,7 @@ export function TagsTab({
         >
           <Icon name="circle-check" size={14} />{' '}
           Categories imported · {importStatus.count} domain
-          {importStatus.count === 1 ? '' : 's'} applied.
+          {plural(importStatus.count)} applied.
         </output>
       )}
       {importStatus.kind === 'error' && (
@@ -548,7 +562,7 @@ export function TagsTab({
             <span className="pending-title">Tag review queue</span>
             <span className="pending-counts">
               <b>{requested.length}</b> governance item
-              {requested.length === 1 ? '' : 's'} awaiting review
+              {plural(requested.length)} awaiting review
             </span>
             <span
               style={{

@@ -371,6 +371,108 @@ function removeDocFromFolderOrDelete(doc: Document, activeFolder: string): boole
   return false;
 }
 
+/** One bulk-delete target that was actually processed (found + in-folder). */
+interface BulkDeleteOutcome {
+  doc: Document;
+  physicallyDeleted: boolean;
+  folder: string;
+}
+
+/**
+ * Per-doc bulk-delete decision (mirrors
+ * `routes_documents._delete_one_document`): resolve the doc, check the
+ * active-folder membership, then apply the shared ref-counted delete.
+ * Returns null when the target must be reported in `failed`.
+ */
+function applyBulkDeleteForDoc(
+  request: Request,
+  id: string,
+): BulkDeleteOutcome | null {
+  const doc = documentsState.find((d) => d.doc_id === id);
+  if (!doc) return null;
+  const active = activeFolderFor(request, doc);
+  if (!foldersForDoc(doc).includes(active)) return null;
+  const physicallyDeleted = removeDocFromFolderOrDelete(doc, active);
+  return { doc, physicallyDeleted, folder: active };
+}
+
+/** Summary variants mirror routes_documents._emit_bulk_delete_activity. */
+function bulkDeleteSummary(
+  actor: string,
+  affectedCount: number,
+  physicalCount: number,
+  unsharedCount: number,
+  activeFolder: string,
+  cascade: string,
+): string {
+  if (physicalCount && unsharedCount) {
+    return (
+      `Bulk delete by ${actor}: ${affectedCount} documents affected ` +
+      `(${physicalCount} physically deleted with cascade, ` +
+      `${unsharedCount} unshared from folder ${activeFolder})`
+    );
+  }
+  if (physicalCount) {
+    return `Bulk delete by ${actor}: ${affectedCount} documents physically deleted; ${cascade}`;
+  }
+  return (
+    `Bulk delete by ${actor}: ${affectedCount} documents unshared ` +
+    `from folder ${activeFolder}; no physical cascade`
+  );
+}
+
+/** Activity-ledger shaping for a non-empty bulk-delete batch. */
+function recordBulkDeleteActivity(
+  rawActor: string | undefined,
+  affected: readonly BulkDeleteOutcome[],
+  failed: readonly string[],
+): void {
+  const actor = rawActor ?? 'operator.demo';
+  const docIds = affected.map((entry) => entry.doc.doc_id);
+  const physicalCount = affected.filter((e) => e.physicallyDeleted).length;
+  const unsharedCount = affected.length - physicalCount;
+  const activeFolder = affected[0].folder;
+  const cascade =
+    'physical delete cascades document data, chunks, vectors and graph links';
+  recordActivity({
+    id: `evt_doc_bulk_delete_${Date.now()}`,
+    ts: new Date().toISOString(),
+    rel: 'now',
+    day: 'Today',
+    kind: physicalCount ? 'doc-deleted' : 'doc-folder-removed',
+    sev: 'info',
+    actor: { user: actor, role: 'KB Steward' },
+    target:
+      affected.length === 1
+        ? {
+            type: 'document',
+            label: affected[0].doc.file_path,
+            id: affected[0].doc.doc_id,
+          }
+        : { type: 'bulk', label: `${affected.length} documents` },
+    summary: bulkDeleteSummary(
+      actor,
+      affected.length,
+      physicalCount,
+      unsharedCount,
+      activeFolder,
+      cascade,
+    ),
+    meta: {
+      operation: 'bulk-delete',
+      folder: activeFolder,
+      doc_count: affected.length,
+      doc_ids: docIds,
+      ...(affected.length === 1 ? { doc_id: docIds[0] } : {}),
+      failed,
+      failed_count: failed.length,
+      physically_deleted_count: physicalCount,
+      unshared_count: unsharedCount,
+      cascade,
+    },
+  });
+}
+
 // Folders — admin CRUD mirror of the backend. The first folder fixture
 // is treated as the SRE-provisioned default (env-seeded) and
 // rejects mutations with 403; the remaining ones are seeded as
@@ -1990,24 +2092,18 @@ export const handlers = [
     // `{deleted, failed}` payload, and HTTP **207** when any target failed
     // (`routes_documents.bulk_delete_documents`, routes_documents.py:441-468).
     const body = (await request.json()) as { actor?: string; doc_ids: string[] };
-    const affected: Array<{ doc: Document; physicallyDeleted: boolean; folder: string }> = [];
+    const affected: BulkDeleteOutcome[] = [];
     const failed: string[] = [];
     const physicallyDeletedIds = new Set<string>();
     for (const rawId of body.doc_ids) {
       const id = String(rawId);
-      const doc = documentsState.find((d) => d.doc_id === id);
-      if (!doc) {
+      const outcome = applyBulkDeleteForDoc(request, id);
+      if (!outcome) {
         failed.push(id);
         continue;
       }
-      const active = activeFolderFor(request, doc);
-      if (!foldersForDoc(doc).includes(active)) {
-        failed.push(id);
-        continue;
-      }
-      const physicallyDeleted = removeDocFromFolderOrDelete(doc, active);
-      if (physicallyDeleted) physicallyDeletedIds.add(id);
-      affected.push({ doc, physicallyDeleted, folder: active });
+      if (outcome.physicallyDeleted) physicallyDeletedIds.add(id);
+      affected.push(outcome);
     }
     // Cascade the whole physically-deleted set at once — an entity shared by
     // two docs deleted in the same batch must orphan (graph doctrine).
@@ -2018,57 +2114,7 @@ export const handlers = [
       );
     }
     if (affected.length > 0) {
-      const actor = body.actor ?? 'operator.demo';
-      const docIds = affected.map((entry) => entry.doc.doc_id);
-      const physicalCount = affected.filter((e) => e.physicallyDeleted).length;
-      const unsharedCount = affected.length - physicalCount;
-      const activeFolder = affected[0].folder;
-      const cascade =
-        'physical delete cascades document data, chunks, vectors and graph links';
-      // Summary variants mirror routes_documents._emit_bulk_delete_activity.
-      let summary: string;
-      if (physicalCount && unsharedCount) {
-        summary =
-          `Bulk delete by ${actor}: ${affected.length} documents affected ` +
-          `(${physicalCount} physically deleted with cascade, ` +
-          `${unsharedCount} unshared from folder ${activeFolder})`;
-      } else if (physicalCount) {
-        summary = `Bulk delete by ${actor}: ${affected.length} documents physically deleted; ${cascade}`;
-      } else {
-        summary =
-          `Bulk delete by ${actor}: ${affected.length} documents unshared ` +
-          `from folder ${activeFolder}; no physical cascade`;
-      }
-      recordActivity({
-        id: `evt_doc_bulk_delete_${Date.now()}`,
-        ts: new Date().toISOString(),
-        rel: 'now',
-        day: 'Today',
-        kind: physicalCount ? 'doc-deleted' : 'doc-folder-removed',
-        sev: 'info',
-        actor: { user: actor, role: 'KB Steward' },
-        target:
-          affected.length === 1
-            ? {
-                type: 'document',
-                label: affected[0].doc.file_path,
-                id: affected[0].doc.doc_id,
-              }
-            : { type: 'bulk', label: `${affected.length} documents` },
-        summary,
-        meta: {
-          operation: 'bulk-delete',
-          folder: activeFolder,
-          doc_count: affected.length,
-          doc_ids: docIds,
-          ...(affected.length === 1 ? { doc_id: docIds[0] } : {}),
-          failed,
-          failed_count: failed.length,
-          physically_deleted_count: physicalCount,
-          unshared_count: unsharedCount,
-          cascade,
-        },
-      });
+      recordBulkDeleteActivity(body.actor, affected, failed);
     }
     return HttpResponse.json(
       { deleted: affected.length, failed },

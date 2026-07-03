@@ -543,7 +543,7 @@ def _degree_expr(mchunks) -> str:
     in-folder edges) when ``mchunks`` carries the active folder's member set."""
     if mchunks is None:
         return "count(r)"
-    return f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} " f"THEN r END)"
+    return f"count(CASE WHEN r IS NOT NULL AND {_twin_in_folder('r')} THEN r END)"
 
 
 async def _twin_member_chunks(self):
@@ -2245,7 +2245,7 @@ async def _init_overlay_memgraph_stores(
         )
     except Exception:
         logger.exception(
-            "twindb: FAILED to switch stores to Memgraph; " "keeping in-memory seed.",
+            "twindb: FAILED to switch stores to Memgraph; keeping in-memory seed.",
         )
         raise
 
@@ -2378,7 +2378,7 @@ def _mount_twin_subapp(
         # notifications visible from the very first request.
         set_store(WebuiStore.from_seed())
         logger.info(
-            "twindb: Twin overlay router included at %s " "(in-memory seed; %d routes)",
+            "twindb: Twin overlay router included at %s (in-memory seed; %d routes)",
             prefix,
             len(webui_router.routes),
         )

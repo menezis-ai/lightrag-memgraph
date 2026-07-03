@@ -841,7 +841,7 @@ def _auth_policy_readiness_check(
         return {
             "status": "failed",
             "detail": (
-                "production IdP auth requires TWIN_IDP_ISSUER and " "TWIN_IDP_AUDIENCE"
+                "production IdP auth requires TWIN_IDP_ISSUER and TWIN_IDP_AUDIENCE"
             ),
             "production_required": True,
             "strict_claims": False,

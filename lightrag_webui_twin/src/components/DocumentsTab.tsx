@@ -146,7 +146,7 @@ function failedDocumentSummary(doc: Document): string {
     return summary;
   }
 
-  const failurePrefix = summary.match(/^(failed ingest|indexing failed)\b/i)?.[0];
+  const failurePrefix = /^(failed ingest|indexing failed)\b/i.exec(summary)?.[0];
   if (failurePrefix) {
     return `${failurePrefix} — ${error}`;
   }
@@ -1057,6 +1057,22 @@ interface DocRowProps {
   nowMs?: number;
 }
 
+function docRowClassName(checked: boolean, isFail: boolean): string {
+  return `docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`;
+}
+
+function rowCheckAriaLabel(doc: Document, isOptimisticUpload: boolean): string {
+  return isOptimisticUpload
+    ? `${doc.file_path} is waiting for ingestion`
+    : `Select ${doc.file_path}`;
+}
+
+function chunksCellTitle(doc: Document, isFail: boolean): string | undefined {
+  return isFail && (doc.chunks_count ?? 0) > 0
+    ? `${doc.chunks_count} chunks created before failure`
+    : undefined;
+}
+
 function DocRow({
   doc,
   checked,
@@ -1081,7 +1097,7 @@ function DocRow({
     : doc.content_summary || 'No indexed preview available.';
   return (
     <div
-      className={`docs-row has-select${checked ? ' is-checked' : ''}${isFail ? ' is-failed' : ''}`}
+      className={docRowClassName(checked, isFail)}
       data-testid={`docs-row-${doc.doc_id}`}
     >
       <div className="cell-select">
@@ -1092,11 +1108,7 @@ function DocRow({
             checked={checked}
             disabled={isOptimisticUpload}
             onChange={() => onToggle(doc.doc_id)}
-            aria-label={
-              isOptimisticUpload
-                ? `${doc.file_path} is waiting for ingestion`
-                : `Select ${doc.file_path}`
-            }
+            aria-label={rowCheckAriaLabel(doc, isOptimisticUpload)}
           />
         </label>
       </div>
@@ -1195,11 +1207,7 @@ function DocRow({
       </div>
       <div
         className="cell-chunks"
-        title={
-          isFail && (doc.chunks_count ?? 0) > 0
-            ? `${doc.chunks_count} chunks created before failure`
-            : undefined
-        }
+        title={chunksCellTitle(doc, isFail)}
         data-testid={`docs-row-chunks-${doc.doc_id}`}
       >
         {doc.chunks_count ?? 0}

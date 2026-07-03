@@ -1656,7 +1656,8 @@ dialog::backdrop {
 .btn.active { background: var(--color-background-secondary); border-color: var(--twin-accent); }
 .btn-retry { border-color: color-mix(in oklab, var(--color-status-failed, #B42318) 35%, var(--color-border-default)); color: var(--color-status-failed, #B42318); }
 .btn-retry:hover { background: color-mix(in oklab, var(--color-status-failed, #B42318) 8%, transparent); }
-.btn-retry .pipeline-badge { background: var(--color-status-failed, #B42318); }
+/* .btn-retry .pipeline-badge lives in the danger-button repair section
+ * further down (its background there fully shadowed the one set here). */
 
 .pipeline-popover {
   position: absolute;
@@ -9086,9 +9087,11 @@ header.topbar dialog.notif-popover-narrow:where(*) {
 }
 
 .btn-retry .pipeline-badge {
-  background: rgba(255, 255, 255, 0.22);
+  /* Dark tint (not white) so #fff text stays WCAG AA over the danger
+     gradient: composed ≈ 8.4:1 vs ≈ 3.9:1 with the white tint. */
+  background: rgba(0, 0, 0, 0.22);
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: rgba(0, 0, 0, 0.35);
 }
 
 :root[data-theme="dark"] .btn.danger.danger-primary,
@@ -11000,7 +11003,7 @@ header.topbar dialog.notif-popover-narrow:where(*) {
   letter-spacing: 0;
 }
 
-.topbar .brand-kb:where(*) {
+.topbar .brand-kb:where(*):where(*) {
   font-size: 12.5px;
   letter-spacing: 0;
 }
@@ -11023,9 +11026,9 @@ header.topbar dialog.notif-popover-narrow:where(*) {
   font-size: 13.5px;
 }
 
-input,
-textarea,
-select {
+input:where(*),
+textarea:where(*),
+select:where(*) {
   font-size: 13.5px;
 }
 

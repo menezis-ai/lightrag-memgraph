@@ -44,9 +44,9 @@ class InMemoryNotificationStore:
     async def clear(self) -> None:  # NOSONAR - async contract.
         self._items.clear()
 
-    async def push(
+    async def push(  # NOSONAR - async contract.
         self, notification: dict[str, Any]
-    ) -> dict[str, Any]:  # NOSONAR - async contract.
+    ) -> dict[str, Any]:
         stored = copy.deepcopy(notification)
         # Newest-first: prepend.
         self._items.insert(0, stored)

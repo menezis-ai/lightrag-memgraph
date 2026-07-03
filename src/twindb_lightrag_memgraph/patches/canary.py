@@ -257,7 +257,7 @@ def warn_on_private_copy_drift(owner: object, attr: str) -> None:
     digest = normalized_source_hash(fn)
     if digest is None:
         logger.debug(
-            "%s source of lightrag.operate.%s unavailable — drift check " "skipped",
+            "%s source of lightrag.operate.%s unavailable — drift check skipped",
             _CANARY_PREFIX,
             attr,
         )

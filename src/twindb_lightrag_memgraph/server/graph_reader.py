@@ -1378,7 +1378,7 @@ async def _lookup_relation_endpoints_from_store(
         return workspace, src, tgt
     except Exception:
         logger.exception(
-            "graph_reader: relation endpoint lookup by id failed " "(ws=%s, rel_id=%s)",
+            "graph_reader: relation endpoint lookup by id failed (ws=%s, rel_id=%s)",
             workspace,
             rel_id,
         )
@@ -2573,6 +2573,51 @@ async def entity_exists(workspace: str, entity_id: str) -> bool:
         return False
 
 
+def _entity_create_props(
+    payload: dict[str, Any], entity_id: str, actor: str
+) -> dict[str, Any]:
+    """Property map for a manually created entity.
+
+    Seeds ``source_id`` with a ``manual:<actor>`` marker so the audit feed
+    can distinguish operator-added entities from LLM-extracted ones, and so
+    the mention/sources badges show a non-zero count instead of 0.
+    """
+    props: dict[str, Any] = {
+        "entity_id": entity_id,
+        "entity_type": payload.get("type") or _DEFAULT_TYPE,
+        "description": (payload.get("summary") or "").strip(),
+        "source_id": f"manual:{actor}",
+    }
+    if "name" in payload and payload["name"] is not None:
+        props["display_name"] = payload["name"]
+    if payload.get("tags"):
+        props["twin_tags_json"] = json.dumps(list(payload["tags"]))
+    if payload.get("properties"):
+        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+    return props
+
+
+async def _stamp_entity_folder_membership(
+    session, label: str, entity_id: str, folder: str
+) -> None:
+    """#1a: stamp explicit folder membership so a chunk-less manual entity
+    survives a folder-scoped refresh. Only called on a genuine create — a
+    matched pre-existing node raised ``EntityExistsError`` before this."""
+    stamp = (
+        f"MATCH (n:`{label}` {{entity_id: $eid}}) "
+        f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
+        f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
+    )
+    try:
+        await (await session.run(stamp, eid=entity_id, folder=folder)).consume()
+    except Exception as exc:
+        logger.exception(
+            "graph_reader.create_graph_entity: folder stamp failed for %s",
+            entity_id,
+        )
+        raise EntityCreateBackendError(str(exc)) from exc
+
+
 async def create_graph_entity(
     workspace: str, payload: dict[str, Any], *, actor: str = "operator"
 ) -> dict[str, Any]:
@@ -2603,22 +2648,7 @@ async def create_graph_entity(
     if await entity_exists(workspace, entity_id):
         raise EntityExistsError(entity_id)
 
-    # Build the property map. We seed ``source_id`` with a
-    # ``manual:<actor>`` marker so the audit feed can distinguish
-    # operator-added entities from LLM-extracted ones, and so the
-    # mention/sources badges show a non-zero count instead of 0.
-    props: dict[str, Any] = {
-        "entity_id": entity_id,
-        "entity_type": payload.get("type") or _DEFAULT_TYPE,
-        "description": (payload.get("summary") or "").strip(),
-        "source_id": f"manual:{actor}",
-    }
-    if "name" in payload and payload["name"] is not None:
-        props["display_name"] = payload["name"]
-    if payload.get("tags"):
-        props["twin_tags_json"] = json.dumps(list(payload["tags"]))
-    if payload.get("properties"):
-        props["twin_props_json"] = json.dumps(dict(payload["properties"]))
+    props = _entity_create_props(payload, entity_id, actor)
 
     from .folder import active_folder_id
 
@@ -2664,25 +2694,7 @@ async def create_graph_entity(
                 # node can be minted.
                 raise EntityExistsError(entity_id)
             if folder:
-                # #1a: stamp explicit folder membership so this chunk-less
-                # manual entity survives a folder-scoped refresh. Only on a
-                # genuine create — a matched pre-existing node raised above.
-                stamp = (
-                    f"MATCH (n:`{label}` {{entity_id: $eid}}) "
-                    f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
-                    f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
-                )
-                try:
-                    await (
-                        await session.run(stamp, eid=entity_id, folder=folder)
-                    ).consume()
-                except Exception as exc:
-                    logger.exception(
-                        "graph_reader.create_graph_entity: folder stamp "
-                        "failed for %s",
-                        entity_id,
-                    )
-                    raise EntityCreateBackendError(str(exc)) from exc
+                await _stamp_entity_folder_membership(session, label, entity_id, folder)
     try:
         projected = await _read_one_entity(workspace, entity_id)
     except Exception as exc:
@@ -2860,7 +2872,7 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
 
     async with acquire_write_slot():
         async with get_session() as session:
-            query = f"MATCH (n:`{label}` {{entity_id: $eid}}) " "DETACH DELETE n"
+            query = f"MATCH (n:`{label}` {{entity_id: $eid}}) DETACH DELETE n"
             try:
                 result = await session.run(query, eid=entity_id)
                 await result.consume()

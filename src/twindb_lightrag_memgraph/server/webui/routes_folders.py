@@ -277,6 +277,64 @@ async def _cleanup_memgraph_folder_residue(folder_id: str) -> None:
             await result.consume()
 
 
+async def _guard_seed_folder_residual(folder_id: str) -> None:
+    """Seed deployment: probe the in-memory store for residual data.
+
+    Raises 409 when the folder still holds documents and/or tags.
+    """
+    bound_store = _stores.get(folder_id)
+    if bound_store is None:
+        return
+    has_docs = len(bound_store._documents) > 0  # noqa: SLF001
+    # `list_tags` is sync on the in-memory backend, async on the
+    # Memgraph one — normalise via inspect.iscoroutine.
+    tags_result = bound_store.tags.list_tags()
+    if hasattr(tags_result, "__await__"):
+        tags_result = await tags_result  # type: ignore[assignment]
+    has_tags = len(tags_result) > 0
+    if has_docs or has_tags:
+        raise HTTPException(
+            409,
+            f"Folder '{folder_id}' still has data (docs and/or tags). "
+            "Remove the contents before deleting the folder.",
+        )
+
+
+async def _guard_memgraph_folder_residual(folder_id: str) -> None:
+    """MG-4: on a Memgraph deployment the in-process store sees nothing —
+    the real data lives in the database, so the database is the guard.
+
+    Raises 503 when the probe or the residue cleanup cannot reach the
+    database (fail-closed), 409 when the folder still has data.
+    """
+    try:
+        residual_counts = await _memgraph_residual_data(folder_id)
+    except Exception as exc:
+        logger.exception("Folder %r delete: residual-data probe failed", folder_id)
+        raise HTTPException(
+            503,
+            f"Cannot verify folder '{folder_id}' is empty (storage probe "
+            "failed); refusing to delete.",
+        ) from exc
+    residual = {kind: n for kind, n in residual_counts.items() if n > 0}
+    if residual:
+        detail = ", ".join(f"{n} {kind}" for kind, n in residual.items())
+        raise HTTPException(
+            409,
+            f"Folder '{folder_id}' still has data ({detail}). "
+            "Remove the contents before deleting the folder.",
+        )
+    try:
+        await _cleanup_memgraph_folder_residue(folder_id)
+    except Exception as exc:
+        logger.exception("Folder %r delete: residue cleanup failed", folder_id)
+        raise HTTPException(
+            503,
+            f"Folder '{folder_id}' residue cleanup failed; folder was "
+            "not deleted, retry later.",
+        ) from exc
+
+
 @router.delete(
     "/folders/{folder_id}",
     status_code=204,
@@ -315,51 +373,9 @@ async def delete_folder(folder_id: str) -> None:
     if folder_store.get_runtime_folder(folder_id) is None:
         raise HTTPException(404, f"Folder '{folder_id}' not found")
     if deployment_store_mode() != "memgraph":
-        # Seed deployment: probe the in-memory store for residual data.
-        bound_store = _stores.get(folder_id)
-        if bound_store is not None:
-            has_docs = len(bound_store._documents) > 0  # noqa: SLF001
-            # `list_tags` is sync on the in-memory backend, async on the
-            # Memgraph one — normalise via inspect.iscoroutine.
-            tags_result = bound_store.tags.list_tags()
-            if hasattr(tags_result, "__await__"):
-                tags_result = await tags_result  # type: ignore[assignment]
-            has_tags = len(tags_result) > 0
-            if has_docs or has_tags:
-                raise HTTPException(
-                    409,
-                    f"Folder '{folder_id}' still has data (docs and/or tags). "
-                    "Remove the contents before deleting the folder.",
-                )
+        await _guard_seed_folder_residual(folder_id)
     else:
-        # MG-4: on a Memgraph deployment the in-process store sees nothing —
-        # the real data lives in the database, so the database is the guard.
-        try:
-            residual_counts = await _memgraph_residual_data(folder_id)
-        except Exception as exc:
-            logger.exception("Folder %r delete: residual-data probe failed", folder_id)
-            raise HTTPException(
-                503,
-                f"Cannot verify folder '{folder_id}' is empty (storage probe "
-                "failed); refusing to delete.",
-            ) from exc
-        residual = {kind: n for kind, n in residual_counts.items() if n > 0}
-        if residual:
-            detail = ", ".join(f"{n} {kind}" for kind, n in residual.items())
-            raise HTTPException(
-                409,
-                f"Folder '{folder_id}' still has data ({detail}). "
-                "Remove the contents before deleting the folder.",
-            )
-        try:
-            await _cleanup_memgraph_folder_residue(folder_id)
-        except Exception as exc:
-            logger.exception("Folder %r delete: residue cleanup failed", folder_id)
-            raise HTTPException(
-                503,
-                f"Folder '{folder_id}' residue cleanup failed; folder was "
-                "not deleted, retry later.",
-            ) from exc
+        await _guard_memgraph_folder_residual(folder_id)
     if not folder_store.delete_runtime_folder(folder_id):
         raise HTTPException(404, f"Folder '{folder_id}' not found")
     # Evict the per-folder WebUI store so future GETs don't resurrect it.

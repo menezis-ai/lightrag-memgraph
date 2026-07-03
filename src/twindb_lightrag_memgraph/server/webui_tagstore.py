@@ -81,17 +81,17 @@ class InMemoryTagStore:
     def list_categories(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._categories)
 
-    async def get_tag(
+    async def get_tag(  # NOSONAR - async contract.
         self, tag: str
-    ) -> dict[str, Any] | None:  # NOSONAR - async contract.
+    ) -> dict[str, Any] | None:
         for entry in self._tags:
             if entry["tag"] == tag:
                 return copy.deepcopy(entry)
         return None
 
-    async def upsert_tag(
+    async def upsert_tag(  # NOSONAR - async contract.
         self, entry: dict[str, Any]
-    ) -> dict[str, Any]:  # NOSONAR - async contract.
+    ) -> dict[str, Any]:
         name = entry["tag"]
         for i, existing in enumerate(self._tags):
             if existing["tag"] == name:
@@ -303,7 +303,7 @@ class MemgraphTagStore:
         for i, entry in enumerate(raw):
             if not isinstance(entry, dict):
                 raise ValueError(
-                    f"{source}[{i}]: must be an object, " f"got {type(entry).__name__}."
+                    f"{source}[{i}]: must be an object, got {type(entry).__name__}."
                 )
             for required in ("id", "label", "color"):
                 if required not in entry:
@@ -314,7 +314,7 @@ class MemgraphTagStore:
             cat_id = entry["id"]
             if not isinstance(cat_id, str) or not cat_id:
                 raise ValueError(
-                    f"{source}[{i}].id must be a non-empty string, " f"got {cat_id!r}."
+                    f"{source}[{i}].id must be a non-empty string, got {cat_id!r}."
                 )
             if cat_id in seen_ids:
                 raise ValueError(f"{source}[{i}]: duplicate id {cat_id!r}.")

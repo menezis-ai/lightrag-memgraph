@@ -291,7 +291,7 @@ async def mark_used(workspace: str, key_id: str) -> None:
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
                 res = await session.run(
-                    f"MATCH (n:`{label}` {{id: $id}}) " f"SET n.last_used_at_ms = $now",
+                    f"MATCH (n:`{label}` {{id: $id}}) SET n.last_used_at_ms = $now",
                     id=key_id,
                     now=now,
                 )

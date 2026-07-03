@@ -59,9 +59,9 @@ class _BufferedGraphProxy:
 
     # ── Intercepted write methods (buffered) ──────────────────────────
 
-    async def upsert_node(
+    async def upsert_node(  # NOSONAR - async contract.
         self, node_id: str, node_data: dict[str, str]
-    ):  # NOSONAR - async contract.
+    ):
         """Buffer node upsert instead of firing a Bolt query."""
         if node_id in self._node_buffer:
             self._node_buffer[node_id].update(node_data)

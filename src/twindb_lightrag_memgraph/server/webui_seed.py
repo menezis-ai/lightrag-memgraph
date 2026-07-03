@@ -863,7 +863,7 @@ ACTIVITY: list[dict[str, Any]] = [
         "Bearer token issued",
         "Login successful · scope: read:documents read:query · expires in 24h",
         {
-            "ip": "10.42.7.118",
+            "ip": "vpn-gw-07.corp.internal",
             "user_agent": "twin-cli/0.4.1",
             "scope": "read:documents read:query",
             "ttl_h": 24,
@@ -979,7 +979,11 @@ ACTIVITY: list[dict[str, Any]] = [
         "session",
         "Login attempt rejected",
         "401 Unauthorized · IP not in allow-list · 10.214.x.x",
-        {"ip": "10.214.99.4", "error_code": "E_IP_NOT_ALLOWLISTED", "attempts_24h": 7},
+        {
+            "ip": "ext-gw-04.partner.example",
+            "error_code": "E_IP_NOT_ALLOWLISTED",
+            "attempts_24h": 7,
+        },
     ),
     _evt(
         "evt_01HX4XQT",
