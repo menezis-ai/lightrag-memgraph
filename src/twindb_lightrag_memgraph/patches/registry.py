@@ -33,6 +33,7 @@ WEBUI_INDEX_FILENAME = "index.html"
 TWIN_API_PREFIX = "/twin/api"
 TWIN_UI_PREFIX = "/twin"
 DEFAULT_DEBUG_USER_EMAIL = "operator@twin.local"
+_UNKNOWN = "<unknown>"
 
 _NOT_INITIALIZED_MSG = (
     "Memgraph driver is not initialized. Call 'await initialize()' first."
@@ -1090,9 +1091,9 @@ async def _signal_empty_extraction_merge(graph_inst, merge_kwargs) -> None:
         "Extraction produced an EMPTY graph for doc %s (file=%s, workspace=%s): "
         "0 entities / 0 relations — the document will still be marked "
         "PROCESSED but contributes nothing to the knowledge graph",
-        doc_id or "<unknown>",
-        file_path or "<unknown>",
-        workspace or "<unknown>",
+        doc_id or _UNKNOWN,
+        file_path or _UNKNOWN,
+        workspace or _UNKNOWN,
     )
     try:
         from ..server.webui_router import _make_event, get_store
@@ -1239,8 +1240,8 @@ _RUNTIME_INSTALL_REFUSED_MSG = (
 
 def _refuse_runtime_install(*args, **kwargs):
     """Hard-refuse a pipmaster install call (security baseline)."""
-    pkg = kwargs.get("package", kwargs.get("package_name", "<unknown>"))
-    if pkg == "<unknown>":
+    pkg = kwargs.get("package", kwargs.get("package_name", _UNKNOWN))
+    if pkg == _UNKNOWN:
         for a in args:
             if isinstance(a, str):
                 pkg = a
