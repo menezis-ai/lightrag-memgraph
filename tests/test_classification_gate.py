@@ -267,6 +267,13 @@ def gate(monkeypatch, tmp_path):
                     delattr(LightRAG, name)
             else:
                 setattr(LightRAG, name, value)
+        # The gate emits classification-rejected events into the
+        # module-singleton activity store; reset it so later test modules
+        # (e.g. test_server/test_classification_rejection.py) don't inherit
+        # this module's events (audit 2026-07-02 addendum, finding A).
+        from twindb_lightrag_memgraph.server import webui_router
+
+        webui_router.reset_store()
 
 
 async def test_gate_blocks_above_ceiling_file(gate, tmp_path):

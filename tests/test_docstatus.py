@@ -100,6 +100,40 @@ class TestMemgraphDocStatusStorage:
         assert result is not None
         assert result["file_path"] == "/special.pdf"
 
+    async def test_duplicate_lookups_return_oldest_deterministically(self, doc_store):
+        """file_path / basename / content_hash are not unique; the duplicate
+        getters must return the oldest match (the original), not a
+        driver-arbitrary first row (audit 2026-07-02 addendum, finding D)."""
+        await doc_store.upsert(
+            {
+                # Newer row upserted first so insertion order can't mask a
+                # non-deterministic pick.
+                "doc-newer": {
+                    "status": "processed",
+                    "file_path": "dup.pdf",
+                    "content_hash": "h-dup",
+                    "created_at": "2025-02-01T00:00:00",
+                    "updated_at": "2025-02-01T00:00:00",
+                },
+                "doc-older": {
+                    "status": "processed",
+                    "file_path": "dup.pdf",
+                    "content_hash": "h-dup",
+                    "created_at": "2025-01-01T00:00:00",
+                    "updated_at": "2025-01-01T00:00:00",
+                },
+            }
+        )
+
+        by_path = await doc_store.get_doc_by_file_path("dup.pdf")
+        assert by_path is not None and by_path["id"] == "doc-older"
+
+        by_basename = await doc_store.get_doc_by_file_basename("dup.pdf")
+        assert by_basename is not None and by_basename[0] == "doc-older"
+
+        by_hash = await doc_store.get_doc_by_content_hash("h-dup")
+        assert by_hash is not None and by_hash[0] == "doc-older"
+
     async def test_filter_keys(self, doc_store):
         await doc_store.upsert({"existing": _make_status()})
         missing = await doc_store.filter_keys({"existing", "absent"})
