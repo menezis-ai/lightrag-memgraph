@@ -9,8 +9,11 @@ The frontend source tree `lightrag_webui_twin/` must also stay in the export for
 audit/review needs, but the BNP Dockerfile must not build it.
 
 The export is also the BNP validation handoff. It must include the Python test
-tree, the `requirements/` constraints, and a lightweight GitHub Actions workflow
-that builds the BNP image and runs the stdlib smoke runner against the container.
+tree (including the stdlib smoke runner `tests/smoke/run_smoke.py`, used for
+manual validation against a deployed instance) and the `requirements/`
+constraints. The export carries **no CI workflow**: the GitHub Actions smoke
+job and the in-image CVE remediation were dropped (decision 2026-07-03) — OS
+and Python package remediation is owned by the BNP-side delivery pipeline.
 
 ## Branches
 
@@ -65,10 +68,9 @@ rsync -a \
   "$SOURCE_REPO/Dockerfile" \
   ./
 
-mkdir -p config requirements .github/workflows src/twindb_lightrag_memgraph/webui_dist
+mkdir -p config requirements src/twindb_lightrag_memgraph/webui_dist
 rsync -a "$SOURCE_REPO/config/build.conf" config/
 rsync -a "$SOURCE_REPO/requirements/" requirements/
-rsync -a "$SOURCE_REPO/.github/workflows/bnp-export-smoke.yml" .github/workflows/
 rsync -a --delete \
   "$SOURCE_REPO/lightrag_webui_twin/dist/" \
   src/twindb_lightrag_memgraph/webui_dist/
@@ -78,10 +80,20 @@ rm -rf src/twindb_lightrag_memgraph.egg-info
 
 ## Export Dockerfile Rule
 
-Start from the BNP Dockerfile in the source repo, then remove only the frontend
-builder stage (`oven/bun`, `bun install`, `bun run build`). The export Dockerfile
-must keep the same BNP runtime base image and runtime registration logic, but it
-must use the committed prebuilt assets:
+Start from the BNP Dockerfile in the source repo, then strip it down to the
+runtime stage only:
+
+- remove the frontend builder stage (`oven/bun`, `bun install`, `bun run build`);
+- remove every `pip install` layer (BNP builds can run without outbound package
+  access; editable installs trigger isolated build dependency resolution and
+  can fail before the application code is even imported);
+- remove the apt CVE-remediation layer (`apt-get ... --only-upgrade`): BNP
+  build hosts may have no apt access and the `t64` package names may not exist
+  on the base's Debian release — package remediation is owned by the BNP-side
+  pipeline, not by this image.
+
+The export Dockerfile must keep the same BNP runtime base image and runtime
+registration logic, but it must use the committed prebuilt assets:
 
 ```text
 src/twindb_lightrag_memgraph/webui_dist/index.html
@@ -96,19 +108,13 @@ from twindb_lightrag_memgraph import register
 register(replace_ui=True, mount_server=True, shim_native_routes=True)
 ```
 
-Do not run `pip install -e "/app/twindb_lightrag_memgraph/[server]"` in the BNP
-export Dockerfile. BNP builds can run without outbound package access; editable
-installs trigger isolated build dependency resolution (`setuptools`, `wheel`) and
-can fail before the application code is even imported.
-
 ## Keep
 
 - `src/twindb_lightrag_memgraph/**`
 - `src/twindb_lightrag_memgraph/webui_dist/**`
 - `lightrag_webui_twin/**`
-- `tests/**`
+- `tests/**` (includes `tests/smoke/run_smoke.py`, the manual validation runner)
 - `requirements/**`
-- `.github/workflows/bnp-export-smoke.yml`
 - `pyproject.toml`
 - `MANIFEST.in`
 - `Dockerfile`
@@ -122,7 +128,7 @@ can fail before the application code is even imported.
 - `docs/`
 - `.forgejo/`
 - `scripts/`
-- `.github/workflows/*` except `.github/workflows/bnp-export-smoke.yml`
+- `.github/` (the export carries no CI workflow — dropped 2026-07-03)
 - `lightrag_webui_twin/node_modules/`
 - `lightrag_webui_twin/dist/`
 - `lightrag_webui_twin/coverage/`
@@ -141,36 +147,28 @@ test -f src/twindb_lightrag_memgraph/webui_dist/index.html
 test -f lightrag_webui_twin/package.json
 test -f tests/smoke/run_smoke.py
 test -f requirements/constraints-prod.txt
-test -f .github/workflows/bnp-export-smoke.yml
 find . -path '*/__pycache__/*' -o -name '*.pyc'
-find . -maxdepth 2 \( -name docs -o -name scripts -o -name node_modules \)
-grep -n 'pip install' Dockerfile
+find . -maxdepth 2 \( -name docs -o -name scripts -o -name node_modules -o -name .github \)
+grep -n 'pip install\|apt-get' Dockerfile
 git status --short
 ```
 
 The two `find` commands and the `grep` command must print nothing.
 
-## BNP Export CI
-
-The export branch carries `.github/workflows/bnp-export-smoke.yml`. This is not
-the development CI matrix. It is a release-consumer smoke:
-
-- build the export Dockerfile directly;
-- start Memgraph 3.9.0;
-- start the BNP runtime image with local JWT auth;
-- run `python tests/smoke/run_smoke.py tests/smoke/runtime-smoke-ci-http.json`;
-- upload the smoke report and HTTP trace.
-
-If `fr2.icr.io/a100575-hprd/hkuds/lightrag:v1.4.9.11` requires registry auth
-on the GitHub runner, configure repository secrets `BNP_REGISTRY_USERNAME` and
-`BNP_REGISTRY_PASSWORD`. If the base image is publicly pullable, no secrets are
-needed.
-
-## Push
+## Stage And Push
 
 ```bash
+git add -A
+git add -f src/twindb_lightrag_memgraph/webui_dist/
 git commit -m "Export BNP runtime bundle 1.0.0"
 git push origin export-1.0.0
 ```
+
+**The `git add -f` is load-bearing.** The `.gitignore` copied from the source
+repo excludes `src/twindb_lightrag_memgraph/webui_dist/` (on `main` the dist
+is a build artifact), so a plain `git add -A` silently stages the export
+WITHOUT the WebUI assets — the resulting image then fails its own
+`RUN test -f .../webui_dist/index.html` assertion at BNP build time. Check
+`git diff --cached --stat` includes `webui_dist/` paths before committing.
 
 Do not push this branch to the private integration remote.
