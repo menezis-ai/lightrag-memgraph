@@ -499,7 +499,7 @@ class TestWriteThrottle:
         assert slot_acquired, "acquire_write_slot was not called during node flush"
 
     async def test_flush_edges_acquires_write_slot(self):
-        """_flush_edges must go through acquire_write_slot."""
+        """flush must keep one write slot across nodes + edges."""
         graph = _mock_graph(workspace="ws")
         proxy = _BufferedGraphProxy(graph)
         slot_count = 0
@@ -525,8 +525,7 @@ class TestWriteThrottle:
         ):
             await proxy.flush()
 
-        # 1 slot for nodes + 1 slot for edges
-        assert slot_count == 2, f"Expected 2 write slot acquisitions, got {slot_count}"
+        assert slot_count == 1, f"Expected 1 write slot acquisition, got {slot_count}"
 
 
 # ── Error handling ───────────────────────────────────────────────────
@@ -534,6 +533,51 @@ class TestWriteThrottle:
 
 class TestFlushErrorHandling:
     """Verify that flush errors are logged and re-raised (not swallowed)."""
+
+    async def test_flush_retries_memgraph_transaction_conflict(self):
+        """Memgraph conflict errors are transient for idempotent MERGE batches."""
+        graph = _mock_graph(workspace="ws")
+        proxy = _BufferedGraphProxy(graph)
+        session_count = 0
+
+        @asynccontextmanager
+        async def conflict_then_success_session():
+            nonlocal session_count
+            session_count += 1
+            session = AsyncMock()
+
+            async def run(_query, **_params):
+                result = AsyncMock()
+                if session_count == 1:
+                    result.consume.side_effect = RuntimeError(
+                        "Cannot resolve conflicting transactions. Retry this "
+                        "transaction when the conflicting transaction is finished."
+                    )
+                return result
+
+            session.run = run
+            yield session
+
+        await proxy.upsert_node("Alice", {"entity_id": "Alice"})
+
+        with (
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.get_session",
+                conflict_then_success_session,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.acquire_write_slot",
+                _mock_write_slot,
+            ),
+            patch(
+                "twindb_lightrag_memgraph._buffered_graph.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+        ):
+            await proxy.flush()
+
+        assert session_count == 2
+        assert proxy._node_buffer == {}
 
     async def test_flush_node_failure_raises(self):
         """If _flush_nodes raises, flush must propagate the exception."""
