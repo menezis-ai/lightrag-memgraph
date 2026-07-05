@@ -50,7 +50,6 @@ found nothing usable). See :func:`_is_no_retrieval_mode`.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -62,10 +61,8 @@ from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
     ANSWER_STATUS_NO_RETRIEVAL,
-    ANSWER_STATUS_QUERY_FAILED,
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
-    AnswerStatus,
     GraphAnswerEnvelopeError,
     build_sources_from_raw_data,
     classify_answer,
@@ -103,6 +100,10 @@ from .source_filters import _source_matches_doc_filter
 from .streaming import (
     _determine_stream_status,
     _emit_answer_tokens,
+    _query_stream_empty_sources_events,
+    _query_stream_failure_events,
+    _query_stream_fatal_events,
+    _query_stream_grounded_events,
     _select_token_source,
 )
 
@@ -481,69 +482,6 @@ async def _build_envelope_sources(
     return filtered, not filter_projection_incomplete
 
 
-async def _query_stream_failure_events(exc: Exception) -> AsyncIterator[str]:
-    logger.exception("twin_query: streaming aquery_llm failed")
-    yield json.dumps({"type": "token", "value": f"\n[query failed: {exc}]"}) + "\n"
-    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_fatal_events(
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    fatal_reason: str,
-) -> AsyncIterator[str]:
-    logger.error(
-        "twin_query stream: aquery_llm envelope failure surfaced as "
-        "in-stream error token: %s",
-        fatal_reason,
-    )
-    yield json.dumps(
-        {"type": "token", "value": f"\n[query failed: {fatal_reason}]"}
-    ) + "\n"
-    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
-    )
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_empty_sources_events(
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    status: AnswerStatus,
-) -> AsyncIterator[str]:
-    yield json.dumps({"type": "status", "value": status}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
-    )
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_grounded_events(
-    rag: Any,
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    envelope: dict[str, Any] | None,
-    status: AnswerStatus,
-) -> AsyncIterator[str]:
-    with _retrieval_scope(folder, body):
-        sources, projection_ok = await _build_envelope_sources(
-            rag, body, folder, envelope
-        )
-    if not projection_ok:
-        status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
-        sources = []
-    yield json.dumps({"type": "status", "value": status}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=len(sources), stream=True
-    )
-    yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
-
-
 async def _generate_twin_query_stream(
     rag: Any,
     body: TwinQueryBody,
@@ -593,7 +531,13 @@ async def _generate_twin_query_stream(
         return
 
     async for line in _query_stream_grounded_events(
-        rag, body, request, folder, envelope, status
+        rag,
+        body,
+        request,
+        folder,
+        envelope,
+        status,
+        _build_envelope_sources,
     ):
         yield line
 
