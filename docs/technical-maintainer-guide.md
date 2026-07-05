@@ -116,10 +116,13 @@ The project has three important distribution surfaces:
 - GitHub `main`: public backend patch surface.
 - GitHub `export-1.0.0`: BNP delivery snapshot.
 
-When a change affects production behavior, update the private source first and
-then make sure the intended public/export surfaces receive the same effective
-patch. Do not assume GitHub Actions fully represent the production test matrix;
-the main matrix is in Forgejo.
+Active development happens on Bunker `main`, currently the `1.1.0` line. BNP
+production is `1.0.0`, frozen on `stable/1.0.x`.
+
+When a change affects production behavior, update the private source first.
+Propagating to GitHub `main` or rebuilding `export-1.0.0` is a deliberate
+release/sync action, not a per-fix reflex. Do not assume GitHub Actions fully
+represent the production test matrix; the main matrix is in Forgejo.
 
 ## 5. Runtime Modes
 

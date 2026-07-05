@@ -50,7 +50,6 @@ found nothing usable). See :func:`_is_no_retrieval_mode`.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import logging
 from collections.abc import AsyncIterator, Iterable, Iterator
@@ -59,7 +58,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
 
 from ..._constants import (
     RetrievalFilters,
@@ -81,6 +79,8 @@ from .._lightrag_compat import (
     collect_chunk_ids,
     is_streaming_envelope,
 )
+from .models import TwinQueryBody, TwinQueryDataResponse, TwinQueryResponse
+from .params import _make_query_param, _query_param_kwargs
 
 _PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
 
@@ -126,65 +126,6 @@ async def _await_query_or_disconnect(awaitable, request: Request):
         raise
 
 
-class TwinQueryBody(BaseModel):
-    query: str
-    actor: str | None = Field(default=None, max_length=200)
-    mode: str = Field(default="mix")
-    response_type: str | None = Field(default=None, min_length=1)
-    top_k: int = Field(default=20, ge=1, le=200)
-    chunk_top_k: int | None = Field(default=None, ge=1, le=200)
-    max_entity_tokens: int | None = Field(default=None, ge=1)
-    max_relation_tokens: int | None = Field(default=None, ge=1)
-    max_total_tokens: int | None = Field(default=None, ge=1)
-    only_need_context: bool = Field(default=False)
-    only_need_prompt: bool = Field(default=False)
-    hl_keywords: list[str] = Field(default_factory=list)
-    ll_keywords: list[str] = Field(default_factory=list)
-    conversation_history: list[dict[str, Any]] = Field(default_factory=list)
-    history_turns: int | None = Field(default=None, ge=0, le=20)
-    user_prompt: str | None = Field(default=None, max_length=4000)
-    enable_rerank: bool | None = Field(default=None)
-    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    tag_filter: dict[str, list[str]] | None = Field(default=None)
-    doc_filter: dict[str, list[str]] | None = Field(default=None)
-    fallback_to_mix: bool = Field(default=True)
-
-    @field_validator("tag_filter", "doc_filter")
-    @classmethod
-    def _validate_advanced_filter(
-        cls, value: dict[str, list[str]] | None
-    ) -> dict[str, list[str]] | None:
-        if value is None:
-            return None
-        allowed_keys = {"all", "any"}
-        unknown_keys = set(value) - allowed_keys
-        if unknown_keys:
-            raise ValueError("advanced filter keys must be a subset of {'all', 'any'}")
-        return value
-
-
-class TwinRetrievalSource(BaseModel):
-    n: int
-    type: str = "file"
-    name: str
-    meta: str | None = None
-    score: float = 0.0
-    doc_id: str | None = None
-    chunk_id: str | None = None
-
-
-class TwinQueryResponse(BaseModel):
-    response: str
-    sources: list[TwinRetrievalSource] = Field(default_factory=list)
-    # TR-RET-02: ``"insufficient_information"`` when LightRAG signalled
-    # no usable retrieval context (canonical ``[no-context]`` marker in
-    # the fail response). The React port uses this to suppress the
-    # Sources panel honestly rather than parsing the LLM prose.
-    # Typed as ``AnswerStatus`` so the generated OpenAPI schema
-    # advertises the enum to clients/tooling instead of an open str.
-    answer_status: AnswerStatus = Field(default=ANSWER_STATUS_GROUNDED)
-
-
 def _filter_sources_by_min_score(
     sources: list[dict[str, Any]],
     min_score: float,
@@ -197,85 +138,6 @@ def _filter_sources_by_min_score(
         if isinstance(source.get("score"), (int, float))
         and float(source["score"]) >= min_score
     ]
-
-
-class TwinQueryDataResponse(BaseModel):
-    status: str = "success"
-    message: str = "Query executed successfully"
-    data: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[str, Any]:
-    param_kwargs: dict[str, Any] = {
-        "mode": body.mode,
-        "top_k": body.top_k,
-        "only_need_context": body.only_need_context,
-        "only_need_prompt": body.only_need_prompt,
-        "stream": stream,
-    }
-    if body.response_type is not None:
-        param_kwargs["response_type"] = body.response_type
-    if body.chunk_top_k is not None:
-        param_kwargs["chunk_top_k"] = body.chunk_top_k
-    if body.max_entity_tokens is not None:
-        param_kwargs["max_entity_tokens"] = body.max_entity_tokens
-    if body.max_relation_tokens is not None:
-        param_kwargs["max_relation_tokens"] = body.max_relation_tokens
-    if body.max_total_tokens is not None:
-        param_kwargs["max_total_tokens"] = body.max_total_tokens
-    if body.hl_keywords:
-        param_kwargs["hl_keywords"] = body.hl_keywords
-    if body.ll_keywords:
-        param_kwargs["ll_keywords"] = body.ll_keywords
-    if body.conversation_history:
-        param_kwargs["conversation_history"] = body.conversation_history
-    if body.history_turns is not None:
-        param_kwargs["history_turns"] = body.history_turns
-    if body.user_prompt is not None and body.user_prompt.strip():
-        param_kwargs["user_prompt"] = body.user_prompt.strip()
-    if body.enable_rerank is not None:
-        param_kwargs["enable_rerank"] = body.enable_rerank
-    if body.tag_filter is not None:
-        param_kwargs["tag_filter"] = body.tag_filter
-    if body.doc_filter is not None:
-        param_kwargs["doc_filter"] = body.doc_filter
-    return param_kwargs
-
-
-def _query_param_ctor_fields(query_param_cls: Any) -> set[str] | None:
-    """Constructor-accepted field names for the installed ``QueryParam``.
-
-    Returns ``None`` when the fields cannot be introspected (non-dataclass),
-    in which case callers fall back to passing every kwarg through.
-    """
-    try:
-        return {f.name for f in dataclasses.fields(query_param_cls)}
-    except TypeError:
-        return None
-
-
-def _make_query_param(query_param_cls: Any, param_kwargs: dict[str, Any]) -> Any:
-    """Build a ``QueryParam`` that is resilient to upstream field churn.
-
-    LightRAG renames/removes ``QueryParam`` fields between minor releases
-    (e.g. ``history_turns`` was dropped in 1.5, and ``tag_filter`` is a Twin
-    extension never present upstream). Passing such a kwarg straight to the
-    constructor raises ``TypeError`` and 500s the whole query endpoint. We
-    instead route only constructor-known kwargs through ``__init__`` and apply
-    the rest as runtime attributes, so downstream code that understands them
-    still sees them and the request never crashes.
-    """
-    fields = _query_param_ctor_fields(query_param_cls)
-    if fields is None:
-        return query_param_cls(**param_kwargs)
-
-    ctor_kwargs = {k: v for k, v in param_kwargs.items() if k in fields}
-    extra_kwargs = {k: v for k, v in param_kwargs.items() if k not in fields}
-    param = query_param_cls(**ctor_kwargs)
-    for key, value in extra_kwargs.items():
-        setattr(param, key, value)
-    return param
 
 
 def _answer_chunk_to_text(chunk: Any) -> str:
@@ -1816,5 +1678,7 @@ __all__ = [
     "TwinQueryBody",
     "TwinQueryDataResponse",
     "TwinQueryResponse",
+    "_make_query_param",
+    "_query_param_kwargs",
     "build_twin_query_router",
 ]
