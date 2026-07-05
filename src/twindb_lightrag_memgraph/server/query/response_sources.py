@@ -6,8 +6,14 @@ import asyncio
 import logging
 from typing import Any
 
+from .._lightrag_compat import (
+    GraphAnswerEnvelopeError,
+    build_sources_from_raw_data,
+    collect_chunk_ids,
+)
 from .doc_lookup import (
     _chunk_to_meta,
+    _resolve_chunk_to_doc_id,
     _resolve_doc_for_chunk,
     _resolve_doc_for_file_path,
     _safe_get_score,
@@ -134,6 +140,38 @@ async def _filter_sources_by_advanced_filters(
     return kept, has_unverified
 
 
+async def _build_envelope_sources(
+    rag: Any,
+    body: Any,
+    folder: str,
+    envelope: Any,
+    fetch_doc_tags: Any,
+) -> tuple[list, bool]:
+    """Project + filter sources from an aquery_llm envelope."""
+    chunk_ids = collect_chunk_ids(envelope or {})
+    chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
+    try:
+        sources = build_sources_from_raw_data(envelope or {}, chunk_to_doc)
+    except GraphAnswerEnvelopeError as exc:
+        logger.warning(
+            "twin_query: aquery_llm references unprojectable, surfacing empty "
+            "sources + source_projection_failed status rather than "
+            "reconstructing from a second vector pass: %s",
+            exc,
+        )
+        return [], False
+    await _enrich_sources_doc_ids_from_file_path(rag, sources)
+    sources = _filter_sources_by_min_score(sources, body.min_score)
+    filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
+        sources,
+        tag_filter=body.tag_filter,
+        doc_filter=body.doc_filter,
+        folder=folder,
+        fetch_doc_tags=fetch_doc_tags,
+    )
+    return filtered, not filter_projection_incomplete
+
+
 async def _build_sources_legacy_fallback(
     rag: Any, query: str, top_k: int
 ) -> list[dict[str, Any]]:
@@ -190,6 +228,7 @@ async def _build_sources_legacy_fallback(
 
 
 __all__ = [
+    "_build_envelope_sources",
     "_build_sources_legacy_fallback",
     "_enrich_sources_doc_ids_from_file_path",
     "_filter_sources_by_advanced_filters",

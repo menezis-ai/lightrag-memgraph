@@ -64,13 +64,10 @@ from .._lightrag_compat import (
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
     GraphAnswerEnvelopeError,
-    build_sources_from_raw_data,
     classify_answer,
     classify_aquery_llm_result,
-    collect_chunk_ids,
 )
 from .activity import _actor_from_request, _record_retrieval_activity
-from .doc_lookup import _resolve_chunk_to_doc_id
 from .models import TwinQueryBody, TwinQueryDataResponse, TwinQueryResponse
 from .params import _make_query_param, _query_param_kwargs
 from .query_data import (
@@ -89,6 +86,7 @@ from .request_scope import (
     _retrieval_scope,
 )
 from .response_sources import (
+    _build_envelope_sources as _build_envelope_sources_impl,
     _build_sources_legacy_fallback as _build_sources_legacy_fallback_impl,
     _enrich_sources_doc_ids_from_file_path as _enrich_sources_doc_ids_from_file_path_impl,
     _filter_sources_by_advanced_filters as _filter_sources_by_advanced_filters_impl,
@@ -456,30 +454,13 @@ async def _build_envelope_sources(
     source_projection_failed`` rather than a silent ``grounded`` + ``[]`` (which
     would look like a genuinely source-less answer). No second vector pass — the
     structural lie this path deliberately avoids."""
-    chunk_ids = collect_chunk_ids(envelope or {})
-    chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
-    try:
-        sources = build_sources_from_raw_data(envelope or {}, chunk_to_doc)
-    except GraphAnswerEnvelopeError as exc:
-        logger.warning(
-            "twin_query: aquery_llm references unprojectable, surfacing empty "
-            "sources + source_projection_failed status rather than "
-            "reconstructing from a second vector pass: %s",
-            exc,
-        )
-        return [], False
-    await _enrich_sources_doc_ids_from_file_path(rag, sources)
-    sources = _filter_sources_by_min_score(sources, body.min_score)
-    filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
-        sources,
-        tag_filter=body.tag_filter,
-        doc_filter=body.doc_filter,
-        folder=folder,
+    return await _build_envelope_sources_impl(
+        rag,
+        body,
+        folder,
+        envelope,
+        _fetch_doc_graph_tags,
     )
-    # If advanced filters are active but could not be validated against all
-    # projected sources (missing doc id/name candidates), keep a conservative
-    # posture and mark the projection as incomplete.
-    return filtered, not filter_projection_incomplete
 
 
 async def _generate_twin_query_stream(
