@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
-from .doc_lookup import _resolve_doc_for_file_path
+from .doc_lookup import (
+    _chunk_to_meta,
+    _resolve_doc_for_chunk,
+    _resolve_doc_for_file_path,
+    _safe_get_score,
+)
 from .source_filters import (
+    UNKNOWN_SOURCE_NAME,
     _doc_filter_terms,
     _doc_tags_match_filter,
     _source_doc_candidates,
@@ -14,6 +21,8 @@ from .source_filters import (
     _source_matches_doc_filter,
     _tag_filter_terms,
 )
+
+logger = logging.getLogger(__name__)
 
 _PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
 
@@ -125,7 +134,63 @@ async def _filter_sources_by_advanced_filters(
     return kept, has_unverified
 
 
+async def _build_sources_legacy_fallback(
+    rag: Any, query: str, top_k: int
+) -> list[dict[str, Any]]:
+    """LEGACY: separate vector pass to assemble a sources list.
+
+    DEPRECATED on the nominal /query and /stream paths since TR-RET-02
+    step 2 / audit C3. Kept ONLY as a compat reference for tests in
+    isolation; it MUST NOT be invoked from a successful aquery_llm
+    response path because that reintroduces the structural lie this
+    PR is closing (the displayed sources used to be the result of a
+    second retrieval, not the chunks LightRAG actually grounded on).
+
+    The nominal source-of-truth now lives in
+    :func:`server._lightrag_compat.build_sources_from_raw_data` which
+    maps ``data.references`` from the aquery_llm envelope.
+    """
+    try:
+        chunks_vdb = getattr(rag, "chunks_vdb", None)
+        if chunks_vdb is None:
+            return []
+        raw = await chunks_vdb.query(query, top_k=top_k)
+    except Exception:
+        logger.exception("twin_query: chunks_vdb.query failed - empty sources")
+        return []
+
+    if not isinstance(raw, list):
+        raw = []
+
+    sources: list[dict[str, Any]] = []
+    total = len(raw)
+    for rank, chunk in enumerate(raw[:top_k]):
+        if not isinstance(chunk, dict):
+            continue
+        chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
+        file_path = (
+            chunk.get("file_path")
+            or chunk.get("source")
+            or chunk_id
+            or UNKNOWN_SOURCE_NAME
+        )
+        doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
+        sources.append(
+            {
+                "n": rank + 1,
+                "type": "file",
+                "name": str(file_path),
+                "meta": _chunk_to_meta(chunk),
+                "score": _safe_get_score(chunk, rank, total),
+                "doc_id": doc_id,
+                "chunk_id": str(chunk_id) or None,
+            }
+        )
+    return sources
+
+
 __all__ = [
+    "_build_sources_legacy_fallback",
     "_enrich_sources_doc_ids_from_file_path",
     "_filter_sources_by_advanced_filters",
     "_filter_sources_by_min_score",
