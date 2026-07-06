@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from .doc_lookup import _resolve_doc_for_chunk, _resolve_doc_for_file_path
@@ -41,34 +42,34 @@ def _file_path_candidates_for_query_data_row(row: dict[str, Any]) -> list[str]:
 
 
 async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
-    doc_ids = set()
-    for chunk_id in chunk_ids:
-        doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
-        if doc_id:
-            doc_ids.add(doc_id)
-    return doc_ids
+    if not chunk_ids:
+        return set()
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in chunk_ids)
+    )
+    return {doc_id for doc_id in resolved if doc_id}
 
 
 async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
-    doc_ids = set()
-    for file_path in file_paths:
-        doc_id = await _resolve_doc_for_file_path(rag, file_path)
-        if doc_id:
-            doc_ids.add(doc_id)
-    return doc_ids
+    if not file_paths:
+        return set()
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_file_path(rag, file_path) for file_path in file_paths)
+    )
+    return {doc_id for doc_id in resolved if doc_id}
 
 
 async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
     doc_ids = _direct_doc_ids_for_query_data_row(row)
-    doc_ids.update(
-        await _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row))
-    )
-    doc_ids.update(
-        await _doc_ids_from_file_paths(
+    chunk_doc_ids, file_doc_ids = await asyncio.gather(
+        _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row)),
+        _doc_ids_from_file_paths(
             rag,
             _file_path_candidates_for_query_data_row(row),
-        )
+        ),
     )
+    doc_ids.update(chunk_doc_ids)
+    doc_ids.update(file_doc_ids)
     return doc_ids
 
 

@@ -123,6 +123,22 @@ async def _filter_sources_by_advanced_filters(
         return sources, False
 
     tags_cache: dict[str, set[str]] = {}
+    if tag_required or tag_optional:
+        tag_doc_ids = list(
+            dict.fromkeys(
+                source["doc_id"]
+                for source in sources
+                if _source_matches_doc_filter(source, doc_filter)
+                and isinstance(source.get("doc_id"), str)
+                and source.get("doc_id")
+            )
+        )
+        if tag_doc_ids:
+            resolved_tags = await asyncio.gather(
+                *(fetch_doc_tags(doc_id, folder) for doc_id in tag_doc_ids)
+            )
+            tags_cache.update(zip(tag_doc_ids, resolved_tags))
+
     kept: list[dict[str, Any]] = []
     has_unverified = False
     for source in sources:
@@ -200,8 +216,8 @@ async def _build_sources_legacy_fallback(
     if not isinstance(raw, list):
         raw = []
 
-    sources: list[dict[str, Any]] = []
     total = len(raw)
+    projected_chunks: list[tuple[int, dict[str, Any], str, str]] = []
     for rank, chunk in enumerate(raw[:top_k]):
         if not isinstance(chunk, dict):
             continue
@@ -212,16 +228,29 @@ async def _build_sources_legacy_fallback(
             or chunk_id
             or UNKNOWN_SOURCE_NAME
         )
-        doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
+        projected_chunks.append((rank, chunk, str(chunk_id), str(file_path)))
+
+    if not projected_chunks:
+        return []
+
+    doc_ids = await asyncio.gather(
+        *(
+            _resolve_doc_for_chunk(rag, chunk_id)
+            for _, _, chunk_id, _ in projected_chunks
+        )
+    )
+
+    sources: list[dict[str, Any]] = []
+    for (rank, chunk, chunk_id, file_path), doc_id in zip(projected_chunks, doc_ids):
         sources.append(
             {
                 "n": rank + 1,
                 "type": "file",
-                "name": str(file_path),
+                "name": file_path,
                 "meta": _chunk_to_meta(chunk),
                 "score": _safe_get_score(chunk, rank, total),
                 "doc_id": doc_id,
-                "chunk_id": str(chunk_id) or None,
+                "chunk_id": chunk_id or None,
             }
         )
     return sources
