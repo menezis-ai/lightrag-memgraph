@@ -6,9 +6,8 @@
  *   - submit emits an AddSourceAction; the host owns the toast lifecycle
  *   - useModalA11y attached via the hook port from S1
  *
- * The upload progress animation (setInterval bumping `progress` by 4% every
- * 320ms) is preserved — for tests we keep timers real-time and rely on
- * Vitest fake timers when we want to observe transitions.
+ * Valid picked files become ready immediately; the host-level submit mutation
+ * owns the real network upload state.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -224,22 +223,9 @@ function fileUploadFromFile(
   rawFiles.set(id, file);
   return {
     ...base,
-    state: 'uploading',
-    progress: 0,
-    uploaded: 0,
-  };
-}
-
-function advanceUploadProgress(file: FileUpload): FileUpload {
-  if (file.state !== 'uploading') return file;
-  const progress = Math.min(100, (file.progress ?? 0) + 4);
-  if (progress >= 100) {
-    return { ...file, state: 'uploaded', progress: 100 };
-  }
-  return {
-    ...file,
-    progress,
-    uploaded: (progress / 100) * file.size,
+    state: 'uploaded',
+    progress: 100,
+    uploaded: base.size,
   };
 }
 
@@ -354,15 +340,6 @@ export function AddSourceModal({
   const [drag, setDrag] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
-
-  // Animate the uploading file's progress (4%/tick @ 320ms — same as proto).
-  useEffect(() => {
-    if (!open) return;
-    const tick = setInterval(() => {
-      setFiles((fs) => fs.map(advanceUploadProgress));
-    }, 320);
-    return () => clearInterval(tick);
-  }, [open]);
 
   const tagSugg = useMemo(() => {
     return tagCatalog
