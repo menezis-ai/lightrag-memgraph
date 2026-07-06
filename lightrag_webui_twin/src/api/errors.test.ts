@@ -22,6 +22,18 @@ describe('mapCreateEntityError', () => {
     expect(out.message.toLowerCase()).toContain('already exists');
   });
 
+  it('maps a 409 pipeline-busy refusal to busy, not duplicate', () => {
+    const err = new ApiError('Conflict', 409, {
+      detail: 'Pipeline is busy. Please try again later',
+    });
+    const out = mapCreateEntityError(err, 'Memgraph');
+    expect(out.kind).toBe('busy');
+    expect(out.message).toBe(
+      'Action not taken while creating the entity: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
+    );
+    expect(out.message).not.toContain('already exists');
+  });
+
   it('maps a 422 to the validation kind', () => {
     const err = new ApiError('Unprocessable', 422, {
       detail: [{ loc: ['body', 'name'], msg: 'empty' }],

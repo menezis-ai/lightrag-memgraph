@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AddSourceModal,
@@ -184,6 +184,128 @@ describe('AddSourceModal — files', () => {
     expect(screen.getByText('oversized.pdf')).toBeInTheDocument();
     expect(screen.getByText('Exceeds 50 MB')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
+  });
+
+  it('submits every file from a large batch upload', async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn<(a: AddSourceAction) => void>();
+    try {
+      render(<AddSourceModal {...defaultProps()} onSubmit={onSubmit} />);
+      const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+      const batch = Array.from(
+        { length: 12 },
+        (_, i) =>
+          new File([`payload-${i}`], `batch-${i + 1}.txt`, {
+            type: 'text/plain',
+            lastModified: i + 1,
+          }),
+      );
+
+      fireEvent.change(input, { target: { files: batch } });
+      expect(screen.getByText('(12 added)')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25 * 320);
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Add 12 sources' }));
+
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      const action = onSubmit.mock.calls[0][0];
+      expect(action.rawFiles).toHaveLength(12);
+      expect(action.fileOptions).toHaveLength(12);
+      expect(action.rawFiles.map((file) => file.name)).toEqual(
+        batch.map((file) => file.name),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps same-name files as separate upload payloads', async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn<(a: AddSourceAction) => void>();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(<AddSourceModal {...defaultProps()} onSubmit={onSubmit} />);
+      const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+      const batch = [
+        new File(['first'], 'runbook.md', {
+          type: 'text/markdown',
+          lastModified: 1,
+        }),
+        new File(['second'], 'runbook.md', {
+          type: 'text/markdown',
+          lastModified: 2,
+        }),
+      ];
+
+      fireEvent.change(input, { target: { files: batch } });
+      expect(screen.getByText('(2 added)')).toBeInTheDocument();
+      expect(consoleError).not.toHaveBeenCalledWith(
+        expect.stringContaining('Encountered two children with the same key'),
+        expect.anything(),
+        expect.anything(),
+      );
+      const classificationSelects = screen.getAllByTestId(
+        'addsource-classification-runbook.md',
+      );
+      fireEvent.change(classificationSelects[0], { target: { value: 'C4' } });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25 * 320);
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Add 2 sources' }));
+
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      const action = onSubmit.mock.calls[0][0];
+      expect(action.rawFiles).toHaveLength(2);
+      expect(action.rawFiles).toEqual(batch);
+      expect(action.fileOptions).toEqual([
+        { name: 'runbook.md', classification: 'C4' },
+        { name: 'runbook.md' },
+      ]);
+    } finally {
+      consoleError.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('removes only the selected same-name file row without leaking its options', async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn<(a: AddSourceAction) => void>();
+    try {
+      render(<AddSourceModal {...defaultProps()} onSubmit={onSubmit} />);
+      const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+      const first = new File(['first'], 'runbook.md', {
+        type: 'text/markdown',
+        lastModified: 1,
+      });
+      const second = new File(['second'], 'runbook.md', {
+        type: 'text/markdown',
+        lastModified: 2,
+      });
+
+      fireEvent.change(input, { target: { files: [first, second] } });
+      const classificationSelects = screen.getAllByTestId(
+        'addsource-classification-runbook.md',
+      );
+      fireEvent.change(classificationSelects[0], { target: { value: 'C4' } });
+      fireEvent.click(screen.getAllByRole('button', { name: 'Remove runbook.md' })[0]);
+
+      expect(screen.getByText('(1 added)')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25 * 320);
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Add 1 source' }));
+
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      const action = onSubmit.mock.calls[0][0];
+      expect(action.rawFiles).toEqual([second]);
+      expect(action.fileOptions).toEqual([{ name: 'runbook.md' }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

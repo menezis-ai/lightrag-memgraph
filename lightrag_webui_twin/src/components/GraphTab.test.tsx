@@ -779,6 +779,32 @@ describe('GraphTab — lifecycle: Add entity', () => {
     expect(screen.getByTestId('kg-add-entity-form')).toBeInTheDocument();
   });
 
+  it('surfaces a 409 pipeline-busy refusal as a global toast', async () => {
+    stubCreateEntityResponse(409, {
+      detail: 'Pipeline is busy. Please try again later',
+    });
+    const onToast = vi.fn();
+    renderWithClient(<GraphTab {...defaultProps()} onToast={onToast} />);
+    await userEvent.click(screen.getByTestId('kg-add-entity-btn'));
+    await userEvent.type(
+      screen.getByTestId('kg-add-entity-name'),
+      'New Entity',
+    );
+    await userEvent.click(screen.getByTestId('kg-add-entity-submit'));
+
+    const err = await screen.findByTestId('kg-add-entity-error');
+    expect(err).toHaveTextContent('Action not taken');
+    expect(err).toHaveTextContent('ingestion pipeline is busy');
+    expect(err).not.toHaveTextContent('already exists');
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Graph update failed',
+        sub: 'Action not taken while creating the entity: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
+      }),
+    );
+  });
+
   it('surfaces a 422 validation error with a payload-shape hint', async () => {
     stubCreateEntityResponse(422, {
       detail: [{ loc: ['body', 'name'], msg: 'empty' }],

@@ -79,6 +79,11 @@ export interface FileUploadOptions {
 }
 
 export interface FileUpload {
+  /**
+   * Stable client-side key for one picked File. File names are not unique
+   * enough for batch uploads: two directories can contain the same basename.
+   */
+  id?: string;
   name: string;
   /** Megabytes (1 decimal place). Retained for backwards compat with
    *  fixtures; display uses `sizeBytes` when present so files smaller
@@ -195,18 +200,28 @@ function validateFile(file: File): string | null {
   return errors.length ? errors.join(' · ') : null;
 }
 
-function fileUploadFromFile(file: File, rawFiles: Map<string, File>): FileUpload {
+function fileUploadKey(file: File, index: number): string {
+  const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return `${path || file.name}:${file.size}:${file.lastModified}:${index}`;
+}
+
+function fileUploadFromFile(
+  file: File,
+  id: string,
+  rawFiles: Map<string, File>,
+): FileUpload {
   const error = validateFile(file);
   const base = {
+    id,
     name: file.name,
     size: Number((file.size / (1024 * 1024)).toFixed(1)),
     sizeBytes: file.size,
   };
   if (error) {
-    rawFiles.delete(file.name);
+    rawFiles.delete(id);
     return { ...base, state: 'error', error };
   }
-  rawFiles.set(file.name, file);
+  rawFiles.set(id, file);
   return {
     ...base,
     state: 'uploading',
@@ -314,16 +329,20 @@ export function AddSourceModal({
   const [files, setFiles] = useState<readonly FileUpload[]>(initialFiles);
   // Raw File objects parallel to `files` — kept out of state shape
   // proper because they're not serializable + the test fixtures only
-  // care about the metadata. Keyed by display name so removeFile can
+  // care about the metadata. Keyed by stable per-pick id so same-name files in
+  // large batch uploads do not overwrite or disappear before submission.
   // drop both metadata + binary in one operation.
   const rawFilesRef = useRef<Map<string, File>>(new Map());
+  const rawFileSequenceRef = useRef(0);
 
   const appendDroppedFiles = (incoming: FileList | null): void => {
     const incomingArr = Array.from(incoming || []);
     if (incomingArr.length === 0) return;
-    const dropped = incomingArr.map((file) =>
-      fileUploadFromFile(file, rawFilesRef.current),
-    );
+    const dropped = incomingArr.map((file) => {
+      const id = fileUploadKey(file, rawFileSequenceRef.current);
+      rawFileSequenceRef.current += 1;
+      return fileUploadFromFile(file, id, rawFilesRef.current);
+    });
     setFiles((current) => [...current, ...dropped]);
   };
   // Linked sources are gated until the RAG 1.5 connector lands — see the
@@ -360,13 +379,17 @@ export function AddSourceModal({
 
   if (!open) return null;
 
-  const removeFile = (n: string) => {
-    rawFilesRef.current.delete(n);
-    setFiles(files.filter((f) => f.name !== n));
+  const removeFile = (file: FileUpload) => {
+    if (file.id) rawFilesRef.current.delete(file.id);
+    else rawFilesRef.current.delete(file.name);
+    setFiles(files.filter((f) => f !== file));
   };
-  const updateFileOptions = (name: string, patch: Partial<FileUploadOptions>) => {
+  const updateFileOptions = (
+    file: FileUpload,
+    patch: Partial<FileUploadOptions>,
+  ) => {
     setFiles((current) =>
-      current.map((f) => (f.name === name ? { ...f, ...patch } : f)),
+      current.map((f) => (f === file ? { ...f, ...patch } : f)),
     );
   };
   const addTag = (t: string) => {
@@ -391,7 +414,7 @@ export function AddSourceModal({
     // (host App) can correlate progress feedback per file.
     const uploadedFiles = files.filter((f) => f.state === 'uploaded');
     const rawFiles = uploadedFiles
-      .map((f) => rawFilesRef.current.get(f.name))
+      .map((f) => rawFilesRef.current.get(f.id ?? f.name))
       .filter((f): f is File => f !== undefined);
     // Per-file options aligned with `uploadedFiles` order — classification-only.
     const fileOptions = uploadedFiles.map((f) => {
@@ -518,7 +541,7 @@ export function AddSourceModal({
               <div className="file-list" style={{ marginTop: 6 }}>
                 {files.map((f) => (
                   <div
-                    key={f.name}
+                    key={f.id ?? f.name}
                     className={f.state === 'error' ? 'file-row error' : 'file-row'}
                   >
                     <Icon name="file-text" size={15} className="file-icon" />
@@ -556,7 +579,7 @@ export function AddSourceModal({
                           className="file-classification-control"
                           value={fileClassification(f)}
                           onChange={(e) =>
-                            updateFileOptions(f.name, {
+                            updateFileOptions(f, {
                               classification:
                                 e.target.value === ''
                                   ? undefined
@@ -581,7 +604,7 @@ export function AddSourceModal({
                     <button
                       type="button"
                       className="x-btn"
-                      onClick={() => removeFile(f.name)}
+                      onClick={() => removeFile(f)}
                       aria-label={`Remove ${f.name}`}
                     >
                       <Icon name="x" size={14} />

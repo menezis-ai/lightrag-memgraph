@@ -25,7 +25,7 @@ function apiError(status: number, body: unknown = null, path = '/twin/api/x'): A
 
 describe('describeError / userErrorMessage', () => {
   it('never leaks the arrow-style technical string into the message', () => {
-    for (const status of [400, 401, 403, 404, 409, 413, 422, 429, 500, 502, 503]) {
+    for (const status of [400, 401, 403, 404, 409, 413, 422, 423, 429, 500, 502, 503]) {
       const out = describeError(apiError(status));
       expect(out.message).not.toContain('→');
       expect(out.message).not.toContain(String(status));
@@ -71,6 +71,28 @@ describe('describeError / userErrorMessage', () => {
     );
     expect(userErrorMessage(apiError(422, { detail: "Invalid folder id 'a b'" }))).toBe(
       "Invalid folder id 'a b'",
+    );
+  });
+
+  it('maps pipeline-busy conflicts to explicit action-not-taken copy', () => {
+    const msg = userErrorMessage(
+      apiError(409, { detail: 'Pipeline is busy. Please try again later' }),
+      { action: 'deleting a.pdf' },
+    );
+    expect(msg).toBe(
+      'Action not taken while deleting a.pdf: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
+    );
+  });
+
+  it('maps lock-style pipeline refusals the same way', () => {
+    const msg = userErrorMessage(
+      apiError(423, {
+        detail: 'Document scan is classifying files. Wait for the classification phase to finish before submitting new work.',
+      }),
+      { action: 'creating the relation' },
+    );
+    expect(msg).toBe(
+      'Action not taken while creating the relation: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
     );
   });
 
@@ -148,6 +170,17 @@ describe('uploadFailureMessage / unsupportedFileMessage', () => {
   it('maps 409 to the duplicate copy (detail preferred)', () => {
     expect(uploadFailureMessage(apiError(409))).toBe(
       'A document with this name already exists.',
+    );
+  });
+
+  it('maps upload 409 pipeline-busy to explicit action-not-taken copy', () => {
+    expect(
+      uploadFailureMessage(
+        apiError(409, { detail: 'Pipeline is busy. Please try again later' }),
+        'a.pdf',
+      ),
+    ).toBe(
+      'Action not taken while uploading the file: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
     );
   });
 

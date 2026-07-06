@@ -839,6 +839,26 @@ describe('AppShell — documents tab derivations', () => {
     expect(screen.getByTestId('dt-page-fetching')).toHaveTextContent('true');
   });
 
+  it('treats stale page data as a page transition and blocks repeated paging clicks', async () => {
+    const user = userEvent.setup();
+    queriesState.docs.data = {
+      items: [makeDoc({ doc_id: 'a' })],
+      total: 75,
+      page: 1,
+      next_cursor: '2',
+    };
+    renderShell();
+
+    await user.click(screen.getByText('next-page'));
+    expect(screen.getByTestId('dt-page')).toHaveTextContent('2');
+    expect(screen.getByTestId('dt-page-fetching')).toHaveTextContent('true');
+
+    await user.click(screen.getByText('next-page'));
+    expect(screen.getByTestId('dt-page')).toHaveTextContent('2');
+    await user.click(screen.getByText('prev-page'));
+    expect(screen.getByTestId('dt-page')).toHaveTextContent('2');
+  });
+
   it('changing a filter resets the page back to 1', async () => {
     const user = userEvent.setup();
     queriesState.docs.data = {

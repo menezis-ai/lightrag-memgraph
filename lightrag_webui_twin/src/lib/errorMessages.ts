@@ -74,6 +74,19 @@ function forbiddenMessage(detail: string | undefined): string {
   return 'You do not have permission to perform this action. Contact Twincore Team if you believe you should.';
 }
 
+export function isPipelineBusyDetail(detail: string | undefined): boolean {
+  return Boolean(
+    detail &&
+      /pipeline|ingestion|document scan|document processing|scanning|processing loop|destructive job/i.test(detail) &&
+      /busy|classifying|clearing|deleting|in flight|running|wait/i.test(detail),
+  );
+}
+
+function pipelineBusyMessage(action?: string): string {
+  const suffix = action ? ` while ${action}` : '';
+  return `Action not taken${suffix}: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.`;
+}
+
 function statusMessage(
   status: number,
   detail: string | undefined,
@@ -90,7 +103,12 @@ function statusMessage(
     case 404:
       return detail ?? 'The requested item could not be found. It may have been removed.';
     case 409:
+      if (isPipelineBusyDetail(detail)) return pipelineBusyMessage(ctx?.action);
       return detail ?? 'This conflicts with an existing item.';
+    case 423:
+      return isPipelineBusyDetail(detail)
+        ? pipelineBusyMessage(ctx?.action)
+        : detail ?? 'This item is currently locked. Please retry in a moment.';
     case 413:
       return 'This file is too large.';
     case 429:
@@ -177,6 +195,9 @@ export function uploadFailureMessage(err: unknown, fileName?: string): string {
       return fileName ? `${fileName} is too large.` : 'This file is too large.';
     }
     if (err.status === 409) {
+      if (isPipelineBusyDetail(detail)) {
+        return statusMessage(err.status, detail, { action: 'uploading the file' });
+      }
       return detail ?? 'A document with this name already exists.';
     }
     return statusMessage(err.status, detail, { action: 'uploading the file' });

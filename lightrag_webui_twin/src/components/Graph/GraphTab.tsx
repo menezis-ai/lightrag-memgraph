@@ -400,6 +400,11 @@ export function GraphTab({
                   return;
                 }
                 setAddEntityError(mapped.message);
+                onToast?.({
+                  kind: 'error',
+                  title: 'Graph update failed',
+                  sub: mapped.message,
+                });
               },
             });
           }}

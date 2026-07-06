@@ -400,6 +400,28 @@ describe('onDeleteSingle', () => {
       }),
     );
   });
+
+  it('pipeline-busy 409 → explicit action-not-taken toast', async () => {
+    deleteDocumentMock.mockRejectedValueOnce(
+      new ApiError('DELETE /documents/doc-1 → 409 Conflict', 409, {
+        detail: 'Pipeline is busy. Please try again later',
+      }),
+    );
+    const { result, pushToast } = setup();
+    await act(async () => {
+      await result.current.onDeleteSingle({
+        doc_id: 'doc-1',
+        file_path: 'a.pdf',
+      });
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Delete failed',
+        sub: 'Action not taken while deleting a.pdf: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
+      }),
+    );
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -780,6 +802,26 @@ describe('onAddSourceSubmit — file upload path', () => {
         kind: 'error',
         title: '1 upload failed',
         sub: '0 uploaded · 1 failed — archive.zip: ZIP format is not supported',
+      }),
+    );
+  });
+
+  it('pipeline-busy upload refusal is surfaced in the batch failure toast', async () => {
+    uploadDocumentMock.mockRejectedValueOnce(
+      new ApiError('POST /documents/upload → 409 Conflict', 409, {
+        detail: 'Pipeline is busy. Please try again later',
+      }),
+    );
+    const { result, pushToast } = setup();
+    await act(async () => {
+      await result.current.onAddSourceSubmit(fileAction());
+      await Promise.resolve();
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: '1 upload failed',
+        sub: '0 uploaded · 1 failed — a.txt: Action not taken while uploading the file: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
       }),
     );
   });
