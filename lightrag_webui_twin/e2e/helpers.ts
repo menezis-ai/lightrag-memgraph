@@ -40,6 +40,23 @@ export async function setMswScenario(page: Page, scenario: Record<string, unknow
   }, scenario);
 }
 
+export async function setMswQuota(page: Page, quota: Record<string, unknown>) {
+  await page.evaluate(async (body) => {
+    await fetch('/__e2e/quota', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await (
+      window as Window & {
+        __TWIN_E2E_QUERY_CLIENT?: {
+          invalidateQueries: (args: { queryKey: readonly string[] }) => Promise<unknown>;
+        };
+      }
+    ).__TWIN_E2E_QUERY_CLIENT?.invalidateQueries({ queryKey: ['quota'] });
+  }, quota);
+}
+
 export async function getMswStats(
   page: Page,
 ): Promise<{

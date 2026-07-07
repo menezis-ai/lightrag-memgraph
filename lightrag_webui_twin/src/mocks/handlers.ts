@@ -1120,6 +1120,11 @@ export const handlers = [
     persistScenario();
     return HttpResponse.json({ ok: true, scenario: e2eScenario });
   }),
+  http.post(`${ANY}/__e2e/quota`, async ({ request }) => {
+    const patch = (await request.json()) as Partial<MockQuotaState>;
+    setMockQuotaState(patch);
+    return HttpResponse.json({ ok: true, quota: quotaState });
+  }),
   http.get(`${ANY}/__e2e/stats`, () =>
     HttpResponse.json({
       approveCalls: e2eStats.approveCalls,
