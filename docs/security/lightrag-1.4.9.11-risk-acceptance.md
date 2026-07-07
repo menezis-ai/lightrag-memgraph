@@ -10,8 +10,9 @@ Scope: `lightrag-hku==1.4.9.11` production target.
 
 ## Decision
 
-The project temporarily accepts the residual risk of the two known LightRAG
-1.4.9.11 JWT advisories while keeping the production pin on
+The project temporarily accepts the residual risk of the known LightRAG
+1.4.9.11 JWT advisories and its `python-jose` / `ecdsa` transitive crypto
+advisory while keeping the production pin on
 `lightrag-hku==1.4.9.11`.
 
 Accepted advisories:
@@ -20,6 +21,7 @@ Accepted advisories:
 | --- | --- | --- |
 | `CVE-2026-30762` / `GHSA-mcww-4hxq-hfr3` | LightRAG native hardcoded JWT secret | Accepted temporarily with compensating controls |
 | `CVE-2026-39413` / `GHSA-8ffj-4hx4-9pgf` | LightRAG native JWT algorithm confusion | Accepted temporarily with compensating controls |
+| `PYSEC-2026-1325` | `ecdsa==0.19.2`, transitive through `python-jose==3.5.0` required by LightRAG 1.4.9.11 | Accepted temporarily; no fixed version is reported by `pip-audit` for the pinned dependency set |
 
 This is not a permanent waiver. The intended remediation remains a LightRAG
 upgrade after compatibility validation.
@@ -31,8 +33,8 @@ pinned for this release train. Moving the pin now would reopen compatibility
 risk across the Memgraph storage patches, native route shims, query envelope
 projection, and WebUI route parity.
 
-The vulnerable upstream surface is authentication-related. The Twin KMS overlay
-has already added local controls around that area:
+The vulnerable upstream LightRAG surface is authentication-related. The Twin KMS
+overlay has already added local controls around that area:
 
 - production mode fails closed when `TWIN_ENV=production` or
   `TWIN_REQUIRE_AUTH=true`;
@@ -48,16 +50,23 @@ Residual risk remains if an operator exposes LightRAG native authentication
 without the production posture above. That deployment mode is not accepted for
 production.
 
+`PYSEC-2026-1325` is carried by `ecdsa==0.19.2` through the upstream
+`python-jose` dependency. Twin KMS does not use `python-jose` for local or IdP
+token validation; the Twin server uses `PyJWT` for that surface. The preferred
+remediation remains removing or replacing upstream `python-jose` when the
+LightRAG production pin can be upgraded or vendor-patched.
+
 ## CI Posture
 
-The Forgejo `pip-audit` gate keeps the two LightRAG advisories as explicit
-ignores and continues to fail on every other production dependency advisory.
+The Forgejo `pip-audit` gate keeps the accepted advisories as explicit ignores
+and continues to fail on every other production dependency advisory.
 
 The ignores must not be broadened beyond:
 
 ```text
 CVE-2026-30762
 CVE-2026-39413
+PYSEC-2026-1325
 ```
 
 ## Revisit Criteria
@@ -67,9 +76,10 @@ following happens:
 
 - the deployment needs LightRAG native auth directly exposed;
 - a public exploit materially changes the likelihood/impact assessment;
-- compatibility testing passes on a LightRAG version that fixes both advisories;
+- compatibility testing passes on a LightRAG version that fixes or removes the
+  accepted advisories;
 - a release candidate is promoted beyond the current temporary acceptance.
 
 Expected follow-up: test and plan the upgrade to a LightRAG version that fixes
-both advisories while preserving the Memgraph storage and WebUI overlay
-contracts.
+the native JWT advisories and removes the `python-jose` / `ecdsa` exposure while
+preserving the Memgraph storage and WebUI overlay contracts.

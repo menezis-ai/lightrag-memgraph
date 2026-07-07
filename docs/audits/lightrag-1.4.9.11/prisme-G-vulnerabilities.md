@@ -59,7 +59,7 @@ Outil: `pip-audit` scanne les environnements Python contre la Python Packaging A
 | `aiohttp` | 3.13.3 | medium | 10 advisories dont CVE-2026-22815 / GHSA-w2fm-2cpv-w7v5 | `<=3.13.3`, fix `3.13.4` | Header/trailer handling pouvant mener a epuisement memoire; autres GHSA corriges dans le meme patch. | Pin `aiohttp>=3.13.4`. |
 | `starlette` | 0.52.1 | high | PYSEC-2026-161 / GHSA-86qp-5c8j-p5mr | `<1.0.1`, fix `1.0.1` | Host header non valide pouvant contourner de l'auth basee sur `request.url.path`; Starlette est la base de FastAPI. | Attendre/valider compat FastAPI vers Starlette `1.0.1+`; en attendant, reverse proxy avec Host allowlist et middleware Host validation. |
 | `cryptography` | 46.0.4 | medium | GHSA-p423-j2cm-9vmq, GHSA-m959-cc7f-wv43, GHSA-r6ph-v2qm-q3c2 | fixes `46.0.5`, `46.0.6`, `46.0.7` | Buffer overflow et bugs crypto selon advisories. | Pin `cryptography>=46.0.7`. |
-| `ecdsa` | 0.19.1 | medium/high | CVE-2024-23342 / GHSA-wj6h-64fc-37mp; CVE-2026-33936 / GHSA-9f5j-8jwj-x28g | one no-fix; fix `0.19.2` | Risques crypto; dependance transitive via `python-jose[cryptography]`. | Eviter `python-jose` si possible; remplacer par lib maintenue compatible JWKS (`pyjwt[crypto]`, `authlib`) et pin `ecdsa>=0.19.2` tant que present. |
+| `ecdsa` | 0.19.1 / 0.19.2 | medium/high | CVE-2024-23342 / GHSA-wj6h-64fc-37mp; CVE-2026-33936 / GHSA-9f5j-8jwj-x28g; PYSEC-2026-1325 | older findings partly fixed by `0.19.2`; no fixed version reported for `PYSEC-2026-1325` | Risques crypto; dependance transitive via `python-jose[cryptography]`. | Eviter `python-jose` si possible; remplacer par lib maintenue compatible JWKS (`pyjwt[crypto]`, `authlib`). Tant que LightRAG 1.4.9.11 impose `python-jose`, documenter l'acceptation de risque et garder le gate `pip-audit` explicite. |
 | `requests` | 2.32.5 | medium | CVE-2026-25645 / GHSA-gc5v-m9x4-r6x2 | fix `2.33.0` | Vuln HTTP client selon advisory. | Pin `requests>=2.33.0`. |
 | `urllib3` | 2.6.3 | medium | PYSEC-2026-141/142, CVE-2026-44431/44432 | fix `2.7.0` | Vulns HTTP transport selon advisories. | Pin `urllib3>=2.7.0` et verifier compat `requests`. |
 | `python-dotenv` | 1.2.1 | low/medium | CVE-2026-28684 / GHSA-mf9w-mj56-hr94 | fix `1.2.2` | Parsing/env handling selon advisory. | Pin `python-dotenv>=1.2.2`. |
@@ -156,4 +156,3 @@ Strategie CVE:
 | Requetes HTTP sans timeout | serieux | Resilience insuffisante, risque DoS/lenteur fournisseur. |
 | F-string Cypher/AGE | serieux | Risque injection/corruption KG; deja comparable a incident Cassandre. |
 | Security policy upstream ambigue | cosmetic/serieux | Pas bloquant seul, mais renforce la necessite d'une gouvernance interne. |
-

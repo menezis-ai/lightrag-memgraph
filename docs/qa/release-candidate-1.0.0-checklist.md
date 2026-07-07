@@ -21,15 +21,16 @@ All gates below must be green before tagging the release candidate.
 | Real-backend E2E | Forgejo real backend workflow / staging evidence | Pending staging run |
 | Docker image build | Build release image from clean checkout | Pending image build |
 | Runtime smoke test | `python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json` against built image | Pending image smoke |
-| Python dependency audit | `uvx pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip --ignore-vuln CVE-2026-30762 --ignore-vuln CVE-2026-39413` | Pending final clean checkout run |
+| Python dependency audit | `uvx pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip --ignore-vuln CVE-2026-30762 --ignore-vuln CVE-2026-39413 --ignore-vuln PYSEC-2026-1325` | Pending final clean checkout run |
 | SonarQube quality gate | `/opt/homebrew/bin/sonar-scanner` using `sonar-project.properties` and `SONAR_TOKEN` | Pending scanner run |
 
 ## Risk Acceptance
 
 `lightrag-hku==1.4.9.11` remains pinned for this release train.
 
-The known advisories `CVE-2026-30762` and `CVE-2026-39413` are temporarily
-accepted with compensating controls, owner, rationale, and review date in:
+The known advisories `CVE-2026-30762`, `CVE-2026-39413`, and
+`PYSEC-2026-1325` are temporarily accepted with compensating controls, owner,
+rationale, and review date in:
 
 ```text
 docs/security/lightrag-1.4.9.11-risk-acceptance.md
