@@ -543,6 +543,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                   -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
         conds: list[str] = []
         if filters.doc_any and not filters.doc_all:
+            params["doc_any"] = sorted(filters.doc_any)
             base += "\n            WHERE d.id IN $doc_any"
         else:
             conds = _doc_conditions_single(filters, params, "d.id")
@@ -576,6 +577,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
                   -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
         if filters.doc_any and not filters.doc_all:
+            params["doc_any"] = sorted(filters.doc_any)
             base += "\n            WHERE d.id IN $doc_any"
         if filters.has_tag:
             tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
