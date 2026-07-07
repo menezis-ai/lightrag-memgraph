@@ -728,14 +728,15 @@ def _row_metadata(row) -> dict:
 
 
 @pytest.mark.integration
-async def test_http_upload_over_classified_is_rejected(gate_native_runtime):
-    """ING-1 contract: the operator's ``X-Twin-Classification`` header on the
-    NATIVE upload route must gate — FAILED row, audit event, zero chunks."""
+async def test_http_upload_over_classified_operator_header_is_rejected(
+    gate_native_runtime,
+):
+    """Operator upload sensitivity is categorically limited to C1/C2."""
     import httpx
 
     from twindb_lightrag_memgraph import _pool
 
-    rag, app, workspace = gate_native_runtime
+    _rag, app, workspace = gate_native_runtime
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -756,37 +757,11 @@ async def test_http_upload_over_classified_is_rejected(gate_native_runtime):
         )
         if response.status_code in (404, 405):
             pytest.skip("native /documents/upload route unavailable")
-        assert response.status_code == 200, response.text
-        track_id = response.json()["track_id"]
-        track_payload = await _poll_terminal_track(client, track_id)
+        assert response.status_code == 400, response.text
+        assert "accepts only C1 or C2" in response.json()["detail"]
 
-    documents = track_payload.get("documents", [])
-    assert documents, f"no DocStatus row appeared for track {track_id}"
-    assert len(documents) == 1
-    rejected_doc = documents[0]
-    assert str(rejected_doc["status"]).lower() == "failed"
-
-    doc_id = rejected_doc["id"]
-    row = await rag.doc_status.get_by_id(doc_id)
-    assert row is not None
-    metadata = _row_metadata(row)
-    assert metadata["classification_rejected"] is True
-    # ``apply_operator_classification`` normalises the operator's "C4"
-    # through the class aliases — the canonical ladder id is "Secret".
-    assert metadata["classification"]["class_id"] in ("C4", "Secret")
-    assert metadata["classification"]["source_format"] == "operator"
-    assert metadata["classification_ceiling"] == "C2"
-    summary = _row_field(row, "content_summary")
-    assert "Highly sensitive" not in summary
-    assert "content withheld" in summary
-
-    # Never enqueued: no content in full_docs, no chunks, no vectors.
-    assert await rag.full_docs.get_by_id(doc_id) is None
     assert await _count_vec_nodes(_pool, workspace) == 0
-
-    events = await _rejected_events()
-    assert len(events) == 1
-    assert events[0]["meta"]["classification"]["class_id"] in ("C4", "Secret")
+    assert await _rejected_events() == []
 
 
 @pytest.mark.integration

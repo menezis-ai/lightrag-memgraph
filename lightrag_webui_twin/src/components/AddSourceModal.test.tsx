@@ -14,7 +14,13 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AddSourceModal,
@@ -130,19 +136,20 @@ describe('AddSourceModal — files', () => {
     expect(
       screen.getByTestId('addsource-classification-oracle-config-guide.pdf'),
     ).toBe(select);
-    // C1..C4 options present with business-name labels.
+    const selectScope = within(select as HTMLElement);
+    // C1/C2 only: C3 is query-restricted and C4 is rejected by policy.
     expect(
-      screen.getByRole('option', { name: 'C1 · Public' }),
+      selectScope.getByRole('option', { name: 'C1 · Public' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('option', { name: 'C2 · Internal' }),
+      selectScope.getByRole('option', { name: 'C2 · Internal' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('option', { name: 'C3 · Confidential' }),
-    ).toBeInTheDocument();
+      selectScope.queryByRole('option', { name: 'C3 · Confidential' }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('option', { name: 'C4 · Secret' }),
-    ).toBeInTheDocument();
+      selectScope.queryByRole('option', { name: 'C4 · Secret' }),
+    ).not.toBeInTheDocument();
     // The LightRAG/RAG1.5 engine toggle is NOT restored.
     expect(screen.queryByText('RAG 1.5')).not.toBeInTheDocument();
   });
@@ -240,7 +247,7 @@ describe('AddSourceModal — files', () => {
       const classificationSelects = screen.getAllByTestId(
         'addsource-classification-runbook.md',
       );
-      fireEvent.change(classificationSelects[0], { target: { value: 'C4' } });
+      fireEvent.change(classificationSelects[0], { target: { value: 'C2' } });
 
       fireEvent.click(screen.getByRole('button', { name: 'Add 2 sources' }));
 
@@ -249,7 +256,7 @@ describe('AddSourceModal — files', () => {
       expect(action.rawFiles).toHaveLength(2);
       expect(action.rawFiles).toEqual(batch);
       expect(action.fileOptions).toEqual([
-        { name: 'runbook.md', classification: 'C4' },
+        { name: 'runbook.md', classification: 'C2' },
         { name: 'runbook.md' },
       ]);
     } finally {
@@ -274,7 +281,7 @@ describe('AddSourceModal — files', () => {
     const classificationSelects = screen.getAllByTestId(
       'addsource-classification-runbook.md',
     );
-    fireEvent.change(classificationSelects[0], { target: { value: 'C4' } });
+    fireEvent.change(classificationSelects[0], { target: { value: 'C2' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove runbook.md' })[0]);
 
     expect(screen.getByText('(1 added)')).toBeInTheDocument();
@@ -426,15 +433,57 @@ describe('AddSourceModal — submit & close', () => {
 
     await userEvent.selectOptions(
       screen.getByLabelText('Classification for oracle-config-guide.pdf'),
-      'C3',
+      'C2',
     );
     await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
 
     expect(p.onSubmit.mock.calls[0][0].fileOptions).toEqual([
       {
         name: 'oracle-config-guide.pdf',
-        classification: 'C3',
+        classification: 'C2',
       },
+    ]);
+  });
+
+  it('applies a C1/C2 bulk sensitivity only to uploadable files', async () => {
+    const p = defaultProps();
+    const secondFile = {
+      ...sampleUploaded,
+      name: 'unix-notes.txt',
+    };
+    const errorFile = {
+      ...sampleUploaded,
+      name: 'huge-archive.zip',
+      state: 'error' as const,
+      error: 'Exceeds 50 MB',
+    };
+    render(
+      <AddSourceModal
+        {...p}
+        initialFiles={[sampleUploaded, secondFile, errorFile]}
+      />,
+    );
+
+    await userEvent.selectOptions(
+      screen.getByLabelText('Sensitivity for all files'),
+      'C2',
+    );
+
+    expect(
+      screen.getByLabelText('Classification for oracle-config-guide.pdf'),
+    ).toHaveValue('C2');
+    expect(screen.getByLabelText('Classification for unix-notes.txt')).toHaveValue(
+      'C2',
+    );
+    expect(
+      screen.queryByLabelText('Classification for huge-archive.zip'),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Add 2 source/ }));
+
+    expect(p.onSubmit.mock.calls[0][0].fileOptions).toEqual([
+      { name: 'oracle-config-guide.pdf', classification: 'C2' },
+      { name: 'unix-notes.txt', classification: 'C2' },
     ]);
   });
 });

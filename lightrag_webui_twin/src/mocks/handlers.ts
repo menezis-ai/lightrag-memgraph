@@ -44,6 +44,7 @@ const MIP_CLASS_NAMES: Readonly<Record<string, string>> = {
   C3: 'Confidential',
   C4: 'Secret',
 };
+const OPERATOR_UPLOAD_CLASSES = new Set(['C1', 'C2']);
 
 const E2E_DOCUMENTS_STORAGE_KEY = 'twin.e2e.documentsState.v1';
 const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
@@ -1273,9 +1274,18 @@ export const handlers = [
         ? file.name
         : `uploaded-${Date.now()}.txt`;
     // Operator MIP classification rides as an HTTP header. Mirror the real
-    // backend: when present, the operator value lands on the doc as a
-    // structured classification payload (source_format 'operator').
+    // backend: operators may only choose C1/C2. C3/C4 uploads are rejected
+    // categorically before ingestion.
     const operatorClass = request.headers.get('X-Twin-Classification');
+    if (operatorClass && !OPERATOR_UPLOAD_CLASSES.has(operatorClass)) {
+      return HttpResponse.json(
+        {
+          detail:
+            'X-Twin-Classification accepts only C1 or C2; C3/C4 uploads are rejected by policy.',
+        },
+        { status: 400 },
+      );
+    }
     const classificationMeta =
       operatorClass && operatorClass in MIP_CLASS_NAMES
         ? {

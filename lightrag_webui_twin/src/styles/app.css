@@ -1396,6 +1396,27 @@ dialog::backdrop {
   gap: 6px;
   margin-top: 4px;
 }
+.bulk-classification-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.bulk-classification-row span {
+  font-weight: 650;
+}
+.bulk-classification-control {
+  height: 26px;
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  padding: 0 20px 0 8px;
+}
 .file-classification-control {
   display: inline-flex;
   align-items: center;

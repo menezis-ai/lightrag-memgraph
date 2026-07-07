@@ -38,6 +38,64 @@ test.describe('Add source validation', () => {
     expect(request.headers()['x-twin-classification']).toBe('C2');
   });
 
+  test('@documents @upload @classification bulk sensitivity is C1/C2 only and applies to every valid file', async ({
+    page,
+  }) => {
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await page.getByTestId('addsource-file-input').setInputFiles([
+      {
+        name: 'bulk-one.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# Bulk one'),
+      },
+      {
+        name: 'bulk-two.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('Bulk two'),
+      },
+    ]);
+
+    const bulkSelect = page.getByLabel('Sensitivity for all files');
+    await expect(bulkSelect.locator('option')).toHaveText([
+      'no MIP',
+      'C1 · Public',
+      'C2 · Internal',
+    ]);
+
+    const perFileSelect = page.getByTestId('addsource-classification-bulk-one.md');
+    await expect(perFileSelect.locator('option')).toHaveText([
+      'no MIP',
+      'C1 · Public',
+      'C2 · Internal',
+    ]);
+    await expect(page.getByRole('option', { name: 'C3 · Confidential' })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole('option', { name: 'C4 · Secret' })).toHaveCount(0);
+
+    await bulkSelect.selectOption('C2');
+    await expect(page.getByTestId('addsource-classification-bulk-one.md')).toHaveValue(
+      'C2',
+    );
+    await expect(page.getByTestId('addsource-classification-bulk-two.txt')).toHaveValue(
+      'C2',
+    );
+
+    const uploadHeaders: string[] = [];
+    page.on('request', (request) => {
+      if (
+        request.url().includes('/documents/upload') &&
+        request.method() === 'POST'
+      ) {
+        uploadHeaders.push(request.headers()['x-twin-classification'] ?? '');
+      }
+    });
+
+    await page.getByRole('button', { name: 'Add 2 sources' }).click();
+    await expect.poll(() => uploadHeaders.length).toBe(2);
+    expect(uploadHeaders).toEqual(['C2', 'C2']);
+  });
+
   test('@documents @upload @rc3 browse opens the native file chooser', async ({
     page,
   }) => {

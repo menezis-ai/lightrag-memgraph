@@ -31,4 +31,4 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv run --python 3.12 --locked --extra test-server pytest tests/test_server/test_folder_membership_routes.py
+      - run: uv run --python 3.12 --locked --extra test-server pytest tests/test_server/test_folder_membership_routes.py tests/test_classification_operator.py
