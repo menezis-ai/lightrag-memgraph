@@ -20,6 +20,7 @@ Accepted advisories:
 | --- | --- | --- |
 | `CVE-2026-30762` / `GHSA-mcww-4hxq-hfr3` | LightRAG native hardcoded JWT secret | Accepted temporarily with compensating controls |
 | `CVE-2026-39413` / `GHSA-8ffj-4hx4-9pgf` | LightRAG native JWT algorithm confusion | Accepted temporarily with compensating controls |
+| `PYSEC-2026-1325` / `CVE-2024-23342` / `GHSA-wj6h-64fc-37mp` | `python-jose` -> `ecdsa` Minerva timing attack (ECDSA P-256 signing/keygen) | Not exploitable here; unused transitive, see rationale |
 
 This is not a permanent waiver. The intended remediation remains a LightRAG
 upgrade after compatibility validation.
@@ -48,16 +49,34 @@ Residual risk remains if an operator exposes LightRAG native authentication
 without the production posture above. That deployment mode is not accepted for
 production.
 
+### `python-jose` / `ecdsa` (PYSEC-2026-1325)
+
+`python-jose[cryptography]` is declared by `lightrag-hku[api]` and drags in
+`ecdsa`, whose only reported advisory is the Minerva P-256 **timing** attack
+(`CVE-2024-23342`). Exposure here is effectively nil:
+
+- neither Twin nor LightRAG import `jose` anywhere — both sign/verify JWTs with
+  **PyJWT** (`cryptography` backend), so `python-ecdsa` is never executed;
+- the advisory affects ECDSA *signing* / keygen / ECDH only — signature
+  *verification* is unaffected — and requires a local timing side channel;
+- upstream is **WONTFIX** (the `python-ecdsa` project considers side channels
+  out of scope), so there is no fix version to upgrade to.
+
+Preferred remediation is dropping the unused package (e.g. `pip uninstall
+python-jose ecdsa` in the image, or an upstream LightRAG change to its `api`
+extra). Until then the advisory is ignored in the gate.
+
 ## CI Posture
 
-The Forgejo `pip-audit` gate keeps the two LightRAG advisories as explicit
-ignores and continues to fail on every other production dependency advisory.
+The Forgejo `pip-audit` gate keeps these advisories as explicit ignores and
+continues to fail on every other production dependency advisory.
 
 The ignores must not be broadened beyond:
 
 ```text
 CVE-2026-30762
 CVE-2026-39413
+PYSEC-2026-1325
 ```
 
 ## Revisit Criteria

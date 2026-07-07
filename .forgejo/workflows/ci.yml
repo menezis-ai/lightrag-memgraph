@@ -28,8 +28,46 @@ jobs:
           black --check --diff src tests
           ruff check src tests
 
+  python-audit:
+    # Dedicated CVE gate. Audits the BNP production pins ONCE here instead of
+    # redundantly re-running pip-audit inside every unit-tests /
+    # integration-tests matrix cell. Install-light (pip-audit reads the pinned
+    # file directly with --no-deps — no project/LightRAG install needed), so it
+    # lives on the low/lint pool and starts at pipeline head with the lints.
+    runs-on: [self-hosted, low, lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit production dependency pins
+        run: |
+          venv="/tmp/twin-python-audit-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          rm -rf "$venv"
+          cleanup() {
+            rm -rf "$venv"
+          }
+          trap cleanup EXIT
+
+          python3 -m venv "$venv"
+          . "$venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          # Audit production pins, not the broader test environment.
+          # LightRAG 1.4.9.11 is the pinned BNP baseline. The two LightRAG
+          # upstream CVEs, plus the python-jose/ecdsa Minerva advisory
+          # (CVE-2024-23342 / PYSEC-2026-1325 — WONTFIX upstream, ECDSA
+          # signing only; python-jose is declared by lightrag-hku[api] but
+          # never imported, Twin and LightRAG both use PyJWT), are
+          # risk-accepted with owner, rationale, and review date in:
+          # docs/security/lightrag-1.4.9.11-risk-acceptance.md
+          # Keep the exception explicit so every other production
+          # dependency vulnerability still fails the gate.
+          pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
+            --ignore-vuln CVE-2026-30762 \
+            --ignore-vuln CVE-2026-39413 \
+            --ignore-vuln PYSEC-2026-1325
+
   unit-tests:
-    needs: [python-lint, webui-lint]
+    needs: [python-lint, python-audit, webui-lint]
     runs-on: [self-hosted, docker]
     strategy:
       matrix:
@@ -59,22 +97,11 @@ jobs:
               python -m pip install --upgrade pip &&
               python -m pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==${{ matrix.lightrag-version }}" &&
               python -m pip install -c requirements/constraints-dev.txt -e ".[intelligence,server,test]" &&
-              python -m pip install pip-audit &&
-              # Audit production pins, not the broader test environment.
-              # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
-              # upstream CVEs are temporarily risk-accepted with owner,
-              # rationale, and review date documented in:
-              # docs/security/lightrag-1.4.9.11-risk-acceptance.md
-              # Keep the exception explicit so every other production
-              # dependency vulnerability still fails the gate.
-              pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
-                --ignore-vuln CVE-2026-30762 \
-                --ignore-vuln CVE-2026-39413 &&
               pytest tests/ --ignore=tests/test_bench.py -v
             '
 
   integration-tests:
-    needs: [python-lint, webui-lint]
+    needs: [python-lint, python-audit, webui-lint]
     runs-on: [self-hosted, docker]
     strategy:
       # Own Docker network per matrix job; keep one Memgraph-heavy job per
@@ -146,17 +173,6 @@ jobs:
               python -m pip install --upgrade pip &&
               python -m pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==${{ matrix.lightrag-version }}" &&
               python -m pip install -c requirements/constraints-dev.txt -e ".[intelligence,server,test]" &&
-              python -m pip install pip-audit &&
-              # Audit production pins, not the broader test environment.
-              # LightRAG 1.4.9.11 is the pinned BNP baseline. These two
-              # upstream CVEs are temporarily risk-accepted with owner,
-              # rationale, and review date documented in:
-              # docs/security/lightrag-1.4.9.11-risk-acceptance.md
-              # Keep the exception explicit so every other production
-              # dependency vulnerability still fails the gate.
-              pip-audit -r requirements/constraints-prod.txt --no-deps --disable-pip \
-                --ignore-vuln CVE-2026-30762 \
-                --ignore-vuln CVE-2026-39413 &&
               pytest tests/ --ignore=tests/test_bench.py -v
             '
 
@@ -588,6 +604,7 @@ jobs:
     runs-on: [self-hosted, low, lint]
     needs:
       - python-lint
+      - python-audit
       - webui-lint
       - webui-e2e
       - unit-tests
@@ -601,6 +618,7 @@ jobs:
         run: |
           cat <<'RESULTS'
           python-lint=${{ needs.python-lint.result }}
+          python-audit=${{ needs.python-audit.result }}
           webui-lint=${{ needs.webui-lint.result }}
           webui-e2e=${{ needs.webui-e2e.result }}
           unit-tests=${{ needs.unit-tests.result }}
@@ -611,6 +629,7 @@ jobs:
           RESULTS
 
           test "${{ needs.python-lint.result }}" = "success"
+          test "${{ needs.python-audit.result }}" = "success"
           test "${{ needs.webui-lint.result }}" = "success"
           test "${{ needs.webui-e2e.result }}" = "success"
           test "${{ needs.unit-tests.result }}" = "success"
