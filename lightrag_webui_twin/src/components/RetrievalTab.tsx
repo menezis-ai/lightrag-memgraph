@@ -296,10 +296,7 @@ function NumericParameterInput({
 }: Readonly<NumericParameterInputProps>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value));
-
-  useEffect(() => {
-    if (!editing) setDraft(String(value));
-  }, [editing, value]);
+  const displayValue = editing ? draft : String(value);
 
   const commitDraft = (raw: string): number | null => {
     if (raw === '') return null;
@@ -322,9 +319,10 @@ function NumericParameterInput({
         max={max}
         step={step}
         aria-label={ariaLabel}
-        value={draft}
+        value={displayValue}
         onFocus={(e) => {
           setEditing(true);
+          setDraft(String(value));
           e.currentTarget.select();
         }}
         onChange={(e) => {
