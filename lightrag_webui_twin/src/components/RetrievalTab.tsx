@@ -260,6 +260,91 @@ function filterPayload(
   return mode === 'all' ? { all: selected } : { any: selected };
 }
 
+function normalizeNumberDraft(raw: string): string {
+  return raw.trim().replace(/^0+(?=\d)/, '');
+}
+
+function clampNumber(value: number, min?: number, max?: number): number {
+  let next = value;
+  if (typeof min === 'number') next = Math.max(min, next);
+  if (typeof max === 'number') next = Math.min(max, next);
+  return next;
+}
+
+interface NumericParameterInputProps {
+  id: string;
+  label: string;
+  ariaLabel: string;
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
+}
+
+function NumericParameterInput({
+  id,
+  label,
+  ariaLabel,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  integer = true,
+}: Readonly<NumericParameterInputProps>) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    if (!editing) setDraft(String(value));
+  }, [editing, value]);
+
+  const commitDraft = (raw: string): number | null => {
+    if (raw === '') return null;
+    const parsed = integer ? Number.parseInt(raw, 10) : Number(raw);
+    if (!Number.isFinite(parsed)) return null;
+    const next = clampNumber(integer ? Math.trunc(parsed) : parsed, min, max);
+    onChange(next);
+    return next;
+  };
+
+  return (
+    <div className="field">
+      <label className="field-label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        aria-label={ariaLabel}
+        value={draft}
+        onFocus={(e) => {
+          setEditing(true);
+          e.currentTarget.select();
+        }}
+        onChange={(e) => {
+          const nextDraft = normalizeNumberDraft(e.target.value);
+          setDraft(nextDraft);
+          const committed = commitDraft(nextDraft);
+          if (committed !== null && String(committed) !== nextDraft) {
+            setDraft(String(committed));
+          }
+        }}
+        onBlur={() => {
+          setEditing(false);
+          const committed = commitDraft(draft);
+          setDraft(String(committed ?? value));
+        }}
+      />
+    </div>
+  );
+}
+
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException
     ? err.name === 'AbortError'
@@ -940,72 +1025,49 @@ export function RetrievalTab({
           />
         </div>
 
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-top-k">
-            Top K results
-          </label>
-          <input
-            id="retrieval-top-k"
-            type="number"
-            aria-label="Top K"
-            value={topK}
-            onChange={(e) => setTopK(Number.parseInt(e.target.value || '0', 10))}
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-chunk-top-k">
-            Chunk top K
-          </label>
-          <input
-            id="retrieval-chunk-top-k"
-            type="number"
-            aria-label="Chunk top K"
-            value={chunkTopK}
-            onChange={(e) => setChunkTopK(Number.parseInt(e.target.value || '0', 10))}
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-max-tokens">
-            Max tokens · text unit
-          </label>
-          <input
-            id="retrieval-max-tokens"
-            type="number"
-            aria-label="Max tokens"
-            value={maxTok}
-            onChange={(e) => setMaxTok(Number.parseInt(e.target.value || '0', 10))}
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-min-score">
-            Minimum source score
-          </label>
-          <input
-            id="retrieval-min-score"
-            type="number"
-            min={0}
-            max={1}
-            step={0.01}
-            aria-label="Minimum source score"
-            value={minScore}
-            onChange={(e) => {
-              const next = Number(e.target.value || '0');
-              setMinScore(Math.min(1, Math.max(0, Number.isFinite(next) ? next : 0)));
-            }}
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-history-turns">
-            History turns
-          </label>
-          <input
-            id="retrieval-history-turns"
-            type="number"
-            aria-label="History turns"
-            value={history}
-            onChange={(e) => setHistory(Number.parseInt(e.target.value || '0', 10))}
-          />
-        </div>
+        <NumericParameterInput
+          id="retrieval-top-k"
+          label="Top K results"
+          ariaLabel="Top K"
+          value={topK}
+          onChange={setTopK}
+          min={0}
+        />
+        <NumericParameterInput
+          id="retrieval-chunk-top-k"
+          label="Chunk top K"
+          ariaLabel="Chunk top K"
+          value={chunkTopK}
+          onChange={setChunkTopK}
+          min={0}
+        />
+        <NumericParameterInput
+          id="retrieval-max-tokens"
+          label="Max tokens · text unit"
+          ariaLabel="Max tokens"
+          value={maxTok}
+          onChange={setMaxTok}
+          min={0}
+        />
+        <NumericParameterInput
+          id="retrieval-min-score"
+          label="Minimum source score"
+          ariaLabel="Minimum source score"
+          value={minScore}
+          onChange={setMinScore}
+          min={0}
+          max={1}
+          step={0.01}
+          integer={false}
+        />
+        <NumericParameterInput
+          id="retrieval-history-turns"
+          label="History turns"
+          ariaLabel="History turns"
+          value={history}
+          onChange={setHistory}
+          min={0}
+        />
         <div className="field">
           <label className="field-label" htmlFor="retrieval-system-prompt">
             System prompt

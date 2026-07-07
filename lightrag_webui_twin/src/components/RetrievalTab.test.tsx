@@ -316,6 +316,21 @@ describe('RetrievalTab — params panel', () => {
     expect(topK.value).toBe('25');
   });
 
+  it('numeric params allow empty edit state and strip leading zeroes', async () => {
+    render(<RetrievalTab {...defaultProps()} />);
+    const topK = screen.getByLabelText('Top K') as HTMLInputElement;
+
+    await userEvent.clear(topK);
+    expect(topK.value).toBe('');
+
+    await userEvent.type(topK, '20');
+    expect(topK.value).toBe('20');
+
+    await userEvent.clear(topK);
+    await userEvent.type(topK, '020');
+    expect(topK.value).toBe('20');
+  });
+
   it('Query mode select changes value', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     const sel = screen.getByLabelText('Query mode') as HTMLSelectElement;
