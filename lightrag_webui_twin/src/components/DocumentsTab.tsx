@@ -555,6 +555,9 @@ export function DocumentsTab({
 }: Readonly<DocumentsTabProps>) {
   const openDetail = onOpenDetail ?? onDeleteDoc;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selectedDocCache, setSelectedDocCache] = useState<Map<string, Document>>(
+    () => new Map(),
+  );
   const [localStatusFilter, setLocalStatusFilter] = useUrlParam<StatusFilterKey>(
     'status',
     'all',
@@ -678,8 +681,26 @@ export function DocumentsTab({
   const toggleRow = (id: string) => {
     setBulkDeleteArmed(false);
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+      setSelectedDocCache((prev) => {
+        if (!prev.has(id)) return prev;
+        const updated = new Map(prev);
+        updated.delete(id);
+        return updated;
+      });
+    } else {
+      next.add(id);
+      const doc = docs.find((d) => d.doc_id === id);
+      if (doc) {
+        setSelectedDocCache((prev) => {
+          if (prev.get(id) === doc) return prev;
+          const updated = new Map(prev);
+          updated.set(id, doc);
+          return updated;
+        });
+      }
+    }
     setSelected(next);
   };
   const filteredIds = filtered.map((d) => d.doc_id);
@@ -689,16 +710,41 @@ export function DocumentsTab({
   const toggleAll = () => {
     setBulkDeleteArmed(false);
     const next = new Set(selected);
-    if (allFilteredSelected) filteredIds.forEach((id) => next.delete(id));
-    else filteredIds.forEach((id) => next.add(id));
+    if (allFilteredSelected) {
+      filteredIds.forEach((id) => next.delete(id));
+      setSelectedDocCache((prev) => {
+        const updated = new Map(prev);
+        let changed = false;
+        filteredIds.forEach((id) => {
+          if (updated.delete(id)) changed = true;
+        });
+        return changed ? updated : prev;
+      });
+    } else {
+      filteredIds.forEach((id) => next.add(id));
+      setSelectedDocCache((prev) => {
+        const updated = new Map(prev);
+        let changed = false;
+        filtered.forEach((doc) => {
+          if (updated.get(doc.doc_id) !== doc) {
+            updated.set(doc.doc_id, doc);
+            changed = true;
+          }
+        });
+        return changed ? updated : prev;
+      });
+    }
     setSelected(next);
   };
   const clearSelection = () => {
     setBulkDeleteArmed(false);
     setBulkFolderAction(null);
     setSelected(new Set());
+    setSelectedDocCache(new Map());
   };
-  const selectedDocs = docs.filter((d) => selected.has(d.doc_id));
+  const selectedDocs = Array.from(selected)
+    .map((id) => selectedDocCache.get(id))
+    .filter((doc): doc is Document => doc != null);
   const openBulk = () => onOpenBulkRetag(selectedDocs);
   const activeFolderId = activeFolder ?? selectedDocs[0]?.folder ?? 'default';
   const hasBulkFolderTarget = folderList.some((folder) => folder.id !== activeFolderId);

@@ -324,6 +324,51 @@ describe('DocumentsTab — selection + bulk', () => {
     expect(arg).toHaveLength(1);
     expect(arg[0].doc_id).toBe('d1');
   });
+
+  it('Bulk Retag keeps selections made on previous pages', async () => {
+    const p = defaultProps();
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const renderPage = (docs: typeof DOCUMENT_FIXTURES) => (
+      <QueryClientProvider client={client}>
+        <DocumentsTab
+          {...p}
+          docs={docs}
+          totalCount={DOCUMENT_FIXTURES.length}
+          currentPage={docs[0]?.doc_id === DOCUMENT_FIXTURES[0].doc_id ? 1 : 2}
+          hasNextPage={docs[0]?.doc_id === DOCUMENT_FIXTURES[0].doc_id}
+          onNextPage={vi.fn()}
+          onPreviousPage={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+
+    const page1 = DOCUMENT_FIXTURES.slice(0, 2);
+    const page2 = DOCUMENT_FIXTURES.slice(2, 4);
+    const view = render(renderPage(page1));
+
+    await userEvent.click(screen.getByLabelText(`Select ${page1[0].file_path}`));
+    await userEvent.click(screen.getByLabelText(`Select ${page1[1].file_path}`));
+
+    view.rerender(renderPage(page2));
+
+    await userEvent.click(screen.getByLabelText(`Select ${page2[0].file_path}`));
+    await userEvent.click(
+      screen.getByRole('button', { name: /Retag 3 sources/ }),
+    );
+
+    expect(p.onOpenBulkRetag).toHaveBeenCalledTimes(1);
+    const selectedDocs = p.onOpenBulkRetag.mock.calls[0][0] as typeof DOCUMENT_FIXTURES;
+    expect(selectedDocs.map((doc) => doc.doc_id)).toEqual([
+      page1[0].doc_id,
+      page1[1].doc_id,
+      page2[0].doc_id,
+    ]);
+  });
 });
 
 describe('DocumentsTab — header actions', () => {
