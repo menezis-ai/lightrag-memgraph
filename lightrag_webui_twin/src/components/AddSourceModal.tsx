@@ -62,13 +62,13 @@ const SUPPORTED_MIME_TYPES = new Set([
 export type FileUploadState = 'uploading' | 'uploaded' | 'error';
 
 /**
- * Operator-set MIP sensitivity classification (BNP C1..C4). Empty selection
+ * Operator-set MIP sensitivity classification (BNP C1/C2 only). Empty selection
  * means "no MIP" — the backend keeps any embedded label / its default. The
  * backend treats a set value as a floor-raiser (can raise above the embedded
- * label, never lower it). The C-code → business-name map: C1=Public,
- * C2=Internal, C3=Confidential, C4=Secret.
+ * label, never lower it). Operators cannot set C3/C4 from the upload UI:
+ * C3 is query-restricted and C4 is rejected by policy.
  */
-export type UploadClassification = 'C1' | 'C2' | 'C3' | 'C4';
+export type UploadClassification = 'C1' | 'C2';
 
 /** Per-file upload options. Classification-only — the LightRAG/RAG1.5 engine
  *  toggle is NOT exposed (RAG 1.5 connector isn't live). */
@@ -128,16 +128,13 @@ function fileClassification(f: FileUpload): UploadClassification | '' {
   return f.classification ?? '';
 }
 
-/** C-code → operator-facing option label. Business names per the BNP MIP
- *  taxonomy (C1=Public … C4=Secret). */
+/** Operator-facing sensitivity options. Only C1/C2 are selectable at upload. */
 const CLASSIFICATION_OPTIONS: readonly {
   value: UploadClassification;
   label: string;
 }[] = [
   { value: 'C1', label: 'C1 · Public' },
   { value: 'C2', label: 'C2 · Internal' },
-  { value: 'C3', label: 'C3 · Confidential' },
-  { value: 'C4', label: 'C4 · Secret' },
 ];
 
 export type LinkedSourceType = 'confluence' | 'sharepoint' | 'url';
@@ -340,6 +337,9 @@ export function AddSourceModal({
   const [drag, setDrag] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
+  const [bulkClassification, setBulkClassification] = useState<
+    UploadClassification | ''
+  >('');
 
   const tagSugg = useMemo(() => {
     return tagCatalog
@@ -367,6 +367,19 @@ export function AddSourceModal({
   ) => {
     setFiles((current) =>
       current.map((f) => (f === file ? { ...f, ...patch } : f)),
+    );
+  };
+  const applyBulkClassification = (classification: UploadClassification | '') => {
+    setBulkClassification(classification);
+    setFiles((current) =>
+      current.map((f) =>
+        f.state === 'error'
+          ? f
+          : {
+              ...f,
+              classification: classification || undefined,
+            },
+      ),
     );
   };
   const addTag = (t: string) => {
@@ -515,6 +528,29 @@ export function AddSourceModal({
                   </span>
                 </span>
               </div>
+              <label className="bulk-classification-row">
+                <span>Set sensitivity for all files</span>
+                <select
+                  className="bulk-classification-control"
+                  value={bulkClassification}
+                  onChange={(e) =>
+                    applyBulkClassification(
+                      e.target.value === ''
+                        ? ''
+                        : (e.target.value as UploadClassification),
+                    )
+                  }
+                  aria-label="Sensitivity for all files"
+                  data-testid="addsource-bulk-classification"
+                >
+                  <option value="">no MIP</option>
+                  {CLASSIFICATION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="file-list" style={{ marginTop: 6 }}>
                 {files.map((f) => (
                   <div

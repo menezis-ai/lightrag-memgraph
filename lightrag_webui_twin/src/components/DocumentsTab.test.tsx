@@ -117,6 +117,50 @@ describe('DocumentsTab — rendering', () => {
     expect(screen.queryByLabelText('Retag new-runbook.pdf')).toBeNull();
     expect(screen.queryByLabelText('Delete new-runbook.pdf')).toBeNull();
   });
+
+  it('renders a MIP sensitivity badge from structured document metadata', () => {
+    const classifiedDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'mip-c4',
+      file_path: 'classified-secret-runbook.docx',
+      metadata: {
+        ...DOCUMENT_FIXTURES[0].metadata,
+        classification: {
+          class_id: 'C4',
+          class_name: 'C4 Secret',
+          label_guid: '44444444-4444-4444-4444-444444444444',
+          raw_name: 'C4 Secret',
+          set_date: '2026-07-06T08:00:00Z',
+          method: 'Privileged',
+          source_format: 'ooxml',
+          reason: null,
+          meta: {},
+        },
+      },
+    };
+
+    renderTab(<DocumentsTab {...defaultProps()} docs={[classifiedDoc]} />);
+
+    const badge = screen.getByTestId('class-pill-mip-c4');
+    expect(badge).toHaveAttribute('data-class-id', 'C4');
+    expect(badge).toHaveAttribute('data-class-tone', 'secret');
+    expect(badge).toHaveAccessibleName('Classification: Secret · C4 Secret');
+  });
+
+  it('does not render a MIP badge for legacy string classifications', () => {
+    const legacyDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'legacy-classification',
+      metadata: {
+        ...DOCUMENT_FIXTURES[0].metadata,
+        classification: 'restricted',
+      },
+    };
+
+    renderTab(<DocumentsTab {...defaultProps()} docs={[legacyDoc]} />);
+
+    expect(screen.queryByTestId('class-pill-legacy-classification')).toBeNull();
+  });
 });
 
 describe('DocumentsTab — filters', () => {

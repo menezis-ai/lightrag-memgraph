@@ -21,6 +21,7 @@ const MAP: Record<TagStatus, BadgeMeta> = {
   'pending-review': { label: 'Pending', cls: 'status-pending' },
   deprecated: { label: 'Deprecated', cls: 'status-deprecated' },
   rejected: { label: 'Rejected', cls: 'status-rejected' },
+  deleted: { label: 'Deleted', cls: 'status-deprecated' },
 };
 
 export interface StatusBadgeProps {

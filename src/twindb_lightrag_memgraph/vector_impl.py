@@ -18,6 +18,7 @@ Query:
 """
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -166,9 +167,7 @@ def _exact_cosine_projection() -> str:
                  sqrt(reduce(__n = 0.0, __v IN node.embedding |
                      __n + __v * __v
                  )) AS __node_norm,
-                 sqrt(reduce(__q = 0.0, __v IN $embedding |
-                     __q + __v * __v
-                 )) AS __query_norm
+                 $query_norm AS __query_norm
             WITH node,
                  CASE
                    WHEN __node_norm = 0.0 OR __query_norm = 0.0 THEN 0.0
@@ -542,7 +541,12 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             MATCH (node:`{label}`)
             MATCH (d:`{doc_label}` {{id: node.full_doc_id}})
                   -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
-        conds = _doc_conditions_single(filters, params, "d.id")
+        conds: list[str] = []
+        if filters.doc_any and not filters.doc_all:
+            params["doc_any"] = sorted(filters.doc_any)
+            base += "\n            WHERE d.id IN $doc_any"
+        else:
+            conds = _doc_conditions_single(filters, params, "d.id")
         if filters.has_tag:
             tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
             base += f"""
@@ -572,15 +576,21 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             MATCH (c:`{chunk_label}` {{id: cid}})
             MATCH (d:`{doc_label}` {{id: c.full_doc_id}})
                   -[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})"""
+        if filters.doc_any and not filters.doc_all:
+            params["doc_any"] = sorted(filters.doc_any)
+            base += "\n            WHERE d.id IN $doc_any"
         if filters.has_tag:
             tag_label = f"WebuiTag_{validate_identifier(folder, 'folder')}"
             base += f"""
             OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
             WITH node, d, collect(DISTINCT toLower(__t.id)) AS __dtags
             WITH node, collect(DISTINCT {{doc: d.id, tags: __dtags}}) AS __docinfos"""
-            conds = _doc_conditions_set(
-                filters, params, "[__di IN __docinfos | __di.doc]"
-            )
+            if filters.doc_any and not filters.doc_all:
+                conds = []
+            else:
+                conds = _doc_conditions_set(
+                    filters, params, "[__di IN __docinfos | __di.doc]"
+                )
             tag_inner = _tag_conditions(filters, params, "__di.tags")
             if tag_inner:
                 conds.append(
@@ -588,7 +598,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 )
         else:
             base += """
-            WITH node, collect(DISTINCT d.id) AS __docids"""
+                WITH node, collect(DISTINCT d.id) AS __docids"""
             conds = _doc_conditions_set(filters, params, "__docids")
         if conds:
             base += "\n            WHERE " + _CYPHER_AND.join(conds)
@@ -712,6 +722,9 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             )
             return []
         params["embedding"] = query_embedding
+        params["query_norm"] = math.sqrt(
+            sum(float(v) * float(v) for v in query_embedding)
+        )
 
         async with _pool.get_read_session() as session:
             try:

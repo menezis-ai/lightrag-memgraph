@@ -108,6 +108,26 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
     expect(chunks[0].text).not.toMatch(/placeholder content/i);
   });
 
+  it('POST /documents/upload rejects operator C3/C4 sensitivity headers', async () => {
+    const form = new FormData();
+    form.append(
+      'file',
+      new File(['classified'], 'classified.md', {
+        type: 'text/markdown',
+      }),
+    );
+    const upload = await fetch(BASE + '/documents/upload', {
+      method: 'POST',
+      headers: { 'X-Twin-Classification': 'C4' },
+      body: form,
+    });
+
+    expect(upload.status).toBe(400);
+    await expect(upload.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('accepts only C1 or C2'),
+    });
+  });
+
   it('GET /health returns ok', async () => {
     const data = await getJson<{ status: string }>('/health');
     expect(data.status).toBe('ok');
@@ -400,6 +420,20 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
       summary: 'Tag argocd rejected: too broad',
     });
     expect(activity.items[0].meta.reason).toBe('too broad');
+
+    const tagsAfterReject = await getJson<Array<{ tag: string }>>(`${TWIN}/tags`);
+    expect(tagsAfterReject.some((tag) => tag.tag === 'argocd')).toBe(false);
+
+    const recreate = await fetch(`${BASE}${TWIN}/tags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag: 'argocd',
+        def: 'GitOps controller',
+        category: 'infra',
+      }),
+    });
+    expect(recreate.status).toBe(201);
   });
 
   it(`POST ${TWIN}/documents/d6/reject records doc-rejected activity with reason`, async () => {

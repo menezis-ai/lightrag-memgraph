@@ -1776,10 +1776,22 @@ def _install_storage_folder_capture(app) -> None:
         except HTTPException as exc:
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-        # Operator-selected MIP class from the upload UI. Bound alongside the
-        # folder so the pre-ingestion classification hook can read it across the
-        # BackgroundTasks boundary (see _patch_background_tasks_folder_context).
+        # Operator-selected MIP class from the upload UI. Operators may only
+        # set C1/C2. Detected C3/C4 labels are handled by the ingestion gate,
+        # but an explicit C3/C4 upload header is a request error.
         operator_class = request.headers.get("X-Twin-Classification")
+        if operator_class is not None:
+            operator_class = operator_class.strip().upper()
+            if operator_class not in {"C1", "C2"}:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            "X-Twin-Classification accepts only C1 or C2; "
+                            "C3/C4 uploads are rejected by policy."
+                        )
+                    },
+                    status_code=400,
+                )
         with (
             storage_folder_context(folder),
             duplicate_share_folder_context(folder),

@@ -473,7 +473,8 @@ Selon DORA art. 9 et EBA/GL/2019/04 : minimum 5 ans pour les events relatifs aux
 | AI Act art. 50 (transparence) | WebUI affiche les citations sources (déjà en place) |
 
 Acceptation de risque temporaire : les advisories LightRAG
-`CVE-2026-30762` et `CVE-2026-39413` restent ignorées par le gate
+`CVE-2026-30762`, `CVE-2026-39413` et la vulnérabilité transitive
+`PYSEC-2026-1325` (`ecdsa` via `python-jose`) restent ignorées par le gate
 `pip-audit` uniquement pour le pin `lightrag-hku==1.4.9.11`. Owner,
 rationale et date de revue sont versionnés dans
 `docs/security/lightrag-1.4.9.11-risk-acceptance.md`.

@@ -536,6 +536,18 @@ def _webui_uses_memgraph(settings: LightRAGServerSettings) -> bool:
     )
 
 
+def _lightrag_accepts_kwarg(name: str) -> bool:
+    """Return whether the installed LightRAG constructor accepts ``name``.
+
+    Twin supports a LightRAG version matrix. Newer extraction controls must be
+    forwarded when available, but older wheels must still boot unmodified.
+    """
+    params = inspect.signature(LightRAG).parameters
+    return name in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in params.values()
+    )
+
+
 def _build_rag_kwargs(
     settings: LightRAGServerSettings,
     embedding_func: Any,
@@ -566,6 +578,18 @@ def _build_rag_kwargs(
         # (false-grounded + cross-folder leak). See settings.enable_llm_cache.
         "enable_llm_cache": settings.enable_llm_cache,
     }
+    extraction_kwargs: dict[str, Any] = {
+        "entity_extract_max_gleaning": settings.max_gleaning,
+        "entity_extract_max_records": settings.entity_extract_max_records,
+        "entity_extract_max_entities": settings.entity_extract_max_entities,
+        "addon_params": {
+            "entity_types": list(settings.entity_types),
+            "entity_types_guidance": settings.entity_types_guidance,
+        },
+    }
+    for name, value in extraction_kwargs.items():
+        if _lightrag_accepts_kwarg(name):
+            rag_kwargs[name] = value
     if settings.workspace:
         rag_kwargs["workspace"] = settings.workspace
     return rag_kwargs

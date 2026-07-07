@@ -100,12 +100,11 @@ export interface DocumentReviewReceipt {
 }
 
 /**
- * Operator-set MIP sensitivity classification (C1..C4). The backend treats
- * this as a floor-raising value: it can only raise the document's
- * classification above any embedded label, never lower it. Empty = "no MIP"
- * (let the embedded label / backend default decide).
+ * Operator-set MIP sensitivity classification (BNP C1/C2 only). Empty =
+ * "no MIP" (let the embedded label / backend default decide). C3/C4 are not
+ * operator-selectable at upload: C3 is query-restricted and C4 is rejected.
  */
-export type UploadClassification = 'C1' | 'C2' | 'C3' | 'C4';
+export type UploadClassification = 'C1' | 'C2';
 
 export interface UploadDocumentOptions {
   signal?: AbortSignal;

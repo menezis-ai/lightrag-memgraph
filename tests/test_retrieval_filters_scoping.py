@@ -240,6 +240,28 @@ class TestEntityRelationFilters:
         assert set(params["tag_all"]) == {"oracle"}
         assert "overfetch" not in params
 
+    def test_doc_any_with_tag_filter_scopes_tags_to_matching_entity_docs(self):
+        st = _store("entities", {"source_id", "content"})
+        cypher, params = st._build_search_cypher(
+            20,
+            "folderX",
+            RetrievalFilters(
+                doc_any=frozenset({"doc-a"}),
+                tag_any=frozenset({"oracle"}),
+            ),
+        )
+
+        assert "CALL vector_search.search" not in cypher
+        assert "WHERE d.id IN $doc_any" in cypher
+        assert cypher.index("WHERE d.id IN $doc_any") < cypher.index(
+            "collect(DISTINCT {doc: d.id, tags: __dtags}) AS __docinfos"
+        )
+        assert "any(__di IN __docinfos WHERE" in cypher
+        assert "any(__ot IN $tag_any WHERE __ot IN __di.tags)" in cypher
+        assert set(params["doc_any"]) == {"doc-a"}
+        assert set(params["tag_any"]) == {"oracle"}
+        assert "overfetch" not in params
+
 
 # ── Live contract (real Memgraph) — out-of-filter rows are actually dropped ─
 #

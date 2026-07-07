@@ -252,13 +252,13 @@ describe('uploadDocument', () => {
     const { bodies, headers } = mockUploadOnce();
 
     await api.uploadDocument(new File(['payload'], 'classified.md'), {
-      classification: 'C3',
+      classification: 'C2',
     });
 
     expect((bodies[0].get('file') as File | null)?.name).toBe('classified.md');
     // Still a header, not a multipart field.
     expect(bodies[0].has('classification')).toBe(false);
-    expect(headers[0].get('X-Twin-Classification')).toBe('C3');
+    expect(headers[0].get('X-Twin-Classification')).toBe('C2');
   });
 
   it('sends the active token as X-API-Key only for the native upload route', async () => {

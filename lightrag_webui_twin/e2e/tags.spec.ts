@@ -105,7 +105,7 @@ test.describe('Twin WebUI tag governance persistence', () => {
     await expect(page.getByTestId('pending-golden-signal')).toContainText('golden-signal');
   });
 
-  test('@doctrine @tags @rc1 rejected request leaves pending queue after reload', async ({
+  test('@doctrine @tags @rc1 rejected request is purged and can be requested again after reload', async ({
     page,
   }) => {
     await page
@@ -124,8 +124,21 @@ test.describe('Twin WebUI tag governance persistence', () => {
     await openTab(page, 'Tags');
     await expect(page.getByTestId('pending-pacs008')).toBeHidden();
     await page.getByLabel('Search tags').fill('pacs008');
-    await expect(page.getByTestId('tag-card-pacs008')).toContainText('pacs008');
-    await expect(page.getByTestId('tag-card-pacs008')).toContainText('Rejected');
+    await expect(page.getByTestId('tag-card-pacs008')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Request new tag' }).click();
+    const requestDialog = page.getByRole('dialog', { name: /Request new tag/ });
+    await page.getByLabel(/Proposed name/).fill('pacs008');
+    await page
+      .getByLabel(/Definition/)
+      .fill('ISO 20022 payment message tag requested again after rejection.');
+    await requestDialog.getByLabel('Domain', { exact: true }).selectOption('infra');
+    await page
+      .getByLabel('Justification')
+      .fill('Required for payment operations retrieval.');
+    await page.getByRole('button', { name: 'Submit request' }).click();
+    await expect(page.locator('.toast-viewport')).toContainText('pacs008');
+    await expect(page.getByTestId('pending-pacs008')).toContainText('pacs008');
   });
 
   test('@doctrine @tags @rc1 edit-approve commits steward edits after reload', async ({
