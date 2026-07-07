@@ -38,6 +38,7 @@ from twindb_lightrag_memgraph.server.webui_seed import (
     TAGS,
 )
 from twindb_lightrag_memgraph.server.webui.router import (
+    _doc_matches_query,
     logout as webui_logout_handler,
 )
 
@@ -78,6 +79,29 @@ async def client():
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
+
+
+class TestDocMatchesQuery:
+    """The pre-projection ``q`` filter must match the same surface a projected
+    row exposes — notably the ``file_path`` -> ``doc_id`` fallback for rows that
+    carry no path/source (parity with ``_project_doc_status_for_webui``)."""
+
+    def test_matches_file_path_and_summary(self):
+        doc = {"file_path": "oracle-runbook.pdf", "content_summary": "RMAN restore"}
+        assert _doc_matches_query(doc, "oracle") is True
+        assert _doc_matches_query(doc, "rman") is True
+        assert _doc_matches_query(doc, "zzz") is False
+
+    def test_matches_doc_id_when_no_path_or_source(self):
+        # No file_path/source: projection falls back to doc_id, so ``q`` must
+        # too, otherwise a path-less row becomes unsearchable by its id.
+        doc = {"id": "doc-oracle-42", "content_summary": ""}
+        assert _doc_matches_query(doc, "oracle-42") is True
+        assert _doc_matches_query(doc, "missing") is False
+
+    def test_empty_query_keeps_row(self):
+        assert _doc_matches_query({"id": "x"}, None) is True
+        assert _doc_matches_query({"id": "x"}, "") is True
 
 
 class TestDocuments:

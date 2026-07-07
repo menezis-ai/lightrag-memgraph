@@ -341,10 +341,14 @@ def _doc_matches_query(doc: dict[str, Any], q: str | None) -> bool:
     if not q:
         return True
     needle = q.lower()
-    return (
-        needle in str(doc.get("file_path") or doc.get("source") or "").lower()
-        or needle in str(doc.get("content_summary") or doc.get("summary") or "").lower()
-    )
+    # Mirror ``_project_doc_status_for_webui``'s field resolution exactly so the
+    # pre-projection ``q`` filter matches the same surface a projected row would
+    # expose — including the ``file_path`` -> ``doc_id`` fallback for rows that
+    # carry no path/source.
+    doc_id = str(doc.get("id") or doc.get("doc_id") or "")
+    file_path = str(doc.get("file_path") or doc.get("source") or doc_id).lower()
+    summary = str(doc.get("content_summary") or doc.get("summary") or "").lower()
+    return needle in file_path or needle in summary
 
 
 async def _filter_docs_to_active_folder(
