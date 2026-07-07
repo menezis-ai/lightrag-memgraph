@@ -12,6 +12,15 @@ from pydantic_settings import BaseSettings
 
 SettingsConfigDict = ConfigDict
 
+TWIN_ENTITY_TYPES_GUIDANCE = """Classify each entity using one of the following Twin graph types. If none fits, use `Concept`.
+
+- Person: Human individuals.
+- Organization: Companies, institutions, teams, departments, standards bodies, and open-source communities.
+- Location: Geographic places, sites, regions, countries, cities, and datacenters.
+- Product: Named commercial products, applications, databases, services, and vendor offerings.
+- Technology: Named technologies and technical building blocks, including operating systems, programming languages, shell commands, command-line utilities, protocols, APIs, libraries, frameworks, runtimes, algorithms, file formats, technical standards, robotics/AI frameworks, and developer tools. Examples: UNIX, grep, sed, ssh, KnowRob, Accelerate, vImage, Cypher, Kubernetes, RMAN.
+- Concept: Abstract ideas, business notions, procedures, methods, incidents, events, content titles, datasets, or other non-technology concepts."""
+
 
 class LightRAGServerSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -113,7 +122,25 @@ class LightRAGServerSettings(BaseSettings):
     # -- Entity extraction --
     max_gleaning: int = Field(
         default=2,
+        ge=0,
         description="Max entity extraction attempts for ambiguous content",
+    )
+    entity_extract_max_records: int = Field(
+        default=120,
+        ge=1,
+        description="Maximum entity/relation records requested per extraction pass",
+    )
+    entity_extract_max_entities: int = Field(
+        default=80,
+        ge=1,
+        description="Maximum entity records requested per extraction pass",
+    )
+    entity_types_guidance: str = Field(
+        default=TWIN_ENTITY_TYPES_GUIDANCE,
+        description=(
+            "Entity type guidance injected into LightRAG extraction prompts. "
+            "Twin's default makes Technology an explicit first-class graph type."
+        ),
     )
 
     # -- LLM query cache --

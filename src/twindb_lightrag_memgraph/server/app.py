@@ -554,6 +554,9 @@ def _build_rag_kwargs(
         "doc_status_storage": settings.doc_status_storage,
         "chunk_token_size": settings.chunk_token_size,
         "chunk_overlap_token_size": settings.chunk_overlap_token_size,
+        "entity_extract_max_gleaning": settings.max_gleaning,
+        "entity_extract_max_records": settings.entity_extract_max_records,
+        "entity_extract_max_entities": settings.entity_extract_max_entities,
         "embedding_func": embedding_func,
         "llm_model_func": llm_func,
         "embedding_batch_num": 32,
@@ -565,6 +568,9 @@ def _build_rag_kwargs(
         # folder A's generated answer for the same question asked in folder B
         # (false-grounded + cross-folder leak). See settings.enable_llm_cache.
         "enable_llm_cache": settings.enable_llm_cache,
+        "addon_params": {
+            "entity_types_guidance": settings.entity_types_guidance,
+        },
     }
     if settings.workspace:
         rag_kwargs["workspace"] = settings.workspace
