@@ -400,6 +400,20 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
       summary: 'Tag argocd rejected: too broad',
     });
     expect(activity.items[0].meta.reason).toBe('too broad');
+
+    const tagsAfterReject = await getJson<Array<{ tag: string }>>(`${TWIN}/tags`);
+    expect(tagsAfterReject.some((tag) => tag.tag === 'argocd')).toBe(false);
+
+    const recreate = await fetch(`${BASE}${TWIN}/tags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag: 'argocd',
+        def: 'GitOps controller',
+        category: 'infra',
+      }),
+    });
+    expect(recreate.status).toBe(201);
   });
 
   it(`POST ${TWIN}/documents/d6/reject records doc-rejected activity with reason`, async () => {

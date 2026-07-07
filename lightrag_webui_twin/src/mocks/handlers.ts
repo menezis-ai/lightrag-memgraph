@@ -982,6 +982,10 @@ function upsertTag(tag: TagEntry): TagEntry {
   return tag;
 }
 
+function isArchivedTag(tag: TagEntry): boolean {
+  return tag.status === 'rejected' || tag.status === 'deleted';
+}
+
 function cascadeDeletedTagFromDocuments(
   name: string,
   strategy: 'migrate' | 'untag' = 'untag',
@@ -1673,7 +1677,7 @@ export const handlers = [
     recordTwinFolderRequest(request);
     const gate = authGateResponse(request);
     if (gate) return gate;
-    return HttpResponse.json(tagState);
+    return HttpResponse.json(tagState.filter((tag) => !isArchivedTag(tag)));
   }),
   http.get(`${ANY}${TWIN}/tags/categories`, ({ request }) => {
     recordTwinFolderRequest(request);
@@ -1736,6 +1740,16 @@ export const handlers = [
       def: string;
       category: string;
     };
+    const existing = tagState.find((tag) => tag.tag === body.tag);
+    if (existing && !isArchivedTag(existing)) {
+      return HttpResponse.json(
+        { detail: `Tag '${body.tag}' already exists` },
+        { status: 409 },
+      );
+    }
+    if (existing) {
+      tagState = tagState.filter((tag) => tag.tag !== body.tag);
+    }
     const next = upsertTag({
       ...tagEntryStub(body.tag, 'pending-review', 'requested'),
       def: body.def,
@@ -1792,13 +1806,15 @@ export const handlers = [
     };
     const reason = body.reason?.trim() || 'rejected';
     const current = tagState.find((t) => t.tag === name);
-    const next = upsertTag({
+    const next = {
       ...(current ?? tagEntryStub(name, 'rejected', 'rejected')),
       status: 'rejected',
       tier: 3,
       reject_reason: reason,
       last_edit: { by: body.actor ?? 'system', at: '2026-05-29', action: 'rejected' },
-    });
+    };
+    tagState = tagState.filter((tag) => tag.tag !== name);
+    persistTagState();
     recordTagMutation(name, `rejected: ${reason}`, {
       actor: body.actor,
       sev: 'warning',

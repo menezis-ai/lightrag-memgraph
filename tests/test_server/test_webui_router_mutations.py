@@ -368,21 +368,6 @@ class TestApproveTag:
         )
         assert r.status_code == 404
 
-    async def test_clears_previous_reject_reason(self, client):
-        rejected = await client.post(
-            "/tags/argocd/reject",
-            json={"reason": "too broad", "actor": "claire.benoit"},
-        )
-        assert rejected.status_code == 200
-        assert rejected.json()["reject_reason"] == "too broad"
-
-        approved = await client.post(
-            "/tags/argocd/approve", json={"actor": "claire.benoit"}
-        )
-        assert approved.status_code == 200
-        assert approved.json()["status"] == "active"
-        assert approved.json().get("reject_reason") is None
-
     async def test_emits_event_and_notification(self, client):
         await client.post("/tags/argocd/approve", json={"actor": "claire.benoit"})
         events = await _get_activity(client)
@@ -397,7 +382,7 @@ class TestApproveTag:
 
 
 class TestRejectTag:
-    async def test_sets_status_rejected_with_reason(self, client):
+    async def test_purges_rejected_tag_and_allows_recreate(self, client):
         r = await client.post(
             "/tags/argocd/reject",
             json={"reason": "duplicate of k8s", "actor": "claire.benoit"},
@@ -406,6 +391,19 @@ class TestRejectTag:
         body = r.json()
         assert body["status"] == "rejected"
         assert body.get("reject_reason") == "duplicate of k8s"
+        assert await _get_tag(client, "argocd") is None
+
+        recreated = await client.post(
+            "/tags",
+            json={
+                "tag": "argocd",
+                "def": "GitOps controller",
+                "category": "infra",
+                "actor": "claire.benoit",
+            },
+        )
+        assert recreated.status_code == 201
+        assert recreated.json()["status"] == "pending-review"
 
     async def test_emits_warning_event(self, client):
         await client.post(
