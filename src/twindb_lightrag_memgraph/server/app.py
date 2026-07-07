@@ -536,6 +536,18 @@ def _webui_uses_memgraph(settings: LightRAGServerSettings) -> bool:
     )
 
 
+def _lightrag_accepts_kwarg(name: str) -> bool:
+    """Return whether the installed LightRAG constructor accepts ``name``.
+
+    Twin supports a LightRAG version matrix. Newer extraction controls must be
+    forwarded when available, but older wheels must still boot unmodified.
+    """
+    params = inspect.signature(LightRAG).parameters
+    return name in params or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in params.values()
+    )
+
+
 def _build_rag_kwargs(
     settings: LightRAGServerSettings,
     embedding_func: Any,
@@ -554,9 +566,6 @@ def _build_rag_kwargs(
         "doc_status_storage": settings.doc_status_storage,
         "chunk_token_size": settings.chunk_token_size,
         "chunk_overlap_token_size": settings.chunk_overlap_token_size,
-        "entity_extract_max_gleaning": settings.max_gleaning,
-        "entity_extract_max_records": settings.entity_extract_max_records,
-        "entity_extract_max_entities": settings.entity_extract_max_entities,
         "embedding_func": embedding_func,
         "llm_model_func": llm_func,
         "embedding_batch_num": 32,
@@ -568,10 +577,18 @@ def _build_rag_kwargs(
         # folder A's generated answer for the same question asked in folder B
         # (false-grounded + cross-folder leak). See settings.enable_llm_cache.
         "enable_llm_cache": settings.enable_llm_cache,
+    }
+    extraction_kwargs: dict[str, Any] = {
+        "entity_extract_max_gleaning": settings.max_gleaning,
+        "entity_extract_max_records": settings.entity_extract_max_records,
+        "entity_extract_max_entities": settings.entity_extract_max_entities,
         "addon_params": {
             "entity_types_guidance": settings.entity_types_guidance,
         },
     }
+    for name, value in extraction_kwargs.items():
+        if _lightrag_accepts_kwarg(name):
+            rag_kwargs[name] = value
     if settings.workspace:
         rag_kwargs["workspace"] = settings.workspace
     return rag_kwargs
