@@ -585,11 +585,12 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             OPTIONAL MATCH (d)-[:TAGGED_WITH]->(__t:`{tag_label}`)
             WITH node, d, collect(DISTINCT toLower(__t.id)) AS __dtags
             WITH node, collect(DISTINCT {{doc: d.id, tags: __dtags}}) AS __docinfos"""
-            conds = _doc_conditions_set(
-                filters, params, "[__di IN __docinfos | __di.doc]"
-            )
             if filters.doc_any and not filters.doc_all:
-                conds = [condition for condition in conds if "doc_any" not in condition]
+                conds = []
+            else:
+                conds = _doc_conditions_set(
+                    filters, params, "[__di IN __docinfos | __di.doc]"
+                )
             tag_inner = _tag_conditions(filters, params, "__di.tags")
             if tag_inner:
                 conds.append(
