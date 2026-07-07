@@ -204,8 +204,7 @@ async def _filter_rows_by_tags(
         if not doc_ids:
             continue
         if not any(
-            _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
-            for doc_id in doc_ids
+            _doc_tags_match_filter(tags_cache[doc_id], tag_filter) for doc_id in doc_ids
         ):
             continue
         kept_rows.append(row)

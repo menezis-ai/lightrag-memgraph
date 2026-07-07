@@ -129,23 +129,22 @@ async def _filter_sources_by_advanced_filters(
     prefetch_doc_id_set: set[str] = set()
     has_unverified = False
 
-    if doc_filter_enabled:
-        for source in sources:
-            source_match = _source_matches_doc_filter(source, doc_filter)
-            source_doc_filter_matches.append(source_match)
-            if not source_match:
-                if not _source_doc_candidates(source):
-                    has_unverified = True
-            elif (
-                isinstance(source.get("doc_id"), str)
-                and source.get("doc_id")
-                and source.get("doc_id") not in prefetch_doc_id_set
-            ):
-                prefetch_doc_id = source.get("doc_id")
-                prefetch_doc_id_set.add(prefetch_doc_id)
-                prefetch_doc_ids.append(prefetch_doc_id)
-    else:
-        source_doc_filter_matches = [True] * len(sources)
+    for source in sources:
+        source_match = _source_matches_doc_filter(source, doc_filter)
+        source_doc_filter_matches.append(source_match)
+        if not source_match:
+            if doc_filter_enabled and not _source_doc_candidates(source):
+                has_unverified = True
+            continue
+        prefetch_doc_id = source.get("doc_id")
+        if (
+            (tag_required or tag_optional)
+            and isinstance(prefetch_doc_id, str)
+            and prefetch_doc_id
+            and prefetch_doc_id not in prefetch_doc_id_set
+        ):
+            prefetch_doc_id_set.add(prefetch_doc_id)
+            prefetch_doc_ids.append(prefetch_doc_id)
 
     if tag_required or tag_optional:
         if prefetch_doc_ids:

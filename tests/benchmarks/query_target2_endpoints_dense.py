@@ -12,7 +12,11 @@ import time
 import tracemalloc
 from typing import Any
 
-from twindb_lightrag_memgraph.server.query import query_data, query_data_filters as qdf, response_sources as rs
+from twindb_lightrag_memgraph.server.query import (
+    query_data,
+    query_data_filters as qdf,
+    response_sources as rs,
+)
 from twindb_lightrag_memgraph.server.query import doc_lookup
 
 ITERATIONS = 80
@@ -105,7 +109,10 @@ def build_query_data_payload() -> dict[str, Any]:
         }
         for i in range(25)
     ]
-    source_ids = [",".join([f"chunk-{i}", f"chunk-{i + 1}", f"chunk-{i + 200}"]) for i in range(90)]
+    source_ids = [
+        ",".join([f"chunk-{i}", f"chunk-{i + 1}", f"chunk-{i + 200}"])
+        for i in range(90)
+    ]
     return {
         "chunks": chunks,
         "entities": [
@@ -128,6 +135,7 @@ def generate_query_response() -> dict[str, Any]:
 
 # --- Baselines --------------------------------------------------------------
 
+
 async def baseline_filter_sources_by_advanced_filters(
     sources: list[dict[str, Any]],
     *,
@@ -148,7 +156,9 @@ async def baseline_filter_sources_by_advanced_filters(
     if not tag_required and not tag_optional and not doc_required and not doc_optional:
         return sources, False
 
-    async def source_matches_tag_filter(source: dict[str, Any], tags_cache: dict[str, set[str]]):
+    async def source_matches_tag_filter(
+        source: dict[str, Any], tags_cache: dict[str, set[str]]
+    ):
         if not tag_required and not tag_optional:
             return True
         doc_id = source.get("doc_id")
@@ -187,7 +197,9 @@ async def baseline_filter_rows_by_tags(
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if await qdf._row_matches_tag_filter(rag, row, tag_filter, folder, tags_cache, fetch_doc_tags):
+        if await qdf._row_matches_tag_filter(
+            rag, row, tag_filter, folder, tags_cache, fetch_doc_tags
+        ):
             kept.append(row)
             ref_id = row.get("reference_id")
             if isinstance(ref_id, str) and ref_id:
@@ -195,7 +207,9 @@ async def baseline_filter_rows_by_tags(
     return kept, kept_reference_ids
 
 
-async def baseline_enrich_query_data_chunks(rag: Any, response: dict[str, Any]) -> dict[str, Any]:
+async def baseline_enrich_query_data_chunks(
+    rag: Any, response: dict[str, Any]
+) -> dict[str, Any]:
     data = response["data"]
     missing = query_data._query_data_source_chunk_ids(data)
     source_scores = query_data._query_data_source_chunk_scores(data)
@@ -294,7 +308,9 @@ async def bench_query_like():
     print(optim)
 
     speedup = (base["mean_ms"] - optim["mean_ms"]) / base["mean_ms"] * 100
-    print(f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)")
+    print(
+        f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)"
+    )
     print(f"p99: {base['p99_ms']:.3f} -> {optim['p99_ms']:.3f}")
 
 
@@ -329,7 +345,9 @@ async def bench_query_data_filters():
     print(base)
     print(optim)
     speedup = (base["mean_ms"] - optim["mean_ms"]) / base["mean_ms"] * 100
-    print(f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)")
+    print(
+        f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)"
+    )
 
 
 async def bench_query_data_enrich():
@@ -353,7 +371,9 @@ async def bench_query_data_enrich():
     print(base)
     print(optim)
     speedup = (base["mean_ms"] - optim["mean_ms"]) / base["mean_ms"] * 100
-    print(f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)")
+    print(
+        f"mean: {base['mean_ms']:.3f} -> {optim['mean_ms']:.3f} ({speedup:.1f}% faster)"
+    )
 
 
 async def main() -> None:

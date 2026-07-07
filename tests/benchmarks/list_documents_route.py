@@ -54,7 +54,10 @@ class FakeDocStatus:
         page = int(kwargs.get("page", 1))
         page_size = int(kwargs.get("page_size", 500))
         status_filter = kwargs.get("status_filter")
-        if status_filter is not None and str(status_filter) not in {"processed", "PROCESSED"}:
+        if status_filter is not None and str(status_filter) not in {
+            "processed",
+            "PROCESSED",
+        }:
             return [], 0
         rows = list(self._docs.items())
         start = (page - 1) * page_size
@@ -74,14 +77,14 @@ class FakeRag:
 async def _fake_attach_graph_tags_for_documents(docs: list[dict[str, Any]]) -> None:
     if not docs:
         return
-    await asyncio.sleep(
-        TAG_BATCH_BASE_SECONDS + TAG_DOC_SECOND * len(docs)
-    )
+    await asyncio.sleep(TAG_BATCH_BASE_SECONDS + TAG_DOC_SECOND * len(docs))
     for idx, doc in enumerate(docs):
         doc["tags"] = ["mock", str(idx)] if idx % 2 else ["keep"]
 
 
-async def _baseline_list_documents(route: Any, *, q: str | None = None) -> list[dict[str, Any]]:
+async def _baseline_list_documents(
+    route: Any, *, q: str | None = None
+) -> list[dict[str, Any]]:
     rag = route._get_rag()
     folder = route.current_folder_id()
     docs_tuples, _total = await rag.doc_status.get_docs_paginated(page=1, page_size=500)
@@ -94,7 +97,12 @@ async def _baseline_list_documents(route: Any, *, q: str | None = None) -> list[
 
     if folder is not None:
         memberships_by_doc = await asyncio.gather(
-            *(rag.doc_status.get_folders_for_doc(str(doc.get("doc_id") or doc.get("id") or "")) for doc in rows)
+            *(
+                rag.doc_status.get_folders_for_doc(
+                    str(doc.get("doc_id") or doc.get("id") or "")
+                )
+                for doc in rows
+            )
         )
         filtered_rows: list[dict[str, Any]] = []
         for row, memberships in zip(rows, memberships_by_doc):
@@ -106,12 +114,16 @@ async def _baseline_list_documents(route: Any, *, q: str | None = None) -> list[
                 filtered_rows.append(row)
         rows = filtered_rows
 
-    docs = [route._project_doc_status_for_webui(row, visible_folder=folder) for row in rows]
+    docs = [
+        route._project_doc_status_for_webui(row, visible_folder=folder) for row in rows
+    ]
     await _fake_attach_graph_tags_for_documents(docs)
     return route._filter_doc_status_rows(docs, q=q, tag=None, folder=None)
 
 
-async def _optimized_list_documents(route: Any, *, q: str | None = None) -> list[dict[str, Any]]:
+async def _optimized_list_documents(
+    route: Any, *, q: str | None = None
+) -> list[dict[str, Any]]:
     rag = route._get_rag()
     folder = route.current_folder_id()
     docs_tuples, _total = await rag.doc_status.get_docs_paginated(page=1, page_size=500)

@@ -18,7 +18,6 @@ from fastapi import HTTPException
 
 from twindb_lightrag_memgraph.server.webui import routes_documents as rd
 
-
 ITERATIONS = 40
 DOC_COUNT = 100
 LOOKUP_DELAY_SECONDS = 0.004
@@ -76,14 +75,18 @@ def _build_payload(doc_count: int = DOC_COUNT) -> list[str]:
     return [f"doc-{idx:03d}" for idx in range(doc_count)]
 
 
-async def _make_env(doc_count: int = DOC_COUNT) -> tuple[_FakeLegacy, _FakeRag, list[str]]:
+async def _make_env(
+    doc_count: int = DOC_COUNT,
+) -> tuple[_FakeLegacy, _FakeRag, list[str]]:
     doc_ids = _build_payload(doc_count)
     rag = _FakeRag(doc_ids)
     legacy = _FakeLegacy(rag)
     return legacy, rag, doc_ids
 
 
-async def _baseline_bulk_delete(legacy: _FakeLegacy, rag: _FakeRag, doc_ids: list[str]) -> list[dict[str, Any]]:
+async def _baseline_bulk_delete(
+    legacy: _FakeLegacy, rag: _FakeRag, doc_ids: list[str]
+) -> list[dict[str, Any]]:
     del rag
     results: list[dict[str, Any]] = []
     for doc_id in doc_ids:
@@ -98,7 +101,9 @@ async def _baseline_bulk_delete(legacy: _FakeLegacy, rag: _FakeRag, doc_ids: lis
     return results
 
 
-async def _optimized_bulk_delete(legacy: _FakeLegacy, rag: _FakeRag, doc_ids: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+async def _optimized_bulk_delete(
+    legacy: _FakeLegacy, rag: _FakeRag, doc_ids: list[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
     del rag
     return await rd._run_bulk_delete_batch(legacy, legacy._rag, doc_ids)
 
