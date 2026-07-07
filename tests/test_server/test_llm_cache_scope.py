@@ -24,6 +24,7 @@ from lightrag import LightRAG
 from twindb_lightrag_memgraph.server.app import _build_rag_kwargs
 from twindb_lightrag_memgraph.server.settings import (
     LightRAGServerSettings,
+    TWIN_ENTITY_TYPES,
     TWIN_ENTITY_TYPES_GUIDANCE,
 )
 
@@ -96,6 +97,8 @@ def test_rag_kwargs_carry_twin_entity_extraction_profile() -> None:
     else:
         assert "entity_extract_max_entities" not in kwargs
     if "addon_params" in supported:
+        assert kwargs["addon_params"]["entity_types"] == list(TWIN_ENTITY_TYPES)
+        assert "Technology" in kwargs["addon_params"]["entity_types"]
         assert (
             kwargs["addon_params"]["entity_types_guidance"]
             == TWIN_ENTITY_TYPES_GUIDANCE

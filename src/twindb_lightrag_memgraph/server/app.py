@@ -583,6 +583,7 @@ def _build_rag_kwargs(
         "entity_extract_max_records": settings.entity_extract_max_records,
         "entity_extract_max_entities": settings.entity_extract_max_entities,
         "addon_params": {
+            "entity_types": list(settings.entity_types),
             "entity_types_guidance": settings.entity_types_guidance,
         },
     }

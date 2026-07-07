@@ -12,6 +12,15 @@ from pydantic_settings import BaseSettings
 
 SettingsConfigDict = ConfigDict
 
+TWIN_ENTITY_TYPES = (
+    "Person",
+    "Organization",
+    "Location",
+    "Product",
+    "Technology",
+    "Concept",
+)
+
 TWIN_ENTITY_TYPES_GUIDANCE = """Classify each entity using one of the following Twin graph types. If none fits, use `Concept`.
 
 - Person: Human individuals.
@@ -140,6 +149,13 @@ class LightRAGServerSettings(BaseSettings):
         description=(
             "Entity type guidance injected into LightRAG extraction prompts. "
             "Twin's default makes Technology an explicit first-class graph type."
+        ),
+    )
+    entity_types: tuple[str, ...] = Field(
+        default=TWIN_ENTITY_TYPES,
+        description=(
+            "Entity type taxonomy passed through LightRAG addon_params. "
+            "LightRAG 1.4.9.11 consumes this key directly in its extraction prompt."
         ),
     )
 
