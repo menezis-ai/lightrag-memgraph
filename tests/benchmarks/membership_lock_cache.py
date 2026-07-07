@@ -15,7 +15,6 @@ import time
 import tracemalloc
 from typing import Dict
 
-
 ITERATIONS = 10
 DOC_COUNT = 3000
 _MAX_MEMBERSHIP_LOCKS = 2048
@@ -114,14 +113,18 @@ async def main() -> None:
         print(result)
 
     size_delta = (baseline["size"] - optimized["size"]) / baseline["size"] * 100
-    mean_delta = (baseline["mean_ms"] - optimized["mean_ms"]) / baseline["mean_ms"] * 100
+    mean_delta = (
+        (baseline["mean_ms"] - optimized["mean_ms"]) / baseline["mean_ms"] * 100
+    )
     throughput_delta = (
         (optimized["ops_per_s"] - baseline["ops_per_s"]) / baseline["ops_per_s"] * 100
     )
 
     print()
     print("## SUMMARY")
-    print(f"lock_map_size: {baseline['size']} -> {optimized['size']} ({size_delta:.1f}% reduction)")
+    print(
+        f"lock_map_size: {baseline['size']} -> {optimized['size']} ({size_delta:.1f}% reduction)"
+    )
     print(
         f"mean: {baseline['mean_ms']:.3f}ms -> {optimized['mean_ms']:.3f}ms "
         f"({mean_delta:.1f}% faster)"
@@ -130,7 +133,9 @@ async def main() -> None:
         f"throughput: {baseline['ops_per_s']:.1f} -> {optimized['ops_per_s']:.1f} "
         f"req/s ({throughput_delta:.1f}%)"
     )
-    print(f"peak_mem: {peak_base / 1024 / 1024:.3f}MB -> {peak_opt / 1024 / 1024:.3f}MB")
+    print(
+        f"peak_mem: {peak_base / 1024 / 1024:.3f}MB -> {peak_opt / 1024 / 1024:.3f}MB"
+    )
 
 
 if __name__ == "__main__":

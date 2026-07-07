@@ -12,7 +12,6 @@ import random
 import statistics
 import time
 
-
 ITERATIONS = 80
 EMBEDDING_DIM = 384
 TOP_K = 25
@@ -26,10 +25,14 @@ def _build_query() -> list[float]:
 
 def _build_candidates() -> list[list[float]]:
     rng = random.Random(7)
-    return [[rng.random() for _ in range(EMBEDDING_DIM)] for _ in range(CANDIDATE_COUNT)]
+    return [
+        [rng.random() for _ in range(EMBEDDING_DIM)] for _ in range(CANDIDATE_COUNT)
+    ]
 
 
-def _score_with_inline_norm(query_embedding: list[float], candidates: list[list[float]]) -> list[float]:
+def _score_with_inline_norm(
+    query_embedding: list[float], candidates: list[list[float]]
+) -> list[float]:
     scores: list[float] = []
     for embedding in candidates:
         dot = 0.0
@@ -68,7 +71,9 @@ def _score_with_precomputed_norm(
     return scores[:TOP_K]
 
 
-def _measure(label: str, fn, query_embedding: list[float], candidates: list[list[float]]) -> dict[str, float | str | int]:
+def _measure(
+    label: str, fn, query_embedding: list[float], candidates: list[list[float]]
+) -> dict[str, float | str | int]:
     durations_ms: list[float] = []
     for _ in range(ITERATIONS):
         start = time.perf_counter()
@@ -91,7 +96,12 @@ def main() -> None:
     query_embedding = _build_query()
     candidates = _build_candidates()
 
-    baseline = _measure("baseline_per_row_query_norm", _score_with_inline_norm, query_embedding, candidates)
+    baseline = _measure(
+        "baseline_per_row_query_norm",
+        _score_with_inline_norm,
+        query_embedding,
+        candidates,
+    )
     optimized = _measure(
         "optimized_precomputed_query_norm",
         _score_with_precomputed_norm,
@@ -102,9 +112,7 @@ def main() -> None:
     for result in (baseline, optimized):
         print(result)
 
-    speedup = (
-        (baseline["mean_ms"] - optimized["mean_ms"]) / baseline["mean_ms"] * 100
-    )
+    speedup = (baseline["mean_ms"] - optimized["mean_ms"]) / baseline["mean_ms"] * 100
     throughput_delta = (
         (optimized["ops_per_s"] - baseline["ops_per_s"]) / baseline["ops_per_s"] * 100
     )
