@@ -11,16 +11,13 @@
 - Tag governance: rejected and deleted tags are now excluded from catalog
   display, catalog export, and uniqueness checks, preventing obsolete entries
   from blocking approved tag creation.
-- Document classification visibility: added regression coverage for MIP badge
-  propagation from backend document metadata to the WebUI source list.
 - Retrieval parameters: numeric inputs now support standard value replacement
-  without leading-zero artifacts.
+  without leading-zero artifacts, including decimal source-score values.
 - Knowledge Graph extraction: expanded entity extraction guidance and graph
   type mapping for technology entities.
 - Upload classification policy: operator-selected sensitivity is restricted to
   C1/C2, bulk upload assignment follows the same rule, and C3/C4 operator
-  headers are rejected before ingestion. The policy is covered by backend unit
-  tests, WebUI unit tests, MSW contract tests, CI wiring, and Playwright e2e.
+  headers are rejected before ingestion.
 
 ### Performance and operational hardening
 - Exact vector search:
@@ -29,7 +26,6 @@
     avoid extra predicate passes and set-style filtering work.
   - Cache query vector norm once in Python and pass it as `query_norm` instead
     of recomputing `reduce(...)` per row in Cypher `_exact_cosine_projection`.
-  - Added benchmark `tests/benchmarks/vector_exact_similarity_projection.py`.
   - Benchmark result on 6000 candidates, 384 dimensions, 80 iterations:
     throughput +30.2%; p50 latency ~102.85ms to ~78.73ms; p99 latency
     ~119.53ms to ~94.99ms.
@@ -37,8 +33,6 @@
   - `_membership_locks` moved to a bounded `OrderedDict` cache with move-to-end
     on access and unlock-based eviction of stale entries to avoid unbounded
     memory growth.
-  - Updated benchmark `tests/benchmarks/membership_lock_cache.py` to mirror the
-    runtime structure.
   - Benchmark result on synthetic churn, 80 concurrent workers, 5 seconds:
     cache size reduced from 30001 to 2497 entries. Mean latency increased from
     14.38ms to 18.32ms and throughput decreased by 21.5%; production-like

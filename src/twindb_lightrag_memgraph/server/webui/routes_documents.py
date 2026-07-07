@@ -56,6 +56,8 @@ def _evict_membership_locks() -> None:
 
 
 def _membership_lock(doc_id: str) -> asyncio.Lock:
+    # Callers must enter the returned lock immediately, without an intervening
+    # await; eviction assumes unlocked cached locks have no pending user.
     global _membership_lock_accesses
     lock = _membership_locks.get(doc_id)
     if lock is None:
@@ -462,12 +464,13 @@ async def _run_bulk_delete_batch(
     rag: Any,
     doc_ids: list[Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Delete multiple docs with parallel per-doc work, preserving old failure
-    behavior.
+    """Delete multiple docs with parallel per-doc work.
 
-    The contract is unchanged: a non-404, non-application exception raises a
-    503, and the route aborts before emitting bulk activity. Independent docs
-    are still processed in parallel to avoid the old `for ... await` bottleneck.
+    The activity/response contract is preserved: a non-404, non-application
+    exception raises a 503, and the route aborts before emitting bulk activity.
+    Error-path side effects are not identical to the old sequential loop:
+    independent deletes in the same batch may complete before gather reports a
+    mid-batch failure. Bulk delete remains non-atomic by contract.
     """
 
     async def _run_one(doc_id: Any) -> dict[str, Any] | None:
