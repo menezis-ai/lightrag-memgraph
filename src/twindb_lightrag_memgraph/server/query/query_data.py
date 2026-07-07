@@ -12,21 +12,26 @@ from .source_filters import _split_source_ids
 logger = logging.getLogger(__name__)
 
 
-def _query_data_source_chunk_ids(data: dict[str, Any]) -> list[str]:
-    """Collect chunk ids referenced by KG rows in a structured data payload."""
-    chunk_ids: list[str] = []
-    seen: set[str] = set()
+def _iter_kg_rows(data: dict[str, Any]):
+    """Yield the dict rows of a structured payload's KG sections in order."""
     for key in ("entities", "relationships"):
         rows = data.get(key)
         if not isinstance(rows, list):
             continue
         for row in rows:
             if isinstance(row, dict):
-                for chunk_id in _split_source_ids(row.get("source_id")):
-                    if chunk_id in seen:
-                        continue
-                    seen.add(chunk_id)
-                    chunk_ids.append(chunk_id)
+                yield row
+
+
+def _query_data_source_chunk_ids(data: dict[str, Any]) -> list[str]:
+    """Collect chunk ids referenced by KG rows in a structured data payload."""
+    chunk_ids: list[str] = []
+    seen: set[str] = set()
+    for row in _iter_kg_rows(data):
+        for chunk_id in _split_source_ids(row.get("source_id")):
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                chunk_ids.append(chunk_id)
     return chunk_ids
 
 
@@ -47,33 +52,18 @@ def _query_data_existing_chunk_ids(data: dict[str, Any]) -> set[str]:
 
 def _query_data_source_chunk_scores(data: dict[str, Any]) -> dict[str, float]:
     """Best-effort score per chunk id from KG rows that reference it."""
-    total = 0
-    for key in ("entities", "relationships"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
-            continue
-        total += sum(1 for row in rows if isinstance(row, dict))
-
+    total = sum(1 for _ in _iter_kg_rows(data))
     if total == 0:
         return {}
 
     scores: dict[str, float] = {}
-    rank = 0
-    for key in ("entities", "relationships"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
+    for rank, row in enumerate(_iter_kg_rows(data)):
+        chunk_ids = _split_source_ids(row.get("source_id"))
+        if not chunk_ids:
             continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            chunk_ids = _split_source_ids(row.get("source_id"))
-            if not chunk_ids:
-                rank += 1
-                continue
-            score = _safe_get_score(row, rank, total)
-            rank += 1
-            for chunk_id in chunk_ids:
-                scores[chunk_id] = max(scores.get(chunk_id, score), score)
+        score = _safe_get_score(row, rank, total)
+        for chunk_id in chunk_ids:
+            scores[chunk_id] = max(scores.get(chunk_id, score), score)
     return scores
 
 

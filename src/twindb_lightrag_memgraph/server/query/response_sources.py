@@ -109,6 +109,66 @@ async def _source_matches_tag_filter(
     return _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
 
 
+def _doc_filter_pass(
+    sources: list[dict[str, Any]],
+    *,
+    doc_filter: dict[str, list[str]] | None,
+    tag_active: bool,
+) -> tuple[list[bool], list[str], bool]:
+    """First pass: per-source doc-filter verdict + tag prefetch doc ids.
+
+    Returns the parallel match verdicts, the deduped doc ids to prefetch tags
+    for, and whether any excluded source could not be tied back to a doc
+    (unverified projection).
+    """
+    doc_required, doc_optional = _doc_filter_terms(doc_filter)
+    doc_filter_enabled = bool(doc_required or doc_optional)
+    matches: list[bool] = []
+    prefetch_doc_ids: list[str] = []
+    prefetch_seen: set[str] = set()
+    has_unverified = False
+
+    for source in sources:
+        source_match = _source_matches_doc_filter(source, doc_filter)
+        matches.append(source_match)
+        if not source_match:
+            if doc_filter_enabled and not _source_doc_candidates(source):
+                has_unverified = True
+            continue
+        if not tag_active:
+            continue
+        doc_id = source.get("doc_id")
+        if isinstance(doc_id, str) and doc_id and doc_id not in prefetch_seen:
+            prefetch_seen.add(doc_id)
+            prefetch_doc_ids.append(doc_id)
+    return matches, prefetch_doc_ids, has_unverified
+
+
+def _apply_tag_filter(
+    sources: list[dict[str, Any]],
+    matches: list[bool],
+    *,
+    tag_active: bool,
+    tags_cache: dict[str, set[str]],
+    tag_filter: dict[str, list[str]] | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Second pass: keep doc-matched sources whose tags also match."""
+    kept: list[dict[str, Any]] = []
+    has_unverified = False
+    for source, source_match in zip(sources, matches):
+        if not source_match:
+            continue
+        if tag_active:
+            doc_id = source.get("doc_id")
+            if not isinstance(doc_id, str) or not doc_id:
+                has_unverified = True
+                continue
+            if not _doc_tags_match_filter(tags_cache.get(doc_id, set()), tag_filter):
+                continue
+        kept.append(source)
+    return kept, has_unverified
+
+
 async def _filter_sources_by_advanced_filters(
     sources: list[dict[str, Any]],
     *,
@@ -122,51 +182,26 @@ async def _filter_sources_by_advanced_filters(
     if not tag_required and not tag_optional and not doc_required and not doc_optional:
         return sources, False
 
+    tag_active = bool(tag_required or tag_optional)
+    matches, prefetch_doc_ids, has_unverified_docs = _doc_filter_pass(
+        sources, doc_filter=doc_filter, tag_active=tag_active
+    )
+
     tags_cache: dict[str, set[str]] = {}
-    doc_filter_enabled = bool(doc_required or doc_optional)
-    source_doc_filter_matches: list[bool] = []
-    prefetch_doc_ids: list[str] = []
-    prefetch_doc_id_set: set[str] = set()
-    has_unverified = False
+    if tag_active and prefetch_doc_ids:
+        resolved_tags = await asyncio.gather(
+            *(fetch_doc_tags(doc_id, folder) for doc_id in prefetch_doc_ids)
+        )
+        tags_cache.update(zip(prefetch_doc_ids, resolved_tags))
 
-    for source in sources:
-        source_match = _source_matches_doc_filter(source, doc_filter)
-        source_doc_filter_matches.append(source_match)
-        if not source_match:
-            if doc_filter_enabled and not _source_doc_candidates(source):
-                has_unverified = True
-            continue
-        prefetch_doc_id = source.get("doc_id")
-        if (
-            (tag_required or tag_optional)
-            and isinstance(prefetch_doc_id, str)
-            and prefetch_doc_id
-            and prefetch_doc_id not in prefetch_doc_id_set
-        ):
-            prefetch_doc_id_set.add(prefetch_doc_id)
-            prefetch_doc_ids.append(prefetch_doc_id)
-
-    if tag_required or tag_optional:
-        if prefetch_doc_ids:
-            resolved_tags = await asyncio.gather(
-                *(fetch_doc_tags(doc_id, folder) for doc_id in prefetch_doc_ids)
-            )
-            tags_cache.update(zip(prefetch_doc_ids, resolved_tags))
-
-    kept: list[dict[str, Any]] = []
-    for index, source in enumerate(sources):
-        source_match = source_doc_filter_matches[index]
-        if not source_match:
-            continue
-        if tag_required or tag_optional:
-            doc_id = source.get("doc_id")
-            if not isinstance(doc_id, str) or not doc_id:
-                has_unverified = True
-                continue
-            if not _doc_tags_match_filter(tags_cache.get(doc_id, set()), tag_filter):
-                continue
-        kept.append(source)
-    return kept, has_unverified
+    kept, has_unverified_tags = _apply_tag_filter(
+        sources,
+        matches,
+        tag_active=tag_active,
+        tags_cache=tags_cache,
+        tag_filter=tag_filter,
+    )
+    return kept, has_unverified_docs or has_unverified_tags
 
 
 async def _build_envelope_sources(

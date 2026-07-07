@@ -136,6 +136,37 @@ async def _row_matches_tag_filter(
     return False
 
 
+def _combine_row_doc_ids(
+    row_direct_doc_ids: list[set[str]],
+    row_chunk_ids: list[set[str]],
+    row_file_paths: list[set[str]],
+    chunk_docs: dict[str, str],
+    file_docs: dict[str, str],
+) -> tuple[list[set[str]], set[str]]:
+    """Merge direct / chunk-resolved / file-resolved doc ids per row.
+
+    Returns the per-row doc-id sets (parallel to the input rows) plus the union
+    of every doc id seen, used to drive the tag prefetch.
+    """
+    row_doc_ids: list[set[str]] = []
+    all_doc_ids: set[str] = set()
+    for idx, direct_doc_ids in enumerate(row_direct_doc_ids):
+        doc_ids = set(direct_doc_ids)
+        doc_ids.update(
+            doc_id
+            for chunk_id in row_chunk_ids[idx]
+            if (doc_id := chunk_docs.get(chunk_id))
+        )
+        doc_ids.update(
+            doc_id
+            for file_path in row_file_paths[idx]
+            if (doc_id := file_docs.get(file_path))
+        )
+        row_doc_ids.append(doc_ids)
+        all_doc_ids.update(doc_ids)
+    return row_doc_ids, all_doc_ids
+
+
 async def _filter_rows_by_tags(
     rag: Any,
     rows: list,
@@ -174,22 +205,13 @@ async def _filter_rows_by_tags(
     chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
     file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
 
-    row_doc_ids: list[set[str]] = []
-    all_doc_ids: set[str] = set()
-    for idx, direct_doc_ids in enumerate(row_direct_doc_ids):
-        doc_ids = set(direct_doc_ids)
-        doc_ids.update(
-            doc_id
-            for chunk_id in row_chunk_ids[idx]
-            if (doc_id := chunk_docs.get(chunk_id))
-        )
-        doc_ids.update(
-            doc_id
-            for file_path in row_file_paths[idx]
-            if (doc_id := file_docs.get(file_path))
-        )
-        row_doc_ids.append(doc_ids)
-        all_doc_ids.update(doc_ids)
+    row_doc_ids, all_doc_ids = _combine_row_doc_ids(
+        row_direct_doc_ids,
+        row_chunk_ids,
+        row_file_paths,
+        chunk_docs,
+        file_docs,
+    )
 
     unresolved_doc_ids = [doc_id for doc_id in all_doc_ids if doc_id not in tags_cache]
     if unresolved_doc_ids:

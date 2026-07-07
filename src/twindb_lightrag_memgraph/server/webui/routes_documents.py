@@ -44,14 +44,15 @@ def _evict_membership_locks() -> None:
     if len(_membership_locks) <= _MAX_MEMBERSHIP_LOCKS:
         return
 
-    for doc_id in list(_membership_locks.keys()):
+    # Snapshot the unlocked, evictable keys first (oldest-first LRU order) so we
+    # never mutate the mapping while iterating it. In-flight (locked) locks are
+    # kept — they are still serializing membership writes.
+    removable = [
+        doc_id for doc_id, lock in _membership_locks.items() if not lock.locked()
+    ]
+    for doc_id in removable:
         if len(_membership_locks) <= _MAX_MEMBERSHIP_LOCKS:
             return
-        lock = _membership_locks[doc_id]
-        if lock.locked():
-            # Keep in-flight locks; they are still being used for membership
-            # serialization and should not be replaced.
-            continue
         _membership_locks.pop(doc_id, None)
 
 
