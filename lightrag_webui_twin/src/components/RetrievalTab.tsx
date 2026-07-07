@@ -314,7 +314,8 @@ function NumericParameterInput({
       </label>
       <input
         id={id}
-        type="number"
+        type={integer ? 'number' : 'text'}
+        inputMode={integer ? 'numeric' : 'decimal'}
         min={min}
         max={max}
         step={step}
@@ -328,10 +329,7 @@ function NumericParameterInput({
         onChange={(e) => {
           const nextDraft = normalizeNumberDraft(e.target.value);
           setDraft(nextDraft);
-          const committed = commitDraft(nextDraft);
-          if (committed !== null && String(committed) !== nextDraft) {
-            setDraft(String(committed));
-          }
+          commitDraft(nextDraft);
         }}
         onBlur={() => {
           setEditing(false);
