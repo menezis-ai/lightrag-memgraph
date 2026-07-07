@@ -14,14 +14,19 @@ logger = logging.getLogger(__name__)
 def _query_data_source_chunk_ids(data: dict[str, Any]) -> list[str]:
     """Collect chunk ids referenced by KG rows in a structured data payload."""
     chunk_ids: list[str] = []
+    seen: set[str] = set()
     for key in ("entities", "relationships"):
         rows = data.get(key)
         if not isinstance(rows, list):
             continue
         for row in rows:
             if isinstance(row, dict):
-                chunk_ids.extend(_split_source_ids(row.get("source_id")))
-    return list(dict.fromkeys(chunk_ids))
+                for chunk_id in _split_source_ids(row.get("source_id")):
+                    if chunk_id in seen:
+                        continue
+                    seen.add(chunk_id)
+                    chunk_ids.append(chunk_id)
+    return chunk_ids
 
 
 def _query_data_existing_chunk_ids(data: dict[str, Any]) -> set[str]:
@@ -41,22 +46,33 @@ def _query_data_existing_chunk_ids(data: dict[str, Any]) -> set[str]:
 
 def _query_data_source_chunk_scores(data: dict[str, Any]) -> dict[str, float]:
     """Best-effort score per chunk id from KG rows that reference it."""
-    kg_rows: list[dict[str, Any]] = []
+    total = 0
     for key in ("entities", "relationships"):
         rows = data.get(key)
         if not isinstance(rows, list):
             continue
-        kg_rows.extend(row for row in rows if isinstance(row, dict))
+        total += sum(1 for row in rows if isinstance(row, dict))
+
+    if total == 0:
+        return {}
 
     scores: dict[str, float] = {}
-    total = len(kg_rows)
-    for rank, row in enumerate(kg_rows):
-        chunk_ids = _split_source_ids(row.get("source_id"))
-        if not chunk_ids:
+    rank = 0
+    for key in ("entities", "relationships"):
+        rows = data.get(key)
+        if not isinstance(rows, list):
             continue
-        score = _safe_get_score(row, rank, total)
-        for chunk_id in chunk_ids:
-            scores[chunk_id] = max(scores.get(chunk_id, score), score)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            chunk_ids = _split_source_ids(row.get("source_id"))
+            if not chunk_ids:
+                rank += 1
+                continue
+            score = _safe_get_score(row, rank, total)
+            rank += 1
+            for chunk_id in chunk_ids:
+                scores[chunk_id] = max(scores.get(chunk_id, score), score)
     return scores
 
 
@@ -271,17 +287,26 @@ async def _enrich_query_data_chunks_from_source_ids(
     chunks = list(raw_chunks) if isinstance(raw_chunks, list) else []
     references = list(raw_references) if isinstance(raw_references, list) else []
     next_ref = _next_query_data_reference_id(data)
+    chunk_rows_to_fetch: list[Any] = []
     for chunk_id in missing:
         raw = records.get(chunk_id)
         if not isinstance(raw, dict):
             continue
         ref_id = str(next_ref)
         next_ref += 1
-        chunk_row, reference = await _query_data_chunk_row(
-            rag, chunk_id, raw, ref_id, source_scores.get(chunk_id)
+        chunk_rows_to_fetch.append(
+            _query_data_chunk_row(
+                rag,
+                chunk_id,
+                raw,
+                ref_id,
+                source_scores.get(chunk_id),
+            )
         )
-        chunks.append(chunk_row)
-        references.append(reference)
+    if chunk_rows_to_fetch:
+        for chunk_row, reference in await asyncio.gather(*chunk_rows_to_fetch):
+            chunks.append(chunk_row)
+            references.append(reference)
 
     enriched_data["chunks"] = chunks
     enriched_data["references"] = references

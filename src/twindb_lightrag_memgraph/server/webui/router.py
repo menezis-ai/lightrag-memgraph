@@ -337,6 +337,17 @@ def _doc_row_has_active_folder_hint(doc: dict[str, Any], folder: str) -> bool:
     return str(row_folder) == folder
 
 
+def _doc_matches_query(doc: dict[str, Any], q: str | None) -> bool:
+    if not q:
+        return True
+    needle = q.lower()
+    return (
+        needle in str(doc.get("file_path") or doc.get("source") or "").lower()
+        or needle
+        in str(doc.get("content_summary") or doc.get("summary") or "").lower()
+    )
+
+
 async def _filter_docs_to_active_folder(
     items: list[dict[str, Any]],
     *,
@@ -403,15 +414,23 @@ async def _list_documents_from_doc_status(
         payload["id"] = doc_id
         doc_rows.append(payload)
 
+    doc_rows = [
+        _project_doc_status_for_webui(doc, visible_folder=folder)
+        for doc in doc_rows
+    ]
+
+    if q:
+        doc_rows = [
+            doc for doc in doc_rows if _doc_matches_query(doc, q=q)
+        ]
+
     if folder is not None:
         doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
-    docs = [
-        _project_doc_status_for_webui(doc, visible_folder=folder) for doc in doc_rows
-    ]
-    await _attach_graph_tags_for_documents(docs)
+
+    await _attach_graph_tags_for_documents(doc_rows)
     return _filter_doc_status_rows(
-        docs,
-        q=q,
+        doc_rows,
+        q=None,
         tag=tag,
         folder=None,
     )

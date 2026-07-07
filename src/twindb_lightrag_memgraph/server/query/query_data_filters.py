@@ -41,22 +41,58 @@ def _file_path_candidates_for_query_data_row(row: dict[str, Any]) -> list[str]:
     return candidates
 
 
-async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
+def _query_data_row_doc_candidates(
+    row: dict[str, Any],
+) -> tuple[set[str], set[str], set[str]]:
+    chunk_ids = set(_chunk_ids_for_query_data_row(row))
+    file_paths = set(_file_path_candidates_for_query_data_row(row))
+    return (
+        _direct_doc_ids_for_query_data_row(row),
+        chunk_ids,
+        file_paths,
+    )
+
+
+async def _resolve_doc_ids_for_chunk_ids(
+    rag: Any, chunk_ids: set[str]
+) -> dict[str, str]:
     if not chunk_ids:
-        return set()
+        return {}
     resolved = await asyncio.gather(
         *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in chunk_ids)
     )
-    return {doc_id for doc_id in resolved if doc_id}
+    return {
+        chunk_id: doc_id
+        for chunk_id, doc_id in zip(chunk_ids, resolved)
+        if isinstance(doc_id, str) and doc_id
+    }
+
+
+async def _resolve_doc_ids_for_file_paths(
+    rag: Any, file_paths: set[str]
+) -> dict[str, str]:
+    if not file_paths:
+        return {}
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_file_path(rag, file_path) for file_path in file_paths)
+    )
+    return {
+        file_path: doc_id
+        for file_path, doc_id in zip(file_paths, resolved)
+        if isinstance(doc_id, str) and doc_id
+    }
+
+
+async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
+    doc_ids_by_chunk = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
+    return set(doc_ids_by_chunk.values())
 
 
 async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
     if not file_paths:
         return set()
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_file_path(rag, file_path) for file_path in file_paths)
-    )
-    return {doc_id for doc_id in resolved if doc_id}
+    doc_ids_by_path = await _resolve_doc_ids_for_file_paths(rag, set(file_paths))
+    return set(doc_ids_by_path.values())
 
 
 async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
@@ -109,18 +145,73 @@ async def _filter_rows_by_tags(
     fetch_doc_tags: Any,
 ) -> tuple[list, set[str]]:
     """Keep rows whose doc tags match the filter; collect their reference_ids."""
-    kept_rows = []
-    kept_reference_ids: set[str] = set()
+    required, optional = _tag_filter_terms(tag_filter)
+    if not required and not optional:
+        return rows, set()
+
+    rows_for_filter: list[dict[str, Any]] = []
+    row_direct_doc_ids: list[set[str]] = []
+    row_chunk_ids: list[set[str]] = []
+    row_file_paths: list[set[str]] = []
+
+    chunk_ids: set[str] = set()
+    file_paths: set[str] = set()
+
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if await _row_matches_tag_filter(
-            rag, row, tag_filter, folder, tags_cache, fetch_doc_tags
+        direct_doc_ids, row_chunks, row_paths = _query_data_row_doc_candidates(row)
+        rows_for_filter.append(row)
+        row_direct_doc_ids.append(direct_doc_ids)
+        row_chunk_ids.append(row_chunks)
+        row_file_paths.append(row_paths)
+        chunk_ids.update(row_chunks)
+        file_paths.update(row_paths)
+
+    if not rows_for_filter:
+        return [], set()
+
+    chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
+    file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
+
+    row_doc_ids: list[set[str]] = []
+    all_doc_ids: set[str] = set()
+    for idx, direct_doc_ids in enumerate(row_direct_doc_ids):
+        doc_ids = set(direct_doc_ids)
+        doc_ids.update(
+            doc_id
+            for chunk_id in row_chunk_ids[idx]
+            if (doc_id := chunk_docs.get(chunk_id))
+        )
+        doc_ids.update(
+            doc_id
+            for file_path in row_file_paths[idx]
+            if (doc_id := file_docs.get(file_path))
+        )
+        row_doc_ids.append(doc_ids)
+        all_doc_ids.update(doc_ids)
+
+    unresolved_doc_ids = [doc_id for doc_id in all_doc_ids if doc_id not in tags_cache]
+    if unresolved_doc_ids:
+        resolved_tags = await asyncio.gather(
+            *(fetch_doc_tags(doc_id, folder) for doc_id in unresolved_doc_ids)
+        )
+        tags_cache.update(zip(unresolved_doc_ids, resolved_tags))
+
+    kept_rows = []
+    kept_reference_ids: set[str] = set()
+    for row, doc_ids in zip(rows_for_filter, row_doc_ids):
+        if not doc_ids:
+            continue
+        if not any(
+            _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
+            for doc_id in doc_ids
         ):
-            kept_rows.append(row)
-            ref_id = row.get("reference_id")
-            if isinstance(ref_id, str) and ref_id:
-                kept_reference_ids.add(ref_id)
+            continue
+        kept_rows.append(row)
+        ref_id = row.get("reference_id")
+        if isinstance(ref_id, str) and ref_id:
+            kept_reference_ids.add(ref_id)
     return kept_rows, kept_reference_ids
 
 

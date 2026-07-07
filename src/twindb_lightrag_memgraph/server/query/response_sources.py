@@ -123,35 +123,49 @@ async def _filter_sources_by_advanced_filters(
         return sources, False
 
     tags_cache: dict[str, set[str]] = {}
-    if tag_required or tag_optional:
-        tag_doc_ids = list(
-            dict.fromkeys(
-                source["doc_id"]
-                for source in sources
-                if _source_matches_doc_filter(source, doc_filter)
-                and isinstance(source.get("doc_id"), str)
+    doc_filter_enabled = bool(doc_required or doc_optional)
+    source_doc_filter_matches: list[bool] = []
+    prefetch_doc_ids: list[str] = []
+    prefetch_doc_id_set: set[str] = set()
+    has_unverified = False
+
+    if doc_filter_enabled:
+        for source in sources:
+            source_match = _source_matches_doc_filter(source, doc_filter)
+            source_doc_filter_matches.append(source_match)
+            if not source_match:
+                if not _source_doc_candidates(source):
+                    has_unverified = True
+            elif (
+                isinstance(source.get("doc_id"), str)
                 and source.get("doc_id")
-            )
-        )
-        if tag_doc_ids:
+                and source.get("doc_id") not in prefetch_doc_id_set
+            ):
+                prefetch_doc_id = source.get("doc_id")
+                prefetch_doc_id_set.add(prefetch_doc_id)
+                prefetch_doc_ids.append(prefetch_doc_id)
+    else:
+        source_doc_filter_matches = [True] * len(sources)
+
+    if tag_required or tag_optional:
+        if prefetch_doc_ids:
             resolved_tags = await asyncio.gather(
-                *(fetch_doc_tags(doc_id, folder) for doc_id in tag_doc_ids)
+                *(fetch_doc_tags(doc_id, folder) for doc_id in prefetch_doc_ids)
             )
-            tags_cache.update(zip(tag_doc_ids, resolved_tags))
+            tags_cache.update(zip(prefetch_doc_ids, resolved_tags))
 
     kept: list[dict[str, Any]] = []
-    has_unverified = False
-    for source in sources:
-        if not _source_matches_doc_filter(source, doc_filter):
-            if not _source_doc_candidates(source):
-                has_unverified = True
+    for index, source in enumerate(sources):
+        source_match = source_doc_filter_matches[index]
+        if not source_match:
             continue
-        if not await _source_matches_tag_filter(
-            source, tag_filter, folder, tags_cache, fetch_doc_tags
-        ):
-            if not source.get("doc_id"):
+        if tag_required or tag_optional:
+            doc_id = source.get("doc_id")
+            if not isinstance(doc_id, str) or not doc_id:
                 has_unverified = True
-            continue
+                continue
+            if not _doc_tags_match_filter(tags_cache.get(doc_id, set()), tag_filter):
+                continue
         kept.append(source)
     return kept, has_unverified
 
