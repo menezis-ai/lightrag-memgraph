@@ -21,7 +21,8 @@ export type TagStatus =
   | 'pending-promotion'
   | 'pending-review'
   | 'deprecated'
-  | 'rejected';
+  | 'rejected'
+  | 'deleted';
 
 export interface TagRelated {
   tag: string;

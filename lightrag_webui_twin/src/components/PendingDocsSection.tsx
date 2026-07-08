@@ -29,6 +29,7 @@ import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { getActiveFolder } from '../api/client';
 import { api } from '../api/resources';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import { Icon, SourceIcon } from './Icon';
 import { ClassPill } from './ClassPill';
 import type { Document } from '../types/document';
@@ -148,10 +149,11 @@ export function PendingDocsSection({
       ctx?.previousDocuments.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
+      logTechnicalError('document-approve', err);
       onToast(
         'error',
         'Approve failed',
-        `${variables.doc.file_path} · ${err.message}`,
+        `${variables.doc.file_path} · ${userErrorMessage(err, { action: 'approving the document' })}`,
       );
     },
     onSettled: async (_data, _err, variables) => {
@@ -185,10 +187,11 @@ export function PendingDocsSection({
       ctx?.previousDocuments.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
+      logTechnicalError('document-reject', err);
       onToast(
         'error',
         'Reject failed',
-        `${variables.doc.file_path} · ${err.message}`,
+        `${variables.doc.file_path} · ${userErrorMessage(err, { action: 'rejecting the document' })}`,
       );
     },
     onSettled: async (_data, _err, variables) => {

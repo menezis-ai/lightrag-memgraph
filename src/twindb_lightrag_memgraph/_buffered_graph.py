@@ -7,6 +7,7 @@ Read operations (get_node, has_edge, get_edge) support read-your-own-writes
 from the buffer, falling back to the real graph for data not yet buffered.
 """
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
@@ -16,6 +17,32 @@ from ._pool import _is_closed_transport_error, acquire_write_slot, get_session
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 _T = TypeVar("_T")
+_MAX_FLUSH_ATTEMPTS = 3
+_flush_lock: asyncio.Lock | None = None
+_flush_lock_loop_id: int | None = None
+
+
+def _get_flush_lock() -> asyncio.Lock:
+    """Return a loop-bound lock for buffered graph flushes.
+
+    LightRAG may merge several documents concurrently in one pipeline run.
+    Memgraph can reject overlapping MERGE-heavy graph transactions with
+    ``Cannot resolve conflicting transactions`` even when each individual
+    write is idempotent. Serializing just this buffered graph flush keeps the
+    high-volume KV/vector writes throttled by the normal pool semaphore while
+    making graph merge flushes deterministic.
+    """
+    global _flush_lock, _flush_lock_loop_id
+
+    current_loop_id = id(asyncio.get_running_loop())
+    if _flush_lock is None or _flush_lock_loop_id != current_loop_id:
+        _flush_lock = asyncio.Lock()
+        _flush_lock_loop_id = current_loop_id
+    return _flush_lock
+
+
+def _is_memgraph_conflicting_transaction(exc: BaseException) -> bool:
+    return "cannot resolve conflicting transactions" in str(exc).lower()
 
 
 class _BufferedGraphProxy:
@@ -130,18 +157,30 @@ class _BufferedGraphProxy:
         """
         node_count = len(self._node_buffer)
         edge_count = len(self._edge_buffer)
-        try:
-            if self._node_buffer:
-                await self._flush_nodes()
-            if self._edge_buffer:
-                await self._flush_edges()
-        except Exception:
-            logger.error(
-                "Buffered flush FAILED: %d nodes, %d edges",
-                node_count,
-                edge_count,
-            )
-            raise
+        async with _get_flush_lock():
+            for attempt in range(1, _MAX_FLUSH_ATTEMPTS + 1):
+                try:
+                    await self._flush_once()
+                    break
+                except Exception as exc:
+                    if (
+                        attempt < _MAX_FLUSH_ATTEMPTS
+                        and _is_memgraph_conflicting_transaction(exc)
+                    ):
+                        logger.warning(
+                            "Buffered flush hit Memgraph transaction conflict "
+                            "(attempt %d/%d); retrying",
+                            attempt,
+                            _MAX_FLUSH_ATTEMPTS,
+                        )
+                        await asyncio.sleep(0.05 * attempt)
+                        continue
+                    logger.error(
+                        "Buffered flush FAILED: %d nodes, %d edges",
+                        node_count,
+                        edge_count,
+                    )
+                    raise
         self._node_buffer.clear()
         self._node_types.clear()
         self._edge_buffer.clear()
@@ -151,7 +190,14 @@ class _BufferedGraphProxy:
             edge_count,
         )
 
-    async def _flush_nodes(self):
+    async def _flush_once(self):
+        async with acquire_write_slot():
+            if self._node_buffer:
+                await self._flush_nodes(write_slot_acquired=True)
+            if self._edge_buffer:
+                await self._flush_edges(write_slot_acquired=True)
+
+    async def _flush_nodes(self, *, write_slot_acquired: bool = False):
         """Single UNWIND query for all buffered nodes + per-type label queries."""
         workspace = validate_identifier(self._real.workspace, "workspace")
         entries = [
@@ -159,43 +205,52 @@ class _BufferedGraphProxy:
             for name, data in self._node_buffer.items()
         ]
 
-        async with acquire_write_slot():
+        async def _write():
             async with get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
-                    SET n += e.properties
-                    """,
-                    entries=entries,
+                await self._flush_nodes_with_session(session, workspace, entries)
+
+        if write_slot_acquired:
+            await _write()
+        else:
+            async with acquire_write_slot():
+                await _write()
+
+    async def _flush_nodes_with_session(self, session, workspace: str, entries: list):
+        result = await session.run(
+            f"""
+            UNWIND $entries AS e
+            MERGE (n:`{workspace}` {{entity_id: e.entity_id}})
+            SET n += e.properties
+            """,
+            entries=entries,
+        )
+        await result.consume()
+
+        # Set additional type labels — group by type to minimize queries.
+        # Cypher can't do SET n:$dynamic, so one query per distinct type.
+        by_type: dict[str, list[str]] = {}
+        for name, node_type in self._node_types.items():
+            by_type.setdefault(node_type, []).append(name)
+        for node_type, names in by_type.items():
+            try:
+                safe_type = validate_identifier(str(node_type), "entity_type")
+            except ValueError:
+                logger.warning(
+                    "Skipping unsafe buffered entity_type label: %r",
+                    node_type,
                 )
-                await result.consume()
+                continue
+            result = await session.run(
+                f"""
+                UNWIND $names AS name
+                MATCH (n:`{workspace}` {{entity_id: name}})
+                SET n:`{safe_type}`
+                """,
+                names=names,
+            )
+            await result.consume()
 
-                # Set additional type labels — group by type to minimize queries.
-                # Cypher can't do SET n:$dynamic, so one query per distinct type.
-                by_type: dict[str, list[str]] = {}
-                for name, node_type in self._node_types.items():
-                    by_type.setdefault(node_type, []).append(name)
-                for node_type, names in by_type.items():
-                    try:
-                        safe_type = validate_identifier(str(node_type), "entity_type")
-                    except ValueError:
-                        logger.warning(
-                            "Skipping unsafe buffered entity_type label: %r",
-                            node_type,
-                        )
-                        continue
-                    result = await session.run(
-                        f"""
-                        UNWIND $names AS name
-                        MATCH (n:`{workspace}` {{entity_id: name}})
-                        SET n:`{safe_type}`
-                        """,
-                        names=names,
-                    )
-                    await result.consume()
-
-    async def _flush_edges(self):
+    async def _flush_edges(self, *, write_slot_acquired: bool = False):
         """Single UNWIND query for all buffered edges."""
         workspace = validate_identifier(self._real.workspace, "workspace")
         entries = [
@@ -207,7 +262,7 @@ class _BufferedGraphProxy:
             for (src, tgt), data in self._edge_buffer.items()
         ]
 
-        async with acquire_write_slot():
+        async def _write():
             async with get_session() as session:
                 result = await session.run(
                     f"""
@@ -220,3 +275,9 @@ class _BufferedGraphProxy:
                     entries=entries,
                 )
                 await result.consume()
+
+        if write_slot_acquired:
+            await _write()
+        else:
+            async with acquire_write_slot():
+                await _write()

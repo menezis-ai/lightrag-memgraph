@@ -362,7 +362,10 @@ async def request_tag(body: TagRequestBody, request: Request) -> dict[str, Any]:
     store = get_store()
     existing = await store.tags.get_tag(body.tag)
     if existing is not None:
-        raise HTTPException(409, f"Tag '{body.tag}' already exists")
+        if str(existing.get("status") or "").lower() in {"rejected", "deleted"}:
+            await store.tags.delete_tag(body.tag)
+        else:
+            raise HTTPException(409, f"Tag '{body.tag}' already exists")
     actor = _request_actor(request)
     now = _utcnow_iso()[:10]
     entry: dict[str, Any] = {
@@ -655,7 +658,7 @@ async def reject_tag(
     entry["status"] = "rejected"
     entry["last_edit"] = {"by": actor, "at": now, "action": "rejected"}
     entry["reject_reason"] = body.reason
-    stored = await store.tags.upsert_tag(entry)
+    await store.tags.delete_tag(name)
     await _emit_tag_audit(
         store=store,
         actor=actor,
@@ -671,7 +674,7 @@ async def reject_tag(
             sub=body.reason,
         ),
     )
-    return stored
+    return entry
 
 
 async def _resolve_tag_rename(store, entry, body) -> str | None:

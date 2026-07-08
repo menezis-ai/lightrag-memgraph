@@ -914,6 +914,26 @@ describe('useUploadDocumentsBatch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('uploads every item in a batch larger than ten', async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
+    );
+    const { result } = renderHook(() => useUploadDocumentsBatch(), {
+      wrapper: wrapper(),
+    });
+    const files = Array.from(
+      { length: 12 },
+      (_, i) => new File([`payload-${i}`], `batch-${i + 1}.txt`),
+    );
+
+    await act(async () => {
+      const res = await result.current.mutateAsync(files);
+      expect(res.every((r) => r.status === 'fulfilled')).toBe(true);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+  });
+
   it('captures per-file failures as rejected settled results', async () => {
     fetchMock
       .mockResolvedValueOnce(

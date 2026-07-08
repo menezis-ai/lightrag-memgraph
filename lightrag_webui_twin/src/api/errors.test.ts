@@ -22,6 +22,18 @@ describe('mapCreateEntityError', () => {
     expect(out.message.toLowerCase()).toContain('already exists');
   });
 
+  it('maps a 409 pipeline-busy refusal to busy, not duplicate', () => {
+    const err = new ApiError('Conflict', 409, {
+      detail: 'Pipeline is busy. Please try again later',
+    });
+    const out = mapCreateEntityError(err, 'Memgraph');
+    expect(out.kind).toBe('busy');
+    expect(out.message).toBe(
+      'Action not taken while creating the entity: the ingestion pipeline is busy. Wait for the current document processing to finish, then retry.',
+    );
+    expect(out.message).not.toContain('already exists');
+  });
+
   it('maps a 422 to the validation kind', () => {
     const err = new ApiError('Unprocessable', 422, {
       detail: [{ loc: ['body', 'name'], msg: 'empty' }],
@@ -65,11 +77,14 @@ describe('mapCreateEntityError', () => {
     expect(out.message).toBeTruthy();
   });
 
-  it('falls back to the unknown kind for non-ApiError throws', () => {
+  it('falls back to the unknown kind with mapped copy for non-ApiError throws', () => {
     const err = new Error('network down');
     const out = mapCreateEntityError(err, 'X');
     expect(out.kind).toBe('unknown');
-    expect(out.message).toBe('network down');
+    // Error-UX pass 2026-07-03: raw technical messages no longer leak.
+    expect(out.message).toBe(
+      'Something went wrong while creating the entity. Please retry or contact Twincore Team.',
+    );
   });
 
   it('falls back to a default message when the throw has no message', () => {

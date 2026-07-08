@@ -45,6 +45,7 @@ import type { Document } from '../types/document';
 import type { Theme, Folder } from '../types/topbar';
 import { dedupeDocumentsBySource } from '../utils/documents';
 import { tagCatalogForSuggestions } from '../utils/tags';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import { formatBackendError, resourceError } from './appErrors';
 import {
   CURRENT_USER,
@@ -483,6 +484,20 @@ export function AppShell() {
         (allDocs.data.total ?? allBackendDocList.length) - allPendingDocs.length,
       )
     : uploadedTotalCount;
+  const loadedDocumentsPage = docs.data?.page;
+  const documentsPageChanging =
+    typeof loadedDocumentsPage === 'number' && loadedDocumentsPage !== documentsPage;
+  const documentsPageFetching = Boolean(
+    (docs.isFetching && !docs.data) || documentsPageChanging,
+  );
+  const goToPreviousDocumentsPage = () => {
+    if (documentsPageFetching || documentsPage <= 1) return;
+    setDocumentsPageForScope((page) => page - 1);
+  };
+  const goToNextDocumentsPage = () => {
+    if (documentsPageFetching || !docs.data?.next_cursor) return;
+    setDocumentsPageForScope((page) => page + 1);
+  };
   const tagList = tags.data ?? [];
   const tagCatalog = tagCatalogForSuggestions(tagList);
   const tagCategoryList = tagCategories.data ?? [];
@@ -571,7 +586,7 @@ export function AppShell() {
               allDocumentsCount={allUploadedTotalCount}
               statusCounts={uploadedStatusCounts}
               hasNextPage={Boolean(docs.data?.next_cursor)}
-              isPageFetching={Boolean(docs.isFetching && !docs.data)}
+              isPageFetching={documentsPageFetching}
               statusFilter={documentsStatusFilter}
               onStatusFilterChange={setDocumentsStatusFilter}
               search={documentsSearch}
@@ -581,10 +596,8 @@ export function AppShell() {
               sourceFilters={documentsSourceFilters}
               onSourceFiltersChange={setDocumentsSourceFilters}
               onFiltersChanged={() => setDocumentsPageForScope(1)}
-              onPreviousPage={() =>
-                setDocumentsPageForScope((page) => page - 1)
-              }
-              onNextPage={() => setDocumentsPageForScope((page) => page + 1)}
+              onPreviousPage={goToPreviousDocumentsPage}
+              onNextPage={goToNextDocumentsPage}
               activeFolder={effectiveFolder}
               canManageFolders={canManageFolders(auth.user)}
               folderList={folderList}
@@ -799,10 +812,13 @@ export function AppShell() {
                 sub: `${r.message ?? 'LightRAG is retrying all FAILED docs'} · ${d.file_path} included`,
               });
             } catch (err) {
+              logTechnicalError('reprocess', err);
               pushToast({
                 kind: 'error',
                 title: 'Re-process failed',
-                sub: err instanceof Error ? err.message : String(err),
+                sub: userErrorMessage(err, {
+                  action: 're-processing failed sources',
+                }),
               });
             }
           })();

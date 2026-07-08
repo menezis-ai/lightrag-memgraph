@@ -9,6 +9,7 @@ import {
   useSuggestTagEdit,
   useUpdateTagSynonyms,
 } from '../api/queries';
+import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import type { TagActionCommit } from '../components/TagActionModal';
 import type { TagApproveAction } from '../components/TagsTab';
 import type { Toast } from '../types/toast';
@@ -49,11 +50,12 @@ export function useTagActions({
         sub: 'Added to tag catalog · Tier 3',
       });
     } catch (err) {
+      logTechnicalError('tag-approve', err);
       pushToast({
         kind: 'error',
         title: 'Tag approval failed',
         tagname: action.tag.tag,
-        sub: err instanceof Error ? err.message : 'Mutation rejected',
+        sub: userErrorMessage(err, { action: 'approving the tag' }),
       });
     }
   };
@@ -68,13 +70,15 @@ export function useTagActions({
   ) => {
     run({
       onSuccess: () => pushToast(toast),
-      onError: (err) =>
+      onError: (err) => {
+        logTechnicalError('tag-mutation', err);
         pushToast({
           kind: 'error',
           title: failureTitle,
           tagname: toast.tagname,
-          sub: err instanceof Error ? err.message : 'Mutation rejected',
-        }),
+          sub: userErrorMessage(err, { action: 'updating the tag' }),
+        });
+      },
     });
   };
 
@@ -234,11 +238,12 @@ export function useTagActions({
             });
             pushToast(successToast);
           } catch (err) {
+            logTechnicalError('tag-edit-approve', err);
             pushToast({
               kind: 'error',
               title: failureTitle,
               tagname: successToast.tagname,
-              sub: err instanceof Error ? err.message : 'Mutation rejected',
+              sub: userErrorMessage(err, { action: 'approving the tag' }),
             });
           }
         })();

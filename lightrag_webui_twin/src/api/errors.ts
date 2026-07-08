@@ -5,7 +5,8 @@
  *
  *   POST /twin/api/graph/entities
  *     201 → created
- *     409 → duplicate (truthful: a node with this canonical name exists)
+ *     409 → duplicate, unless the backend detail says the ingestion pipeline
+ *           refused the write while busy
  *     422 → Pydantic validation (empty/whitespace name, missing type, …)
  *     503 → Memgraph backend rejected the write (driver down, lock, …)
  *     500 → entity was created, projection failed (half-success)
@@ -16,8 +17,14 @@
  */
 
 import { ApiError } from './client';
+import {
+  backendDetail,
+  isPipelineBusyDetail,
+  userErrorMessage,
+} from '../lib/errorMessages';
 
 export type CreateEntityErrorKind =
+  | 'busy'
   | 'duplicate'
   | 'validation'
   | 'backend'
@@ -33,8 +40,8 @@ export interface CreateEntityErrorResult {
  * Map a thrown error from ``api.createGraphEntity`` to a typed result.
  *
  * Non-``ApiError`` throws (network failures, JSON parse errors, …) land
- * on ``unknown`` with the raw message so the user still gets a non-blank
- * error rather than a silent dropped submit.
+ * on ``unknown`` with shared operator-facing copy rather than a silent
+ * dropped submit.
  */
 export function mapCreateEntityError(
   err: unknown,
@@ -43,6 +50,12 @@ export function mapCreateEntityError(
   if (err instanceof ApiError) {
     switch (err.status) {
       case 409:
+        if (isPipelineBusyDetail(backendDetail(err.body))) {
+          return {
+            kind: 'busy',
+            message: userErrorMessage(err, { action: 'creating the entity' }),
+          };
+        }
         return {
           kind: 'duplicate',
           message: `An entity named “${entityName}” already exists. Choose a different name.`,
@@ -66,13 +79,12 @@ export function mapCreateEntityError(
       default:
         return {
           kind: 'unknown',
-          message: err.message || 'Entity creation failed.',
+          message: userErrorMessage(err, { action: 'creating the entity' }),
         };
     }
   }
   return {
     kind: 'unknown',
-    message:
-      err instanceof Error ? err.message : 'Entity creation failed.',
+    message: userErrorMessage(err, { action: 'creating the entity' }),
   };
 }

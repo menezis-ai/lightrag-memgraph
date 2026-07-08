@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { __resetAuthConfigCacheForTests, useAuth } from './useAuth';
-import { apiFetch } from '../api/client';
+import { ApiError, apiFetch } from '../api/client';
 import { resolveRuntimeConfig, DEV_CONFIG } from '../config/devConfig';
 
 /** A runtime config with NO debugUser, so the identity derives from
@@ -317,5 +317,66 @@ describe('useAuth — local login', () => {
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.name).toBe('twinadmin');
     expect(result.current.user?.palier.label).toBe('Steward');
+  });
+
+  it('maps a 401 login rejection to "Incorrect username or password."', async () => {
+    // Error-UX pass 2026-07-03: the operator never sees the transport
+    // string ("POST /login → 401 Unauthorized") — only the mapped copy.
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockResolvedValue({
+      auth_enabled: true,
+      authenticated: false,
+      user: null,
+      expires_at: null,
+      login_required: true,
+    });
+    loginMock.mockRejectedValueOnce(
+      new ApiError('POST /login → 401 Unauthorized', 401, {
+        detail: 'Invalid username or password',
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+    await waitFor(() => expect(result.current.needsLogin).toBe(true));
+
+    await act(async () => {
+      await expect(
+        result.current.login('twinadmin', 'wrong-password'),
+      ).rejects.toBeInstanceOf(ApiError);
+    });
+
+    expect(result.current.loginError).toBe('Incorrect username or password.');
+    expect(result.current.loginError).not.toContain('401');
+    warn.mockRestore();
+  });
+
+  it('maps a network failure at login to the connectivity copy', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockResolvedValue({
+      auth_enabled: true,
+      authenticated: false,
+      user: null,
+      expires_at: null,
+      login_required: true,
+    });
+    loginMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+    await waitFor(() => expect(result.current.needsLogin).toBe(true));
+
+    await act(async () => {
+      await expect(
+        result.current.login('twinadmin', 'secret'),
+      ).rejects.toBeInstanceOf(TypeError);
+    });
+
+    expect(result.current.loginError).toBe(
+      'Cannot reach the Twin backend. Check your connection and retry.',
+    );
+    warn.mockRestore();
   });
 });

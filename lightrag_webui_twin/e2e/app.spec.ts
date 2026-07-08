@@ -461,7 +461,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
-    await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
+    await expect(page.getByRole('alert')).toContainText('Tag update failed');
     await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
@@ -642,10 +642,12 @@ test.describe('Twin WebUI operator journeys', () => {
     });
     await page.getByRole('button', { name: 'Add 2 sources' }).click();
     await expect(page.getByRole('alert')).toContainText('1 upload failed');
-    await expect(page.getByRole('alert')).toContainText('1 ok · 1 ko');
+    await expect(page.getByRole('alert')).toContainText('1 uploaded · 1 failed');
     await page.getByLabel('Search source').fill('partial-');
     await expect(page.getByTestId('docs-row-uploaded_1')).toContainText('partial-ok.md');
-    await expect(page.getByText('partial-fail.md')).toBeHidden();
+    await expect(
+      page.locator('[data-testid^="docs-row-"]').filter({ hasText: 'partial-fail.md' }),
+    ).toHaveCount(0);
   });
 
   test('@doctrine @documents single delete requires confirm and removes the document', async ({ page }) => {
@@ -727,7 +729,7 @@ test.describe('Twin WebUI operator journeys', () => {
       buffer: Buffer.from('[{"id":"x",]'),
     });
     await expect(page.getByTestId('taxonomy-import-status')).toContainText(
-      'Invalid JSON file',
+      'This file is not valid JSON',
     );
   });
 
@@ -848,8 +850,8 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
-    await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
-    await expect(page.getByRole('alert')).toContainText('413');
+    await expect(page.getByRole('alert')).toContainText('Tag update failed');
+    await expect(page.getByRole('alert')).toContainText('This file is too large');
     await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
@@ -876,8 +878,8 @@ test.describe('Twin WebUI operator journeys', () => {
     await page.getByRole('combobox', { name: 'Tag input' }).fill('memgraph');
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
-    await expect(page.getByRole('alert')).toContainText('Tag mutation failed');
-    await expect(page.getByRole('alert')).toContainText('413');
+    await expect(page.getByRole('alert')).toContainText('Tag update failed');
+    await expect(page.getByRole('alert')).toContainText('This file is too large');
   });
 
   test('@doctrine @auth twin api without auth returns 401 challenge', async ({ page }) => {

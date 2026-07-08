@@ -50,51 +50,62 @@ found nothing usable). See :func:`_is_no_retrieval_mode`.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import json
 import logging
-from collections.abc import AsyncIterator, Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
 
-from ..._constants import (
-    RetrievalFilters,
-    storage_filter_context,
-    storage_folder_context,
-)
 from .._lightrag_compat import (
     ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
     ANSWER_STATUS_NO_RETRIEVAL,
-    ANSWER_STATUS_QUERY_FAILED,
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
     AnswerMarkerStripper,
-    AnswerStatus,
     GraphAnswerEnvelopeError,
-    build_sources_from_raw_data,
     classify_answer,
     classify_aquery_llm_result,
-    collect_chunk_ids,
-    is_streaming_envelope,
+)
+from .activity import _actor_from_request, _record_retrieval_activity
+from .models import TwinQueryBody, TwinQueryDataResponse, TwinQueryResponse
+from .params import _make_query_param, _query_param_kwargs
+from .query_data import (
+    _annotate_query_data_chunk_scores,
+    _enrich_query_data_chunks_from_source_ids,
+)
+from .query_data_filters import (
+    _filter_query_data_by_tags as _filter_query_data_by_tags_impl,
+)
+from .request_scope import (
+    _annotate_query_data_fallback,
+    _has_advanced_filter,
+    _is_no_retrieval_mode,
+    _query_data_failure_reason,
+    _query_data_fallback_mode,
+    _retrieval_scope,
+)
+from .response_sources import (
+    _build_envelope_sources as _build_envelope_sources_impl,
+    _build_sources_legacy_fallback as _build_sources_legacy_fallback_impl,
+    _enrich_sources_doc_ids_from_file_path as _enrich_sources_doc_ids_from_file_path_impl,
+    _filter_sources_by_advanced_filters as _filter_sources_by_advanced_filters_impl,
+    _filter_sources_by_min_score,
+    _public_sources,
+    _source_matches_tag_filter as _source_matches_tag_filter_impl,
+)
+from .source_filters import _source_matches_doc_filter
+from .streaming import (
+    _determine_stream_status,
+    _emit_answer_tokens,
+    _query_stream_empty_sources_events,
+    _query_stream_failure_events,
+    _query_stream_fatal_events,
+    _query_stream_grounded_events,
+    _select_token_source,
 )
 
-_PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
-
-
-def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Strip internal source markers before returning public responses."""
-    return [
-        {key: value for key, value in source.items() if key not in _PUBLIC_SOURCE_KEYS}
-        for source in sources
-    ]
-
-
 logger = logging.getLogger(__name__)
-UNKNOWN_SOURCE_NAME = "unknown source"
 
 
 class ClientDisconnectedDuringQuery(Exception):
@@ -126,728 +137,11 @@ async def _await_query_or_disconnect(awaitable, request: Request):
         raise
 
 
-class TwinQueryBody(BaseModel):
-    query: str
-    actor: str | None = Field(default=None, max_length=200)
-    mode: str = Field(default="mix")
-    response_type: str | None = Field(default=None, min_length=1)
-    top_k: int = Field(default=20, ge=1, le=200)
-    chunk_top_k: int | None = Field(default=None, ge=1, le=200)
-    max_entity_tokens: int | None = Field(default=None, ge=1)
-    max_relation_tokens: int | None = Field(default=None, ge=1)
-    max_total_tokens: int | None = Field(default=None, ge=1)
-    only_need_context: bool = Field(default=False)
-    only_need_prompt: bool = Field(default=False)
-    hl_keywords: list[str] = Field(default_factory=list)
-    ll_keywords: list[str] = Field(default_factory=list)
-    conversation_history: list[dict[str, Any]] = Field(default_factory=list)
-    history_turns: int | None = Field(default=None, ge=0, le=20)
-    user_prompt: str | None = Field(default=None, max_length=4000)
-    enable_rerank: bool | None = Field(default=None)
-    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    tag_filter: dict[str, list[str]] | None = Field(default=None)
-    doc_filter: dict[str, list[str]] | None = Field(default=None)
-    fallback_to_mix: bool = Field(default=True)
-
-    @field_validator("tag_filter", "doc_filter")
-    @classmethod
-    def _validate_advanced_filter(
-        cls, value: dict[str, list[str]] | None
-    ) -> dict[str, list[str]] | None:
-        if value is None:
-            return None
-        allowed_keys = {"all", "any"}
-        unknown_keys = set(value) - allowed_keys
-        if unknown_keys:
-            raise ValueError("advanced filter keys must be a subset of {'all', 'any'}")
-        return value
-
-
-class TwinRetrievalSource(BaseModel):
-    n: int
-    type: str = "file"
-    name: str
-    meta: str | None = None
-    score: float = 0.0
-    doc_id: str | None = None
-    chunk_id: str | None = None
-
-
-class TwinQueryResponse(BaseModel):
-    response: str
-    sources: list[TwinRetrievalSource] = Field(default_factory=list)
-    # TR-RET-02: ``"insufficient_information"`` when LightRAG signalled
-    # no usable retrieval context (canonical ``[no-context]`` marker in
-    # the fail response). The React port uses this to suppress the
-    # Sources panel honestly rather than parsing the LLM prose.
-    # Typed as ``AnswerStatus`` so the generated OpenAPI schema
-    # advertises the enum to clients/tooling instead of an open str.
-    answer_status: AnswerStatus = Field(default=ANSWER_STATUS_GROUNDED)
-
-
-def _filter_sources_by_min_score(
-    sources: list[dict[str, Any]],
-    min_score: float,
-) -> list[dict[str, Any]]:
-    if min_score <= 0:
-        return sources
-    return [
-        source
-        for source in sources
-        if isinstance(source.get("score"), (int, float))
-        and float(source["score"]) >= min_score
-    ]
-
-
-class TwinQueryDataResponse(BaseModel):
-    status: str = "success"
-    message: str = "Query executed successfully"
-    data: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-def _query_param_kwargs(body: TwinQueryBody, *, stream: bool = False) -> dict[str, Any]:
-    param_kwargs: dict[str, Any] = {
-        "mode": body.mode,
-        "top_k": body.top_k,
-        "only_need_context": body.only_need_context,
-        "only_need_prompt": body.only_need_prompt,
-        "stream": stream,
-    }
-    if body.response_type is not None:
-        param_kwargs["response_type"] = body.response_type
-    if body.chunk_top_k is not None:
-        param_kwargs["chunk_top_k"] = body.chunk_top_k
-    if body.max_entity_tokens is not None:
-        param_kwargs["max_entity_tokens"] = body.max_entity_tokens
-    if body.max_relation_tokens is not None:
-        param_kwargs["max_relation_tokens"] = body.max_relation_tokens
-    if body.max_total_tokens is not None:
-        param_kwargs["max_total_tokens"] = body.max_total_tokens
-    if body.hl_keywords:
-        param_kwargs["hl_keywords"] = body.hl_keywords
-    if body.ll_keywords:
-        param_kwargs["ll_keywords"] = body.ll_keywords
-    if body.conversation_history:
-        param_kwargs["conversation_history"] = body.conversation_history
-    if body.history_turns is not None:
-        param_kwargs["history_turns"] = body.history_turns
-    if body.user_prompt is not None and body.user_prompt.strip():
-        param_kwargs["user_prompt"] = body.user_prompt.strip()
-    if body.enable_rerank is not None:
-        param_kwargs["enable_rerank"] = body.enable_rerank
-    if body.tag_filter is not None:
-        param_kwargs["tag_filter"] = body.tag_filter
-    if body.doc_filter is not None:
-        param_kwargs["doc_filter"] = body.doc_filter
-    return param_kwargs
-
-
-def _query_param_ctor_fields(query_param_cls: Any) -> set[str] | None:
-    """Constructor-accepted field names for the installed ``QueryParam``.
-
-    Returns ``None`` when the fields cannot be introspected (non-dataclass),
-    in which case callers fall back to passing every kwarg through.
-    """
-    try:
-        return {f.name for f in dataclasses.fields(query_param_cls)}
-    except TypeError:
-        return None
-
-
-def _make_query_param(query_param_cls: Any, param_kwargs: dict[str, Any]) -> Any:
-    """Build a ``QueryParam`` that is resilient to upstream field churn.
-
-    LightRAG renames/removes ``QueryParam`` fields between minor releases
-    (e.g. ``history_turns`` was dropped in 1.5, and ``tag_filter`` is a Twin
-    extension never present upstream). Passing such a kwarg straight to the
-    constructor raises ``TypeError`` and 500s the whole query endpoint. We
-    instead route only constructor-known kwargs through ``__init__`` and apply
-    the rest as runtime attributes, so downstream code that understands them
-    still sees them and the request never crashes.
-    """
-    fields = _query_param_ctor_fields(query_param_cls)
-    if fields is None:
-        return query_param_cls(**param_kwargs)
-
-    ctor_kwargs = {k: v for k, v in param_kwargs.items() if k in fields}
-    extra_kwargs = {k: v for k, v in param_kwargs.items() if k not in fields}
-    param = query_param_cls(**ctor_kwargs)
-    for key, value in extra_kwargs.items():
-        setattr(param, key, value)
-    return param
-
-
-def _answer_chunk_to_text(chunk: Any) -> str:
-    if isinstance(chunk, bytes):
-        return chunk.decode("utf-8", errors="replace")
-    if isinstance(chunk, str):
-        return chunk
-    if isinstance(chunk, dict):
-        for key in ("response", "content", "text", "delta"):
-            value = chunk.get(key)
-            if isinstance(value, str):
-                return value
-        return ""
-    return str(chunk)
-
-
-async def _iter_answer_text(answer: Any) -> AsyncIterator[str]:
-    if isinstance(answer, str):
-        yield answer
-        return
-    if hasattr(answer, "__aiter__"):
-        async for chunk in answer:
-            text = _answer_chunk_to_text(chunk)
-            if text:
-                yield text
-        return
-    if isinstance(answer, Iterable) and not isinstance(answer, (bytes, dict)):
-        for chunk in answer:
-            text = _answer_chunk_to_text(chunk)
-            if text:
-                yield text
-        return
-    text = _answer_chunk_to_text(answer)
-    if text:
-        yield text
-
-
-def _safe_get_score(result: dict[str, Any], rank: int, total: int) -> float:
-    """Best-effort score for a retrieval row.
-
-    The LightRAG ``MemgraphVectorDBStorage`` projection includes the
-    cosine score under ``__metrics__`` / ``score`` depending on the
-    backend version. When neither is present we synthesise a smooth
-    rank-based value so the UI can sort consistently.
-    """
-    for key in ("score", "similarity", "cosine_similarity"):
-        if key in result and isinstance(result[key], (int, float)):
-            return float(result[key])
-    metrics = result.get("__metrics__")
-    if isinstance(metrics, dict):
-        for key in ("score", "similarity", "cosine_similarity"):
-            if key in metrics and isinstance(metrics[key], (int, float)):
-                return float(metrics[key])
-    if total <= 0:
-        return 0.5
-    # Smooth descent from 0.95 (rank 0) to 0.50 (rank total-1).
-    return round(0.95 - 0.45 * (rank / max(total - 1, 1)), 3)
-
-
-def _chunk_to_meta(chunk: dict[str, Any]) -> str | None:
-    """Cheap meta string — chunk order index when present, else the
-    short id suffix."""
-    idx = chunk.get("chunk_order_index")
-    if isinstance(idx, int):
-        return f"chunk {idx}"
-    cid = chunk.get("chunk_id") or chunk.get("id") or ""
-    if isinstance(cid, str) and "-" in cid:
-        return f"chunk {cid.split('-')[-1][:8]}"
-    return None
-
-
-async def _resolve_doc_for_chunk(rag: Any, chunk_id: str) -> str | None:
-    """Best-effort: walk DocStatus to find which doc owns this chunk
-    so the source surfaces a real ``doc_id`` instead of just the
-    file path."""
-    if not chunk_id:
-        return None
-    try:
-        # `get_docs_by_chunks` is the modern LightRAG signature when
-        # available; fall back to a scan otherwise.
-        get_by_chunks = getattr(rag.doc_status, "get_docs_by_chunks", None)
-        if callable(get_by_chunks):
-            result = await get_by_chunks([chunk_id])
-            if isinstance(result, dict) and result:
-                return next(iter(result.keys()))
-    except Exception:
-        logger.exception("twin_query: doc lookup failed for chunk %s", chunk_id)
-    return None
-
-
-async def _resolve_doc_for_file_path(rag: Any, file_path: str) -> str | None:
-    """Best-effort file_path -> doc_id resolution for projected references.
-
-    LightRAG's public ``aquery_llm`` envelope keeps ``file_path`` and
-    ``chunk_id`` but can drop the chunk-vdb ``full_doc_id`` before Twin projects
-    sources. Filtered graph/tag/doc retrieval then looked source-less because
-    the post-filter could not validate the source against document ids. Resolve
-    through DocStatus by file path; this is enrichment of the existing
-    ``aquery_llm`` reference, not a second vector retrieval.
-    """
-    if not file_path:
-        return None
-    try:
-        get_by_file_path = getattr(rag.doc_status, "get_doc_by_file_path", None)
-        if callable(get_by_file_path):
-            result = await get_by_file_path(file_path)
-            if isinstance(result, dict):
-                doc_id = result.get("id") or result.get("doc_id")
-                if isinstance(doc_id, str) and doc_id:
-                    return doc_id
-    except Exception:
-        logger.exception("twin_query: doc lookup failed for file_path %s", file_path)
-    return None
-
-
-async def _resolve_chunk_to_doc_id(rag: Any, chunk_ids: list[str]) -> dict[str, str]:
-    """Batch chunk_id -> doc_id resolution for the aquery_llm path.
-
-    LightRAG's ``get_docs_by_chunks`` signature returns
-    ``{doc_id: status}`` keyed by doc, so we resolve each chunk
-    individually and run the per-chunk lookups concurrently via
-    ``asyncio.gather`` — N chunks resolve in roughly one round-trip
-    instead of N. Failures degrade silently to "no doc_id"; the
-    source still renders, just without the drill-down doc id.
-    """
-    if not chunk_ids:
-        return {}
-    import asyncio
-
-    # De-dup so we don't ask the same chunk twice.
-    unique = list(dict.fromkeys(chunk_ids))
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in unique),
-        return_exceptions=False,
-    )
-    out: dict[str, str] = {}
-    for chunk_id, doc_id in zip(unique, resolved):
-        if doc_id:
-            out[chunk_id] = doc_id
-    return out
-
-
-def _query_data_source_chunk_ids(data: dict[str, Any]) -> list[str]:
-    """Collect chunk ids referenced by KG rows in a structured data payload."""
-    chunk_ids: list[str] = []
-    for key in ("entities", "relationships"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if isinstance(row, dict):
-                chunk_ids.extend(_split_source_ids(row.get("source_id")))
-    return list(dict.fromkeys(chunk_ids))
-
-
-def _query_data_existing_chunk_ids(data: dict[str, Any]) -> set[str]:
-    rows = data.get("chunks")
-    if not isinstance(rows, list):
-        return set()
-    out: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key in ("chunk_id", "id", "_id"):
-            value = row.get(key)
-            if isinstance(value, str) and value:
-                out.add(value)
-    return out
-
-
-def _query_data_source_chunk_scores(data: dict[str, Any]) -> dict[str, float]:
-    """Best-effort score per chunk id from KG rows that reference it."""
-    kg_rows: list[dict[str, Any]] = []
-    for key in ("entities", "relationships"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
-            continue
-        kg_rows.extend(row for row in rows if isinstance(row, dict))
-
-    scores: dict[str, float] = {}
-    total = len(kg_rows)
-    for rank, row in enumerate(kg_rows):
-        chunk_ids = _split_source_ids(row.get("source_id"))
-        if not chunk_ids:
-            continue
-        score = _safe_get_score(row, rank, total)
-        for chunk_id in chunk_ids:
-            scores[chunk_id] = max(scores.get(chunk_id, score), score)
-    return scores
-
-
-def _query_data_chunk_id(row: dict[str, Any]) -> str | None:
-    for key in ("chunk_id", "id", "_id"):
-        value = row.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _annotate_query_data_chunk_scores(data: dict[str, Any]) -> dict[str, Any]:
-    rows = data.get("chunks")
-    if not isinstance(rows, list):
-        return data
-
-    source_scores = _query_data_source_chunk_scores(data)
-    total = len(rows)
-    annotated_rows: list[Any] = []
-    changed = False
-    for rank, row in enumerate(rows):
-        if not isinstance(row, dict):
-            annotated_rows.append(row)
-            continue
-        annotated = dict(row)
-        chunk_id = _query_data_chunk_id(annotated)
-        if not isinstance(annotated.get("score"), (int, float)):
-            if chunk_id and chunk_id in source_scores:
-                annotated["score"] = source_scores[chunk_id]
-            else:
-                annotated["score"] = _safe_get_score(annotated, rank, total)
-            changed = True
-        annotated_rows.append(annotated)
-
-    if not changed:
-        return data
-    annotated_data = dict(data)
-    annotated_data["chunks"] = annotated_rows
-    return annotated_data
-
-
-def _next_query_data_reference_id(data: dict[str, Any]) -> int:
-    references = data.get("references")
-    if not isinstance(references, list):
-        return 1
-    numeric_ids: list[int] = []
-    for ref in references:
-        if not isinstance(ref, dict):
-            continue
-        try:
-            numeric_ids.append(int(str(ref.get("reference_id") or "")))
-        except ValueError:
-            continue
-    return max(numeric_ids, default=0) + 1
-
-
-def _query_data_record_id(raw: dict[str, Any], requested_id: str) -> str | None:
-    record_id = raw.get("chunk_id") or raw.get("id") or raw.get("_id") or requested_id
-    if isinstance(record_id, str) and record_id:
-        return record_id
-    return None
-
-
-async def _fetch_chunk_records_from_store(
-    rag: Any,
-    attr: str,
-    chunk_ids: list[str],
-) -> dict[str, dict[str, Any]]:
-    store = getattr(rag, attr, None)
-    get_by_ids = getattr(store, "get_by_ids", None)
-    if not callable(get_by_ids):
-        return {}
-    try:
-        raw_list = await get_by_ids(chunk_ids)
-    except Exception:
-        logger.exception("twin_query: %s.get_by_ids failed for query/data", attr)
-        return {}
-    if not isinstance(raw_list, list):
-        return {}
-    records: dict[str, dict[str, Any]] = {}
-    for requested_id, raw in zip(chunk_ids, raw_list):
-        if not isinstance(raw, dict):
-            continue
-        record_id = _query_data_record_id(raw, requested_id)
-        if record_id is not None:
-            records.setdefault(record_id, dict(raw))
-    return records
-
-
-async def _fetch_chunk_records_by_id(
-    rag: Any,
-    chunk_ids: list[str],
-) -> dict[str, dict[str, Any]]:
-    """Fetch exact chunk records by id without issuing semantic retrieval."""
-    if not chunk_ids:
-        return {}
-    unique = list(dict.fromkeys(chunk_ids))
-    out: dict[str, dict[str, Any]] = {}
-
-    for attr in ("text_chunks", "chunks_vdb"):
-        records = await _fetch_chunk_records_from_store(rag, attr, unique)
-        out.update({key: value for key, value in records.items() if key not in out})
-        if len(out) == len(unique):
-            break
-    return out
-
-
-async def _doc_file_path(rag: Any, doc_id: str | None) -> str | None:
-    if not doc_id:
-        return None
-    try:
-        get_by_id = getattr(rag.doc_status, "get_by_id", None)
-        if not callable(get_by_id):
-            return None
-        doc = await get_by_id(doc_id)
-    except Exception:
-        logger.exception("twin_query: doc lookup failed for doc %s", doc_id)
-        return None
-    if isinstance(doc, dict):
-        file_path = doc.get("file_path")
-        if isinstance(file_path, str) and file_path:
-            return file_path
-    return None
-
-
-async def _query_data_row_doc_id(
-    rag: Any,
-    row: dict[str, Any],
-    chunk_id: str,
-) -> str | None:
-    doc_id = row.get("full_doc_id") or row.get("doc_id")
-    if isinstance(doc_id, str) and doc_id:
-        return doc_id
-    resolved = await _resolve_doc_for_chunk(rag, chunk_id)
-    if resolved:
-        row["full_doc_id"] = resolved
-    return resolved
-
-
-async def _query_data_row_file_path(
-    rag: Any,
-    row: dict[str, Any],
-    doc_id: str | None,
-) -> str | None:
-    file_path = row.get("file_path") or row.get("source")
-    if isinstance(file_path, str) and file_path:
-        return file_path
-    resolved = await _doc_file_path(rag, doc_id)
-    if resolved:
-        row["file_path"] = resolved
-    return resolved
-
-
-async def _query_data_chunk_row(
-    rag: Any,
-    chunk_id: str,
-    raw: dict[str, Any],
-    reference_id: str,
-    score: float | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    row = dict(raw)
-    row["chunk_id"] = str(
-        row.get("chunk_id") or row.get("id") or row.get("_id") or chunk_id
-    )
-    doc_id = await _query_data_row_doc_id(rag, row, chunk_id)
-    file_path = await _query_data_row_file_path(rag, row, doc_id)
-    row["reference_id"] = reference_id
-    if score is not None and not isinstance(row.get("score"), (int, float)):
-        row["score"] = score
-    return row, {
-        "reference_id": reference_id,
-        "file_path": str(file_path or chunk_id),
-    }
-
-
-async def _enrich_query_data_chunks_from_source_ids(
-    rag: Any,
-    response: dict[str, Any],
-) -> dict[str, Any]:
-    """Materialize chunks already referenced by KG rows.
-
-    ``aquery_data(mode="hybrid")`` can return entities/relationships with
-    ``source_id`` provenance while leaving ``data.chunks`` and
-    ``data.references`` empty. For filtered API calls that makes the visible
-    payload look sourceless even though LightRAG gave us exact chunk ids. This
-    helper fetches those exact chunks by id; it never runs a new vector query.
-    """
-    data = response.get("data")
-    if not isinstance(data, dict):
-        return response
-
-    missing = [
-        chunk_id
-        for chunk_id in _query_data_source_chunk_ids(data)
-        if chunk_id not in _query_data_existing_chunk_ids(data)
-    ]
-    if not missing:
-        enriched = dict(response)
-        enriched["data"] = _annotate_query_data_chunk_scores(data)
-        return enriched
-
-    records = await _fetch_chunk_records_by_id(rag, missing)
-    if not records:
-        enriched = dict(response)
-        enriched["data"] = _annotate_query_data_chunk_scores(data)
-        return enriched
-
-    enriched_data = dict(data)
-    source_scores = _query_data_source_chunk_scores(data)
-    raw_chunks = data.get("chunks")
-    raw_references = data.get("references")
-    chunks = list(raw_chunks) if isinstance(raw_chunks, list) else []
-    references = list(raw_references) if isinstance(raw_references, list) else []
-    next_ref = _next_query_data_reference_id(data)
-    for chunk_id in missing:
-        raw = records.get(chunk_id)
-        if not isinstance(raw, dict):
-            continue
-        ref_id = str(next_ref)
-        next_ref += 1
-        chunk_row, reference = await _query_data_chunk_row(
-            rag, chunk_id, raw, ref_id, source_scores.get(chunk_id)
-        )
-        chunks.append(chunk_row)
-        references.append(reference)
-
-    enriched_data["chunks"] = chunks
-    enriched_data["references"] = references
-    enriched_data = _annotate_query_data_chunk_scores(enriched_data)
-    enriched = dict(response)
-    enriched["data"] = enriched_data
-    return enriched
-
-
-def _source_file_path_candidate(source: dict[str, Any]) -> str | None:
-    """Return a reliable file_path candidate from a projected source."""
-    name = source.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return None
-    if source.get("_lightrag_reference_name_fallback"):
-        return None
-    if name == UNKNOWN_SOURCE_NAME:
-        return None
-    return name.strip()
-
-
 async def _enrich_sources_doc_ids_from_file_path(
     rag: Any,
     sources: list[dict[str, Any]],
 ) -> None:
-    """Fill missing ``doc_id`` values in-place from projected source paths."""
-    file_paths = [
-        candidate
-        for source in sources
-        if not source.get("doc_id")
-        for candidate in [_source_file_path_candidate(source)]
-        if candidate
-    ]
-    if not file_paths:
-        return
-    import asyncio
-
-    unique = list(dict.fromkeys(file_paths))
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_file_path(rag, file_path) for file_path in unique),
-        return_exceptions=False,
-    )
-    file_path_to_doc_id = {
-        file_path: doc_id for file_path, doc_id in zip(unique, resolved) if doc_id
-    }
-    if not file_path_to_doc_id:
-        return
-    for source in sources:
-        if source.get("doc_id"):
-            continue
-        candidate = _source_file_path_candidate(source)
-        if candidate and candidate in file_path_to_doc_id:
-            source["doc_id"] = file_path_to_doc_id[candidate]
-
-
-def _split_source_ids(raw: Any) -> list[str]:
-    if not isinstance(raw, str):
-        return []
-    return [
-        item.strip() for item in raw.replace("<SEP>", ",").split(",") if item.strip()
-    ]
-
-
-def _tag_filter_terms(
-    tag_filter: dict[str, list[str]] | None,
-) -> tuple[set[str], set[str]]:
-    if not tag_filter:
-        return set(), set()
-    required = {
-        tag.strip().lower()
-        for tag in tag_filter.get("all", [])
-        if isinstance(tag, str) and tag.strip()
-    }
-    optional = {
-        tag.strip().lower()
-        for tag in tag_filter.get("any", [])
-        if isinstance(tag, str) and tag.strip()
-    }
-    return required, optional
-
-
-def _doc_filter_terms(
-    doc_filter: dict[str, list[str]] | None,
-) -> tuple[set[str], set[str]]:
-    if not doc_filter:
-        return set(), set()
-    required = {
-        doc.strip()
-        for doc in doc_filter.get("all", [])
-        if isinstance(doc, str) and doc.strip()
-    }
-    optional = {
-        doc.strip()
-        for doc in doc_filter.get("any", [])
-        if isinstance(doc, str) and doc.strip()
-    }
-    return required, optional
-
-
-def _doc_tags_match_filter(
-    doc_tags: set[str], tag_filter: dict[str, list[str]] | None
-) -> bool:
-    """Audit C2: doc tags come from the ``TAGGED_WITH`` graph relation,
-    never from ``DocStatus.metadata.tags`` (which can lag the WebUI
-    retag flow and produces a misleading filter result).
-    """
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
-        return True
-    if required and not required.issubset(doc_tags):
-        return False
-    if optional and doc_tags.isdisjoint(optional):
-        return False
-    return True
-
-
-def _source_doc_candidates(source: dict[str, Any]) -> set[str]:
-    # ``name`` is used as a document-level fallback only when it is a real
-    # identifier-like value coming from payload metadata. Synthetic fallbacks from
-    # the envelope projection cannot be trusted as filter evidence.
-    # We rely on an explicit marker emitted during projection.
-    synthetic_name_marker = "_lightrag_reference_name_fallback"
-
-    out = {
-        str(source[key]).strip()
-        for key in ("doc_id", "name")
-        if isinstance(source.get(key), str) and source.get(key).strip()
-    }
-    if UNKNOWN_SOURCE_NAME in out:
-        out.discard(UNKNOWN_SOURCE_NAME)
-    if source.get(synthetic_name_marker):
-        out.discard(str(source.get("name") or "").strip())
-    return out
-
-
-def _source_matches_doc_filter(
-    source: dict[str, Any], doc_filter: dict[str, list[str]] | None
-) -> bool:
-    """Mirror the storage-layer ``doc_all`` / ``doc_any`` semantics.
-
-    Source candidates are the source's own doc identifiers (``doc_id`` + path),
-    so this is the *set* form of ``vector_impl._doc_conditions_set``:
-    ``all`` → requested ⊆ candidates (strict — NOT the union-as-``any`` the
-    legacy post-filter conflated); ``any`` → candidates ∩ requested ≠ ∅; both
-    AND-ed when present. Same shape as :func:`_doc_tags_match_filter`. The real
-    exclusion lives in the Cypher; this is the last-line guard if the envelope
-    shape shifts under a LightRAG bump.
-    """
-    required, optional = _doc_filter_terms(doc_filter)
-    if not required and not optional:
-        return True
-    candidates = _source_doc_candidates(source)
-    if not candidates:
-        return False
-    if required and not required.issubset(candidates):
-        return False
-    if optional and candidates.isdisjoint(optional):
-        return False
-    return True
+    await _enrich_sources_doc_ids_from_file_path_impl(rag, sources)
 
 
 async def _source_matches_tag_filter(
@@ -856,18 +150,13 @@ async def _source_matches_tag_filter(
     folder: str,
     tags_cache: dict[str, set[str]],
 ) -> bool:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
-        return True
-    doc_id = source.get("doc_id")
-    if not isinstance(doc_id, str) or not doc_id:
-        # If we cannot read ``TAGGED_WITH`` because doc_id is unavailable, we do
-        # not assert a match. We keep only explicit matches from resolvable doc
-        # ids and fail the source otherwise.
-        return False
-    if doc_id not in tags_cache:
-        tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
-    return _doc_tags_match_filter(tags_cache[doc_id], tag_filter)
+    return await _source_matches_tag_filter_impl(
+        source,
+        tag_filter,
+        folder,
+        tags_cache,
+        _fetch_doc_graph_tags,
+    )
 
 
 async def _filter_sources_by_advanced_filters(
@@ -877,25 +166,13 @@ async def _filter_sources_by_advanced_filters(
     doc_filter: dict[str, list[str]] | None,
     folder: str,
 ) -> tuple[list[dict[str, Any]], bool]:
-    tag_required, tag_optional = _tag_filter_terms(tag_filter)
-    doc_required, doc_optional = _doc_filter_terms(doc_filter)
-    if not tag_required and not tag_optional and not doc_required and not doc_optional:
-        return sources, False
-
-    tags_cache: dict[str, set[str]] = {}
-    kept: list[dict[str, Any]] = []
-    has_unverified = False
-    for source in sources:
-        if not _source_matches_doc_filter(source, doc_filter):
-            if not _source_doc_candidates(source):
-                has_unverified = True
-            continue
-        if not await _source_matches_tag_filter(source, tag_filter, folder, tags_cache):
-            if not source.get("doc_id"):
-                has_unverified = True
-            continue
-        kept.append(source)
-    return kept, has_unverified
+    return await _filter_sources_by_advanced_filters_impl(
+        sources,
+        tag_filter=tag_filter,
+        doc_filter=doc_filter,
+        folder=folder,
+        fetch_doc_tags=_fetch_doc_graph_tags,
+    )
 
 
 async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
@@ -950,359 +227,25 @@ async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
     }
 
 
-def _direct_doc_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
-    return {
-        str(row[key])
-        for key in ("doc_id", "full_doc_id")
-        if isinstance(row.get(key), str) and row.get(key)
-    }
-
-
-def _chunk_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
-    chunk_ids = {
-        str(row[key])
-        for key in ("chunk_id", "id")
-        if isinstance(row.get(key), str) and row.get(key)
-    }
-    chunk_ids.update(_split_source_ids(row.get("source_id")))
-    return chunk_ids
-
-
-def _file_path_candidates_for_query_data_row(row: dict[str, Any]) -> list[str]:
-    candidates: list[str] = []
-    for key in ("file_path", "source", "name"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip() and value != UNKNOWN_SOURCE_NAME:
-            candidates.append(value.strip())
-    return candidates
-
-
-async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
-    doc_ids = set()
-    for chunk_id in chunk_ids:
-        doc_id = await _resolve_doc_for_chunk(rag, chunk_id)
-        if doc_id:
-            doc_ids.add(doc_id)
-    return doc_ids
-
-
-async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
-    doc_ids = set()
-    for file_path in file_paths:
-        doc_id = await _resolve_doc_for_file_path(rag, file_path)
-        if doc_id:
-            doc_ids.add(doc_id)
-    return doc_ids
-
-
-async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
-    doc_ids = _direct_doc_ids_for_query_data_row(row)
-    doc_ids.update(
-        await _doc_ids_from_chunk_ids(rag, _chunk_ids_for_query_data_row(row))
-    )
-    doc_ids.update(
-        await _doc_ids_from_file_paths(
-            rag,
-            _file_path_candidates_for_query_data_row(row),
-        )
-    )
-    return doc_ids
-
-
-async def _row_matches_tag_filter(
-    rag: Any,
-    row: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
-    folder: str,
-    tags_cache: dict[str, set[str]],
-) -> bool:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
-        return True
-    doc_ids = await _doc_ids_for_query_data_row(rag, row)
-    if not doc_ids:
-        # Active tag filters are an inclusion contract. If a row cannot be tied
-        # back to a DocStatus node (direct doc id, source chunk, or file path),
-        # we cannot prove it belongs to the tagged corpus, so reject it. The
-        # previous fail-open path made the API claim "Tag Filter Applied" while
-        # returning unrelated entities/references from the broader graph.
-        return False
-    for doc_id in doc_ids:
-        # Per-request cache: chunks/references rows often repeat the
-        # same doc_id; one Cypher round-trip per unique doc suffices.
-        if doc_id not in tags_cache:
-            tags_cache[doc_id] = await _fetch_doc_graph_tags(doc_id, folder)
-        if _doc_tags_match_filter(tags_cache[doc_id], tag_filter):
-            return True
-    return False
-
-
-async def _filter_rows_by_tags(
-    rag: Any, rows: list, tag_filter, folder: str, tags_cache: dict[str, set[str]]
-) -> tuple[list, set[str]]:
-    """Keep rows whose doc tags match the filter; collect their reference_ids."""
-    kept_rows = []
-    kept_reference_ids: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if await _row_matches_tag_filter(rag, row, tag_filter, folder, tags_cache):
-            kept_rows.append(row)
-            ref_id = row.get("reference_id")
-            if isinstance(ref_id, str) and ref_id:
-                kept_reference_ids.add(ref_id)
-    return kept_rows, kept_reference_ids
-
-
 async def _filter_query_data_by_tags(
     rag: Any,
     response: dict[str, Any],
     tag_filter: dict[str, list[str]] | None,
     folder: str,
 ) -> dict[str, Any]:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
-        return response
-
-    data = response.get("data")
-    if not isinstance(data, dict):
-        return response
-
-    # Cache shared across all rows in this single request — bounded by
-    # the number of unique doc_ids in the result set.
-    tags_cache: dict[str, set[str]] = {}
-
-    filtered_data = dict(data)
-    kept_reference_ids: set[str] = set()
-    for key in ("chunks", "entities", "relationships"):
-        rows = data.get(key)
-        if not isinstance(rows, list):
-            continue
-        kept_rows, ref_ids = await _filter_rows_by_tags(
-            rag, rows, tag_filter, folder, tags_cache
-        )
-        filtered_data[key] = kept_rows
-        kept_reference_ids |= ref_ids
-
-    references = data.get("references")
-    if isinstance(references, list):
-        filtered_data["references"] = [
-            ref
-            for ref in references
-            if not isinstance(ref, dict)
-            or ref.get("reference_id") in kept_reference_ids
-        ]
-
-    filtered = dict(response)
-    filtered["data"] = filtered_data
-    metadata = dict(response.get("metadata") or {})
-    metadata["tag_filter"] = tag_filter
-    filtered["metadata"] = metadata
-    return filtered
+    return await _filter_query_data_by_tags_impl(
+        rag,
+        response,
+        tag_filter,
+        folder,
+        _fetch_doc_graph_tags,
+    )
 
 
 async def _build_sources_legacy_fallback(
     rag: Any, query: str, top_k: int
 ) -> list[dict[str, Any]]:
-    """LEGACY: separate vector pass to assemble a sources list.
-
-    DEPRECATED on the nominal /query and /stream paths since TR-RET-02
-    step 2 / audit C3. Kept ONLY as a compat reference for tests in
-    isolation; it MUST NOT be invoked from a successful aquery_llm
-    response path because that reintroduces the structural lie this
-    PR is closing (the displayed sources used to be the result of a
-    second retrieval, not the chunks LightRAG actually grounded on).
-
-    The nominal source-of-truth now lives in
-    :func:`server._lightrag_compat.build_sources_from_raw_data` which
-    maps ``data.references`` from the aquery_llm envelope.
-    """
-    try:
-        chunks_vdb = getattr(rag, "chunks_vdb", None)
-        if chunks_vdb is None:
-            return []
-        raw = await chunks_vdb.query(query, top_k=top_k)
-    except Exception:
-        logger.exception("twin_query: chunks_vdb.query failed — empty sources")
-        return []
-
-    if not isinstance(raw, list):
-        raw = []
-
-    sources: list[dict[str, Any]] = []
-    total = len(raw)
-    for rank, chunk in enumerate(raw[:top_k]):
-        if not isinstance(chunk, dict):
-            continue
-        chunk_id = chunk.get("id") or chunk.get("chunk_id") or ""
-        file_path = (
-            chunk.get("file_path")
-            or chunk.get("source")
-            or chunk_id
-            or UNKNOWN_SOURCE_NAME
-        )
-        doc_id = await _resolve_doc_for_chunk(rag, str(chunk_id))
-        sources.append(
-            {
-                "n": rank + 1,
-                "type": "file",
-                "name": str(file_path),
-                "meta": _chunk_to_meta(chunk),
-                "score": _safe_get_score(chunk, rank, total),
-                "doc_id": doc_id,
-                "chunk_id": str(chunk_id) or None,
-            }
-        )
-    return sources
-
-
-def _actor_from_request(body: TwinQueryBody, request: Request) -> str:
-    if body.actor and body.actor.strip():
-        return body.actor.strip()
-    for header in (
-        "x-auth-request-email",
-        "x-forwarded-user",
-        "x-auth-request-user",
-    ):
-        value = request.headers.get(header)
-        if value and value.strip():
-            return value.strip()
-    return "system"
-
-
-async def _record_retrieval_activity(
-    body: TwinQueryBody,
-    request: Request,
-    *,
-    folder: str,
-    sources_count: int,
-    stream: bool,
-) -> None:
-    """Best-effort Activity write for completed retrieval calls."""
-    try:
-        from ..webui_router import _make_event, get_store
-
-        actor = _actor_from_request(body, request)
-        event = _make_event(
-            kind="retrieval",
-            sev="info",
-            actor=actor,
-            target_label=body.query[:120],
-            summary=f"retrieval completed ({body.mode})",
-            meta={
-                "query": body.query,
-                "mode": body.mode,
-                "top_k": body.top_k,
-                "sources_count": sources_count,
-                "stream": stream,
-                "tag_filter": body.tag_filter,
-                "doc_filter": body.doc_filter,
-            },
-            target_type="query",
-        )
-        await get_store(folder).record_activity(event)
-    except Exception:
-        logger.exception("twin_query: failed to record retrieval activity")
-
-
-def _retrieval_filters_from_body(body: TwinQueryBody) -> RetrievalFilters:
-    """Map the request's ``doc_filter`` / ``tag_filter`` / ``min_score`` onto the
-    storage-layer ``RetrievalFilters`` contract.
-
-    Reuses the same term extractors as the post-filter guard-rail so the two
-    stay in lock-step: ``tag_*`` are lower-cased (case-insensitive tag ids),
-    ``doc_*`` are case-preserving.
-    """
-    tag_required, tag_optional = _tag_filter_terms(body.tag_filter)
-    doc_required, doc_optional = _doc_filter_terms(body.doc_filter)
-    return RetrievalFilters(
-        doc_all=frozenset(doc_required),
-        doc_any=frozenset(doc_optional),
-        tag_all=frozenset(tag_required),
-        tag_any=frozenset(tag_optional),
-        min_score=body.min_score,
-    )
-
-
-@contextmanager
-def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
-    """Bind folder membership **and** retrieval filters for the duration of a
-    grounding call.
-
-    Every ``aquery_llm`` / ``aquery_data`` / ``aquery`` issued under this scope
-    has its vector retrievals constrained at the Memgraph storage layer to the
-    active folder *and* the requested docs/tags/``min_score`` — so an excluded
-    chunk/entity never enters the prompt. The downstream Sources post-filter
-    becomes a guard-rail that removes nothing in the nominal case.
-    """
-    with (
-        storage_folder_context(folder),
-        storage_filter_context(_retrieval_filters_from_body(body)),
-    ):
-        yield
-
-
-def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:
-    """True for modes that produce no sourced answer by design.
-
-    ``bypass`` calls the LLM directly with no retrieval; ``only_need_context`` /
-    ``only_need_prompt`` return the retrieved context / assembled prompt instead
-    of a grounded answer. All three carry an empty sources panel as a contract,
-    not a failure -- so they report ``answer_status = no_retrieval`` rather than
-    falsely claiming ``grounded``.
-    """
-    return body.mode == "bypass" or body.only_need_context or body.only_need_prompt
-
-
-def _has_advanced_filter(body: TwinQueryBody) -> bool:
-    filters = _retrieval_filters_from_body(body)
-    return filters.has_doc or filters.has_tag
-
-
-def _query_data_failure_reason(result: dict[str, Any]) -> str | None:
-    if result.get("status") != "failure":
-        return None
-    metadata = result.get("metadata")
-    if not isinstance(metadata, dict):
-        return None
-    reason = metadata.get("failure_reason")
-    return str(reason) if reason else None
-
-
-def _query_data_fallback_mode(body: TwinQueryBody) -> str | None:
-    """Chunk-inclusive fallback for filtered structured retrieval.
-
-    Upstream LightRAG's ``aquery_data(mode="hybrid")`` goes through ``kg_query``.
-    In that path, no entities/relations means ``no_results`` unless the mode is
-    ``mix``. For tag/doc-filtered API calls this reads as a broken filter: the
-    caller asked for the tagged corpus, not specifically for "only KG rows".
-    Retrying as ``mix`` preserves KG data when it exists and lets filtered chunks
-    surface when the graph side is empty.
-    """
-    if not body.fallback_to_mix:
-        return None
-    if body.only_need_context or body.only_need_prompt:
-        return None
-    if not _has_advanced_filter(body):
-        return None
-    if body.mode in {"local", "global", "hybrid"}:
-        return "mix"
-    return None
-
-
-def _annotate_query_data_fallback(
-    result: dict[str, Any],
-    *,
-    requested_mode: str,
-    fallback_mode: str,
-) -> dict[str, Any]:
-    annotated = dict(result)
-    metadata = dict(result.get("metadata") or {})
-    metadata.setdefault("requested_mode", requested_mode)
-    metadata["fallback_mode"] = fallback_mode
-    metadata["fallback_reason"] = "filtered_graph_mode_no_results"
-    annotated["metadata"] = metadata
-    return annotated
+    return await _build_sources_legacy_fallback_impl(rag, query, top_k)
 
 
 async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[str, Any]:
@@ -1511,141 +454,13 @@ async def _build_envelope_sources(
     source_projection_failed`` rather than a silent ``grounded`` + ``[]`` (which
     would look like a genuinely source-less answer). No second vector pass — the
     structural lie this path deliberately avoids."""
-    chunk_ids = collect_chunk_ids(envelope or {})
-    chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
-    try:
-        sources = build_sources_from_raw_data(envelope or {}, chunk_to_doc)
-    except GraphAnswerEnvelopeError as exc:
-        logger.warning(
-            "twin_query: aquery_llm references unprojectable, surfacing empty "
-            "sources + source_projection_failed status rather than "
-            "reconstructing from a second vector pass: %s",
-            exc,
-        )
-        return [], False
-    await _enrich_sources_doc_ids_from_file_path(rag, sources)
-    sources = _filter_sources_by_min_score(sources, body.min_score)
-    filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
-        sources,
-        tag_filter=body.tag_filter,
-        doc_filter=body.doc_filter,
-        folder=folder,
+    return await _build_envelope_sources_impl(
+        rag,
+        body,
+        folder,
+        envelope,
+        _fetch_doc_graph_tags,
     )
-    # If advanced filters are active but could not be validated against all
-    # projected sources (missing doc id/name candidates), keep a conservative
-    # posture and mark the projection as incomplete.
-    return filtered, not filter_projection_incomplete
-
-
-def _select_token_source(envelope) -> Any:
-    """Pick the streaming iterator (or single-shot content) from an envelope."""
-    llm_response = (
-        envelope.get("llm_response") if isinstance(envelope, dict) else None
-    ) or {}
-    if is_streaming_envelope(envelope):
-        return llm_response.get("response_iterator")
-    # Synchronous answer (failure path, bypass mode, non-streaming backend):
-    # treat content as a single-shot token.
-    return llm_response.get("content") or ""
-
-
-async def _emit_answer_tokens(envelope, stripper) -> AsyncIterator[str]:
-    """Yield NDJSON ``token`` events from the envelope, marker-stripped."""
-    async for text in _iter_answer_text(_select_token_source(envelope)):
-        for safe in stripper.feed(text):
-            if safe:
-                yield json.dumps({"type": "token", "value": safe}) + "\n"
-    for safe in stripper.flush():
-        if safe:
-            yield json.dumps({"type": "token", "value": safe}) + "\n"
-
-
-def _determine_stream_status(envelope, stripper) -> tuple[AnswerStatus, str | None]:
-    """Resolve (answer_status, fatal_reason) from the envelope + marker state.
-
-    fatal_reason is set only for a generic backend failure (status=failure,
-    reason != no_results) that must be surfaced as an in-stream error token.
-    """
-    status: AnswerStatus = ANSWER_STATUS_GROUNDED
-    fatal_reason: str | None = None
-    if isinstance(envelope, dict):
-        metadata = envelope.get("metadata") or {}
-        failure_reason = (
-            metadata.get("failure_reason") if isinstance(metadata, dict) else None
-        )
-        if envelope.get("status") == "failure":
-            if failure_reason == "no_results":
-                status = ANSWER_STATUS_INSUFFICIENT
-            else:
-                fatal_reason = failure_reason or str(
-                    envelope.get("message") or "backend failure"
-                )
-    if stripper.detected and fatal_reason is None:
-        status = ANSWER_STATUS_INSUFFICIENT
-    return status, fatal_reason
-
-
-async def _query_stream_failure_events(exc: Exception) -> AsyncIterator[str]:
-    logger.exception("twin_query: streaming aquery_llm failed")
-    yield json.dumps({"type": "token", "value": f"\n[query failed: {exc}]"}) + "\n"
-    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_fatal_events(
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    fatal_reason: str,
-) -> AsyncIterator[str]:
-    logger.error(
-        "twin_query stream: aquery_llm envelope failure surfaced as "
-        "in-stream error token: %s",
-        fatal_reason,
-    )
-    yield json.dumps(
-        {"type": "token", "value": f"\n[query failed: {fatal_reason}]"}
-    ) + "\n"
-    yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
-    )
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_empty_sources_events(
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    status: AnswerStatus,
-) -> AsyncIterator[str]:
-    yield json.dumps({"type": "status", "value": status}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
-    )
-    yield json.dumps({"type": "sources", "value": []}) + "\n"
-
-
-async def _query_stream_grounded_events(
-    rag: Any,
-    body: TwinQueryBody,
-    request: Request,
-    folder: str,
-    envelope: dict[str, Any] | None,
-    status: AnswerStatus,
-) -> AsyncIterator[str]:
-    with _retrieval_scope(folder, body):
-        sources, projection_ok = await _build_envelope_sources(
-            rag, body, folder, envelope
-        )
-    if not projection_ok:
-        status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
-        sources = []
-    yield json.dumps({"type": "status", "value": status}) + "\n"
-    await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=len(sources), stream=True
-    )
-    yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
 
 
 async def _generate_twin_query_stream(
@@ -1697,7 +512,13 @@ async def _generate_twin_query_stream(
         return
 
     async for line in _query_stream_grounded_events(
-        rag, body, request, folder, envelope, status
+        rag,
+        body,
+        request,
+        folder,
+        envelope,
+        status,
+        _build_envelope_sources,
     ):
         yield line
 
@@ -1816,5 +637,8 @@ __all__ = [
     "TwinQueryBody",
     "TwinQueryDataResponse",
     "TwinQueryResponse",
+    "_make_query_param",
+    "_query_param_kwargs",
+    "_source_matches_doc_filter",
     "build_twin_query_router",
 ]

@@ -44,6 +44,7 @@ const MIP_CLASS_NAMES: Readonly<Record<string, string>> = {
   C3: 'Confidential',
   C4: 'Secret',
 };
+const OPERATOR_UPLOAD_CLASSES = new Set(['C1', 'C2']);
 
 const E2E_DOCUMENTS_STORAGE_KEY = 'twin.e2e.documentsState.v1';
 const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
@@ -982,6 +983,10 @@ function upsertTag(tag: TagEntry): TagEntry {
   return tag;
 }
 
+function isArchivedTag(tag: TagEntry): boolean {
+  return tag.status === 'rejected' || tag.status === 'deleted';
+}
+
 function cascadeDeletedTagFromDocuments(
   name: string,
   strategy: 'migrate' | 'untag' = 'untag',
@@ -1119,6 +1124,11 @@ export const handlers = [
     Object.assign(e2eScenario, patch);
     persistScenario();
     return HttpResponse.json({ ok: true, scenario: e2eScenario });
+  }),
+  http.post(`${ANY}/__e2e/quota`, async ({ request }) => {
+    const patch = (await request.json()) as Partial<MockQuotaState>;
+    setMockQuotaState(patch);
+    return HttpResponse.json({ ok: true, quota: quotaState });
   }),
   http.get(`${ANY}/__e2e/stats`, () =>
     HttpResponse.json({
@@ -1264,9 +1274,18 @@ export const handlers = [
         ? file.name
         : `uploaded-${Date.now()}.txt`;
     // Operator MIP classification rides as an HTTP header. Mirror the real
-    // backend: when present, the operator value lands on the doc as a
-    // structured classification payload (source_format 'operator').
+    // backend: operators may only choose C1/C2. C3/C4 uploads are rejected
+    // categorically before ingestion.
     const operatorClass = request.headers.get('X-Twin-Classification');
+    if (operatorClass && !OPERATOR_UPLOAD_CLASSES.has(operatorClass)) {
+      return HttpResponse.json(
+        {
+          detail:
+            'X-Twin-Classification accepts only C1 or C2; C3/C4 uploads are rejected by policy.',
+        },
+        { status: 400 },
+      );
+    }
     const classificationMeta =
       operatorClass && operatorClass in MIP_CLASS_NAMES
         ? {
@@ -1668,7 +1687,7 @@ export const handlers = [
     recordTwinFolderRequest(request);
     const gate = authGateResponse(request);
     if (gate) return gate;
-    return HttpResponse.json(tagState);
+    return HttpResponse.json(tagState.filter((tag) => !isArchivedTag(tag)));
   }),
   http.get(`${ANY}${TWIN}/tags/categories`, ({ request }) => {
     recordTwinFolderRequest(request);
@@ -1731,6 +1750,16 @@ export const handlers = [
       def: string;
       category: string;
     };
+    const existing = tagState.find((tag) => tag.tag === body.tag);
+    if (existing && !isArchivedTag(existing)) {
+      return HttpResponse.json(
+        { detail: `Tag '${body.tag}' already exists` },
+        { status: 409 },
+      );
+    }
+    if (existing) {
+      tagState = tagState.filter((tag) => tag.tag !== body.tag);
+    }
     const next = upsertTag({
       ...tagEntryStub(body.tag, 'pending-review', 'requested'),
       def: body.def,
@@ -1787,13 +1816,15 @@ export const handlers = [
     };
     const reason = body.reason?.trim() || 'rejected';
     const current = tagState.find((t) => t.tag === name);
-    const next = upsertTag({
+    const next = {
       ...(current ?? tagEntryStub(name, 'rejected', 'rejected')),
       status: 'rejected',
       tier: 3,
       reject_reason: reason,
       last_edit: { by: body.actor ?? 'system', at: '2026-05-29', action: 'rejected' },
-    });
+    };
+    tagState = tagState.filter((tag) => tag.tag !== name);
+    persistTagState();
     recordTagMutation(name, `rejected: ${reason}`, {
       actor: body.actor,
       sev: 'warning',

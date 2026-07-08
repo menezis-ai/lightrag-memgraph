@@ -55,6 +55,36 @@ class TestInMemoryTagStore:
         assert [t["tag"] for t in store.list_tags()] == ["alpha"]
         assert [c["id"] for c in store.list_categories()] == ["infra"]
 
+    def test_list_tags_hides_archived_entries(self):
+        def tag(name: str, status: str) -> dict:
+            return {
+                "tag": name,
+                "tier": 3,
+                "category": "infra",
+                "status": status,
+                "def": "...",
+                "aliases": [],
+                "deprecates": [],
+                "sources_count": 0,
+                "chunks_count": 0,
+                "query_freq_30d": 0,
+                "created": {"by": "x", "at": "2026-01-01"},
+                "last_edit": {"by": "x", "at": "2026-01-01"},
+                "related": [],
+                "examples": [],
+            }
+
+        store = InMemoryTagStore(
+            tags=[
+                tag("active", "active"),
+                tag("ghost-rejected", "rejected"),
+                tag("ghost-deleted", "deleted"),
+            ],
+            categories=[{"id": "infra", "label": "Infra", "color": "#000"}],
+        )
+
+        assert [t["tag"] for t in store.list_tags()] == ["active"]
+
 
 # ---------------------------------------------------------------------------
 # Integration — Memgraph backend

@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/resources';
 import { onUnauthorized, setSessionAuthToken } from '../api/client';
+import { loginErrorMessage, logTechnicalError } from '../lib/errorMessages';
 import { resolveRuntimeConfig } from '../config/devConfig';
 import type { AuthenticatedUser, TwinRuntimeConfig } from '../types/auth';
 
@@ -224,9 +225,11 @@ export function useAuth(): UseAuthResult {
         scheduleExpiry(status.expires_at);
       } catch (err) {
         setSessionAuthToken(null);
-        const message =
-          err instanceof Error ? err.message : 'Authentication failed';
-        setLoginError(message);
+        // Operator-facing copy only — a 401 here is a failed credential
+        // check ("Incorrect username or password."), never the raw
+        // "POST /login → 401" transport string.
+        logTechnicalError('login', err);
+        setLoginError(loginErrorMessage(err));
         setAuthState((prev) => ({
           ...prev,
           checked: true,

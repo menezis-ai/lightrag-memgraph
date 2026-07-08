@@ -337,6 +337,20 @@ def _doc_row_has_active_folder_hint(doc: dict[str, Any], folder: str) -> bool:
     return str(row_folder) == folder
 
 
+def _doc_matches_query(doc: dict[str, Any], q: str | None) -> bool:
+    if not q:
+        return True
+    needle = q.lower()
+    # Mirror ``_project_doc_status_for_webui``'s field resolution exactly so the
+    # pre-projection ``q`` filter matches the same surface a projected row would
+    # expose — including the ``file_path`` -> ``doc_id`` fallback for rows that
+    # carry no path/source.
+    doc_id = str(doc.get("id") or doc.get("doc_id") or "")
+    file_path = str(doc.get("file_path") or doc.get("source") or doc_id).lower()
+    summary = str(doc.get("content_summary") or doc.get("summary") or "").lower()
+    return needle in file_path or needle in summary
+
+
 async def _filter_docs_to_active_folder(
     items: list[dict[str, Any]],
     *,
@@ -405,12 +419,14 @@ async def _list_documents_from_doc_status(
 
     if folder is not None:
         doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
-    docs = [
+
+    doc_rows = [
         _project_doc_status_for_webui(doc, visible_folder=folder) for doc in doc_rows
     ]
-    await _attach_graph_tags_for_documents(docs)
+
+    await _attach_graph_tags_for_documents(doc_rows)
     return _filter_doc_status_rows(
-        docs,
+        doc_rows,
         q=q,
         tag=tag,
         folder=None,

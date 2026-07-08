@@ -53,6 +53,13 @@ class FakeRag:
 def patched_lightrag(monkeypatch):
     from lightrag import LightRAG
 
+    # Order-independence: earlier test modules (e.g. test_classification_gate)
+    # may have emitted events into the module-singleton activity store. Reset
+    # BEFORE the test too, not only in teardown, so the assertions below count
+    # only this test's events regardless of execution order (audit 2026-07-02
+    # addendum, finding A).
+    webui_router.reset_store()
+
     original_ainsert = LightRAG.ainsert
 
     async def forbidden_ainsert(*_args, **_kwargs):

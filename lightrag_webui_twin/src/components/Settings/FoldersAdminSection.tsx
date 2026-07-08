@@ -26,6 +26,7 @@ import {
   useUpdateFolder,
 } from '../../api/queries';
 import { ApiError } from '../../api/client';
+import { userErrorMessage } from '../../lib/errorMessages';
 import { canManageFolders } from '../../lib/permissions';
 import type { AuthenticatedUser } from '../../types/auth';
 import type { Toast } from '../../types/toast';
@@ -69,7 +70,7 @@ export function FoldersAdminSection({
     onToast?.({
       kind: 'error',
       title: 'Admin scope required',
-      sub: "Admin scope 'admin:folders' required",
+      sub: 'Your account does not have the folder-administration permission. Contact Twincore Team to request it.',
     });
   };
 
@@ -475,9 +476,10 @@ function errorToMessage(err: unknown): string | null {
   if (err === null || err === undefined) return null;
   if (err instanceof ApiError) {
     const detail = (err.body as { detail?: string } | undefined)?.detail;
-    return detail || err.message;
+    // Folder-route details are operator-facing sentences; the mapped
+    // copy covers detail-less responses (never the raw arrow string).
+    return detail || userErrorMessage(err, { action: 'updating the folder catalog' });
   }
-  if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
-  return 'Unexpected folder operation error';
+  return userErrorMessage(err, { action: 'updating the folder catalog' });
 }

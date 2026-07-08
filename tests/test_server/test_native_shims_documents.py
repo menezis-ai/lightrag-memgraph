@@ -149,6 +149,33 @@ class TestDocumentsFailedProjection:
         assert doc["chunks_count"] == 327
         assert doc["error_msg"] == "LLM extractor: invalid JSON response on chunk 14"
 
+    async def test_list_projection_preserves_structured_classification(
+        self, monkeypatch
+    ):
+        docs = {
+            "doc-c4": FakeDocStatus(
+                status="processed",
+                file_path="classified-secret-runbook.docx",
+                chunks_count=12,
+                metadata={
+                    "classification": {
+                        "class_id": "C4",
+                        "class_name": "C4 Secret",
+                        "raw_name": "C4 Secret",
+                        "source_format": "ooxml",
+                    }
+                },
+            ),
+        }
+
+        async with _make_client(monkeypatch, docs) as client:
+            r = await client.get("/documents")
+
+        assert r.status_code == 200
+        doc = r.json()["items"][0]
+        assert doc["metadata"]["classification"]["class_id"] == "C4"
+        assert doc["metadata"]["classification"]["raw_name"] == "C4 Secret"
+
     async def test_documents_envelope_exposes_page_and_page_size(self, monkeypatch):
         docs = {
             "doc-1": FakeDocStatus(

@@ -17,8 +17,16 @@ Twin-safe default and the opt-in override.
 
 from __future__ import annotations
 
+import inspect
+
+from lightrag import LightRAG
+
 from twindb_lightrag_memgraph.server.app import _build_rag_kwargs
-from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
+from twindb_lightrag_memgraph.server.settings import (
+    LightRAGServerSettings,
+    TWIN_ENTITY_TYPES,
+    TWIN_ENTITY_TYPES_GUIDANCE,
+)
 
 
 def _settings(**overrides: object) -> LightRAGServerSettings:
@@ -63,6 +71,43 @@ def test_rag_kwargs_carry_static_wiring() -> None:
     assert kwargs["embedding_func"] == "ef"
     assert kwargs["llm_model_func"] == "lf"
     assert kwargs["workspace"] == "acme"
+
+
+def test_rag_kwargs_carry_twin_entity_extraction_profile() -> None:
+    """Technology must be explicit in LightRAG's extraction prompt profile."""
+    settings = _settings(max_gleaning=3)
+    kwargs = _build_rag_kwargs(settings, embedding_func=object(), llm_func=object())
+    supported = inspect.signature(LightRAG).parameters
+
+    if "entity_extract_max_gleaning" in supported:
+        assert kwargs["entity_extract_max_gleaning"] == 3
+    else:
+        assert "entity_extract_max_gleaning" not in kwargs
+    if "entity_extract_max_records" in supported:
+        assert (
+            kwargs["entity_extract_max_records"] == settings.entity_extract_max_records
+        )
+    else:
+        assert "entity_extract_max_records" not in kwargs
+    if "entity_extract_max_entities" in supported:
+        assert (
+            kwargs["entity_extract_max_entities"]
+            == settings.entity_extract_max_entities
+        )
+    else:
+        assert "entity_extract_max_entities" not in kwargs
+    if "addon_params" in supported:
+        assert kwargs["addon_params"]["entity_types"] == list(TWIN_ENTITY_TYPES)
+        assert "Technology" in kwargs["addon_params"]["entity_types"]
+        assert (
+            kwargs["addon_params"]["entity_types_guidance"]
+            == TWIN_ENTITY_TYPES_GUIDANCE
+        )
+        assert "- Technology:" in kwargs["addon_params"]["entity_types_guidance"]
+        for expected in ("UNIX", "grep", "sed", "ssh", "KnowRob", "Accelerate"):
+            assert expected in kwargs["addon_params"]["entity_types_guidance"]
+    else:
+        assert "addon_params" not in kwargs
 
 
 def test_rag_kwargs_omit_workspace_when_unset() -> None:

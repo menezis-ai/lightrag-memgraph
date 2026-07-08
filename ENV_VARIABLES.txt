@@ -56,6 +56,14 @@ MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT
 MEMGRAPH_IDLE_DISCONNECT_SECONDS
                              Force write/read driver recreation after this many
                              seconds without pool activity. Default: 3600.
+TWIN_PURGE_LLM_CACHE_ON_FAILED
+                             "0"/"false" disables the purge of LLM
+                             entity-extraction cache rows tied to a document
+                             that lands in FAILED status (LightRAG-native
+                             behavior: cache rows survive the failure and a
+                             re-ingestion replays them). Default: enabled —
+                             a FAILED doc's extraction cache is deleted so
+                             the re-ingestion re-calls the LLM.
 
 --------------------------------------------------------------------------------
 2. SERVER (FastAPI overlay) — prefix LIGHTRAG_

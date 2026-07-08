@@ -71,6 +71,23 @@ DEFAULT_IDLE_DISCONNECT_SECONDS = 3600.0
 MEMGRAPH_READ_POOL_SIZE_ENV = "MEMGRAPH_READ_POOL_SIZE"
 DEFAULT_READ_POOL_SIZE = 20
 
+# LLM extraction-cache hygiene — when a document lands in FAILED status,
+# purge the entity-extraction LLM cache rows tied to its chunks so a
+# re-ingestion re-calls the LLM instead of replaying the cached (possibly
+# truncated / imparsable) responses. Default ON; set to "0"/"false" to keep
+# LightRAG-native behavior (cache rows survive the failure).
+# Audit 2026-07-02 addendum, finding B.
+TWIN_PURGE_LLM_CACHE_ON_FAILED_ENV = "TWIN_PURGE_LLM_CACHE_ON_FAILED"
+
+_FALSE_FLAG_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def purge_llm_cache_on_failed_enabled() -> bool:
+    """Feature flag (default ON) for the FAILED-doc LLM-cache purge."""
+    raw = os.environ.get(TWIN_PURGE_LLM_CACHE_ON_FAILED_ENV, "1")
+    return raw.strip().lower() not in _FALSE_FLAG_VALUES
+
+
 _SAFE_IDENTIFIER_RE = re.compile(r"^\w+$", re.ASCII)
 _active_storage_folder: ContextVar[str | None] = ContextVar(
     "twin_active_storage_folder",

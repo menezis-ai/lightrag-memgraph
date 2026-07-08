@@ -117,6 +117,50 @@ describe('DocumentsTab — rendering', () => {
     expect(screen.queryByLabelText('Retag new-runbook.pdf')).toBeNull();
     expect(screen.queryByLabelText('Delete new-runbook.pdf')).toBeNull();
   });
+
+  it('renders a MIP sensitivity badge from structured document metadata', () => {
+    const classifiedDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'mip-c4',
+      file_path: 'classified-secret-runbook.docx',
+      metadata: {
+        ...DOCUMENT_FIXTURES[0].metadata,
+        classification: {
+          class_id: 'C4',
+          class_name: 'C4 Secret',
+          label_guid: '44444444-4444-4444-4444-444444444444',
+          raw_name: 'C4 Secret',
+          set_date: '2026-07-06T08:00:00Z',
+          method: 'Privileged',
+          source_format: 'ooxml',
+          reason: null,
+          meta: {},
+        },
+      },
+    };
+
+    renderTab(<DocumentsTab {...defaultProps()} docs={[classifiedDoc]} />);
+
+    const badge = screen.getByTestId('class-pill-mip-c4');
+    expect(badge).toHaveAttribute('data-class-id', 'C4');
+    expect(badge).toHaveAttribute('data-class-tone', 'secret');
+    expect(badge).toHaveAccessibleName('Classification: Secret · C4 Secret');
+  });
+
+  it('does not render a MIP badge for legacy string classifications', () => {
+    const legacyDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'legacy-classification',
+      metadata: {
+        ...DOCUMENT_FIXTURES[0].metadata,
+        classification: 'restricted',
+      },
+    };
+
+    renderTab(<DocumentsTab {...defaultProps()} docs={[legacyDoc]} />);
+
+    expect(screen.queryByTestId('class-pill-legacy-classification')).toBeNull();
+  });
 });
 
 describe('DocumentsTab — filters', () => {
@@ -323,6 +367,51 @@ describe('DocumentsTab — selection + bulk', () => {
     const arg = p.onOpenBulkRetag.mock.calls[0][0];
     expect(arg).toHaveLength(1);
     expect(arg[0].doc_id).toBe('d1');
+  });
+
+  it('Bulk Retag keeps selections made on previous pages', async () => {
+    const p = defaultProps();
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const renderPage = (docs: typeof DOCUMENT_FIXTURES) => (
+      <QueryClientProvider client={client}>
+        <DocumentsTab
+          {...p}
+          docs={docs}
+          totalCount={DOCUMENT_FIXTURES.length}
+          currentPage={docs[0]?.doc_id === DOCUMENT_FIXTURES[0].doc_id ? 1 : 2}
+          hasNextPage={docs[0]?.doc_id === DOCUMENT_FIXTURES[0].doc_id}
+          onNextPage={vi.fn()}
+          onPreviousPage={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+
+    const page1 = DOCUMENT_FIXTURES.slice(0, 2);
+    const page2 = DOCUMENT_FIXTURES.slice(2, 4);
+    const view = render(renderPage(page1));
+
+    await userEvent.click(screen.getByLabelText(`Select ${page1[0].file_path}`));
+    await userEvent.click(screen.getByLabelText(`Select ${page1[1].file_path}`));
+
+    view.rerender(renderPage(page2));
+
+    await userEvent.click(screen.getByLabelText(`Select ${page2[0].file_path}`));
+    await userEvent.click(
+      screen.getByRole('button', { name: /Retag 3 sources/ }),
+    );
+
+    expect(p.onOpenBulkRetag).toHaveBeenCalledTimes(1);
+    const selectedDocs = p.onOpenBulkRetag.mock.calls[0][0] as typeof DOCUMENT_FIXTURES;
+    expect(selectedDocs.map((doc) => doc.doc_id)).toEqual([
+      page1[0].doc_id,
+      page1[1].doc_id,
+      page2[0].doc_id,
+    ]);
   });
 });
 

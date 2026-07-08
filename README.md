@@ -22,7 +22,10 @@ reduction.
 
 ## Status
 
-Project version: `1.0.0`.
+Active development version on `main`: `1.1.0`.
+
+Deployed BNP production release: `1.0.0`, frozen on `stable/1.0.x` and
+delivered through the `export-1.0.0` snapshot.
 
 Production target:
 

@@ -23,6 +23,7 @@ from ._constants import (
     default_twin_folder,
     get_active_duplicate_share_folder,
     get_active_storage_folder,
+    purge_llm_cache_on_failed_enabled,
     resolve_workspace,
     validate_identifier,
 )
@@ -508,6 +509,83 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 )
         await cleanup_processed_imports(cleanup_props)
 
+        failed_doc_ids = [
+            e["id"]
+            for e in entries
+            if e["props"].get("status") == DocStatus.FAILED.value
+        ]
+        if failed_doc_ids:
+            await self._purge_failed_doc_llm_cache(failed_doc_ids)
+
+    async def _purge_failed_doc_llm_cache(self, doc_ids: list[str]) -> None:
+        """Purge LLM extraction-cache rows tied to docs that just FAILED.
+
+        LightRAG persists the entity-extraction LLM cache even when the
+        document itself fails — the extraction cache is gated by
+        ``enable_llm_cache_for_entity_extract`` (default true, independent of
+        ``enable_llm_cache``), and the FAILED handlers in ``process_document``
+        explicitly flush the cache *before* writing the FAILED status row
+        (verified on the 1.4.9.11 wheel). Left in place, a re-ingestion of the
+        same document replays the cached — possibly truncated or imparsable —
+        responses instead of re-calling the LLM (audit 2026-07-02 addendum,
+        finding B).
+
+        Cache rows are matched through the failed doc's chunk ids: extraction
+        cache entries embed their ``chunk_id`` in the JSON ``data`` payload,
+        and chunk rows embed ``full_doc_id``. Query-mode cache rows carry no
+        chunk id and are never touched. Best-effort by design: any failure is
+        logged and swallowed — this hygiene pass must never break the
+        ingestion pipeline. Disable with ``TWIN_PURGE_LLM_CACHE_ON_FAILED=0``
+        (LightRAG-native behavior: cache rows survive the failure).
+        """
+        if not purge_llm_cache_on_failed_enabled():
+            return
+        try:
+            ws = validate_identifier(self.workspace, "workspace")
+            chunks_label = f"KV_{ws}_text_chunks"
+            cache_label = f"KV_{ws}_llm_response_cache"
+            async with _pool.get_read_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (c:`{chunks_label}`)
+                    WHERE any(d IN $doc_ids WHERE c.data CONTAINS d)
+                    RETURN c.id AS id
+                    """,
+                    doc_ids=list(doc_ids),
+                )
+                chunk_ids = [record["id"] async for record in result]
+                await result.consume()
+            if not chunk_ids:
+                return
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        MATCH (n:`{cache_label}`)
+                        WHERE any(cid IN $chunk_ids WHERE n.data CONTAINS cid)
+                        DETACH DELETE n
+                        """,
+                        chunk_ids=chunk_ids,
+                    )
+                    summary = await result.consume()
+            deleted = getattr(getattr(summary, "counters", None), "nodes_deleted", None)
+            if deleted:
+                logger.info(
+                    "[MemgraphDocStatus:%s] purged %s LLM extraction-cache "
+                    "row(s) for FAILED doc(s) %s",
+                    self.workspace,
+                    deleted,
+                    doc_ids,
+                )
+        except Exception:
+            logger.warning(
+                "[MemgraphDocStatus:%s] LLM extraction-cache purge after "
+                "FAILED status failed for docs %s (ingestion unaffected)",
+                self.workspace,
+                doc_ids,
+                exc_info=True,
+            )
+
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
@@ -789,12 +867,20 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     async def get_all_status_counts(self, folder: str | None = None) -> dict[str, int]:
         return await self.get_status_counts(folder=folder)
 
+    # Duplicate-lookup getters: file_path / basename / content_hash are NOT
+    # unique in the store (duplicate uploads, legacy data), so a bare
+    # `result.single()` would pick a driver-arbitrary row (audit 2026-07-02
+    # addendum, finding D). Each query below orders by (created_at, id) and
+    # LIMITs to 1 so "the original" is always the oldest matching document,
+    # deterministically.
+
     async def get_doc_by_file_path(self, file_path: str) -> dict[str, Any] | None:
         label = self._label()
         async with _pool.get_read_session() as session:
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{file_path: $file_path}})
+                WITH n ORDER BY n.created_at ASC, n.id ASC LIMIT 1
                 RETURN n.id AS id, properties(n) AS props
                 """,
                 file_path=file_path,
@@ -829,6 +915,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{file_path: $basename}})
+                WITH n ORDER BY n.created_at ASC, n.id ASC LIMIT 1
                 RETURN n.id AS id, properties(n) AS props
                 """,
                 basename=basename,
@@ -851,6 +938,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{content_hash: $content_hash}})
+                WITH n ORDER BY n.created_at ASC, n.id ASC LIMIT 1
                 RETURN n.id AS id, properties(n) AS props
                 """,
                 content_hash=content_hash,

@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from fastapi import FastAPI
 from lightrag import LightRAG
-from lightrag.base import DocStatus
+from lightrag.base import DocProcessingStatus, DocStatus
 from lightrag.kg.shared_storage import finalize_share_data, initialize_share_data
 from lightrag.utils import EmbeddingFunc, Tokenizer
 
@@ -210,6 +210,17 @@ async def _poll_track(client: httpx.AsyncClient, track_id: str) -> dict:
     return payload
 
 
+async def _poll_track_registered(client: httpx.AsyncClient, track_id: str) -> dict:
+    for _ in range(50):
+        response = await client.get(f"/documents/track_status/{track_id}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        if payload.get("total_count", 0) >= 1:
+            return payload
+        await asyncio.sleep(0.1)
+    return payload
+
+
 def _doc_status_value(doc_status) -> str:
     status = doc_status["status"] if isinstance(doc_status, dict) else doc_status.status
     return status.value if isinstance(status, DocStatus) else str(status)
@@ -320,3 +331,98 @@ async def test_native_document_runtime_upload_and_failed_reprocess(native_runtim
     assert _doc_field(stored, "chunks_list")
     assert DEFAULT_FOLDER in await rag.doc_status.get_folders_for_doc(REPROCESS_DOC_ID)
     assert await _count_nodes(f"Vec_{WORKSPACE}") > 0
+
+
+@pytest.mark.integration
+async def test_native_upload_batch_registers_every_accepted_track(
+    native_runtime, monkeypatch
+):
+    rag, app = native_runtime
+    upload_count = 39
+
+    import lightrag.api.routers.document_routes as document_routes
+
+    async def allow_enqueue(_rag):
+        return True
+
+    async def release_enqueue(_rag):
+        return None
+
+    async def register_pending_track(_rag, file_path, track_id=None):
+        assert track_id is not None
+        now = datetime.now(timezone.utc).isoformat()
+        await _rag.doc_status.upsert(
+            {
+                f"doc-{track_id}": DocProcessingStatus(
+                    content_summary=file_path.name,
+                    content_length=file_path.stat().st_size,
+                    file_path=file_path.name,
+                    status=DocStatus.PENDING,
+                    created_at=now,
+                    updated_at=now,
+                    track_id=track_id,
+                )
+            }
+        )
+
+    monkeypatch.setattr(
+        document_routes, "_reserve_enqueue_slot", allow_enqueue, raising=False
+    )
+    monkeypatch.setattr(
+        document_routes, "_release_enqueue_slot", release_enqueue, raising=False
+    )
+    monkeypatch.setattr(
+        document_routes,
+        "check_pipeline_busy_or_raise",
+        allow_enqueue,
+        raising=False,
+    )
+    monkeypatch.setattr(document_routes, "pipeline_index_file", register_pending_track)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        timeout=30.0,
+    ) as client:
+        responses = await asyncio.gather(
+            *[
+                client.post(
+                    "/documents/upload",
+                    files={
+                        "file": (
+                            f"native-runtime-batch-{i:02d}.txt",
+                            (
+                                f"Concurrent upload batch document {i}. "
+                                f"Unique marker batch-{i:02d} for DocStatus tracking."
+                            ).encode(),
+                            "text/plain",
+                        )
+                    },
+                    headers={"X-Twin-Folder": DEFAULT_FOLDER},
+                )
+                for i in range(upload_count)
+            ]
+        )
+
+        assert [response.status_code for response in responses] == [200] * upload_count
+        track_ids = [response.json()["track_id"] for response in responses]
+        assert len(set(track_ids)) == upload_count
+
+        track_payloads = await asyncio.gather(
+            *[_poll_track_registered(client, track_id) for track_id in track_ids]
+        )
+
+    missing = [
+        track_id
+        for track_id, payload in zip(track_ids, track_payloads)
+        if payload.get("total_count", 0) != 1
+    ]
+    assert missing == []
+
+    tracked_docs = [payload["documents"][0] for payload in track_payloads]
+    assert len({doc["id"] for doc in tracked_docs}) == upload_count
+    valid_statuses = {status.value for status in DocStatus}
+    assert {doc["status"] for doc in tracked_docs}.issubset(valid_statuses)
+
+    stored_rows = [await rag.doc_status.get_by_id(doc["id"]) for doc in tracked_docs]
+    assert all(row is not None for row in stored_rows)

@@ -205,7 +205,13 @@ async def test_upload_middleware_binds_classification_header(monkeypatch):
         no_header = await client.post(
             "/documents/upload", headers={"X-Twin-Folder": "default"}
         )
+        rejected = await client.post(
+            "/documents/upload",
+            headers={"X-Twin-Folder": "default", "X-Twin-Classification": "C3"},
+        )
 
     assert with_header.json() == {"classification": "C2"}
     # LightRAG-compat: no operator header -> nothing bound, native path.
     assert no_header.json() == {"classification": None}
+    assert rejected.status_code == 400
+    assert "accepts only C1 or C2" in rejected.json()["detail"]

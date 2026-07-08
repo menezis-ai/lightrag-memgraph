@@ -120,7 +120,7 @@ describe('onTagApprove', () => {
     );
   });
 
-  it('pushes an error toast with the Error message on rejection', async () => {
+  it('pushes an error toast with mapped copy on rejection', async () => {
     approveTagMock.mockRejectedValueOnce(new Error('backend down'));
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
@@ -131,19 +131,22 @@ describe('onTagApprove', () => {
         kind: 'error',
         title: 'Tag approval failed',
         tagname: 'k8s',
-        sub: 'backend down',
+        sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
       }),
     );
   });
 
-  it('falls back to "Mutation rejected" when the error is not an Error', async () => {
+  it('falls back to the mapped generic copy when the error is not an Error', async () => {
     approveTagMock.mockRejectedValueOnce('boom-string');
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
     await result.current.onTagApprove({ tag: makeTag() });
 
     expect(pushToast).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'error', sub: 'Mutation rejected' }),
+      expect.objectContaining({
+        kind: 'error',
+        sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+      }),
     );
   });
 });
@@ -489,7 +492,7 @@ describe('onTagCommit success paths', () => {
 });
 
 describe('onTagCommit error paths (commitTagMutation onError)', () => {
-  it('edit failure → "Tag edit failed" toast with Error message', async () => {
+  it('edit failure → "Tag edit failed" toast with mapped copy', async () => {
     editTagMock.mockRejectedValueOnce(new Error('write conflict'));
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
@@ -501,13 +504,13 @@ describe('onTagCommit error paths (commitTagMutation onError)', () => {
           kind: 'error',
           title: 'Tag edit failed',
           tagname: 'argocd',
-          sub: 'write conflict',
+          sub: 'Something went wrong while updating the tag. Please retry or contact Twincore Team.',
         }),
       ),
     );
   });
 
-  it('reject failure with non-Error → "Mutation rejected" fallback', async () => {
+  it('reject failure with non-Error → mapped generic fallback', async () => {
     rejectTagMock.mockRejectedValueOnce('weird');
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
@@ -518,7 +521,7 @@ describe('onTagCommit error paths (commitTagMutation onError)', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Tag reject failed',
-          sub: 'Mutation rejected',
+          sub: 'Something went wrong while updating the tag. Please retry or contact Twincore Team.',
         }),
       ),
     );
@@ -571,13 +574,13 @@ describe('onTagCommit edit-approve path', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Tag edit-approve failed',
-          sub: 'approve boom',
+          sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
         }),
       ),
     );
   });
 
-  it('error during edit-approve with non-Error → "Mutation rejected"', async () => {
+  it('error during edit-approve with non-Error → mapped generic fallback', async () => {
     editTagMock.mockRejectedValueOnce('str');
     const pushToast = vi.fn();
     const { result } = setup(pushToast);
@@ -589,7 +592,10 @@ describe('onTagCommit edit-approve path', () => {
 
     await waitFor(() =>
       expect(pushToast).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'error', sub: 'Mutation rejected' }),
+        expect.objectContaining({
+          kind: 'error',
+          sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+        }),
       ),
     );
   });

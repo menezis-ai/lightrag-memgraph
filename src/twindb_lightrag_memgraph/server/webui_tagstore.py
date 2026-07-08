@@ -33,6 +33,12 @@ from . import webui_seed
 
 logger = logging.getLogger(__name__)
 
+_ARCHIVED_TAG_STATUSES = {"rejected", "deleted"}
+
+
+def _visible_catalog_tag(entry: dict[str, Any]) -> bool:
+    return str(entry.get("status") or "").lower() not in _ARCHIVED_TAG_STATUSES
+
 
 # ---------------------------------------------------------------------------
 # Protocol — minimal surface the WebuiStore depends on for tag governance
@@ -76,7 +82,7 @@ class InMemoryTagStore:
         )
 
     def list_tags(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self._tags)
+        return copy.deepcopy([t for t in self._tags if _visible_catalog_tag(t)])
 
     def list_categories(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._categories)
@@ -454,7 +460,8 @@ class MemgraphTagStore:
             usage = usage_by_id.get(row.get("id"), {})
             item["sources_count"] = usage.get("sources_count", 0)
             item["chunks_count"] = usage.get("chunks_count", 0)
-            out.append(item)
+            if _visible_catalog_tag(item):
+                out.append(item)
         return out
 
     async def list_categories(self) -> list[dict[str, Any]]:

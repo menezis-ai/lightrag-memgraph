@@ -33,6 +33,7 @@ WEBUI_INDEX_FILENAME = "index.html"
 TWIN_API_PREFIX = "/twin/api"
 TWIN_UI_PREFIX = "/twin"
 DEFAULT_DEBUG_USER_EMAIL = "operator@twin.local"
+_UNKNOWN = "<unknown>"
 
 _NOT_INITIALIZED_MSG = (
     "Memgraph driver is not initialized. Call 'await initialize()' first."
@@ -1072,6 +1073,55 @@ def _swap_merge_graph_inst(args, kwargs, graph_inst, proxy):
     return tuple(args), kwargs
 
 
+async def _signal_empty_extraction_merge(graph_inst, merge_kwargs) -> None:
+    """Operator signal for a document whose extraction produced an empty graph.
+
+    LightRAG marks a document PROCESSED even when the extraction LLM returned
+    nothing parseable — zero entities, zero relations (audit 2026-07-02
+    addendum, finding B). The status transition is upstream's contract and is
+    deliberately left untouched; this emits the missing operator signal
+    instead: a WARNING log always, plus a best-effort ``pipeline-warning``
+    activity event when the overlay store is importable and available.
+    Never raises into the ingestion pipeline.
+    """
+    doc_id = merge_kwargs.get("doc_id")
+    file_path = merge_kwargs.get("file_path")
+    workspace = getattr(graph_inst, "workspace", None)
+    logger.warning(
+        "Extraction produced an EMPTY graph for doc %s (file=%s, workspace=%s): "
+        "0 entities / 0 relations — the document will still be marked "
+        "PROCESSED but contributes nothing to the knowledge graph",
+        doc_id or _UNKNOWN,
+        file_path or _UNKNOWN,
+        workspace or _UNKNOWN,
+    )
+    try:
+        from ..server.webui_router import _make_event, get_store
+
+        event = _make_event(
+            kind="pipeline-warning",
+            sev="warning",
+            actor="system",
+            target_label=str(file_path or doc_id or "unknown document"),
+            summary=(
+                "Extraction produced no entities or relations; document is "
+                "PROCESSED with an empty knowledge-graph contribution"
+            ),
+            meta={
+                "doc_id": doc_id,
+                "path": file_path,
+                "workspace": workspace,
+                "entities": 0,
+                "relations": 0,
+            },
+            target_type="document",
+            target_id=doc_id,
+        )
+        await get_store().record_activity(event)
+    except Exception as exc:  # store absent/unreachable — log-only signal
+        logger.debug("empty-extraction activity event skipped: %s", exc)
+
+
 def _patch_merge_write_path():
     """Replace merge_nodes_and_edges with a buffered version.
 
@@ -1105,7 +1155,11 @@ def _patch_merge_write_path():
         proxy = _BufferedGraphProxy(graph_inst)
         args, kwargs = _swap_merge_graph_inst(args, kwargs, graph_inst, proxy)
         await _original_merge(*args, **kwargs)
+        buffered_nodes = len(proxy._node_buffer)
+        buffered_edges = len(proxy._edge_buffer)
         await proxy.flush()
+        if buffered_nodes == 0 and buffered_edges == 0:
+            await _signal_empty_extraction_merge(graph_inst, kwargs)
 
     _buffered_merge_nodes_and_edges.__name__ = "buffered_merge_nodes_and_edges"
 
@@ -1186,8 +1240,8 @@ _RUNTIME_INSTALL_REFUSED_MSG = (
 
 def _refuse_runtime_install(*args, **kwargs):
     """Hard-refuse a pipmaster install call (security baseline)."""
-    pkg = kwargs.get("package", kwargs.get("package_name", "<unknown>"))
-    if pkg == "<unknown>":
+    pkg = kwargs.get("package", kwargs.get("package_name", _UNKNOWN))
+    if pkg == _UNKNOWN:
         for a in args:
             if isinstance(a, str):
                 pkg = a
@@ -1722,10 +1776,22 @@ def _install_storage_folder_capture(app) -> None:
         except HTTPException as exc:
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-        # Operator-selected MIP class from the upload UI. Bound alongside the
-        # folder so the pre-ingestion classification hook can read it across the
-        # BackgroundTasks boundary (see _patch_background_tasks_folder_context).
+        # Operator-selected MIP class from the upload UI. Operators may only
+        # set C1/C2. Detected C3/C4 labels are handled by the ingestion gate,
+        # but an explicit C3/C4 upload header is a request error.
         operator_class = request.headers.get("X-Twin-Classification")
+        if operator_class is not None:
+            operator_class = operator_class.strip().upper()
+            if operator_class not in {"C1", "C2"}:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            "X-Twin-Classification accepts only C1 or C2; "
+                            "C3/C4 uploads are rejected by policy."
+                        )
+                    },
+                    status_code=400,
+                )
         with (
             storage_folder_context(folder),
             duplicate_share_folder_context(folder),

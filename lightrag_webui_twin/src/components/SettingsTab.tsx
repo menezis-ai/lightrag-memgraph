@@ -26,6 +26,7 @@ import { FoldersAdminSection } from './Settings/FoldersAdminSection';
 import { FolderSection } from './Settings/FolderSection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
+import { userErrorMessage } from '../lib/errorMessages';
 import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
@@ -156,7 +157,10 @@ function ApiSection() {
           data-testid="settings-api-error"
         >
           OpenAPI surface unavailable
-          {error instanceof Error ? ` — ${error.message}` : ''}.{' '}
+          {error === undefined || error === null
+            ? ''
+            : ` — ${userErrorMessage(error)}`}
+          .{' '}
           <button
             type="button"
             className="ghost-btn"

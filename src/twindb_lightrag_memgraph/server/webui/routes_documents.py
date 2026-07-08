@@ -9,6 +9,7 @@ while the large router is split incrementally.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -31,16 +32,46 @@ router = APIRouter()
 # likely multi-worker, so a cross-worker last-membership race window remains
 # (narrow, and the routes are admin-gated). A proper fix moves the
 # decide-and-delete into a storage-level atomic op or a workspace/distributed
-# lock — tracked as a follow-up in FOLDER-MEMBERSHIP-REFACTOR.md. The dict is
-# also unbounded; bound it (TTL / WeakValueDictionary) when this leaves batch 1.
-_membership_locks: dict[str, asyncio.Lock] = {}
+# lock — tracked as a follow-up in FOLDER-MEMBERSHIP-REFACTOR.md.
+_MAX_MEMBERSHIP_LOCKS = 2048
+_MEMBERSHIP_LOCK_CLEANUP_EVERY = 1024
+_membership_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
+_membership_lock_accesses = 0
+
+
+def _evict_membership_locks() -> None:
+    """Drop stale, unlocked locks when map capacity is exceeded."""
+    if len(_membership_locks) <= _MAX_MEMBERSHIP_LOCKS:
+        return
+
+    # Snapshot the unlocked, evictable keys first (oldest-first LRU order) so we
+    # never mutate the mapping while iterating it. In-flight (locked) locks are
+    # kept — they are still serializing membership writes.
+    removable = [
+        doc_id for doc_id, lock in _membership_locks.items() if not lock.locked()
+    ]
+    for doc_id in removable:
+        if len(_membership_locks) <= _MAX_MEMBERSHIP_LOCKS:
+            return
+        _membership_locks.pop(doc_id, None)
 
 
 def _membership_lock(doc_id: str) -> asyncio.Lock:
+    # Callers must enter the returned lock immediately, without an intervening
+    # await; eviction assumes unlocked cached locks have no pending user.
+    global _membership_lock_accesses
     lock = _membership_locks.get(doc_id)
     if lock is None:
         lock = asyncio.Lock()
         _membership_locks[doc_id] = lock
+    else:
+        # Re-order recently-used locks so cleanup can preferentially evict cold
+        # entries when the map exceeds its bounded size.
+        _membership_locks.move_to_end(doc_id)
+
+    _membership_lock_accesses += 1
+    if _membership_lock_accesses % _MEMBERSHIP_LOCK_CLEANUP_EVERY == 0:
+        _evict_membership_locks()
     return lock
 
 
@@ -429,6 +460,43 @@ async def _emit_bulk_delete_activity(
     await get_store().record_activity(event)
 
 
+async def _run_bulk_delete_batch(
+    legacy: Any,
+    rag: Any,
+    doc_ids: list[Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Delete multiple docs with parallel per-doc work.
+
+    The activity/response contract is preserved: a non-404, non-application
+    exception raises a 503, and the route aborts before emitting bulk activity.
+    Error-path side effects are not identical to the old sequential loop:
+    independent deletes in the same batch may complete before gather reports a
+    mid-batch failure. Bulk delete remains non-atomic by contract.
+    """
+
+    async def _run_one(doc_id: Any) -> dict[str, Any] | None:
+        return await _delete_one_document(legacy, rag, doc_id)
+
+    outcomes = await asyncio.gather(
+        *(_run_one(doc_id) for doc_id in doc_ids), return_exceptions=True
+    )
+    results: list[dict[str, Any]] = []
+    failed: list[str] = []
+    for doc_id, outcome in zip(doc_ids, outcomes):
+        if isinstance(outcome, HTTPException):
+            raise outcome
+        if isinstance(outcome, Exception):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Bulk delete failed while deleting '{doc_id}': {outcome}",
+            ) from outcome
+        if outcome is None:
+            failed.append(str(doc_id))
+            continue
+        results.append(outcome)
+    return results, failed
+
+
 @router.post(
     "/documents/bulk-delete",
     response_model=None,
@@ -444,22 +512,7 @@ async def bulk_delete_documents(body: dict[str, Any], request: Request) -> Any:
     doc_ids = _parse_bulk_delete_body(body)
     actor = _request_actor(request)
     rag = legacy._get_rag()
-    results: list[dict[str, Any]] = []
-    failed: list[str] = []
-    for doc_id in doc_ids:
-        try:
-            result = await _delete_one_document(legacy, rag, doc_id)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Bulk delete failed while deleting '{doc_id}': {exc}",
-            ) from exc
-        if result is not None:
-            results.append(result)
-        else:
-            failed.append(str(doc_id))
+    results, failed = await _run_bulk_delete_batch(legacy, rag, doc_ids)
 
     await _emit_bulk_delete_activity(actor=actor, results=results, failed=failed)
     payload = {"deleted": len(results), "failed": failed}

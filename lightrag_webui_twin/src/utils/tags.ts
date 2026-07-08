@@ -7,6 +7,7 @@ export function tagCatalogForSuggestions(
     (tag) =>
       tag.tier !== 'requested' &&
       tag.status !== 'rejected' &&
+      tag.status !== 'deleted' &&
       tag.status !== 'deprecated',
   );
 }
