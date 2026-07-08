@@ -35,3 +35,13 @@ Method:     Async/Parallelization — asyncio.gather the two independent post-fe
 Verified:   Functional parity — graph suites 159 passed/17 skipped identical before(stash)/after; full server suite 954 passed/70 skipped; output entity count identical (400) every bench run
 Load-test:  Gain scales with per-query RTT (idle→contended DB: 5.1%→12.3%), largest exactly under load where p95/p99 matter. Back-pressure preserved: reads use the unthrottled get_read_session pool; +1 concurrent read session/request (bounded, no fan-out), write semaphore untouched — no downstream saturation.
 Bench:      `.venv/bin/python tests/benchmarks/graph_reader_metadata_gather.py` (RTT_MS env-tunable; ITERATIONS=200, ENTITY_COUNT=400, DOC_COUNT=300)
+
+## 2026-07-08 - [Bounded parallel doc-id batch resolution]
+Target:     server/query/query_data_filters.py::_filter_rows_by_tags
+Before:     9.780 ms mean / 9.865 ms p95 / 20.497 ms p99 / 102.2 req/s / 0.050 MB peak
+After:      5.141 ms mean / 5.345 ms p95 / 9.880 ms p99 / 194.5 req/s / 0.042 MB peak
+Gain:       47.4% latency reduced, +90.2% throughput, -0.008 MB peak
+Method:     Async/Parallelization — gather independent chunk-id and file-path resolver groups for small mixed row sets only (combined ids <=16). Larger mixed sets keep the two resolver groups serial to avoid doubling the existing inner per-id resolver fan-out; this does not bound the inner fan-out itself.
+Verified:   Functional parity confirmed — baseline full suite 1548 passed/249 skipped before; after change 1550 passed/249 skipped (two new regression tests added); focused query/filter suite 24 passed/6 skipped
+Load-test:  Small mixed rows at sustained concurrency 8 improved 11.265 ms mean / 11.997 ms p95 / 11.999 ms p99 / 679.2 req/s -> 6.871 ms mean / 7.241 ms p95 / 7.276 ms p99 / 1081.0 req/s. Peak concurrency 32 improved 15.720 ms mean / 16.906 ms p95 / 16.910 ms p99 / 1730.4 req/s -> 12.622 ms mean / 13.428 ms p95 / 13.447 ms p99 / 2108.0 req/s. Serial guard was exercised with row_count=9 / ids_per_request=18 / budget=16: 10.130 ms baseline -> 9.931 ms optimized.
+Bench:      `uv run python tests/benchmarks/query_data_batch_resolution.py` (ITERATIONS=80, SMALL_ROW_COUNT=4, SERIAL_GUARD_ROW_COUNT=9, LOOKUP_DELAY_SECONDS=0.004, sustained concurrency=8, peak concurrency=32)

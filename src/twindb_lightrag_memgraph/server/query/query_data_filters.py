@@ -13,6 +13,10 @@ from .source_filters import (
     _tag_filter_terms,
 )
 
+# Budget for overlapping the two resolver groups. The per-id fan-out is inside
+# each resolver; this only avoids doubling that fan-out for larger mixed rows.
+_PARALLEL_RESOLVE_ID_BUDGET = 16
+
 
 def _direct_doc_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
     return {
@@ -202,8 +206,18 @@ async def _filter_rows_by_tags(
     if not rows_for_filter:
         return [], set()
 
-    chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
-    file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
+    if (
+        chunk_ids
+        and file_paths
+        and len(chunk_ids) + len(file_paths) <= _PARALLEL_RESOLVE_ID_BUDGET
+    ):
+        chunk_docs, file_docs = await asyncio.gather(
+            _resolve_doc_ids_for_chunk_ids(rag, chunk_ids),
+            _resolve_doc_ids_for_file_paths(rag, file_paths),
+        )
+    else:
+        chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
+        file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
 
     row_doc_ids, all_doc_ids = _combine_row_doc_ids(
         row_direct_doc_ids,
