@@ -45,3 +45,13 @@ Method:     Async/Parallelization — gather independent chunk-id and file-path 
 Verified:   Functional parity confirmed — baseline full suite 1548 passed/249 skipped before; after change 1550 passed/249 skipped (two new regression tests added); focused query/filter suite 24 passed/6 skipped
 Load-test:  Small mixed rows at sustained concurrency 8 improved 11.265 ms mean / 11.997 ms p95 / 11.999 ms p99 / 679.2 req/s -> 6.871 ms mean / 7.241 ms p95 / 7.276 ms p99 / 1081.0 req/s. Peak concurrency 32 improved 15.720 ms mean / 16.906 ms p95 / 16.910 ms p99 / 1730.4 req/s -> 12.622 ms mean / 13.428 ms p95 / 13.447 ms p99 / 2108.0 req/s. Serial guard was exercised with row_count=9 / ids_per_request=18 / budget=16: 10.130 ms baseline -> 9.931 ms optimized.
 Bench:      `uv run python tests/benchmarks/query_data_batch_resolution.py` (ITERATIONS=80, SMALL_ROW_COUNT=4, SERIAL_GUARD_ROW_COUNT=9, LOOKUP_DELAY_SECONDS=0.004, sustained concurrency=8, peak concurrency=32)
+
+## 2026-07-09 - [Reuse KG source projection during query/data enrichment]
+Target:     server/query/query_data.py::_enrich_query_data_chunks_from_source_ids + _annotate_query_data_chunk_scores
+Before:     131.111 ms mean / 132.291 ms p95 / 132.326 ms p99 / 7.6 req/s (dense KG rows, chunks already projected)
+After:      12.920 ms mean / 13.450 ms p95 / 13.541 ms p99 / 77.4 req/s
+Gain:       90.1% latency reduced, +914.6% throughput
+Method:     Algorithm — compute source chunk id order, existing chunk ids, and KG-derived score map once, then reuse them for missing-chunk detection and chunk score annotation instead of rescanning entities/relationships and projected chunks.
+Verified:   Functional parity confirmed — baseline full suite 1550 passed/249 skipped before; after change focused query suite 92 passed/1 skipped and full suite 1550 passed/249 skipped.
+Load-test:  Sustained concurrency 4 improved 131.459 ms mean / 133.930 ms p95 / 143.226 ms p99 / 7.6 req/s -> 12.859 ms mean / 13.288 ms p95 / 13.310 ms p99 / 77.4 req/s. No downstream pressure added: this is CPU/allocation reduction only, with no new I/O or concurrency.
+Bench:      `uv run python tests/benchmarks/query_data_source_enrichment.py` (ITERATIONS=32, KG_ROW_COUNT=2000, UNIQUE_CHUNK_COUNT=480, EXISTING_CHUNK_COUNT=480, concurrency=4)
