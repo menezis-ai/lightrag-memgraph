@@ -25,3 +25,13 @@ Bench: `python .venv/bin/python tests/benchmarks/membership_lock_cache.py` (ITER
 
 ## 2026-07-07 - [Optimization] Target: [vector_impl exact path + cosine projection] Before: [103.240ms mean / 102.854ms p50 / 105.674ms p95 / 119.528ms p99 / 9.7 req/s] After: [79.319ms mean / 78.732ms p50 / 83.301ms p95 / 94.992ms p99 / 12.6 req/s] Gain: [23.2% faster, +30.2% throughput] Method: [Precompute query vector norm once in `query()` and reuse in `_exact_cosine_projection`; prefilter `doc_any` in exact graph/chunk branches]
 Bench: `python .venv/bin/python tests/benchmarks/vector_exact_similarity_projection.py` (ITERATIONS=80, EMBEDDING_DIM=384, CANDIDATE_COUNT=6000, TOP_K=25)
+
+## 2026-07-08 - [Parallelize independent metadata reads in graph read paths]
+Target:     server/graph_reader.py::read_graph_entities + read_graph_relations
+Before:     62.862 ms mean / 65.092 ms p95 / 73.998 ms p99 / 15.9 req/s / 1.523 MB peak (RTT=4ms/query, folder-bound)
+After:      57.938 ms mean / 59.857 ms p95 / 69.091 ms p99 / 17.3 req/s / 1.533 MB peak
+Gain:       7.8% latency reduced, +8.5% throughput @ 4ms RTT (grows with DB latency: 5.1% @2ms, 10.3% @8ms, 12.3% @15ms)
+Method:     Async/Parallelization — asyncio.gather the two independent post-fetch reads (_load_chunk_to_doc_index + _active_member_docs) instead of serializing one Memgraph round-trip
+Verified:   Functional parity — graph suites 159 passed/17 skipped identical before(stash)/after; full server suite 954 passed/70 skipped; output entity count identical (400) every bench run
+Load-test:  Gain scales with per-query RTT (idle→contended DB: 5.1%→12.3%), largest exactly under load where p95/p99 matter. Back-pressure preserved: reads use the unthrottled get_read_session pool; +1 concurrent read session/request (bounded, no fan-out), write semaphore untouched — no downstream saturation.
+Bench:      `.venv/bin/python tests/benchmarks/graph_reader_metadata_gather.py` (RTT_MS env-tunable; ITERATIONS=200, ENTITY_COUNT=400, DOC_COUNT=300)
