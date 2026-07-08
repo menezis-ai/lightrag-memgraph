@@ -68,11 +68,20 @@ class FakeRag:
     def __init__(self) -> None:
         self.doc_status = FakeDocStatus()
         self.deleted: list[str] = []
+        self.cache_cleared = 0
+        self.aclear_cache_raises = False
 
     async def adelete_by_doc_id(self, doc_id: str) -> None:
         self.deleted.append(doc_id)
         self.doc_status.docs.pop(doc_id, None)
         self.doc_status.members.pop(doc_id, None)
+
+    async def aclear_cache(self) -> None:
+        # LightRAG's LLM-response-cache purge, invoked by _delete_doc_from_rag
+        # after a physical delete so cached answers stop citing the dead doc.
+        self.cache_cleared += 1
+        if self.aclear_cache_raises:
+            raise RuntimeError("cache backend down")
 
 
 @pytest.fixture()
@@ -218,4 +227,49 @@ class TestBulkDeleteRefcount:
         )
         assert r.status_code == 200
         assert r.json() == {"deleted": 1, "failed": []}
+        assert client._test_rag.deleted == ["doc-default"]
+
+
+# ── Query-cache purge on physical delete ─────────────────────────────────
+#
+# LightRAG caches query answers keyed only on (query, mode, params), never on
+# corpus state. Without an explicit purge, a physically-deleted doc keeps being
+# cited in the *answer text* of any repeated question even though folder-scoped
+# retrieval no longer returns its chunks. _delete_doc_from_rag must drop the
+# cache on physical delete — and only on physical delete.
+class TestQueryCachePurgeOnDelete:
+    async def test_physical_delete_purges_query_cache(self, client):
+        r = await client.delete("/documents/doc-default/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is True
+        assert client._test_rag.deleted == ["doc-default"]
+        assert client._test_rag.cache_cleared == 1
+
+    async def test_bulk_physical_delete_purges_query_cache(self, client):
+        r = await client.post(
+            "/documents/bulk-delete", json={"doc_ids": ["doc-default"]}
+        )
+        assert r.status_code == 200
+        assert client._test_rag.deleted == ["doc-default"]
+        # Exactly one purge for one physical delete — a double global flush
+        # would be needlessly costly and is a regression this pins down.
+        assert client._test_rag.cache_cleared == 1
+
+    async def test_unshare_does_not_purge_query_cache(self, client):
+        # Shared doc removed from one folder is NOT physically deleted, so the
+        # global answer cache must be left intact (the doc still exists).
+        await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
+        r = await client.delete("/documents/doc-a/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is False
+        assert client._test_rag.deleted == []
+        assert client._test_rag.cache_cleared == 0
+
+    async def test_cache_purge_failure_does_not_break_delete(self, client):
+        # Cache purge is best-effort: a backend failure must never fail the
+        # primary delete (side-effect-never-breaks-primary-op rule).
+        client._test_rag.aclear_cache_raises = True
+        r = await client.delete("/documents/doc-default/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is True
         assert client._test_rag.deleted == ["doc-default"]
