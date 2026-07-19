@@ -45,13 +45,32 @@ def _filter_sources_by_min_score(
     sources: list[dict[str, Any]],
     min_score: float,
 ) -> list[dict[str, Any]]:
+    """Validate explicit source metrics against ``min_score``.
+
+    The retrieval scope applies ``min_score`` before the answer prompt is
+    assembled.  This projection-time check is therefore only a consistency
+    guard for metrics LightRAG actually returns.  A missing metric is retained:
+    absence of a display score is not evidence that the already-scoped chunk
+    failed the threshold, and manufacturing a proxy merely to re-filter it
+    would be scientifically invalid.
+    """
     if min_score <= 0:
         return sources
     return [
         source
         for source in sources
-        if isinstance(source.get("score"), (int, float))
-        and float(source["score"]) >= min_score
+        if not isinstance(source.get("score"), (int, float))
+        or float(source["score"]) >= min_score
+    ]
+
+
+def _same_reference_projection(
+    original: list[dict[str, Any]],
+    candidate: list[dict[str, Any]],
+) -> bool:
+    """Whether a validation pass preserved every reference, in order."""
+    return [source.get("n") for source in original] == [
+        source.get("n") for source in candidate
     ]
 
 
@@ -211,7 +230,17 @@ async def _build_envelope_sources(
     envelope: Any,
     fetch_doc_tags: Any,
 ) -> tuple[list, bool]:
-    """Project + filter sources from an aquery_llm envelope."""
+    """Project sources from the answer envelope and validate them fail-closed.
+
+    ``min_score`` / document / tag constraints already ran inside
+    ``retrieval_scope`` before LightRAG assembled the LLM prompt.  The checks
+    here are not a second retrieval filter and must never publish a subset of
+    the references the model saw.  If a check would remove or cannot verify a
+    reference, the caller receives ``([], False)`` and surfaces
+    ``source_projection_failed``.  This preserves the one-to-one
+    ``reference_id -> source.n`` contract instead of silently relabelling a
+    partially filtered answer as grounded.
+    """
     chunk_ids = collect_chunk_ids(envelope or {})
     chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
     try:
@@ -224,16 +253,40 @@ async def _build_envelope_sources(
             exc,
         )
         return [], False
+    if not sources:
+        logger.warning(
+            "twin_query: successful nominal answer has no projectable "
+            "references; surfacing source_projection_failed"
+        )
+        return [], False
     await _enrich_sources_doc_ids_from_file_path(rag, sources)
-    sources = _filter_sources_by_min_score(sources, body.min_score)
-    filtered, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
-        sources,
+
+    score_validated = _filter_sources_by_min_score(sources, body.min_score)
+    if not _same_reference_projection(sources, score_validated):
+        logger.warning(
+            "twin_query: min_score post-validation would remove references "
+            "already used for answer synthesis; surfacing "
+            "source_projection_failed"
+        )
+        return [], False
+
+    validated, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
+        score_validated,
         tag_filter=body.tag_filter,
         doc_filter=body.doc_filter,
         folder=folder,
         fetch_doc_tags=fetch_doc_tags,
     )
-    return filtered, not filter_projection_incomplete
+    if filter_projection_incomplete or not _same_reference_projection(
+        sources, validated
+    ):
+        logger.warning(
+            "twin_query: document/tag post-validation could not preserve all "
+            "references used for answer synthesis; surfacing "
+            "source_projection_failed"
+        )
+        return [], False
+    return sources, True
 
 
 async def _build_sources_legacy_fallback(

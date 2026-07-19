@@ -41,6 +41,13 @@ class OntologyConfig:
     global_max_tokens: int = 20000
     workspaces: dict[str, WorkspaceOntologyConfig] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Reject the unsafe auto-approval posture on every construction path."""
+        if self.require_review is not True:
+            raise ValueError(
+                "require_review=false is forbidden: LLM ontology output is untrusted"
+            )
+
 
 _VALID_MODES = ("dedicated", "emergence", "deep_extraction")
 
@@ -88,10 +95,16 @@ def load_ontology_config(path: Optional[Path] = None) -> Optional[OntologyConfig
             dsep_operators_local=ws_data.get("dsep_operators_local", []),
         )
 
+    require_review = raw.get("require_review", True)
+    if require_review is not True:
+        raise ValueError(
+            "require_review=false is forbidden: LLM ontology output is untrusted"
+        )
+
     return OntologyConfig(
         enabled=raw.get("enabled", False),
         confidence_threshold=raw.get("confidence_threshold", 0.7),
-        require_review=raw.get("require_review", True),
+        require_review=True,
         dsep_enabled=raw.get("dsep_enabled", True),
         dual_pass=raw.get("dual_pass", False),
         global_max_tokens=raw.get("global_max_tokens", 20000),

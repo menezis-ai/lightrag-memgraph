@@ -1,7 +1,7 @@
 """Folder-scoped retrieval — batch 2 of FOLDER-MEMBERSHIP-REFACTOR.md.
 
 Real cloisonnement of the query path: a retrieval issued *in folder X* may only
-ground on chunks / entities / relations whose document is ``MEMBER_OF X``.
+ground on chunks whose document is ``MEMBER_OF X``.
 LightRAG cannot scope its own retrieval (verified against the BNP-pinned
 1.4.9.11: ``QueryParam`` has no id filter, ``BaseVectorStorage.query`` has no
 ``ids`` param), so the constraint is applied at the Memgraph storage layer in
@@ -11,17 +11,13 @@ Two layers of test:
 
 1. **Cypher-builder unit tests** (no DB) — lock the strict-compat contract:
    *folder absent → the query Cypher is byte-for-byte the legacy search*, and
-   the two membership join shapes (chunks via ``full_doc_id``; entity/relation
-   via ``split(source_id)`` → chunks).
+   the chunk membership join (via ``full_doc_id``) and graph-vector fail-close.
 2. **Live contract** (``@pytest.mark.integration``, needs Memgraph) — the real
-   boundary across all three vdb, including the critical *mixed* ``source_id``
-   case (``chunk_A<SEP>chunk_B`` → selected in A and B, never in C).
+   boundary for chunks plus refusal of entity/relation VDBs while folder scoped.
 
-**Known residual (acceptance, not a gap to fix here):** entity/relation scoping
-filters the *selection* by member source chunks, but a kept record's aggregated
-``content``/description was merged by LightRAG across *all* its source docs at
-extraction — so the payload may still encode non-member text. Un-blending needs
-per-folder re-extraction (out of scope).
+Entity/relation payloads are aggregated across source documents before vector
+storage. A membership join cannot unblend that text, so folder-scoped graph
+vector retrieval fails closed until vectors are materialized per security scope.
 """
 
 from __future__ import annotations
@@ -73,23 +69,20 @@ class TestSearchCypherBuilder:
         assert params["overfetch"] == _folder_scope_overfetch(20)
         assert "sep" not in params  # chunks don't split source_id
 
-    def test_entities_join_on_source_id_chunks(self):
+    def test_entities_fail_closed_in_folder_scope(self):
         st = _store("entities", {"entity_name", "source_id", "content", "file_path"})
         cypher, params = st._build_search_cypher(20, "A")
-        assert "split(coalesce(node.source_id, ''), $sep)" in cypher
-        assert "MATCH (c:`Vec_ws_chunks` {id: cid})" in cypher
-        assert "MATCH (d:`DocStatus_ws` {id: c.full_doc_id})" in cypher
-        assert "-[:MEMBER_OF]->(:`Folder_ws` {id: $folder})" in cypher
-        assert params["sep"] == GRAPH_FIELD_SEP
+        assert cypher is None
+        assert params == {}
 
-    def test_relationships_use_the_source_id_shape(self):
+    def test_relationships_fail_closed_in_folder_scope(self):
         st = _store(
             "relationships",
             {"src_id", "tgt_id", "source_id", "content", "file_path"},
         )
-        cypher, _ = st._build_search_cypher(20, "A")
-        assert "split(coalesce(node.source_id, ''), $sep)" in cypher
-        assert "MATCH (c:`Vec_ws_chunks` {id: cid})" in cypher
+        cypher, params = st._build_search_cypher(20, "A")
+        assert cypher is None
+        assert params == {}
 
     def test_unknown_vdb_category_with_folder_fails_closed(self):
         # A vdb with neither full_doc_id nor source_id has no membership concept.
@@ -114,6 +107,15 @@ class TestFailClosed:
         # No DB is touched: the fail-closed branch returns before opening a
         # session (query_embedding passed so embedding_func is never called).
         st = _store("misc", {"content"})
+        with storage_folder_context("A"):
+            out = await st.query("q", top_k=5, query_embedding=[0.0])
+        assert out == []
+
+    @pytest.mark.parametrize("namespace", ["entities", "relationships"])
+    async def test_graph_vector_query_returns_empty_before_opening_session(
+        self, namespace
+    ):
+        st = _store(namespace, {"source_id", "content"})
         with storage_folder_context("A"):
             out = await st.query("q", top_k=5, query_embedding=[0.0])
         assert out == []
@@ -301,18 +303,17 @@ async def test_chunks_are_scoped_to_folder_membership(stores):
 
 
 @pytestmark_integration
-async def test_entities_scoped_by_member_source_chunks_mixed_case(stores):
+async def test_entities_fail_closed_when_folder_scoped(stores):
     ds, chunks, entities, rels = stores
     await _seed(ds, chunks, entities, rels)
 
-    # The critical real case: ent-mixed has source_id chunk-a<SEP>chunk-b, so it
-    # is a valid candidate in BOTH A and B (member via one source chunk each),
-    # but NOT in C. (Selection is scoped; the aggregated description is a known
-    # residual — see module docstring.)
+    # ent-mixed blends provenance from A and B. Selection by either membership
+    # would retain a globally aggregated payload, so all folder-scoped graph
+    # vector retrieval is refused.
     with storage_folder_context("A"):
-        assert await _ids(entities) == {"ent-a", "ent-mixed"}
+        assert await _ids(entities) == set()
     with storage_folder_context("B"):
-        assert await _ids(entities) == {"ent-b", "ent-mixed"}
+        assert await _ids(entities) == set()
     with storage_folder_context("C"):
         assert await _ids(entities) == set()
 
@@ -321,13 +322,13 @@ async def test_entities_scoped_by_member_source_chunks_mixed_case(stores):
 
 
 @pytestmark_integration
-async def test_relationships_scoped_by_member_source_chunks(stores):
+async def test_relationships_fail_closed_when_folder_scoped(stores):
     ds, chunks, entities, rels = stores
     await _seed(ds, chunks, entities, rels)
 
     with storage_folder_context("A"):
-        assert await _ids(rels) == {"rel-a", "rel-mixed"}
+        assert await _ids(rels) == set()
     with storage_folder_context("B"):
-        assert await _ids(rels) == {"rel-mixed"}  # rel-a is A-only
+        assert await _ids(rels) == set()
     with storage_folder_context("C"):
         assert await _ids(rels) == set()

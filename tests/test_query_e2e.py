@@ -5,7 +5,8 @@ Seeds both the knowledge graph (MemgraphStorage) and the vector DB
 each mode. This validates the FULL retrieval pipeline, not just
 individual batch methods.
 
-Requires running Memgraph with MAGE (for vector_search).
+Requires running Memgraph >= 3.0 for vector_search (native core feature; MAGE
+not required).
 """
 
 import asyncio

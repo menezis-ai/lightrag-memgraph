@@ -69,14 +69,63 @@ class TestClassifyForIngestion:
         with pytest.raises(ClassificationRejection):
             classify_for_ingestion(path, label_map={}, ceiling="C2")
 
-    def test_unsupported_extension_returns_payload_with_reason(self, tmp_path):
-        # Unsupported here means "no MIP label extraction applied", not
-        # "unknown MIP label". It should not invent a default classification.
+    def test_unsupported_extension_fails_closed_in_reject_mode(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
+        path = tmp_path / "notes.txt"
+        path.write_text("nothing here")
+        with pytest.raises(ClassificationRejection) as exc_info:
+            classify_for_ingestion(path, label_map={}, ceiling="C2")
+        assert exc_info.value.result.class_id is None
+        assert "unsupported-extension" in (exc_info.value.result.reason or "")
+
+    def test_stripped_ooxml_label_fails_closed_in_reject_mode(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
+        path = tmp_path / "unlabelled.docx"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml", "<document/>")
+
+        with pytest.raises(ClassificationRejection) as exc_info:
+            classify_for_ingestion(path, label_map={}, ceiling="C2")
+        assert exc_info.value.result.class_id is None
+        assert exc_info.value.result.reason == "no-custom-props"
+
+    def test_unsupported_extension_allowed_by_default(self, tmp_path):
+        """Permissive default (decision 2026-07-10): an unlabeled format is
+        ingested, classification traced as None in the payload."""
         path = tmp_path / "notes.txt"
         path.write_text("nothing here")
         payload = classify_for_ingestion(path, label_map={}, ceiling="C2")
         assert payload["class_id"] is None
         assert "unsupported-extension" in (payload["reason"] or "")
+
+    def test_unlabeled_ooxml_allowed_by_default_emits_detected(self, tmp_path):
+        path = tmp_path / "unlabelled.docx"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml", "<document/>")
+        events = []
+        payload = classify_for_ingestion(
+            path,
+            label_map={},
+            ceiling="C2",
+            audit_emit=lambda kind, data: events.append(kind),
+        )
+        assert payload["class_id"] is None
+        assert payload["reason"] == "no-custom-props"
+        assert events == ["classification-detected"]
+
+    def test_readable_label_above_ceiling_still_rejected_in_allow_mode(
+        self, tmp_path, monkeypatch
+    ):
+        """The permissive policy only covers UNLABELED docs — a readable C3
+        label above a C2 ceiling rejects exactly as in tier-1."""
+        monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "allow")
+        path = _build_docx_with_label(tmp_path, "C3 Strict", C3_GUID)
+        with pytest.raises(ClassificationRejection):
+            classify_for_ingestion(path, label_map={C3_GUID: "C3"}, ceiling="C2")
 
     def test_audit_emit_called_on_detection_and_rejection(self, tmp_path):
         path = _build_docx_with_label(tmp_path, "C3 Strict", C3_GUID)

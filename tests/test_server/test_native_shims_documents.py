@@ -16,11 +16,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
 from twindb_lightrag_memgraph.server import native_shims
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.native_shims import build_native_shims_router
 
 
@@ -70,11 +71,14 @@ class FakeRag:
 
 @pytest.fixture(autouse=True)
 def _folder_env(monkeypatch):
+    configure_auth(api_key="test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
         json.dumps([{"id": "default", "label": "Default folder", "kind": "primary"}]),
     )
+    yield
+    configure_auth()
 
 
 def _make_client(
@@ -94,6 +98,7 @@ def _make_client(
     return AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     )
 
 
@@ -382,6 +387,7 @@ class _MembershipDocStatus:
     def __init__(self, folders_by_doc: dict[str, list[str]]) -> None:
         self._folders = folders_by_doc
         self.removed: list[tuple[str, str]] = []
+        self.claims: dict[str, str] = {}
 
     async def get_folders_for_doc(self, doc_id: str):
         return self._folders.get(doc_id)
@@ -391,6 +397,18 @@ class _MembershipDocStatus:
         remaining = [f for f in (self._folders.get(doc_id) or []) if f != folder]
         self._folders[doc_id] = remaining
         return len(remaining)
+
+    async def claim_last_membership_delete(
+        self, doc_id: str, folder: str, claim: str
+    ) -> bool:
+        if self.claims.get(doc_id) or self._folders.get(doc_id) != [folder]:
+            return False
+        self.claims[doc_id] = claim
+        return True
+
+    async def release_delete_claim(self, doc_id: str, claim: str) -> None:
+        if self.claims.get(doc_id) == claim:
+            self.claims.pop(doc_id)
 
 
 class _MembershipRag:
@@ -423,6 +441,16 @@ class TestSingleDeleteRefCounted:
         await native_shims._delete_or_unshare(rag, "doc1", "A")
         assert rag.physically_deleted == ["doc1"]
         assert ds.removed == []
+
+    async def test_unknown_membership_fails_closed_instead_of_hard_delete(self):
+        ds = _MembershipDocStatus({})
+        rag = _MembershipRag(ds)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await native_shims._delete_or_unshare(rag, "doc1", "A")
+
+        assert exc_info.value.status_code == 409
+        assert rag.physically_deleted == []
 
     async def test_backend_without_membership_falls_back_to_hard_delete(self):
         class _LegacyDocStatus:
@@ -513,7 +541,9 @@ class TestNativeListMembershipProjection:
         app = FastAPI()
         app.include_router(build_native_shims_router(lambda: _Rag()))
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
         ) as client:
             r = await client.get("/documents", headers={"X-Twin-Folder": "B"})
 
@@ -569,7 +599,9 @@ class TestNativeListMembershipProjection:
         app = FastAPI()
         app.include_router(build_native_shims_router(lambda: _Rag()))
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
         ) as client:
             r = await client.get("/documents", headers={"X-Twin-Folder": "B"})
 
@@ -622,7 +654,9 @@ class TestNativeChunksMembershipGate:
         app = FastAPI()
         app.include_router(build_native_shims_router(lambda: _Rag()))
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
         ) as client:
             visible = await client.get(
                 "/documents/doc1/chunks", headers={"X-Twin-Folder": "B"}
@@ -718,7 +752,11 @@ def _make_delete_client(monkeypatch, membership: list[str]):
     rag = _DeleteRouteRag(membership)
     app = FastAPI()
     app.include_router(build_native_shims_router(lambda: rag))
-    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    client = AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
+    )
     return client, rag
 
 

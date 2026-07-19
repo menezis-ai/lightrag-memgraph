@@ -33,7 +33,9 @@ from ._import_cleanup import cleanup_processed_imports
 @dataclass
 class MemgraphDocStatusStorage(DocStatusStorage):
     def __init__(self, namespace, global_config, embedding_func, **kwargs):
-        workspace = resolve_workspace()
+        workspace = validate_identifier(
+            str(global_config.get("workspace") or resolve_workspace()), "workspace"
+        )
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,
@@ -197,7 +199,9 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         result = await session.run(f"""
             MATCH (n:`{label}`)
             WHERE n.folder IS NOT NULL
+              AND n.__delete_claim IS NULL
               AND NOT EXISTS((n)-[:MEMBER_OF]->(:`{flabel}`))
+            SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
             MERGE (f:`{flabel}` {{id: n.folder}})
             MERGE (n)-[:MEMBER_OF]->(f)
             """)
@@ -447,6 +451,20 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 UNWIND $entries AS e
                 MERGE (n:`{label}` {{id: e.id}})
                 SET n += e.props
+                """,
+                entries=entries,
+            )
+            await result.consume()
+            # Keep status/retry-state updates possible while a deletion owns the
+            # claim, but never create another membership under that claim. This
+            # second query also writes the node guard, so it conflicts with a
+            # claim racing from an older snapshot.
+            result = await session.run(
+                f"""
+                UNWIND $entries AS e
+                MATCH (n:`{label}` {{id: e.id}})
+                WHERE n.__delete_claim IS NULL
+                SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
                 WITH n, coalesce(e.folder, $default_folder) AS fid
                 // Dual-write the legacy single-valued property (migration
                 // safety net) only on first insert.
@@ -466,6 +484,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 f"""
                 UNWIND $memberships AS m
                 MATCH (n:`{label}` {{id: m.doc_id}})
+                WHERE n.__delete_claim IS NULL
+                SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
                 MERGE (f:`{folder_label}` {{id: m.folder}})
                 MERGE (n)-[:MEMBER_OF]->(f)
                 """,
@@ -619,6 +639,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 result = await session.run(
                     f"""
                     MATCH (n:`{label}` {{id: $doc_id}})
+                    WHERE n.__delete_claim IS NULL
+                    SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
                     MERGE (f:`{flabel}` {{id: $fid}})
                     MERGE (n)-[:MEMBER_OF]->(f)
                     RETURN n.id AS id
@@ -645,6 +667,9 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 result = await session.run(
                     f"""
                     MATCH (n:`{label}` {{id: $doc_id}})
+                    WHERE n.__delete_claim IS NULL
+                    SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
+                    WITH n
                     OPTIONAL MATCH (n)-[r:MEMBER_OF]->(:`{flabel}` {{id: $fid}})
                     DELETE r
                     WITH n
@@ -660,6 +685,62 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 record = await result.single()
                 await result.consume()
                 return record["remaining"] if record else None
+
+    async def claim_last_membership_delete(
+        self, doc_id: str, folder: str, claim: str
+    ) -> bool:
+        """Claim a document for a last-membership physical delete.
+
+        The claim and the exact-one-membership check happen in one Memgraph
+        transaction. Every membership writer also updates
+        ``__membership_epoch`` on the DocStatus node, creating a write/write
+        conflict when two workers race from the same snapshot. Once committed,
+        ``__delete_claim`` makes later membership writers fail closed.
+        """
+        label = self._label()
+        flabel = self._folder_label()
+        fid = validate_identifier(folder, "folder")
+        if not claim:
+            raise ValueError("delete claim must not be empty")
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}` {{id: $doc_id}})
+                    WHERE n.__delete_claim IS NULL
+                    OPTIONAL MATCH (n)-[:MEMBER_OF]->(f:`{flabel}`)
+                    WITH n, collect(f.id) AS folders
+                    WHERE size(folders) = 1 AND folders[0] = $fid
+                    SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1,
+                        n.__delete_claim = $claim
+                    RETURN n.id AS id
+                    """,
+                    doc_id=doc_id,
+                    fid=fid,
+                    claim=claim,
+                )
+                record = await result.single()
+                await result.consume()
+                return record is not None
+
+    async def release_delete_claim(self, doc_id: str, claim: str) -> None:
+        """Release this caller's claim after a failed physical cascade."""
+        label = self._label()
+        if not claim:
+            raise ValueError("delete claim must not be empty")
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (n:`{label}` {{id: $doc_id}})
+                    WHERE n.__delete_claim = $claim
+                    SET n.__membership_epoch = coalesce(n.__membership_epoch, 0) + 1
+                    REMOVE n.__delete_claim
+                    """,
+                    doc_id=doc_id,
+                    claim=claim,
+                )
+                await result.consume()
 
     async def get_folders_for_doc(self, doc_id: str) -> list[str] | None:
         """List the folders a document is a member of (ordered).

@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph._constants import get_active_storage_folder
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.twin_query_routes import build_twin_query_router
 
 
@@ -65,6 +66,7 @@ class CapturingRag:
 
 @pytest.fixture()
 async def client(monkeypatch):
+    configure_auth(api_key="test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -79,10 +81,13 @@ async def client(monkeypatch):
     app = FastAPI()
     app.include_router(build_twin_query_router(lambda: rag))
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         c._rag = rag
         yield c
+    configure_auth()
 
 
 class TestQueryBindsFolderContext:

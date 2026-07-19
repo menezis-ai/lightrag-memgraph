@@ -273,6 +273,30 @@ export function useRevokeApiKey() {
   });
 }
 
+// Vision ingestion settings — the two curation knobs of the image
+// pipeline. GET is open to authenticated operators; PUT is admin-gated
+// server-side (403 surfaces through the mutation error).
+export function useVisionSettings(options: QueryGate = {}) {
+  return useQuery({
+    queryKey: ['vision-settings'] as const,
+    queryFn: ({ signal }) => api.getVisionSettings({ signal }),
+    ...DEFAULTS,
+    ...gateOptions(options),
+  });
+}
+
+export function useUpdateVisionSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.updateVisionSettings>[0]) =>
+      api.updateVisionSettings(body),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['vision-settings'] });
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+    },
+  });
+}
+
 export function useNotifications(options: QueryGate = {}) {
   const scope = folderScope(options);
   return useQuery({

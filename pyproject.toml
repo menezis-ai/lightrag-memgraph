@@ -55,12 +55,28 @@ server = [
 tracing = [
     "langsmith>=0.1.0",
 ]
+convert = [
+    # MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md).
+    # Exact pin: the 0.x API already broke once (0.0.x -> 0.1.0 binary
+    # streams). Document extras only — no audio (Google web API), no
+    # youtube, no az-* cloud converters (offline BNP posture, audit
+    # docs/audits/markitdown-integration/audit-2026-07-10.md §B5).
+    "markitdown[pdf,docx,pptx,xlsx,xls,outlook]==0.1.6",
+]
+vision = [
+    # Vision image-ingestion tier (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+    # RapidOCR = offline OCR pre-filter (onnxruntime cost already paid by
+    # markitdown's magika dependency); openai = sync client for the
+    # OpenAI-compatible vision endpoint (BNP: Gemma 4 31B-it LLMaaS/vLLM).
+    "rapidocr-onnxruntime>=1.3.0",
+    "openai>=1.50",
+]
 test-server = [
     "twindb-lightrag-memgraph[server,test]",
     "httpx>=0.27.0",
 ]
 all = [
-    "twindb-lightrag-memgraph[intelligence,server,tracing]",
+    "twindb-lightrag-memgraph[intelligence,server,tracing,convert,vision]",
 ]
 
 [tool.setuptools.packages.find]

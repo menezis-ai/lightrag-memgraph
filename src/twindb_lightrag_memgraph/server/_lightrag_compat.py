@@ -44,6 +44,7 @@ Compatibility
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from typing import Any, Literal
 
@@ -213,20 +214,28 @@ _SCORE_KEYS = ("score", "similarity", "cosine_similarity")
 
 
 def _first_numeric_metric(d: dict[str, Any], keys) -> float | None:
-    """Return the first key in ``keys`` whose value is numeric, as float."""
+    """Return the first finite, non-boolean numeric metric, as float."""
     for key in keys:
         value = d.get(key)
-        if isinstance(value, (int, float)):
-            return float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric = float(value)
+            if math.isfinite(numeric):
+                return numeric
     return None
 
 
 def _reference_score(
     chunks: list[dict[str, Any]],
-    *,
-    rank: int,
-    total: int,
-) -> float:
+) -> float | None:
+    """Return an explicit retrieval metric, never a rank-derived proxy.
+
+    ``data.references`` does not carry a score of its own.  When LightRAG
+    exposes a numeric metric on one of the chunks behind the reference, the
+    first such metric (in retrieval-envelope order) is safe to project.  When
+    it does not, ``None`` is the only epistemically honest value: synthesising
+    ``0.95 .. 0.5`` from display rank made the wire field look like cosine
+    similarity even though no similarity measurement existed.
+    """
     for chunk in chunks:
         direct = _first_numeric_metric(chunk, _SCORE_KEYS)
         if direct is not None:
@@ -236,9 +245,7 @@ def _reference_score(
             nested = _first_numeric_metric(metrics, _SCORE_KEYS)
             if nested is not None:
                 return nested
-    if total <= 0:
-        return 0.5
-    return round(0.95 - 0.45 * (rank / max(total - 1, 1)), 3)
+    return None
 
 
 def classify_aquery_llm_result(
@@ -254,7 +261,11 @@ def classify_aquery_llm_result(
       signal — OR the ``[no-context]`` marker is present (defense in
       depth for environments where LightRAG sets the marker without
       populating the failure_reason).
-    - ``status == "grounded"`` otherwise.
+    - ``status == "grounded"`` otherwise, provisionally.  The route must still
+      project at least one source from ``data.references`` before publishing a
+      final ``grounded`` status; an empty or inconsistent projection is
+      classified as ``source_projection_failed`` by
+      :func:`query.response_sources._build_envelope_sources`.
 
     A generic backend failure (``status == "failure"`` with any other
     ``failure_reason`` — empty, ``query_failed``, …) raises
@@ -380,9 +391,7 @@ def _chunk_count_label(chunk_count: int) -> str | None:
     return None
 
 
-def _build_source_entry(
-    reference, rank, total, chunks_by_ref, chunk_id_to_doc_id
-) -> dict[str, Any]:
+def _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id) -> dict[str, Any]:
     """Project one ``data.references`` entry into a WebUI source dict."""
     if not isinstance(reference, dict):
         raise GraphAnswerEnvelopeError(
@@ -412,7 +421,7 @@ def _build_source_entry(
         "name": source_name,
         "_lightrag_reference_name_fallback": source_name_is_fallback,
         "meta": _chunk_count_label(len(matching_chunks)),
-        "score": _reference_score(matching_chunks, rank=rank, total=total),
+        "score": _reference_score(matching_chunks),
         "doc_id": doc_id,
         "chunk_id": chunk_id,
     }
@@ -446,10 +455,8 @@ def build_sources_from_raw_data(
     references, chunks = parsed
     chunks_by_ref = _index_chunks_by_ref(chunks)
     entries = [
-        _build_source_entry(
-            reference, rank, len(references), chunks_by_ref, chunk_id_to_doc_id
-        )
-        for rank, reference in enumerate(references)
+        _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id)
+        for reference in references
     ]
     # Defense-in-depth: ``n`` mirrors LightRAG's ``reference_id`` and the React
     # port collapses/keys sources by it. A duplicate would silently merge two

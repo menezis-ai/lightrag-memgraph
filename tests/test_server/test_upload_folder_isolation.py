@@ -24,6 +24,7 @@ from lightrag.base import DocProcessingStatus, DocStatus
 from twindb_lightrag_memgraph import _install_storage_folder_capture
 from twindb_lightrag_memgraph._constants import get_active_storage_folder
 from twindb_lightrag_memgraph.server import native_shims
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.native_shims import build_native_shims_router
 
 
@@ -75,6 +76,8 @@ def _folder_env(monkeypatch):
 
 
 async def test_uploaded_sandbox_document_is_hidden_from_default(monkeypatch):
+    configure_auth(api_key="test-infra-root")
+
     async def no_tags(_docs, *, folder: str) -> None:
         return None
 
@@ -108,6 +111,7 @@ async def test_uploaded_sandbox_document_is_hidden_from_default(monkeypatch):
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as client:
         uploaded = await client.post(
             "/documents/upload",
@@ -119,6 +123,7 @@ async def test_uploaded_sandbox_document_is_hidden_from_default(monkeypatch):
             "/documents",
             headers={"X-Twin-Folder": "sandbox"},
         )
+    configure_auth()
 
     assert uploaded.status_code == 200
     assert default_docs.status_code == 200

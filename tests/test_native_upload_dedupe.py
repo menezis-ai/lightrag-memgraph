@@ -70,6 +70,7 @@ from lightrag.utils import EmbeddingFunc, Tokenizer
 
 import twindb_lightrag_memgraph
 from twindb_lightrag_memgraph import _install_storage_folder_capture, _pool
+from twindb_lightrag_memgraph.server.auth import configure_auth
 
 twindb_lightrag_memgraph.register()
 
@@ -79,6 +80,7 @@ EMBEDDING_DIM = 384
 WORKSPACE = f"dedupe_{uuid.uuid4().hex[:10]}"
 DEFAULT_FOLDER = "default"
 SHARE_FOLDER = "sandbox"
+ROOT_AUTH_HEADER = {"X-API-Key": "test-infra-root"}
 
 TRACK_DEADLINE_S = 30.0
 OUTCOME_DEADLINE_S = 20.0
@@ -182,6 +184,7 @@ async def native_runtime(request, monkeypatch, runtime_dirs):
     )
     # Keep folder resolution on palier 1 regardless of ambient env.
     monkeypatch.delenv("TWIN_IDP_JWKS_URL", raising=False)
+    configure_auth(api_key="test-infra-root")
 
     finalize_share_data()
     initialize_share_data()
@@ -226,13 +229,16 @@ async def native_runtime(request, monkeypatch, runtime_dirs):
     if install_capture:
         _install_storage_folder_capture(app)
     ensure_fresh_native_document_router()
-    app.include_router(create_document_routes(rag, doc_manager, api_key=None))
+    app.include_router(
+        create_document_routes(rag, doc_manager, api_key="test-infra-root")
+    )
 
     try:
         yield rag, app
     finally:
         await _cleanup_workspace()
         await rag.finalize_storages()
+        configure_auth()
 
 
 async def _cleanup_workspace() -> None:
@@ -332,7 +338,9 @@ async def _assert_no_double_ingestion(before: dict, original_doc_id: str) -> Non
 
 def _client(app) -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers=ROOT_AUTH_HEADER,
     )
 
 

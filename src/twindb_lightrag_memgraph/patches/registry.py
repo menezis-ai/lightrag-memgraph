@@ -19,12 +19,15 @@ Usage:
 
 import inspect
 import logging
+import math
+import os
 from contextlib import asynccontextmanager
 from functools import partial, wraps
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 from . import canary
+from .. import _conversion, _vision
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -303,9 +306,11 @@ def register(
     # 8. Optionally extend the FastAPI app: swap WebUI + mount Twin sub-app
     #    + shim native routes for the agent-readable contract.
     #    Opt-in via flags — default off keeps prod instances unaffected.
-    if shim_native_routes:
+    if replace_ui or mount_server or shim_native_routes:
         # Must wrap create_document_routes BEFORE create_app runs so that
         # when the host's create_app calls it, we capture the rag instance.
+        # Every overlay deployment also shadows the native query routes with
+        # the Twin security boundary, even when document shims are disabled.
         _patch_capture_rag()
 
     _apply_app_overlays(
@@ -359,9 +364,15 @@ class _SafeDriverWrapper:
 
     @asynccontextmanager
     async def _safe_session(self, **kwargs):
-        async with self._real.session(**kwargs) as session:
-            await self._apply_use_database(session)
-            yield session
+        # Graph storage owns an upstream driver instead of using Twin's shared
+        # pool.  Apply the same Python 3.10-compatible deadline to connection
+        # checkout, USE DATABASE, query work, and session return/close.
+        from .._pool import _operation_deadline, _read_operation_timeout
+
+        async with _operation_deadline(_read_operation_timeout()):
+            async with self._real.session(**kwargs) as session:
+                await self._apply_use_database(session)
+                yield session
 
     async def _apply_use_database(self, session):
         """On bolt:// + custom db, issue ``USE DATABASE``; detect Community once.
@@ -391,7 +402,10 @@ class _SafeDriverWrapper:
                 raise
 
     async def close(self):
-        await self._real.close()
+        from .._pool import _operation_deadline, _read_operation_timeout
+
+        async with _operation_deadline(_read_operation_timeout()):
+            await self._real.close()
 
     def __getattr__(self, name):
         return getattr(self._real, name)
@@ -405,6 +419,48 @@ def _lightrag_logger():
         return logger
     except ImportError:
         return None
+
+
+def _explicit_workspace_memgraph_init(original_init):
+    """Wrap Memgraph graph initialization with explicit workspace priority.
+
+    The upstream Memgraph backend gives the process-wide
+    ``MEMGRAPH_WORKSPACE`` environment variable priority over its ``workspace``
+    argument.  That is unsafe for the intelligence engine, which maintains
+    concurrent LightRAG instances for distinct workspaces in one process.
+
+    Delegate first so every reviewed LightRAG version retains its native field
+    initialization and validation.  Then override only ``self.workspace`` when
+    LightRAG supplied an explicit argument/config value.  With neither value,
+    native environment/default behavior is byte-for-byte unchanged.
+    """
+
+    @wraps(original_init)
+    def explicit_workspace_init(
+        self, namespace, global_config, embedding_func, workspace=None
+    ) -> None:
+        from .._constants import validate_identifier
+
+        explicit_workspace = workspace
+        if (
+            explicit_workspace is None or not str(explicit_workspace).strip()
+        ) and global_config is not None:
+            explicit_workspace = global_config.get("workspace")
+
+        original_init(
+            self,
+            namespace,
+            global_config,
+            embedding_func,
+            workspace=workspace,
+        )
+
+        if explicit_workspace is not None and str(explicit_workspace).strip():
+            self.workspace = validate_identifier(str(explicit_workspace), "workspace")
+
+    explicit_workspace_init._twindb_explicit_workspace_patch = True
+    explicit_workspace_init._twindb_original_init = original_init
+    return explicit_workspace_init
 
 
 async def _create_workspace_index(
@@ -475,6 +531,117 @@ try:  # version-skew guard, see feedback_lightrag_version_skew
     from lightrag.constants import GRAPH_FIELD_SEP as _GRAPH_FIELD_SEP
 except Exception:  # pragma: no cover - defensive
     _GRAPH_FIELD_SEP = "<SEP>"
+
+
+# Bounded semantic traversal used only by the patched LightRAG retrieval hot
+# path.  This is deliberately a small-hop neighbourhood expansion, not
+# PageRank, community detection, or an unbounded path search.
+_GRAPH_MAX_HOPS_ENV = "TWIN_GRAPH_MAX_HOPS"
+_GRAPH_PATHS_PER_SEED_ENV = "TWIN_GRAPH_PATHS_PER_SEED"
+_GRAPH_HOP_PENALTY_ENV = "TWIN_GRAPH_HOP_PENALTY"
+_DEFAULT_GRAPH_MAX_HOPS = 2
+_MAX_GRAPH_MAX_HOPS = 3
+_DEFAULT_GRAPH_PATHS_PER_SEED = 20
+_MAX_GRAPH_PATHS_PER_SEED = 100
+_DEFAULT_GRAPH_HOP_PENALTY = 0.15
+
+
+def _bounded_graph_int(value, *, name: str, minimum: int, maximum: int) -> int:
+    """Validate a traversal integer without accepting bool as an integer."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must be an integer between {minimum} and {maximum}"
+        ) from exc
+    if str(value).strip() != str(parsed) or not minimum <= parsed <= maximum:
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+    return parsed
+
+
+def _bounded_graph_float(value, *, name: str, minimum: float, maximum: float) -> float:
+    """Validate a finite traversal coefficient in a documented closed range."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}") from exc
+    if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _graph_traversal_config(
+    *,
+    max_hops=None,
+    paths_per_seed=None,
+    hop_penalty=None,
+) -> tuple[int, int, float]:
+    """Resolve and validate the bounded graph-traversal controls.
+
+    Explicit arguments are primarily useful to storage-level callers and
+    tests.  The LightRAG hot path uses the corresponding ``TWIN_GRAPH_*``
+    environment variables.
+    """
+    max_hops = (
+        os.environ.get(_GRAPH_MAX_HOPS_ENV, str(_DEFAULT_GRAPH_MAX_HOPS))
+        if max_hops is None
+        else max_hops
+    )
+    paths_per_seed = (
+        os.environ.get(_GRAPH_PATHS_PER_SEED_ENV, str(_DEFAULT_GRAPH_PATHS_PER_SEED))
+        if paths_per_seed is None
+        else paths_per_seed
+    )
+    hop_penalty = (
+        os.environ.get(_GRAPH_HOP_PENALTY_ENV, str(_DEFAULT_GRAPH_HOP_PENALTY))
+        if hop_penalty is None
+        else hop_penalty
+    )
+    return (
+        _bounded_graph_int(
+            max_hops,
+            name=_GRAPH_MAX_HOPS_ENV,
+            minimum=1,
+            maximum=_MAX_GRAPH_MAX_HOPS,
+        ),
+        _bounded_graph_int(
+            paths_per_seed,
+            name=_GRAPH_PATHS_PER_SEED_ENV,
+            minimum=1,
+            maximum=_MAX_GRAPH_PATHS_PER_SEED,
+        ),
+        _bounded_graph_float(
+            hop_penalty,
+            name=_GRAPH_HOP_PENALTY_ENV,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+    )
+
+
+def _graph_path_score(edge_weights: list[float], hop_penalty: float) -> float:
+    """Reference implementation of the Cypher path-ranking formula.
+
+    ``mean(edge_weight) - hop_penalty * (hops - 1)`` keeps accumulated edge
+    weight from rewarding a path merely because it contains more edges.  The
+    explicit penalty makes an equally weighted longer path strictly worse.
+    """
+    if not edge_weights:
+        raise ValueError("edge_weights must contain at least one weight")
+    penalty = _bounded_graph_float(
+        hop_penalty,
+        name="hop_penalty",
+        minimum=0.0,
+        maximum=1.0,
+    )
+    weights = [float(weight) for weight in edge_weights]
+    if not all(math.isfinite(weight) for weight in weights):
+        raise ValueError("edge_weights must be finite")
+    return (sum(weights) / len(weights)) - penalty * (len(weights) - 1)
 
 
 # ── Folder cloisonnement for KG graph reads (batch 2) ─────────────────────
@@ -749,6 +916,162 @@ async def _patched_get_nodes_edges_batch(
     return result
 
 
+@_retry_closed_graph_transport("get_nodes_edges_paths_batch")
+async def _patched_get_nodes_edges_paths_batch(
+    self,
+    node_ids: list[str],
+    *,
+    max_hops=None,
+    paths_per_seed=None,
+    hop_penalty=None,
+) -> dict[str, list[dict]]:
+    """Return real edges from the best bounded paths around each seed.
+
+    Paths are ranked per seed by::
+
+        mean(coalesce(edge.weight, 1.0)) - hop_penalty * (hops - 1)
+
+    The mean prevents a longer path from winning merely by accumulating more
+    edge weights.  The second term makes equal-quality longer paths strictly
+    worse.  At most ``paths_per_seed`` complete paths are flattened into their
+    constituent edges.  Memgraph's native ``*BFS`` expansion avoids enumerating
+    every simple path and yields shortest-hop neighbourhood paths.  The output
+    cap prevents downstream relation-context growth, but does not cap the BFS
+    planner itself: a dense reachable neighbourhood is still ``O(d**max_hops)``
+    in the worst case.  The strict default of two hops and validated hard
+    maximum of three are the exploration guard.  This is a bounded
+    neighbourhood heuristic; it is not PageRank or community detection.  Edge
+    weights rank the paths returned by BFS; they do not select a weighted
+    shortest path.
+
+    ``get_nodes_edges_batch`` intentionally remains the historical one-hop API.
+    This richer shape is consumed only by the patched retrieval hot path.
+    """
+    if not node_ids:
+        return {}
+    if self._driver is None:
+        raise RuntimeError(_NOT_INITIALIZED_MSG)
+
+    max_hops, paths_per_seed, hop_penalty = _graph_traversal_config(
+        max_hops=max_hops,
+        paths_per_seed=paths_per_seed,
+        hop_penalty=hop_penalty,
+    )
+    if max_hops == _MAX_GRAPH_MAX_HOPS:
+        logger.warning(
+            "Graph traversal is configured at its hard maximum of %d hops; "
+            "reachable-neighbourhood exploration remains O(d**h) before the per-seed "
+            "output cap is applied",
+            max_hops,
+        )
+    ws = self._get_workspace_label()
+    mchunks = await _twin_member_chunks(self)
+    traversal_filter = f"'{ws}' IN labels(__next)"
+    folder_predicate = ""
+    if mchunks is not None:
+        # Security boundary: every relationship in a candidate path must be
+        # backed by at least one chunk in the active folder.  Filtering only
+        # the terminal or first edge would permit cross-folder bridge paths.
+        folder_predicate = (
+            f"AND all(__rel IN relationships(path) "
+            f"WHERE {_twin_in_folder('__rel')}) "
+        )
+        traversal_filter += f" AND {_twin_in_folder('__rel')}"
+
+    query = (
+        f"UNWIND $ids AS eid "
+        f"MATCH (seed:`{ws}` {{entity_id: eid}}) "
+        # DIRECTED is the semantic LightRAG relation type.  An untyped path
+        # could traverse governance relationships if such nodes share labels.
+        # The inline BFS filter prevents invalid edges/nodes from entering the
+        # traversal frontier rather than discarding them only after expansion.
+        f"MATCH path=(seed)-[__rels:DIRECTED *BFS 1..{max_hops} "
+        f"(__rel, __next | {traversal_filter})]-(reached:`{ws}`) "
+        f"WHERE reached.entity_id IS NOT NULL "
+        # Variable-length patterns constrain only endpoints by default;
+        # explicitly require every intermediate node to be a KG entity in the
+        # same workspace.
+        f"AND all(__node IN nodes(path) WHERE '{ws}' IN labels(__node)) "
+        # Keep paths simple so cycles cannot consume the per-seed path budget.
+        f"AND all(__node IN nodes(path) WHERE "
+        f"single(__same IN nodes(path) WHERE __same = __node)) "
+        f"{folder_predicate}"
+        f"WITH eid, path, length(path) AS hops, "
+        f"reduce(__weight_sum = 0.0, __rel IN relationships(path) | "
+        f"__weight_sum + coalesce(toFloat(__rel.weight), 1.0)) AS weight_sum, "
+        f"reduce(__path_key = '', __node IN nodes(path) | "
+        f"__path_key + '|' + coalesce(__node.entity_id, '')) AS path_key, "
+        f"reduce(__relationship_key = '', __rel IN relationships(path) | "
+        f"__relationship_key + '|' + type(__rel) + ':' + "
+        f"coalesce(__rel.source_id, '')) AS relationship_key "
+        f"WITH eid, path, hops, path_key, relationship_key, "
+        f"weight_sum / toFloat(hops) "
+        f"- $hop_penalty * toFloat(hops - 1) AS path_score "
+        f"ORDER BY eid ASC, path_score DESC, hops ASC, "
+        f"path_key ASC, relationship_key ASC "
+        f"WITH eid, collect({{path: path, hops: hops, "
+        f"path_score: path_score, path_key: path_key}})"
+        f"[..$paths_per_seed] AS selected_paths "
+        f"UNWIND selected_paths AS selected "
+        f"WITH eid, selected, nodes(selected.path) AS path_nodes, "
+        f"relationships(selected.path) AS path_relationships "
+        f"UNWIND range(0, size(path_relationships) - 1) AS edge_index "
+        f"RETURN eid, collect({{"
+        f"edge: [path_nodes[edge_index].entity_id, "
+        f"path_nodes[edge_index + 1].entity_id], "
+        f"discovery_hop: edge_index + 1, "
+        f"path_hops: selected.hops, "
+        f"path_score: selected.path_score, "
+        f"path_key: selected.path_key}}) AS traversals"
+    )
+    params = {
+        "ids": node_ids,
+        "paths_per_seed": paths_per_seed,
+        "hop_penalty": hop_penalty,
+    }
+    if mchunks is not None:
+        params["sep"] = _GRAPH_FIELD_SEP
+        params["mchunks"] = mchunks
+
+    result: dict[str, list[dict]] = {}
+    async with self._driver.session(
+        database=self._DATABASE, default_access_mode="READ"
+    ) as session:
+        records = await session.run(query, **params)
+        async for record in records:
+            result[record["eid"]] = _seed_traversals_from_record(record)
+        await records.consume()
+
+    for node_id in node_ids:
+        result.setdefault(node_id, [])
+    return result
+
+
+def _seed_traversals_from_record(record) -> list[dict]:
+    """Project one seed's raw traversal rows, dropping malformed edges."""
+    traversals = []
+    for raw in record["traversals"]:
+        pair = raw.get("edge") if raw else None
+        if (
+            not isinstance(pair, (list, tuple))
+            or len(pair) != 2
+            or pair[0] is None
+            or pair[1] is None
+        ):
+            continue
+        traversals.append(
+            {
+                "edge": (pair[0], pair[1]),
+                "seed": record["eid"],
+                "discovery_hop": int(raw["discovery_hop"]),
+                "path_hops": int(raw["path_hops"]),
+                "path_score": float(raw["path_score"]),
+                "path_key": str(raw["path_key"]),
+            }
+        )
+    return traversals
+
+
 @_retry_closed_graph_transport("get_nodes_with_degrees_batch")
 async def _patched_get_nodes_with_degrees_batch(
     self, node_ids: list[str]
@@ -875,7 +1198,13 @@ async def _patched_get_edges_with_degrees_batch(
 
 
 def _patch_builtin_memgraph_storage():
-    """Replace MemgraphStorage.initialize to support MEMGRAPH_ENCRYPTED
+    """Patch MemgraphStorage workspace binding and driver initialization.
+
+    The constructor patch makes an explicit per-instance workspace authoritative
+    while retaining ``MEMGRAPH_WORKSPACE`` as a fallback for legacy callers
+    that leave the LightRAG workspace blank.
+
+    Replace MemgraphStorage.initialize to support MEMGRAPH_ENCRYPTED
     and wrap the driver so that database routing works correctly for both
     direct (``bolt://``) and routing (``neo4j+s://``) protocols.
 
@@ -891,6 +1220,11 @@ def _patch_builtin_memgraph_storage():
 
     from lightrag.kg.memgraph_impl import MemgraphStorage
 
+    original_init = canary.reviewed_memgraph_init(MemgraphStorage)
+    if original_init is not None and not getattr(
+        original_init, "_twindb_explicit_workspace_patch", False
+    ):
+        MemgraphStorage.__init__ = _explicit_workspace_memgraph_init(original_init)
     MemgraphStorage.initialize = _patched_initialize
 
     # -- Batch overrides: single-UNWIND queries instead of N round-trips --
@@ -902,6 +1236,7 @@ def _patch_builtin_memgraph_storage():
     MemgraphStorage.get_edges_batch = _patched_get_edges_batch
     MemgraphStorage.edge_degrees_batch = _patched_edge_degrees_batch
     MemgraphStorage.get_nodes_edges_batch = _patched_get_nodes_edges_batch
+    MemgraphStorage.get_nodes_edges_paths_batch = _patched_get_nodes_edges_paths_batch
     MemgraphStorage.get_nodes_with_degrees_batch = _patched_get_nodes_with_degrees_batch
     MemgraphStorage.get_edges_with_degrees_batch = _patched_get_edges_with_degrees_batch
 
@@ -971,37 +1306,107 @@ async def _fused_get_node_data(
     return node_datas, use_relations
 
 
-async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
-    """Fused replacement for operate._find_most_related_edges_from_entities."""
+def _explicit_bound_method(instance, name: str):
+    """Return a real instance/class method, excluding MagicMock auto-children."""
+    try:
+        instance_attributes = vars(instance)
+    except TypeError:
+        instance_attributes = {}
+    if name in instance_attributes:
+        method = instance_attributes[name]
+        return method if callable(method) else None
+    class_method = getattr(type(instance), name, None)
+    if callable(class_method):
+        return getattr(instance, name)
+    return None
+
+
+def _graph_candidate_key(metadata: dict) -> tuple:
+    """Lower key wins when one edge is discovered through several paths."""
+    return (
+        -float(metadata["graph_path_score"]),
+        int(metadata["graph_hops"]),
+        int(metadata["graph_path_hops"]),
+        str(metadata["graph_seed"]),
+        str(metadata["graph_path_key"]),
+    )
+
+
+def _graph_relation_sort_key(relation: dict) -> tuple:
+    """Deterministic retrieval order with explicit topology evidence first.
+
+    Multi-hop results are ranked by the bounded path score, then by nearest
+    discovery hop, total path length, scoped degree, stored edge weight, and
+    finally the canonical endpoint pair.  Legacy backends without path
+    metadata preserve LightRAG's degree-then-weight ordering.
+    """
+    pair = tuple(relation["src_tgt"])
+    if relation.get("graph_path_score") is not None:
+        return (
+            0,
+            -float(relation["graph_path_score"]),
+            int(relation["graph_hops"]),
+            int(relation["graph_path_hops"]),
+            -float(relation["rank"]),
+            -float(relation["weight"]),
+            pair,
+        )
+    # Same 7-slot shape as above: neutral constants pad the path-metadata
+    # slots so legacy tuples still order by (rank, weight, pair) among
+    # themselves while the leading 1 keeps them after any path-scored tuple.
+    return (
+        1,
+        0.0,
+        0,
+        0,
+        -float(relation["rank"]),
+        -float(relation["weight"]),
+        pair,
+    )
+
+
+def _edge_metadata_from_paths(node_names, batch_paths_dict) -> dict:
+    """Keep the best-path metadata per canonical edge pair (lower key wins)."""
+    edge_metadata: dict[tuple[str, str], dict] = {}
+    for node_name in node_names:
+        for traversal in batch_paths_dict.get(node_name, []):
+            raw_edge = traversal.get("edge")
+            if not isinstance(raw_edge, (list, tuple)) or len(raw_edge) != 2:
+                continue
+            pair = tuple(sorted(raw_edge))
+            metadata = {
+                "graph_seed": traversal["seed"],
+                "graph_hops": int(traversal["discovery_hop"]),
+                "graph_path_hops": int(traversal["path_hops"]),
+                "graph_path_score": float(traversal["path_score"]),
+                "graph_path_key": traversal["path_key"],
+            }
+            current = edge_metadata.get(pair)
+            if current is None or _graph_candidate_key(metadata) < _graph_candidate_key(
+                current
+            ):
+                edge_metadata[pair] = metadata
+    return edge_metadata
+
+
+async def _fetch_edge_data_and_degrees(
+    knowledge_graph_inst, all_edges, edge_pairs_dicts
+):
+    """Fused edge-props+degrees fetch when available; upstream gather otherwise."""
     import asyncio
 
-    from lightrag.utils import logger as _lr_logger
-
-    node_names = [dp["entity_name"] for dp in node_datas]
-    batch_edges_dict = await knowledge_graph_inst.get_nodes_edges_batch(node_names)
-
-    all_edges = []
-    seen = set()
-    for node_name in node_names:
-        this_edges = batch_edges_dict.get(node_name, [])
-        for e in this_edges:
-            sorted_edge = tuple(sorted(e))
-            if sorted_edge not in seen:
-                seen.add(sorted_edge)
-                all_edges.append(sorted_edge)
-
-    edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
-
     if hasattr(knowledge_graph_inst, "get_edges_with_degrees_batch"):
-        edge_data_dict, edge_degrees_dict = (
-            await knowledge_graph_inst.get_edges_with_degrees_batch(edge_pairs_dicts)
-        )
-    else:
-        edge_pairs_tuples = list(all_edges)
-        edge_data_dict, edge_degrees_dict = await asyncio.gather(
-            knowledge_graph_inst.get_edges_batch(edge_pairs_dicts),
-            knowledge_graph_inst.edge_degrees_batch(edge_pairs_tuples),
-        )
+        return await knowledge_graph_inst.get_edges_with_degrees_batch(edge_pairs_dicts)
+    edge_pairs_tuples = list(all_edges)
+    return await asyncio.gather(
+        knowledge_graph_inst.get_edges_batch(edge_pairs_dicts),
+        knowledge_graph_inst.edge_degrees_batch(edge_pairs_tuples),
+    )
+
+
+def _project_edge_rows(all_edges, edge_data_dict, edge_degrees_dict, edge_metadata):
+    """Join edge props, scoped degree and traversal metadata into relation rows."""
+    from lightrag.utils import logger as _lr_logger
 
     all_edges_data = []
     for pair in all_edges:
@@ -1018,10 +1423,54 @@ async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
                 "src_tgt": pair,
                 "rank": edge_degrees_dict.get(pair, 0),
                 **edge_props,
+                **edge_metadata[pair],
             }
         )
+    return all_edges_data
 
-    return sorted(all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True)
+
+async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
+    """Fused edge retrieval with bounded topology expansion for Memgraph."""
+    from lightrag.utils import logger as _lr_logger
+
+    node_names = [dp["entity_name"] for dp in node_datas]
+    path_batch_method = _explicit_bound_method(
+        knowledge_graph_inst, "get_nodes_edges_paths_batch"
+    )
+    edge_metadata: dict[tuple[str, str], dict] = {}
+
+    if path_batch_method is not None:
+        batch_paths_dict = await path_batch_method(node_names)
+        edge_metadata = _edge_metadata_from_paths(node_names, batch_paths_dict)
+        if edge_metadata:
+            _lr_logger.debug(
+                "Bounded graph traversal selected %d edges from %d seeds "
+                "(max observed discovery hop=%d, max path hops=%d)",
+                len(edge_metadata),
+                len(node_names),
+                max(meta["graph_hops"] for meta in edge_metadata.values()),
+                max(meta["graph_path_hops"] for meta in edge_metadata.values()),
+            )
+    else:
+        # Non-Memgraph and older graph backends keep the upstream one-hop API.
+        batch_edges_dict = await knowledge_graph_inst.get_nodes_edges_batch(node_names)
+        for node_name in node_names:
+            for edge in batch_edges_dict.get(node_name, []):
+                edge_metadata.setdefault(tuple(sorted(edge)), {})
+
+    all_edges = sorted(edge_metadata)
+
+    edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
+
+    edge_data_dict, edge_degrees_dict = await _fetch_edge_data_and_degrees(
+        knowledge_graph_inst, all_edges, edge_pairs_dicts
+    )
+
+    all_edges_data = _project_edge_rows(
+        all_edges, edge_data_dict, edge_degrees_dict, edge_metadata
+    )
+
+    return sorted(all_edges_data, key=_graph_relation_sort_key)
 
 
 def _patch_operate_hot_paths():
@@ -1579,6 +2028,203 @@ def _patch_upload_duplicate_lookup() -> None:
     logger.info("twindb: patched document_routes.find_existing_file_by_file_path")
 
 
+def _patch_document_manager_extensions() -> None:
+    """Extend the upload whitelist with the conversion-covered extensions.
+
+    The 1.4.x ``DocumentManager`` carries a hardcoded ``supported_extensions``
+    tuple that rejects e.g. ``.xls``/``.msg`` with a synchronous 400 before the
+    conversion seam can run. Wrap ``__init__`` to append the missing dotted
+    extensions from the active conversion format set.
+
+    **Must run BEFORE the native ``create_app`` builds its ``doc_manager``**
+    (called at the head of ``wrapped_create_app``). On 1.5.x builds where
+    ``supported_extensions`` is derived from the parser registry (read-only),
+    the assignment failure degrades gracefully: whitelist untouched, native
+    routing decides — conversion still applies to already-accepted formats.
+    """
+    import lightrag.api.routers.document_routes as dr
+
+    if getattr(dr, "_twindb_doc_manager_ext_patched", False):
+        return
+
+    manager_cls = canary.degradable_symbol(
+        dr,
+        "DocumentManager",
+        patch_name="markitdown conversion upload whitelist",
+    )
+    if manager_cls is None:
+        return
+
+    orig_init = manager_cls.__init__
+
+    def extension_extended_init(self, *args, **kwargs):
+        orig_init(self, *args, **kwargs)
+        try:
+            wanted = ()
+            if _conversion.is_enabled():
+                wanted += _conversion.extra_supported_extensions()
+            if _vision.is_enabled():
+                wanted += _vision.extra_supported_extensions()
+            current = tuple(self.supported_extensions)
+            missing = tuple(ext for ext in wanted if ext not in current)
+            if missing:
+                self.supported_extensions = current + missing
+                logger.info(
+                    "twindb convert: extended upload whitelist with %s",
+                    ", ".join(missing),
+                )
+        except (AttributeError, TypeError) as exc:
+            logger.warning(
+                "twindb convert: could not extend supported_extensions "
+                "(%s: %s) — native whitelist kept",
+                type(exc).__name__,
+                exc,
+            )
+
+    extension_extended_init.__wrapped__ = orig_init
+    manager_cls.__init__ = extension_extended_init
+    dr._twindb_doc_manager_ext_patched = True
+
+
+async def _report_error_document(rag, file_path, description, original, track_id):
+    """Surface a FAILED error-document via LightRAG's reporter, when present."""
+    reporter = getattr(rag, "apipeline_enqueue_error_documents", None)
+    if not callable(reporter):
+        return
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        file_size = 0
+    await reporter(
+        [
+            {
+                "file_path": str(file_path.name),
+                "error_description": description,
+                "original_error": original,
+                "file_size": file_size,
+            }
+        ],
+        track_id,
+    )
+
+
+async def _enqueue_converted(rag, file_path, markdown, track_id, from_scan):
+    """Enqueue converted markdown under the ORIGINAL file name."""
+    enqueue_kwargs = {"file_paths": file_path.name, "track_id": track_id}
+    if from_scan:
+        # 1.5.x scan guard passthrough; never set on the 1.4.x line.
+        enqueue_kwargs["from_scan"] = True
+    try:
+        await rag.apipeline_enqueue_documents(markdown, **enqueue_kwargs)
+    except Exception as exc:
+        await _report_error_document(
+            rag,
+            file_path,
+            "Document enqueue error",
+            f"Failed to enqueue converted document: {exc}",
+            track_id,
+        )
+        logger.exception(
+            "twindb convert: enqueue failed for %s: %s", file_path.name, exc
+        )
+        return False, track_id
+    logger.info("twindb convert: enqueued %s as converted markdown", file_path.name)
+    return True, track_id
+
+
+def _make_converting_pipeline_enqueue_file(dr, orig_enqueue_file):
+    """Build the ``pipeline_enqueue_file`` wrapper bound to ``dr``/original."""
+
+    async def converting_pipeline_enqueue_file(rag, file_path, *args, **kwargs):
+        # Delegation is always verbatim (*args/**kwargs untouched): the two
+        # LightRAG lines differ in signature (1.4.x has no ``from_scan``).
+        path = Path(file_path)
+        wants_vision = _vision.should_process(path)
+        if not wants_vision and not _conversion.should_convert(path):
+            return await orig_enqueue_file(rag, file_path, *args, **kwargs)
+
+        vision_reason = None
+        if wants_vision:
+            outcome = await _vision.aprocess_image(path)
+            markdown = outcome.markdown
+            vision_reason = outcome.reason
+        else:
+            markdown = await _conversion.aconvert_file(path)
+            if markdown is None:
+                # MarkItDown failure — the native extractors still get a shot.
+                return await orig_enqueue_file(rag, file_path, *args, **kwargs)
+
+        track_id = kwargs.get("track_id", args[0] if args else None)
+        from_scan = kwargs.get("from_scan", args[1] if len(args) > 1 else False)
+        if track_id is None:
+            generate = getattr(dr, "generate_track_id", None)
+            if not callable(generate):
+                # Cannot honor the (success, track_id) contract — native path.
+                logger.warning(
+                    "twindb convert: generate_track_id missing in this "
+                    "LightRAG build — native path for %s",
+                    path.name,
+                )
+                return await orig_enqueue_file(rag, file_path, *args, **kwargs)
+            track_id = generate("unknown")
+
+        if markdown is None:
+            # Vision refusal/failure: unlike MarkItDown formats there is no
+            # native image extractor to fall back to — surface an explicit
+            # FAILED error-document with the pipeline's reason.
+            await _report_error_document(
+                rag, path, "Image ingestion refused", vision_reason, track_id
+            )
+            logger.info("twindb vision: %s refused (%s)", path.name, vision_reason)
+            return False, track_id
+        return await _enqueue_converted(rag, path, markdown, track_id, from_scan)
+
+    converting_pipeline_enqueue_file.__wrapped__ = orig_enqueue_file
+    converting_pipeline_enqueue_file.__name__ = "converting_pipeline_enqueue_file"
+    return converting_pipeline_enqueue_file
+
+
+def _patch_pipeline_enqueue_conversion() -> None:
+    """Insert the MarkItDown pre-conversion seam into ``pipeline_enqueue_file``.
+
+    Both LightRAG lines share the ``(rag, file_path, track_id=None, …) ->
+    tuple[bool, str]`` contract (verified on the 1.4.9.11 wheel and the local
+    1.5.4). When conversion applies, the wrapper enqueues the converted
+    markdown under the ORIGINAL file name via ``apipeline_enqueue_documents``
+    — the exact call the 1.4.x native path makes with its extracted text —
+    so the MIP gate (which patches that method and resolves the original
+    binary in the INPUT_DIR tree), content dedup, folder membership and
+    ``_import_cleanup`` all keep working unchanged. Any non-convert decision
+    or conversion failure delegates to the original function untouched.
+
+    The original file is deliberately left in place (no ``__enqueued__`` /
+    ``__parsed__`` move): DocStatus carries its name, so ``_import_cleanup``
+    removes it from the INPUT_DIR root once the doc reaches ``processed``,
+    and a rescan in the processing window is deduplicated by content hash.
+    """
+    import lightrag.api.routers.document_routes as dr
+
+    if getattr(dr, "_twindb_convert_enqueue_patched", False):
+        return
+
+    orig_enqueue_file = canary.degradable_symbol(
+        dr,
+        "pipeline_enqueue_file",
+        patch_name="markitdown pre-conversion seam",
+    )
+    if orig_enqueue_file is None:
+        return
+
+    dr.pipeline_enqueue_file = _make_converting_pipeline_enqueue_file(
+        dr, orig_enqueue_file
+    )
+    dr._twindb_convert_enqueue_patched = True
+    logger.info(
+        "twindb convert: pipeline_enqueue_file wrapped (formats: %s)",
+        ", ".join(sorted(_conversion.conversion_formats())),
+    )
+
+
 def _patch_lightrag_server_create_app(
     webui_dist: str | None = None,
     twin_api_prefix: str | None = None,
@@ -1625,13 +2271,28 @@ def _patch_lightrag_server_create_app(
         return
 
     def wrapped_create_app(args):
+        # MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md).
+        # The whitelist extension must land BEFORE the native create_app
+        # builds its DocumentManager; the enqueue seam can follow after.
+        # Both are no-ops when TWIN_CONVERT resolves disabled.
+        if _conversion.is_enabled() or _vision.is_enabled():
+            _patch_document_manager_extensions()
         app = orig_create_app(args)
         # Server-runtime perf patch: document_routes is now imported (with the
         # server's argv), so the upload duplicate-lookup cache is safe to apply
         # here. It is a pure optimization, independent of the Twin overlay flags.
         _patch_upload_duplicate_lookup()
+        if _conversion.is_enabled() or _vision.is_enabled():
+            _patch_pipeline_enqueue_conversion()
         if shim_native_routes or twin_api_prefix is not None:
             _install_storage_folder_capture(app)
+        if webui_dist is not None or twin_api_prefix is not None or shim_native_routes:
+            # Native LightRAG query models admit bypass, raw prompt overrides,
+            # prompt disclosure and unrestricted history roles. Any deployment
+            # opting into a Twin overlay must shadow every root query surface
+            # with the same fail-closed model and folder-scoped retrieval used
+            # by /twin/api/query. This is independent of document-route shims.
+            _inject_native_query_guards(app)
         if shim_native_routes:
             _inject_native_shims(app)
         if twin_api_prefix is not None:
@@ -1741,6 +2402,60 @@ def _patch_background_tasks_folder_context() -> None:
     BackgroundTasks._twindb_folder_context_patched = True
 
 
+#: POST paths whose ingestion writes must run under the request's folder.
+_INGESTION_CAPTURE_PATHS = {
+    "/documents/upload",
+    "/documents/reprocess_failed",
+    "/documents/text",
+    "/documents/texts",
+    "/documents/scan",
+}
+
+
+async def _run_storage_folder_capture(request, call_next):
+    """Body of the ingestion folder-capture middleware."""
+    if request.method != "POST" or request.url.path not in _INGESTION_CAPTURE_PATHS:
+        return await call_next(request)
+
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
+    from .._constants import (
+        duplicate_share_folder_context,
+        operator_classification_context,
+        storage_folder_context,
+    )
+    from ..server.folder import resolve_folder_for_request
+
+    try:
+        folder = resolve_folder_for_request(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    # Operator-selected MIP class from the upload UI. Operators may only
+    # set C1/C2. Detected C3/C4 labels are handled by the ingestion gate,
+    # but an explicit C3/C4 upload header is a request error.
+    operator_class = request.headers.get("X-Twin-Classification")
+    if operator_class is not None:
+        operator_class = operator_class.strip().upper()
+        if operator_class not in {"C1", "C2"}:
+            return JSONResponse(
+                {
+                    "detail": (
+                        "X-Twin-Classification accepts only C1 or C2; "
+                        "C3/C4 uploads are rejected by policy."
+                    )
+                },
+                status_code=400,
+            )
+    with (
+        storage_folder_context(folder),
+        duplicate_share_folder_context(folder),
+        operator_classification_context(operator_class),
+    ):
+        return await call_next(request)
+
+
 def _install_storage_folder_capture(app) -> None:
     """Bind validated ``X-Twin-Folder`` to storage writes for ingestion."""
     _patch_background_tasks_folder_context()
@@ -1748,56 +2463,9 @@ def _install_storage_folder_capture(app) -> None:
     if getattr(app, "_twindb_storage_folder_capture_installed", False):
         return
 
-    ingestion_paths = {
-        "/documents/upload",
-        "/documents/reprocess_failed",
-        "/documents/text",
-        "/documents/texts",
-        "/documents/scan",
-    }
-
     @app.middleware("http")
     async def _storage_folder_capture_middleware(request, call_next):
-        if request.method != "POST" or request.url.path not in ingestion_paths:
-            return await call_next(request)
-
-        from fastapi import HTTPException
-        from fastapi.responses import JSONResponse
-
-        from .._constants import (
-            duplicate_share_folder_context,
-            operator_classification_context,
-            storage_folder_context,
-        )
-        from ..server.folder import resolve_folder_for_request
-
-        try:
-            folder = resolve_folder_for_request(request)
-        except HTTPException as exc:
-            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-        # Operator-selected MIP class from the upload UI. Operators may only
-        # set C1/C2. Detected C3/C4 labels are handled by the ingestion gate,
-        # but an explicit C3/C4 upload header is a request error.
-        operator_class = request.headers.get("X-Twin-Classification")
-        if operator_class is not None:
-            operator_class = operator_class.strip().upper()
-            if operator_class not in {"C1", "C2"}:
-                return JSONResponse(
-                    {
-                        "detail": (
-                            "X-Twin-Classification accepts only C1 or C2; "
-                            "C3/C4 uploads are rejected by policy."
-                        )
-                    },
-                    status_code=400,
-                )
-        with (
-            storage_folder_context(folder),
-            duplicate_share_folder_context(folder),
-            operator_classification_context(operator_class),
-        ):
-            return await call_next(request)
+        return await _run_storage_folder_capture(request, call_next)
 
     app._twindb_storage_folder_capture_installed = True
 
@@ -1843,6 +2511,62 @@ def _inject_native_shims(app) -> None:
     logger.info(
         "twindb: prepended %d native shim route(s) at app.router HEAD",
         insert_at,
+    )
+
+
+def _inject_native_query_guards(app) -> None:
+    """Shadow all LightRAG root query routes with the Twin security boundary.
+
+    LightRAG 1.4.9.11, 1.4.11 and 1.4.12 all expose ``POST /query``,
+    ``/query/stream`` and ``/query/data`` from ``create_query_routes``.  Their
+    native request model permits privileged prompt controls and their handlers
+    do not bind ``storage_folder_context``.  FastAPI is first-match-wins, so a
+    reviewed Twin router is inserted before those upstream routes.
+
+    This is a REQUIRED security boundary for an overlay deployment: missing
+    server components or a missing captured RAG fail requests explicitly; no
+    native route is allowed to become the fallback.
+    """
+    if getattr(app, "_twindb_native_query_guards_installed", False):
+        return
+
+    from ..server.auth import require_auth
+    from ..server.twin_query_routes import build_twin_query_router
+
+    def _get_rag():
+        rag = _twindb_state.get("rag")
+        if rag is None:
+            raise RuntimeError(
+                "twindb query guard: host LightRAG instance not captured. "
+                "The guarded native query surface refuses to fall back."
+            )
+        return rag
+
+    guard_router = build_twin_query_router(
+        _get_rag,
+        auth_dependency=require_auth,
+    )
+    guarded_paths = {"/query", "/query/data", "/query/stream"}
+    guard_routes = [
+        route
+        for route in guard_router.routes
+        if getattr(route, "path", None) in guarded_paths
+    ]
+    actual_paths = {getattr(route, "path", None) for route in guard_routes}
+    if actual_paths != guarded_paths:
+        missing = sorted(guarded_paths - actual_paths)
+        raise RuntimeError(
+            "Twin query security router is incomplete; refusing to expose "
+            f"native query routes. Missing: {missing}"
+        )
+
+    for route in reversed(guard_routes):
+        app.router.routes.insert(0, route)
+
+    app._twindb_native_query_guards_installed = True
+    logger.info(
+        "twindb: prepended guarded Twin handlers for %s",
+        ", ".join(sorted(guarded_paths)),
     )
 
 
@@ -2391,6 +3115,23 @@ def _mount_twin_subapp(
         dependencies=[Depends(require_auth)],
     )
 
+    # Vision-ingestion settings (Settings → Vision). Same hand-maintained
+    # router-list constraint as the API keys block above: the standalone
+    # factory mounts these, and the production overlay path MUST mount them
+    # too, or the surface silently misses /settings/vision (caught by the
+    # e2e api-coverage battery: "admin operation missing from live
+    # surface"). Also wires the _vision runtime-settings provider so a PUT
+    # applies to the ingestion pipeline without restart.
+    from ..server.vision_settings_routes import install_settings_provider
+    from ..server.vision_settings_routes import router as vision_settings_router
+
+    app.include_router(
+        vision_settings_router,
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
+    install_settings_provider()
+
     # Instance memory-cap quota — public snapshot endpoint (the WebUI
     # QuotaBanner polls it) + a 507 guard on ingestion endpoints. Mirror
     # of server/app.py; the overlay must mount both or the banner 404s
@@ -2406,30 +3147,23 @@ def _mount_twin_subapp(
     # clickable citations. Mounted under the same prefix so the
     # frontend just calls `${TWIN}/query` instead of LightRAG's
     # native `/query`.
-    try:
-        from ..server.twin_query_routes import build_twin_query_router
+    from ..server.twin_query_routes import build_twin_query_router
 
-        def _get_rag_for_twin_query():
-            rag = _twindb_state.get("rag")
-            if rag is None:
-                raise RuntimeError(
-                    "twindb twin_query: host LightRAG instance not captured. "
-                    "register(mount_server=True) requires shim_native_routes=True "
-                    "so the rag instance is available."
-                )
-            return rag
+    def _get_rag_for_twin_query():
+        rag = _twindb_state.get("rag")
+        if rag is None:
+            raise RuntimeError(
+                "twindb twin_query: host LightRAG instance not captured; "
+                "refusing to fall back to an unguarded native query route."
+            )
+        return rag
 
-        twin_query_router = build_twin_query_router(_get_rag_for_twin_query)
-        app.include_router(
-            twin_query_router,
-            prefix=prefix,
-            dependencies=[Depends(require_auth)],
-        )
-    except ImportError:
-        # twin_query_routes is part of the server extra; if the
-        # extra wasn't installed we silently skip — the legacy
-        # LightRAG native /query still works for the React port.
-        pass
+    twin_query_router = build_twin_query_router(_get_rag_for_twin_query)
+    app.include_router(
+        twin_query_router,
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
 
     from ..server.api_wiring import api_wiring_probes, log_api_wiring_sanity
 

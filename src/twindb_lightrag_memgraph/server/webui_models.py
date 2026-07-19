@@ -202,6 +202,7 @@ class ActivityEvent(_Base):
         "settings",
         "api-key-created",
         "api-key-revoked",
+        "vision-settings-updated",
     ]
     sev: Literal["info", "warning", "error", "critical"]
     actor: ActivityActor

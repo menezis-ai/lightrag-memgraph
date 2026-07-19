@@ -18,10 +18,13 @@ from twindb_lightrag_memgraph.server.app import create_app
 
 
 @pytest.fixture()
-async def client():
+async def client(monkeypatch):
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
     webui_router.reset_store()

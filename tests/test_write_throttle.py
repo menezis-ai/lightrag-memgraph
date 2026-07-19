@@ -83,6 +83,68 @@ class TestAcquireWriteSlot:
         async with pool.acquire_write_slot():
             pass
 
+    async def test_slot_released_when_driver_acquisition_hits_operation_deadline(
+        self, monkeypatch
+    ):
+        """A timed-out Bolt getter cannot permanently consume a write permit."""
+
+        async def stalled_getter():
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(pool, "get_driver", stalled_getter)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with pool.acquire_write_slot():
+                async with pool.get_session():
+                    pytest.fail("a stalled driver getter must not yield")
+
+        # The timeout is translated from cancellation, but the outer slot
+        # context must still execute its finally block and return the permit.
+        async with pool.acquire_write_slot():
+            pass
+
+    async def test_wait_for_slot_is_bounded(self, monkeypatch):
+        semaphore = asyncio.Semaphore(1)
+        await semaphore.acquire()
+        monkeypatch.setattr(pool, "_get_write_semaphore", lambda: semaphore)
+        monkeypatch.setenv("MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError, match="write queue exhausted"):
+            async with pool.acquire_write_slot():
+                pytest.fail("timed-out waiter entered the slot")
+
+        # The timed-out waiter must not release the slot owned by this test.
+        assert semaphore.locked()
+        semaphore.release()
+
+    async def test_timeout_returns_permit_when_acquire_wins_cancel_race(
+        self, monkeypatch
+    ):
+        class RacingSemaphore:
+            releases = 0
+
+            async def acquire(self):
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    # Simulate a permit granted just as the timeout cancels
+                    # the waiter. The owner must observe and return it.
+                    return True
+
+            def release(self):
+                self.releases += 1
+
+        semaphore = RacingSemaphore()
+        monkeypatch.setattr(pool, "_get_write_semaphore", lambda: semaphore)
+        monkeypatch.setenv("MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError, match="write queue exhausted"):
+            async with pool.acquire_write_slot():
+                pytest.fail("timed-out waiter entered the slot")
+
+        assert semaphore.releases == 1
+
     async def test_semaphore_recreated_on_loop_change(self):
         # Acquire once to create the semaphore
         async with pool.acquire_write_slot():

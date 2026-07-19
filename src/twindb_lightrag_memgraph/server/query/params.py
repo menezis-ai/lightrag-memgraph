@@ -11,7 +11,10 @@ def _query_param_kwargs(body: Any, *, stream: bool = False) -> dict[str, Any]:
         "mode": body.mode,
         "top_k": body.top_k,
         "only_need_context": body.only_need_context,
-        "only_need_prompt": body.only_need_prompt,
+        # The external model rejects prompt disclosure. Keep the downstream
+        # control pinned off as defense in depth for any internally constructed
+        # body that bypassed Pydantic validation.
+        "only_need_prompt": False,
         "stream": stream,
     }
     if body.response_type is not None:
@@ -29,11 +32,11 @@ def _query_param_kwargs(body: Any, *, stream: bool = False) -> dict[str, Any]:
     if body.ll_keywords:
         param_kwargs["ll_keywords"] = body.ll_keywords
     if body.conversation_history:
-        param_kwargs["conversation_history"] = body.conversation_history
+        param_kwargs["conversation_history"] = [
+            message.model_dump() for message in body.conversation_history
+        ]
     if body.history_turns is not None:
         param_kwargs["history_turns"] = body.history_turns
-    if body.user_prompt is not None and body.user_prompt.strip():
-        param_kwargs["user_prompt"] = body.user_prompt.strip()
     if body.enable_rerank is not None:
         param_kwargs["enable_rerank"] = body.enable_rerank
     if body.tag_filter is not None:

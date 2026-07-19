@@ -17,6 +17,9 @@ from fastapi import FastAPI
 from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
 from twindb_lightrag_memgraph.server.auth import auth_router
 from twindb_lightrag_memgraph.server.quota_routes import router as quota_router
+from twindb_lightrag_memgraph.server.vision_settings_routes import (
+    router as vision_settings_router,
+)
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.native_shims import (
     build_health_shim,
@@ -60,7 +63,7 @@ def _fastapi_routes_from_router(router, *, prefix: str = "") -> set[Route]:
         for path, operations in paths.items()
         if isinstance(operations, dict)
         for method in operations
-        if method.upper() in {"GET", "POST", "PATCH", "DELETE"}
+        if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
     }
 
 
@@ -78,13 +81,14 @@ def _backend_routes() -> set[Route]:
         )
         | _fastapi_routes_from_router(api_key_router, prefix="/twin/api")
         | _fastapi_routes_from_router(quota_router, prefix="/twin/api")
+        | _fastapi_routes_from_router(vision_settings_router, prefix="/twin/api")
     )
 
 
 def _msw_routes() -> set[Route]:
     text = MSW_HANDLERS_TS.read_text(encoding="utf-8")
     routes: set[Route] = set()
-    pattern = re.compile(r"http\.(get|post|patch|delete)\(\s*`([^`]+)`", re.S)
+    pattern = re.compile(r"http\.(get|post|put|patch|delete)\(\s*`([^`]+)`", re.S)
     for method, raw_path in pattern.findall(text):
         path = _normalize_path(raw_path)
         if path.startswith("/__e2e/"):
@@ -122,7 +126,7 @@ def _frontend_routes_from_resources_ts() -> set[Route]:
             snippet = text[match.end() : snippet_end]
             method_match = re.search(r"method:\s*['\"]([A-Z]+)['\"]", snippet)
             method = method_match.group(1) if method_match else "GET"
-            if method in {"GET", "POST", "PATCH", "DELETE"}:
+            if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
                 routes.add(Route(method, path))
     return routes
 
@@ -148,6 +152,8 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/twin/api/settings/api-keys"),
     Route("POST", "/twin/api/settings/api-keys"),
     Route("DELETE", "/twin/api/settings/api-keys/{param}"),
+    Route("GET", "/twin/api/settings/vision"),
+    Route("PUT", "/twin/api/settings/vision"),
     Route("GET", "/twin/api/quota"),
     Route("GET", "/twin/api/folders"),
     Route("POST", "/twin/api/folders"),

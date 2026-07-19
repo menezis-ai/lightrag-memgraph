@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from .auth import auth_router, configure_auth, require_auth
 from .api_wiring import log_api_wiring_sanity
 from .chunk_routes import create_chunk_routes, router as chunk_router
+from .query.models import TwinQueryBody
 from .settings import LightRAGServerSettings, get_settings
 from .tracing import (
     apply_lang_with_tracing,
@@ -79,13 +80,6 @@ def _production_auth_required(env: dict[str, str] | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 
-class QueryRequest(BaseModel):
-    query: str
-    mode: str = "hybrid"
-    only_need_context: bool = False
-    workspace: str | None = None
-
-
 class QueryResponse(BaseModel):
     response: str
     source_doc_ids: list[str] = []
@@ -115,14 +109,9 @@ class ReadinessResponse(BaseModel):
     checks: dict[str, dict[str, Any]]
 
 
-def _classification_guard_requires_file_path(
-    require_production_auth: bool,
-    env: dict[str, str] | None = None,
-) -> bool:
-    """Fail closed on raw-text /insert in production when MIP gating is active."""
+def _classification_guard_active(env: dict[str, str] | None = None) -> bool:
+    """Return whether MIP source classification governs ingestion."""
     env = env if env is not None else os.environ
-    if not require_production_auth:
-        return False
     if (env.get("TWIN_MIP_LABEL_MAP") or "").strip():
         return True
     return getattr(LightRAG, "_twin_classification_hook", None) is not None
@@ -151,7 +140,6 @@ async def _ainsert_with_optional_file_path(
     text: str,
     *,
     file_path: str | None,
-    classification_guard: bool,
 ) -> None:
     ainsert = rag.ainsert
     if file_path is None:
@@ -160,14 +148,6 @@ async def _ainsert_with_optional_file_path(
     if _ainsert_accepts_file_paths(ainsert):
         await ainsert(text, file_paths=file_path)
         return
-    if classification_guard:
-        raise HTTPException(
-            status_code=501,
-            detail=(
-                "This LightRAG version cannot receive file_paths on ainsert; "
-                "classification-gated /insert would bypass source-file checks."
-            ),
-        )
     logger.warning(
         "Ignoring /insert file_path because LightRAG.ainsert does not support "
         "file_paths in this LightRAG version"
@@ -968,7 +948,14 @@ def _register_core_routes(
         response_model=QueryResponse,
         dependencies=[Depends(require_auth)],
     )
-    async def query(body: QueryRequest, request: Request):
+    async def query(body: TwinQueryBody, request: Request):
+        """Legacy response envelope behind the Twin query security boundary.
+
+        The root endpoint remains for standalone-client compatibility, but it
+        deliberately shares the strict request model and retrieval ContextVars
+        with ``/twin/api/query``.  No native prompt-control model reaches the
+        LLM on this path.
+        """
         rag = _get_rag()
 
         # P1: Extract distributed trace context from agent headers
@@ -976,13 +963,16 @@ def _register_core_routes(
         if trace_ctx:
             logger.debug("Distributed trace context: %s", trace_ctx)
 
-        result = await rag.aquery(
-            body.query,
-            param={
-                "mode": body.mode,
-                "only_need_context": body.only_need_context,
-            },
-        )
+        from lightrag.base import QueryParam
+
+        from .folder import resolve_folder_for_request
+        from .query.params import _make_query_param, _query_param_kwargs
+        from .query.request_scope import _retrieval_scope
+
+        folder = resolve_folder_for_request(request)
+        param = _make_query_param(QueryParam, _query_param_kwargs(body))
+        with _retrieval_scope(folder, body):
+            result = await rag.aquery(body.query, param=param)
 
         # P2: Extract full_doc_ids from the query result
         source_doc_ids = _extract_doc_ids(result)
@@ -998,32 +988,26 @@ def _register_core_routes(
         dependencies=[Depends(require_auth)],
         responses={
             400: {
-                "description": "file_path is required when production MIP classification is active"
-            },
-            501: {
-                "description": "The installed LightRAG ainsert API cannot receive file_paths"
+                "description": "Raw-text insertion is disabled when MIP source classification is active"
             },
         },
     )
     async def insert(body: InsertRequest):
         rag = _get_rag()
         file_path = _usable_file_path(body.file_path)
-        classification_guard = _classification_guard_requires_file_path(
-            require_production_auth
-        )
-        if classification_guard and file_path is None:
+        if _classification_guard_active():
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "file_path is required for /insert when MIP classification "
-                    "is active in production."
+                    "Raw-text /insert is disabled when MIP source classification "
+                    "is active: an independent file_path cannot prove that it "
+                    "is the source of the submitted text. Use /documents/upload."
                 ),
             )
         await _ainsert_with_optional_file_path(
             rag,
             body.text,
             file_path=file_path,
-            classification_guard=classification_guard,
         )
         return InsertResponse(status="ok")
 
@@ -1164,6 +1148,23 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     )
     logger.info(
         "API key management routes mounted at %s/settings/api-keys",
+        TWIN_API_PREFIX,
+    )
+
+    # -- Vision-ingestion settings (Settings → Vision; GET auth-only,
+    # PUT admin-gated at the route level). Also wires the runtime
+    # provider so _vision re-reads the store on every image.
+    from .vision_settings_routes import install_settings_provider
+    from .vision_settings_routes import router as vision_settings_router
+
+    app.include_router(
+        vision_settings_router,
+        prefix=TWIN_API_PREFIX,
+        dependencies=[Depends(require_auth)],
+    )
+    install_settings_provider()
+    logger.info(
+        "Vision settings routes mounted at %s/settings/vision",
         TWIN_API_PREFIX,
     )
 

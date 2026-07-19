@@ -355,6 +355,25 @@ def _resolve_local_jwt_actor(request: Request, bearer_token: str | None) -> str 
         return None
 
 
+def is_infrastructure_root_request(request: Request | None) -> bool:
+    """Return whether *request* presents the configured static root secret.
+
+    Authorization gates must use this credential predicate rather than compare
+    the human-readable actor label returned by :func:`resolve_auth_actor`.
+    A local JWT subject is caller-controlled configuration and may legitimately
+    be named ``api_key``; treating that string as a capability would let the
+    account collide with the infrastructure-root audit label.
+    """
+    if request is None or not _static_api_key:
+        return False
+    bearer_token = _bearer_token_from_request(request)
+    native_api_key = request.headers.get("x-api-key") or ""
+    return any(
+        token and _secret_equal(token, _static_api_key)
+        for token in (bearer_token, native_api_key)
+    )
+
+
 def resolve_auth_actor(request: Request | None) -> str | None:
     """Best-effort actor resolution for auth Activity events.
 
@@ -368,17 +387,21 @@ def resolve_auth_actor(request: Request | None) -> str | None:
     if actor:
         return actor
 
+    # Keep actor attribution aligned with ``require_auth``: the separately
+    # managed static key is the infrastructure root credential and is checked
+    # before legacy JWT decoding.  Besides producing accurate audit records,
+    # this distinction is used by dormant-IdP authorization gates.
+    # LightRAG's native document routes carry the static root credential in
+    # ``X-API-Key`` while Twin routes use ``Authorization: Bearer``. Folder
+    # binding runs before either router dependency, so it must recognise both
+    # transports as the same separately managed infrastructure identity.
+    if is_infrastructure_root_request(request):
+        return "api_key"
+
     bearer_token = _bearer_token_from_request(request)
     actor = _resolve_local_jwt_actor(request, bearer_token)
     if actor:
         return actor
-
-    if (
-        _static_api_key
-        and bearer_token
-        and _secret_equal(bearer_token, _static_api_key)
-    ):
-        return "api_key"
     return None
 
 
@@ -505,7 +528,8 @@ async def require_auth(
     Resolution order:
       1. IdP JWT — when ``TWIN_IDP_JWKS_URL`` is configured (cookie or
          ``Authorization`` header). Returns the verified ``sso_subject``.
-      2. Static API key (``LIGHTRAG_API_KEY``) carried via Authorization.
+      2. Static API key (``LIGHTRAG_API_KEY``) carried via Authorization or
+         the LightRAG-native ``X-API-Key`` transport.
       3. Per-operator API key (``twk_``) minted via Settings → API keys.
       4. Legacy local JWT (``LIGHTRAG_JWT_SECRET``) carried via Authorization.
 
@@ -518,6 +542,11 @@ async def require_auth(
     identity = _resolve_idp_identity(request, idp_config)
     if identity is not None:
         return identity
+
+    # Static infrastructure root. Keep both transports aligned with the
+    # credential predicate used by dormant-IdP admin and folder gates.
+    if is_infrastructure_root_request(request):
+        return "api_key"
 
     if not _auth_enabled:
         return await _resolve_open_access(request, credentials, idp_config)
@@ -537,7 +566,8 @@ async def require_auth(
 
     token = credentials.credentials
 
-    # 2. Static API key (env-set, infra root key — never exposed via UI).
+    # Preserve the dependency's direct-call contract used by integrations and
+    # tests that supply parsed HTTPBearer credentials without a Request object.
     if _static_api_key and _secret_equal(token, _static_api_key):
         return "api_key"
 

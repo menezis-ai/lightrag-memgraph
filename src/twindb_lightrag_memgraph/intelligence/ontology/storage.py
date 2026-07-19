@@ -12,6 +12,8 @@ Follows the same patterns as kv_impl.py:
 
 import logging
 import os
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -28,6 +30,172 @@ from .schema import (
 )
 
 logger = logging.getLogger("twin_rag_intelligence.ontology.storage")
+
+_MIN_EXPANSION_HOPS = 1
+_MAX_EXPANSION_HOPS = 3
+_MAX_QUERY_NGRAM = 4
+_MAX_QUERY_CANDIDATES = 64
+_QUERY_TOKEN_RE = re.compile(r"[\w]+(?:[-./:][\w]+)*", re.UNICODE)
+
+# These words may occur in almost every support question and are not useful
+# ontology seeds on their own.  Technical identifiers remain eligible even
+# when short because punctuation, digits, or acronym casing mark them as such.
+_GENERIC_QUERY_TERMS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "after",
+        "apres",
+        "après",
+        "are",
+        "at",
+        "au",
+        "aux",
+        "avec",
+        "avant",
+        "before",
+        "by",
+        "cause",
+        "causes",
+        "ce",
+        "ces",
+        "comment",
+        "dans",
+        "de",
+        "des",
+        "du",
+        "en",
+        "erreur",
+        "error",
+        "est",
+        "et",
+        "for",
+        "from",
+        "how",
+        "in",
+        "is",
+        "issue",
+        "la",
+        "le",
+        "les",
+        "lorsque",
+        "of",
+        "on",
+        "or",
+        "out",
+        "ou",
+        "pour",
+        "pourquoi",
+        "problem",
+        "probleme",
+        "problème",
+        "quel",
+        "quelle",
+        "quelles",
+        "quels",
+        "qui",
+        "se",
+        "son",
+        "sont",
+        "sur",
+        "the",
+        "that",
+        "this",
+        "to",
+        "un",
+        "une",
+        "what",
+        "when",
+        "where",
+        "which",
+        "why",
+        "with",
+    }
+)
+
+
+def _is_technical_token(raw: str) -> bool:
+    """True for identifier-like tokens (digits, separators, acronyms)."""
+    return (
+        any(character.isdigit() for character in raw)
+        or any(separator in raw for separator in "./:_")
+        or (len(raw) >= 2 and raw.isupper())
+    )
+
+
+def _candidate_class(technical: bool, size: int) -> int:
+    """Technical identifiers first, then more specific phrases."""
+    if technical and size == 1:
+        return 0
+    if technical:
+        return 1
+    if size > 1:
+        return 2
+    return 3
+
+
+def _ranked_query_phrases(
+    tokens: list[str], raw_tokens: list[str]
+) -> list[tuple[tuple[int, int, int, int, str], str]]:
+    """Rank informative n-grams with a deterministic sort key."""
+    ranked: list[tuple[tuple[int, int, int, int, str], str]] = []
+    max_size = min(_MAX_QUERY_NGRAM, len(tokens))
+    for size in range(1, max_size + 1):
+        for start in range(0, len(tokens) - size + 1):
+            end = start + size
+            phrase_tokens = tokens[start:end]
+            technical = any(
+                _is_technical_token(raw_tokens[index]) for index in range(start, end)
+            )
+            informative = [
+                token
+                for token in phrase_tokens
+                if token not in _GENERIC_QUERY_TERMS and len(token) >= 3
+            ]
+            if not technical and not informative:
+                continue
+
+            phrase = " ".join(phrase_tokens)
+            # Source position and lexical value make the bound deterministic.
+            key = (
+                _candidate_class(technical, size),
+                -size,
+                -len(phrase),
+                start,
+                phrase,
+            )
+            ranked.append((key, phrase))
+    return ranked
+
+
+def _query_term_candidates(query: str) -> list[str]:
+    """Return bounded, deterministic ontology seeds extracted from *query*.
+
+    Exact matching is intentional: it prevents a broad lexical match from
+    activating unrelated ontology branches.  The candidates include
+    informative unigrams and contiguous n-grams, while generic question words
+    cannot become seeds by themselves.
+    """
+
+    normalized = unicodedata.normalize("NFKC", query)
+    raw_tokens = _QUERY_TOKEN_RE.findall(normalized)
+    if not raw_tokens:
+        return []
+
+    tokens = [token.casefold() for token in raw_tokens]
+    ranked = _ranked_query_phrases(tokens, raw_tokens)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for _key, phrase in sorted(ranked):
+        if phrase in seen:
+            continue
+        seen.add(phrase)
+        candidates.append(phrase)
+        if len(candidates) == _MAX_QUERY_CANDIDATES:
+            break
+    return candidates
 
 
 @dataclass
@@ -254,26 +422,70 @@ class OntologyStorage:
             await result.consume()
             return record["cnt"] > 0 if record else False
 
-    async def query_expansion(self, term: str, max_hops: int = 2) -> list[str]:
-        """Traverse SYNONYM/RELATED_TO/CO_OCCURS to expand a term.
+    async def query_expansion(self, query: str, max_hops: int = 2) -> list[str]:
+        """Return deterministically ranked terms related to query candidates.
 
-        Returns list of related term names.
+        Candidate terms are exact, bounded n-grams extracted from the natural
+        language query.  For every reachable term, the best path score is::
+
+            max_path(product(clamp(relation.confidence, 0, 1)) / path_hops)
+
+        This score uses stored evidence confidence and explicitly penalizes
+        longer paths.  It is a ranking heuristic, not a measured recall gain.
         """
+        if (
+            isinstance(max_hops, bool)
+            or not isinstance(max_hops, int)
+            or not _MIN_EXPANSION_HOPS <= max_hops <= _MAX_EXPANSION_HOPS
+        ):
+            raise ValueError(
+                "max_hops must be an integer between "
+                f"{_MIN_EXPANSION_HOPS} and {_MAX_EXPANSION_HOPS}"
+            )
+
+        candidate_terms = _query_term_candidates(query)
+        if not candidate_terms:
+            return []
+
         label = self._label()
 
         async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 f"""
                 MATCH (start:`{label}` {{node_type: 'Term'}})
-                WHERE toLower(start.name) = toLower($term)
-                MATCH (start)-[:SYNONYM|RELATED_TO|CO_OCCURS*1..{max_hops}]-(related:`{label}`)
+                WHERE toLower(start.name) IN $candidate_terms
+                MATCH path=(start)-[:SYNONYM|RELATED_TO|CO_OCCURS*1..{max_hops}]-(related:`{label}`)
                 WHERE related.node_type = 'Term' AND related.name <> start.name
-                RETURN DISTINCT related.name AS name
+                WITH related.name AS name,
+                     length(path) AS hops,
+                     reduce(
+                         confidence_product = 1.0,
+                         relation IN relationships(path) |
+                         confidence_product *
+                         CASE
+                             WHEN relation.confidence IS NULL THEN 0.0
+                             WHEN toFloat(relation.confidence) < 0.0 THEN 0.0
+                             WHEN toFloat(relation.confidence) > 1.0 THEN 1.0
+                             ELSE toFloat(relation.confidence)
+                         END
+                     ) AS confidence_product
+                WITH name,
+                     hops,
+                     max(confidence_product / toFloat(hops)) AS path_score
+                ORDER BY name ASC, path_score DESC, hops ASC
+                WITH name,
+                     collect({{score: path_score, hops: hops}})[0] AS best_path
+                RETURN name
+                ORDER BY best_path.score DESC,
+                         best_path.hops ASC,
+                         toLower(name) ASC,
+                         name ASC
                 LIMIT 20
                 """,
-                term=term,
+                candidate_terms=candidate_terms,
             )
-            names = [record["name"] async for record in result]
+            raw_names = [record["name"] async for record in result]
+            names = list(dict.fromkeys(raw_names))
             await result.consume()
             return names
 

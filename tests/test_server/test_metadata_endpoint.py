@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server import webui_router
+from twindb_lightrag_memgraph.server.auth import configure_auth
 
 
 class FakeDocStatus:
@@ -47,6 +48,7 @@ class FakeRag:
 
 @pytest.fixture()
 async def client(monkeypatch):
+    configure_auth(api_key="test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -73,10 +75,12 @@ async def client(monkeypatch):
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
     _twindb_state.pop("rag", None)
     webui_router.reset_store()
+    configure_auth()
 
 
 class TestDocumentMetadataEndpoint:

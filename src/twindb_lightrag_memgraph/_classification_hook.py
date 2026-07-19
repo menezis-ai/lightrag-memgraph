@@ -51,10 +51,9 @@ Two LightRAG entry points are patched by
 
 Design notes
 ------------
-- The hook works only when ingestion receives a file path (the most
-  common case). If LightRAG is fed raw text in-memory, classification
-  is unavailable and the hook deliberately passes the insertion through
-  without adding classification metadata.
+- In-memory ingestion without a source file is rejected while the hook is
+  active: there is no trustworthy classification signal to enforce against
+  the workspace ceiling.
 - Native upload routes enqueue with the bare file name while the binary
   sits in the configured ``INPUT_DIR`` — :func:`_resolve_detection_path`
   re-joins the two (confined to the input tree) before probing.
@@ -62,10 +61,13 @@ Design notes
   the rejected content (audit finding PIPE-6b): ``content_summary`` is
   a fixed redaction placeholder, because the summary would surface the
   very document the gate refused into the WebUI.
-- The hook NEVER raises into the caller — a failed extraction yields a
-  ``classification = {class_id: 'UNKNOWN', reason: 'extraction-failed'}``
-  payload and the document is allowed through (or blocked, depending on
-  ``TWIN_MIP_MAX_CLASSIFICATION``).
+- The hook NEVER raises into the caller — rejections are converted to FAILED
+  DocStatus rows. What rejects depends on ``TWIN_MIP_UNLABELED_POLICY``
+  (default ``allow``, decision 2026-07-10): readable-above-ceiling and
+  untrusted UNKNOWN labels always reject; UNLABELED documents (unsupported
+  format, no label, missing optional dep) are ingested with class None
+  traced in metadata — set the policy to ``reject`` to restore the tier-1
+  fail-closed posture.
 - Audit event emission is delegated to a callback so this module stays
   decoupled from the Twin overlay's specific store implementation.
 """
@@ -86,6 +88,7 @@ from .classification import (
     detect_classification,
     is_above,
     load_label_map,
+    unlabeled_ingest_allowed,
 )
 
 log = logging.getLogger("twin.classification.hook")
@@ -99,6 +102,10 @@ AuditEmitter = Callable[[str, dict[str, Any]], None]
 _AINSERT_GATE_ACTIVE: ContextVar[bool] = ContextVar(
     "twin_ainsert_gate_active", default=False
 )
+
+# Placeholder "path" recorded for rejections of in-memory ingestion calls
+# (no source file on disk, hence no trustworthy classification signal).
+_IN_MEMORY_INGESTION_PATH = "<in-memory-ingestion>"
 
 
 class ClassificationRejection(Exception):
@@ -132,8 +139,8 @@ def classify_for_ingestion(
     Parameters
     ----------
     file_path:
-        Path to the source document. Required — in-memory ingestion
-        bypasses this hook.
+        Path to the source document. Required; source-less ingestion is
+        rejected by the patched LightRAG entry points before this helper.
     label_map:
         Override for the loaded ``{guid → class_id}`` map. Defaults to
         :func:`load_label_map` (reads ``TWIN_MIP_LABEL_MAP``).
@@ -157,7 +164,10 @@ def classify_for_ingestion(
     Raises
     ------
     ClassificationRejection
-        When the detected class outranks the configured ceiling.
+        When the detected class outranks the configured ceiling, when the
+        label is readable but untrusted (``UNKNOWN``), or — only under
+        ``TWIN_MIP_UNLABELED_POLICY=reject`` — when no MIP label could be
+        read at all (default policy is ``allow``; decision 2026-07-10).
     """
     path_str = os.fspath(file_path)
     if label_map is None:
@@ -175,11 +185,41 @@ def classify_for_ingestion(
             reason=f"extraction-failed: {exc.__class__.__name__}",
         )
 
+    # Validate the immutable source signal before considering mutable operator
+    # input. Otherwise an operator-selected C1/C2 could turn a missing or
+    # unparseable label into an apparently authorised classification before the
+    # ceiling check below.
+    #
+    # Unlabeled documents (class_id=None) follow TWIN_MIP_UNLABELED_POLICY
+    # (default: allow — decision 2026-07-10). UNKNOWN (readable-but-unmapped
+    # label, extraction crash) stays fail-closed through is_above regardless
+    # of the policy; ``is_above(None, ceiling)`` is False by contract.
+    source_payload = result.as_dict()
+    if (result.class_id is None and not unlabeled_ingest_allowed()) or is_above(
+        result.class_id, ceiling
+    ):
+        if audit_emit is not None:
+            audit_emit(
+                "classification-detected",
+                {
+                    "path": path_str,
+                    "classification": source_payload,
+                    "ceiling": ceiling,
+                },
+            )
+            audit_emit(
+                "classification-rejected",
+                {
+                    "path": path_str,
+                    "classification": source_payload,
+                    "ceiling": ceiling,
+                },
+            )
+        raise ClassificationRejection(path_str, result, ceiling)
+
     # An operator-selected class (upload UI -> X-Twin-Classification header,
-    # bound into the ingestion context) can raise the classification or set one
-    # when nothing was detected. The embedded label stays a floor — operators
-    # can never downgrade below it (PO decision 2026-06-24). When the operator
-    # made no choice this is a no-op and auto-detection alone stands.
+    # bound into the ingestion context) may only raise a trusted source class.
+    # The embedded label stays a floor: operators can never downgrade below it.
     result = apply_operator_classification(result, get_active_operator_classification())
 
     payload = result.as_dict()
@@ -190,6 +230,8 @@ def classify_for_ingestion(
             {"path": path_str, "classification": payload, "ceiling": ceiling},
         )
 
+    # The source has already passed the trust/ceiling gate. This second check
+    # enforces the same ceiling after a legitimate operator raise.
     if is_above(result.class_id, ceiling):
         if audit_emit is not None:
             audit_emit(
@@ -228,6 +270,10 @@ def install_classification_hook(
             ceiling=resolved_ceiling,
             audit_emit=audit_emit,
         )
+
+    # The patched LightRAG entry points need the same explicitly configured
+    # ceiling when constructing a rejection for source-less ingestion.
+    setattr(_hook, "_twin_classification_ceiling", resolved_ceiling)
 
     log.info(
         "Classification hook installed (ceiling=%s, label_map_size=%d)",
@@ -405,6 +451,31 @@ def _partition_inputs(
     return accepted, rejected
 
 
+def _source_required_rejections(
+    active_hook: Callable[..., Any], count: int
+) -> list[tuple[int, ClassificationRejection]]:
+    """Build fail-closed rejections for documents without source files."""
+    ceiling = str(
+        getattr(
+            active_hook,
+            "_twin_classification_ceiling",
+            os.environ.get("TWIN_MIP_MAX_CLASSIFICATION", "C2"),
+        )
+    )
+    result = ClassificationResult(
+        class_id="UNKNOWN",
+        source_format="in-memory",
+        reason="source-file-required",
+    )
+    return [
+        (
+            idx,
+            ClassificationRejection(_IN_MEMORY_INGESTION_PATH, result, ceiling),
+        )
+        for idx in range(count)
+    ]
+
+
 def _raw_path_at(paths, idx) -> str | None:
     """The raw (unresolved) path string at ``idx``, or None when blank."""
     if not paths or idx >= len(paths):
@@ -544,20 +615,26 @@ async def _gated_ainsert(
     paths = _as_list(file_paths)
     explicit_ids = _as_list(ids)
 
-    if file_paths is None:
-        return await original_ainsert(
-            self,
-            input,
-            split_by_character,
-            split_by_character_only,
-            ids,
-            file_paths,
-            track_id,
-        )
-    if len(paths) != len(inputs):
+    if file_paths is not None and len(paths) != len(inputs):
         raise ValueError("Number of file paths must match the number of documents")
     if ids is not None and len(explicit_ids) != len(inputs):
         raise ValueError("Number of IDs must match the number of documents")
+
+    if file_paths is None:
+        from lightrag.utils import generate_track_id
+
+        resolved_track_id = track_id or generate_track_id("insert")
+        rejection_paths = [_IN_MEMORY_INGESTION_PATH] * len(inputs)
+        await _record_rejections(
+            self,
+            _source_required_rejections(active_hook, len(inputs)),
+            inputs,
+            rejection_paths,
+            explicit_ids,
+            ids is not None,
+            resolved_track_id,
+        )
+        return resolved_track_id
 
     accepted, rejected = _partition_inputs(active_hook, paths)
 
@@ -693,8 +770,6 @@ async def _patched_apipeline_enqueue_documents(
     - the ainsert-level gate already owns this call chain
       (:data:`_AINSERT_GATE_ACTIVE` — prevents double gating/events);
     - the hook is not installed / was uninstalled (stale class patch);
-    - ``file_paths is None`` (in-memory text, nothing to probe — parity with
-      the ainsert gate);
     - argument shapes are invalid (the original raises its own native
       ``ValueError``, unchanged).
 
@@ -712,15 +787,28 @@ async def _patched_apipeline_enqueue_documents(
     gate_off = (
         _AINSERT_GATE_ACTIVE.get()
         or active_hook is None
-        or file_paths is None
         or not inputs
-        or len(paths) != len(inputs)
+        or (file_paths is not None and len(paths) != len(inputs))
         or (ids is not None and len(explicit_ids) != len(inputs))
     )
     if gate_off:
         return await original_enqueue(
             self, input, ids, file_paths, track_id, *args, **kwargs
         )
+
+    if file_paths is None:
+        resolved_track_id = _resolve_enqueue_track_id(track_id)
+        rejection_paths = [_IN_MEMORY_INGESTION_PATH] * len(inputs)
+        await _record_rejections(
+            self,
+            _source_required_rejections(active_hook, len(inputs)),
+            inputs,
+            rejection_paths,
+            explicit_ids,
+            ids is not None,
+            resolved_track_id,
+        )
+        return resolved_track_id
 
     accepted, rejected = _partition_inputs(active_hook, paths)
 

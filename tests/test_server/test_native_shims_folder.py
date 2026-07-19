@@ -102,14 +102,17 @@ async def client(monkeypatch):
         return None
 
     monkeypatch.setattr(native_shims, "_attach_tags_via_graph", no_tags)
+    configure_auth(api_key="test-infra-root")
     rag = FakeRag()
     app = FastAPI()
     app.include_router(build_native_shims_router(lambda: rag))
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
+    configure_auth()
 
 
 class TestNativeShimFolders:

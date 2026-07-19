@@ -555,23 +555,15 @@ def _build_admin_app() -> FastAPI:
 
 
 class TestRequireAdminUser:
-    async def test_dormant_returns_placeholder_user(self):
-        """Audit 2026-06-10 H4 palier 1: dormant IdP returns a
-        placeholder dict tagged ``idp_validated=False`` rather than
-        ``None``. The route-level ``require_auth`` dep is what gates
-        anonymous in this posture; ``require_admin_user`` just signals
-        "authenticated, no RBAC yet". Critical for dev / standalone
-        compat until MyAccess is wired."""
+    async def test_dormant_rejects_request_without_infrastructure_root(self):
         idp_jwt.configure_idp(None)
         app = _build_admin_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
             r = await c.get("/admin/ping")
-        assert r.status_code == 200
-        body = r.json()
-        assert body["user"]["idp_validated"] is False
-        assert body["user"]["gateway_scopes"] == []
+        assert r.status_code == 403
+        assert "infrastructure root key" in r.json()["detail"]
 
     async def test_active_idp_missing_token_401(self, fake_jwks):
         cfg = _config_for(fake_jwks)

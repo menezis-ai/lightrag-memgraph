@@ -51,10 +51,13 @@ def test_api_key_router_rejects_anonymous_when_mounted_directly():
 @pytest.fixture()
 async def client(monkeypatch):
     monkeypatch.setenv("WORKSPACE", f"apikey_routes_{secrets.token_hex(4)}")
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     webui_router.reset_store()
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
     # Cleanup the workspace label

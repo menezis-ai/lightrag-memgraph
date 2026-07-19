@@ -99,6 +99,24 @@ def test_protected_routes_accept_valid_bearer():
     assert response.status_code == 200
 
 
+def test_protected_routes_accept_native_x_api_key_transport():
+    app = _build_app(with_auth=True)
+    client = TestClient(app)
+
+    response = client.get("/openapi", headers={"X-API-Key": "test-api-key"})
+
+    assert response.status_code == 200
+
+
+def test_protected_routes_reject_invalid_native_x_api_key():
+    app = _build_app(with_auth=True)
+    client = TestClient(app)
+
+    response = client.get("/openapi", headers={"X-API-Key": "wrong"})
+
+    assert response.status_code == 401
+
+
 def test_pipeline_status_projects_real_lightrag_history(monkeypatch):
     async def fake_get_namespace_data(name, *, workspace):
         assert name == "pipeline_status"

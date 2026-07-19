@@ -102,7 +102,7 @@ describe('TweakRadio', () => {
       <TweakRadio
         label="Mode"
         value="hybrid"
-        options={['naive', 'local', 'global', 'hybrid', 'mix', 'bypass']}
+        options={['naive', 'local', 'global', 'hybrid', 'mix']}
         onChange={vi.fn()}
       />,
     );
@@ -116,7 +116,7 @@ describe('TweakRadio', () => {
       <TweakRadio
         label="Mode"
         value="hybrid"
-        options={['naive', 'local', 'global', 'hybrid', 'mix', 'bypass']}
+        options={['naive', 'local', 'global', 'hybrid', 'mix']}
         onChange={onChange}
       />,
     );

@@ -255,6 +255,30 @@ describe('onRetagSubmit', () => {
     );
   });
 
+  it('surfaces the backend active-tag 422 with the rejected tag ids', async () => {
+    bulkRetagDocumentsMock.mockRejectedValueOnce(
+      new ApiError('POST /documents/_bulk-retag → 422', 422, {
+        detail: {
+          message: 'Only active, approved tags may be attached',
+          unapproved_tags: ['argocd', 'unknown-tag'],
+        },
+      }),
+    );
+    const { result, pushToast } = setup();
+
+    await act(async () => {
+      await result.current.onRetagSubmit(retagAction());
+    });
+
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Tag update failed',
+        sub: 'Only active, approved tags may be attached: argocd, unknown-tag.',
+      }),
+    );
+  });
+
   it('error non-Error → generic mapped copy with the source count', async () => {
     bulkRetagDocumentsMock.mockRejectedValueOnce('weird');
     const a = makeDoc({ doc_id: 'd1' });

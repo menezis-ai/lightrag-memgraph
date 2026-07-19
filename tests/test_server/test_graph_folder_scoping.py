@@ -1095,6 +1095,7 @@ async def test_native_unions_direct_member_entities(patched_loaders, monkeypatch
 
 @pytest.fixture
 async def graph_client(monkeypatch):
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -1110,6 +1111,7 @@ async def graph_client(monkeypatch):
 
     from twindb_lightrag_memgraph import _twindb_state
     from twindb_lightrag_memgraph.server import webui_router
+    from twindb_lightrag_memgraph.server.auth import configure_auth
 
     # No DB: stub the two index loaders the scoping path needs.
     async def _ctd(_ws):
@@ -1122,15 +1124,19 @@ async def graph_client(monkeypatch):
     monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
 
     webui_router.reset_store()
+    configure_auth(api_key="test-infra-root")
     _twindb_state["rag"] = _FakeRag(_kg_two_entities())
     app = FastAPI()
     app.include_router(webui_router.router)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
     _twindb_state.pop("rag", None)
     webui_router.reset_store()
+    configure_auth()
 
 
 async def test_graph_entities_route_scopes_by_folder_header(graph_client):

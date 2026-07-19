@@ -589,14 +589,25 @@ async def _delete_or_unshare(rag, doc_id: str, folder: str) -> None:
         await _delete_doc_from_rag(rag, doc_id)
         return
 
-    from .webui.routes_documents import _membership_lock
+    from .webui.routes_documents import (
+        _delete_with_last_membership_claim,
+        _membership_lock,
+    )
 
     async with _membership_lock(doc_id):
         folders = await get_folders(doc_id)
-        # Physical delete only on the last (or unknown) membership; otherwise
-        # unshare from the active folder, keeping the doc alive for the others.
-        if folders is None or folders == [folder]:
-            await _delete_doc_from_rag(rag, doc_id)
+        # A membership-aware backend may hard-delete only after claiming an
+        # observed last membership. ``None`` means the state changed since the
+        # route's visibility check; fail closed instead of bypassing the CAS.
+        if folders is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Document membership changed concurrently; retry.",
+            )
+        elif folders == [folder]:
+            await _delete_with_last_membership_claim(
+                _delete_doc_from_rag, rag, doc_id, folder
+            )
         else:
             await rag.doc_status.remove_from_folder(doc_id, folder)
 
@@ -632,6 +643,8 @@ async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     try:
         await _delete_or_unshare(rag, doc_id, folder)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("twindb shim: delete_document(%s) failed", doc_id)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -817,6 +830,7 @@ def build_native_shims_router(
         dependencies=protected_deps,
         responses={
             404: {"description": "Document not found"},
+            409: {"description": "Document membership changed concurrently"},
             500: {"description": "Document deletion failed"},
         },
     )

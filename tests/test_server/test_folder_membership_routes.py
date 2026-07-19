@@ -1,9 +1,8 @@
 """Endpoint contract tests for folder membership routes.
 
 Covers the new /documents/{id}/folders surface and the ref-counted bulk-delete,
-against an in-memory FakeDocStatus that models membership. The admin gate is
-dormant here (no TWIN_IDP_JWKS_URL) so require_admin_user returns a placeholder
-and the routes are reachable — the gating itself is exercised in the IdP tests.
+against an in-memory FakeDocStatus that models membership. With no IdP, the
+fixture authenticates using the explicit infrastructure root key.
 """
 
 from __future__ import annotations
@@ -17,6 +16,8 @@ from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server import webui_router
+from twindb_lightrag_memgraph.server.webui import routes_documents
+from twindb_lightrag_memgraph.server.auth import configure_auth
 
 
 class FakeDocStatus:
@@ -42,6 +43,7 @@ class FakeDocStatus:
             "doc-default": {"default"},
             "doc-sandbox": {"sandbox"},
         }
+        self.claims: dict[str, str] = {}
 
     async def get_by_id(self, doc_id: str):
         return self.docs.get(doc_id)
@@ -52,7 +54,7 @@ class FakeDocStatus:
         return sorted(self.members.get(doc_id, set()))
 
     async def add_to_folder(self, doc_id: str, folder: str) -> bool:
-        if doc_id not in self.docs:
+        if doc_id not in self.docs or doc_id in self.claims:
             return False
         self.members.setdefault(doc_id, set()).add(folder)
         return True
@@ -63,16 +65,41 @@ class FakeDocStatus:
         self.members.get(doc_id, set()).discard(folder)
         return len(self.members.get(doc_id, set()))
 
+    async def claim_last_membership_delete(
+        self, doc_id: str, folder: str, claim: str
+    ) -> bool:
+        if doc_id in self.claims or self.members.get(doc_id) != {folder}:
+            return False
+        self.claims[doc_id] = claim
+        return True
+
+    async def release_delete_claim(self, doc_id: str, claim: str) -> None:
+        if self.claims.get(doc_id) == claim:
+            self.claims.pop(doc_id)
+
 
 class FakeRag:
     def __init__(self) -> None:
         self.doc_status = FakeDocStatus()
         self.deleted: list[str] = []
+        self.cache_cleared = 0
+        self.aclear_cache_raises = False
+        self.delete_raises = False
 
     async def adelete_by_doc_id(self, doc_id: str) -> None:
+        if self.delete_raises:
+            raise RuntimeError("delete cascade failed")
         self.deleted.append(doc_id)
         self.doc_status.docs.pop(doc_id, None)
         self.doc_status.members.pop(doc_id, None)
+        self.doc_status.claims.pop(doc_id, None)
+
+    async def aclear_cache(self) -> None:
+        # LightRAG's LLM-response-cache purge, invoked by _delete_doc_from_rag
+        # after a physical delete so cached answers stop citing the dead doc.
+        self.cache_cleared += 1
+        if self.aclear_cache_raises:
+            raise RuntimeError("cache backend down")
 
 
 @pytest.fixture()
@@ -88,17 +115,21 @@ async def client(monkeypatch):
         ),
     )
     webui_router.reset_store()
+    configure_auth(api_key="test-infra-root")
     rag = FakeRag()
     _twindb_state["rag"] = rag
     app = FastAPI()
     app.include_router(webui_router.router)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         c._test_rag = rag
         yield c
     _twindb_state.pop("rag", None)
     webui_router.reset_store()
+    configure_auth()
 
 
 # ── POST add membership ──────────────────────────────────────────────────
@@ -180,6 +211,33 @@ class TestRemoveMembership:
         r = await client.delete("/documents/ghost/folders/default")
         assert r.status_code == 404
 
+    async def test_last_membership_cas_conflict_is_409_not_hard_delete(self, client):
+        doc_status = client._test_rag.doc_status
+
+        async def concurrent_share(_doc_id: str, _folder: str, _claim: str) -> bool:
+            doc_status.members["doc-default"].add("sandbox")
+            return False
+
+        doc_status.claim_last_membership_delete = concurrent_share
+        r = await client.delete("/documents/doc-default/folders/default")
+
+        assert r.status_code == 409
+        assert client._test_rag.deleted == []
+        assert doc_status.members["doc-default"] == {"default", "sandbox"}
+
+    async def test_failed_cascade_releases_claim(self, client):
+        client._test_rag.delete_raises = True
+
+        with pytest.raises(RuntimeError, match="delete cascade failed"):
+            await routes_documents._delete_with_last_membership_claim(
+                webui_router._delete_doc_from_rag,
+                client._test_rag,
+                "doc-default",
+                "default",
+            )
+
+        assert "doc-default" not in client._test_rag.doc_status.claims
+
 
 class TestMembershipActivity:
     async def test_folder_membership_events_are_serializable(self, client):
@@ -218,4 +276,49 @@ class TestBulkDeleteRefcount:
         )
         assert r.status_code == 200
         assert r.json() == {"deleted": 1, "failed": []}
+        assert client._test_rag.deleted == ["doc-default"]
+
+
+# ── Query-cache purge on physical delete ─────────────────────────────────
+#
+# LightRAG caches query answers keyed only on (query, mode, params), never on
+# corpus state. Without an explicit purge, a physically-deleted doc keeps being
+# cited in the *answer text* of any repeated question even though folder-scoped
+# retrieval no longer returns its chunks. _delete_doc_from_rag must drop the
+# cache on physical delete — and only on physical delete.
+class TestQueryCachePurgeOnDelete:
+    async def test_physical_delete_purges_query_cache(self, client):
+        r = await client.delete("/documents/doc-default/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is True
+        assert client._test_rag.deleted == ["doc-default"]
+        assert client._test_rag.cache_cleared == 1
+
+    async def test_bulk_physical_delete_purges_query_cache(self, client):
+        r = await client.post(
+            "/documents/bulk-delete", json={"doc_ids": ["doc-default"]}
+        )
+        assert r.status_code == 200
+        assert client._test_rag.deleted == ["doc-default"]
+        # Exactly one purge for one physical delete — a double global flush
+        # would be needlessly costly and is a regression this pins down.
+        assert client._test_rag.cache_cleared == 1
+
+    async def test_unshare_does_not_purge_query_cache(self, client):
+        # Shared doc removed from one folder is NOT physically deleted, so the
+        # global answer cache must be left intact (the doc still exists).
+        await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
+        r = await client.delete("/documents/doc-a/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is False
+        assert client._test_rag.deleted == []
+        assert client._test_rag.cache_cleared == 0
+
+    async def test_cache_purge_failure_does_not_break_delete(self, client):
+        # Cache purge is best-effort: a backend failure must never fail the
+        # primary delete (side-effect-never-breaks-primary-op rule).
+        client._test_rag.aclear_cache_raises = True
+        r = await client.delete("/documents/doc-default/folders/default")
+        assert r.status_code == 200
+        assert r.json()["physically_deleted"] is True
         assert client._test_rag.deleted == ["doc-default"]

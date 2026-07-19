@@ -34,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 # Auth + admin gates are at the router level so every route (including
 # future additions) is protected by default even if the router is mounted
-# outside ``create_app`` / the Forgejo overlay. ``require_admin_user``
-# deliberately treats dormant IdP as "authenticated user is admin", so it
-# must never be the only dependency on an admin router.
+# outside ``create_app`` / the Forgejo overlay. When the IdP is dormant,
+# ``require_admin_user`` accepts only the separately managed infrastructure
+# root key; generated ``twk_`` keys and local JWTs fail closed.
 #
 # Handlers that also inject ``admin`` via ``Depends(require_admin_user)`` do so
 # to INJECT the user dict (for audit ``actor``), not to re-enforce

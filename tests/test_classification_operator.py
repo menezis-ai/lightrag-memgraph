@@ -5,9 +5,9 @@ The upload UI lets an operator pick a MIP class per file. It travels as the
 (``operator_classification_context``), and combined with any auto-detected
 embedded label by :func:`classification.apply_operator_classification`.
 
-Policy under test — the embedded label is a FLOOR:
-  * operator can RAISE the class, or SET one when nothing was detected
-    (e.g. a ``.md`` with no embedded MIP label),
+Policy under test — the embedded label is a FLOOR and a prerequisite:
+  * operator can RAISE a trusted, mapped source classification,
+  * operator can NEVER replace a missing, malformed, or unmapped source label,
   * operator can NEVER downgrade below a detected label,
   * the ceiling (``TWIN_MIP_MAX_CLASSIFICATION``) applies to the resolved class,
   * with no operator choice the auto-detection path is byte-for-byte unchanged
@@ -39,12 +39,13 @@ def test_no_operator_choice_is_noop():
     assert apply_operator_classification(det, "") is det
 
 
-def test_operator_sets_class_when_nothing_detected():
+def test_operator_cannot_replace_missing_source_classification():
     det = ClassificationResult(class_id=None, reason="no-msip-label")
     out = apply_operator_classification(det, "C2")
-    assert out.class_id == "Internal"
-    assert out.source_format == "operator"
-    assert out.reason == "operator-set"
+    assert out.class_id is None
+    assert out.source_format == "unknown"
+    assert out.reason == "no-msip-label"
+    assert out.meta.get("operator_requested") == "Internal"
 
 
 def test_operator_raises_above_detected():
@@ -74,7 +75,7 @@ def test_operator_equal_class_keeps_detected_provenance():
 
 
 def test_business_name_operator_value_normalises():
-    det = ClassificationResult(class_id=None)
+    det = ClassificationResult(class_id="C1", source_format="ooxml")
     out = apply_operator_classification(det, "Confidential")
     assert out.class_id == "Confidential"
     assert out.source_format == "operator"
@@ -105,40 +106,122 @@ def _write(tmp_path, name: str, body: str = "hello") -> str:
     return str(p)
 
 
-def test_classify_for_ingestion_applies_operator_for_unlabeled_md(tmp_path):
-    # .md carries no embedded MIP label -> operator choice is authoritative.
+def test_unlabeled_source_rejected_before_operator_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
+    path = _write(tmp_path, "faq.md", "# FAQ\nhello")
+    with operator_classification_context("C2"):
+        with pytest.raises(ClassificationRejection) as exc_info:
+            classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert exc_info.value.result.class_id is None
+    assert exc_info.value.result.source_format != "operator"
+    assert "operator_requested" not in exc_info.value.result.meta
+
+
+def test_operator_header_never_fabricates_a_class_in_allow_mode(tmp_path):
+    """Permissive default (2026-07-10): the unlabeled doc is ingested, but
+    the operator header still cannot become the resolved class — it is only
+    traced in meta for the audit trail (same invariant as tier-1)."""
     path = _write(tmp_path, "faq.md", "# FAQ\nhello")
     with operator_classification_context("C2"):
         payload = classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert payload["class_id"] is None
+    assert payload["source_format"] != "operator"
+    assert payload["meta"].get("operator_requested") == "Internal"
+
+
+def test_operator_raises_trusted_source_within_ceiling(tmp_path, monkeypatch):
+    from twindb_lightrag_memgraph import _classification_hook
+
+    path = _write(tmp_path, "trusted.docx")
+    monkeypatch.setattr(
+        _classification_hook,
+        "detect_classification",
+        lambda *_args, **_kwargs: ClassificationResult(
+            class_id="C1", source_format="ooxml", label_guid="trusted-guid"
+        ),
+    )
+    with operator_classification_context("C2"):
+        payload = classify_for_ingestion(path, label_map={}, ceiling="C2")
     assert payload["class_id"] == "Internal"
     assert payload["source_format"] == "operator"
+    assert payload["label_guid"] == "trusted-guid"
 
 
-def test_operator_classification_subject_to_ceiling(tmp_path):
+def test_operator_classification_subject_to_ceiling(tmp_path, monkeypatch):
+    from twindb_lightrag_memgraph import _classification_hook
+
     path = _write(tmp_path, "secret.md")
+    monkeypatch.setattr(
+        _classification_hook,
+        "detect_classification",
+        lambda *_args, **_kwargs: ClassificationResult(
+            class_id="C1", source_format="ooxml"
+        ),
+    )
     with operator_classification_context("C4"):  # Secret
-        with pytest.raises(ClassificationRejection):
+        with pytest.raises(ClassificationRejection) as exc_info:
             classify_for_ingestion(path, label_map={}, ceiling="C2")
+    assert exc_info.value.result.class_id == "Secret"
+    assert exc_info.value.result.source_format == "operator"
 
 
-def test_no_operator_context_leaves_autodetection_untouched(tmp_path):
-    # LightRAG-compat: with no operator choice the resolved payload is exactly
-    # what auto-detection alone produces — never tagged 'operator'.
+def test_unmapped_source_rejected_before_operator_override(tmp_path, monkeypatch):
+    from twindb_lightrag_memgraph import _classification_hook
+
+    path = _write(tmp_path, "unmapped.docx")
+    monkeypatch.setattr(
+        _classification_hook,
+        "detect_classification",
+        lambda *_args, **_kwargs: ClassificationResult(
+            class_id="UNKNOWN",
+            source_format="ooxml",
+            label_guid="unmapped-guid",
+            reason="unknown-label-guid",
+        ),
+    )
+    with operator_classification_context("C1"):
+        with pytest.raises(ClassificationRejection) as exc_info:
+            classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert exc_info.value.result.class_id == "UNKNOWN"
+    assert exc_info.value.result.source_format == "ooxml"
+    assert "operator_requested" not in exc_info.value.result.meta
+
+
+def test_no_operator_context_fails_closed_when_autodetection_has_no_class(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
     path = _write(tmp_path, "faq.md")
-    baseline = classify_for_ingestion(path, label_map={}, ceiling="C4")
+    with pytest.raises(ClassificationRejection) as baseline:
+        classify_for_ingestion(path, label_map={}, ceiling="C4")
     with operator_classification_context(None):
-        with_ctx = classify_for_ingestion(path, label_map={}, ceiling="C4")
-    assert with_ctx == baseline
-    assert baseline["source_format"] != "operator"
+        with pytest.raises(ClassificationRejection) as with_ctx:
+            classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert with_ctx.value.result.as_dict() == baseline.value.result.as_dict()
+    assert baseline.value.result.source_format != "operator"
 
 
-def test_garbage_operator_header_falls_back_to_autodetection(tmp_path):
+def test_garbage_operator_header_cannot_bypass_missing_classification(
+    tmp_path, monkeypatch
+):
     # An unsafe/garbage header value is dropped by the context manager, so the
-    # ingestion path behaves as if no operator choice was made.
+    # ingestion path behaves as if no operator choice was made. Exercised in
+    # reject mode where "missing classification" is still a rejection.
+    monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
+    path = _write(tmp_path, "faq.md")
+    with operator_classification_context("../etc/passwd"):
+        with pytest.raises(ClassificationRejection) as exc_info:
+            classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert exc_info.value.result.source_format != "operator"
+
+
+def test_garbage_operator_header_leaves_allow_mode_payload_untouched(tmp_path):
     path = _write(tmp_path, "faq.md")
     with operator_classification_context("../etc/passwd"):
         payload = classify_for_ingestion(path, label_map={}, ceiling="C4")
+    assert payload["class_id"] is None
     assert payload["source_format"] != "operator"
+    assert "operator_requested" not in payload["meta"]
 
 
 # --------------------------------------------------------------------------

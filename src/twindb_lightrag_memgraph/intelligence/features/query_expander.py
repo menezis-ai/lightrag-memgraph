@@ -3,8 +3,8 @@ twin_rag_intelligence/features/query_expander.py
 ==================================================
 F03: Query Expansion with IT/Ops thesaurus.
 
-Impact measured (CNCAC production):
-  +30% recall on domain terminology
+Retrieval impact must be established with corpus-specific qrels; this module
+only defines the expansion mechanism.
 """
 
 import logging
@@ -123,14 +123,22 @@ class QueryExpander:
 
             if domain_hint:
                 domain_terms = await storage.get_domain_terms(domain_hint)
+                allowed_terms = {term.casefold() for term in domain_terms}
                 graph_terms = [
-                    t for t in graph_terms if t in domain_terms
-                ] or graph_terms
+                    term for term in graph_terms if term.casefold() in allowed_terms
+                ]
 
             if graph_terms:
-                unique = list(dict.fromkeys(graph_terms))[
-                    : self.config.max_total_synonyms
-                ]
+                unique: list[str] = []
+                seen: set[str] = set()
+                for term in graph_terms:
+                    normalized = term.casefold()
+                    if normalized in seen:
+                        continue
+                    seen.add(normalized)
+                    unique.append(term)
+                    if len(unique) == self.config.max_total_synonyms:
+                        break
                 expanded = f"{query} {' '.join(unique)}"
                 return ExpansionResult(
                     original_query=query,

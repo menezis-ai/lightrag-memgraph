@@ -6,7 +6,7 @@
  *   - History panel (new / switch / delete threads, localStorage persistence)
  *   - Main conversation with streamed tokens + clickable citations
  *   - Parameters panel (query mode, tag filter, top-k, max-tok, history,
- *     only-context, only-prompt)
+ *     only-context)
  *
  * Behavior delta vs the proto:
  *   - tag catalog injected via prop (no window globals)
@@ -64,6 +64,7 @@ function loadThreads(
 }
 const STREAM_TICK_MS = 70;
 const INITIAL_VISIBLE_SOURCES = 5;
+const MAX_CONVERSATION_MESSAGE_CHARS = 2_000;
 
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
 
@@ -117,8 +118,6 @@ export interface RetrievalTabProps {
     historyTurns: number;
     conversationHistory: readonly ConversationHistoryMessage[];
     onlyContext: boolean;
-    onlyPrompt: boolean;
-    userPrompt: string;
     enableRerank: boolean;
     minScore: number;
     signal?: AbortSignal;
@@ -142,8 +141,6 @@ export interface RetrievalTabProps {
       historyTurns: number;
       conversationHistory: readonly ConversationHistoryMessage[];
       onlyContext: boolean;
-      onlyPrompt: boolean;
-      userPrompt: string;
       enableRerank: boolean;
       minScore: number;
       signal?: AbortSignal;
@@ -402,8 +399,6 @@ export function RetrievalTab({
     { validate: (v) => v === 'any' || v === 'all' },
   );
   const [onlyCtx, setOnlyCtx] = useState(false);
-  const [onlyPrompt, setOnlyPrompt] = useState(false);
-  const [userPrompt, setUserPrompt] = useState('');
   const [enableRerank, setEnableRerank] = useState(true);
 
   const convRef = useRef<HTMLDivElement>(null);
@@ -646,7 +641,13 @@ export function RetrievalTab({
             : splitThinkBlocks(message.tokens?.join('') ?? '').visible;
         const trimmed = content?.trim();
         if (!trimmed) return null;
-        return { role: message.role, content: trimmed };
+        // TwinQueryBody enforces the same limit. Iterate Unicode code points
+        // (rather than UTF-16 code units) so astral characters cannot create a
+        // malformed surrogate while keeping every replayed message <= 2,000.
+        const bounded = [...trimmed]
+          .slice(0, MAX_CONVERSATION_MESSAGE_CHARS)
+          .join('');
+        return { role: message.role, content: bounded };
       })
       .filter(
         (message): message is ConversationHistoryMessage => message !== null,
@@ -667,8 +668,6 @@ export function RetrievalTab({
     historyTurns: history,
     conversationHistory,
     onlyContext: onlyCtx,
-    onlyPrompt,
-    userPrompt,
     enableRerank,
     minScore,
     signal,
@@ -1064,19 +1063,6 @@ export function RetrievalTab({
           onChange={setHistory}
           min={0}
         />
-        <div className="field">
-          <label className="field-label" htmlFor="retrieval-system-prompt">
-            System prompt
-          </label>
-          <textarea
-            id="retrieval-system-prompt"
-            aria-label="System prompt"
-            value={userPrompt}
-            onChange={(e) => setUserPrompt(e.target.value)}
-            rows={3}
-            placeholder="Optional retrieval instruction"
-          />
-        </div>
         <div className="toggle">
           <span
             className={`switch${enableRerank ? ' on' : ''}`}
@@ -1111,24 +1097,6 @@ export function RetrievalTab({
           />{' '}
           Only need context
         </div>
-        <div className="toggle">
-          <span
-            className={`switch${onlyPrompt ? ' on' : ''}`}
-            onClick={() => setOnlyPrompt(!onlyPrompt)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setOnlyPrompt((v) => !v);
-              }
-            }}
-            role="switch"
-            tabIndex={0}
-            aria-checked={onlyPrompt}
-            aria-label="Only need prompt"
-          />{' '}
-          Only need prompt
-        </div>
-
         <div className="connected">
           <span className="dot" /> Connected
         </div>
@@ -1357,10 +1325,10 @@ function Turn({
           Sources unavailable for this answer.
         </div>
       )}
-      {/* Sourceless by design (bypass / only_need_context / only_need_prompt):
-          no retrieval was attempted, so the empty Sources area is expected.
-          Show a discrete cue so the operator reads it as intentional rather
-          than a missing-sources glitch. */}
+      {/* No sourced final answer was requested (currently only_need_context),
+          so the empty Sources area is expected. Show a discrete cue so the
+          operator reads it as intentional rather than a missing-sources
+          glitch. */}
       {!streaming && msg.answerStatus === 'no_retrieval' && (
         <div
           className="sources-empty muted"
@@ -1430,7 +1398,14 @@ function Turn({
                     {s.name}
                   </span>
                   {s.meta && <span className="src-meta">{s.meta}</span>}
-                  <span className="src-score">{s.score.toFixed(2)}</span>
+                  <span
+                    className="src-score"
+                    title={s.score == null ? 'Score unavailable' : undefined}
+                  >
+                    {typeof s.score === 'number' && Number.isFinite(s.score)
+                      ? s.score.toFixed(2)
+                      : '—'}
+                  </span>
                   <span className="src-ext" title="Open source">
                     <Icon name="external-link" size={12} />
                   </span>

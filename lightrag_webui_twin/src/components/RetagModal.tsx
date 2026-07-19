@@ -250,8 +250,15 @@ function RetagModalBody({
   const suggestionListId = 'retag-tag-suggestions';
 
   const sugg = useMemo(() => {
+    // Defence in depth: callers normally pass tagCatalogForSuggestions(), but
+    // this mutation dialog also enforces the backend's active-tag invariant so
+    // a stale/raw catalogue cannot offer a pending tag that will 422.
     const all = tagCatalog.filter(
-      (t) => !current.includes(t.tag) && !pendingAdd.includes(t.tag),
+      (t) =>
+        t.status === 'active' &&
+        t.tier !== 'requested' &&
+        !current.includes(t.tag) &&
+        !pendingAdd.includes(t.tag),
     );
     if (!input) return all.slice(0, 4);
     return all

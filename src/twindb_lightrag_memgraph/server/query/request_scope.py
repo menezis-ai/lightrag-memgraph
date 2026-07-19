@@ -51,7 +51,8 @@ def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
 
 def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:
     """True for modes that produce no sourced answer by design."""
-    return body.mode == "bypass" or body.only_need_context or body.only_need_prompt
+    # ``bypass`` and ``only_need_prompt`` are rejected by TwinQueryBody.
+    return body.only_need_context
 
 
 def _has_advanced_filter(body: TwinQueryBody) -> bool:
@@ -81,7 +82,7 @@ def _query_data_fallback_mode(body: TwinQueryBody) -> str | None:
     """
     if not body.fallback_to_mix:
         return None
-    if body.only_need_context or body.only_need_prompt:
+    if body.only_need_context:
         return None
     if not _has_advanced_filter(body):
         return None

@@ -212,25 +212,43 @@ class TestValidateStep:
         )
         pipeline = OntologyPipeline(config, onto_config)
 
-        with patch(
-            "twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI",
-            return_value=mock_openai_client(mock_extract_response),
-        ):
-            with patch(
+        with (
+            patch.object(pipeline, "approve", new_callable=AsyncMock) as approve,
+            patch(
+                "twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI",
+                return_value=mock_openai_client(mock_extract_response),
+            ),
+            patch(
                 "twindb_lightrag_memgraph.intelligence.ontology.steps.cluster.AsyncOpenAI",
                 return_value=mock_openai_client(mock_cluster_response),
-            ):
-                with patch(
-                    "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich.AsyncOpenAI",
-                    return_value=mock_openai_client(mock_enrich_response),
-                ):
-                    result = await pipeline.run(["doc content"], "ws")
+            ),
+            patch(
+                "twindb_lightrag_memgraph.intelligence.ontology.steps.enrich.AsyncOpenAI",
+                return_value=mock_openai_client(mock_enrich_response),
+            ),
+        ):
+            result = await pipeline.run(["doc content"], "ws")
 
         assert result.is_dry_run is True
         assert len(result.nodes) > 0
+        approve.assert_not_awaited()
 
 
 class TestFullPipeline:
+    def test_pipeline_rejects_auto_approval_configuration(self, config):
+        onto_config = OntologyConfig(
+            enabled=True,
+            workspaces={
+                "ws": WorkspaceOntologyConfig(mode="emergence"),
+            },
+        )
+        # Preserve the pipeline check as defense in depth if a caller mutates an
+        # otherwise valid config object after construction.
+        onto_config.require_review = False
+
+        with pytest.raises(ValueError, match="requires human review"):
+            OntologyPipeline(config, onto_config)
+
     async def test_full_pipeline_dedicated_mode(
         self,
         config,

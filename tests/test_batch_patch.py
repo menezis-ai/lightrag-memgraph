@@ -6,6 +6,7 @@ Verifies that register() patches all 5 batch methods on MemgraphStorage
 and that each returns the correct types from a single UNWIND query.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -892,6 +893,100 @@ class TestSafeDriverWrapper:
 
         wrapper = WrapperCls(mock_raw, database="", use_routing=False)
         assert wrapper.some_custom_attr == "hello"
+
+    async def test_stalled_graph_session_body_times_out_and_closes_session(
+        self, monkeypatch
+    ):
+        """Graph queries share the same bounded operation lifetime as pool I/O."""
+        WrapperCls = self._get_wrapper_class()
+
+        class Session:
+            exited = False
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                self.exited = True
+
+        session = Session()
+        raw = MagicMock()
+        raw.session = MagicMock(return_value=session)
+        wrapper = WrapperCls(raw, database="memgraph", use_routing=False)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with wrapper.session():
+                await asyncio.Event().wait()
+
+        assert session.exited is True
+
+    async def test_stalled_graph_session_checkout_times_out(self, monkeypatch):
+        """A driver checkout hang cannot starve the graph Bolt pool forever."""
+        WrapperCls = self._get_wrapper_class()
+        entered = asyncio.Event()
+
+        class Session:
+            async def __aenter__(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+            async def __aexit__(self, *_exc):  # pragma: no cover - no checkout
+                return False
+
+        raw = MagicMock()
+        raw.session = MagicMock(return_value=Session())
+        wrapper = WrapperCls(raw, database="memgraph", use_routing=False)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with wrapper.session():
+                pytest.fail("a stalled graph checkout must not yield")
+
+        assert entered.is_set()
+
+    async def test_stalled_graph_session_close_times_out(self, monkeypatch):
+        """Returning a graph session to a wedged driver is also bounded."""
+        WrapperCls = self._get_wrapper_class()
+        close_started = asyncio.Event()
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                close_started.set()
+                await asyncio.Event().wait()
+
+        raw = MagicMock()
+        raw.session = MagicMock(return_value=Session())
+        wrapper = WrapperCls(raw, database="memgraph", use_routing=False)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with wrapper.session():
+                pass
+
+        assert close_started.is_set()
+
+    async def test_stalled_graph_driver_close_times_out(self, monkeypatch):
+        """LightRAG graph shutdown cannot hang indefinitely in driver.close()."""
+        WrapperCls = self._get_wrapper_class()
+        close_started = asyncio.Event()
+
+        async def stalled_close():
+            close_started.set()
+            await asyncio.Event().wait()
+
+        raw = MagicMock()
+        raw.close = AsyncMock(side_effect=stalled_close)
+        wrapper = WrapperCls(raw, database="memgraph", use_routing=False)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            await wrapper.close()
+
+        assert close_started.is_set()
 
 
 # ── _patched_initialize tests ────────────────────────────────────────

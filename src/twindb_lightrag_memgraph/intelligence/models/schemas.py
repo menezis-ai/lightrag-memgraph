@@ -19,6 +19,16 @@ class IntentType(str, Enum):
     ESCALATION = "ESCALATION"
 
 
+class AnswerStatus(str, Enum):
+    """Epistemic state of an answer returned by the intelligence pipeline."""
+
+    GROUNDED = "grounded"
+    INSUFFICIENT_INFORMATION = "insufficient_information"
+    CITATION_VALIDATION_FAILED = "citation_validation_failed"
+    QUERY_FAILED = "query_failed"
+    NO_RETRIEVAL = "no_retrieval"
+
+
 class IntentResult(BaseModel):
     intent: IntentType = IntentType.IN_SCOPE
     confidence: float = 0.0
@@ -66,6 +76,7 @@ class QueryResult(BaseModel):
 
     answer: str
     citations: list[Citation] = Field(default_factory=list)
+    answer_status: AnswerStatus = AnswerStatus.GROUNDED
     trace: Optional[QueryTrace] = None
     intent: Optional[IntentResult] = None
 

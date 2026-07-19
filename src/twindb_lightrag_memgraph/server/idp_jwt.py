@@ -448,20 +448,14 @@ def _resolve_palier_level(
 
 _active_config: IdpConfig | None = None
 _active_cache: JwksCache | None = None
-# True once we've already emitted the palier-1 admin warning so each
-# admin call doesn't flood the log.
-_dormant_admin_warned: bool = False
 
 
 def configure_idp(config: IdpConfig | None) -> None:
     """Activate or reset the IdP middleware. Called once at startup
     (or repeatedly from tests)."""
-    global _active_config, _active_cache, _dormant_admin_warned
+    global _active_config, _active_cache
     _active_config = config
     _active_cache = JwksCache(config) if config and config.enabled else None
-    # Reset the per-process warning latch on every (re)configuration so
-    # tests can verify the warning fires after flipping back to dormant.
-    _dormant_admin_warned = False
     if config and config.enabled:
         logger.info(
             "idp_jwt: middleware active (jwks=%s, issuer=%s, audience=%s)",
@@ -472,7 +466,7 @@ def configure_idp(config: IdpConfig | None) -> None:
     else:
         logger.warning(
             "idp_jwt: middleware dormant (no JWKS URL configured) -- "
-            "admin routes gated by authentication only, no RBAC (palier 1)"
+            "admin routes require the infrastructure root API key"
         )
 
 
@@ -502,34 +496,28 @@ def require_admin_user(request: Request) -> dict[str, Any] | None:
 
     Two-tier behaviour, controlled by whether ``TWIN_IDP_JWKS_URL`` is set:
 
-    - **Palier 1 — IdP dormant**: returns a placeholder user dict
-      (``idp_validated=False``). The route-level ``require_auth``
-      dependency has already rejected anonymous requests, so what
-      reaches this function is at least an authenticated identity.
-      A single boot-time warning was emitted by :func:`configure_idp`;
-      additional per-call INFO logs are rate-limited to once per
-      process so audit trails see "admin without RBAC" without log
-      flooding. Doctrine: MyAccess will provide real RBAC; until then
-      admin = authenticated.
-    - **Palier 2 — IdP active**: resolves the user via
+    - **IdP dormant**: only the separately managed static infrastructure
+      API key is authoritative for administration. Legacy local JWTs and
+      per-operator keys intentionally carry no RBAC claims and fail closed.
+    - **IdP active**: resolves the user via
       ``require_idp_user`` (401 on missing/invalid token), then raises
       403 unless the user's ``gateway_scopes`` contains
       :data:`ADMIN_FOLDERS_SCOPE`. The scope is injected by
       :func:`claims_to_user` whenever the user's ``groups`` intersect
       ``IdpConfig.admin_groups``.
     """
-    global _dormant_admin_warned
     if _active_config is None:
-        if not _dormant_admin_warned:
-            logger.info(
-                "idp_jwt: admin route hit while IdP dormant "
-                "-- palier 1 (authenticated, no RBAC scope check)"
+        from .auth import is_infrastructure_root_request
+
+        if not is_infrastructure_root_request(request):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Verified IdP admin scope or infrastructure root key required",
             )
-            _dormant_admin_warned = True
         return {
-            "sso_subject": "anonymous-admin",
+            "sso_subject": "api_key",
             "idp_validated": False,
-            "gateway_scopes": [],
+            "gateway_scopes": [ADMIN_FOLDERS_SCOPE],
         }
     user = require_idp_user(request)
     if user is None:

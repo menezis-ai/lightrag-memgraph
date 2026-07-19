@@ -25,6 +25,7 @@ from twindb_lightrag_memgraph.server.app import create_app
 
 @pytest.fixture()
 async def client(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -49,7 +50,9 @@ async def client(monkeypatch, tmp_path):
 
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
     folder_store.reset_runtime_store()

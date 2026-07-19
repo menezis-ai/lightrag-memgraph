@@ -229,11 +229,37 @@ function retagTitleSuffix(
   return `${verb} to ${sourceCountLabel(updated)}${skippedSuffix}`;
 }
 
-function retagErrorMessage(err: unknown, targetCount: number): string {
-  logTechnicalError('retag', err);
-  return userErrorMessage(err, {
-    action: `updating tags on ${sourceCountLabel(targetCount)}`,
-  });
+function retagGovernanceDetail(err: ApiError): string | null {
+  if (err.status !== 422 || !err.body || typeof err.body !== 'object') {
+    return null;
+  }
+  const detail = (err.body as Record<string, unknown>).detail;
+  if (!detail || typeof detail !== 'object') return null;
+  const payload = detail as Record<string, unknown>;
+  const message =
+    typeof payload.message === 'string' && payload.message.trim()
+      ? payload.message.trim()
+      : 'Only active, approved tags may be attached';
+  const tags = Array.isArray(payload.unapproved_tags)
+    ? payload.unapproved_tags.filter(
+        (tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()),
+      )
+    : [];
+  return tags.length > 0 ? `${message}: ${tags.join(', ')}.` : `${message}.`;
+}
+
+function retagErrorMessage(
+  err: unknown,
+  targetCount: number,
+  scope = 'retag',
+  action = `updating tags on ${sourceCountLabel(targetCount)}`,
+): string {
+  logTechnicalError(scope, err);
+  if (err instanceof ApiError) {
+    const governanceDetail = retagGovernanceDetail(err);
+    if (governanceDetail) return governanceDetail;
+  }
+  return userErrorMessage(err, { action });
 }
 
 function undoTitleSuffix(updated: number, failedCount: number): string {
@@ -422,12 +448,16 @@ export function useDocumentActions({
         sub: toast.sub,
       });
     } catch (err) {
-      logTechnicalError('retag-undo', err);
       pushToast({
         kind: 'error',
         title: 'Undo failed',
         tagname: toast.tagname,
-        sub: userErrorMessage(err, { action: 'undoing the tag change' }),
+        sub: retagErrorMessage(
+          err,
+          undo.targets.length,
+          'retag-undo',
+          'undoing the tag change',
+        ),
       });
     }
   };
@@ -624,11 +654,15 @@ export function useDocumentActions({
         sub: `${resolvedDocIds.size} doc${resolvedDocIds.size === 1 ? '' : 's'} · tags: ${tags.join(', ')}`,
       });
     } catch (err) {
-      logTechnicalError('initial-tags', err);
       pushToast({
         kind: 'error',
         title: 'Initial tags failed',
-        sub: userErrorMessage(err, { action: 'applying initial tags' }),
+        sub: retagErrorMessage(
+          err,
+          resolvedDocIds.size,
+          'initial-tags',
+          'applying initial tags',
+        ),
       });
     }
   };

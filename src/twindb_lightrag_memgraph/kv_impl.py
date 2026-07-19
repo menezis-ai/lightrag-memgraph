@@ -23,7 +23,9 @@ from ._constants import resolve_workspace, validate_identifier
 @dataclass
 class MemgraphKVStorage(BaseKVStorage):
     def __init__(self, namespace, global_config, embedding_func, **kwargs):
-        workspace = resolve_workspace()
+        workspace = validate_identifier(
+            str(global_config.get("workspace") or resolve_workspace()), "workspace"
+        )
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,

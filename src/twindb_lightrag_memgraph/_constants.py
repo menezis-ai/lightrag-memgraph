@@ -59,11 +59,15 @@ DEFAULT_TWIN_MAX_FOLDERS = 5
 # to avoid saturating the Bolt pool during bulk uploads.
 MEMGRAPH_WRITE_CONCURRENCY_ENV = "MEMGRAPH_WRITE_CONCURRENCY"
 DEFAULT_WRITE_CONCURRENCY = 8
+MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT_ENV = "MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT"
+DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT = 5.0
 
 # Pool Bolt tuning — configurable pool size and connection acquire timeout.
 MEMGRAPH_POOL_SIZE_ENV = "MEMGRAPH_POOL_SIZE"
 MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV = "MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT"
 DEFAULT_CONNECTION_ACQUIRE_TIMEOUT = 5.0  # seconds — fail fast, don't hang
+MEMGRAPH_OPERATION_TIMEOUT_ENV = "MEMGRAPH_OPERATION_TIMEOUT"
+DEFAULT_OPERATION_TIMEOUT = 60.0  # seconds — bound an acquired Bolt session
 MEMGRAPH_IDLE_DISCONNECT_SECONDS_ENV = "MEMGRAPH_IDLE_DISCONNECT_SECONDS"
 DEFAULT_IDLE_DISCONNECT_SECONDS = 3600.0
 
@@ -78,6 +82,39 @@ DEFAULT_READ_POOL_SIZE = 20
 # LightRAG-native behavior (cache rows survive the failure).
 # Audit 2026-07-02 addendum, finding B.
 TWIN_PURGE_LLM_CACHE_ON_FAILED_ENV = "TWIN_PURGE_LLM_CACHE_ON_FAILED"
+
+# MAGE capability tier — controls detection of optional MAGE query modules
+# (community_detection/Louvain, katz_centrality, …) that back additive
+# graph-algorithm curation features. "auto" (default) probes the connected
+# instance via CALL mg.procedures(); "off" forces the floor tier (base
+# memgraph image, LLM-only curation); "on" trusts the operator that MAGE is
+# present and skips the probe. The floor tier is ALWAYS fully functional —
+# MAGE never gates the storage backends (which are MAGE-free). See
+# _capabilities.py.
+TWIN_MAGE_ENV = "TWIN_MAGE"
+
+# MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md, PR 1).
+# "auto" (default) enables conversion iff the optional markitdown dependency
+# ([convert] extra) is importable; "on" forces it (warns and degrades to the
+# native path if the import fails); "off" disables it entirely — the native
+# LightRAG extraction path is then byte-identical to an unpatched install.
+TWIN_CONVERT_ENV = "TWIN_CONVERT"
+TWIN_CONVERT_FORMATS_ENV = "TWIN_CONVERT_FORMATS"
+TWIN_CONVERT_MAX_BYTES_ENV = "TWIN_CONVERT_MAX_BYTES"
+TWIN_CONVERT_TIMEOUT_ENV = "TWIN_CONVERT_TIMEOUT"
+
+# Vision image-ingestion tier (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+# Knowledge-Bot pattern: RapidOCR pre-filter -> vision LLM (OpenAI-compatible,
+# JSON {image_classification, content}) -> drop noise classes -> markdown.
+TWIN_VISION_ENV = "TWIN_VISION"
+TWIN_VISION_BASE_URL_ENV = "TWIN_VISION_BASE_URL"
+TWIN_VISION_API_KEY_ENV = "TWIN_VISION_API_KEY"
+TWIN_VISION_MODEL_ENV = "TWIN_VISION_MODEL"
+TWIN_VISION_FORMATS_ENV = "TWIN_VISION_FORMATS"
+TWIN_VISION_MAX_BYTES_ENV = "TWIN_VISION_MAX_BYTES"
+TWIN_VISION_TIMEOUT_ENV = "TWIN_VISION_TIMEOUT"
+TWIN_VISION_MIN_OCR_CHARS_ENV = "TWIN_VISION_MIN_OCR_CHARS"
+TWIN_VISION_DROP_CLASSES_ENV = "TWIN_VISION_DROP_CLASSES"
 
 _FALSE_FLAG_VALUES = frozenset({"0", "false", "no", "off"})
 

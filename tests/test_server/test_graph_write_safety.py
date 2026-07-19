@@ -35,6 +35,7 @@ from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph.server import graph_reader as gr
 from twindb_lightrag_memgraph.server import webui_router
+from twindb_lightrag_memgraph.server.auth import configure_auth
 
 EMBEDDING_DIM = 4
 
@@ -197,6 +198,7 @@ async def graph_env(monkeypatch):
         )
 
     app = FastAPI()
+    configure_auth(api_key="test-infra-root")
     app.include_router(webui_router.router)
     # Deterministic in-memory store for the routes' activity recording —
     # the graph mutations under test persist through graph_reader Cypher,
@@ -209,10 +211,15 @@ async def graph_env(monkeypatch):
         for lbl in (ws, f"Folder_{ws}", f"DocStatus_{ws}"):
             await (await s.run(f"MATCH (n:`{lbl}`) DETACH DELETE n")).consume()
     webui_router.reset_store()
+    configure_auth()
 
 
 def _client(app: FastAPI) -> AsyncClient:
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
+    )
 
 
 async def _count_entities(ws: str, entity_id: str) -> int:

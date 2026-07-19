@@ -33,7 +33,12 @@ import type {
   GraphRelationPatch,
 } from '../types/graph';
 import type { ApiKeyCreated, ApiKeyPublic } from '../types/apiKey';
+import type {
+  VisionSettings,
+  VisionSettingsPublic,
+} from '../types/visionSettings';
 import type { QuotaSnapshot } from '../types/quota';
+import type { QueryMode } from '../types/retrieval';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
@@ -127,18 +132,16 @@ interface RawDocumentChunk {
 export interface TwinQueryRequest {
   query: string;
   actor?: string;
-  mode?: string;
+  mode?: QueryMode;
   top_k?: number;
   chunk_top_k?: number;
   max_total_tokens?: number;
   only_need_context?: boolean;
-  only_need_prompt?: boolean;
   history_turns?: number;
   conversation_history?: readonly {
     role: 'user' | 'assistant';
     content: string;
   }[];
-  user_prompt?: string;
   enable_rerank?: boolean;
   min_score?: number;
   tag_filter?: {
@@ -157,7 +160,8 @@ export interface TwinQuerySource {
   type: string;
   name: string;
   meta?: string | null;
-  score: number;
+  /** Real retrieval metric, when the backend can expose one. */
+  score?: number | null;
   doc_id?: string | null;
   chunk_id?: string | null;
 }
@@ -587,6 +591,19 @@ export const twinApi = {
       },
     ),
 
+  // ── Vision ingestion settings ────────────────────────────────────
+  // The two operator-tunable curation knobs of the image-ingestion
+  // pipeline (RapidOCR pre-filter + post-LLM class drop). GET is open
+  // to any authenticated operator; PUT is admin-gated server-side.
+  getVisionSettings: (init?: ApiRequestInit) =>
+    apiFetch<VisionSettingsPublic>(`${TWIN}/settings/vision`, init),
+  updateVisionSettings: (body: VisionSettings, init?: ApiRequestInit) =>
+    apiFetch<VisionSettingsPublic>(`${TWIN}/settings/vision`, {
+      ...init,
+      method: 'PUT',
+      body,
+    }),
+
   // Tag governance. listThesaurus is legacy compatibility only; new UI
   // surfaces must use listTags as the canonical runtime catalog.
   listThesaurus: (init?: ApiRequestInit) =>
@@ -1008,6 +1025,8 @@ export const api = {
   listApiKeys: twinApi.listApiKeys,
   createApiKey: twinApi.createApiKey,
   revokeApiKey: twinApi.revokeApiKey,
+  getVisionSettings: twinApi.getVisionSettings,
+  updateVisionSettings: twinApi.updateVisionSettings,
   getQuotaSnapshot: twinApi.getQuotaSnapshot,
 };
 

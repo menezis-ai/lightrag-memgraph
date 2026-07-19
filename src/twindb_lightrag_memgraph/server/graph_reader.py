@@ -25,6 +25,7 @@ PATCH/POST/DELETE `/twin/api/graph/*` routes in `webui_router.py`.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -1557,8 +1558,13 @@ async def read_graph_entities(
                     }
                 )
             await result.consume()
-        chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-        member_docs = await _active_member_docs(workspace)
+        # These two loads are independent Memgraph reads (separate sessions,
+        # distinct results, each swallows its own errors) — run them
+        # concurrently instead of serializing the round-trips.
+        chunk_to_doc, member_docs = await asyncio.gather(
+            _load_chunk_to_doc_index(workspace),
+            _active_member_docs(workspace),
+        )
         # #1a: union operator-created entities (GRAPH_MEMBER_OF the active
         # folder) — they have no chunk provenance so the predicate above skips
         # them. Dedup by id; direct rows are surfaced via `direct_members`.
@@ -2157,8 +2163,12 @@ async def read_graph_relations(
             member_chunks=member_chunks,
             max_edges=max_edges,
         )
-        chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-        member_docs = await _active_member_docs(workspace)
+        # Independent Memgraph reads (separate sessions, own error handling) —
+        # gather them so the two round-trips overlap instead of serializing.
+        chunk_to_doc, member_docs = await asyncio.gather(
+            _load_chunk_to_doc_index(workspace),
+            _active_member_docs(workspace),
+        )
         from .folder import active_folder_id
 
         folder = active_folder_id()

@@ -51,8 +51,17 @@ MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 50.
 MEMGRAPH_READ_POOL_SIZE      Connection pool size (read pool). Default: 20.
 MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 8.
                              Reads are never throttled.
+MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT
+                             Seconds to wait for a write semaphore slot.
+                             Default: 5.
 MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT
                              Seconds to wait for a pooled connection. Default: 5.
+MEMGRAPH_OPERATION_TIMEOUT   Maximum seconds for one pooled or graph-storage Bolt
+                             operation, including driver/session acquisition,
+                             large UNWIND batches, and session/driver closure.
+                             Default: 60. Measure production ingestion batches
+                             and raise this value when their legitimate work can
+                             exceed 60 seconds.
 MEMGRAPH_IDLE_DISCONNECT_SECONDS
                              Force write/read driver recreation after this many
                              seconds without pool activity. Default: 3600.
@@ -64,6 +73,69 @@ TWIN_PURGE_LLM_CACHE_ON_FAILED
                              re-ingestion replays them). Default: enabled —
                              a FAILED doc's extraction cache is deleted so
                              the re-ingestion re-calls the LLM.
+TWIN_MAGE                    MAGE capability tier. "auto" (default) probes the
+                             connected instance via CALL mg.procedures();
+                             "off" forces the floor tier (base memgraph image,
+                             storage + LLM curation only); "on" trusts the
+                             operator that MAGE is present and skips the probe.
+                             The floor tier is fully functional — MAGE only
+                             unlocks additive graph-algorithm features
+                             (Louvain, Katz), never the storage backends.
+TWIN_EMBEDDING_TIMEOUT       Per-attempt timeout (seconds) for storage-side
+                             ingestion embedding calls. Default: 30. Raise it
+                             for a legitimately slow (not cold) endpoint.
+TWIN_EMBEDDING_ATTEMPTS      Number of embedding attempts before failing a
+                             document. Default: 3 (>= 1). Retries recover a
+                             cold embedding endpoint; the last error is
+                             re-raised on exhaustion (doc marked FAILED).
+TWIN_CONVERT                 MarkItDown pre-conversion tier
+                             (MARKITDOWN-INGESTION-PLAN.md). "auto" (default)
+                             enables it iff the [convert] extra is installed;
+                             "on" forces it (warns + native path if the import
+                             fails); "off" disables — native extraction is
+                             byte-identical to an unpatched install. Effective
+                             on the lightrag_server entrypoints (twin_main.py,
+                             -m lightrag_server, asgi.py) — the seam rides the
+                             create_app wrapper.
+TWIN_CONVERT_FORMATS         Comma list of extensions routed through
+                             conversion. Default: pdf,docx,pptx,xlsx,xls,msg,
+                             epub,html,htm,csv. ZIP is deliberately excluded
+                             (no upstream zip-bomb guard).
+TWIN_CONVERT_MAX_BYTES       Size cap above which conversion is skipped
+                             (native path). Default: 104857600 (100 MB).
+TWIN_CONVERT_TIMEOUT         Per-conversion timeout in seconds (native path
+                             on expiry). Default: 120.
+TWIN_VISION                  Vision image-ingestion tier (PR 2). "auto"
+                             (default) enables it iff openai is importable
+                             AND TWIN_VISION_BASE_URL + TWIN_VISION_MODEL
+                             are set; "on" forces (warns when unusable);
+                             "off" disables — image uploads then follow the
+                             native LightRAG behavior (rejected extension).
+TWIN_VISION_BASE_URL         OpenAI-compatible endpoint serving a
+                             vision-capable model (BNP: Gemma 4 31B-it via
+                             LLMaaS/vLLM). Required for the tier.
+TWIN_VISION_API_KEY          API key for that endpoint. Default: dummy
+                             ("twin-vision" — vLLM does not check it).
+TWIN_VISION_MODEL            Model name on the endpoint. Required.
+TWIN_VISION_FORMATS          Comma list of image extensions. Default:
+                             png,jpg,jpeg.
+TWIN_VISION_MAX_BYTES        Image size cap (refused above). Default:
+                             20971520 (20 MB).
+TWIN_VISION_TIMEOUT          Whole-pipeline timeout per image (OCR + LLM),
+                             seconds. Default: 60.
+TWIN_VISION_MIN_OCR_CHARS    RapidOCR pre-filter: an image whose OCR text is
+                             below this many chars is refused WITHOUT a
+                             vision call (Knowledge-Bot economics). Default:
+                             20. Set 0 to caption every image. RapidOCR not
+                             installed → pre-filter bypassed (warn once).
+TWIN_VISION_DROP_CLASSES     Vision classifications refused after the LLM
+                             call. Default: invalid,logo,signature.
+The two knobs above are the ONLY runtime-overridable vision settings:
+Settings → Vision in the WebUI (PUT /twin/api/settings/vision, admin-gated)
+persists per-workspace values in Memgraph that take precedence over these
+env defaults, effective immediately across workers (re-read per image).
+Endpoint/key/model/timeouts/caps stay env-only by design (secrets + SSRF
+surface do not belong in a UI-mutable store).
 
 --------------------------------------------------------------------------------
 2. SERVER (FastAPI overlay) — prefix LIGHTRAG_
@@ -141,7 +213,12 @@ TWIN_REQUIRE_AUTH=true        Same requirement without changing the env name.
                               LIGHTRAG_JWT_PASSWORD or AUTH_ACCOUNTS.
 
 Mode A — static API key:
-LIGHTRAG_API_KEY             Static key; clients send it as bearer.
+LIGHTRAG_API_KEY             Static infrastructure root key. Twin routes accept it
+                             as a bearer; LightRAG-native routes use X-API-Key.
+                             When the IdP is dormant, this is the only credential
+                             authorized for admin routes and non-default folder
+                             selection. Local JWT and twk_ credentials remain
+                             non-admin and are confined to the default folder.
 
 Mode B — local JWT login (POST /login → HttpOnly cookie):
 LIGHTRAG_JWT_SECRET          Signing secret. Enables /login.
@@ -198,6 +275,19 @@ The HTTP client scopes every Twin call with the X-Twin-Folder header.
 TWIN_MIP_LABEL_MAP           Path to a JSON map GUID → class id (e.g. C1..C4).
 TWIN_MIP_MAX_CLASSIFICATION  Ceiling; documents above it are rejected at
                              ingestion with an audit event. Default: C2.
+TWIN_MIP_UNLABELED_POLICY    "allow" (default — decision 2026-07-10) ingests
+                             documents WITHOUT a readable MIP label (images,
+                             csv/html, unlabeled OOXML/PDF, olefile/pikepdf
+                             missing), tracing class None in
+                             DocStatus.metadata.classification. "reject"
+                             restores the tier-1 fail-closed posture (every
+                             unlabeled document refused).
+When the MIP hook is active: a READABLE label above the ceiling and an
+untrusted UNKNOWN label (unmapped GUID, extraction crash) always reject;
+unlabeled documents follow TWIN_MIP_UNLABELED_POLICY; source-less ingestion
+still fails closed regardless of the policy (provenance, not labels).
+Operator C1/C2 input may raise, but never replace, source provenance.
+Raw-text /insert is disabled; ingest classified binaries via /documents/upload.
 
 --------------------------------------------------------------------------------
 6. WEBUI OVERLAY / RUNTIME CONFIG

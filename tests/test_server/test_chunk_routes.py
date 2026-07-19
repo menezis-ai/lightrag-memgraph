@@ -759,9 +759,14 @@ class TestHTTPFolderScoping:
         }
         rag.doc_status.get_folders_for_doc = AsyncMock(return_value=["B"])
         app = _make_chunk_app(rag)
+        configure_auth(api_key="test-infra-root")
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
+        ) as client:
             hidden_context = await client.get(
                 "/chunks/c1/context",
                 headers={"X-Twin-Folder": "A"},
@@ -786,6 +791,7 @@ class TestHTTPFolderScoping:
                 "/documents/doc-1/chunks",
                 headers={"X-Twin-Folder": "B"},
             )
+        configure_auth()
 
         assert hidden_context.status_code == 404
         assert hidden_document.status_code == 404
@@ -805,9 +811,14 @@ class TestHTTPFolderScoping:
             "metadata": {"folder": "B"},
         }
         app = _make_chunk_app(rag)
+        configure_auth(api_key="test-infra-root")
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
+        ) as client:
             hidden = await client.get(
                 "/documents/doc-1/chunks",
                 headers={"X-Twin-Folder": "A"},
@@ -816,6 +827,7 @@ class TestHTTPFolderScoping:
                 "/documents/doc-1/chunks",
                 headers={"X-Twin-Folder": "B"},
             )
+        configure_auth()
 
         assert hidden.status_code == 404
         assert visible.status_code == 200

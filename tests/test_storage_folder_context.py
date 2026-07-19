@@ -11,6 +11,7 @@ from twindb_lightrag_memgraph._constants import (
     storage_folder_context,
 )
 from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from twindb_lightrag_memgraph.server.auth import configure_auth
 from lightrag.base import DocProcessingStatus, DocStatus
 
 
@@ -48,6 +49,7 @@ def test_docstatus_serialization_uses_storage_folder_context():
 
 
 async def test_reprocess_failed_captures_request_storage_folder(monkeypatch):
+    configure_auth(api_key="test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -62,14 +64,20 @@ async def test_reprocess_failed_captures_request_storage_folder(monkeypatch):
     async def reprocess_failed_probe():
         return {"folder": get_active_storage_folder()}
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/documents/reprocess_failed",
-            headers={"X-Twin-Folder": "sandbox"},
-        )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/documents/reprocess_failed",
+                headers={
+                    "Authorization": "Bearer test-infra-root",
+                    "X-Twin-Folder": "sandbox",
+                },
+            )
+    finally:
+        configure_auth()
 
     assert response.status_code == 200
     assert response.json() == {"folder": "sandbox"}

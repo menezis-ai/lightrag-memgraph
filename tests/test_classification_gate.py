@@ -320,11 +320,16 @@ async def test_gate_splits_mixed_batch(gate, tmp_path):
     assert len(failed) == 1
 
 
-async def test_gate_bypassed_when_no_file_paths(gate):
+async def test_gate_rejects_when_no_file_paths(gate):
     rag, indexed = gate
-    # No file_paths → classification cannot run → straight passthrough.
-    await rag.ainsert("in-memory text only")
-    assert len(indexed) == 1
+    track = await rag.ainsert("in-memory text only")
+
+    assert indexed == []
+    assert isinstance(track, str) and track
+    failed = rag.doc_status.upsert.call_args.args[0]
+    (row,) = failed.values()
+    assert row["metadata"]["classification"]["class_id"] == "UNKNOWN"
+    assert row["metadata"]["classification"]["reason"] == "source-file-required"
 
 
 async def test_gate_rejects_mismatched_path_count(gate):

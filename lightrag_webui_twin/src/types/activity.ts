@@ -27,6 +27,7 @@ export type ActivityKind =
   | 'graph-relation-edited'
   | 'api-key-created'
   | 'api-key-revoked'
+  | 'vision-settings-updated'
   | 'auth'
   | 'settings';
 
@@ -148,6 +149,11 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     label: 'API key revoked',
     icon: 'lock',
     color: 'var(--twin-amber-vivid)',
+  },
+  'vision-settings-updated': {
+    label: 'Vision settings updated',
+    icon: 'eye',
+    color: 'var(--twin-accent)',
   },
   auth: { label: 'Auth', icon: 'lock', color: 'var(--color-text-secondary)' },
   settings: {

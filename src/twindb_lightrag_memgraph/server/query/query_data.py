@@ -25,13 +25,7 @@ def _iter_kg_rows(data: dict[str, Any]):
 
 def _query_data_source_chunk_ids(data: dict[str, Any]) -> list[str]:
     """Collect chunk ids referenced by KG rows in a structured data payload."""
-    chunk_ids: list[str] = []
-    seen: set[str] = set()
-    for row in _iter_kg_rows(data):
-        for chunk_id in _split_source_ids(row.get("source_id")):
-            if chunk_id not in seen:
-                seen.add(chunk_id)
-                chunk_ids.append(chunk_id)
+    chunk_ids, _scores = _query_data_source_chunk_projection(data)
     return chunk_ids
 
 
@@ -52,19 +46,33 @@ def _query_data_existing_chunk_ids(data: dict[str, Any]) -> set[str]:
 
 def _query_data_source_chunk_scores(data: dict[str, Any]) -> dict[str, float]:
     """Best-effort score per chunk id from KG rows that reference it."""
-    total = sum(1 for _ in _iter_kg_rows(data))
-    if total == 0:
-        return {}
+    _chunk_ids, scores = _query_data_source_chunk_projection(data)
+    return scores
 
+
+def _query_data_source_chunk_projection(
+    data: dict[str, Any],
+) -> tuple[list[str], dict[str, float]]:
+    """Collect referenced chunk ids and their best KG-derived scores."""
+    kg_rows = list(_iter_kg_rows(data))
+    total = len(kg_rows)
+    if total == 0:
+        return [], {}
+
+    chunk_ids: list[str] = []
+    seen: set[str] = set()
     scores: dict[str, float] = {}
-    for rank, row in enumerate(_iter_kg_rows(data)):
-        chunk_ids = _split_source_ids(row.get("source_id"))
-        if not chunk_ids:
+    for rank, row in enumerate(kg_rows):
+        row_chunk_ids = _split_source_ids(row.get("source_id"))
+        if not row_chunk_ids:
             continue
         score = _safe_get_score(row, rank, total)
-        for chunk_id in chunk_ids:
+        for chunk_id in row_chunk_ids:
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                chunk_ids.append(chunk_id)
             scores[chunk_id] = max(scores.get(chunk_id, score), score)
-    return scores
+    return chunk_ids, scores
 
 
 def _query_data_chunk_id(row: dict[str, Any]) -> str | None:
@@ -75,12 +83,16 @@ def _query_data_chunk_id(row: dict[str, Any]) -> str | None:
     return None
 
 
-def _annotate_query_data_chunk_scores(data: dict[str, Any]) -> dict[str, Any]:
+def _annotate_query_data_chunk_scores(
+    data: dict[str, Any],
+    source_scores: dict[str, float] | None = None,
+) -> dict[str, Any]:
     rows = data.get("chunks")
     if not isinstance(rows, list):
         return data
 
-    source_scores = _query_data_source_chunk_scores(data)
+    if source_scores is None:
+        source_scores = _query_data_source_chunk_scores(data)
     total = len(rows)
     annotated_rows: list[Any] = []
     changed = False
@@ -255,24 +267,23 @@ async def _enrich_query_data_chunks_from_source_ids(
     if not isinstance(data, dict):
         return response
 
+    source_chunk_ids, source_scores = _query_data_source_chunk_projection(data)
+    existing_chunk_ids = _query_data_existing_chunk_ids(data)
     missing = [
-        chunk_id
-        for chunk_id in _query_data_source_chunk_ids(data)
-        if chunk_id not in _query_data_existing_chunk_ids(data)
+        chunk_id for chunk_id in source_chunk_ids if chunk_id not in existing_chunk_ids
     ]
     if not missing:
         enriched = dict(response)
-        enriched["data"] = _annotate_query_data_chunk_scores(data)
+        enriched["data"] = _annotate_query_data_chunk_scores(data, source_scores)
         return enriched
 
     records = await _fetch_chunk_records_by_id(rag, missing)
     if not records:
         enriched = dict(response)
-        enriched["data"] = _annotate_query_data_chunk_scores(data)
+        enriched["data"] = _annotate_query_data_chunk_scores(data, source_scores)
         return enriched
 
     enriched_data = dict(data)
-    source_scores = _query_data_source_chunk_scores(data)
     raw_chunks = data.get("chunks")
     raw_references = data.get("references")
     chunks = list(raw_chunks) if isinstance(raw_chunks, list) else []
@@ -301,7 +312,7 @@ async def _enrich_query_data_chunks_from_source_ids(
 
     enriched_data["chunks"] = chunks
     enriched_data["references"] = references
-    enriched_data = _annotate_query_data_chunk_scores(enriched_data)
+    enriched_data = _annotate_query_data_chunk_scores(enriched_data, source_scores)
     enriched = dict(response)
     enriched["data"] = enriched_data
     return enriched

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -127,8 +128,48 @@ def _validate_bulk_retag(targets, adds, removes) -> None:
             )
 
 
+def _active_tag_ids(entries: list[dict[str, Any]]) -> set[str]:
+    """Return exact catalog ids whose authoritative status is active."""
+    return {
+        entry["tag"]
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("tag"), str)
+        and entry.get("status") == "active"
+    }
+
+
+def _unapproved_bulk_tags(
+    requested: list[str], locked_rows: list[dict[str, Any]]
+) -> list[str]:
+    """Validate tag JSON read while its Memgraph nodes are write-locked."""
+    entries: list[dict[str, Any]] = []
+    for row in locked_rows:
+        raw = row.get("data")
+        if not isinstance(raw, str):
+            continue
+        try:
+            entry = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(entry, dict) or entry.get("tag") != row.get("id"):
+            continue
+        entries.append(entry)
+    return sorted(set(requested) - _active_tag_ids(entries))
+
+
+def _unapproved_bulk_tag_error(unapproved: list[str]) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "message": "Only active, approved tags may be attached",
+            "unapproved_tags": unapproved,
+        },
+    )
+
+
 async def _apply_bulk_tag_mutations(
-    adds, removes, doc_ids, tag_label, doc_label, placeholder, now, actor
+    adds, removes, doc_ids, tag_label, doc_label, now, actor
 ) -> None:
     """Apply tag add/remove edges in a single write transaction (or no-op)."""
     if not (adds or removes):
@@ -140,34 +181,42 @@ async def _apply_bulk_tag_mutations(
             tx = await session.begin_transaction()
             try:
                 if adds:
-                    tag_rows = [
-                        {
-                            "id": tag_id,
-                            "data": placeholder.replace(
-                                '"<PLACEHOLDER>"', json.dumps(tag_id)
-                            ),
-                        }
-                        for tag_id in adds
-                    ]
+                    # list_tags() is only a fast API pre-check. Re-read and
+                    # write-lock the catalog nodes in the mutation transaction
+                    # so a concurrent deprecation cannot slip through the gap.
+                    lock_token = secrets.token_urlsafe(24)
                     result = await tx.run(
                         f"""
-                        UNWIND $tags AS tag
-                        MERGE (t:`{tag_label}` {{id: tag.id}})
-                          ON CREATE SET
-                            t.data = tag.data,
-                            t.`__created_at` = timestamp(),
-                            t.`__auto_via_retag` = true
-                          SET t.`__updated_at` = timestamp()
+                        UNWIND $tags AS tagId
+                        MATCH (t:`{tag_label}` {{id: tagId}})
+                        SET t.`__bulk_retag_lock` = $lock_token
+                        RETURN t.id AS id, t.data AS data
+                        """,
+                        tags=adds,
+                        lock_token=lock_token,
+                    )
+                    locked_rows = [dict(record) async for record in result]
+                    await result.consume()
+                    unapproved = _unapproved_bulk_tags(adds, locked_rows)
+                    if unapproved:
+                        raise _unapproved_bulk_tag_error(unapproved)
+
+                    result = await tx.run(
+                        f"""
+                        UNWIND $tags AS tagId
+                        MATCH (t:`{tag_label}` {{id: tagId}})
+                        WHERE t.`__bulk_retag_lock` = $lock_token
                         WITH t
                         UNWIND $docs AS docId
                         MATCH (d:`{doc_label}` {{id: docId}})
                         MERGE (d)-[r:TAGGED_WITH]->(t)
                           ON CREATE SET r.at = $now, r.actor = $actor
                         """,
-                        tags=tag_rows,
+                        tags=adds,
                         docs=doc_ids,
                         now=now,
                         actor=actor,
+                        lock_token=lock_token,
                     )
                     await result.consume()
 
@@ -181,6 +230,19 @@ async def _apply_bulk_tag_mutations(
                         """,
                         docs=doc_ids,
                         tags=removes,
+                    )
+                    await result.consume()
+
+                if adds:
+                    result = await tx.run(
+                        f"""
+                        UNWIND $tags AS tagId
+                        MATCH (t:`{tag_label}` {{id: tagId}})
+                        WHERE t.`__bulk_retag_lock` = $lock_token
+                        REMOVE t.`__bulk_retag_lock`
+                        """,
+                        tags=adds,
+                        lock_token=lock_token,
                     )
                     await result.consume()
 
@@ -218,6 +280,7 @@ async def _emit_bulk_retag_events(
     dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "Invalid bulk retag payload"},
+        422: {"description": "One or more added tags are not active"},
         413: {"description": "Bulk retag payload too large"},
     },
 )
@@ -236,43 +299,17 @@ async def bulk_retag_documents(
 
     _validate_bulk_retag(targets, adds, removes)
 
+    active_tags = _active_tag_ids(await get_store().list_tags())
+    unapproved = sorted(set(adds) - active_tags)
+    if unapproved:
+        raise _unapproved_bulk_tag_error(unapproved)
+
     workspace = resolve_workspace()
     folder = current_folder_id()
     doc_label = f"DocStatus_{workspace}"
     folder_label = f"Folder_{workspace}"
     tag_label = f"WebuiTag_{folder}"
     now = _utcnow_iso()
-
-    placeholder = json.dumps(
-        {
-            "tag": "<PLACEHOLDER>",
-            "tier": "requested",
-            "category": "uncategorized",
-            "status": "pending-review",
-            "def": "Auto-created via retag — needs Steward review.",
-            "aliases": [],
-            "deprecates": [],
-            "sources_count": 0,
-            "chunks_count": 0,
-            "query_freq_30d": 0,
-            "related": [],
-            "examples": [],
-            "requested_by": actor,
-            "requested_at": now,
-            "justification": "auto-created via retag",
-            "created": {
-                "by": actor,
-                "at": now[:10],
-                "action": "auto-requested-via-retag",
-            },
-            "last_edit": {
-                "by": actor,
-                "at": now[:10],
-                "action": "auto-requested-via-retag",
-            },
-        },
-        sort_keys=True,
-    )
 
     async with _pool.get_read_session() as session:
         result = await session.run(
@@ -297,7 +334,7 @@ async def bulk_retag_documents(
     doc_ids = list(existing.keys())
 
     await _apply_bulk_tag_mutations(
-        adds, removes, doc_ids, tag_label, doc_label, placeholder, now, actor
+        adds, removes, doc_ids, tag_label, doc_label, now, actor
     )
 
     async with _pool.get_read_session() as session:

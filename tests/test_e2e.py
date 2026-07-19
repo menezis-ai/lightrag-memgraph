@@ -8,7 +8,8 @@ Exercises the full LightRAG lifecycle with Memgraph backends:
   4. adelete_by_doc_id() — document deletion
   5. Post-deletion verification: KV, Vector, Graph, DocStatus all cleaned
 
-Requires: running Memgraph >= 3.2 + MAGE (set MEMGRAPH_URI).
+Requires: running Memgraph >= 3.0 with native (core) vector search — MAGE not
+required, the plain ``memgraph/memgraph`` image suffices (set MEMGRAPH_URI).
 """
 
 import hashlib

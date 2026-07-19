@@ -26,6 +26,7 @@ from lightrag.utils import EmbeddingFunc, Tokenizer
 
 import twindb_lightrag_memgraph
 from twindb_lightrag_memgraph import _install_storage_folder_capture, _pool
+from twindb_lightrag_memgraph.server.auth import configure_auth
 
 twindb_lightrag_memgraph.register()
 
@@ -33,6 +34,7 @@ twindb_lightrag_memgraph.register()
 EMBEDDING_DIM = 384
 WORKSPACE = "native_runtime"
 DEFAULT_FOLDER = "default"
+ROOT_AUTH_HEADER = {"X-API-Key": "test-infra-root"}
 
 UPLOAD_DOC = (
     "Native upload runtime coverage document. It mentions Atlas, Boreal, and "
@@ -106,6 +108,7 @@ async def native_runtime(monkeypatch, runtime_dirs):
     monkeypatch.setenv("MEMGRAPH_WORKSPACE", WORKSPACE)
     monkeypatch.setenv("INPUT_DIR", runtime_dirs["input"])
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", DEFAULT_FOLDER)
+    configure_auth(api_key="test-infra-root")
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
         '[{"id":"default","label":"Default","kind":"primary"},'
@@ -160,13 +163,16 @@ async def native_runtime(monkeypatch, runtime_dirs):
     app = FastAPI()
     _install_storage_folder_capture(app)
     ensure_fresh_native_document_router()
-    app.include_router(create_document_routes(rag, doc_manager, api_key=None))
+    app.include_router(
+        create_document_routes(rag, doc_manager, api_key="test-infra-root")
+    )
 
     try:
         yield rag, app
     finally:
         await _cleanup_workspace()
         await rag.finalize_storages()
+        configure_auth()
 
 
 async def _cleanup_workspace() -> None:
@@ -241,6 +247,7 @@ async def test_native_document_runtime_upload_and_failed_reprocess(native_runtim
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
+        headers=ROOT_AUTH_HEADER,
     ) as client:
         response = await client.post(
             "/documents/upload",
@@ -307,6 +314,7 @@ async def test_native_document_runtime_upload_and_failed_reprocess(native_runtim
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
+        headers=ROOT_AUTH_HEADER,
     ) as client:
         # Reprocess is workspace-global, not folder-scoped: a request issued
         # from sandbox must still resume a failed default-folder document.
@@ -383,6 +391,7 @@ async def test_native_upload_batch_registers_every_accepted_track(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
         timeout=30.0,
+        headers=ROOT_AUTH_HEADER,
     ) as client:
         responses = await asyncio.gather(
             *[

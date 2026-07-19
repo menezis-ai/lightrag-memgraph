@@ -353,6 +353,36 @@ class TestBuildSourcesFromRawData:
         sources = build_sources_from_raw_data(result)
         assert sources[0]["meta"] == "1 chunk"
 
+    def test_missing_metric_is_null_not_a_rank_derived_similarity(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+            ],
+        )
+
+        sources = build_sources_from_raw_data(result)
+
+        assert sources[0]["score"] is None
+
+    @pytest.mark.parametrize("invalid_score", [True, float("nan"), float("inf")])
+    def test_invalid_metric_is_not_projected_as_a_score(self, invalid_score):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {
+                    "reference_id": "1",
+                    "chunk_id": "c-1",
+                    "file_path": "/a.pdf",
+                    "score": invalid_score,
+                },
+            ],
+        )
+
+        sources = build_sources_from_raw_data(result)
+
+        assert sources[0]["score"] is None
+
     def test_chunk_id_to_doc_id_lookup(self):
         result = _envelope(
             references=[{"reference_id": "1", "file_path": "/a.pdf"}],

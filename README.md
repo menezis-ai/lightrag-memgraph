@@ -166,7 +166,9 @@ variables:
 | `MEMGRAPH_POOL_SIZE` | `50` | Write pool size. |
 | `MEMGRAPH_READ_POOL_SIZE` | `20` | Dedicated read pool size. |
 | `MEMGRAPH_WRITE_CONCURRENCY` | `8` | Write semaphore limit. |
+| `MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT` | `5.0` | Seconds to wait for a write semaphore slot. |
 | `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` | `5.0` | Seconds to wait for a Bolt connection. |
+| `MEMGRAPH_OPERATION_TIMEOUT` | `60.0` | Maximum seconds for one pooled or graph-storage Bolt operation, including driver/session acquisition and closure. Raise this for unusually large ingestion batches after measuring them. |
 
 Common Twin runtime variables:
 
@@ -210,6 +212,11 @@ LightRAG-parity mode they warn but do not crash the process.
 
 Admin folder operations are gated through `require_admin_user`; with an active IdP,
 that means the configured `admin:folders` gateway scope/group mapping.
+Without an active IdP, local-login JWTs and per-operator `twk_` keys do not carry
+authoritative RBAC claims: only the separately managed `LIGHTRAG_API_KEY` may call
+administrative routes or select a non-default `X-Twin-Folder`. Twin routes accept
+that root key as a bearer token; LightRAG-native routes use `X-API-Key`. This is a
+breaking security posture change in 1.1.0 for local-login deployments.
 
 ## Folder Model
 
@@ -315,7 +322,7 @@ Storage layout:
 | Storage | Label shape | Notes |
 |---|---|---|
 | KV | `KV_{workspace}_{namespace}` | JSON-serialized value in `data`. |
-| Vector | `Vec_{workspace}_{namespace}` | Embeddings plus MAGE vector index. |
+| Vector | `Vec_{workspace}_{namespace}` | Embeddings plus native (core) vector index. |
 | DocStatus | `DocStatus_{workspace}` | Document processing state, content hash, chunks list, membership edges. |
 | Graph | `{workspace}` | Built-in LightRAG Memgraph graph backend, patched for TLS/multi-db and batched reads/writes. |
 
@@ -416,9 +423,12 @@ TWIN_MIP_LABEL_MAP=/etc/twin/labels.json
 TWIN_MIP_MAX_CLASSIFICATION=C2
 ```
 
-Unknown mapped labels resolve to `UNKNOWN` and are treated as above the ceiling.
-Missing labels or missing optional parser dependencies degrade to allow-by-default,
-with an explicit reason in the classification result.
+Unknown mapped labels, missing labels, unsupported inputs, and missing parser
+dependencies all fail closed while the hook is active. An operator-selected
+C1/C2 value may raise a trusted mapped source label, but cannot replace absent
+or unparseable source provenance. Raw-text `/insert` is disabled in this mode,
+even when a separate `file_path` is supplied; use `/documents/upload` so the
+classified binary and the ingested content are the same source.
 
 ## Debugging
 
@@ -435,8 +445,11 @@ mgconsole --host localhost --port 7687 \
   -c "CALL schema.node_type_properties() YIELD nodeLabels RETURN DISTINCT nodeLabels"
 ```
 
-Vector search requires MAGE. Use `memgraph/memgraph-mage:3.9.0`, not the plain
-`memgraph/memgraph` image.
+Vector search does **not** require MAGE — `CREATE VECTOR INDEX` and
+`vector_search.search` are core Memgraph features (stable since 3.0.0). The
+plain `memgraph/memgraph:3.9.0` image is sufficient; `memgraph/memgraph-mage`
+also works (superset). This package calls no MAGE-only procedure — KV,
+DocStatus and the graph backend are plain Cypher.
 
 If LightRAG reports `Unknown storage implementation`, `register()` ran too late.
 Call it before constructing `LightRAG` or before importing the LightRAG server

@@ -21,6 +21,7 @@ const cfg: CoverageConfig = {
   authToken: process.env.REAL_BACKEND_AUTH_TOKEN ?? process.env.VITE_AUTH_TOKEN ?? '',
   expectAuth: process.env.REAL_E2E_EXPECT_AUTH === 'true',
   defaultFolder: process.env.REAL_BACKEND_FOLDER ?? 'default',
+  credentialTier: 'infrastructure-root',
 };
 
 test.describe('Twin API — 100% adversarial coverage (static API key)', () => {

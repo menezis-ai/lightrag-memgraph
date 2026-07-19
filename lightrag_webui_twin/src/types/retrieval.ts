@@ -32,8 +32,8 @@ export interface RetrievalSource {
   type: SourceType;
   name: string;
   meta?: string | null;
-  /** Cosine / hybrid similarity, 0..1. */
-  score: number;
+  /** Retrieval metric when exposed by the backend; null/absent means unavailable. */
+  score?: number | null;
   /** Optional document id for direct drill-down from citations/sources. */
   doc_id?: string | null;
   /** Optional chunk id cited by the backend. */
@@ -51,9 +51,10 @@ export type ChatRole = 'user' | 'assistant';
  * grounded but its references could not be projected into the sources
  * contract — the answer is shown, the Sources panel is suppressed, and a
  * "sources unavailable" cue is rendered (never silently as no-sources).
- * ``no_retrieval`` means the mode is sourceless by design (``bypass`` /
- * ``only_need_context`` / ``only_need_prompt``): no grounding was attempted,
- * so the empty Sources panel is the contract, not a failure.
+ * ``no_retrieval`` means no sourced final answer was requested (currently
+ * ``only_need_context``): the empty Sources panel is the contract, not a
+ * projection failure. Ungrounded ``bypass`` and prompt disclosure are not
+ * part of the external Twin API.
  * ``query_failed`` means a backend error occurred mid-stream (the HTTP status
  * was already committed to 200): the answer text is an ``[query failed: …]``
  * error notice, NOT a grounded answer — the Sources panel is suppressed and no
@@ -90,7 +91,7 @@ export interface RetrievalThread {
   messages: readonly ChatMessage[];
 }
 
-export type QueryMode = 'naive' | 'local' | 'global' | 'hybrid' | 'mix' | 'bypass';
+export type QueryMode = 'naive' | 'local' | 'global' | 'hybrid' | 'mix';
 
 export const QUERY_MODES: readonly QueryMode[] = [
   'naive',
@@ -98,7 +99,6 @@ export const QUERY_MODES: readonly QueryMode[] = [
   'global',
   'hybrid',
   'mix',
-  'bypass',
 ];
 
 function stripTrailingReferencesSection(text: string): string {

@@ -9,8 +9,8 @@ filtered" while the prompt saw chunks the filter was meant to exclude.
 
 These filters are now enforced where folder scoping already lives:
 ``MemgraphVectorDBStorage._build_search_cypher`` turns an active
-``storage_filter_context`` into Cypher predicates, so an excluded chunk/entity
-never enters the vector-search result and therefore never reaches the prompt.
+``storage_filter_context`` into Cypher predicates, so an excluded chunk never
+enters the vector-search result and therefore never reaches the prompt.
 
 Pinned semantics (the sharp one is ``doc_filter`` ``all``):
 
@@ -18,11 +18,8 @@ Pinned semantics (the sharp one is ``doc_filter`` ``all``):
   ``any:S`` → keep iff ``full_doc_id ∈ S``;
   ``all:S`` → keep iff every element of ``S`` equals ``full_doc_id`` (so ``all``
   with ≥2 docs is *impossible on a single chunk* → empty; NOT union-as-any).
-- ``doc_filter`` on **entity/relation** (multi source-docs ``D``):
-  ``any:S`` → ``D ∩ S ≠ ∅``; ``all:S`` → ``S ⊆ D``.
 - ``tag_filter`` (doc-level via ``TAGGED_WITH`` → ``WebuiTag_{folder}``):
   ``all`` → doc has every required tag; ``any`` → doc has ≥1 optional tag.
-  Entity/relation: ≥1 source-member-doc satisfies the predicate.
 - ``min_score``: unfiltered / folder-only retrieval keeps the configured cosine
   floor. Doc/tag filtered retrieval treats the filter as the candidate corpus
   and uses ``min_score`` only when the caller explicitly sends one.
@@ -31,11 +28,8 @@ Strict compat (non-negotiable for LightRAG upgrades): a filter fragment is
 emitted *only when that filter is non-empty*. Filters empty ⇒ the folder /
 legacy Cypher is byte-for-byte identical to the pre-filter build.
 
-**Known residual (#3, NOT fixed here):** entity/relation filtering scopes the
-*selection* by source docs, but a kept record's aggregated ``content`` was
-merged by LightRAG across *all* its source docs at extraction — so the payload
-may still encode text from non-member / non-matching docs. Un-blending needs
-per-folder re-extraction (out of scope).
+Entity/relation graph vectors fail closed whenever a folder is active because
+their payloads are globally blended across source documents.
 """
 
 from __future__ import annotations
@@ -202,65 +196,28 @@ class TestTagFilter:
         assert set(params["tag_any"]) == {"rman", "asm"}
 
 
-# ── entity/relation: subset / intersection ────────────────────────────────
+# ── entity/relation: globally blended payloads fail closed ────────────────
 
 
 class TestEntityRelationFilters:
-    def test_doc_all_subset_over_collected_source_docs(self):
-        st = _store("entities", {"source_id", "content"})
-        cypher, params = st._build_search_cypher(
-            20, "f", RetrievalFilters(doc_all=frozenset({"A", "B"}))
-        )
-        assert "CALL vector_search.search" not in cypher
-        assert "MATCH (node:`Vec_ws_entities`)" in cypher
-        assert "reduce(__dot" in cypher
-        assert "collect" in cypher.lower()
-        assert "$doc_all" in cypher
-        assert set(params["doc_all"]) == {"A", "B"}
-        assert "overfetch" not in params
-
-    def test_doc_any_intersection(self):
-        st = _store("relationships", {"source_id", "content"})
-        cypher, params = st._build_search_cypher(
-            20, "f", RetrievalFilters(doc_any=frozenset({"A"}))
-        )
-        assert "$doc_any" in cypher
-        assert set(params["doc_any"]) == {"A"}
-
-    def test_tag_filter_exact_scans_entity_candidates(self):
-        st = _store("entities", {"source_id", "content"})
-        cypher, params = st._build_search_cypher(
-            20, "folderX", RetrievalFilters(tag_all=frozenset({"oracle"}))
-        )
-        assert "CALL vector_search.search" not in cypher
-        assert "MATCH (node:`Vec_ws_entities`)" in cypher
-        assert "WebuiTag_folderX" in cypher
-        assert "any(__di IN __docinfos WHERE" in cypher
-        assert "reduce(__dot" in cypher
-        assert set(params["tag_all"]) == {"oracle"}
-        assert "overfetch" not in params
-
-    def test_doc_any_with_tag_filter_scopes_tags_to_matching_entity_docs(self):
-        st = _store("entities", {"source_id", "content"})
-        cypher, params = st._build_search_cypher(
-            20,
-            "folderX",
+    @pytest.mark.parametrize("namespace", ["entities", "relationships"])
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            RetrievalFilters(doc_all=frozenset({"A", "B"})),
+            RetrievalFilters(doc_any=frozenset({"A"})),
+            RetrievalFilters(tag_all=frozenset({"oracle"})),
             RetrievalFilters(
                 doc_any=frozenset({"doc-a"}),
                 tag_any=frozenset({"oracle"}),
             ),
-        )
-
-        assert "CALL vector_search.search" not in cypher
-        assert "WHERE d.id IN $doc_any" in cypher
-        assert cypher.index("WHERE d.id IN $doc_any") < cypher.index(
-            "collect(DISTINCT {doc: d.id, tags: __dtags}) AS __docinfos"
-        )
-        assert "any(__di IN __docinfos WHERE" in cypher
-        assert "any(__ot IN $tag_any WHERE __ot IN __di.tags)" in cypher
-        assert set(params["doc_any"]) == {"doc-a"}
-        assert set(params["tag_any"]) == {"oracle"}
-        assert "overfetch" not in params
+        ],
+    )
+    def test_filters_cannot_make_blended_graph_vectors_safe(self, namespace, filters):
+        st = _store(namespace, {"source_id", "content"})
+        cypher, params = st._build_search_cypher(20, "folderX", filters)
+        assert cypher is None
+        assert params == {}
 
 
 # ── Live contract (real Memgraph) — out-of-filter rows are actually dropped ─
@@ -445,38 +402,24 @@ async def test_live_min_score_drops_low_similarity(stores):
 async def test_live_entity_doc_filter_set_semantics(stores):
     ds, chunks, entities = stores
     await _seed(ds, chunks, entities)
-    # ent-a → {doc-a}; ent-mixed → {doc-a, doc-b}.
-    # all:{doc-a,doc-b} ⇒ only the entity whose source docs ⊇ both.
-    assert await _ids(
-        entities, RetrievalFilters(doc_all=frozenset({"doc-a", "doc-b"}))
-    ) == {"ent-mixed"}
-    # any:{doc-b} ⇒ only entities touching doc-b.
-    assert await _ids(entities, RetrievalFilters(doc_any=frozenset({"doc-b"}))) == {
-        "ent-mixed"
-    }
+    # Filters cannot unblend graph-vector payloads, so they remain unavailable.
+    assert (
+        await _ids(entities, RetrievalFilters(doc_all=frozenset({"doc-a", "doc-b"})))
+        == set()
+    )
+    assert await _ids(entities, RetrievalFilters(doc_any=frozenset({"doc-b"}))) == set()
 
 
 @pytestmark_integration
 async def test_live_entity_tag_filter_set_semantics(stores):
-    # The riskiest Cypher branch: tag_filter on the entity/relation vdb —
-    # collect({doc, tags}) then any(... all/any ...) in _graph_membership_join.
-    # Only doc-a carries "oracle"; ent-a sources doc-a, ent-mixed sources
-    # doc-a (tagged) + doc-b (untagged). A record is kept when ≥1 of its source
-    # member-docs satisfies the tag predicate.
     ds, chunks, entities = stores
     await _seed(ds, chunks, entities)
-    # ent-a → doc-a(oracle); ent-mixed → doc-a(oracle) via one source chunk.
-    assert await _ids(entities, RetrievalFilters(tag_all=frozenset({"oracle"}))) == {
-        "ent-a",
-        "ent-mixed",
-    }
-    # A tag no doc carries ⇒ no entity selected (no false positive from the
-    # untagged source doc or the OPTIONAL MATCH null-collect).
+    assert (
+        await _ids(entities, RetrievalFilters(tag_all=frozenset({"oracle"}))) == set()
+    )
     assert (
         await _ids(entities, RetrievalFilters(tag_all=frozenset({"vmware"}))) == set()
     )
-    # any-tag variant exercises the same branch via the optional clause.
-    assert await _ids(entities, RetrievalFilters(tag_any=frozenset({"oracle"}))) == {
-        "ent-a",
-        "ent-mixed",
-    }
+    assert (
+        await _ids(entities, RetrievalFilters(tag_any=frozenset({"oracle"}))) == set()
+    )

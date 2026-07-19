@@ -22,7 +22,7 @@ import {
 } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RetrievalTab } from './RetrievalTab';
+import { RetrievalTab, type RetrievalTabProps } from './RetrievalTab';
 import { makeSampleThreads } from '../fixtures';
 
 function defaultProps() {
@@ -94,6 +94,46 @@ describe('RetrievalTab — thread switcher', () => {
     await userEvent.click(screen.getByTitle('New conversation'));
     // 3 threads now: 1 new + 2 seeds. The new one is "New thread"
     expect(screen.getByText('New thread')).toBeInTheDocument();
+  });
+
+  it('renders unavailable scores honestly and preserves numeric scores', () => {
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'score-contract',
+            title: 'Score contract',
+            created: 1,
+            updated: 1,
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['Answer [1] [2] [3] [4]'],
+                sources: [
+                  { n: 1, type: 'file', name: 'null.pdf', score: null },
+                  { n: 2, type: 'file', name: 'absent.pdf' },
+                  { n: 3, type: 'file', name: 'zero.pdf', score: 0 },
+                  { n: 4, type: 'file', name: 'ranked.pdf', score: 0.82 },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const displayedScore = (sourceNumber: number) =>
+      screen.getByTestId(`source-${sourceNumber}`).querySelector('.src-score');
+
+    expect(displayedScore(1)).toHaveTextContent('—');
+    expect(displayedScore(1)).toHaveAttribute('title', 'Score unavailable');
+    expect(displayedScore(2)).toHaveTextContent('—');
+    expect(displayedScore(2)).toHaveAttribute('title', 'Score unavailable');
+    expect(displayedScore(3)).toHaveTextContent('0.00');
+    expect(displayedScore(3)).not.toHaveAttribute('title');
+    expect(displayedScore(4)).toHaveTextContent('0.82');
+    expect(displayedScore(4)).not.toHaveAttribute('title');
   });
 });
 
@@ -350,8 +390,24 @@ describe('RetrievalTab — params panel', () => {
   it('Query mode select changes value', async () => {
     render(<RetrievalTab {...defaultProps()} />);
     const sel = screen.getByLabelText('Query mode') as HTMLSelectElement;
+    expect(Array.from(sel.options, (option) => option.value)).toEqual([
+      'naive',
+      'local',
+      'global',
+      'hybrid',
+      'mix',
+    ]);
     await userEvent.selectOptions(sel, 'hybrid');
     expect(sel.value).toBe('hybrid');
+  });
+
+  it('normalizes a legacy bypass URL and exposes no prompt override controls', () => {
+    window.history.replaceState(null, '', '/?mode=bypass');
+    render(<RetrievalTab {...defaultProps()} />);
+
+    expect(screen.getByLabelText('Query mode')).toHaveValue('mix');
+    expect(screen.queryByLabelText('System prompt')).toBeNull();
+    expect(screen.queryByLabelText('Only need prompt')).toBeNull();
   });
 
   it('renders advanced source filters for tags and documents', async () => {
@@ -409,10 +465,6 @@ describe('RetrievalTab — params panel', () => {
     await userEvent.type(screen.getByLabelText('Minimum source score'), '0.7');
     await userEvent.clear(screen.getByLabelText('History turns'));
     await userEvent.type(screen.getByLabelText('History turns'), '2');
-    await userEvent.type(
-      screen.getByLabelText('System prompt'),
-      'prefer operational runbooks',
-    );
     await userEvent.click(screen.getByLabelText('Enable rerank'));
     await userEvent.type(screen.getByLabelText('Retrieval tag filter'), 'oracle');
     await userEvent.click(
@@ -454,12 +506,18 @@ describe('RetrievalTab — params panel', () => {
         maxTokens: 2048,
         minScore: 0.7,
         historyTurns: 2,
-        userPrompt: 'prefer operational runbooks',
         enableRerank: false,
         tagFilter: { all: ['oracle', 'rman'] },
         docFilter: { any: ['doc-oracle'] },
       }),
     );
+    const sentParams = (
+      onSendQuery.mock.calls as unknown as Array<
+        [Record<string, unknown>]
+      >
+    )[0][0];
+    expect(sentParams).not.toHaveProperty('onlyPrompt');
+    expect(sentParams).not.toHaveProperty('userPrompt');
   });
 
   it('hydrates Graph-transferred filters from URL and shows sources when grounded', async () => {
@@ -546,6 +604,42 @@ describe('RetrievalTab — params panel', () => {
         ],
       }),
     );
+  });
+
+  it('bounds replayed history to the backend message contract', async () => {
+    const longAnswer = '🙂'.repeat(2_001);
+    const onSendQuery = vi.fn<
+      NonNullable<RetrievalTabProps['onSendQuery']>
+    >(async () => ({ response: 'ok', sources: [] }));
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[
+          {
+            id: 'th_long_history',
+            title: 'Long history',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              { role: 'user', text: 'Summarize this document' },
+              { role: 'assistant', tokens: [longAnswer], sources: [] },
+            ],
+          },
+        ]}
+        onSendQuery={onSendQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'Continue');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    const request = onSendQuery.mock.calls[0]?.[0];
+    const assistant = request?.conversationHistory.find(
+      (message) => message.role === 'assistant',
+    );
+    expect(assistant?.content).toBe('🙂'.repeat(2_000));
+    expect([...(assistant?.content ?? '')]).toHaveLength(2_000);
   });
 
   it('question and answer land in the same thread when no thread is active', async () => {
@@ -1174,8 +1268,8 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
   });
 
   it('keeps the answer but shows the no-retrieval cue and blocks leaked-source navigation', async () => {
-    // bypass / only_need_context / only_need_prompt: the answer/context body is
-    // shown, but the empty Sources area must read as intentional (cue), not as
+    // only_need_context: the raw context body is shown, but the empty Sources
+    // area must read as intentional (cue), not as
     // insufficient_information and not as a missing-sources glitch. A future
     // backend that leaks sources under this status must still not surface them
     // via the panel OR an inline citation.
@@ -1201,7 +1295,7 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
       />,
     );
 
-    await userEvent.type(screen.getByLabelText('Query input'), 'bypass question');
+    await userEvent.type(screen.getByLabelText('Query input'), 'context question');
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
 
     await waitFor(() =>

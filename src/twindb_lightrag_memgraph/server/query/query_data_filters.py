@@ -13,6 +13,10 @@ from .source_filters import (
     _tag_filter_terms,
 )
 
+# Budget for overlapping the two resolver groups. The per-id fan-out is inside
+# each resolver; this only avoids doubling that fan-out for larger mixed rows.
+_PARALLEL_RESOLVE_ID_BUDGET = 16
+
 
 def _direct_doc_ids_for_query_data_row(row: dict[str, Any]) -> set[str]:
     return {
@@ -167,6 +171,68 @@ def _combine_row_doc_ids(
     return row_doc_ids, all_doc_ids
 
 
+def _collect_row_doc_candidates(
+    rows: list,
+) -> tuple[list[dict[str, Any]], list[set[str]], list[set[str]], list[set[str]]]:
+    """Gather per-row doc-id candidates (direct, chunk, file) for dict rows."""
+    rows_for_filter: list[dict[str, Any]] = []
+    row_direct_doc_ids: list[set[str]] = []
+    row_chunk_ids: list[set[str]] = []
+    row_file_paths: list[set[str]] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        direct_doc_ids, row_chunks, row_paths = _query_data_row_doc_candidates(row)
+        rows_for_filter.append(row)
+        row_direct_doc_ids.append(direct_doc_ids)
+        row_chunk_ids.append(row_chunks)
+        row_file_paths.append(row_paths)
+    return rows_for_filter, row_direct_doc_ids, row_chunk_ids, row_file_paths
+
+
+async def _resolve_row_doc_maps(
+    rag: Any, chunk_ids: set[str], file_paths: set[str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve chunk-id and file-path doc maps, in parallel when both are small."""
+    if (
+        chunk_ids
+        and file_paths
+        and len(chunk_ids) + len(file_paths) <= _PARALLEL_RESOLVE_ID_BUDGET
+    ):
+        chunk_docs, file_docs = await asyncio.gather(
+            _resolve_doc_ids_for_chunk_ids(rag, chunk_ids),
+            _resolve_doc_ids_for_file_paths(rag, file_paths),
+        )
+    else:
+        chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
+        file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
+    return chunk_docs, file_docs
+
+
+def _keep_rows_matching_tags(
+    rows_for_filter: list[dict[str, Any]],
+    row_doc_ids: list[set[str]],
+    tag_filter,
+    tags_cache: dict[str, set[str]],
+) -> tuple[list, set[str]]:
+    """Keep rows with at least one tag-matching doc; collect reference_ids."""
+    kept_rows = []
+    kept_reference_ids: set[str] = set()
+    for row, doc_ids in zip(rows_for_filter, row_doc_ids):
+        if not doc_ids:
+            continue
+        if not any(
+            _doc_tags_match_filter(tags_cache[doc_id], tag_filter) for doc_id in doc_ids
+        ):
+            continue
+        kept_rows.append(row)
+        ref_id = row.get("reference_id")
+        if isinstance(ref_id, str) and ref_id:
+            kept_reference_ids.add(ref_id)
+    return kept_rows, kept_reference_ids
+
+
 async def _filter_rows_by_tags(
     rag: Any,
     rows: list,
@@ -180,30 +246,16 @@ async def _filter_rows_by_tags(
     if not required and not optional:
         return rows, set()
 
-    rows_for_filter: list[dict[str, Any]] = []
-    row_direct_doc_ids: list[set[str]] = []
-    row_chunk_ids: list[set[str]] = []
-    row_file_paths: list[set[str]] = []
-
-    chunk_ids: set[str] = set()
-    file_paths: set[str] = set()
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        direct_doc_ids, row_chunks, row_paths = _query_data_row_doc_candidates(row)
-        rows_for_filter.append(row)
-        row_direct_doc_ids.append(direct_doc_ids)
-        row_chunk_ids.append(row_chunks)
-        row_file_paths.append(row_paths)
-        chunk_ids.update(row_chunks)
-        file_paths.update(row_paths)
-
+    rows_for_filter, row_direct_doc_ids, row_chunk_ids, row_file_paths = (
+        _collect_row_doc_candidates(rows)
+    )
     if not rows_for_filter:
         return [], set()
 
-    chunk_docs = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
-    file_docs = await _resolve_doc_ids_for_file_paths(rag, file_paths)
+    chunk_ids: set[str] = set().union(*row_chunk_ids)
+    file_paths: set[str] = set().union(*row_file_paths)
+
+    chunk_docs, file_docs = await _resolve_row_doc_maps(rag, chunk_ids, file_paths)
 
     row_doc_ids, all_doc_ids = _combine_row_doc_ids(
         row_direct_doc_ids,
@@ -220,20 +272,9 @@ async def _filter_rows_by_tags(
         )
         tags_cache.update(zip(unresolved_doc_ids, resolved_tags))
 
-    kept_rows = []
-    kept_reference_ids: set[str] = set()
-    for row, doc_ids in zip(rows_for_filter, row_doc_ids):
-        if not doc_ids:
-            continue
-        if not any(
-            _doc_tags_match_filter(tags_cache[doc_id], tag_filter) for doc_id in doc_ids
-        ):
-            continue
-        kept_rows.append(row)
-        ref_id = row.get("reference_id")
-        if isinstance(ref_id, str) and ref_id:
-            kept_reference_ids.add(ref_id)
-    return kept_rows, kept_reference_ids
+    return _keep_rows_matching_tags(
+        rows_for_filter, row_doc_ids, tag_filter, tags_cache
+    )
 
 
 async def _filter_query_data_by_tags(

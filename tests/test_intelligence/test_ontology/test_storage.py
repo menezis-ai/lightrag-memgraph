@@ -8,7 +8,25 @@ from twindb_lightrag_memgraph.intelligence.ontology.storage import (
     OntologyEdge,
     OntologyNode,
     OntologyStorage,
+    _query_term_candidates,
 )
+
+
+class AsyncRecordResult:
+    def __init__(self, records):
+        self._records = records
+        self._iterator = iter(())
+        self.consume = AsyncMock()
+
+    def __aiter__(self):
+        self._iterator = iter(self._records)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
 
 
 @pytest.fixture
@@ -138,32 +156,68 @@ class TestOntologyStorage:
 
         assert rel_types_in_queries == {"RELATED_TO", "CO_OCCURS"}
 
-    async def test_query_expansion_traversal(self, storage, mock_session):
-        # Mock traversal result
-        mock_record1 = {"name": "PGA memory"}
-        mock_record2 = {"name": "heap allocation"}
+    async def test_query_expansion_uses_ngram_seeds_and_weighted_paths(
+        self, storage, mock_session
+    ):
+        result = AsyncRecordResult(
+            [
+                {"name": "PGA memory"},
+                {"name": "heap allocation"},
+            ]
+        )
+        mock_session.run = AsyncMock(return_value=result)
 
-        async def async_iter(*args, **kwargs):
-            result = AsyncMock()
-            result.__aiter__ = lambda self: self
-            records = [mock_record1, mock_record2]
-            result._records = iter(records)
-            result.__anext__ = lambda self: self._next()
+        names = await storage.query_expansion(
+            "Pourquoi ORA-04030 survient-il après allocation PGA ?",
+            max_hops=2,
+        )
 
-            async def _next():
-                try:
-                    return next(result._records)
-                except StopIteration:
-                    raise StopAsyncIteration
+        assert names == ["PGA memory", "heap allocation"]
+        query = mock_session.run.call_args.args[0]
+        params = mock_session.run.call_args.kwargs
+        assert "toLower(start.name) IN $candidate_terms" in query
+        assert "SYNONYM|RELATED_TO|CO_OCCURS*1..2" in query
+        assert "relation.confidence" in query
+        assert "max(confidence_product / toFloat(hops)) AS path_score" in query
+        assert "collect({score: path_score, hops: hops})[0] AS best_path" in query
+        assert "ORDER BY best_path.score DESC" in query
+        assert "best_path.hops ASC" in query
+        assert "toLower(name) ASC" in query
+        assert "name ASC" in query
+        assert "ora-04030" in params["candidate_terms"]
+        assert "allocation pga" in params["candidate_terms"]
+        assert "pourquoi" not in params["candidate_terms"]
+        assert "term" not in params
+        result.consume.assert_awaited_once()
 
-            result._next = _next
-            result.consume = AsyncMock()
-            return result
+    def test_query_candidates_are_bounded_and_deterministic(self):
+        question = "Pourquoi ORA-04030 survient-il après allocation PGA ?"
 
-        mock_session.run = async_iter
+        first = _query_term_candidates(question)
+        second = _query_term_candidates(question)
 
-        names = await storage.query_expansion("ORA-04030", max_hops=2)
-        assert isinstance(names, list)
+        assert first == second
+        assert len(first) <= 64
+        assert first[:2] == ["ora-04030", "pga"]
+        assert "allocation pga" in first
+        assert "pourquoi" not in first
+
+    async def test_query_expansion_skips_generic_only_question(
+        self, storage, mock_session
+    ):
+        names = await storage.query_expansion("Pourquoi une erreur ?")
+
+        assert names == []
+        mock_session.run.assert_not_called()
+
+    @pytest.mark.parametrize("max_hops", [0, 4, True, 1.5, "2"])
+    async def test_query_expansion_rejects_unbounded_hops(
+        self, storage, mock_session, max_hops
+    ):
+        with pytest.raises(ValueError, match="between 1 and 3"):
+            await storage.query_expansion("ORA-04030", max_hops=max_hops)
+
+        mock_session.run.assert_not_called()
 
     async def test_has_data_true(self, storage, mock_session):
         result = await storage.has_data()

@@ -9,7 +9,10 @@ while the large router is split incrementally.
 from __future__ import annotations
 
 import asyncio
+import logging
+import secrets
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -21,18 +24,15 @@ from .events import _make_event, _request_actor
 from .store import get_store
 
 router = APIRouter()
+logger = logging.getLogger("twindb_lightrag_memgraph")
 
 # Per-document lock serialising membership add/remove so a concurrent add cannot
 # slip in between "is this the last membership?" and the physical delete
 # (architect review P1 race).
 #
-# LIMITATION (architect review P2): this lock is **process-local**. It closes
-# the race within one ASGI worker but NOT across multiple workers/processes. The
-# production runtime (gunicorn/uvicorn import-string per worker, see asgi.py) is
-# likely multi-worker, so a cross-worker last-membership race window remains
-# (narrow, and the routes are admin-gated). A proper fix moves the
-# decide-and-delete into a storage-level atomic op or a workspace/distributed
-# lock — tracked as a follow-up in FOLDER-MEMBERSHIP-REFACTOR.md.
+# This lock remains useful for avoiding duplicate work inside one process. The
+# authoritative cross-worker guard is the storage-level delete claim acquired
+# immediately before a last-membership physical cascade.
 _MAX_MEMBERSHIP_LOCKS = 2048
 _MEMBERSHIP_LOCK_CLEANUP_EVERY = 1024
 _membership_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
@@ -73,6 +73,41 @@ def _membership_lock(doc_id: str) -> asyncio.Lock:
     if _membership_lock_accesses % _MEMBERSHIP_LOCK_CLEANUP_EVERY == 0:
         _evict_membership_locks()
     return lock
+
+
+async def _delete_with_last_membership_claim(
+    delete_doc_from_rag: Callable[[Any, str], Awaitable[None]],
+    rag: Any,
+    doc_id: str,
+    folder: str,
+) -> None:
+    """Claim and physically delete a doc, releasing on cascade failure."""
+    claim_last = getattr(rag.doc_status, "claim_last_membership_delete", None)
+    release_claim = getattr(rag.doc_status, "release_delete_claim", None)
+    if claim_last is None or release_claim is None:
+        # Falling back to the process-local lock here would re-open the
+        # multi-worker data-loss race, so membership-aware backends fail closed.
+        raise RuntimeError(
+            "Membership backend lacks the atomic last-membership delete claim"
+        )
+
+    claim = secrets.token_urlsafe(24)
+    if not await claim_last(doc_id, folder, claim):
+        raise HTTPException(
+            status_code=409,
+            detail="Membership changed concurrently; retry the operation.",
+        )
+    try:
+        await delete_doc_from_rag(rag, doc_id)
+    except BaseException:
+        try:
+            await release_claim(doc_id, claim)
+        except Exception:
+            # Preserve the primary failure/cancellation (cancellation raised by
+            # the cleanup itself still propagates). A claim deliberately fails
+            # closed if Memgraph is unavailable during cleanup.
+            logger.exception("Failed to release delete claim for %s", doc_id)
+        raise
 
 
 @router.get("/documents", response_model=ListEnvelope[Document])
@@ -134,14 +169,14 @@ async def get_document_metadata(doc_id: str) -> dict[str, Any]:
 # an orphan Folder node or punch a cloisonnement hole.
 #
 # Documented residual risks (architect reviews; accepted for this batch):
-#   - AUTHZ: the mutation routes are gated by ``require_admin_user``. That gate
-#     is two-tier: with an IdP active (``TWIN_IDP_JWKS_URL`` set) it requires the
-#     ``admin:folders`` scope; with the IdP DORMANT it degrades to "authenticated"
-#     (idp_jwt.py palier 1). The BNP target runs MyAccess + Broadcom SSO (JWKS
-#     active), so the strict admin gate applies there; a no-IdP dev/local run is
-#     only "authenticated". Per-user source-doc + target-folder RBAC is owned by
-#     MyAccess/SSO, not implemented here.
-#   - CONCURRENCY: the per-doc lock is process-local (see ``_membership_locks``).
+#   - AUTHZ: the mutation routes are gated by ``require_admin_user``. With an
+#     active IdP this requires ``admin:folders``; with the IdP dormant only the
+#     separately managed infrastructure root key is authoritative. Local JWTs
+#     and generated ``twk_`` keys intentionally remain non-admin. Per-user
+#     source-doc + target-folder RBAC is owned by MyAccess/SSO, not implemented
+#     here.
+#   - CONCURRENCY: the local lock is backed by a Memgraph CAS delete claim for
+#     the last-membership path (see ``_delete_with_last_membership_claim``).
 #   - LEGACY READS: other folder-scoped reads (chunks routes, native shims) still
 #     consult the legacy ``folder`` property and are migrated in a later batch.
 
@@ -239,6 +274,7 @@ async def add_document_to_folder(
         401: {"description": "Unauthenticated"},
         403: {"description": "Not an admin"},
         404: {"description": "Document or folder not found"},
+        409: {"description": "Membership changed concurrently; retry"},
         503: {"description": "LightRAG instance unavailable"},
     },
 )
@@ -283,7 +319,9 @@ async def remove_document_from_folder(
         physically_deleted = False
         if folders == [folder_id]:
             # Last membership: physically delete (node + edge removed together).
-            await legacy._delete_doc_from_rag(rag, doc_id)
+            await _delete_with_last_membership_claim(
+                legacy._delete_doc_from_rag, rag, doc_id, folder_id
+            )
             physically_deleted = True
             remaining_folders: list[str] = []
         else:
@@ -354,7 +392,9 @@ async def _apply_membership_delete(
         if folders is None or active not in folders:
             return None
         if folders == [active]:
-            await legacy._delete_doc_from_rag(rag, doc_id)
+            await _delete_with_last_membership_claim(
+                legacy._delete_doc_from_rag, rag, doc_id, active
+            )
             return True
         await rag.doc_status.remove_from_folder(doc_id, active)
         return False
@@ -502,6 +542,7 @@ async def _run_bulk_delete_batch(
     response_model=None,
     responses={
         400: {"description": "Invalid bulk delete payload"},
+        409: {"description": "Membership changed concurrently; retry"},
         413: {"description": "Bulk delete payload too large"},
         503: {"description": "LightRAG instance unavailable"},
     },

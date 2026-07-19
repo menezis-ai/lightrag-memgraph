@@ -21,8 +21,9 @@ This module converts both into explicit, classified behavior:
   installed lightrag version. This does NOT make any today-working boot fail:
   the same absence crashed with a bare ``AttributeError``/``KeyError`` before.
 * **DEGRADABLE** symbols (buffered-merge, ``_insert_done`` hook, document-routes
-  capture, ``create_app`` overlay): a loud ``logger.warning`` naming the symbol
-  and version, then the individual patch is SKIPPED and boot continues.
+  capture, ``create_app`` overlay, unreviewed Memgraph constructor): a loud
+  ``logger.warning`` naming the symbol and version, then the individual patch
+  is SKIPPED and boot continues.
 * **DRIFT** (private copies): a sha256 over the whitespace-normalized source of
   the upstream function is compared against recorded known-good hashes; an
   unknown hash logs a warning ("private copy may have drifted") and never
@@ -92,6 +93,28 @@ KNOWN_PRIVATE_COPY_SOURCE_HASHES: dict[str, dict[str, str]] = {
             "lightrag-hku 1.4.9.11 (PyPI wheel) == 1.5.4 (identical body)"
         ),
     },
+}
+
+#: Reviewed constructor contracts for ``MemgraphStorage.__init__``.  Unlike
+#: the operate hot-path patches above, the Twin patch wraps and delegates to
+#: this constructor instead of carrying a private copy.  We still record both
+#: its call shape and body hashes because a future constructor may derive more
+#: state from the environment-selected workspace before the wrapper can apply
+#: the explicit per-instance value.
+KNOWN_MEMGRAPH_INIT_SIGNATURES: dict[str, str] = {
+    "(self, namespace, global_config, embedding_func, workspace=None)": (
+        "lightrag-hku 1.4.9.11 / 1.4.11 / 1.4.12 / 1.5.3 / 1.5.4"
+    ),
+}
+
+KNOWN_MEMGRAPH_INIT_SOURCE_HASHES: dict[str, str] = {
+    "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d": (
+        "lightrag-hku 1.4.9.11 / 1.4.11 / 1.4.12 (exact cached PyPI wheel bodies)"
+    ),
+    "a0c43427a1013f0d24f4e4ce1ad41558a5c13af7a50929faab419c32fb79b47b": (
+        "lightrag-hku 1.5.3 / 1.5.4 "
+        "(same body plus upstream validate_workspace call)"
+    ),
 }
 
 
@@ -229,6 +252,86 @@ def normalized_source_hash(fn: object) -> str | None:
         return None
     normalized = "".join(source.split())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def reviewed_memgraph_init(owner: object):
+    """Return a compatible ``MemgraphStorage.__init__`` or warn-and-skip.
+
+    The explicit-workspace patch calls the upstream constructor with the
+    reviewed five-argument ABI, then corrects only ``self.workspace``.  An ABI
+    change is therefore DEGRADABLE: leave the upstream constructor untouched
+    rather than install a wrapper that could crash every graph-storage
+    construction.  The multi-workspace intelligence engine separately checks
+    that the wrapper is present and fails closed before constructing LightRAG.
+
+    A source-body change, or unavailable source, is also DEGRADABLE: the wrapper
+    is skipped because a new constructor could derive other workspace-dependent
+    state before the wrapper corrects ``self.workspace``.  ``register()`` still
+    boots on native behavior, while the multi-workspace engine checks the patch
+    marker and fails closed.
+    """
+    init = getattr(owner, "__init__", None)
+    if init is None:
+        logger.warning(
+            "%s upstream symbol %s.__init__ is absent from the installed "
+            "lightrag-hku %s — skipping the explicit Memgraph workspace "
+            "patch. Multi-workspace callers must fail closed.",
+            _CANARY_PREFIX,
+            _owner_name(owner),
+            installed_lightrag_version(),
+        )
+        return None
+    if getattr(init, "_twindb_explicit_workspace_patch", False):
+        return init
+
+    try:
+        signature_text = str(inspect.signature(init))
+    except (TypeError, ValueError):
+        signature_text = None
+    if (
+        signature_text is not None
+        and signature_text not in KNOWN_MEMGRAPH_INIT_SIGNATURES
+    ):
+        logger.warning(
+            "%s upstream symbol %s.__init__ has unreviewed signature %s in "
+            "the installed lightrag-hku %s — skipping the explicit Memgraph "
+            "workspace patch. Expected one of %s; multi-workspace callers "
+            "must fail closed.",
+            _CANARY_PREFIX,
+            _owner_name(owner),
+            signature_text,
+            installed_lightrag_version(),
+            sorted(KNOWN_MEMGRAPH_INIT_SIGNATURES),
+        )
+        return None
+
+    digest = normalized_source_hash(init)
+    if digest is None:
+        logger.warning(
+            "%s source of %s.__init__ is unavailable in the installed "
+            "lightrag-hku %s — skipping the explicit Memgraph workspace "
+            "patch because its constructor body cannot be verified. "
+            "Multi-workspace callers must fail closed.",
+            _CANARY_PREFIX,
+            _owner_name(owner),
+            installed_lightrag_version(),
+        )
+        return None
+    if digest not in KNOWN_MEMGRAPH_INIT_SOURCE_HASHES:
+        logger.warning(
+            "%s %s.__init__ in the installed lightrag-hku %s hashes to %s, "
+            "which matches no reviewed constructor body — skipping the "
+            "explicit Memgraph workspace patch. Review whether upstream "
+            "derives other state from the environment-selected workspace, "
+            "then record the new hash. Multi-workspace callers must fail "
+            "closed.",
+            _CANARY_PREFIX,
+            _owner_name(owner),
+            installed_lightrag_version(),
+            digest,
+        )
+        return None
+    return init
 
 
 def warn_on_private_copy_drift(owner: object, attr: str) -> None:

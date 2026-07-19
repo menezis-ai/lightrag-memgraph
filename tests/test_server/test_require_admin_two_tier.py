@@ -1,17 +1,8 @@
-"""Audit 2026-06-10 P0 — ``require_admin_user`` two-tier behaviour (H4).
+"""Regression coverage for ``require_admin_user`` two-tier behaviour.
 
-The previous version of ``require_admin_user`` returned ``None`` when
-the IdP middleware was dormant, which meant any caller — including
-unauthenticated ones — could hit folder CRUD routes. The fix:
-
-* **Palier 1 — IdP dormant**: returns a placeholder user dict
-  (``idp_validated=False``). The route-level ``require_auth`` has
-  already filtered anonymous, so a real identity is required to reach
-  this branch. A single boot warning + a single INFO log on the first
-  admin hit document the "no RBAC yet" posture.
-* **Palier 2 — IdP active**: requires the ``admin:folders`` gateway
-  scope (already projected by ``claims_to_user``). 401 on missing
-  token, 403 on scope-missing.
+Without an IdP only the infrastructure root key is authoritative. Legacy JWTs
+have identity but no RBAC claims and must not inherit administrator power.
+With an IdP, the verified ``admin:folders`` scope remains mandatory.
 """
 
 from __future__ import annotations
@@ -23,6 +14,7 @@ import pytest
 from fastapi import HTTPException, Request
 
 from twindb_lightrag_memgraph.server import idp_jwt
+from twindb_lightrag_memgraph.server.auth import _create_jwt, configure_auth
 from twindb_lightrag_memgraph.server.idp_jwt import (
     ADMIN_FOLDERS_SCOPE,
     IdpConfig,
@@ -58,44 +50,64 @@ def _make_request(
 @pytest.fixture(autouse=True)
 def _reset_idp_state():
     configure_idp(None)
+    configure_auth()
     yield
     configure_idp(None)
+    configure_auth()
 
 
 # ---------------------------------------------------------------------------
-# Palier 1 — IdP dormant
+# IdP dormant
 # ---------------------------------------------------------------------------
 
 
-def test_palier1_dormant_returns_placeholder(caplog):
-    caplog.set_level("WARNING")
-    configure_idp(None)
-    request = _make_request()
+def test_dormant_allows_only_infrastructure_root_key():
+    configure_auth(api_key="infra-root")
+    request = _make_request(headers={"Authorization": "Bearer infra-root"})
     user = require_admin_user(request)
-    assert user is not None
+    assert user["sso_subject"] == "api_key"
     assert user["idp_validated"] is False
-    assert user["gateway_scopes"] == []
-    # The dormant warning should fire from configure_idp.
-    assert any("palier 1" in r.getMessage() for r in caplog.records)
+    assert user["gateway_scopes"] == [ADMIN_FOLDERS_SCOPE]
 
 
-def test_palier1_dormant_logs_info_once_per_process(caplog):
-    """The per-call INFO log is rate-limited to once per (configure_idp,
-    require_admin_user) cycle to avoid log flooding."""
-    caplog.set_level("INFO")
-    configure_idp(None)
-    request = _make_request()
+def test_dormant_allows_native_x_api_key_transport():
+    configure_auth(api_key="infra-root")
+    request = _make_request(headers={"X-API-Key": "infra-root"})
 
-    require_admin_user(request)
-    require_admin_user(request)
-    require_admin_user(request)
+    user = require_admin_user(request)
 
-    info_hits = [
-        r
-        for r in caplog.records
-        if r.levelname == "INFO" and "palier 1" in r.getMessage()
-    ]
-    assert len(info_hits) == 1
+    assert user["sso_subject"] == "api_key"
+    assert user["gateway_scopes"] == [ADMIN_FOLDERS_SCOPE]
+
+
+def test_dormant_rejects_legacy_jwt_without_rbac_claims():
+    configure_auth(jwt_secret="legacy-secret", jwt_password="not-default")
+    token = _create_jwt({"sub": "legacy-reader"})
+    request = _make_request(headers={"Authorization": f"Bearer {token}"})
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_user(request)
+    assert exc.value.status_code == 403
+    assert "infrastructure root key" in exc.value.detail
+
+
+def test_dormant_rejects_legacy_jwt_subject_named_api_key():
+    """An audit-label collision must never become a root capability."""
+    configure_auth(jwt_secret="legacy-secret", jwt_password="not-default")
+    token = _create_jwt({"sub": "api_key"})
+    request = _make_request(headers={"Authorization": f"Bearer {token}"})
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin_user(request)
+
+    assert exc.value.status_code == 403
+    assert "infrastructure root key" in exc.value.detail
+
+
+def test_dormant_rejects_request_without_root_credentials():
+    with pytest.raises(HTTPException) as exc:
+        require_admin_user(_make_request())
+    assert exc.value.status_code == 403
 
 
 # ---------------------------------------------------------------------------

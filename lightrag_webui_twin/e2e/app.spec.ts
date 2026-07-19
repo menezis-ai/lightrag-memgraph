@@ -184,10 +184,9 @@ test.describe('Twin WebUI operator journeys', () => {
     await onlyContext.focus();
     await page.keyboard.press('Space');
     await expect(onlyContext).toHaveAttribute('aria-checked', 'true');
-    const onlyPrompt = page.getByRole('switch', { name: 'Only need prompt' });
-    await onlyPrompt.focus();
-    await page.keyboard.press('Enter');
-    await expect(onlyPrompt).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByLabel('Only need prompt')).toHaveCount(0);
+    await expect(page.getByLabel('System prompt')).toHaveCount(0);
+    await expect(page.getByLabel('Query mode').locator('option[value="bypass"]')).toHaveCount(0);
   });
 
   test('@doctrine @folder folder switch refreshes documents and clears local filters', async ({

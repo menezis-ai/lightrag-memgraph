@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -57,6 +58,8 @@ from .routes_graph import (
 from .routes_notifications import router as notifications_router
 from .routes_tags import router as tags_router
 from ..document_hash import enrich_metadata_with_document_hash
+
+logger = logging.getLogger(__name__)
 
 _security = HTTPBearer(auto_error=False)
 
@@ -603,11 +606,48 @@ async def _cascade_graph_tag_edges(
         return None
 
 
+async def _purge_query_llm_cache(rag: Any) -> None:
+    """Best-effort drop of LightRAG's LLM response cache after a physical delete.
+
+    LightRAG caches query answers keyed only on ``(query, mode, params)`` — NOT
+    on corpus state (``compute_args_hash`` in ``operate.kg_query``). The cached
+    entry stores the answer *text*; the structured context/``data.references``
+    is rebuilt fresh (folder-scoped) on every call, so the Sources panel already
+    drops a deleted doc — but the cached answer prose keeps citing it (inline
+    ``[N]`` markers + its self-generated ``### References`` block) until the next
+    cache miss. ``adelete_by_doc_id(delete_llm_cache=False)`` only touches the
+    entity-*extraction* cache, never the query cache, so the delete routes must
+    drop it explicitly.
+
+    Best-effort by contract: a cache-purge failure must NEVER fail the delete
+    (same "side-effect must never break the primary op" rule as activity
+    emission). ``aclear_cache`` clears all modes and its signature is stable
+    no-arg across the CI LightRAG matrix (1.4.9.11/1.4.11/1.4.12) and local
+    1.5.4; guard on presence for any store/version that lacks it.
+    """
+    clear = getattr(rag, "aclear_cache", None)
+    if clear is None:
+        return
+    try:
+        await clear()
+    except Exception:  # noqa: BLE001 (cache purge is best-effort, never fatal)
+        logger.warning("query-cache purge after document delete failed", exc_info=True)
+
+
 async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
     if hasattr(rag, "adelete_by_doc_id"):
-        await rag.adelete_by_doc_id(doc_id)
-        return
-    await rag.doc_status.delete([doc_id])
+        result = await rag.adelete_by_doc_id(doc_id)
+        result_status = getattr(result, "status", None)
+        result_status = getattr(result_status, "value", result_status)
+        if result_status is not None and str(result_status).lower() != "success":
+            message = getattr(result, "message", None) or (
+                f"LightRAG deletion returned {result_status!r}"
+            )
+            raise RuntimeError(str(message))
+    else:
+        await rag.doc_status.delete([doc_id])
+    # A physically-deleted doc must stop being cited by cached answers.
+    await _purge_query_llm_cache(rag)
 
 
 # ---------------------------------------------------------------------------

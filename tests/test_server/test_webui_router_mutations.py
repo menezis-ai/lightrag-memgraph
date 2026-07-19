@@ -26,7 +26,7 @@ def _make_settings() -> LightRAGServerSettings:
         working_dir="/tmp/lightrag_webui_mutation_test",
         workspace="cib",
         enable_langsmith_tracing=False,
-        api_key=None,
+        api_key="test-infra-root",
         jwt_secret=None,
         enable_webui_routes=True,
     )
@@ -43,7 +43,9 @@ def _reset_store():
 async def client():
     app = create_app(_make_settings())
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
 
@@ -104,19 +106,43 @@ class _NoMemberReadSession:
 
 
 class _FakeTx:
+    def __init__(self, *, tag_status: str = "active") -> None:
+        self.tag_status = tag_status
+        self.queries: list[str] = []
+        self.committed = False
+        self.rolled_back = False
+
     async def run(self, _query: str, **_params):
+        self.queries.append(_query)
+        if "RETURN t.id AS id, t.data AS data" in _query:
+            return _FakeResult(
+                [
+                    {
+                        "id": "rmf-validated",
+                        "data": json.dumps(
+                            {
+                                "tag": "rmf-validated",
+                                "status": self.tag_status,
+                            }
+                        ),
+                    }
+                ]
+            )
         return _FakeResult([])
 
     async def commit(self) -> None:
-        return None
+        self.committed = True
 
     async def rollback(self) -> None:
-        return None
+        self.rolled_back = True
 
 
 class _FakeWriteSession:
+    def __init__(self, tx: _FakeTx | None = None) -> None:
+        self.tx = tx or _FakeTx()
+
     async def begin_transaction(self):
-        return _FakeTx()
+        return self.tx
 
 
 class _FakeDocStatus:
@@ -153,6 +179,7 @@ class TestBulkRetag:
         from twindb_lightrag_memgraph import _pool
 
         read_session = _FakeReadSession()
+        tx = _FakeTx()
 
         @asynccontextmanager
         async def fake_read_session():
@@ -160,7 +187,7 @@ class TestBulkRetag:
 
         @asynccontextmanager
         async def fake_write_session():
-            yield _FakeWriteSession()
+            yield _FakeWriteSession(tx)
 
         @asynccontextmanager
         async def fake_write_slot():
@@ -182,6 +209,145 @@ class TestBulkRetag:
 
         assert r.status_code == 200
         assert r.json() == {"updated": 1, "failed": []}
+        assert tx.committed is True
+        assert tx.rolled_back is False
+        assert all("MERGE (t:" not in query for query in tx.queries)
+
+    @pytest.mark.parametrize(
+        "status",
+        ["pending-review", "pending-promotion", "deprecated", "rejected", None],
+    )
+    async def test_rejects_every_non_active_catalog_status(
+        self, status, monkeypatch, client
+    ):
+        from twindb_lightrag_memgraph import _pool
+
+        await webui_router.get_store().tags.upsert_tag(
+            {"tag": "not-active", "status": status}
+        )
+
+        @asynccontextmanager
+        async def fail_if_session_is_opened():
+            raise AssertionError("non-active retag must fail before graph access")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(_pool, "get_read_session", fail_if_session_is_opened)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-hyphen"],
+                "adds": ["not-active"],
+                "removes": [],
+            },
+        )
+
+        assert r.status_code == 422
+        assert r.json()["detail"]["unapproved_tags"] == ["not-active"]
+
+    async def test_rejects_unapproved_tag_without_creating_it(
+        self, monkeypatch, client
+    ):
+        from twindb_lightrag_memgraph import _pool
+
+        async def fail_if_session_is_opened():
+            raise AssertionError("unapproved retag must fail before graph access")
+
+        monkeypatch.setattr(_pool, "get_read_session", fail_if_session_is_opened)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-hyphen"],
+                "adds": ["attacker-created-tag"],
+                "removes": [],
+            },
+        )
+
+        assert r.status_code == 422
+        assert r.json()["detail"] == {
+            "message": "Only active, approved tags may be attached",
+            "unapproved_tags": ["attacker-created-tag"],
+        }
+
+    async def test_revalidates_status_inside_write_transaction(
+        self, monkeypatch, client
+    ):
+        """A tag deprecated after the list pre-check must not be attached."""
+        from twindb_lightrag_memgraph import _pool
+
+        read_session = _FakeReadSession()
+        tx = _FakeTx(tag_status="deprecated")
+
+        @asynccontextmanager
+        async def fake_read_session():
+            yield read_session
+
+        @asynccontextmanager
+        async def fake_write_session():
+            yield _FakeWriteSession(tx)
+
+        @asynccontextmanager
+        async def fake_write_slot():
+            yield None
+
+        monkeypatch.setattr(_pool, "get_read_session", fake_read_session)
+        monkeypatch.setattr(_pool, "get_session", fake_write_session)
+        monkeypatch.setattr(_pool, "acquire_write_slot", fake_write_slot)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-hyphen"],
+                "adds": ["rmf-validated"],
+                "removes": [],
+            },
+        )
+
+        assert r.status_code == 422
+        assert r.json()["detail"]["unapproved_tags"] == ["rmf-validated"]
+        assert tx.committed is False
+        assert tx.rolled_back is True
+        assert not any("MERGE (d)-[r:TAGGED_WITH]" in query for query in tx.queries)
+
+    async def test_remove_only_allows_cleanup_of_non_active_legacy_edge(
+        self, monkeypatch, client
+    ):
+        """Cleanup must not require a legacy tag to remain catalog-active."""
+        from twindb_lightrag_memgraph import _pool
+
+        read_session = _FakeReadSession()
+        tx = _FakeTx(tag_status="deprecated")
+
+        @asynccontextmanager
+        async def fake_read_session():
+            yield read_session
+
+        @asynccontextmanager
+        async def fake_write_session():
+            yield _FakeWriteSession(tx)
+
+        @asynccontextmanager
+        async def fake_write_slot():
+            yield None
+
+        monkeypatch.setattr(_pool, "get_read_session", fake_read_session)
+        monkeypatch.setattr(_pool, "get_session", fake_write_session)
+        monkeypatch.setattr(_pool, "acquire_write_slot", fake_write_slot)
+
+        r = await client.post(
+            "/documents/_bulk-retag",
+            json={
+                "targets": ["doc-hyphen"],
+                "adds": [],
+                "removes": ["retired-legacy-tag"],
+            },
+        )
+
+        assert r.status_code == 200
+        assert tx.committed is True
+        assert any("DELETE r" in query for query in tx.queries)
+        assert not any("__bulk_retag_lock" in query for query in tx.queries)
 
     async def test_reports_existing_cross_folder_doc_as_failed(
         self, monkeypatch, client
@@ -200,7 +366,7 @@ class TestBulkRetag:
             "/documents/_bulk-retag",
             json={
                 "targets": ["doc-in-other-folder"],
-                "adds": ["folder-local-tag"],
+                "adds": ["rmf-validated"],
                 "removes": [],
                 "actor": "claire.benoit",
             },
@@ -289,7 +455,7 @@ class TestRequestTag:
         assert events
         assert events[0]["kind"] == "tag-mutation"
         assert "newtag" in events[0]["summary"]
-        assert events[0]["actor"]["user"] == "operator"
+        assert events[0]["actor"]["user"] == "api_key"
 
     async def test_pushes_notification(self, client):
         await client.post(

@@ -220,6 +220,28 @@ describe('RetagModal — autocomplete & interactions', () => {
     expect(screen.getByTestId('sugg-semantic')).toHaveTextContent('semantic');
   });
 
+  it('never offers pending-review or pending-promotion catalog entries', async () => {
+    render(
+      <RetagModal
+        open
+        doc={makeDoc({ tags: [] })}
+        // Pass the raw catalogue deliberately: the modal must enforce the
+        // active-tag invariant even if its host forgot to pre-filter it.
+        tagCatalog={TAG_FIXTURES}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    const input = screen.getByLabelText('Tag input');
+    await userEvent.type(input, 'argo');
+    expect(screen.queryByTestId('sugg-argocd')).toBeNull();
+
+    await userEvent.clear(input);
+    await userEvent.type(input, 'graph');
+    expect(screen.queryByTestId('sugg-graphrag')).toBeNull();
+  });
+
   it('clicking a suggestion adds it to pendingAdd', async () => {
     render(
       <RetagModal

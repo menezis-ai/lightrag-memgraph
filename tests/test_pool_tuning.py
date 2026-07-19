@@ -3,6 +3,8 @@
 No Memgraph required — all DB interactions are mocked.
 """
 
+import asyncio
+
 import pytest
 
 import twindb_lightrag_memgraph._pool as pool
@@ -10,7 +12,9 @@ from twindb_lightrag_memgraph._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     DEFAULT_IDLE_DISCONNECT_SECONDS,
+    DEFAULT_OPERATION_TIMEOUT,
     DEFAULT_READ_POOL_SIZE,
+    DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT,
 )
 
 
@@ -103,6 +107,42 @@ class TestReadConnectionAcquireTimeout:
         assert (
             pool._read_connection_acquire_timeout()
             == DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
+        )
+
+
+class TestReadOperationTimeout:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_OPERATION_TIMEOUT", raising=False)
+        assert pool._read_operation_timeout() == DEFAULT_OPERATION_TIMEOUT
+
+    def test_override_from_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "12.5")
+        assert pool._read_operation_timeout() == 12.5
+
+    @pytest.mark.parametrize("value", ["", "nope", "0", "-1"])
+    def test_invalid_falls_back(self, monkeypatch, value):
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", value)
+        assert pool._read_operation_timeout() == DEFAULT_OPERATION_TIMEOUT
+
+
+class TestReadWriteSlotAcquireTimeout:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT", raising=False)
+        assert (
+            pool._read_write_slot_acquire_timeout()
+            == DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT
+        )
+
+    def test_override_from_env(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT", "8.5")
+        assert pool._read_write_slot_acquire_timeout() == 8.5
+
+    @pytest.mark.parametrize("value", ["", "nope", "0", "-1"])
+    def test_invalid_falls_back(self, monkeypatch, value):
+        monkeypatch.setenv("MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT", value)
+        assert (
+            pool._read_write_slot_acquire_timeout()
+            == DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT
         )
 
 
@@ -273,3 +313,144 @@ class TestConnectionConfig:
 
         assert driver is second
         assert closed == [(first, "read")]
+
+
+class TestSessionOperationDeadline:
+    async def test_caller_cancellation_is_not_translated_to_timeout(self):
+        entered = asyncio.Event()
+
+        async def stalled_operation():
+            async with pool._operation_deadline(60):
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(stalled_operation())
+        await entered.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_expiry_swallowed_by_body_still_raises_timeout(self):
+        # A driver cleanup path can swallow the cancellation our timer
+        # delivers. The deadline must still report the expiry on normal exit
+        # instead of leaking a pending cancellation into the caller's next
+        # await as a stray CancelledError.
+        with pytest.raises(asyncio.TimeoutError):
+            async with pool._operation_deadline(0.01):
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    pass
+
+        # The withdrawn request must not cancel unrelated follow-up awaits.
+        await asyncio.sleep(0)
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        if cancelling is not None:  # Python 3.11+ tracks requests
+            assert cancelling() == 0
+
+    @pytest.mark.parametrize(
+        ("getter_name", "context_name"),
+        [
+            ("get_driver", "get_session"),
+            ("_get_read_driver", "get_read_session"),
+        ],
+    )
+    async def test_stalled_session_body_times_out_and_closes_session(
+        self, monkeypatch, getter_name, context_name
+    ):
+        class Session:
+            exited = False
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                self.exited = True
+
+        session = Session()
+
+        class Driver:
+            def session(self, **_kwargs):
+                return session
+
+        async def get_driver():
+            return Driver(), "memgraph"
+
+        monkeypatch.setattr(pool, getter_name, get_driver)
+        # ``asyncio.timeout`` is absent on Python 3.10. Keep the regression
+        # visible even when this test runs under a newer interpreter.
+        monkeypatch.setattr(asyncio, "timeout", None, raising=False)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt://localhost:7687")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with getattr(pool, context_name)():
+                await asyncio.Event().wait()
+
+        assert session.exited is True
+
+    @pytest.mark.parametrize(
+        ("getter_name", "context_name"),
+        [
+            ("get_driver", "get_session"),
+            ("_get_read_driver", "get_read_session"),
+        ],
+    )
+    async def test_stalled_driver_acquisition_is_inside_operation_deadline(
+        self, monkeypatch, getter_name, context_name
+    ):
+        entered = asyncio.Event()
+
+        async def stalled_getter():
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(pool, getter_name, stalled_getter)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with getattr(pool, context_name)():
+                pytest.fail("a stalled driver getter must not yield a session")
+
+        assert entered.is_set()
+
+    @pytest.mark.parametrize(
+        ("getter_name", "context_name"),
+        [
+            ("get_driver", "get_session"),
+            ("_get_read_driver", "get_read_session"),
+        ],
+    )
+    async def test_stalled_stale_driver_close_is_inside_operation_deadline(
+        self, monkeypatch, getter_name, context_name
+    ):
+        stale_driver = object()
+        close_started = asyncio.Event()
+
+        async def stalled_close(driver, _label):
+            assert driver is stale_driver
+            close_started.set()
+            await asyncio.Event().wait()
+
+        if getter_name == "get_driver":
+            pool._driver = stale_driver
+            pool._bound_loop_id = -1
+        else:
+            pool._read_driver = stale_driver
+            pool._read_bound_loop_id = -1
+
+        class DriverFactory:
+            @staticmethod
+            def driver(*_args, **_kwargs):
+                return object()
+
+        monkeypatch.setattr(pool, "AsyncGraphDatabase", DriverFactory)
+        monkeypatch.setattr(pool, "_close_stale_driver", stalled_close)
+        monkeypatch.setenv("MEMGRAPH_OPERATION_TIMEOUT", "0.01")
+
+        with pytest.raises(asyncio.TimeoutError):
+            async with getattr(pool, context_name)():
+                pytest.fail("a stalled stale-driver close must not yield a session")
+
+        assert close_started.is_set()

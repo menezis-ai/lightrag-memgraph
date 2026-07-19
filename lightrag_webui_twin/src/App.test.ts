@@ -33,7 +33,9 @@ describe('tagCatalogForSuggestions', () => {
     expect(names).toContain('rman');
     expect(names).toContain('memgraph');
     expect(names).not.toContain('argocd');
-    expect(catalog.every((tag) => tag.status !== 'deprecated')).toBe(true);
+    expect(names).not.toContain('graphrag');
+    expect(catalog.every((tag) => tag.status === 'active')).toBe(true);
+    expect(catalog.every((tag) => tag.tier !== 'requested')).toBe(true);
   });
 });
 
@@ -117,6 +119,26 @@ describe('mapTwinQueryResponseForRetrievalTab — answer_status wiring', () => {
       'url',
       'confluence',
       'sharepoint',
+    ]);
+  });
+
+  it('preserves unavailable and real retrieval score values', () => {
+    const out = mapTwinQueryResponseForRetrievalTab({
+      response: 'x',
+      sources: [
+        { n: 1, type: 'file', name: 'null.pdf', score: null },
+        { n: 2, type: 'file', name: 'absent.pdf' },
+        { n: 3, type: 'file', name: 'zero.pdf', score: 0 },
+        { n: 4, type: 'file', name: 'ranked.pdf', score: 0.82 },
+      ],
+      answer_status: 'grounded',
+    });
+
+    expect(out.sources.map((source) => source.score)).toEqual([
+      null,
+      undefined,
+      0,
+      0.82,
     ]);
   });
 });

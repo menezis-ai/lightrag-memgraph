@@ -212,10 +212,13 @@ class TestLazyStoreModeInheritance:
 
 
 @pytest.fixture()
-async def client(catalog_env, quiet_backend_init):
+async def client(catalog_env, quiet_backend_init, monkeypatch):
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
 
@@ -361,6 +364,7 @@ def mg_env(monkeypatch):
     default_id = f"dflt_{secrets.token_hex(4)}"
     monkeypatch.setenv("MEMGRAPH_WORKSPACE", ws)
     monkeypatch.setenv("WORKSPACE", ws)
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "test-infra-root")
     monkeypatch.setenv("TWIN_DEFAULT_FOLDER", default_id)
     monkeypatch.setenv(
         "TWIN_FOLDERS_JSON",
@@ -440,7 +444,9 @@ class TestFolderDeleteLifecycleIntegration:
         app = create_app()
         _register_memgraph_template(default_id)
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": "Bearer test-infra-root"},
         ) as c:
             yield c, ws, default_id
         await _drop_folder_labels(default_id)

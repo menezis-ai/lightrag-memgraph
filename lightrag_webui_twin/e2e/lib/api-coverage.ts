@@ -6,7 +6,7 @@
  *     LIGHTRAG_API_KEY (the infra key).
  *   - api-coverage-generated-key.spec.ts → mints a key through
  *     POST /twin/api/settings/api-keys (the Settings → API keys flow) and
- *     authenticates the whole surface with THAT key.
+ *     probes the whole surface with THAT non-admin operator key.
  *
  * Surface = every /twin/api route the live OpenAPI declares (discovered at
  * runtime — 100% by construction, no committed catalog) PLUS the native
@@ -47,25 +47,62 @@ export interface CoverageRoute {
   path: string;
   hasBody: boolean;
   isPublic: boolean;
+  isAdminOnly: boolean;
   /** A *valid* body reaches retrieval/generation (LLM) — probe pre-LLM only. */
   preLlmOnly: boolean;
 }
+
+// Generated ``twk_`` keys are operator credentials, not RBAC-bearing admin
+// identities. Keep this capability map explicit: a newly admin-gated route
+// will make the generated-key job fail until its expected security boundary is
+// reviewed and recorded here.
+const ADMIN_ONLY_TWIN_OPERATIONS = new Set([
+  'GET /twin/api/settings/api-keys',
+  'POST /twin/api/settings/api-keys',
+  'DELETE /twin/api/settings/api-keys/{key_id}',
+  // Vision curation knobs: GET is any-authenticated, PUT is admin-gated
+  // (server/vision_settings_routes.py, feat/vision-settings-runtime).
+  'PUT /twin/api/settings/vision',
+  'GET /twin/api/documents/{doc_id}/folders',
+  'POST /twin/api/documents/{doc_id}/folders',
+  'DELETE /twin/api/documents/{doc_id}/folders/{folder_id}',
+  'POST /twin/api/folders',
+  'PATCH /twin/api/folders/{folder_id}',
+  'DELETE /twin/api/folders/{folder_id}',
+  'PATCH /twin/api/graph/entities/{entity_id}',
+  'POST /twin/api/graph/entities',
+  'DELETE /twin/api/graph/entities/{entity_id}',
+  'POST /twin/api/graph/relations',
+  'DELETE /twin/api/graph/relations/{rel_id}',
+  'PATCH /twin/api/graph/relations/{rel_id}',
+  'POST /twin/api/tags/categories/_import',
+  'POST /twin/api/documents/_bulk-retag',
+  'POST /twin/api/tags',
+  'POST /twin/api/tags/{name}/suggest-edit',
+  'POST /twin/api/tags/{name}/approve',
+  'POST /twin/api/tags/{name}/reject',
+  'PATCH /twin/api/tags/{name}',
+  'POST /twin/api/tags/{name}/deprecate',
+  'POST /twin/api/tags/{name}/reactivate',
+  'POST /twin/api/tags/{name}/synonyms',
+  'DELETE /twin/api/tags/{name}',
+]);
 
 // Native shim routes: a fixed contract (server/native_shims.py). Public set
 // per the 2026-06-10 C1 audit: /auth-status, /login, /logout, /health.
 // /openapi shim is protected; the FastAPI /openapi.json used for discovery
 // is the public default and is covered via the /twin/api surface separately.
 export const SHIM_ROUTES: CoverageRoute[] = [
-  { method: 'GET', path: '/auth-status', hasBody: false, isPublic: true, preLlmOnly: false },
-  { method: 'POST', path: '/login', hasBody: true, isPublic: true, preLlmOnly: false },
-  { method: 'POST', path: '/logout', hasBody: false, isPublic: true, preLlmOnly: false },
-  { method: 'GET', path: '/health', hasBody: false, isPublic: true, preLlmOnly: false },
-  { method: 'GET', path: '/documents', hasBody: false, isPublic: false, preLlmOnly: false },
-  { method: 'GET', path: '/documents/{doc_id}/chunks', hasBody: false, isPublic: false, preLlmOnly: false },
-  { method: 'POST', path: '/documents/{doc_id}/scan', hasBody: false, isPublic: false, preLlmOnly: false },
-  { method: 'DELETE', path: '/documents/{doc_id}', hasBody: false, isPublic: false, preLlmOnly: false },
-  { method: 'GET', path: '/pipeline_status', hasBody: false, isPublic: false, preLlmOnly: false },
-  { method: 'GET', path: '/openapi', hasBody: false, isPublic: false, preLlmOnly: false },
+  { method: 'GET', path: '/auth-status', hasBody: false, isPublic: true, isAdminOnly: false, preLlmOnly: false },
+  { method: 'POST', path: '/login', hasBody: true, isPublic: true, isAdminOnly: false, preLlmOnly: false },
+  { method: 'POST', path: '/logout', hasBody: false, isPublic: true, isAdminOnly: false, preLlmOnly: false },
+  { method: 'GET', path: '/health', hasBody: false, isPublic: true, isAdminOnly: false, preLlmOnly: false },
+  { method: 'GET', path: '/documents', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'GET', path: '/documents/{doc_id}/chunks', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'POST', path: '/documents/{doc_id}/scan', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'DELETE', path: '/documents/{doc_id}', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'GET', path: '/pipeline_status', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'GET', path: '/openapi', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
 ];
 
 export interface CoverageConfig {
@@ -74,6 +111,7 @@ export interface CoverageConfig {
   /** Whether the backend enforces auth (assert 401/403 on missing bearer). */
   expectAuth: boolean;
   defaultFolder: string;
+  credentialTier: 'infrastructure-root' | 'operator';
 }
 
 function baseHeaders(cfg: CoverageConfig, withAuth: boolean): Record<string, string> {
@@ -124,6 +162,7 @@ export function discoverTwinRoutes(schema: Record<string, unknown>): CoverageRou
         path,
         hasBody: !!(op && typeof op === 'object' && 'requestBody' in op),
         isPublic: PUBLIC_TWIN_PATHS.has(path),
+        isAdminOnly: ADMIN_ONLY_TWIN_OPERATIONS.has(`${M} ${path}`),
         preLlmOnly: path.startsWith('/twin/api/query'),
       });
     }
@@ -137,8 +176,23 @@ export async function coverRoute(
   route: CoverageRoute,
   cfg: CoverageConfig,
 ): Promise<void> {
-  const { method, path, hasBody, isPublic, preLlmOnly } = route;
+  const { method, path, hasBody, isPublic, isAdminOnly, preLlmOnly } = route;
   const hasParam = /{[^}]+}/.test(path);
+  const expectAdminForbidden =
+    isAdminOnly && cfg.credentialTier === 'operator';
+
+  // 0) Prove the authorization boundary with a syntactically clean request.
+  //    Injection payloads may be rejected by the HTTP router before FastAPI
+  //    reaches dependencies (for example an encoded slash can yield 404), so
+  //    they cannot reliably prove whether the admin gate ran.
+  if (expectAdminForbidden) {
+    const res = await ctx.fetch(concretePath(path), {
+      method,
+      headers: baseHeaders(cfg, true),
+      ...(hasBody ? { data: {} } : {}),
+    });
+    expect(res.status(), `${method} ${path} accepted a non-admin key`).toBe(403);
+  }
 
   // 1) Hostile input must never 5xx, never leak the driver. LLM routes get an
   //    empty body (→ 422) so a valid query never reaches an absent model.
@@ -174,7 +228,8 @@ export async function coverRoute(
     expect([401, 403], `${method} ${path} did not reject anonymous`).toContain(res.status());
   }
 
-  // 4) Malformed JSON body → 422/400, never 5xx.
+  // 4) Malformed JSON body → 422/400, never 5xx. An admin dependency may
+  //    reject an operator before body parsing; step 0 already proved that gate.
   if (hasBody) {
     const res = await ctx.fetch(concretePath(path), {
       method,
@@ -182,7 +237,8 @@ export async function coverRoute(
       data: '{ not valid json',
     });
     expect(res.status(), `${method} ${path} 5xx on bad JSON`).toBeLessThan(500);
-    expect([400, 422], `${method} ${path} bad JSON not rejected`).toContain(res.status());
+    const expectedStatuses = expectAdminForbidden ? [400, 403, 422] : [400, 422];
+    expect(expectedStatuses, `${method} ${path} bad JSON not rejected`).toContain(res.status());
   }
 
   // 5) Unknown id on a parametrised route → 4xx, never 5xx.
@@ -207,6 +263,14 @@ export async function coverApiSurface(
 ): Promise<string[]> {
   const schema = await fetchOpenApi(ctx, cfg);
   const routes = [...discoverTwinRoutes(schema), ...SHIM_ROUTES];
+
+  const discovered = new Set(routes.map(({ method, path }) => `${method} ${path}`));
+  for (const operation of ADMIN_ONLY_TWIN_OPERATIONS) {
+    expect(
+      discovered.has(operation),
+      `admin operation missing from live surface: ${operation}`,
+    ).toBe(true);
+  }
 
   // Sanity floor: a broken/empty surface must fail loudly, not report a
   // vacuous "100%". (45 /twin/api + 10 shims on the BNP target.)

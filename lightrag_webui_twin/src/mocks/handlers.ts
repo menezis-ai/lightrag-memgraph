@@ -567,6 +567,29 @@ export function setMockQuotaState(patch: Partial<MockQuotaState>): void {
         : quotaState.used_bytes / quotaState.limit_bytes;
   }
 }
+// Vision ingestion settings — the two curation knobs of the image
+// pipeline. In-memory snapshot (like quota); defaults mirror the backend
+// env defaults (`_vision.DEFAULT_MIN_OCR_CHARS` / `DEFAULT_DROP_CLASSES`)
+// with `source: 'env-default'` until a PUT lands a runtime override.
+interface MockVisionSettingsState {
+  min_ocr_chars: number;
+  drop_classes: string[];
+  source: 'runtime' | 'env-default';
+  updated_at: number | null;
+  updated_by: string | null;
+}
+function defaultVisionSettingsState(): MockVisionSettingsState {
+  return {
+    min_ocr_chars: 20,
+    drop_classes: ['invalid', 'logo', 'signature'],
+    source: 'env-default',
+    updated_at: null,
+    updated_by: null,
+  };
+}
+let visionSettingsState: MockVisionSettingsState = defaultVisionSettingsState();
+const VISION_DROP_CLASS_RE = /^[a-z0-9][a-z0-9 _-]{0,39}$/;
+
 function nextApiKeyId(): string {
   apiKeyCounter += 1;
   return `mock-key-${apiKeyCounter}`;
@@ -698,6 +721,7 @@ export function resetDocumentsState(): void {
   apiKeyState = [];
   apiKeyCounter = 0;
   quotaState = defaultQuotaState();
+  visionSettingsState = defaultVisionSettingsState();
   graphEntityState = cloneGraphEntities(GRAPH_ENTITY_FIXTURES);
   graphRelationState = cloneGraphRelations(GRAPH_RELATION_FIXTURES);
   uploadedTrackDocs.clear();
@@ -725,6 +749,32 @@ async function recordQueryRequest(request: Request): Promise<Record<string, unkn
     body,
   });
   return body;
+}
+
+const TWIN_QUERY_MODES = new Set(['naive', 'local', 'global', 'hybrid', 'mix']);
+
+function rejectUnsafeTwinQuery(
+  body: Record<string, unknown>,
+): ReturnType<typeof HttpResponse.json> | undefined {
+  if (typeof body.mode === 'string' && !TWIN_QUERY_MODES.has(body.mode)) {
+    return HttpResponse.json(
+      { detail: `Unsupported Twin query mode: ${body.mode}` },
+      { status: 422 },
+    );
+  }
+  if (body.only_need_prompt === true) {
+    return HttpResponse.json(
+      { detail: 'only_need_prompt is disabled on the external API' },
+      { status: 422 },
+    );
+  }
+  if (typeof body.user_prompt === 'string' && body.user_prompt.trim()) {
+    return HttpResponse.json(
+      { detail: 'raw user_prompt overrides are disabled' },
+      { status: 422 },
+    );
+  }
+  return undefined;
 }
 
 function updateDoc(id: string, patch: Partial<Document>): Document | null {
@@ -1476,15 +1526,11 @@ export const handlers = [
   // Twin overlay query — mirrors the structured `{response, sources}`
   // contract from the backend so dev / standalone parity is honest.
   http.post(`${ANY}${TWIN}/query`, async ({ request }) => {
-    const body = (await recordQueryRequest(request)) as {
-      query?: string;
-      top_k?: number;
-      chunk_top_k?: number;
-      user_prompt?: string;
-      enable_rerank?: boolean;
-    };
-    const q = body.query ?? '';
-    const topK = body.top_k ?? 3;
+    const body = await recordQueryRequest(request);
+    const unsafe = rejectUnsafeTwinQuery(body);
+    if (unsafe) return unsafe;
+    const q = typeof body.query === 'string' ? body.query : '';
+    const topK = typeof body.top_k === 'number' ? body.top_k : 3;
     const responseText = q
       ? `Mock retrieval response for: ${q}`
       : 'Mock retrieval response';
@@ -1500,10 +1546,13 @@ export const handlers = [
     return HttpResponse.json({ response: responseText, sources });
   }),
   http.post(`${ANY}${TWIN}/query/data`, async ({ request }) => {
-    const body = (await recordQueryRequest(request)) as {
-      query?: string;
-      tag_filter?: { all?: string[]; any?: string[] };
-    };
+    const body = await recordQueryRequest(request);
+    const unsafe = rejectUnsafeTwinQuery(body);
+    if (unsafe) return unsafe;
+    const tagFilter = body.tag_filter as
+      | { all?: string[]; any?: string[] }
+      | undefined;
+    const q = typeof body.query === 'string' ? body.query : '';
     return HttpResponse.json({
       status: 'success',
       message: 'Query executed successfully',
@@ -1522,8 +1571,8 @@ export const handlers = [
             chunk_id: 'mock-chunk-1',
             full_doc_id: 'mock-doc-1',
             file_path: '/cib/runbooks/mock-source-1.pdf',
-            content: body.query
-              ? `Mock structured Twin retrieval for: ${body.query}`
+            content: q
+              ? `Mock structured Twin retrieval for: ${q}`
               : 'Mock structured Twin retrieval',
             reference_id: '1',
           },
@@ -1534,7 +1583,7 @@ export const handlers = [
       },
       metadata: {
         query_mode: 'hybrid',
-        ...(body.tag_filter ? { tag_filter: body.tag_filter } : {}),
+        ...(tagFilter ? { tag_filter: tagFilter } : {}),
       },
     });
   }),
@@ -1545,12 +1594,11 @@ export const handlers = [
     // The client parses line-by-line and ignores anything else, so
     // returning plain text here used to silently produce an empty
     // assistant turn in MSW dev mode (no tokens, no sources).
-    const body = (await recordQueryRequest(request)) as {
-      query?: string;
-      top_k?: number;
-    };
-    const q = body.query ?? '';
-    const topK = Math.min(body.top_k ?? 3, 3);
+    const body = await recordQueryRequest(request);
+    const unsafe = rejectUnsafeTwinQuery(body);
+    if (unsafe) return unsafe;
+    const q = typeof body.query === 'string' ? body.query : '';
+    const topK = Math.min(typeof body.top_k === 'number' ? body.top_k : 3, 3);
     const text = q
       ? `Mock retrieval response for: ${q}`
       : 'Mock retrieval response';
@@ -1645,6 +1693,74 @@ export const handlers = [
       persistApiKeyState();
     }
     return HttpResponse.json(publicApiKey(apiKeyState[idx]));
+  }),
+  // Vision ingestion settings — GET is open to any authenticated user;
+  // PUT mirrors the backend's admin gate (same `admin:folders` scope the
+  // folder mutations check) and mutates the state so a refetch reflects it.
+  http.get(`${ANY}${TWIN}/settings/vision`, () =>
+    HttpResponse.json(visionSettingsState),
+  ),
+  http.put(`${ANY}${TWIN}/settings/vision`, async ({ request }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const body = (await request.json().catch(() => null)) as {
+      min_ocr_chars?: unknown;
+      drop_classes?: unknown;
+    } | null;
+    const minOcr = body?.min_ocr_chars;
+    if (
+      typeof minOcr !== 'number' ||
+      !Number.isInteger(minOcr) ||
+      minOcr < 0 ||
+      minOcr > 100_000
+    ) {
+      return HttpResponse.json(
+        { detail: 'min_ocr_chars must be an integer in 0..100000' },
+        { status: 422 },
+      );
+    }
+    const rawClasses = body?.drop_classes;
+    if (!Array.isArray(rawClasses) || rawClasses.length > 20) {
+      return HttpResponse.json(
+        { detail: 'drop_classes must be a list of at most 20 slugs' },
+        { status: 422 },
+      );
+    }
+    const cleaned: string[] = [];
+    for (const value of rawClasses) {
+      const slug = String(value).trim().toLowerCase();
+      if (!slug) continue;
+      if (!VISION_DROP_CLASS_RE.test(slug)) {
+        return HttpResponse.json(
+          { detail: `invalid drop class '${value}' (letters/digits/-_ only)` },
+          { status: 422 },
+        );
+      }
+      cleaned.push(slug);
+    }
+    visionSettingsState = {
+      min_ocr_chars: minOcr,
+      drop_classes: [...new Set(cleaned)].sort((a, b) => a.localeCompare(b)),
+      source: 'runtime',
+      updated_at: Date.now(),
+      updated_by: 'mock-operator',
+    };
+    recordActivity({
+      id: `evt_vision_settings_${Date.now()}`,
+      ts: new Date().toISOString(),
+      rel: 'now',
+      day: 'Today',
+      kind: 'vision-settings-updated',
+      sev: 'info',
+      actor: { user: 'mock-operator', role: 'admin' },
+      target: { type: 'settings', label: 'vision' },
+      summary: `Vision settings updated: min OCR chars ${visionSettingsState.min_ocr_chars}, drop classes ${visionSettingsState.drop_classes.join(', ') || '(none)'}`,
+      meta: {
+        min_ocr_chars: visionSettingsState.min_ocr_chars,
+        drop_classes: visionSettingsState.drop_classes,
+      },
+    });
+    return HttpResponse.json(visionSettingsState);
   }),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinFolderRequest(request);
@@ -2164,6 +2280,27 @@ export const handlers = [
       adds?: string[];
       removes?: string[];
     };
+    const activeTags = new Set(
+      tagState
+        .filter((tag) => tag.status === 'active' && tag.tier !== 'requested')
+        .map((tag) => tag.tag),
+    );
+    const unapproved = Array.from(
+      new Set((body.adds ?? []).filter((tag) => !activeTags.has(tag))),
+    ).sort((a, b) => a.localeCompare(b));
+    if (unapproved.length > 0) {
+      // Match the real route: unknown and pending tags are neither auto-created
+      // nor attached. Returning before document mutation keeps this atomic.
+      return HttpResponse.json(
+        {
+          detail: {
+            message: 'Only active, approved tags may be attached',
+            unapproved_tags: unapproved,
+          },
+        },
+        { status: 422 },
+      );
+    }
     const targetIds = new Set(body.targets);
     const failed: string[] = [];
     body.targets.forEach((id) => {

@@ -9,7 +9,7 @@ surface. This module covers the enqueue-level gate:
 
   * unit: gate fires when ``apipeline_enqueue_documents`` is called directly
     (over-classified → FAILED row + event + not enqueued; under-ceiling →
-    enqueued untouched; graceful non-detection → enqueued; detector crash →
+    enqueued untouched; missing classification → rejected; detector crash →
     UNKNOWN → fail-closed rejection, parity with the ainsert gate);
   * no-double-event: the ainsert path (which internally calls enqueue on
     every supported LightRAG) classifies and emits exactly once;
@@ -249,7 +249,7 @@ async def test_enqueue_gate_all_rejected_returns_track_id(enqueue_gate, tmp_path
     assert enqueued == []
 
 
-async def test_enqueue_gate_passthrough_when_no_file_paths(enqueue_gate, monkeypatch):
+async def test_enqueue_gate_rejects_when_no_file_paths(enqueue_gate, monkeypatch):
     rag, enqueued = enqueue_gate
     calls: list[str] = []
 
@@ -259,23 +259,47 @@ async def test_enqueue_gate_passthrough_when_no_file_paths(enqueue_gate, monkeyp
 
     monkeypatch.setattr(hook_mod, "detect_classification", counting_detect)
 
-    await rag.apipeline_enqueue_documents("in-memory text only")
+    track = await rag.apipeline_enqueue_documents("in-memory text only")
 
-    assert len(enqueued) == 1
+    assert enqueued == []
     assert calls == []  # nothing to probe → no classification at all
-    rag.doc_status.upsert.assert_not_called()
+    assert isinstance(track, str) and track
+    failed = rag.doc_status.upsert.call_args.args[0]
+    (row,) = failed.values()
+    assert row["metadata"]["classification"]["reason"] == "source-file-required"
 
 
-async def test_enqueue_gate_graceful_nondetection_enqueues(enqueue_gate, tmp_path):
+async def test_enqueue_gate_graceful_nondetection_fails_closed(
+    enqueue_gate, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TWIN_MIP_UNLABELED_POLICY", "reject")
     rag, enqueued = enqueue_gate
     plain = tmp_path / "notes.txt"
     plain.write_text("unlabeled plain text")
 
     await rag.apipeline_enqueue_documents("body", file_paths=str(plain))
 
-    # Unsupported extension → class None → not above any ceiling → enqueued.
+    assert enqueued == []
+    failed = rag.doc_status.upsert.call_args.args[0]
+    (row,) = failed.values()
+    assert row["metadata"]["classification"]["class_id"] is None
+    assert "unsupported-extension" in row["metadata"]["classification"]["reason"]
+    assert len(await _rejected_events()) == 1
+
+
+async def test_enqueue_gate_unlabeled_passes_under_default_policy(
+    enqueue_gate, tmp_path
+):
+    """Permissive default (decision 2026-07-10): an unlabeled format flows
+    through the gate; the classification payload traces class None."""
+    rag, enqueued = enqueue_gate
+    plain = tmp_path / "notes.txt"
+    plain.write_text("unlabeled plain text")
+
+    await rag.apipeline_enqueue_documents("body", file_paths=str(plain))
+
     assert len(enqueued) == 1
-    assert len(await _rejected_events()) == 0
+    assert await _rejected_events() == []
 
 
 async def test_enqueue_gate_detector_crash_is_fail_closed(
@@ -778,6 +802,7 @@ async def test_direct_enqueue_mixed_batch_and_failed_row_survives_pipeline(
 
     input_dir = Path(os.environ["INPUT_DIR"])
     input_dir.mkdir(parents=True, exist_ok=True)
+    accepted = _build_docx_with_label(input_dir, "C2 Confidentiel", C2_GUID)
     secret = _build_docx_with_label(input_dir, "C3 Strict", C3_GUID)
 
     clean_content = (
@@ -788,7 +813,7 @@ async def test_direct_enqueue_mixed_batch_and_failed_row_survives_pipeline(
 
     await rag.apipeline_enqueue_documents(
         [clean_content, "embedded secret body"],
-        file_paths=["clean-notes.txt", secret.name],
+        file_paths=[accepted.name, secret.name],
         track_id=track_id,
     )
 

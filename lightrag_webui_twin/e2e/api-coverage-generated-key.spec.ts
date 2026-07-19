@@ -4,10 +4,11 @@
  * endpoint the WebUI "Create API key" button hits.
  *
  * This proves the full lifecycle: a key an operator generates in
- * Settings → API keys is a real, accepted credential across the entire API
- * (require_auth validates it via api_key_store.validate_bearer), not a
- * display-only artefact. If a generated key did NOT authenticate, the
- * sanity probe below would fail loudly.
+ * Settings → API keys is a real credential accepted by ``require_auth``, not
+ * a display-only artefact. It intentionally remains non-admin: routes guarded
+ * by ``require_admin_user`` return 403 because only the separately managed
+ * infrastructure root key may administer a deployment without an IdP. If a
+ * generated key did NOT authenticate, the sanity probe below would fail loudly.
  *
  * Designed to run on its OWN CI runner (webui-e2e-keygen), separate from the
  * static-key job, against the same real Memgraph + LightRAG backend. The
@@ -32,9 +33,8 @@ test.describe('Twin API — 100% coverage with a Settings-generated key', () => 
 
   test.beforeAll(async () => {
     ctx = await playwrightRequest.newContext({ baseURL: backendUrl });
-    // Mint a key through the same endpoint the WebUI uses. Authenticated with
-    // the static admin key (palier-1 require_admin_user accepts any
-    // authenticated identity when the IdP is dormant).
+    // Mint a key through the same endpoint the WebUI uses. Only the static
+    // infrastructure root key may call this admin endpoint without an IdP.
     const res = await ctx.post('/twin/api/settings/api-keys', {
       headers: {
         Accept: 'application/json',
@@ -53,7 +53,7 @@ test.describe('Twin API — 100% coverage with a Settings-generated key', () => 
     await ctx?.dispose();
   });
 
-  test('a Settings-generated key authenticates the entire surface', async () => {
+  test('a Settings-generated key authenticates operator routes and is denied admin routes', async () => {
     // Sanity: prove the generated key (not the static key) is what authenticates.
     const probe = await ctx.get('/twin/api/folders', {
       headers: {
@@ -64,7 +64,27 @@ test.describe('Twin API — 100% coverage with a Settings-generated key', () => 
     });
     expect(probe.status(), 'generated key did not authenticate').toBe(200);
 
-    const cfg: CoverageConfig = { authToken: generatedKey, expectAuth, defaultFolder };
+    // The same key must not cross the dormant-IdP administration boundary.
+    const adminProbe = await ctx.post(
+      '/twin/api/documents/__twin_e2e_nonexistent_0000__/folders',
+      {
+        headers: {
+          Accept: 'application/json',
+          'X-Twin-Folder': defaultFolder,
+          Authorization: `Bearer ${generatedKey}`,
+          'Content-Type': 'application/json',
+        },
+        data: { folder_id: defaultFolder },
+      },
+    );
+    expect(adminProbe.status(), 'generated key unexpectedly has admin power').toBe(403);
+
+    const cfg: CoverageConfig = {
+      authToken: generatedKey,
+      expectAuth,
+      defaultFolder,
+      credentialTier: 'operator',
+    };
     const covered = await coverApiSurface(test, ctx, cfg);
     test.info().annotations.push({
       type: 'coverage',

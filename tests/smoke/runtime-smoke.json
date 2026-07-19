@@ -93,6 +93,13 @@
       "expect_status": 200
     },
     {
+      "name": "vision settings are readable after login",
+      "method": "GET",
+      "path": "/twin/api/settings/vision",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
       "name": "logout clears local session",
       "method": "POST",
       "path": "/logout",

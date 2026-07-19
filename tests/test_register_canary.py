@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import logging
 import sys
 import types
@@ -252,6 +253,7 @@ class TestCanaryNeutrality:
         a recorded hash — 1.4.11/1.4.12 — the drift canary legitimately
         fires; that is its job, not a neutrality break.)"""
         import lightrag.operate as operate
+        from lightrag.kg.memgraph_impl import MemgraphStorage
         from lightrag.lightrag import LightRAG
 
         for var in _TWIN_OVERLAY_ENV:
@@ -270,6 +272,9 @@ class TestCanaryNeutrality:
         assert operate._get_node_data is registry._fused_get_node_data
         assert (
             operate._find_most_related_edges_from_entities is registry._fused_find_edges
+        )
+        assert getattr(
+            MemgraphStorage.__init__, "_twindb_explicit_workspace_patch", False
         )
 
     def test_register_stays_idempotent_with_canary(self, monkeypatch):
@@ -416,3 +421,132 @@ class TestPrivateCopyDriftCanary:
                 f"hashes to {digest}, not recorded in "
                 "canary.KNOWN_PRIVATE_COPY_SOURCE_HASHES"
             )
+
+
+# ---------------------------------------------------------------------------
+# Memgraph constructor — reviewed ABI/body + minimal delegating wrapper
+# ---------------------------------------------------------------------------
+
+
+class _ReviewedMemgraphStorage:
+    def __init__(
+        self, namespace, global_config, embedding_func, workspace=None
+    ):  # pragma: no cover - signature fixture only
+        self.workspace = workspace
+
+
+class TestMemgraphInitCanary:
+    @pytest.mark.parametrize("version", ["1.4.9.11", "1.4.11", "1.4.12"])
+    def test_supported_matrix_signature_and_body_are_silent(
+        self, version, monkeypatch, caplog
+    ):
+        digest = "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d"
+        monkeypatch.setattr(canary, "installed_lightrag_version", lambda: version)
+        monkeypatch.setattr(canary, "normalized_source_hash", lambda _fn: digest)
+
+        with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
+            reviewed = canary.reviewed_memgraph_init(_ReviewedMemgraphStorage)
+
+        assert reviewed is _ReviewedMemgraphStorage.__init__
+        assert str(inspect.signature(reviewed)) in canary.KNOWN_MEMGRAPH_INIT_SIGNATURES
+        assert _canary_messages(caplog) == []
+
+    def test_reviewed_fingerprint_provenance_covers_supported_matrix(self):
+        provenance = " ".join(canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES.values())
+        assert "1.4.9.11" in provenance
+        assert "1.4.11" in provenance
+        assert "1.4.12" in provenance
+        assert (
+            "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d"
+            in canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES
+        )
+        assert (
+            "a0c43427a1013f0d24f4e4ce1ad41558a5c13af7a50929faab419c32fb79b47b"
+            in canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES
+        )
+
+    def test_recorded_fingerprint_matches_installed_supported_wheel(self):
+        version = canary.installed_lightrag_version()
+        recorded_versions = {"1.4.9.11", "1.4.11", "1.4.12", "1.5.3", "1.5.4"}
+        if version not in recorded_versions:
+            pytest.skip(f"no Memgraph constructor baseline recorded for {version}")
+
+        import lightrag.kg.memgraph_impl as memgraph_impl
+
+        source = Path(memgraph_impl.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        storage_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "MemgraphStorage"
+        )
+        init_node = next(
+            node
+            for node in storage_class.body
+            if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        )
+        init_source = ast.get_source_segment(source, init_node)
+        digest = hashlib.sha256(
+            "".join(init_source.split()).encode("utf-8")
+        ).hexdigest()
+
+        assert digest in canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES
+        assert (
+            str(inspect.signature(memgraph_impl.MemgraphStorage.__init__))
+            in canary.KNOWN_MEMGRAPH_INIT_SIGNATURES
+        )
+
+    def test_reviewed_signature_with_unknown_body_warns_and_skips(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(canary, "normalized_source_hash", lambda _fn: "f" * 64)
+
+        with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
+            reviewed = canary.reviewed_memgraph_init(_ReviewedMemgraphStorage)
+
+        assert reviewed is None
+        msgs = _canary_messages(caplog)
+        assert len(msgs) == 1
+        assert "no reviewed constructor body" in msgs[0]
+        assert "skipping" in msgs[0]
+
+    def test_unreviewed_signature_warns_and_skips(self, caplog):
+        class ChangedMemgraphStorage:
+            def __init__(self, namespace, *, new_required):  # pragma: no cover
+                self.namespace = namespace
+
+        with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
+            reviewed = canary.reviewed_memgraph_init(ChangedMemgraphStorage)
+
+        assert reviewed is None
+        msgs = _canary_messages(caplog)
+        assert len(msgs) == 1
+        assert "unreviewed signature" in msgs[0]
+        assert "skipping" in msgs[0]
+
+    def test_unavailable_source_warns_and_skips(self, monkeypatch, caplog):
+        monkeypatch.setattr(canary, "normalized_source_hash", lambda _fn: None)
+
+        with caplog.at_level(logging.WARNING, logger="twindb_lightrag_memgraph"):
+            reviewed = canary.reviewed_memgraph_init(_ReviewedMemgraphStorage)
+
+        assert reviewed is None
+        msgs = _canary_messages(caplog)
+        assert len(msgs) == 1
+        assert "source" in msgs[0]
+        assert "unavailable" in msgs[0]
+        assert "skipping" in msgs[0]
+
+    def test_registry_does_not_replace_init_when_canary_skips(self, monkeypatch):
+        from lightrag.kg.memgraph_impl import MemgraphStorage
+
+        def unreviewed_init(self, *, changed):  # pragma: no cover
+            self.changed = changed
+
+        monkeypatch.setattr(MemgraphStorage, "__init__", unreviewed_init)
+        monkeypatch.setattr(canary, "reviewed_memgraph_init", lambda _owner: None)
+        monkeypatch.setattr(registry, "_patch_operate_hot_paths", lambda: None)
+
+        registry._patch_builtin_memgraph_storage()
+
+        assert MemgraphStorage.__init__ is unreviewed_init

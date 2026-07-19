@@ -13,20 +13,20 @@ import asyncio
 import hashlib
 import hmac
 import logging
-import os
 import secrets
 from pathlib import Path
 from typing import Optional
 
 from lightrag import LightRAG, QueryParam
 
+from .._constants import validate_identifier
 from .config import TwinRAGConfig
 from .features.cognitive_reranker import CognitiveReranker
 from .features.feedback import FeedbackStore
 from .features.workspace_router import FolderRouter
 from .features.intent_classifier import IntentClassifier
 from .features.query_expander import QueryExpander
-from .models.schemas import IntentType, QueryResult, QueryTrace
+from .models.schemas import AnswerStatus, IntentType, QueryResult, QueryTrace
 from .ontology.config import OntologyConfig, load_ontology_config
 from .react.act import SearchEngine
 from .react.observe import SynthesisEngine
@@ -59,7 +59,12 @@ class TwinRAGEngine:
 
     Usage:
         engine = TwinRAGEngine(config)
-        result = await engine.aquery("Pourquoi ORA-04030 ?", history=[...], workspace="cib")
+        result = await engine.aquery(
+            "Pourquoi ORA-04030 ?",
+            conversation_history=[...],
+            workspace="cib",
+            authorized_folders={"cib", "commons"},
+        )
     """
 
     def __init__(self, config: Optional[TwinRAGConfig] = None) -> None:
@@ -85,15 +90,27 @@ class TwinRAGEngine:
 
     def _get_rag(self, workspace: str) -> LightRAG:
         """Return (or create) a LightRAG instance for a given workspace."""
+        workspace = validate_identifier(str(workspace), "workspace")
         if workspace not in self._rag_instances:
             from .. import register
 
             register()
 
-            os.environ["MEMGRAPH_WORKSPACE"] = workspace
+            from lightrag.kg.memgraph_impl import MemgraphStorage
+
+            if not getattr(
+                MemgraphStorage.__init__,
+                "_twindb_explicit_workspace_patch",
+                False,
+            ):
+                raise RuntimeError(
+                    "The installed LightRAG Memgraph constructor is not "
+                    "compatible with explicit workspace isolation"
+                )
 
             self._rag_instances[workspace] = LightRAG(
                 working_dir=f"/tmp/lightrag_{workspace}",
+                workspace=workspace,
                 kv_storage="MemgraphKVStorage",
                 vector_storage="MemgraphVectorDBStorage",
                 doc_status_storage="MemgraphDocStatusStorage",
@@ -163,6 +180,7 @@ class TwinRAGEngine:
             return QueryResult(
                 answer=self._scripted_response(intent_result.intent),
                 citations=[],
+                answer_status=AnswerStatus.NO_RETRIEVAL,
                 trace=trace,
                 intent=intent_result,
             )
@@ -172,6 +190,7 @@ class TwinRAGEngine:
             return QueryResult(
                 answer=self._scripted_response(IntentType.GREETING),
                 citations=[],
+                answer_status=AnswerStatus.NO_RETRIEVAL,
                 trace=trace,
                 intent=intent_result,
             )
@@ -188,6 +207,7 @@ class TwinRAGEngine:
             return QueryResult(
                 answer=self._scripted_response(IntentType.MALICIOUS),
                 citations=[],
+                answer_status=AnswerStatus.NO_RETRIEVAL,
                 trace=trace,
                 intent=intent_result,
             )
@@ -202,6 +222,7 @@ class TwinRAGEngine:
         user_id: Optional[str] = None,
         folder: Optional[str] = None,
         folders_publics: Optional[list[str]] = None,
+        authorized_folders: Optional[set[str]] = None,
     ) -> QueryResult:
         """
         Main entry point -- Full ReAct + AFFINE pipeline.
@@ -214,6 +235,7 @@ class TwinRAGEngine:
             workspace: Deprecated alias for folder.
             workspaces_publics: Deprecated alias for folders_publics.
             user_id: User identifier for feedback.
+            authorized_folders: Authoritative folder ids the caller may query.
 
         Returns:
             QueryResult containing answer, citations, trace, intent.
@@ -221,6 +243,19 @@ class TwinRAGEngine:
         active_folder, public_folders, explicit_folder_override = self._resolve_folders(
             folder, workspace, folders_publics, workspaces_publics
         )
+        if authorized_folders is None:
+            raise PermissionError("An authoritative folder scope is required")
+
+        authorized = {
+            validate_identifier(str(item), "folder") for item in authorized_folders
+        }
+        active_folder = validate_identifier(str(active_folder), "folder")
+        public_folders = [
+            validate_identifier(str(item), "folder") for item in public_folders
+        ]
+        denied = {active_folder, *public_folders} - authorized
+        if denied:
+            raise PermissionError(f"Unauthorized folders: {sorted(denied)}")
 
         trace = QueryTrace(question=question, workspace=active_folder, user_id=user_id)
         trace.start()
@@ -264,6 +299,12 @@ class TwinRAGEngine:
             public_folders=public_folders,
             explicit_folder_override=explicit_folder_override,
         )
+        all_workspaces = [
+            validate_identifier(str(item), "folder") for item in all_workspaces
+        ]
+        denied = set(all_workspaces) - authorized
+        if denied:
+            raise PermissionError(f"Unauthorized folders: {sorted(denied)}")
         search_tasks = []
         for ws in all_workspaces:
             rag = self._get_rag(ws)
@@ -296,6 +337,7 @@ class TwinRAGEngine:
         return QueryResult(
             answer=synthesis_result.answer,
             citations=synthesis_result.citations,
+            answer_status=synthesis_result.answer_status,
             trace=trace,
             intent=trace.intent,
         )

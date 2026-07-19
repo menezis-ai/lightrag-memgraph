@@ -1,7 +1,12 @@
 """
 Vector Storage backend using Memgraph native vector search.
 
-Requires: Memgraph >= 3.2 with MAGE (vector_search module).
+Requires: Memgraph >= 3.0 with native vector search. Vector search
+(CREATE VECTOR INDEX / vector_search.search) is a CORE Memgraph feature
+(stable since 3.0.0, Jan 2025) — MAGE is NOT required. The plain
+``memgraph/memgraph`` image is sufficient; ``memgraph/memgraph-mage`` also
+works (it is a superset that additionally bundles the graph-algorithm modules
+this package does not use).
 
 Each vector entry is a Cypher node:
   Label: :Vec_{workspace}_{namespace}
@@ -17,6 +22,7 @@ Query:
   YIELD node, similarity
 """
 
+import asyncio
 import json
 import math
 import os
@@ -63,6 +69,22 @@ _FOLDER_SCOPE_OVERFETCH_ENV = "TWIN_QUERY_FOLDER_SCOPE_OVERFETCH"
 _FOLDER_SCOPE_OVERFETCH_DEFAULT = 4
 _FOLDER_SCOPE_OVERFETCH_CAP = 500
 _DEFAULT_EMBEDDING_BATCH_NUM = 32
+
+# Ingestion-side embedding retry. A cold embedding endpoint (model still
+# loading / first request of the day) can blow past LightRAG's 60s worker
+# timeout on the FIRST call and fail the whole document, even though the
+# endpoint is warm and fast a second later. We wrap each storage-side embedding
+# call in a shorter per-attempt timeout and retry, so a cold start recovers
+# automatically instead of failing prematurely. On the happy path (endpoint
+# responds immediately) attempt 1 returns and behaviour is identical to before.
+# Scoped to ingestion (_compute_missing_embeddings) — the query path fails fast
+# by design. Tunable via env; retries re-raise the last error on exhaustion so
+# LightRAG still marks the doc FAILED (graceful degradation, no silent drop).
+_EMBEDDING_TIMEOUT_ENV = "TWIN_EMBEDDING_TIMEOUT"
+_DEFAULT_EMBEDDING_TIMEOUT = 30.0  # seconds per attempt
+_EMBEDDING_ATTEMPTS_ENV = "TWIN_EMBEDDING_ATTEMPTS"
+_DEFAULT_EMBEDDING_ATTEMPTS = 3
+_EMBEDDING_RETRY_BACKOFF = 1.0  # seconds between attempts (give a cold model time)
 
 
 def _folder_scope_overfetch(top_k: int) -> int:
@@ -191,7 +213,9 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         cosine_better_than_threshold=None,
         **kwargs,
     ):
-        workspace = resolve_workspace()
+        workspace = validate_identifier(
+            str(global_config.get("workspace") or resolve_workspace()), "workspace"
+        )
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,
@@ -444,7 +468,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         top_k: int,
         folder: str | None,
         filters: RetrievalFilters | None = None,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str | None, dict[str, Any]]:
         """Build the vector-search Cypher + params for this query.
 
         When ``folder`` is None and no filters are active the query is the
@@ -472,22 +496,15 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         Doc/tag predicates require an active folder (the Twin query path always
         binds one) — the tag label is folder-scoped (``WebuiTag_{folder}``).
 
-        Two membership join shapes, detected from ``meta_fields`` (robust — no
-        namespace-string hardcoding):
+        Folder-scoped graph-vector retrieval is intentionally unavailable.
+        LightRAG aggregates entity and relationship payloads across all source
+        documents before storing their vectors. A membership predicate could
+        scope row selection, but cannot remove text contributed by documents in
+        other folders. Those VDBs therefore fail closed until their payloads are
+        materialized per folder or per source document.
 
-        - **chunks** (``full_doc_id`` ∈ meta_fields): direct join
-          ``chunk.full_doc_id → DocStatus → MEMBER_OF folder``. Fully scoped.
-        - **entities / relationships** (``source_id`` ∈ meta_fields): ``source_id``
-          is a ``GRAPH_FIELD_SEP``-joined list of *chunk ids*. The record is kept
-          if **any** source chunk belongs to a member document. **This scopes the
-          *selection*, not the payload**: a kept entity/relation ``content`` /
-          description is aggregated by LightRAG across *all* its source docs at
-          extraction time, so a kept record's description may still encode text
-          from non-member docs. Un-blending would require per-folder
-          re-extraction — out of scope. Known residual (batch-2 acceptance).
-          The same residual applies to ``doc_filter`` / ``tag_filter``: they
-          scope which entity/relation records are *selected*, not the blended
-          content of a kept record.
+        Chunk vectors (``full_doc_id`` in ``meta_fields``) remain available and
+        are joined directly through ``DocStatus → MEMBER_OF folder``.
         """
         # Normalise: an empty/None filter set is a true no-op so the folder-only
         # and native LightRAG paths stay byte-for-byte identical.
@@ -498,6 +515,16 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         index_name = self._index_name()
         if not folder:
             return self._legacy_search_cypher(index_name, top_k, threshold)
+
+        if "source_id" in self.meta_fields:
+            logger.error(
+                "[MemgraphVec:%s/%s] refusing blended graph-vector retrieval "
+                "under folder scope %s",
+                self.workspace,
+                self.namespace,
+                folder,
+            )
+            return None, {}
 
         ws, doc_label, folder_label, params = self._folder_search_context(
             top_k, folder, threshold
@@ -646,14 +673,20 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         filters: RetrievalFilters | None,
         params: dict[str, Any],
     ) -> str:
-        """Folder MEMBER_OF join for the entity/relation vdb, plus doc/tag.
+        """Build the legacy graph-row membership join.
+
+        This helper is deliberately unreachable from ``_build_search_cypher``
+        while a folder is active: membership can scope selection but cannot
+        unblend the stored payload. It remains isolated here to ease a future
+        migration to per-folder or per-source graph-vector materialization.
 
         ``source_id`` is split into source chunk ids → docs. ``filters is None``
         returns the bare membership join byte-for-byte. With filters, the member
         source docs (and, when a tag filter is active, their tag ids) are
         aggregated per record so set semantics apply: ``doc_all`` ⊆ source docs,
         ``doc_any`` ∩ source docs, and tag filters satisfied by ≥1 source doc.
-        This scopes *selection*, not blended content (known residual).
+        These predicates scope selection only; callers must not treat them as
+        sufficient content isolation.
         """
         chunk_label = f"Vec_{ws}_chunks"
         base = f"""
@@ -709,12 +742,13 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         filters = get_active_retrieval_filters()
         cypher, params = self._build_search_cypher(top_k, folder, filters)
         if cypher is None:
-            # Fail-closed: active folder but an unrecognised vdb category. Never
-            # leak a global result set into a folder-scoped retrieval.
+            # Fail-closed: the active folder cannot safely scope this VDB shape
+            # (including globally blended entity/relation payloads). Never leak
+            # a global result set into a folder-scoped retrieval.
             logger.error(
-                "[MemgraphVec:%s/%s] folder=%s active but vdb category is "
-                "unknown (meta_fields=%s) — returning empty (fail-closed) "
-                "rather than leaking a global result set.",
+                "[MemgraphVec:%s/%s] folder=%s active but vdb category cannot "
+                "be safely scoped (meta_fields=%s) — returning empty "
+                "(fail-closed) rather than leaking a global result set.",
                 self.workspace,
                 self.namespace,
                 folder,
@@ -786,7 +820,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             batch = needs_embed[start : start + batch_size]
             eids = [eid for eid, _ in batch]
             contents = [content for _, content in batch]
-            emb_results = await self.embedding_func.func(contents)
+            emb_results = await self._embed_with_retry(contents)
             rows = list(emb_results)
             if len(rows) != len(eids):
                 raise ValueError(
@@ -800,6 +834,65 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                     else list(embedding)
                 )
         return out
+
+    async def _embed_with_retry(self, contents: list[str]):
+        """Call the embedding function with a per-attempt timeout and retry.
+
+        Recovers from a cold embedding endpoint: a first attempt that times out
+        wakes the model; a later, now-warm attempt succeeds. The happy path
+        (endpoint responds within the timeout) returns on attempt 1 with no
+        added latency. Once attempts are exhausted the last error is re-raised
+        so LightRAG still marks the document FAILED — never a silent drop.
+
+        Tradeoff: a legitimately slow (not cold) endpoint that always exceeds
+        the per-attempt timeout will fail slower than a single native call.
+        Raise ``TWIN_EMBEDDING_TIMEOUT`` for such endpoints.
+        """
+        timeout = self._embedding_timeout()
+        attempts = self._embedding_attempts()
+        last_exc: BaseException = RuntimeError("no embedding attempt ran")
+        for attempt in range(1, attempts + 1):
+            try:
+                return await asyncio.wait_for(
+                    self.embedding_func.func(contents), timeout=timeout
+                )
+            except (asyncio.TimeoutError, TimeoutError, ConnectionError) as exc:
+                last_exc = exc
+                logger.warning(
+                    "[MemgraphVec:%s] embedding attempt %d/%d failed after "
+                    "~%.0fs (cold start?) for %d texts: %s",
+                    self.workspace,
+                    attempt,
+                    attempts,
+                    timeout,
+                    len(contents),
+                    type(exc).__name__,
+                )
+                if attempt < attempts:
+                    await asyncio.sleep(_EMBEDDING_RETRY_BACKOFF)
+        raise last_exc
+
+    def _embedding_timeout(self) -> float:
+        """Per-attempt embedding timeout (seconds). Env-tunable, default 30s."""
+        raw = os.environ.get(_EMBEDDING_TIMEOUT_ENV, "")
+        try:
+            val = float(raw)
+            if val <= 0:
+                raise ValueError
+            return val
+        except (TypeError, ValueError):
+            return _DEFAULT_EMBEDDING_TIMEOUT
+
+    def _embedding_attempts(self) -> int:
+        """Number of embedding attempts. Env-tunable, default 3 (>= 1)."""
+        raw = os.environ.get(_EMBEDDING_ATTEMPTS_ENV, "")
+        try:
+            val = int(raw)
+            if val < 1:
+                raise ValueError
+            return val
+        except (TypeError, ValueError):
+            return _DEFAULT_EMBEDDING_ATTEMPTS
 
     def _embedding_batch_size(self) -> int:
         """Batch size for storage-side embedding calls.

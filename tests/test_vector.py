@@ -1,14 +1,18 @@
 """
 Integration tests for MemgraphVectorDBStorage.
 
-Requires a running Memgraph >= 3.2 with MAGE (set MEMGRAPH_URI).
+Requires a running Memgraph >= 3.0 with native vector search (core; MAGE not
+required — the plain ``memgraph/memgraph`` image suffices). Set MEMGRAPH_URI.
 """
+
+import asyncio
 
 import numpy as np
 import pytest
 from lightrag.utils import EmbeddingFunc
 
 from twindb_lightrag_memgraph import register
+from twindb_lightrag_memgraph import vector_impl
 from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 register()
@@ -112,6 +116,93 @@ class TestComputeMissingEmbeddings:
 
         with pytest.raises(ValueError, match="returned 0 rows for 1 input"):
             await store._compute_missing_embeddings({"a": {"content": "one"}})
+
+
+class _ColdThenWarmEmbed:
+    """Fail (timeout) the first ``fail_times`` calls, then succeed."""
+
+    def __init__(self, fail_times: int):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    async def func(self, texts):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise TimeoutError("Embedding func: Worker execution timeout after 60s")
+        return [[float(len(t)), 0.0, 0.0, 0.0] for t in texts]
+
+
+class _SlowEmbed:
+    """Always slower than a small per-attempt timeout — exercises wait_for."""
+
+    def __init__(self, delay: float):
+        self.delay = delay
+        self.calls = 0
+
+    async def func(self, texts):
+        self.calls += 1
+        await asyncio.sleep(self.delay)
+        return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+
+def _retry_store(embed):
+    store = _unit_store(embed, batch_num=32)
+    store.workspace = "test_ws"  # only read by the retry failure-path log
+    return store
+
+
+class TestEmbeddingRetry:
+    async def test_happy_path_calls_once(self, monkeypatch):
+        embed = _ColdThenWarmEmbed(fail_times=0)
+        store = _retry_store(embed)
+        rows = await store._embed_with_retry(["one", "two"])
+        assert embed.calls == 1
+        assert len(rows) == 2
+
+    async def test_cold_start_recovers_on_retry(self, monkeypatch):
+        monkeypatch.setattr(vector_impl, "_EMBEDDING_RETRY_BACKOFF", 0)
+        embed = _ColdThenWarmEmbed(fail_times=1)  # cold once, then warm
+        store = _retry_store(embed)
+        rows = await store._embed_with_retry(["hello"])
+        assert embed.calls == 2  # retried and succeeded
+        assert len(rows) == 1
+
+    async def test_exhausts_attempts_then_reraises(self, monkeypatch):
+        monkeypatch.setattr(vector_impl, "_EMBEDDING_RETRY_BACKOFF", 0)
+        monkeypatch.setenv("TWIN_EMBEDDING_ATTEMPTS", "3")
+        embed = _ColdThenWarmEmbed(fail_times=99)  # never warms
+        store = _retry_store(embed)
+        with pytest.raises(TimeoutError):
+            await store._embed_with_retry(["x"])
+        assert embed.calls == 3  # re-raised only after all attempts
+
+    async def test_attempts_env_respected(self, monkeypatch):
+        monkeypatch.setattr(vector_impl, "_EMBEDDING_RETRY_BACKOFF", 0)
+        monkeypatch.setenv("TWIN_EMBEDDING_ATTEMPTS", "2")
+        embed = _ColdThenWarmEmbed(fail_times=99)
+        store = _retry_store(embed)
+        with pytest.raises(TimeoutError):
+            await store._embed_with_retry(["x"])
+        assert embed.calls == 2
+
+    async def test_wait_for_timeout_fires(self, monkeypatch):
+        # Per-attempt timeout below the embed delay → wait_for raises, single
+        # attempt so no retry/backoff. Proves the timeout wrapper is wired.
+        monkeypatch.setenv("TWIN_EMBEDDING_TIMEOUT", "0.05")
+        monkeypatch.setenv("TWIN_EMBEDDING_ATTEMPTS", "1")
+        embed = _SlowEmbed(delay=0.3)
+        store = _retry_store(embed)
+        with pytest.raises((TimeoutError, asyncio.TimeoutError)):
+            await store._embed_with_retry(["slow"])
+        assert embed.calls == 1
+
+    async def test_compute_missing_embeddings_routes_through_retry(self, monkeypatch):
+        monkeypatch.setattr(vector_impl, "_EMBEDDING_RETRY_BACKOFF", 0)
+        embed = _ColdThenWarmEmbed(fail_times=1)  # cold once
+        store = _retry_store(embed)
+        result = await store._compute_missing_embeddings({"a": {"content": "one"}})
+        assert embed.calls == 2  # retry happened inside the ingestion path
+        assert set(result) == {"a"}
 
 
 @pytest.mark.integration

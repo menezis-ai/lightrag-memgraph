@@ -33,18 +33,12 @@ Doctrine (TR-RET-02 step 2 / audit C3):
   :func:`_build_sources_legacy_fallback`, kept for compat tests in
   isolation. It MUST NOT be invoked from the nominal route paths.
 
-The ``only_need_context`` / ``only_need_prompt`` modes still use the
-legacy ``aquery()``: ``aquery_llm`` delegates to ``kg_query`` /
-``naive_query``, which DO honor those flags but return a bare
-context / prompt string rather than the structured ``{data,
-llm_response}`` envelope this module projects — so routing them
-through ``aquery_llm`` would mishandle the return shape. The operator
-gets the requested body and an empty sources list. These modes, and
-``bypass`` (direct LLM, no retrieval), report
-``answer_status = no_retrieval`` rather than ``grounded``: they are
-sourceless by design, so the empty sources panel is the contract, not
-a failure. Distinct from ``insufficient_information`` (retrieval ran,
-found nothing usable). See :func:`_is_no_retrieval_mode`.
+The ``only_need_context`` mode still uses legacy ``aquery()`` because
+``aquery_llm`` returns a bare context string for that flag rather than
+the structured envelope this module projects. It reports
+``answer_status = no_retrieval``. The external model rejects
+``only_need_prompt`` (privileged prompt disclosure), raw
+``user_prompt`` overrides, and ``bypass`` (ungrounded direct LLM).
 """
 
 from __future__ import annotations
@@ -54,7 +48,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .._lightrag_compat import (
@@ -262,11 +256,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     param_kwargs = _query_param_kwargs(body)
     param = _make_query_param(QueryParam, param_kwargs)
 
-    # only_need_context / only_need_prompt skip the LLM entirely, so aquery_llm
-    # is overkill. Keep the legacy aquery() path here — the operator gets the
-    # context/prompt body they asked for and the sources panel stays empty
-    # (this branch never claimed grounded sources to begin with).
-    if body.only_need_context or body.only_need_prompt:
+    if body.only_need_context:
         try:
             # Folder-scoped retrieval: the storage layer constrains candidate
             # chunks/entities/relations to docs MEMBER_OF the active folder, so
@@ -540,7 +530,7 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
     )
 
 
-def build_twin_query_router(get_rag) -> APIRouter:
+def build_twin_query_router(get_rag, *, auth_dependency=None) -> APIRouter:
     """Mount the Twin overlay query endpoints.
 
     Args:
@@ -548,7 +538,8 @@ def build_twin_query_router(get_rag) -> APIRouter:
             instance. Raises a 500 if the host bootstrap didn't capture
             one (same pattern as the native shims).
     """
-    router = APIRouter(tags=["twin-query"])
+    dependencies = [Depends(auth_dependency)] if auth_dependency is not None else None
+    router = APIRouter(tags=["twin-query"], dependencies=dependencies)
 
     @router.post(
         "/query",

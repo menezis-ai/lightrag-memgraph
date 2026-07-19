@@ -19,13 +19,20 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from ..config import TwinRAGConfig
-from ..models.schemas import Citation
+from ..models.schemas import AnswerStatus, Citation
 from ..prompt_security import neutralize_reserved_tags
 from .act import ChunkResult
 
 logger = logging.getLogger("twin_rag_intelligence.observe")
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "synthesis_system.txt"
+# ReDoS-hardened (Sonar S5852): the first captured char class is disjoint
+# from ``\s+`` so the two quantifiers cannot trade characters (the old
+# ``\s+([^\]]+)`` backtracked polynomially on long space runs without a
+# closing bracket — and this regex runs over LLM output, which document
+# content can influence). The optional group keeps ``[Passage   ]``
+# counting as a (malformed, non-decimal) marker exactly like before.
+_PASSAGE_MARKER_PATTERN = re.compile(r"\[Passage\s+([^\]\s][^\]]*)?\]")
 
 
 def _load_system_prompt() -> str:
@@ -74,6 +81,7 @@ class SynthesisResult:
     answer: str
     citations: list[Citation]
     tokens_used: int = 0
+    answer_status: AnswerStatus = AnswerStatus.GROUNDED
 
 
 class SynthesisEngine:
@@ -112,6 +120,7 @@ class SynthesisEngine:
                     "de connaissances disponibles pour repondre a cette question."
                 ),
                 citations=[],
+                answer_status=AnswerStatus.INSUFFICIENT_INFORMATION,
             )
 
         passages_text = self._format_passages(chunks)
@@ -159,13 +168,34 @@ class SynthesisEngine:
             raw_answer = response.choices[0].message.content or ""
             tokens = response.usage.total_tokens if response.usage else 0
 
+            passage_markers = _PASSAGE_MARKER_PATTERN.findall(raw_answer)
+            referenced_indices = self._citation_indices(raw_answer)
             citations = self._extract_citations(raw_answer, chunks)
-            clean_answer = re.sub(r"\s*\[Passage \d+\]", "", raw_answer).strip()
+            all_markers_are_indices = len(passage_markers) == len(referenced_indices)
+            citation_validation_passed = (
+                bool(passage_markers)
+                and all_markers_are_indices
+                and len(citations) == len(set(referenced_indices))
+            )
+            if not citation_validation_passed:
+                logger.warning(
+                    "Synthesis citation validation failed: markers=%d "
+                    "valid_unique_indices=%d available_passages=%d",
+                    len(passage_markers),
+                    len(citations),
+                    len(chunks),
+                )
+            clean_answer = _PASSAGE_MARKER_PATTERN.sub("", raw_answer).strip()
 
             return SynthesisResult(
                 answer=clean_answer,
-                citations=citations,
+                citations=citations if citation_validation_passed else [],
                 tokens_used=tokens,
+                answer_status=(
+                    AnswerStatus.GROUNDED
+                    if citation_validation_passed
+                    else AnswerStatus.CITATION_VALIDATION_FAILED
+                ),
             )
 
         except Exception as exc:
@@ -181,6 +211,7 @@ class SynthesisEngine:
                     "le support si le probleme persiste."
                 ),
                 citations=[],
+                answer_status=AnswerStatus.QUERY_FAILED,
             )
 
     def _format_passages(self, chunks: list[ChunkResult]) -> str:
@@ -204,8 +235,7 @@ class SynthesisEngine:
         chunks: list[ChunkResult],
     ) -> list[Citation]:
         """Extract [Passage X] citations from the answer and map to ChunkResults."""
-        indices = re.findall(r"\[Passage (\d+)\]", answer)
-        unique_indices = list(dict.fromkeys(int(i) for i in indices))
+        unique_indices = list(dict.fromkeys(self._citation_indices(answer)))
 
         citations = []
         invalid_indices = []
@@ -219,7 +249,11 @@ class SynthesisEngine:
                         document_id=chunk.document_id,
                         document_path=chunk.document_path,
                         source_workspace=chunk.source_workspace,
-                        score=chunk.rerank_score or chunk.score,
+                        score=(
+                            chunk.rerank_score
+                            if chunk.rerank_score is not None
+                            else chunk.score
+                        ),
                     )
                 )
             else:
@@ -233,3 +267,12 @@ class SynthesisEngine:
             )
 
         return citations
+
+    @staticmethod
+    def _citation_indices(answer: str) -> list[int]:
+        """Return passage indices exactly as referenced by the synthesized answer."""
+        return [
+            int(marker)
+            for marker in _PASSAGE_MARKER_PATTERN.findall(answer)
+            if marker.isascii() and marker.isdecimal()
+        ]

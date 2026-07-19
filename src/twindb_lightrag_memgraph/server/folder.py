@@ -92,11 +92,10 @@ def resolve_folder_for_request(request: Request) -> str:
 
     Two-tier behaviour mirroring :func:`server.idp_jwt.require_admin_user`:
 
-    - **Palier 1 — IdP dormant**: identical to
-      :func:`resolve_folder_from_headers`. The route-level
-      ``require_auth`` dep has already filtered anonymous; folder
-      scoping is purely UX until MyAccess is wired.
-    - **Palier 2 — IdP active**: header is resolved against the
+    - **IdP dormant**: the infrastructure root API key may select any catalog
+      folder. Legacy JWTs, per-operator keys, and open-access requests have no
+      authoritative folder claims and are confined to the default folder.
+    - **IdP active**: header is resolved against the
       catalog, then bound to the caller's ``twin_folders`` claim
       (projected as ``user["folders"]`` by
       :func:`server.idp_jwt.claims_to_user`).
@@ -114,7 +113,17 @@ def resolve_folder_for_request(request: Request) -> str:
 
     idp_config = idp_jwt.get_active_config()
     if idp_config is None:
-        return base_folder
+        from .auth import is_infrastructure_root_request
+
+        if is_infrastructure_root_request(request):
+            return base_folder
+        default_id = load_folder_catalog().default_folder_id
+        if base_folder != default_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Folder claims are unavailable without the configured IdP",
+            )
+        return default_id
 
     user = idp_jwt.require_idp_user(request)
     if user is None:

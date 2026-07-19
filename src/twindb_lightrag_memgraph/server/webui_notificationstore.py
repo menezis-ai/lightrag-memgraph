@@ -115,17 +115,29 @@ class MemgraphNotificationStore:
 
     async def mark_all_read(self) -> None:
         items = await self.list()
+        rows: list[dict[str, str]] = []
+        for n in items:
+            n["read"] = True
+            rows.append(
+                {
+                    "id": str(n["id"]),
+                    "data": json.dumps(n, sort_keys=True),
+                }
+            )
+        if not rows:
+            return
+
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
-                for n in items:
-                    n["read"] = True
-                    result = await session.run(
-                        f"MATCH (m:`{self._label}` {{id: $id}}) "
-                        "SET m.data = $data, m.`__updated_at` = timestamp()",
-                        id=str(n["id"]),
-                        data=json.dumps(n, sort_keys=True),
-                    )
-                    await result.consume()
+                result = await session.run(
+                    f"""
+                    UNWIND $rows AS row
+                    MATCH (m:`{self._label}` {{id: row.id}})
+                    SET m.data = row.data, m.`__updated_at` = timestamp()
+                    """,
+                    rows=rows,
+                )
+                await result.consume()
 
     async def clear(self) -> None:
         async with _pool.acquire_write_slot():

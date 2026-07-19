@@ -978,8 +978,20 @@ describe('AppShell — tab navigation', () => {
     expect(tab).toBeInTheDocument();
     await user.click(within(tab).getByText('send-query'));
     await waitFor(() => expect(apiMock.query).toHaveBeenCalled());
+    expect(apiMock.query.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'only_need_prompt',
+    );
+    expect(apiMock.query.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'user_prompt',
+    );
     await user.click(within(tab).getByText('stream-query'));
     await waitFor(() => expect(apiMock.queryStream).toHaveBeenCalled());
+    expect(apiMock.queryStream.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'only_need_prompt',
+    );
+    expect(apiMock.queryStream.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'user_prompt',
+    );
     // navigate back out via the tab's onNavigate
     await user.click(within(tab).getByText('ret-navigate'));
     expect(await screen.findByTestId('graph-tab')).toBeInTheDocument();

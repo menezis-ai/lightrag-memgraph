@@ -508,6 +508,26 @@ _DEFAULT_CLASS_LADDER: Final = (
     "Secret",
 )
 
+TWIN_MIP_UNLABELED_POLICY_ENV: Final = "TWIN_MIP_UNLABELED_POLICY"
+
+
+def unlabeled_ingest_allowed() -> bool:
+    """Whether a document WITHOUT a readable MIP label may be ingested.
+
+    Permissive by default (product decision 2026-07-10, PR 3 of
+    ``MARKITDOWN-INGESTION-PLAN.md``): ``class_id=None`` — unsupported
+    extension (images, csv, html, …), OOXML/PDF without a label, missing
+    optional dep (olefile/pikepdf) — is accepted, with the classification
+    payload tracing why in ``reason``. Only a READABLE label above the
+    ceiling, or an untrusted ``UNKNOWN`` (unmapped GUID, extraction crash),
+    keeps rejecting.
+
+    ``TWIN_MIP_UNLABELED_POLICY=reject`` restores the tier-1 fail-closed
+    posture (every unlabeled document refused) without a redeploy.
+    """
+    raw = os.environ.get(TWIN_MIP_UNLABELED_POLICY_ENV, "allow").strip().lower()
+    return raw != "reject"
+
 
 def _normalize_class_id(class_id: str | None) -> str | None:
     if class_id is None:
@@ -555,12 +575,12 @@ def apply_operator_classification(
 ) -> ClassificationResult:
     """Combine an operator-selected class with the auto-detected result.
 
-    Policy (compliance-safe, PO decision 2026-06-24): the embedded/detected
-    label is a **floor**. The operator can RAISE the classification, or set one
-    when nothing was detected (e.g. a ``.md`` with no embedded MIP label), but
-    can NEVER downgrade below a detected label. An operator attempt to downgrade
-    is recorded in ``meta['operator_requested']`` for the audit trail without
-    changing the resolved class.
+    Policy (Tier-1 fail-closed): the embedded/detected label is both a
+    **prerequisite** and a floor. The operator can RAISE a trusted, mapped
+    classification, but can neither replace a missing/unparseable label nor
+    downgrade below a detected label. An operator request that cannot be
+    applied is recorded in ``meta['operator_requested']`` for the audit trail
+    without changing the resolved class.
 
     ``operator_class`` accepts either the C1-C4 ladder ids or the business names
     (``Public`` … ``Secret``); both normalise through ``_CLASS_ALIASES``. A
@@ -575,21 +595,10 @@ def apply_operator_classification(
 
     det_norm = _normalize_class_id(detected.class_id)
 
-    # Nothing solid auto-detected (no embedded label) -> operator is the only
-    # signal and becomes authoritative.
-    if det_norm is None:
-        return ClassificationResult(
-            class_id=op_norm,
-            class_name=op_norm,
-            source_format="operator",
-            reason="operator-set",
-            meta={**detected.meta, "detected_reason": detected.reason},
-        )
-
-    # A label was detected but does not resolve into the ladder (UNKNOWN /
-    # fail-closed): never let the operator downgrade an unrecognised-but-present
-    # label. Keep it, note the attempted choice.
-    if det_norm not in ladder:
+    # A missing/unparseable source label and an unmapped label are both
+    # untrusted. Operator input is not source provenance and must never turn
+    # either state into an ingestible class.
+    if det_norm is None or det_norm not in ladder:
         return cast(
             ClassificationResult,
             replace(detected, meta={**detected.meta, "operator_requested": op_norm}),

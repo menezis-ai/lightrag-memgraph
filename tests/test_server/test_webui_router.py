@@ -44,9 +44,7 @@ from twindb_lightrag_memgraph.server.webui.router import (
 
 
 def _make_settings(*, api_key: str | None = None) -> LightRAGServerSettings:
-    """Build settings with auth disabled by default so the WebUI router is
-    reachable without a Bearer header (auth is exercised separately in
-    test_auth.py)."""
+    """Build settings with auth disabled unless a test opts into it."""
     return LightRAGServerSettings(
         working_dir="/tmp/lightrag_webui_test",
         workspace="cib",
@@ -67,11 +65,12 @@ def _reset_store():
 
 @pytest.fixture()
 async def client():
-    """AsyncClient against the WebUI-enabled app, auth disabled."""
-    app = create_app(_make_settings())
+    """AsyncClient against the WebUI-enabled app as infrastructure root."""
+    app = create_app(_make_settings(api_key="test-infra-root"))
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers={"Authorization": "Bearer test-infra-root"},
     ) as c:
         yield c
 
@@ -377,7 +376,7 @@ class TestActivity:
         body = feed.json()
         assert body["total"] == 1
         event = body["items"][0]
-        assert event["actor"]["user"] == "operator"
+        assert event["actor"]["user"] == "api_key"
         assert event["target"]["type"] == "source"
         assert event["target"]["label"] == "runbook.pdf"
         assert event["meta"]["track_id"] == "upload-track-1"
@@ -405,7 +404,7 @@ class TestActivity:
         event = body["items"][0]
         assert event["kind"] == "auth"
         assert event["sev"] == "info"
-        assert event["actor"]["user"] == "unknown"
+        assert event["actor"]["user"] == "api_key"
         assert event["target"]["type"] == "auth"
         assert event["target"]["label"] == "logout"
         assert event["meta"]["operation"] == "logout"

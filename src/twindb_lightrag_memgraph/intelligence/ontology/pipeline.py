@@ -6,7 +6,7 @@ EXTRACT -> CLUSTER -> ENRICH -> VALIDATE
 
 Each step is a separate module. This class wires them together.
 
-When require_review is True (default), results are returned as a dry-run.
+Results are always returned as a dry-run.
 Call approve(result) to persist after human validation.
 """
 
@@ -27,6 +27,8 @@ class OntologyPipeline:
     """4-step ontology pipeline: Extract -> Cluster -> Enrich -> Validate."""
 
     def __init__(self, config: TwinRAGConfig, onto_config: OntologyConfig) -> None:
+        if onto_config.require_review is not True:
+            raise ValueError("Ontology persistence requires human review")
         self.config = config
         self.onto_config = onto_config
 
@@ -78,10 +80,6 @@ class OntologyPipeline:
 
         # Step 4: VALIDATE
         validated = self._validate(enriched)
-
-        # Auto-persist only if review is disabled
-        if not self.onto_config.require_review:
-            await self.approve(validated, workspace)
 
         return validated
 
@@ -242,5 +240,8 @@ class OntologyPipeline:
         return validate(
             enrichment,
             confidence_threshold=self.onto_config.confidence_threshold,
-            require_review=self.onto_config.require_review,
+            # LLM-derived ontology output is untrusted until a separate caller
+            # explicitly invokes approve() after human review. Do not let a
+            # mutated configuration object change this safety invariant.
+            require_review=True,
         )

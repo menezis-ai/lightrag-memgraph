@@ -77,6 +77,32 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(res.sources).toHaveLength(1);
   });
 
+  it('preserves null, absent, zero, and numeric source scores', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'token', value: 'A real answer.' }),
+        JSON.stringify({ type: 'status', value: 'grounded' }),
+        JSON.stringify({
+          type: 'sources',
+          value: [
+            { n: 1, type: 'file', name: 'null.pdf', score: null },
+            { n: 2, type: 'file', name: 'absent.pdf' },
+            { n: 3, type: 'file', name: 'zero.pdf', score: 0 },
+            { n: 4, type: 'file', name: 'ranked.pdf', score: 0.82 },
+          ],
+        }),
+      ]),
+    );
+
+    const res = await api.queryStream({ query: 'real' }, () => undefined);
+    expect(res.sources.map((source) => source.score)).toEqual([
+      null,
+      undefined,
+      0,
+      0.82,
+    ]);
+  });
+
   it('returns answer_status=source_projection_failed when the stream signals it', async () => {
     // The grounded answer streamed, but its references could not be projected:
     // the parser must propagate the explicit status (NOT default to grounded,
@@ -101,9 +127,9 @@ describe('queryStream parser — answer_status propagation', () => {
   });
 
   it('returns answer_status=no_retrieval when the stream signals a sourceless mode', async () => {
-    // bypass / only_need_context / only_need_prompt stream an answer/context
-    // body but never ground in sources: the parser must propagate no_retrieval
-    // (NOT default to grounded) and surface empty sources.
+    // only_need_context streams a context body but no sourced final answer:
+    // the parser must propagate no_retrieval (NOT default to grounded) and
+    // surface empty sources.
     const chunks: string[] = [];
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       ndjsonResponse([
@@ -114,7 +140,7 @@ describe('queryStream parser — answer_status propagation', () => {
     );
 
     const res = await api.queryStream(
-      { query: 'anything', mode: 'bypass' },
+      { query: 'anything', mode: 'mix', only_need_context: true },
       (c) => chunks.push(c),
     );
     expect(res.answer_status).toBe('no_retrieval');

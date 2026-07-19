@@ -19,7 +19,7 @@ class TestOntologyConfig:
         config_data = {
             "enabled": True,
             "confidence_threshold": 0.8,
-            "require_review": False,
+            "require_review": True,
             "dsep_enabled": True,
             "workspaces": {
                 "oracle_ws": {
@@ -42,7 +42,7 @@ class TestOntologyConfig:
         assert config is not None
         assert config.enabled is True
         assert config.confidence_threshold == 0.8
-        assert config.require_review is False
+        assert config.require_review is True
         assert config.dsep_enabled is True
         assert len(config.workspaces) == 2
         assert config.workspaces["oracle_ws"].mode == "dedicated"
@@ -55,6 +55,17 @@ class TestOntologyConfig:
 
         with pytest.raises(ValueError, match="Invalid ontology.json"):
             load_ontology_config(json_file)
+
+    def test_require_review_false_is_forbidden(self, tmp_path):
+        json_file = tmp_path / "ontology.json"
+        json_file.write_text(json.dumps({"enabled": True, "require_review": False}))
+
+        with pytest.raises(ValueError, match="require_review=false is forbidden"):
+            load_ontology_config(json_file)
+
+    def test_direct_auto_approval_configuration_is_forbidden(self):
+        with pytest.raises(ValueError, match="require_review=false is forbidden"):
+            OntologyConfig(require_review=False)
 
     def test_load_non_object_json_raises(self, tmp_path):
         json_file = tmp_path / "ontology.json"

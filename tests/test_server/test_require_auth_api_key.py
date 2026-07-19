@@ -163,12 +163,21 @@ class TestOpenAccessTwkOptIn:
         assert r.status_code == 200
 
     async def test_minted_twk_authenticates_in_open_access(self, open_access_client):
-        # In open-access mode, create a key (admin gate is dormant).
-        created = (
-            await open_access_client.post(
-                "/twin/api/settings/api-keys", json={"name": "open-test"}
-            )
-        ).json()
+        # Open access does not imply administration: without an IdP, only the
+        # separately managed root key may mint operator credentials.
+        denied = await open_access_client.post(
+            "/twin/api/settings/api-keys", json={"name": "open-test"}
+        )
+        assert denied.status_code == 403
+
+        # Provision one out of band to keep exercising the independent runtime
+        # contract: a valid twk_ bearer authenticates even when ordinary
+        # anonymous reads remain enabled.
+        from twindb_lightrag_memgraph._constants import resolve_workspace
+
+        created = await api_key_store.create_key(
+            resolve_workspace(), name="open-test", created_by="test-provisioner"
+        )
         full = created["full_value"]
         # And use that key on a protected route.
         r = await open_access_client.get(

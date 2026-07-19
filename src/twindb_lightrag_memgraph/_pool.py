@@ -25,19 +25,24 @@ from ._constants import (
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     DEFAULT_IDLE_DISCONNECT_SECONDS,
     DEFAULT_MEMGRAPH_URI,
+    DEFAULT_OPERATION_TIMEOUT,
     DEFAULT_READ_POOL_SIZE,
     DEFAULT_WRITE_CONCURRENCY,
+    DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT,
     MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV,
     MEMGRAPH_IDLE_DISCONNECT_SECONDS_ENV,
+    MEMGRAPH_OPERATION_TIMEOUT_ENV,
     MEMGRAPH_POOL_SIZE_ENV,
     MEMGRAPH_READ_POOL_SIZE_ENV,
     MEMGRAPH_WRITE_CONCURRENCY_ENV,
+    MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT_ENV,
     validate_identifier,
 )
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
 _MUST_BE_POSITIVE = "must be >= 1"
+_MUST_BE_STRICTLY_POSITIVE = "must be > 0"
 
 _thread_lock = threading.Lock()
 _driver = None
@@ -148,10 +153,87 @@ def _read_connection_acquire_timeout() -> float:
     try:
         val = float(raw)
         if val <= 0:
-            raise ValueError("must be > 0")
+            raise ValueError(_MUST_BE_STRICTLY_POSITIVE)
         return val
     except (ValueError, TypeError):
         return DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
+
+
+def _read_operation_timeout() -> float:
+    """Read the deadline for work performed with an acquired Bolt session."""
+    raw = os.environ.get(MEMGRAPH_OPERATION_TIMEOUT_ENV, "")
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError(_MUST_BE_STRICTLY_POSITIVE)
+        return val
+    except (ValueError, TypeError):
+        return DEFAULT_OPERATION_TIMEOUT
+
+
+def _read_write_slot_acquire_timeout() -> float:
+    """Read the deadline for waiting on the process-local write semaphore."""
+    raw = os.environ.get(MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT_ENV, "")
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError(_MUST_BE_STRICTLY_POSITIVE)
+        return val
+    except (ValueError, TypeError):
+        return DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT
+
+
+@asynccontextmanager
+async def _operation_deadline(seconds: float):
+    """Bound an async block without requiring Python 3.11 ``asyncio.timeout``.
+
+    Python 3.10 is part of the supported and tested matrix.  A loop timer
+    cancels the current task when the deadline expires; only that cancellation
+    is translated to ``asyncio.TimeoutError``.  Cancellation requested by a
+    caller remains ``CancelledError``.
+    """
+    task = asyncio.current_task()
+    if task is None:  # pragma: no cover - an async context always owns a task
+        raise RuntimeError("operation deadline requires a running asyncio task")
+
+    cancelling = getattr(task, "cancelling", None)
+    initial_cancels = cancelling() if cancelling is not None else 0
+    expired = False
+
+    def _cancel_on_expiry() -> None:
+        nonlocal expired
+        expired = True
+        task.cancel()
+
+    handle = asyncio.get_running_loop().call_later(seconds, _cancel_on_expiry)
+    try:
+        yield
+    except asyncio.CancelledError as exc:  # NOSONAR - deliberate translation:
+        # external cancellation re-raises on both guarded paths below; only
+        # this context's own expiry cancellation becomes TimeoutError (the
+        # same contract as Python 3.11's ``asyncio.timeout``).
+        if not expired:
+            raise
+
+        # Python 3.11 tracks cancellation requests. Remove only our timeout
+        # cancellation; if another caller also cancelled the task, preserve it.
+        uncancel = getattr(task, "uncancel", None)
+        if uncancel is not None and uncancel() > initial_cancels:
+            raise
+        raise asyncio.TimeoutError from exc
+    else:
+        # The timer can fire after the body's last suspension point, or the
+        # body may swallow the cancellation itself (driver cleanup paths do).
+        # Without translation here the operation would "succeed" while our
+        # cancellation request leaks into the caller's next await as a stray
+        # CancelledError. Withdraw the request, then report the expiry.
+        if expired:
+            uncancel = getattr(task, "uncancel", None)
+            if uncancel is not None:
+                uncancel()
+            raise asyncio.TimeoutError
+    finally:
+        handle.cancel()
 
 
 def _read_idle_disconnect_seconds() -> float:
@@ -165,7 +247,7 @@ def _read_idle_disconnect_seconds() -> float:
     try:
         val = float(raw)
         if val <= 0:
-            raise ValueError("must be > 0")
+            raise ValueError(_MUST_BE_STRICTLY_POSITIVE)
         return val
     except (ValueError, TypeError):
         return DEFAULT_IDLE_DISCONNECT_SECONDS
@@ -337,21 +419,26 @@ async def get_session():
       On Memgraph Community (no Enterprise license), ``USE DATABASE``
       fails — we detect this once and skip it for all subsequent sessions.
     """
-    driver, database = await get_driver()
-    if _uses_routing_protocol():
-        async with driver.session(database=database) as session:
-            try:
-                yield session
-            finally:
-                _mark_write_activity()
-    else:
-        async with driver.session() as session:
-            if database:
-                await _try_use_database(session, database)
-            try:
-                yield session
-            finally:
-                _mark_write_activity()
+    # Include driver creation/replacement and stale-driver shutdown in the
+    # operation deadline.  Those paths can await I/O before the Neo4j driver's
+    # connection-acquisition timeout applies, often while the caller already
+    # owns a write-semaphore slot.
+    async with _operation_deadline(_read_operation_timeout()):
+        driver, database = await get_driver()
+        if _uses_routing_protocol():
+            async with driver.session(database=database) as session:
+                try:
+                    yield session
+                finally:
+                    _mark_write_activity()
+        else:
+            async with driver.session() as session:
+                if database:
+                    await _try_use_database(session, database)
+                try:
+                    yield session
+                finally:
+                    _mark_write_activity()
 
 
 async def _get_read_driver():
@@ -415,21 +502,22 @@ async def get_read_session():
     Uses the same database routing logic as ``get_session()`` but draws
     connections from a separate pool, isolating reads from write pressure.
     """
-    driver, database = await _get_read_driver()
-    if _uses_routing_protocol():
-        async with driver.session(database=database) as session:
-            try:
-                yield session
-            finally:
-                _mark_read_activity()
-    else:
-        async with driver.session() as session:
-            if database:
-                await _try_use_database(session, database)
-            try:
-                yield session
-            finally:
-                _mark_read_activity()
+    async with _operation_deadline(_read_operation_timeout()):
+        driver, database = await _get_read_driver()
+        if _uses_routing_protocol():
+            async with driver.session(database=database) as session:
+                try:
+                    yield session
+                finally:
+                    _mark_read_activity()
+        else:
+            async with driver.session() as session:
+                if database:
+                    await _try_use_database(session, database)
+                try:
+                    yield session
+                finally:
+                    _mark_read_activity()
 
 
 async def _try_use_database(session, database: str) -> None:
@@ -534,8 +622,47 @@ async def acquire_write_slot():
     Read operations must NOT acquire this so they remain unthrottled.
     """
     sem = _get_write_semaphore()
-    async with sem:
+    acquire_task = asyncio.create_task(sem.acquire())
+    try:
+        done, _ = await asyncio.wait(
+            {acquire_task}, timeout=_read_write_slot_acquire_timeout()
+        )
+    except asyncio.CancelledError:
+        # A cancellation can race with the semaphore granting the permit. If
+        # the acquire completed, return that permit before propagating.
+        acquire_task.cancel()
+        try:
+            acquired = await acquire_task
+        except asyncio.CancelledError:
+            if not acquire_task.cancelled():
+                # The current task was cancelled, not the reaped acquire —
+                # cancellation must propagate (S7497).
+                raise
+            acquired = False
+        if acquired:
+            sem.release()
+        raise
+
+    if acquire_task not in done:
+        acquire_task.cancel()
+        try:
+            acquired = await acquire_task
+        except asyncio.CancelledError:
+            if not acquire_task.cancelled():
+                # The current task was cancelled, not the reaped acquire —
+                # cancellation must propagate (S7497).
+                raise
+            acquired = False
+        if acquired:
+            sem.release()
+        raise asyncio.TimeoutError("Memgraph write queue exhausted")
+
+    acquired = acquire_task.result()
+    try:
         yield
+    finally:
+        if acquired:
+            sem.release()
 
 
 async def close_driver():
@@ -552,6 +679,11 @@ async def close_driver():
     _write_semaphore = None
     _semaphore_loop_id = None
     _enterprise_supported = None
+    # Deferred import: _capabilities imports get_read_session from this module,
+    # so a top-level import here would be circular.
+    from ._capabilities import reset_capability_cache
+
+    reset_capability_cache()
     if _read_driver is not None:
         await _read_driver.close()
         _read_driver = None

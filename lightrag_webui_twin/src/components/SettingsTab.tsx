@@ -24,22 +24,29 @@ import { ApiKeysSection } from './Settings/ApiKeysSection';
 import { ProfileSection } from './Settings/ProfileSection';
 import { FoldersAdminSection } from './Settings/FoldersAdminSection';
 import { FolderSection } from './Settings/FolderSection';
+import { VisionSection } from './Settings/VisionSection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
 import { userErrorMessage } from '../lib/errorMessages';
 import { useOpenApi } from '../api/queries';
 import type { Toast } from '../types/toast';
 
-export type SettingsSectionKey = 'profile' | 'api' | 'api-keys' | 'folder';
+export type SettingsSectionKey =
+  | 'profile'
+  | 'api'
+  | 'api-keys'
+  | 'vision'
+  | 'folder';
 
 const SECTIONS: {
   key: SettingsSectionKey;
   label: string;
-  icon: 'circle-dot' | 'world' | 'folder' | 'lock';
+  icon: 'circle-dot' | 'world' | 'folder' | 'lock' | 'eye';
 }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
   { key: 'api-keys', label: 'API keys', icon: 'lock' },
+  { key: 'vision', label: 'Vision', icon: 'eye' },
   { key: 'folder', label: 'Folder', icon: 'folder' },
 ];
 
@@ -100,6 +107,9 @@ export function SettingsTab({
         )}
         {section === 'api' && <ApiSection />}
         {section === 'api-keys' && <ApiKeysSection />}
+        {section === 'vision' && (
+          <VisionSection user={user} onToast={onToast} />
+        )}
         {section === 'folder' && (
           <>
             <FolderSection

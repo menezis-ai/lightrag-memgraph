@@ -30,10 +30,16 @@ def _overlay_client() -> TestClient:
     """Mount the production overlay on a bare app (seed stores → no
     Memgraph lifespan) exactly as `_mount_twin_subapp` does in prod."""
     import twindb_lightrag_memgraph as t
+    from twindb_lightrag_memgraph.server.auth import configure_auth
 
     app = FastAPI()
     t._mount_twin_subapp(app, "/twin/api", webui_stores="seed")
-    return TestClient(app, raise_server_exceptions=False)
+    configure_auth(api_key="test-infra-root")
+    return TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"Authorization": "Bearer test-infra-root"},
+    )
 
 
 class TestOverlayMountsApiKeys:

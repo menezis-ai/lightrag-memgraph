@@ -62,7 +62,7 @@ def onto_config_deep_extraction():
     return OntologyConfig(
         enabled=True,
         confidence_threshold=0.7,
-        require_review=False,
+        require_review=True,
         dsep_enabled=True,
         workspaces={
             "deep_ws": WorkspaceOntologyConfig(
