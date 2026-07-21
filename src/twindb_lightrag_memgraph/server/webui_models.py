@@ -203,6 +203,13 @@ class ActivityEvent(_Base):
         "api-key-created",
         "api-key-revoked",
         "vision-settings-updated",
+        "procedure-parked",
+        "procedure-failed",
+        "procedure-approved",
+        "procedure-rejected",
+        "procedure-retried",
+        "procedure-rerouted",
+        "procedure-store-recovered",
     ]
     sev: Literal["info", "warning", "error", "critical"]
     actor: ActivityActor

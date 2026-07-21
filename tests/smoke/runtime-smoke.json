@@ -100,6 +100,13 @@
       "expect_status": 200
     },
     {
+      "name": "procedure approval list is mounted after login",
+      "method": "GET",
+      "path": "/twin/api/procedures",
+      "after_login": true,
+      "expect_status": 200
+    },
+    {
       "name": "logout clears local session",
       "method": "POST",
       "path": "/logout",

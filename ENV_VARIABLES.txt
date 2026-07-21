@@ -137,6 +137,37 @@ env defaults, effective immediately across workers (re-read per image).
 Endpoint/key/model/timeouts/caps stay env-only by design (secrets + SSRF
 surface do not belong in a UI-mutable store).
 
+TWIN_PROCEDURE               Procedure-PDF ingestion profile
+                             (PROCEDURE-PROFILE-PLAN.md). "auto" (default)
+                             enables it iff pypdfium2 + pypdf are importable
+                             AND the vision tier is enabled (same
+                             gemma-4-31b-it endpoint); "on" forces (warns
+                             when unusable); "off" disables — procedure PDFs
+                             then follow the standard conversion path.
+                             When active, a detected (or X-Twin-Doc-Type:
+                             procedure forced) document is parked as an
+                             approval bundle and NOT enqueued until a human
+                             approves it.
+TWIN_PROCEDURE_STORE_FILE    Approval-bundle store (JSON file, atomic
+                             writes, PNGs base64-inline). Default:
+                             {WORKING_DIR}/twin_procedure_bundles.json.
+                             A corrupt store is quarantined as
+                             <name>.corrupt-* and the profile then FAILS
+                             CLOSED for every file (the claim index is
+                             lost) until an operator inspects and removes
+                             the quarantine files.
+TWIN_PROCEDURE_RENDER_SCALE  pypdfium2 page-render scale for schematic
+                             pages (1.0 = 72 dpi). Default: 2.0. Accepted
+                             range 0.5–8.0 (out-of-range falls back).
+TWIN_PROCEDURE_MAX_SCHEMATICS  Cap on "Schematic:" pages processed per
+                             document (excess logged and skipped).
+                             Default: 8.
+TWIN_PROCEDURE_MAX_BYTES     Size cap above which the profile is skipped
+                             (standard path). Default: 104857600 (100 MB).
+Upload header X-Twin-Doc-Type: "procedure" forces the profile, "standard"
+bypasses auto-detection; anything else is a 400. Absent = auto-detect on
+the first two pages' text (ITG reference + template markers).
+
 --------------------------------------------------------------------------------
 2. SERVER (FastAPI overlay) — prefix LIGHTRAG_
 --------------------------------------------------------------------------------

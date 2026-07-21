@@ -116,6 +116,16 @@ TWIN_VISION_TIMEOUT_ENV = "TWIN_VISION_TIMEOUT"
 TWIN_VISION_MIN_OCR_CHARS_ENV = "TWIN_VISION_MIN_OCR_CHARS"
 TWIN_VISION_DROP_CLASSES_ENV = "TWIN_VISION_DROP_CLASSES"
 
+# Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md, PR 1).
+# BNP "IT Group" level-2 procedures get a dedicated path: deterministic
+# template detection (or X-Twin-Doc-Type forcing), per-schematic dual vision
+# pass, and a human-approval bundle parked BEFORE enqueue.
+TWIN_PROCEDURE_ENV = "TWIN_PROCEDURE"
+TWIN_PROCEDURE_STORE_FILE_ENV = "TWIN_PROCEDURE_STORE_FILE"
+TWIN_PROCEDURE_RENDER_SCALE_ENV = "TWIN_PROCEDURE_RENDER_SCALE"
+TWIN_PROCEDURE_MAX_SCHEMATICS_ENV = "TWIN_PROCEDURE_MAX_SCHEMATICS"
+TWIN_PROCEDURE_MAX_BYTES_ENV = "TWIN_PROCEDURE_MAX_BYTES"
+
 _FALSE_FLAG_VALUES = frozenset({"0", "false", "no", "off"})
 
 
@@ -136,6 +146,10 @@ _active_duplicate_share_folder: ContextVar[str | None] = ContextVar(
 )
 _active_operator_classification: ContextVar[str | None] = ContextVar(
     "twin_active_operator_classification",
+    default=None,
+)
+_active_doc_type: ContextVar[str | None] = ContextVar(
+    "twin_active_doc_type",
     default=None,
 )
 
@@ -362,3 +376,32 @@ def operator_classification_context(class_id: str | None) -> Iterator[None]:
         yield
     finally:
         _active_operator_classification.reset(token)
+
+
+def get_active_doc_type() -> str | None:
+    """Operator-selected document profile for the current ingestion context.
+
+    Set from the ``X-Twin-Doc-Type`` upload header: ``"procedure"`` forces
+    the procedure profile, ``"standard"`` bypasses it, ``None`` (no header)
+    lets template auto-detection decide (``_procedure.detect_procedure``).
+    """
+    return _active_doc_type.get()
+
+
+@contextmanager
+def doc_type_context(doc_type: str | None) -> Iterator[None]:
+    """Temporarily bind the operator-selected document profile.
+
+    Lives here (not ``server``) so the registry enqueue seam can read it
+    without importing FastAPI. Values outside {procedure, standard} are
+    dropped (treated as "no operator choice"); the middleware already 400s
+    them at the route boundary.
+    """
+    cleaned = doc_type.strip().lower() if doc_type else None
+    if cleaned not in {"procedure", "standard"}:
+        cleaned = None
+    token = _active_doc_type.set(cleaned)
+    try:
+        yield
+    finally:
+        _active_doc_type.reset(token)

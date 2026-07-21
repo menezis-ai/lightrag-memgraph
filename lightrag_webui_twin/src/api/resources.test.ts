@@ -287,6 +287,27 @@ describe('uploadDocument', () => {
     expect(headers[0].get('X-Twin-Classification')).toBe('C2');
   });
 
+  it('does not send X-Twin-Doc-Type by default (auto-detect)', async () => {
+    const { headers } = mockUploadOnce();
+
+    await api.uploadDocument(new File(['payload'], 'plain.md'));
+
+    expect(headers[0].has('X-Twin-Doc-Type')).toBe(false);
+  });
+
+  it('sends the forced doc type as the X-Twin-Doc-Type header', async () => {
+    const { bodies, headers } = mockUploadOnce();
+
+    await api.uploadDocument(new File(['payload'], 'runbook.pdf'), {
+      docType: 'procedure',
+    });
+
+    expect((bodies[0].get('file') as File | null)?.name).toBe('runbook.pdf');
+    // Profile is a header, never a multipart field.
+    expect(bodies[0].has('doc_type')).toBe(false);
+    expect(headers[0].get('X-Twin-Doc-Type')).toBe('procedure');
+  });
+
   it('sends the active token as X-API-Key only for the native upload route', async () => {
     setSessionAuthToken('native-upload-token');
     const { headers } = mockUploadOnce();

@@ -297,6 +297,37 @@ export function useUpdateVisionSettings() {
   });
 }
 
+// Procedure approval bundles — parked procedure PDFs awaiting review.
+// Folder-scoped key so switching folders refetches the visible bundles.
+// The list carries summaries only (no PNGs); the admin-only detail hook
+// below fetches the full bundle when the review modal opens.
+export function useProcedures(
+  query: { state?: string } = {},
+  options: QueryGate = {},
+) {
+  const scope = folderScope(options);
+  return useQuery({
+    queryKey: ['procedures', scope, query] as const,
+    queryFn: ({ signal }) => api.listProcedures(query, { signal }),
+    ...DEFAULTS,
+    staleTime: 0,
+    ...gateOptions(options),
+  });
+}
+
+export function useProcedureBundle(
+  bundleId: string | null,
+  options: Pick<QueryGate, 'enabled'> = {},
+) {
+  return useQuery({
+    queryKey: ['procedure', bundleId] as const,
+    queryFn: ({ signal }) => api.getProcedureBundle(bundleId ?? '', { signal }),
+    ...DEFAULTS,
+    staleTime: 0,
+    enabled: Boolean(bundleId) && (options.enabled ?? true),
+  });
+}
+
 export function useNotifications(options: QueryGate = {}) {
   const scope = folderScope(options);
   return useQuery({
@@ -845,6 +876,9 @@ export function useUploadDocument() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
       qc.invalidateQueries({ queryKey: ['pipeline_status'] });
+      // An upload may have been PARKED as a procedure bundle (detected or
+      // forced): the review card lives under ['procedures'], not documents.
+      qc.invalidateQueries({ queryKey: ['procedures'] });
     },
   });
 }
@@ -860,12 +894,16 @@ export function useUploadDocumentsBatch() {
           const upload = normalizeUploadInput(item);
           return api.uploadDocument(upload.file, {
             classification: upload.classification,
+            docType: upload.docType,
           });
         },
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
       qc.invalidateQueries({ queryKey: ['pipeline_status'] });
+      // An upload may have been PARKED as a procedure bundle (detected or
+      // forced): the review card lives under ['procedures'], not documents.
+      qc.invalidateQueries({ queryKey: ['procedures'] });
     },
   });
 }

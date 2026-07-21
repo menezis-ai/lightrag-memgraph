@@ -1168,6 +1168,20 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         TWIN_API_PREFIX,
     )
 
+    # -- Procedure approval workflow (PROCEDURE-PROFILE-PLAN.md, PR 2).
+    # List auth-only + folder-bound; detail/decisions admin-gated. Also
+    # wires the seam event sink so parked/failed bundles surface in the
+    # activity feed + notifications. MUST also be mounted by the overlay
+    # _mount_twin_subapp (guard: tests/test_server/test_overlay_procedures.py).
+    from .procedure_routes import build_procedure_router, install_procedure_event_sink
+
+    app.include_router(
+        build_procedure_router(_get_rag),
+        prefix=TWIN_API_PREFIX,
+    )
+    install_procedure_event_sink()
+    logger.info("Procedure approval routes mounted at %s/procedures", TWIN_API_PREFIX)
+
     # -- Quota snapshot endpoint (auth-protected operational read).
     from .quota_routes import router as quota_router
 

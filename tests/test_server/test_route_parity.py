@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
 from twindb_lightrag_memgraph.server.auth import auth_router
+from twindb_lightrag_memgraph.server.procedure_routes import build_procedure_router
 from twindb_lightrag_memgraph.server.quota_routes import router as quota_router
 from twindb_lightrag_memgraph.server.vision_settings_routes import (
     router as vision_settings_router,
@@ -82,6 +83,9 @@ def _backend_routes() -> set[Route]:
         | _fastapi_routes_from_router(api_key_router, prefix="/twin/api")
         | _fastapi_routes_from_router(quota_router, prefix="/twin/api")
         | _fastapi_routes_from_router(vision_settings_router, prefix="/twin/api")
+        | _fastapi_routes_from_router(
+            build_procedure_router(_fake_rag), prefix="/twin/api"
+        )
     )
 
 
@@ -188,6 +192,12 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("POST", "/twin/api/documents/_bulk-retag"),
     Route("POST", "/twin/api/documents/uploads/activity"),
     Route("POST", "/twin/api/auth/logout"),
+    Route("GET", "/twin/api/procedures"),
+    Route("GET", "/twin/api/procedures/{param}"),
+    Route("POST", "/twin/api/procedures/{param}/approve"),
+    Route("POST", "/twin/api/procedures/{param}/reject"),
+    Route("POST", "/twin/api/procedures/{param}/retry"),
+    Route("POST", "/twin/api/procedures/{param}/reroute-standard"),
     Route("GET", "/twin/api/graph/entities"),
     Route("GET", "/twin/api/graph/relations"),
     Route("PATCH", "/twin/api/graph/entities/{param}"),

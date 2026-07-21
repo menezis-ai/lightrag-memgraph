@@ -28,6 +28,13 @@ export type ActivityKind =
   | 'api-key-created'
   | 'api-key-revoked'
   | 'vision-settings-updated'
+  | 'procedure-parked'
+  | 'procedure-failed'
+  | 'procedure-approved'
+  | 'procedure-rejected'
+  | 'procedure-retried'
+  | 'procedure-rerouted'
+  | 'procedure-store-recovered'
   | 'auth'
   | 'settings';
 
@@ -154,6 +161,41 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     label: 'Vision settings updated',
     icon: 'eye',
     color: 'var(--twin-accent)',
+  },
+  'procedure-parked': {
+    label: 'Procedure parked',
+    icon: 'file-text',
+    color: 'var(--twin-amber-vivid)',
+  },
+  'procedure-failed': {
+    label: 'Procedure failed',
+    icon: 'alert-triangle',
+    color: 'var(--twin-red-vivid)',
+  },
+  'procedure-approved': {
+    label: 'Procedure approved',
+    icon: 'circle-check',
+    color: 'var(--twin-green-700)',
+  },
+  'procedure-rejected': {
+    label: 'Procedure rejected',
+    icon: 'alert-triangle',
+    color: 'var(--twin-amber-vivid)',
+  },
+  'procedure-retried': {
+    label: 'Procedure retried',
+    icon: 'refresh',
+    color: 'var(--twin-accent)',
+  },
+  'procedure-rerouted': {
+    label: 'Procedure rerouted',
+    icon: 'file-text',
+    color: 'var(--twin-accent)',
+  },
+  'procedure-store-recovered': {
+    label: 'Procedure store recovered',
+    icon: 'settings',
+    color: 'var(--twin-amber-vivid)',
   },
   auth: { label: 'Auth', icon: 'lock', color: 'var(--color-text-secondary)' },
   settings: {

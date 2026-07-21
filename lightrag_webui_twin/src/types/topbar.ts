@@ -28,6 +28,7 @@ export type NotificationKind =
   | 'pipeline-warning'
   | 'source-uploaded'
   | 'retrieval'
+  | 'procedure-review'
   | 'info';
 
 export interface Notification {

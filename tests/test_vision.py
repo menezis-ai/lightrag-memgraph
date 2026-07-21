@@ -86,7 +86,24 @@ def test_should_process_gates(vision_configured, monkeypatch, tmp_path):
     assert _vision.should_process(tmp_path / "ghost.png") is False
 
     monkeypatch.setenv("TWIN_VISION_MAX_BYTES", "8")
-    assert _vision.should_process(image) is False
+    # Size does not relinquish ownership to the native parser. The full
+    # processor reports an explicit refusal instead.
+    assert _vision.should_process(image) is True
+
+
+async def test_oversized_image_is_refused_before_ocr(
+    vision_configured, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TWIN_VISION_MAX_BYTES", "8")
+
+    def no_ocr(_path):
+        raise AssertionError("OCR must not run above the vision size cap")
+
+    monkeypatch.setattr(_vision, "_ocr_text_sync", no_ocr)
+    outcome = await _vision.aprocess_image(_write_png(tmp_path))
+
+    assert outcome.markdown is None
+    assert "vision-size-limit" in outcome.reason
 
 
 def test_extra_supported_extensions_default():
@@ -315,6 +332,31 @@ async def test_seam_reports_error_document_on_vision_refusal(
     assert reported_track == "tid-logo"
     assert error_files[0]["file_path"] == "logo.png"
     assert "image-dropped" in error_files[0]["original_error"]
+
+
+async def test_seam_never_falls_back_to_native_for_oversized_image(
+    dr_module, vision_configured, monkeypatch, tmp_path
+):
+    async def fake_orig(rag, file_path, *args, **kwargs):
+        raise AssertionError("native path must not run for a vision image")
+
+    wrapped = _install_patch(dr_module, fake_orig)
+    monkeypatch.setattr(_conversion, "should_convert", lambda _p: False)
+    monkeypatch.setenv("TWIN_VISION_MAX_BYTES", "8")
+
+    rag = _FakeRag()
+    success, track_id = await wrapped(
+        rag,
+        _write_png(tmp_path, name="oversized.png"),
+        "tid-oversized",
+    )
+
+    assert success is False
+    assert track_id == "tid-oversized"
+    assert rag.enqueue_calls == []
+    error_files, reported_track = rag.error_calls[0]
+    assert reported_track == "tid-oversized"
+    assert "vision-size-limit" in error_files[0]["original_error"]
 
 
 async def test_seam_leaves_non_image_non_convert_untouched(

@@ -30,3 +30,8 @@ src/twindb_lightrag_memgraph/webui_dist/
 
 # Local OVH deploy assets (Dockerfile/stack/.env live on the server, not versioned)
 deploy/ovh-twin/
+
+# Procedure bundle store runtime artefacts (default local path + sidecars:
+# .lock, mkstemp temporaries, .corrupt-* quarantines)
+twin_procedure_bundles.json
+twin_procedure_bundles.json.*

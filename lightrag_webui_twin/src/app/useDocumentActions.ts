@@ -497,12 +497,47 @@ export function useDocumentActions({
   ): Promise<void> => {
     if (trackIds.length === 0) return;
     const pending = new Set(trackIds);
+    const parked = new Set<string>();
     for (let i = 0; i < 30 && pending.size > 0; i += 1) {
       await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
+      // A PARKED procedure (detected or forced) never lands in /documents —
+      // the backend deliberately creates no document until approval. Its
+      // optimistic row must resolve against the approval queue instead of
+      // dangling forever, and the review card must appear without a manual
+      // refresh. Reconciliation is exact: BundleSummary projects track_id.
+      try {
+        const bundles = await api.listProcedures();
+        const newlyParked = bundles.filter(
+          (bundle) => bundle.track_id && pending.has(bundle.track_id),
+        );
+        if (newlyParked.length > 0) {
+          for (const bundle of newlyParked) {
+            pending.delete(bundle.track_id as string);
+            parked.add(bundle.track_id as string);
+          }
+          setOptimisticUploadDocs((current) =>
+            current.filter(
+              (doc) => !(doc.track_id && parked.has(doc.track_id)),
+            ),
+          );
+          void queryClient.invalidateQueries({ queryKey: ['procedures'] });
+        }
+      } catch {
+        // Procedure list unreachable (e.g. degraded store): keep polling
+        // documents — the pending section surfaces the store error itself.
+      }
+      if (pending.size === 0) break;
       const result = await docs.refetch();
       for (const item of result.data?.items ?? []) {
         if (item.track_id) pending.delete(item.track_id);
       }
+    }
+    if (parked.size > 0) {
+      pushToast({
+        kind: 'done',
+        title: 'Parked for review',
+        sub: `${parked.size} procedure${parked.size === 1 ? '' : 's'} awaiting approval in the pending section`,
+      });
     }
   };
 
@@ -576,6 +611,9 @@ export function useDocumentActions({
           ...(opts?.classification
             ? { classification: opts.classification }
             : {}),
+          // Batch-level operator profile → per-upload X-Twin-Doc-Type header
+          // (omitted for auto-detect, see api.uploadDocument).
+          ...(action.docType ? { docType: action.docType } : {}),
         };
       },
     );

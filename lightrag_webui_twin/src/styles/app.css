@@ -8563,6 +8563,8 @@ header.topbar .notif-popover {
   font-size: 11px; font-weight: 600; white-space: nowrap;
 }
 .pending-pill.amber { background: var(--twin-amber-50); color: var(--twin-amber-700); border: 0.5px solid var(--twin-amber-vivid); }
+/* red pill — failed procedure bundles awaiting operator retry/reject */
+.pending-pill.red { background: var(--twin-red-50); color: var(--twin-red-vivid); border: 0.5px solid var(--twin-red-vivid); }
 
 /* modified-source card variant — same card as the others; only the amber
  * "Modified source" pill distinguishes it (no special background). */

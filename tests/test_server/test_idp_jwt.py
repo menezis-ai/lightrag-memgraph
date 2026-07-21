@@ -873,3 +873,31 @@ class TestRuntimeConfigDebugUserStripped:
 
         cfg = _build_runtime_config()
         assert "debugUser" not in cfg
+
+    def test_extra_upload_extensions_follow_active_tiers(self, monkeypatch):
+        """The modal whitelist is runtime-config-driven (BNP 2026-07-20:
+        'format not supported' on PNG — the frontend list predated the
+        vision tier). Advertise images ONLY when the vision tier is
+        actually usable on this deployment."""
+        from twindb_lightrag_memgraph import _build_runtime_config, _vision
+        from twindb_lightrag_memgraph import _conversion
+
+        monkeypatch.setattr(_conversion, "is_enabled", lambda: False)
+        monkeypatch.setattr(_vision, "is_enabled", lambda: False)
+        cfg = _build_runtime_config()
+        assert cfg["extraUploadExtensions"] == []
+        assert cfg["extraUploadMaxBytes"] == {}
+
+        monkeypatch.setattr(_vision, "is_enabled", lambda: True)
+        cfg = _build_runtime_config()
+        assert "png" in cfg["extraUploadExtensions"]
+        assert "jpg" in cfg["extraUploadExtensions"]
+        assert "jpeg" in cfg["extraUploadExtensions"]
+        assert cfg["extraUploadMaxBytes"]["png"] == _vision.max_image_bytes()
+
+        monkeypatch.setattr(_conversion, "is_enabled", lambda: True)
+        cfg = _build_runtime_config()
+        assert "epub" in cfg["extraUploadExtensions"]  # markitdown repair set
+        # Conversion's cap is only a preference: oversized native formats
+        # fall back to LightRAG, so it must not become a frontend rejection.
+        assert "epub" not in cfg["extraUploadMaxBytes"]

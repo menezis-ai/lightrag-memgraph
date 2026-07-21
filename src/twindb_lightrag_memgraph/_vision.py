@@ -271,7 +271,13 @@ async def _effective_settings() -> tuple[int, frozenset[str]]:
 
 
 def should_process(file_path: Path | str) -> bool:
-    """Cheap gate: tier enabled + image format + under the size cap."""
+    """Claim an existing image owned by the active vision tier.
+
+    Size is deliberately NOT an ownership gate. Once the upload whitelist
+    accepts an image extension, the vision seam must never fall through to a
+    native parser merely because the image exceeds the tier cap. The full
+    processor returns an explicit refusal for that case instead.
+    """
     if not is_enabled():
         return False
     path = Path(file_path)
@@ -279,16 +285,8 @@ def should_process(file_path: Path | str) -> bool:
     if ext not in vision_formats():
         return False
     try:
-        size = path.stat().st_size
+        path.stat()
     except OSError:
-        return False
-    if size > max_image_bytes():
-        logger.warning(
-            "twindb vision: %s exceeds %s (%d bytes) — refused",
-            path.name,
-            TWIN_VISION_MAX_BYTES_ENV,
-            size,
-        )
         return False
     return True
 
@@ -339,16 +337,31 @@ def _get_client():
     return _client
 
 
+def vision_chat_sync(messages: list[dict]) -> str:
+    """One JSON-mode chat call against the configured vision endpoint.
+
+    Shared entry point for every tier that talks to the vision LLM (image
+    ingestion here, per-schematic passes in ``_procedure``): the client, the
+    model resolution and the strict-JSON posture (``temperature=0``,
+    ``response_format=json_object``) stay defined in exactly one place.
+    Returns the raw model text; callers parse with :func:`_parse_vision_json`.
+    """
+    response = _get_client().chat.completions.create(
+        model=os.environ[TWIN_VISION_MODEL_ENV].strip(),
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=messages,
+    )
+    return response.choices[0].message.content or ""
+
+
 def _call_vision_llm_sync(path: Path) -> str:
     """One vision chat call; returns the raw model text (JSON expected)."""
     data = path.read_bytes()
     mime = _MIME_BY_EXT.get(path.suffix.lower().lstrip("."), "image/png")
     data_url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
-    response = _get_client().chat.completions.create(
-        model=os.environ[TWIN_VISION_MODEL_ENV].strip(),
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
+    return vision_chat_sync(
+        [
             {"role": "system", "content": VISION_SYSTEM_PROMPT},
             {
                 "role": "user",
@@ -357,9 +370,8 @@ def _call_vision_llm_sync(path: Path) -> str:
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             },
-        ],
+        ]
     )
-    return response.choices[0].message.content or ""
 
 
 def _parse_vision_json(raw: str) -> dict | None:
@@ -416,6 +428,23 @@ async def aprocess_image(file_path: Path | str) -> VisionOutcome:
 
 
 async def _aprocess_inner(path: Path) -> VisionOutcome:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return VisionOutcome(
+            markdown=None,
+            reason=f"vision-input-error: {type(exc).__name__}: {exc}",
+        )
+
+    size_limit = max_image_bytes()
+    if size > size_limit:
+        reason = (
+            f"vision-size-limit: {size} bytes exceeds "
+            f"{TWIN_VISION_MAX_BYTES_ENV}={size_limit}"
+        )
+        logger.warning("twindb vision: %s — %s", path.name, reason)
+        return VisionOutcome(markdown=None, reason=reason)
+
     threshold, active_drop_classes = await _effective_settings()
     ocr_text = await asyncio.to_thread(_ocr_text_sync, path)
 

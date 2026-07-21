@@ -40,7 +40,7 @@ import {
 import { setActiveFolder } from '../api/client';
 import { api, type ActivityQuery } from '../api/resources';
 import { mapTwinQueryResponseForRetrievalTab } from '../api/twinQueryResponse';
-import { FORMAT_CATEGORIES } from '../constants/formatCategories';
+import { buildFormatCategories } from '../constants/formatCategories';
 import type { Document } from '../types/document';
 import type { Theme, Folder } from '../types/topbar';
 import { dedupeDocumentsBySource } from '../utils/documents';
@@ -607,6 +607,8 @@ export function AppShell() {
                   docs={pendingDocs}
                   actor={auth.user?.email ?? 'anonymous'}
                   defaultOpen
+                  folderList={folderList}
+                  canReviewProcedures={canManageFolders(auth.user)}
                   onReadSource={(d) => setReadSourceDoc(d)}
                   onToast={(kind, title, sub) =>
                     pushToast({ kind, title, sub })
@@ -748,8 +750,12 @@ export function AppShell() {
           <AddSourceModal
             open={addOpen}
             tagCatalog={tagCatalog}
-            formatCategories={FORMAT_CATEGORIES}
+            formatCategories={buildFormatCategories(
+              runtimeConfig.extraUploadExtensions,
+            )}
             submitting={uploadDocs.isPending}
+            extraUploadExtensions={runtimeConfig.extraUploadExtensions}
+            extraUploadMaxBytes={runtimeConfig.extraUploadMaxBytes}
             onClose={() => setAddOpen(false)}
             onSubmit={onAddSourceSubmit}
           />

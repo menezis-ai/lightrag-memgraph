@@ -71,12 +71,24 @@ vision = [
     "rapidocr-onnxruntime>=1.3.0",
     "openai>=1.50",
 ]
+procedure = [
+    # Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md).
+    # pypdfium2 renders schematic pages (Apache/BSD — PyMuPDF is AGPL,
+    # licence red line for a bank deliverable); pypdf extracts the text
+    # used by the deterministic template detection; Pillow encodes the
+    # rendered bitmaps to PNG. The vision LLM rides the [vision] tier's
+    # endpoint configuration (same gemma-4-31b-it, decision 2026-07-20).
+    "pypdfium2>=4.30",
+    "pypdf>=4.0",
+    "pillow>=10.0",
+    "twindb-lightrag-memgraph[vision]",
+]
 test-server = [
     "twindb-lightrag-memgraph[server,test]",
     "httpx>=0.27.0",
 ]
 all = [
-    "twindb-lightrag-memgraph[intelligence,server,tracing,convert,vision]",
+    "twindb-lightrag-memgraph[intelligence,server,tracing,convert,vision,procedure]",
 ]
 
 [tool.setuptools.packages.find]

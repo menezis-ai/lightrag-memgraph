@@ -227,6 +227,245 @@ describe('PendingDocsSection — Read source (B2)', () => {
   });
 });
 
+describe('PendingDocsSection — procedure bundles (third variant)', () => {
+  const PROC_SUMMARIES = [
+    {
+      id: 'pb-1',
+      file_name: 'failover-procedure.pdf',
+      state: 'pending',
+      reason: 'procedure detected: schematic-heavy layout',
+      source: 'detected',
+      schematics_total: 2,
+      schematics_described: 2,
+      classification: {
+        class_id: 'C2',
+        class_name: 'C2 Confidentiel',
+        reason: null,
+      },
+      operator_classification: 'C2',
+      created_at: '2026-07-18T09:00:00Z',
+      updated_at: null,
+    },
+    {
+      id: 'pb-2',
+      file_name: 'segmentation-procedure.pdf',
+      state: 'failed',
+      reason: 'vision pass failed on page 2',
+      source: 'forced',
+      schematics_total: 2,
+      schematics_described: 1,
+      classification: null,
+      operator_classification: null,
+      created_at: '2026-07-17T15:00:00Z',
+      updated_at: null,
+    },
+  ];
+
+  const procRejectCalls: { id: string; body: unknown }[] = [];
+
+  function useProcedureHandlers() {
+    procRejectCalls.length = 0;
+    server.use(
+      http.get('*/twin/api/procedures', () =>
+        HttpResponse.json(PROC_SUMMARIES),
+      ),
+      http.post(
+        '*/twin/api/procedures/:id/reject',
+        async ({ params, request }) => {
+          const body = await request.json().catch(() => null);
+          procRejectCalls.push({ id: String(params.id), body });
+          return HttpResponse.json({
+            ...PROC_SUMMARIES[0],
+            id: String(params.id),
+            state: 'rejected',
+          });
+        },
+      ),
+    );
+  }
+
+  function queryClientNoRetry() {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+  }
+
+  it('renders the section from bundles alone (no pending docs) with state pills + schematic counts', async () => {
+    useProcedureHandlers();
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[]} onToast={() => {}} defaultOpen />
+      </Wrap>,
+    );
+
+    const pendingCard = await screen.findByTestId('pending-proc-pb-1');
+    expect(pendingCard.textContent).toContain('failover-procedure.pdf');
+    expect(pendingCard.textContent).toContain('procedure detected');
+    expect(pendingCard.textContent).toContain('2/2 schematics described');
+    expect(screen.getByTestId('pending-proc-state-pb-1').textContent).toContain(
+      'Procedure review',
+    );
+    // MIP pill from the summary's partial classification payload.
+    expect(pendingCard.querySelector('[data-testid="class-pill-pb-1"]')).not.toBeNull();
+
+    const failedCard = screen.getByTestId('pending-proc-pb-2');
+    expect(screen.getByTestId('pending-proc-state-pb-2').textContent).toContain(
+      'Procedure failed',
+    );
+    expect(failedCard.textContent).toContain('1/2 schematics described');
+    // No classification on pb-2 → the pill stays silent.
+    expect(failedCard.querySelector('[data-testid="class-pill-pb-2"]')).toBeNull();
+  });
+
+  it('quick Reject posts to /procedures/{id}/reject and toasts', async () => {
+    useProcedureHandlers();
+    const toast = vi.fn();
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[]} onToast={toast} defaultOpen />
+      </Wrap>,
+    );
+
+    await userEvent.click(await screen.findByTestId('pending-proc-reject-pb-1'));
+    await waitFor(() => expect(procRejectCalls.length).toBe(1));
+    expect(procRejectCalls[0].id).toBe('pb-1');
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(toast.mock.calls[0][0]).toBe('done');
+    expect(toast.mock.calls[0][1]).toBe('Procedure rejected');
+  });
+
+  it('hides Review/Reject when canReviewProcedures is false (cards stay visible)', async () => {
+    useProcedureHandlers();
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection
+          docs={[]}
+          onToast={() => {}}
+          defaultOpen
+          canReviewProcedures={false}
+        />
+      </Wrap>,
+    );
+
+    await screen.findByTestId('pending-proc-pb-1');
+    expect(screen.queryByTestId('pending-proc-review-pb-1')).toBeNull();
+    expect(screen.queryByTestId('pending-proc-reject-pb-1')).toBeNull();
+  });
+
+  it('Review opens the procedure review modal (detail fetch)', async () => {
+    useProcedureHandlers();
+    server.use(
+      http.get('*/twin/api/procedures/:id', ({ params }) =>
+        HttpResponse.json({
+          ...PROC_SUMMARIES[0],
+          id: String(params.id),
+          original_path: '/inputs/failover-procedure.pdf',
+          track_id: null,
+          folder: 'default',
+          content_hash: null,
+          full_text: 'text',
+          duplicate_requests: [],
+          schematics: [],
+        }),
+      ),
+    );
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[]} onToast={() => {}} defaultOpen />
+      </Wrap>,
+    );
+
+    await userEvent.click(await screen.findByTestId('pending-proc-review-pb-1'));
+    expect(await screen.findByTestId('procedure-review-modal')).toBeInTheDocument();
+  });
+
+  it('keeps rejected bundles visible and recoverable (reject → retry path)', async () => {
+    // Stateful test handlers: reject mutates the list the next refetch sees —
+    // the rejected bundle must NOT disappear (the review modal is the only
+    // surface offering retry/reroute recovery).
+    const bundles = PROC_SUMMARIES.map((b) => ({ ...b }));
+    server.use(
+      http.get('*/twin/api/procedures', () => HttpResponse.json(bundles)),
+      http.post('*/twin/api/procedures/:id/reject', ({ params }) => {
+        const bundle = bundles.find((b) => b.id === String(params.id));
+        if (bundle) bundle.state = 'rejected';
+        return HttpResponse.json({ ...bundle, state: 'rejected' });
+      }),
+      http.get('*/twin/api/procedures/:id', ({ params }) => {
+        const bundle = bundles.find((b) => b.id === String(params.id));
+        return HttpResponse.json({
+          ...bundle,
+          original_path: '/inputs/x.pdf',
+          track_id: null,
+          folder: 'default',
+          content_hash: null,
+          full_text: 'text',
+          duplicate_requests: [],
+          schematics: [],
+        });
+      }),
+    );
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[]} onToast={() => {}} defaultOpen />
+      </Wrap>,
+    );
+
+    await userEvent.click(await screen.findByTestId('pending-proc-reject-pb-1'));
+
+    // Still visible, now with the rejected pill and NO quick-reject.
+    const pill = await screen.findByTestId('pending-proc-state-pb-1');
+    await waitFor(() =>
+      expect(pill.textContent).toContain('Procedure rejected'),
+    );
+    expect(
+      screen.queryByTestId('pending-proc-reject-pb-1'),
+    ).not.toBeInTheDocument();
+
+    // Recovery path stays reachable: Review opens the modal with Retry.
+    await userEvent.click(screen.getByTestId('pending-proc-review-pb-1'));
+    expect(await screen.findByTestId('procedure-review-modal')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('procedure-review-retry'),
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces a store error with a retry instead of an empty queue', async () => {
+    // A degraded store answers 503 precisely so parked work is never
+    // presented as an empty list.
+    let failures = 1;
+    server.use(
+      http.get('*/twin/api/procedures', () => {
+        if (failures > 0) {
+          failures -= 1;
+          return HttpResponse.json(
+            { detail: 'procedure store degraded: … store/recover' },
+            { status: 503 },
+          );
+        }
+        return HttpResponse.json(PROC_SUMMARIES);
+      }),
+    );
+    const Wrap = wrap(queryClientNoRetry());
+    render(
+      <Wrap>
+        <PendingDocsSection docs={[]} onToast={() => {}} defaultOpen />
+      </Wrap>,
+    );
+
+    const errorCard = await screen.findByTestId('pending-procedures-error');
+    expect(errorCard.textContent).toContain('NOT an empty queue');
+
+    await userEvent.click(screen.getByTestId('pending-procedures-retry'));
+    expect(await screen.findByTestId('pending-proc-pb-1')).toBeInTheDocument();
+  });
+});
+
 describe('PendingDocsSection — Modified variant (Confluence revalidation)', () => {
   function makeModifiedDoc(): Document {
     return {

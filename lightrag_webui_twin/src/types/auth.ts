@@ -65,6 +65,15 @@ export interface TwinRuntimeConfig {
   /** Admin-created logical folders inside the same Memgraph DB / KB. Max 5. */
   folders?: readonly TwinFolderConfig[];
   maxFolders?: number;
+  /** Upload extensions accepted BEYOND the native LightRAG set, advertised
+   *  by the backend's active ingestion tiers (vision images, markitdown
+   *  repair formats). The AddSourceModal merges these into its client-side
+   *  whitelist — absent/empty means the deployment cannot process them. */
+  extraUploadExtensions?: readonly string[];
+  /** Terminal per-extension byte caps for `extraUploadExtensions`. The modal
+   *  applies the stricter of this tier cap and its global upload cap,
+   *  preventing an accepted image from reaching a tier that must reject it. */
+  extraUploadMaxBytes?: Readonly<Record<string, number>>;
   /** Debug-only: bypass IdP and pretend to be this user. Stripped in prod. */
   debugUser?: AuthenticatedUser;
 }

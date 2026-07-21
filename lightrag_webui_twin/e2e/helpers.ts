@@ -70,6 +70,11 @@ export async function getMswStats(
     path: string;
     body: Record<string, unknown>;
   }>;
+  uploadRequests: Array<{
+    name: string;
+    docType: string | null;
+    classification: string | null;
+  }>;
 }> {
   return page.evaluate(async () => {
     const res = await fetch('/__e2e/stats');
@@ -125,4 +130,24 @@ export async function addSourceFile(
     timeout: 12_000,
   });
   await page.getByRole('button', { name: 'Add 1 source' }).click();
+}
+
+export async function seedProcedures(
+  page: Page,
+  bundles: readonly Record<string, unknown>[],
+) {
+  await page.evaluate(async (items) => {
+    await fetch('/__e2e/procedures', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bundles: items }),
+    });
+    await (
+      window as Window & {
+        __TWIN_E2E_QUERY_CLIENT?: {
+          invalidateQueries: (args: { queryKey: readonly string[] }) => Promise<unknown>;
+        };
+      }
+    ).__TWIN_E2E_QUERY_CLIENT?.invalidateQueries({ queryKey: ['procedures'] });
+  }, bundles);
 }

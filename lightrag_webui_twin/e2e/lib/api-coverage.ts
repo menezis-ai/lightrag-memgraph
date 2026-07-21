@@ -86,6 +86,16 @@ const ADMIN_ONLY_TWIN_OPERATIONS = new Set([
   'POST /twin/api/tags/{name}/reactivate',
   'POST /twin/api/tags/{name}/synonyms',
   'DELETE /twin/api/tags/{name}',
+  // Procedure approval workflow (server/procedure_routes.py, PR 2):
+  // the LIST is any-authenticated (folder-bound summaries); detail,
+  // decisions and store recovery are admin-gated.
+  'GET /twin/api/procedures/{bundle_id}',
+  'POST /twin/api/procedures/{bundle_id}/approve',
+  'POST /twin/api/procedures/{bundle_id}/reject',
+  'POST /twin/api/procedures/{bundle_id}/retry',
+  'POST /twin/api/procedures/{bundle_id}/reroute-standard',
+  'GET /twin/api/procedures/store/health',
+  'POST /twin/api/procedures/store/recover',
 ]);
 
 // Native shim routes: a fixed contract (server/native_shims.py). Public set

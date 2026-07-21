@@ -187,6 +187,10 @@ const NOTIF_ICON: Record<NotificationKind, { name: IconName; color: string }> = 
     color: 'var(--color-text-secondary)',
   },
   retrieval: { name: 'search', color: 'var(--twin-accent)' },
+  'procedure-review': {
+    name: 'file-text',
+    color: 'var(--twin-amber-vivid, #9C7000)',
+  },
   info: { name: 'info-circle', color: 'var(--color-text-secondary)' },
 };
 

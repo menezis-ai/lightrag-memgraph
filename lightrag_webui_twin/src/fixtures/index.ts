@@ -25,3 +25,4 @@ export {
   GRAPH_RELATION_FIXTURES,
 } from './graph';
 export { TAG_CATEGORY_FIXTURES, TAG_FIXTURES } from './tags';
+export { PROCEDURE_BUNDLE_FIXTURES, TINY_PNG_BASE64 } from './procedures';

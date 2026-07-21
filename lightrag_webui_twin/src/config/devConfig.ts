@@ -20,6 +20,14 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
   idpLogoutUrl: 'https://idp.twin.internal/realms/twin/protocol/openid-connect/logout',
   defaultFolderId: 'default',
   maxFolders: 5,
+  // Demo parity with a vision-enabled deployment: MSW accepts any upload,
+  // so the dev/standalone build lets images through the modal too.
+  extraUploadExtensions: ['jpeg', 'jpg', 'png'],
+  extraUploadMaxBytes: {
+    jpeg: 20 * 1024 * 1024,
+    jpg: 20 * 1024 * 1024,
+    png: 20 * 1024 * 1024,
+  },
   folders: [
     {
       id: 'default',

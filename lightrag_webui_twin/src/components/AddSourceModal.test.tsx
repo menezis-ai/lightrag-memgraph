@@ -177,6 +177,82 @@ describe('AddSourceModal — files', () => {
     expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
   });
 
+  it('format tooltip stops claiming "coming soon" when images are live', async () => {
+    const { buildFormatCategories } = await import(
+      '../constants/formatCategories'
+    );
+    const floor = buildFormatCategories(undefined);
+    expect(floor.find((c) => c.cat === 'Images')?.future).toBe(true);
+
+    const live = buildFormatCategories(['png', 'jpg', 'jpeg']);
+    const images = live.find((c) => c.cat === 'Images');
+    expect(images?.future).toBeUndefined();
+    expect(images?.fmts).toBe('PNG JPG JPEG');
+    // Other rows untouched.
+    expect(live.find((c) => c.cat === 'Documents')).toEqual(
+      floor.find((c) => c.cat === 'Documents'),
+    );
+  });
+
+  it('rejects images unless the backend advertises them (BNP 2026-07-20 report)', async () => {
+    // Without extraUploadExtensions the deployment has no vision endpoint:
+    // the modal must keep rejecting images honestly.
+    const { unmount } = render(<AddSourceModal {...defaultProps()} />);
+    let input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    await userEvent.upload(
+      input,
+      new File(['png payload'], 'diagram.png', { type: 'image/png' }),
+    );
+    expect(screen.getByText('PNG format is not supported')).toBeInTheDocument();
+    unmount();
+
+    // A vision-enabled backend advertises the image extensions via runtime
+    // config — the SAME file becomes uploadable.
+    render(
+      <AddSourceModal
+        {...defaultProps()}
+        extraUploadExtensions={['png', 'jpg', 'jpeg']}
+        extraUploadMaxBytes={{
+          jpeg: 20 * 1024 * 1024,
+          jpg: 20 * 1024 * 1024,
+          png: 20 * 1024 * 1024,
+        }}
+      />,
+    );
+    input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    await userEvent.upload(
+      input,
+      new File(['png payload'], 'diagram.png', { type: 'image/png' }),
+    );
+    expect(screen.getByText('diagram.png')).toBeInTheDocument();
+    expect(screen.queryByText('PNG format is not supported')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Add 1 source' }),
+    ).not.toBeDisabled();
+  });
+
+  it('rejects an image above the advertised vision cap before upload', async () => {
+    render(
+      <AddSourceModal
+        {...defaultProps()}
+        extraUploadExtensions={['png', 'jpg', 'jpeg']}
+        extraUploadMaxBytes={{ png: 20 * 1024 * 1024 }}
+      />,
+    );
+    const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    const oversized = new File(['png payload'], 'oversized.png', {
+      type: 'image/png',
+    });
+    Object.defineProperty(oversized, 'size', {
+      value: 21 * 1024 * 1024,
+    });
+
+    await userEvent.upload(input, oversized);
+
+    expect(screen.getByText('Exceeds 20 MB')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add 0 sources' })).toBeDisabled();
+  });
+
   it('marks oversized files as errors and excludes them from the ready count', async () => {
     render(<AddSourceModal {...defaultProps()} />);
     const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
@@ -485,6 +561,48 @@ describe('AddSourceModal — submit & close', () => {
       { name: 'oracle-config-guide.pdf', classification: 'C2' },
       { name: 'unix-notes.txt', classification: 'C2' },
     ]);
+  });
+});
+
+describe('AddSourceModal — document type selector', () => {
+  it('defaults to auto-detect and omits docType from the emitted action', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
+
+    expect(screen.getByTestId('addsource-doc-type')).toHaveValue('');
+
+    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
+
+    const action = p.onSubmit.mock.calls[0][0];
+    // Auto-detect must OMIT the key entirely — the host only sends the
+    // X-Twin-Doc-Type header when docType is present.
+    expect('docType' in action).toBe(false);
+  });
+
+  it('emits docType "procedure" when the operator forces the procedure profile', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
+
+    await userEvent.selectOptions(
+      screen.getByLabelText('Document type'),
+      'procedure',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
+
+    expect(p.onSubmit.mock.calls[0][0].docType).toBe('procedure');
+  });
+
+  it('emits docType "standard" when procedure detection is bypassed', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
+
+    await userEvent.selectOptions(
+      screen.getByTestId('addsource-doc-type'),
+      'standard',
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
+
+    expect(p.onSubmit.mock.calls[0][0].docType).toBe('standard');
   });
 });
 

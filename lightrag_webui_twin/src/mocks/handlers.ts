@@ -23,12 +23,18 @@ import {
   GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
   OPENAPI_GROUPS,
+  PROCEDURE_BUNDLE_FIXTURES,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   FOLDER_FIXTURES,
 } from '../fixtures';
 import { ACTIVITY_RANGE_MS, type ActivityEvent } from '../types/activity';
 import type { Document, DocumentStatus } from '../types/document';
+import {
+  bundleFolders,
+  type ProcedureBundle,
+  type ProcedureBundleSummary,
+} from '../types/procedure';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
@@ -56,6 +62,7 @@ const E2E_AUTH_USER_STORAGE_KEY = 'twin.e2e.localAuthUser.v1';
 const E2E_GRAPH_ENTITIES_STORAGE_KEY = 'twin.e2e.graphEntitiesState.v1';
 const E2E_GRAPH_RELATIONS_STORAGE_KEY = 'twin.e2e.graphRelationsState.v1';
 const E2E_API_KEYS_STORAGE_KEY = 'twin.e2e.apiKeysState.v1';
+const E2E_PROCEDURES_STORAGE_KEY = 'twin.e2e.proceduresState.v1';
 
 function cloneDocuments(docs: readonly Document[]): Document[] {
   return docs.map((doc) => ({
@@ -590,6 +597,130 @@ function defaultVisionSettingsState(): MockVisionSettingsState {
 let visionSettingsState: MockVisionSettingsState = defaultVisionSettingsState();
 const VISION_DROP_CLASS_RE = /^[a-z0-9][a-z0-9 _-]{0,39}$/;
 
+// ---------------------------------------------------------------------------
+// Procedure approval bundles — STATEFUL mock of `server/procedure_routes.py`.
+// Test doctrine: decisions must MUTATE the mock the way the real backend
+// would (approve → bundle state flips AND the documents list gains the
+// enqueued doc), otherwise the e2e journey goes falsely green.
+// ---------------------------------------------------------------------------
+
+function cloneProcedures(
+  items: readonly ProcedureBundle[],
+): ProcedureBundle[] {
+  // Bundles nest schematics/tasks/divergences — JSON round-trip is the
+  // simplest faithful deep clone for this plain-data shape.
+  return JSON.parse(JSON.stringify(items)) as ProcedureBundle[];
+}
+
+function loadProceduresState(): ProcedureBundle[] {
+  const raw = e2eStorage()?.getItem(E2E_PROCEDURES_STORAGE_KEY);
+  if (!raw) return cloneProcedures(PROCEDURE_BUNDLE_FIXTURES);
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return cloneProcedures(parsed as ProcedureBundle[]);
+    }
+  } catch {
+    // Ignore corrupt e2e state and fall back to the fixtures.
+  }
+  return cloneProcedures(PROCEDURE_BUNDLE_FIXTURES);
+}
+
+let proceduresState: ProcedureBundle[] = loadProceduresState();
+let procedureDocSeq = 0;
+
+function persistProceduresState(): void {
+  persistState(E2E_PROCEDURES_STORAGE_KEY, proceduresState);
+}
+
+/** Folder-bound list projection — mirrors `procedure_routes._summary`
+ *  (NO paths, NO PNGs, NO full text in the list). */
+function procedureSummary(bundle: ProcedureBundle): ProcedureBundleSummary {
+  return {
+    id: bundle.id,
+    file_name: bundle.file_name,
+    state: bundle.state,
+    reason: bundle.reason,
+    source: bundle.source,
+    track_id: bundle.track_id ?? null,
+    schematics_total: bundle.schematics_total ?? 0,
+    schematics_described: (bundle.schematics ?? []).filter(
+      (s) => s.informed !== null && s.informed !== undefined,
+    ).length,
+    classification: bundle.classification ?? null,
+    operator_classification: bundle.operator_classification ?? null,
+    created_at: bundle.created_at ?? null,
+    updated_at: bundle.updated_at ?? null,
+  };
+}
+
+/** Mirrors `_procedure.bundle_folders` — primary first, deduped,
+ *  duplicate-request folders included, nulls skipped. */
+function mockBundleFolders(bundle: ProcedureBundle): string[] {
+  const folders: string[] = [];
+  if (bundle.folder) folders.push(String(bundle.folder));
+  for (const request of bundle.duplicate_requests ?? []) {
+    const folder = request?.folder;
+    if (folder && !folders.includes(folder)) folders.push(folder);
+  }
+  return folders;
+}
+
+function recordProcedureActivity(
+  kind: string,
+  bundle: ProcedureBundle,
+  summary: string,
+): void {
+  recordActivity({
+    id: `evt_proc_${kind}_${bundle.id}_${Date.now()}`,
+    ts: new Date().toISOString(),
+    rel: 'now',
+    day: 'Today',
+    kind: kind as ActivityEvent['kind'],
+    sev: kind === 'procedure-approved' ? 'info' : 'warning',
+    actor: { user: 'mock-operator', role: 'admin' },
+    target: { type: 'document', label: bundle.file_name, id: bundle.id },
+    summary,
+    meta: { bundle_id: bundle.id },
+  });
+}
+
+/** The document row an approved/rerouted bundle enqueues — lands PENDING
+ *  and flips PROCESSED on a later poll like real ingestion. */
+function enqueueProcedureDocument(
+  bundle: ProcedureBundle,
+  folder: string,
+): void {
+  procedureDocSeq += 1;
+  documentsState = [
+    {
+      doc_id: `proc_doc_${bundle.id}_${procedureDocSeq}`,
+      track_id: bundle.track_id ?? `track_proc_${procedureDocSeq}`,
+      file_path: bundle.file_name,
+      content_summary: `Approved procedure bundle ${bundle.id}`,
+      content_length: bundle.full_text?.length ?? 0,
+      status: 'PENDING',
+      chunks_count: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      error_msg: null,
+      metadata: {
+        uploader: 'procedure-review',
+        [INGEST_POLLS_KEY]: 1,
+        ...(bundle.classification
+          ? { classification: bundle.classification }
+          : {}),
+      },
+      type: 'file',
+      tags: [],
+      folder,
+      visibility: 'private',
+    },
+    ...documentsState,
+  ];
+  persistDocumentsState();
+}
+
 function nextApiKeyId(): string {
   apiKeyCounter += 1;
   return `mock-key-${apiKeyCounter}`;
@@ -670,6 +801,11 @@ const e2eStats = {
     path: string;
     body: unknown;
   }>,
+  uploadRequests: [] as Array<{
+    name: string;
+    docType: string | null;
+    classification: string | null;
+  }>,
 };
 
 function recordTwinFolderRequest(request: Request): void {
@@ -712,7 +848,10 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_GRAPH_ENTITIES_STORAGE_KEY);
   storage?.removeItem(E2E_GRAPH_RELATIONS_STORAGE_KEY);
   storage?.removeItem(E2E_API_KEYS_STORAGE_KEY);
+  storage?.removeItem(E2E_PROCEDURES_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
+  proceduresState = cloneProcedures(PROCEDURE_BUNDLE_FIXTURES);
+  procedureDocSeq = 0;
   resetDocumentMemberships();
   categoryState = cloneTagCategories(TAG_CATEGORY_FIXTURES);
   tagState = cloneTags(TAG_FIXTURES);
@@ -739,6 +878,7 @@ export function resetDocumentsState(): void {
   e2eStats.tagApproveCalls = {};
   e2eStats.folderRequests = [];
   e2eStats.queryRequests = [];
+  e2eStats.uploadRequests = [];
   localAuthUser = null;
 }
 
@@ -1186,6 +1326,7 @@ export const handlers = [
       tagApproveCalls: e2eStats.tagApproveCalls,
       folderRequests: e2eStats.folderRequests,
       queryRequests: e2eStats.queryRequests,
+      uploadRequests: e2eStats.uploadRequests,
     }),
   ),
   http.post(`${ANY}/__e2e/documents`, async ({ request }) => {
@@ -1208,6 +1349,18 @@ export const handlers = [
     activityState = [...cloneActivity(events), ...activityState];
     persistActivityState();
     return HttpResponse.json({ ok: true, ids: events.map((event) => event.id) });
+  }),
+  // Replace the parked-procedure queue (e.g. empty it): the pending section
+  // aggregates documents AND procedures, so a doc-only journey that expects
+  // the section to vanish must be able to clear the procedure seed too.
+  http.post(`${ANY}/__e2e/procedures`, async ({ request }) => {
+    const body = (await request.json()) as
+      | { bundles?: ProcedureBundle[] }
+      | ProcedureBundle[];
+    const bundles = Array.isArray(body) ? body : body.bundles ?? [];
+    proceduresState = cloneProcedures(bundles);
+    persistProceduresState();
+    return HttpResponse.json({ ok: true, count: proceduresState.length });
   }),
 
   // Local LightRAG-compatible auth endpoints. In production these are native
@@ -1336,6 +1489,24 @@ export const handlers = [
         { status: 400 },
       );
     }
+    // Operator-forced ingestion profile — mirrors the backend seam: only
+    // procedure|standard are valid; absent = auto-detect. Recorded in the
+    // e2e stats so specs can assert the header actually rode the request.
+    const docType = request.headers.get('X-Twin-Doc-Type');
+    if (docType && docType !== 'procedure' && docType !== 'standard') {
+      return HttpResponse.json(
+        {
+          detail:
+            "X-Twin-Doc-Type accepts only 'procedure' or 'standard' (omit for auto-detect).",
+        },
+        { status: 400 },
+      );
+    }
+    e2eStats.uploadRequests.push({
+      name,
+      docType,
+      classification: operatorClass,
+    });
     const classificationMeta =
       operatorClass && operatorClass in MIP_CLASS_NAMES
         ? {
@@ -1355,6 +1526,43 @@ export const handlers = [
     }
     uploadSeq += 1;
     const trackId = `track_${name.replaceAll(/[^a-z0-9]+/gi, '_').toLowerCase()}_${uploadSeq}`;
+
+    // PARKED path — mirrors the backend seam: a FORCED procedure upload is
+    // claimed by the profile, parks an approval bundle and creates NO
+    // document until approval. The upload response is indistinguishable
+    // from a normal enqueue (same receipt) — exactly why the UI reconciles
+    // its optimistic row against the procedure queue by track_id.
+    if (docType === 'procedure') {
+      proceduresState = [
+        {
+          id: `proc_up_${uploadSeq}`,
+          file_name: name,
+          state: 'pending',
+          reason: 'ok',
+          source: 'forced',
+          original_path: `/inputs/${name}`,
+          track_id: trackId,
+          folder: 'default',
+          content_hash: `hash_${uploadSeq}`,
+          full_text: 'Uploaded procedure body',
+          schematics: [],
+          schematics_total: 0,
+          classification: null,
+          operator_classification: operatorClass,
+          duplicate_requests: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        ...proceduresState,
+      ];
+      persistProceduresState();
+      return HttpResponse.json({
+        status: 'success',
+        message: `${name} queued for ingestion`,
+        track_id: trackId,
+      });
+    }
+
     const docId = `uploaded_${uploadSeq}`;
     uploadedTrackDocs.set(trackId, docId);
     const text =
@@ -1762,6 +1970,174 @@ export const handlers = [
     });
     return HttpResponse.json(visionSettingsState);
   }),
+  // Procedure approval bundles — STATEFUL and FOLDER-BOUND like the
+  // backend: a bundle is visible when the X-Twin-Folder is its own folder
+  // or one of its duplicate-request folders; an UNASSIGNED bundle (no
+  // folder at all — scan-created) is visible in every folder, mirroring
+  // server/procedure_routes._visible_in_folder (it would otherwise be
+  // reviewable from nowhere). The rest mirrors the backend state machine:
+  // decisions 409 outside their legal source states, folderless
+  // approve/reroute 422 without an explicit folder, and approve/reroute
+  // enqueue a real document row so the Documents tab reflects the release
+  // (test doctrine: MSW mutates like the backend).
+  http.get(`${ANY}${TWIN}/procedures`, ({ request }) => {
+    recordTwinFolderRequest(request);
+    const url = new URL(request.url);
+    const state = url.searchParams.get('state');
+    const activeFolder = request.headers.get('X-Twin-Folder');
+    const items = proceduresState.filter((bundle) => {
+      if (state && String(bundle.state) !== state) return false;
+      if (!activeFolder) return true;
+      const folders = bundleFolders(bundle);
+      return folders.length === 0 || folders.includes(activeFolder);
+    });
+    return HttpResponse.json(items.map(procedureSummary));
+  }),
+  http.get(`${ANY}${TWIN}/procedures/:id`, ({ params }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const bundle = proceduresState.find((b) => b.id === String(params.id));
+    if (!bundle) {
+      return HttpResponse.json({ detail: 'unknown bundle' }, { status: 404 });
+    }
+    return HttpResponse.json(bundle);
+  }),
+  http.post(
+    `${ANY}${TWIN}/procedures/:id/approve`,
+    async ({ params, request }) => {
+      const denied = rejectFolderAdminMutationIfNeeded();
+      if (denied) return denied;
+      const bundle = proceduresState.find((b) => b.id === String(params.id));
+      if (!bundle) {
+        return HttpResponse.json({ detail: 'unknown bundle' }, { status: 404 });
+      }
+      if (bundle.state !== 'pending') {
+        return HttpResponse.json(
+          {
+            detail: `bundle is ${bundle.state}; only pending bundles can be approved`,
+          },
+          { status: 409 },
+        );
+      }
+      const body = (await request.json().catch(() => null)) as {
+        folder?: string | null;
+      } | null;
+      const folders = mockBundleFolders(bundle);
+      const primary = body?.folder || folders[0];
+      if (!primary) {
+        return HttpResponse.json(
+          {
+            detail:
+              "bundle has no requesting folder (scan-created): pass 'folder' in the request body to choose the target folder",
+          },
+          { status: 422 },
+        );
+      }
+      bundle.state = 'approved';
+      bundle.reason = 'approved';
+      bundle.updated_at = new Date().toISOString();
+      persistProceduresState();
+      enqueueProcedureDocument(bundle, primary);
+      recordProcedureActivity(
+        'procedure-approved',
+        bundle,
+        `Procedure '${bundle.file_name}' approved and enqueued in folder '${primary}'`,
+      );
+      return HttpResponse.json(bundle);
+    },
+  ),
+  http.post(
+    `${ANY}${TWIN}/procedures/:id/reject`,
+    async ({ params, request }) => {
+      const denied = rejectFolderAdminMutationIfNeeded();
+      if (denied) return denied;
+      const bundle = proceduresState.find((b) => b.id === String(params.id));
+      if (!bundle || !['pending', 'failed'].includes(String(bundle.state))) {
+        return HttpResponse.json(
+          { detail: 'bundle unknown or not in a rejectable state' },
+          { status: 409 },
+        );
+      }
+      const body = (await request.json().catch(() => null)) as {
+        comment?: string | null;
+      } | null;
+      const comment = body?.comment ?? '';
+      bundle.state = 'rejected';
+      bundle.reason = comment ? `rejected: ${comment}` : 'rejected';
+      bundle.updated_at = new Date().toISOString();
+      persistProceduresState();
+      recordProcedureActivity(
+        'procedure-rejected',
+        bundle,
+        `Procedure '${bundle.file_name}' rejected`,
+      );
+      return HttpResponse.json(bundle);
+    },
+  ),
+  http.post(`${ANY}${TWIN}/procedures/:id/retry`, ({ params }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const bundle = proceduresState.find((b) => b.id === String(params.id));
+    if (!bundle || !['failed', 'rejected'].includes(String(bundle.state))) {
+      return HttpResponse.json(
+        { detail: 'bundle unknown or not retryable (failed/rejected only)' },
+        { status: 409 },
+      );
+    }
+    // Mock rerun always succeeds → back to pending review.
+    bundle.state = 'pending';
+    bundle.reason = 're-processed after operator retry';
+    bundle.updated_at = new Date().toISOString();
+    persistProceduresState();
+    recordProcedureActivity(
+      'procedure-retried',
+      bundle,
+      `Procedure '${bundle.file_name}' re-processed (now pending)`,
+    );
+    return HttpResponse.json(bundle);
+  }),
+  http.post(
+    `${ANY}${TWIN}/procedures/:id/reroute-standard`,
+    async ({ params, request }) => {
+      const denied = rejectFolderAdminMutationIfNeeded();
+      if (denied) return denied;
+      const bundle = proceduresState.find((b) => b.id === String(params.id));
+      if (!bundle) {
+        return HttpResponse.json({ detail: 'unknown bundle' }, { status: 404 });
+      }
+      if (!['pending', 'failed', 'rejected'].includes(String(bundle.state))) {
+        return HttpResponse.json(
+          { detail: `bundle is ${bundle.state}; cannot reroute` },
+          { status: 409 },
+        );
+      }
+      const body = (await request.json().catch(() => null)) as {
+        folder?: string | null;
+      } | null;
+      const folders = mockBundleFolders(bundle);
+      const primary = body?.folder || folders[0];
+      if (!primary) {
+        return HttpResponse.json(
+          {
+            detail:
+              "bundle has no requesting folder (scan-created): pass 'folder' in the request body to choose the target folder",
+          },
+          { status: 422 },
+        );
+      }
+      bundle.state = 'rerouted';
+      bundle.reason = `rerouted-standard into folder '${primary}'`;
+      bundle.updated_at = new Date().toISOString();
+      persistProceduresState();
+      enqueueProcedureDocument(bundle, primary);
+      recordProcedureActivity(
+        'procedure-rerouted',
+        bundle,
+        `Procedure '${bundle.file_name}' rerouted to the standard pipeline (folder '${primary}')`,
+      );
+      return HttpResponse.json(bundle);
+    },
+  ),
   http.get(`${ANY}${TWIN}/notifications`, ({ request }) => {
     recordTwinFolderRequest(request);
     return HttpResponse.json(notificationState);

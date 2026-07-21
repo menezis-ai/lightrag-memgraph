@@ -29,12 +29,23 @@ import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { getActiveFolder } from '../api/client';
 import { api } from '../api/resources';
+import { useProcedures } from '../api/queries';
 import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import { Icon, SourceIcon } from './Icon';
 import { ClassPill } from './ClassPill';
+import { ProcedureReviewModal } from './ProcedureReviewModal';
 import type { Document } from '../types/document';
 import type { ClassificationValue } from '../types/classification';
+import type { ProcedureBundleSummary } from '../types/procedure';
+import type { Folder } from '../types/topbar';
 import type { ListEnvelope } from '../api/resources';
+
+/** Bundle states surfaced as pending-review cards. Approved/rerouted
+ *  bundles leave the section (they became documents); `processing` is
+ *  still churning. `rejected` stays VISIBLE: the review modal is the only
+ *  surface offering the retry/reroute recovery, so dropping rejected
+ *  bundles from this list would strand them forever. */
+const REVIEWABLE_BUNDLE_STATES = new Set(['pending', 'failed', 'rejected']);
 
 export interface PendingDocsSectionProps {
   docs: readonly Document[];
@@ -46,6 +57,15 @@ export interface PendingDocsSectionProps {
   actor?: string;
   /** Expand cards on first render for operator shells that need immediate actions. */
   defaultOpen?: boolean;
+  /** Folder catalog — the procedure review modal needs it when a bundle is
+   *  folderless (scan-created) and Approve must pick a target folder. */
+  folderList?: readonly Folder[];
+  /**
+   * Gate for the procedure Review/Reject actions (server-side they are
+   * admin-only). Mirrors `canManageFolders(auth.user)` — defaults to true
+   * (open-access deployments) so a 403 still surfaces as an honest toast.
+   */
+  canReviewProcedures?: boolean;
 }
 
 function fmtDate(iso: string | undefined): string {
@@ -58,10 +78,15 @@ export function PendingDocsSection({
   onToast,
   actor,
   defaultOpen = false,
+  folderList = [],
+  canReviewProcedures = true,
 }: Readonly<PendingDocsSectionProps>) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
   const [rejecting, setRejecting] = useState<Document | null>(null);
+  const [reviewingBundleId, setReviewingBundleId] = useState<string | null>(
+    null,
+  );
   const [open, setOpen] = useState(defaultOpen);
   const busyDocIdsRef = useRef(new Set<string>());
   const [busyDocIds, setBusyDocIds] = useState<ReadonlySet<string>>(
@@ -204,9 +229,51 @@ export function PendingDocsSection({
     },
   });
 
-  if (docs.length === 0) return null;
+  // Procedure bundles awaiting review — third card variant. The list
+  // endpoint is folder-bound and summary-only (no PNGs); the review modal
+  // fetches the full admin bundle on open. A degraded store answers 503
+  // precisely so pending work is never presented as an empty queue — the
+  // error state below keeps the section visible with a retry.
+  const proceduresQuery = useProcedures();
+  const proceduresUnavailable = proceduresQuery.isError;
+  const procedureBundles = (proceduresQuery.data ?? []).filter((b) =>
+    REVIEWABLE_BUNDLE_STATES.has(String(b.state)),
+  );
+
+  const rejectProcMut = useMutation({
+    mutationFn: (bundle: ProcedureBundleSummary) =>
+      api.rejectProcedure(bundle.id, {}),
+    onSuccess: (_data, bundle) => {
+      onToast('done', 'Procedure rejected', bundle.file_name);
+    },
+    onError: (err: Error, bundle) => {
+      logTechnicalError('procedure-reject', err);
+      onToast(
+        'error',
+        'Procedure reject failed',
+        `${bundle.file_name} · ${userErrorMessage(err, { action: 'rejecting the procedure' })}`,
+      );
+    },
+    onSettled: async (_data, _err, bundle) => {
+      clearDocBusy(`proc:${bundle.id}`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['procedures'] }),
+        queryClient.invalidateQueries({ queryKey: ['activity'] }),
+        queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      ]);
+    },
+  });
+
+  if (
+    docs.length === 0 &&
+    procedureBundles.length === 0 &&
+    !proceduresUnavailable
+  ) {
+    return null;
+  }
 
   const isBusy = (docId: string) => busyDocIds.has(docId);
+  const pendingCount = docs.length + procedureBundles.length;
 
   return (
     <section
@@ -223,7 +290,8 @@ export function PendingDocsSection({
         <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
         <span className="pending-title">To be validated by your reviewer</span>
         <span className="pending-counts">
-          <b>{docs.length}</b> documents awaiting your sign-off
+          <b>{pendingCount}</b> document{pendingCount === 1 ? '' : 's'}{' '}
+          awaiting your sign-off
         </span>
         <span
           style={{
@@ -240,6 +308,37 @@ export function PendingDocsSection({
           />
         </span>
       </button>
+      {open && proceduresUnavailable && (
+        <div
+          className="pending-card modified"
+          role="alert"
+          data-testid="pending-procedures-error"
+          style={{ marginBottom: 8 }}
+        >
+          <div className="pending-card-h">
+            <Icon name="alert-triangle" size={14} color="var(--twin-red-600)" />
+            <span className="pending-card-title">
+              Procedure review queue unavailable
+            </span>
+          </div>
+          <div className="pending-body">
+            {userErrorMessage(proceduresQuery.error, {
+              action: 'loading the procedure review queue',
+            })}{' '}
+            Parked procedures may be hidden — this is NOT an empty queue.
+          </div>
+          <div className="pending-actions grid2">
+            <button
+              type="button"
+              className="pbtn ghost"
+              onClick={() => void proceduresQuery.refetch()}
+              data-testid="pending-procedures-retry"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
       {open && (
         <div className="pending-grid">
           {docs.map((doc) => {
@@ -370,7 +469,94 @@ export function PendingDocsSection({
               </div>
             );
           })}
+          {procedureBundles.map((bundle) => {
+            const busyKey = `proc:${bundle.id}`;
+            const state = String(bundle.state);
+            const failed = state === 'failed';
+            const rejected = state === 'rejected';
+            const pillLabel = rejected
+              ? 'Procedure rejected'
+              : failed
+                ? 'Procedure failed'
+                : 'Procedure review';
+            return (
+              <div
+                key={bundle.id}
+                className={`pending-card procedure ${failed || rejected ? 'modified' : 'requested'}`}
+                data-testid={`pending-proc-${bundle.id}`}
+              >
+                <div className="pending-card-h">
+                  <SourceIcon type="file" size={14} />
+                  <span className="pending-card-title">{bundle.file_name}</span>
+                  <ClassPill
+                    // Partial MIP payload (the list projection exposes
+                    // class_id/class_name/reason only) — ClassPill's
+                    // accessors handle missing optional fields.
+                    cls={bundle.classification as unknown as ClassificationValue}
+                    docId={bundle.id}
+                  />
+                  <span
+                    className={`pending-pill ${failed || rejected ? 'red' : 'amber'}`}
+                    style={{ marginLeft: 'auto' }}
+                    data-testid={`pending-proc-state-${bundle.id}`}
+                  >
+                    <Icon
+                      name={failed || rejected ? 'alert-triangle' : 'eye'}
+                      size={11}
+                    />{' '}
+                    {pillLabel}
+                  </span>
+                </div>
+                <div className="pending-body">
+                  {bundle.reason.length > 140
+                    ? `${bundle.reason.slice(0, 140)}…`
+                    : bundle.reason}
+                </div>
+                <div className="pending-meta">
+                  Procedure · {bundle.schematics_described}/
+                  {bundle.schematics_total} schematics described ·{' '}
+                  {fmtDate(bundle.created_at ?? undefined)}
+                </div>
+                {canReviewProcedures && (
+                  <div className="pending-actions grid2">
+                    <button
+                      type="button"
+                      className="pbtn approve"
+                      disabled={isBusy(busyKey)}
+                      onClick={() => setReviewingBundleId(bundle.id)}
+                      data-testid={`pending-proc-review-${bundle.id}`}
+                    >
+                      <Icon name="eye" size={13} /> Review
+                    </button>
+                    {!rejected && (
+                      <button
+                        type="button"
+                        className="pbtn danger"
+                        disabled={isBusy(busyKey)}
+                        onClick={() => {
+                          if (!setDocBusy(busyKey)) return;
+                          rejectProcMut.mutate(bundle);
+                        }}
+                        data-testid={`pending-proc-reject-${bundle.id}`}
+                      >
+                        {isBusy(busyKey) ? 'Rejecting…' : 'Reject'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {reviewingBundleId && (
+        <ProcedureReviewModal
+          bundleId={reviewingBundleId}
+          folderList={folderList}
+          onClose={() => setReviewingBundleId(null)}
+          onToast={onToast}
+        />
       )}
 
       {editing && (

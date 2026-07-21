@@ -19,7 +19,14 @@ import type { FormatCategory } from '../types/format';
 import type { TagEntry } from '../types/tag';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
 
+const BYTES_PER_MB = 1024 * 1024;
 const MAX_FILE_MB = 50;
+const MAX_FILE_BYTES = MAX_FILE_MB * BYTES_PER_MB;
+// The NATIVE-LightRAG floor. Formats owned by the backend ingestion tiers
+// (vision images, markitdown repair formats) are NOT hardcoded here: the
+// server advertises them via runtime config (`extraUploadExtensions`) and
+// they are merged per-deployment — a runtime without a vision endpoint
+// keeps rejecting images at the modal instead of bouncing on the backend.
 const SUPPORTED_EXTENSIONS = new Set([
   'csv',
   'doc',
@@ -69,6 +76,24 @@ export type FileUploadState = 'uploading' | 'uploaded' | 'error';
  * C3 is query-restricted and C4 is rejected by policy.
  */
 export type UploadClassification = 'C1' | 'C2';
+
+/**
+ * Operator-forced ingestion profile for the whole upload batch. Absent
+ * (auto-detect) lets the backend seam decide from the document layout;
+ * `procedure` forces the parked-bundle review flow; `standard` bypasses
+ * procedure detection. Sent as the `X-Twin-Doc-Type` header (omitted for
+ * auto-detect).
+ */
+export type UploadDocType = 'procedure' | 'standard';
+
+const DOC_TYPE_OPTIONS: readonly {
+  value: UploadDocType | '';
+  label: string;
+}[] = [
+  { value: '', label: 'Auto-detect' },
+  { value: 'procedure', label: 'Procedure (human review before indexing)' },
+  { value: 'standard', label: 'Standard (skip procedure detection)' },
+];
 
 /** Per-file upload options. Classification-only — the LightRAG/RAG1.5 engine
  *  toggle is NOT exposed (RAG 1.5 connector isn't live). */
@@ -158,6 +183,11 @@ export interface AddSourceAction {
   fileOptions: readonly FileUploadOptions[];
   urls: readonly LinkedSource[];
   tags: readonly string[];
+  /**
+   * Operator-forced ingestion profile for the whole batch. Omitted for
+   * auto-detect — the host must then NOT send the `X-Twin-Doc-Type` header.
+   */
+  docType?: UploadDocType;
   /** Files in `uploaded` state + all URLs. Mirrors the proto's `ready` count. */
   readyCount: number;
 }
@@ -175,6 +205,14 @@ export interface AddSourceModalProps {
    *  the modal stays open and close (X / backdrop / Escape) + submit are
    *  disabled so the operator can't dismiss an in-flight upload. */
   submitting?: boolean;
+  /** Extra accepted extensions advertised by the backend runtime config
+   *  (`extraUploadExtensions`): vision images, markitdown repair formats.
+   *  Merged into the native floor list — absent means the deployment
+   *  cannot process them and the modal keeps rejecting them. */
+  extraUploadExtensions?: readonly string[];
+  /** Per-extension tier caps advertised alongside `extraUploadExtensions`.
+   *  The stricter of this value and the global 50 MB cap is enforced. */
+  extraUploadMaxBytes?: Readonly<Record<string, number>>;
 }
 
 function fileExtension(name: string): string {
@@ -182,18 +220,61 @@ function fileExtension(name: string): string {
   return idx >= 0 ? name.slice(idx + 1).toLowerCase() : '';
 }
 
-function unsupportedFileType(file: File): boolean {
+function unsupportedFileType(
+  file: File,
+  extraExtensions: ReadonlySet<string>,
+): boolean {
   const ext = fileExtension(file.name);
-  if (ext && SUPPORTED_EXTENSIONS.has(ext)) return false;
+  if (ext && (SUPPORTED_EXTENSIONS.has(ext) || extraExtensions.has(ext))) {
+    return false;
+  }
   if (file.type && SUPPORTED_MIME_TYPES.has(file.type)) return false;
   return !SUPPORTED_MIME_PREFIXES.some((prefix) => file.type.startsWith(prefix));
 }
 
-function validateFile(file: File): string | null {
+function validateFile(
+  file: File,
+  extraExtensions: ReadonlySet<string>,
+  extraMaxBytes: ReadonlyMap<string, number>,
+): string | null {
   const errors: string[] = [];
-  if (file.size > MAX_FILE_MB * 1024 * 1024) errors.push('Exceeds 50 MB');
-  if (unsupportedFileType(file)) errors.push(unsupportedFileMessage(file.name));
+  const extensionLimit = extraMaxBytes.get(fileExtension(file.name));
+  const maxBytes = Math.min(extensionLimit ?? MAX_FILE_BYTES, MAX_FILE_BYTES);
+  if (file.size > maxBytes) {
+    const exactMegabytes = maxBytes / BYTES_PER_MB;
+    const formattedLimit = Number.isInteger(exactMegabytes)
+      ? `${exactMegabytes} MB`
+      : formatFileSize(maxBytes);
+    errors.push(`Exceeds ${formattedLimit}`);
+  }
+  if (unsupportedFileType(file, extraExtensions)) {
+    errors.push(unsupportedFileMessage(file.name));
+  }
   return errors.length ? errors.join(' · ') : null;
+}
+
+function normalizeExtraExtensions(
+  extras: readonly string[] | undefined,
+): ReadonlySet<string> {
+  return new Set(
+    (extras ?? []).map((ext) => ext.toLowerCase().replace(/^\./, '')),
+  );
+}
+
+function normalizeExtraMaxBytes(
+  limits: Readonly<Record<string, number>> | undefined,
+): ReadonlyMap<string, number> {
+  const normalized = new Map<string, number>();
+  for (const [rawExtension, rawLimit] of Object.entries(limits ?? {})) {
+    const extension = rawExtension.toLowerCase().replace(/^\./, '');
+    if (!extension || !Number.isFinite(rawLimit) || rawLimit <= 0) continue;
+    const current = normalized.get(extension);
+    normalized.set(
+      extension,
+      current === undefined ? rawLimit : Math.min(current, rawLimit),
+    );
+  }
+  return normalized;
 }
 
 function fileUploadKey(file: File, index: number): string {
@@ -205,8 +286,10 @@ function fileUploadFromFile(
   file: File,
   id: string,
   rawFiles: Map<string, File>,
+  extraExtensions: ReadonlySet<string>,
+  extraMaxBytes: ReadonlyMap<string, number>,
 ): FileUpload {
-  const error = validateFile(file);
+  const error = validateFile(file, extraExtensions, extraMaxBytes);
   const base = {
     id,
     name: file.name,
@@ -300,7 +383,13 @@ export function AddSourceModal({
   onClose,
   onSubmit,
   submitting = false,
+  extraUploadExtensions,
+  extraUploadMaxBytes,
 }: Readonly<AddSourceModalProps>) {
+  const acceptedExtraExtensions = normalizeExtraExtensions(
+    extraUploadExtensions,
+  );
+  const acceptedExtraMaxBytes = normalizeExtraMaxBytes(extraUploadMaxBytes);
   const tagSuggListId = 'addsource-tag-suggestions';
   const modalRef = useRef<HTMLDialogElement>(null);
   // While an upload is in flight, neutralise close so X / backdrop / Escape
@@ -324,7 +413,13 @@ export function AddSourceModal({
     const dropped = incomingArr.map((file) => {
       const id = fileUploadKey(file, rawFileSequenceRef.current);
       rawFileSequenceRef.current += 1;
-      return fileUploadFromFile(file, id, rawFilesRef.current);
+      return fileUploadFromFile(
+        file,
+        id,
+        rawFilesRef.current,
+        acceptedExtraExtensions,
+        acceptedExtraMaxBytes,
+      );
     });
     setFiles((current) => [...current, ...dropped]);
   };
@@ -340,6 +435,7 @@ export function AddSourceModal({
   const [bulkClassification, setBulkClassification] = useState<
     UploadClassification | ''
   >('');
+  const [docType, setDocType] = useState<UploadDocType | ''>('');
 
   const tagSugg = useMemo(() => {
     return tagCatalog
@@ -414,7 +510,15 @@ export function AddSourceModal({
         ...(classification ? { classification } : {}),
       };
     });
-    onSubmit({ files, rawFiles, fileOptions, urls, tags, readyCount: ready });
+    onSubmit({
+      files,
+      rawFiles,
+      fileOptions,
+      urls,
+      tags,
+      ...(docType ? { docType } : {}),
+      readyCount: ready,
+    });
     // Do NOT close here: the host keeps the modal open during the upload
     // (submitting=true) and closes it when the mutation settles, so the
     // operator sees progress and can't dismiss an in-flight upload.
@@ -528,6 +632,29 @@ export function AddSourceModal({
                   </span>
                 </span>
               </div>
+              <label className="bulk-classification-row">
+                <span>Document type</span>
+                <select
+                  className="bulk-classification-control"
+                  value={docType}
+                  onChange={(e) =>
+                    setDocType(
+                      e.target.value === ''
+                        ? ''
+                        : (e.target.value as UploadDocType),
+                    )
+                  }
+                  aria-label="Document type"
+                  data-testid="addsource-doc-type"
+                  title="Procedure documents are parked for human review of their schematics before indexing"
+                >
+                  {DOC_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value || 'auto'} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="bulk-classification-row">
                 <span>Set sensitivity for all files</span>
                 <select

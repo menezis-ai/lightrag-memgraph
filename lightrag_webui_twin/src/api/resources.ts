@@ -38,6 +38,10 @@ import type {
   VisionSettingsPublic,
 } from '../types/visionSettings';
 import type { QuotaSnapshot } from '../types/quota';
+import type {
+  ProcedureBundle,
+  ProcedureBundleSummary,
+} from '../types/procedure';
 import type { QueryMode } from '../types/retrieval';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
@@ -111,14 +115,23 @@ export interface DocumentReviewReceipt {
  */
 export type UploadClassification = 'C1' | 'C2';
 
+/**
+ * Operator-forced ingestion profile. Rides as the `X-Twin-Doc-Type` header;
+ * omitted entirely for auto-detect (the backend seam then decides from the
+ * document layout). Anything else is rejected 400 by the backend.
+ */
+export type UploadDocType = 'procedure' | 'standard';
+
 export interface UploadDocumentOptions {
   signal?: AbortSignal;
   classification?: UploadClassification;
+  docType?: UploadDocType;
 }
 
 export interface UploadDocumentInput {
   file: File;
   classification?: UploadClassification;
+  docType?: UploadDocType;
 }
 
 interface RawDocumentChunk {
@@ -368,6 +381,9 @@ export const lightragApi = {
         ...(init?.classification
           ? { 'X-Twin-Classification': init.classification }
           : {}),
+        // Operator-forced ingestion profile (procedure|standard). Omitted for
+        // auto-detect so the backend seam keeps its layout-based detection.
+        ...(init?.docType ? { 'X-Twin-Doc-Type': init.docType } : {}),
       },
       body: formData,
       signal: init?.signal,
@@ -867,6 +883,57 @@ export const twinApi = {
       body,
     }),
 
+  // ── Procedure approval bundles (BNP procedure-PDF profile) ───────
+  // Parked procedure documents awaiting human review. The list is
+  // folder-bound (any authenticated operator); detail + decisions are
+  // admin-gated server-side — a 403 surfaces through the mutation error.
+  // A degraded bundle store returns 503 with a recovery hint.
+  listProcedures: (
+    q: { state?: string } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<readonly ProcedureBundleSummary[]>(`${TWIN}/procedures`, {
+      ...init,
+      query: { ...q },
+    }),
+  getProcedureBundle: (bundleId: string, init?: ApiRequestInit) =>
+    apiFetch<ProcedureBundle>(
+      `${TWIN}/procedures/${encodeURIComponent(bundleId)}`,
+      init,
+    ),
+  approveProcedure: (
+    bundleId: string,
+    body: { folder?: string | null } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<ProcedureBundle>(
+      `${TWIN}/procedures/${encodeURIComponent(bundleId)}/approve`,
+      { ...init, method: 'POST', body },
+    ),
+  rejectProcedure: (
+    bundleId: string,
+    body: { comment?: string | null } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<ProcedureBundle>(
+      `${TWIN}/procedures/${encodeURIComponent(bundleId)}/reject`,
+      { ...init, method: 'POST', body },
+    ),
+  retryProcedure: (bundleId: string, init?: ApiRequestInit) =>
+    apiFetch<ProcedureBundle>(
+      `${TWIN}/procedures/${encodeURIComponent(bundleId)}/retry`,
+      { ...init, method: 'POST' },
+    ),
+  rerouteProcedureStandard: (
+    bundleId: string,
+    body: { folder?: string | null } = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<ProcedureBundle>(
+      `${TWIN}/procedures/${encodeURIComponent(bundleId)}/reroute-standard`,
+      { ...init, method: 'POST', body },
+    ),
+
   // Knowledge graph teaser
   listGraphEntities: (
     q: { folder?: string; type?: string } = {},
@@ -1011,6 +1078,12 @@ export const api = {
   bulkRetagDocuments: twinApi.bulkRetagDocuments,
   logout: twinApi.logout,
   recordSourceUploaded: twinApi.recordSourceUploaded,
+  listProcedures: twinApi.listProcedures,
+  getProcedureBundle: twinApi.getProcedureBundle,
+  approveProcedure: twinApi.approveProcedure,
+  rejectProcedure: twinApi.rejectProcedure,
+  retryProcedure: twinApi.retryProcedure,
+  rerouteProcedureStandard: twinApi.rerouteProcedureStandard,
   listGraphEntities: twinApi.listGraphEntities,
   listGraphRelations: twinApi.listGraphRelations,
   updateGraphEntity: twinApi.updateGraphEntity,

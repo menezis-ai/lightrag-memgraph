@@ -390,8 +390,11 @@ describe('useUploadDocumentsBatch', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(20);
     expect(maxActive).toBeLessThanOrEqual(4);
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['documents'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pipeline_status'] });
+    // A batch may contain PARKED procedures: their review cards live under
+    // ['procedures'], never under documents.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['procedures'] });
   });
 });

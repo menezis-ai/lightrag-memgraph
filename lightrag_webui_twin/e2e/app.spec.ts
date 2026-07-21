@@ -5,6 +5,7 @@ import {
   getMswStats,
   openTab,
   seedDocuments,
+  seedProcedures,
   setMswScenario,
 } from './helpers';
 
@@ -952,6 +953,11 @@ test.describe('Twin WebUI operator journeys', () => {
   test('@doctrine @reviewer pending docs section disappears after the queue is drained', async ({
     page,
   }) => {
+    // The pending section now aggregates documents AND parked procedures.
+    // This doc-only journey asserts the section vanishes once the DOCUMENT
+    // queue is drained, so clear the procedure seed first (its own journey
+    // lives in procedure-review.spec.ts).
+    await seedProcedures(page, []);
     await page.getByTestId('pending-doc-approve-d6').click();
     await expect(page.getByRole('status')).toContainText('Document approved');
     await page.getByTestId('pending-doc-reject-d7').click();

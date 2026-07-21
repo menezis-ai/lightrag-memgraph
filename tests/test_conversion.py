@@ -174,14 +174,20 @@ def dr_module(monkeypatch):
     saved = {
         "pipeline_enqueue_file": dr.pipeline_enqueue_file,
         "manager_init": dr.DocumentManager.__init__,
+        "is_supported_file": dr.DocumentManager.is_supported_file,
     }
-    sentinels = ("_twindb_convert_enqueue_patched", "_twindb_doc_manager_ext_patched")
+    sentinels = (
+        "_twindb_convert_enqueue_patched",
+        "_twindb_doc_manager_ext_patched",
+        "_twindb_doc_manager_supported_patched",
+    )
     saved_sentinels = {
         name: getattr(dr, name) for name in sentinels if hasattr(dr, name)
     }
     yield dr
     dr.pipeline_enqueue_file = saved["pipeline_enqueue_file"]
     dr.DocumentManager.__init__ = saved["manager_init"]
+    dr.DocumentManager.is_supported_file = saved["is_supported_file"]
     for name in sentinels:
         if name in saved_sentinels:
             setattr(dr, name, saved_sentinels[name])
@@ -370,6 +376,37 @@ def test_whitelist_patch_degrades_on_readonly_property(
     assert "could not extend supported_extensions" in caplog.text
     # Native behavior intact — the manager still works.
     assert ".pdf" in manager.supported_extensions
+
+
+def test_is_supported_file_accepts_tier_extensions_on_both_lines(
+    dr_module, monkeypatch, tmp_path
+):
+    """The ENFORCEMENT check (what the upload route asks) must accept the
+    tier extensions on 1.4.x AND 1.5.x. On 1.5.x the whitelist property is
+    read-only, so before the ``is_supported_file`` wrapper the runtime
+    config advertised e.g. ``png`` while the API still 400-ed the upload
+    (review finding on fix/webui-image-upload-whitelist)."""
+    from twindb_lightrag_memgraph import _vision
+
+    monkeypatch.setattr(_conversion, "is_available", lambda: True)
+    monkeypatch.setattr(_vision, "is_enabled", lambda: True)
+    dr_module._twindb_doc_manager_ext_patched = False
+    dr_module._twindb_doc_manager_supported_patched = False
+    registry._patch_document_manager_extensions()
+
+    manager = dr_module.DocumentManager(str(tmp_path))
+    assert manager.is_supported_file("diagram.png")
+    assert manager.is_supported_file("photo.JPEG")  # case-insensitive
+    assert manager.is_supported_file("legacy.xls")
+    assert manager.is_supported_file("report.pdf")  # native set untouched
+    assert not manager.is_supported_file("archive.zip")  # no tier owns it
+
+    # Tiers re-checked per call (late-read): switching them off restores
+    # the native answer without a process restart.
+    monkeypatch.setattr(_vision, "is_enabled", lambda: False)
+    monkeypatch.setenv("TWIN_CONVERT", "off")
+    assert not manager.is_supported_file("diagram.png")
+    assert manager.is_supported_file("report.pdf")
 
 
 def test_whitelist_patch_is_idempotent(dr_module, monkeypatch, tmp_path):

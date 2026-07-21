@@ -27,7 +27,7 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 from . import canary
-from .. import _conversion, _vision
+from .. import _conversion, _procedure, _vision
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
@@ -2028,24 +2028,58 @@ def _patch_upload_duplicate_lookup() -> None:
     logger.info("twindb: patched document_routes.find_existing_file_by_file_path")
 
 
-def _patch_document_manager_extensions() -> None:
-    """Extend the upload whitelist with the conversion-covered extensions.
+def _tier_extra_upload_limits() -> dict[str, int]:
+    """Bare extension -> terminal byte cap advertised to upload clients.
 
-    The 1.4.x ``DocumentManager`` carries a hardcoded ``supported_extensions``
-    tuple that rejects e.g. ``.xls``/``.msg`` with a synchronous 400 before the
-    conversion seam can run. Wrap ``__init__`` to append the missing dotted
-    extensions from the active conversion format set.
+    MarkItDown's max size is not included: it is a conversion preference,
+    and oversized native formats deliberately fall back to LightRAG. Vision
+    has no native image fallback, so its cap is a real acceptance boundary.
+    """
+    limits: dict[str, int] = {}
+    if _vision.is_enabled():
+        size_limit = _vision.max_image_bytes()
+        for dotted_extension in _vision.extra_supported_extensions():
+            extension = dotted_extension.lstrip(".").lower()
+            if extension:
+                limits[extension] = size_limit
+    return limits
+
+
+def _tier_extra_extensions() -> tuple[str, ...]:
+    """Dotted extensions the ACTIVE Twin ingestion tiers accept (late-read)."""
+    wanted: tuple[str, ...] = ()
+    if _conversion.is_enabled():
+        wanted += _conversion.extra_supported_extensions()
+    if _vision.is_enabled():
+        wanted += _vision.extra_supported_extensions()
+    return tuple(dict.fromkeys(extension.lower() for extension in wanted))
+
+
+def _patch_document_manager_extensions() -> None:
+    """Extend the upload whitelist with the tier-covered extensions.
+
+    Two complementary patches, because the two LightRAG lines gate uploads
+    differently:
+
+    - ``__init__`` wrapper (1.4.x): ``supported_extensions`` is a plain
+      instance tuple — append the missing dotted extensions so both the
+      accept check and the "Supported types: …" error message reflect them.
+      On 1.5.x the attribute is a read-only property (derived from the
+      parser registry): the assignment degrades gracefully.
+    - ``is_supported_file`` wrapper (both lines — the ENFORCEMENT): the
+      upload route asks this method; accept a file when the native answer
+      is no but an active Twin tier owns the extension. Safe by
+      construction: everything the wrapper admits is intercepted by the
+      conversion/vision seam in ``pipeline_enqueue_file`` BEFORE any native
+      engine sees it, so 1.5.x engine routing never receives a format it
+      cannot parse. Without this wrapper the 1.5.x line advertised e.g.
+      ``png`` in the runtime config while still 400-ing the upload
+      (review finding on fix/webui-image-upload-whitelist).
 
     **Must run BEFORE the native ``create_app`` builds its ``doc_manager``**
-    (called at the head of ``wrapped_create_app``). On 1.5.x builds where
-    ``supported_extensions`` is derived from the parser registry (read-only),
-    the assignment failure degrades gracefully: whitelist untouched, native
-    routing decides — conversion still applies to already-accepted formats.
+    (called at the head of ``wrapped_create_app``).
     """
     import lightrag.api.routers.document_routes as dr
-
-    if getattr(dr, "_twindb_doc_manager_ext_patched", False):
-        return
 
     manager_cls = canary.degradable_symbol(
         dr,
@@ -2055,17 +2089,46 @@ def _patch_document_manager_extensions() -> None:
     if manager_cls is None:
         return
 
+    if not getattr(dr, "_twindb_doc_manager_supported_patched", False):
+        orig_is_supported = getattr(manager_cls, "is_supported_file", None)
+        if callable(orig_is_supported):
+
+            def tier_aware_is_supported_file(self, filename: str) -> bool:
+                suffix = Path(str(filename)).suffix.lower()
+                native_supported = orig_is_supported(self, filename)
+                native_extensions = getattr(
+                    self, "_twindb_native_supported_extensions", None
+                )
+                if native_supported and (
+                    native_extensions is None or suffix in native_extensions
+                ):
+                    return True
+                return bool(suffix) and suffix in _tier_extra_extensions()
+
+            tier_aware_is_supported_file.__wrapped__ = orig_is_supported
+            manager_cls.is_supported_file = tier_aware_is_supported_file
+            dr._twindb_doc_manager_supported_patched = True
+        else:
+            logger.warning(
+                "twindb convert: DocumentManager.is_supported_file missing "
+                "on this LightRAG — tier extensions rely on the whitelist "
+                "extension only"
+            )
+
+    if getattr(dr, "_twindb_doc_manager_ext_patched", False):
+        return
+
     orig_init = manager_cls.__init__
 
     def extension_extended_init(self, *args, **kwargs):
         orig_init(self, *args, **kwargs)
         try:
-            wanted = ()
-            if _conversion.is_enabled():
-                wanted += _conversion.extra_supported_extensions()
-            if _vision.is_enabled():
-                wanted += _vision.extra_supported_extensions()
+            wanted = _tier_extra_extensions()
             current = tuple(self.supported_extensions)
+            # 1.4.x mutates this tuple below. Keep the pre-Twin baseline so
+            # the enforcement wrapper can distinguish native support from a
+            # tier extension after that tier is disabled at runtime.
+            self._twindb_native_supported_extensions = frozenset(current)
             missing = tuple(ext for ext in wanted if ext not in current)
             if missing:
                 self.supported_extensions = current + missing
@@ -2139,6 +2202,47 @@ def _make_converting_pipeline_enqueue_file(dr, orig_enqueue_file):
         # Delegation is always verbatim (*args/**kwargs untouched): the two
         # LightRAG lines differ in signature (1.4.x has no ``from_scan``).
         path = Path(file_path)
+
+        # Procedure profile first (PROCEDURE-PROFILE-PLAN.md): a detected or
+        # operator-forced BNP procedure is parked as an approval bundle and
+        # deliberately NOT enqueued — a human approves before anything
+        # reaches LightRAG (PR 2 performs the approve-time enqueue). ``None``
+        # means "not a procedure": the standard path below is untouched.
+        # ``aroute_check`` also covers the rescan of an already-claimed file
+        # that would fail the cheap gates (forced non-PDF/oversized doc
+        # rescanned without its header) — the gate must stay closed.
+        if await _procedure.aroute_check(path):
+            proc_track_id = kwargs.get("track_id", args[0] if args else None)
+            if proc_track_id is None:
+                generate = getattr(dr, "generate_track_id", None)
+                if callable(generate):
+                    proc_track_id = generate("unknown")
+            # Scan provenance matters: a global /documents/scan still runs
+            # under a captured folder, and a rescan must never turn into a
+            # membership request for whatever folder the scan ran under.
+            proc_from_scan = bool(
+                kwargs.get("from_scan", args[1] if len(args) > 1 else False)
+            )
+            outcome = await _procedure.aprocess_procedure(
+                path, proc_track_id, from_scan=proc_from_scan
+            )
+            if outcome is not None:
+                if outcome.state == "error":
+                    # Profile selected but even parking failed: the approval
+                    # gate fails CLOSED — explicit error-document, never a
+                    # silent fall-through to the standard enqueue.
+                    await _report_error_document(
+                        rag,
+                        path,
+                        "Procedure ingestion error",
+                        outcome.reason,
+                        proc_track_id,
+                    )
+                    return False, (proc_track_id or "")
+                # The upload IS accepted — into the review workflow, not the
+                # pipeline. Failed bundles are parked too (visible/retryable).
+                return True, (proc_track_id or "")
+
         wants_vision = _vision.should_process(path)
         if not wants_vision and not _conversion.should_convert(path):
             return await orig_enqueue_file(rag, file_path, *args, **kwargs)
@@ -2282,7 +2386,7 @@ def _patch_lightrag_server_create_app(
         # server's argv), so the upload duplicate-lookup cache is safe to apply
         # here. It is a pure optimization, independent of the Twin overlay flags.
         _patch_upload_duplicate_lookup()
-        if _conversion.is_enabled() or _vision.is_enabled():
+        if _conversion.is_enabled() or _vision.is_enabled() or _procedure.is_enabled():
             _patch_pipeline_enqueue_conversion()
         if shim_native_routes or twin_api_prefix is not None:
             _install_storage_folder_capture(app)
@@ -2326,8 +2430,12 @@ def _patch_lightrag_server_create_app(
 
 
 def _capture_storage_contexts():
-    """Snapshot the active (folder, duplicate-share-folder, classification)."""
+    """Snapshot the active (folder, duplicate-share-folder, classification,
+    doc-type) — everything the enqueue path reads must survive the
+    BackgroundTasks boundary, or a header-bound choice silently dies with
+    the request."""
     from .._constants import (
+        get_active_doc_type,
         get_active_duplicate_share_folder,
         get_active_operator_classification,
         get_active_storage_folder,
@@ -2337,24 +2445,28 @@ def _capture_storage_contexts():
         get_active_storage_folder(),
         get_active_duplicate_share_folder(),
         get_active_operator_classification(),
+        get_active_doc_type(),
     )
 
 
 def _enter_storage_contexts(stack, captured) -> None:
     """Re-enter the captured contexts on ``stack`` (skipping empty ones)."""
     from .._constants import (
+        doc_type_context,
         duplicate_share_folder_context,
         operator_classification_context,
         storage_folder_context,
     )
 
-    folder, duplicate_share_folder, classification = captured
+    folder, duplicate_share_folder, classification, doc_type = captured
     if folder:
         stack.enter_context(storage_folder_context(folder))
     if duplicate_share_folder:
         stack.enter_context(duplicate_share_folder_context(duplicate_share_folder))
     if classification:
         stack.enter_context(operator_classification_context(classification))
+    if doc_type:
+        stack.enter_context(doc_type_context(doc_type))
 
 
 async def _run_in_storage_contexts(func, captured, task_args, task_kwargs):
@@ -2421,6 +2533,7 @@ async def _run_storage_folder_capture(request, call_next):
     from fastapi.responses import JSONResponse
 
     from .._constants import (
+        doc_type_context,
         duplicate_share_folder_context,
         operator_classification_context,
         storage_folder_context,
@@ -2448,10 +2561,27 @@ async def _run_storage_folder_capture(request, call_next):
                 },
                 status_code=400,
             )
+
+    # Operator-selected document profile (PROCEDURE-PROFILE-PLAN.md):
+    # "procedure" forces the approval-gated procedure path, "standard"
+    # bypasses auto-detection. Absent header = auto-detect.
+    doc_type = request.headers.get("X-Twin-Doc-Type")
+    if doc_type is not None:
+        doc_type = doc_type.strip().lower()
+        if doc_type not in {"procedure", "standard"}:
+            return JSONResponse(
+                {
+                    "detail": (
+                        "X-Twin-Doc-Type accepts only 'procedure' or " "'standard'."
+                    )
+                },
+                status_code=400,
+            )
     with (
         storage_folder_context(folder),
         duplicate_share_folder_context(folder),
         operator_classification_context(operator_class),
+        doc_type_context(doc_type),
     ):
         return await call_next(request)
 
@@ -2633,10 +2763,24 @@ def _build_runtime_config() -> dict[str, object]:
             "admin:folders",
         ],
     }
+    # Upload formats accepted BEYOND the native LightRAG set — owned by the
+    # ingestion tiers (vision images, markitdown repair formats). The React
+    # modal keeps its own hardcoded floor list and merges these in, so a
+    # deployment without a vision endpoint keeps rejecting images honestly
+    # at the modal instead of bouncing on the backend whitelist (BNP report
+    # 2026-07-20: "format not supported" on PNG/JPEG uploads — the frontend
+    # list predated the vision tier and nothing advertised the extension).
+    extra_upload_extensions = sorted(
+        extension.lstrip(".") for extension in _tier_extra_extensions()
+    )
+    extra_upload_max_bytes = _tier_extra_upload_limits()
+
     config: dict[str, object] = {
         "apiBaseUrl": api_base,
         "lightragBaseUrl": lightrag_base,
         "idpLogoutUrl": idp_logout,
+        "extraUploadExtensions": extra_upload_extensions,
+        "extraUploadMaxBytes": extra_upload_max_bytes,
         **runtime_folder_config,
     }
     # debugUser bypasses the LoginScreen, so expose it only for fully
@@ -3131,6 +3275,31 @@ def _mount_twin_subapp(
         dependencies=[Depends(require_auth)],
     )
     install_settings_provider()
+
+    # Procedure approval workflow (PROCEDURE-PROFILE-PLAN.md, PR 2) —
+    # same both-surfaces constraint (guard:
+    # tests/test_server/test_overlay_procedures.py). The rag getter reuses
+    # the captured host instance; the seam event sink bridges parked/failed
+    # bundles into the activity feed + notifications.
+    from ..server.procedure_routes import (
+        build_procedure_router,
+        install_procedure_event_sink,
+    )
+
+    def _get_rag_for_procedures():
+        rag = _twindb_state.get("rag")
+        if rag is None:
+            raise RuntimeError(
+                "twindb procedures: host LightRAG instance not captured; "
+                "approve/reroute cannot enqueue."
+            )
+        return rag
+
+    app.include_router(
+        build_procedure_router(_get_rag_for_procedures),
+        prefix=prefix,
+    )
+    install_procedure_event_sink()
 
     # Instance memory-cap quota — public snapshot endpoint (the WebUI
     # QuotaBanner polls it) + a 507 guard on ingestion endpoints. Mirror
