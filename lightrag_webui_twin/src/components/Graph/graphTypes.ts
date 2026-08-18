@@ -1,4 +1,5 @@
 import type { GraphEntity, GraphEntityType, GraphRelation } from '../../types/graph';
+import type { TagEntry } from '../../types/tag';
 import type { Toast } from '../../types/toast';
 
 export type MatchMode = 'any' | 'all';
@@ -17,8 +18,10 @@ export interface GraphTabProps {
    * in production (doc-level tag propagation, tagging roadmap phase 1).
    */
   docTags?: Readonly<Record<string, readonly string[]>>;
-  /** Canonical tag catalog from /tags, used by the graph tag picker. */
-  tagCatalog?: readonly string[];
+  /** Canonical tag catalog from /tags, used by Graph suggestions and lifecycle
+   * decoration. String entries are accepted for isolated/legacy callers and
+   * are treated as active. */
+  tagCatalog?: readonly (string | Pick<TagEntry, 'tag' | 'status' | 'tier'>)[];
   /** Active folder label for the header; the segment is hidden when unset. */
   folderLabel?: string;
   /** Host-controlled tab navigation. */

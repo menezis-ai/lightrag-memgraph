@@ -1,5 +1,45 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { boot, openTab } from './helpers';
+
+async function expectNarrowRetrievalLayout(page: Page) {
+  const metrics = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('.retrieval.has-history');
+    const topbar = document.querySelector<HTMLElement>('.topbar');
+    const tabs = document.querySelector<HTMLElement>('.topbar .tabs');
+    if (!root || !topbar || !tabs) throw new Error('Retrieval shell not rendered');
+    const rootStyle = getComputedStyle(root);
+    const topbarStyle = getComputedStyle(topbar);
+    const rootRect = root.getBoundingClientRect();
+    const tabsRect = tabs.getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      documentClientWidth: document.documentElement.clientWidth,
+      rootColumns: rootStyle.gridTemplateColumns.split(/\s+/).filter(Boolean),
+      rootLeft: rootRect.left,
+      rootRight: rootRect.right,
+      topbarDisplay: topbarStyle.display,
+      topbarAreas: topbarStyle.gridTemplateAreas,
+      tabsLeft: tabsRect.left,
+      tabsRight: tabsRect.right,
+    };
+  });
+
+  expect(metrics.rootColumns, JSON.stringify(metrics)).toHaveLength(1);
+  expect(metrics.topbarDisplay, JSON.stringify(metrics)).toBe('grid');
+  expect(metrics.topbarAreas, JSON.stringify(metrics)).toContain('tabs tabs');
+  expect(metrics.documentScrollWidth, JSON.stringify(metrics)).toBeLessThanOrEqual(
+    metrics.documentClientWidth + 1,
+  );
+  expect(metrics.rootLeft, JSON.stringify(metrics)).toBeGreaterThanOrEqual(-1);
+  expect(metrics.rootRight, JSON.stringify(metrics)).toBeLessThanOrEqual(
+    metrics.viewportWidth + 1,
+  );
+  expect(metrics.tabsLeft, JSON.stringify(metrics)).toBeGreaterThanOrEqual(-1);
+  expect(metrics.tabsRight, JSON.stringify(metrics)).toBeLessThanOrEqual(
+    metrics.viewportWidth + 1,
+  );
+}
 
 test.describe('Retrieval citations', () => {
   test.beforeEach(async ({ page }) => {
@@ -154,4 +194,22 @@ test.describe('Retrieval threads and parameters', () => {
   // /query and /query/stream. The unit-test "does not render a Tag
   // filter affordance" in RetrievalTab.test.tsx is the replacement
   // guard; restoring this e2e would mean restoring the lie.
+});
+
+test.describe('Retrieval responsive layout', () => {
+  for (const viewport of [
+    { name: 'mobile', width: 390, height: 760 },
+    { name: 'tablet', width: 820, height: 900 },
+  ] as const) {
+    test(`@retrieval @responsive ${viewport.name} uses the one-column workspace`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await boot(page);
+      await openTab(page, 'Retrieval');
+
+      await expect(page.getByLabel('Query input')).toBeVisible();
+      await expectNarrowRetrievalLayout(page);
+    });
+  }
 });

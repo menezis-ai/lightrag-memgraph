@@ -2,8 +2,8 @@
  * Instance storage quota snapshot.
  *
  * Mirrors ``server/quota.py:snapshot``. ``configured == false`` means
- * the deployment runs without ``MEMGRAPH_MEMORY_LIMIT`` set — the UI
- * then hides the banner entirely instead of rendering ``? / ? GiB``.
+ * neither Memgraph 3.12 nor the fallback environment exposed a usable
+ * memory limit, so the UI hides the banner instead of rendering ``? / ? GiB``.
  */
 export type QuotaStatus = 'ok' | 'warning' | 'blocked';
 

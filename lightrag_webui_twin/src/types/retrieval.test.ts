@@ -3,7 +3,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { parseAnswer, relTime } from './retrieval';
+import {
+  parseAnswer,
+  relTime,
+  stripTrailingReferencesSection,
+} from './retrieval';
 
 describe('parseAnswer', () => {
   it('returns empty array for an empty token list', () => {
@@ -70,6 +74,27 @@ describe('parseAnswer', () => {
     ]);
   });
 
+  it('extracts emphasis and safe HTTP links', () => {
+    expect(parseAnswer(['Read *carefully* in [the runbook](https://kb.example/runbook)'])).toEqual([
+      { type: 'text', value: 'Read ' },
+      { type: 'italic', value: 'carefully' },
+      { type: 'text', value: ' in ' },
+      { type: 'link', label: 'the runbook', href: 'https://kb.example/runbook' },
+    ]);
+  });
+
+  it('does not treat snake_case identifiers as emphasis', () => {
+    expect(parseAnswer(['Set TWIN_MIP_MAX_CLASSIFICATION to C2'])).toEqual([
+      { type: 'text', value: 'Set TWIN_MIP_MAX_CLASSIFICATION to C2' },
+    ]);
+  });
+
+  it('does not treat spaced multiplication as emphasis', () => {
+    expect(parseAnswer(['compute 3 * 4 * 5'])).toEqual([
+      { type: 'text', value: 'compute 3 * 4 * 5' },
+    ]);
+  });
+
   it('renders minimal Markdown blocks for headings and lists', () => {
     expect(parseAnswer(['### Runbook\n- check backup\n1. open incident'])).toEqual([
       {
@@ -77,16 +102,16 @@ describe('parseAnswer', () => {
         level: 3,
         children: [{ type: 'text', value: 'Runbook' }],
       },
-      { type: 'lineBreak' },
       {
         type: 'listItem',
         ordered: false,
+        marker: '•',
         children: [{ type: 'text', value: 'check backup' }],
       },
-      { type: 'lineBreak' },
       {
         type: 'listItem',
         ordered: true,
+        marker: '1.',
         children: [{ type: 'text', value: 'open incident' }],
       },
     ]);
@@ -99,10 +124,45 @@ describe('parseAnswer', () => {
       ]),
     ).toEqual([
       { type: 'text', value: 'Conclusion' },
-      { type: 'lineBreak' },
-      { type: 'lineBreak' },
+      { type: 'paragraphBreak' },
       { type: 'text', value: 'Answer text.' },
     ]);
+  });
+
+  it('parses GitHub-flavored Markdown tables into structured cells', () => {
+    expect(
+      parseAnswer([
+        '| Step | Command |\n| --- | --- |\n| Stop | `shutdown immediate` |\n| Start | `startup` |',
+      ]),
+    ).toEqual([
+      {
+        type: 'table',
+        headers: [
+          [{ type: 'text', value: 'Step' }],
+          [{ type: 'text', value: 'Command' }],
+        ],
+        rows: [
+          [
+            [{ type: 'text', value: 'Stop' }],
+            [{ type: 'code', value: 'shutdown immediate' }],
+          ],
+          [
+            [{ type: 'text', value: 'Start' }],
+            [{ type: 'code', value: 'startup' }],
+          ],
+        ],
+      },
+    ]);
+  });
+});
+
+describe('stripTrailingReferencesSection', () => {
+  it('strips reference headings with a descriptive suffix', () => {
+    expect(
+      stripTrailingReferencesSection(
+        'Visible answer\n\n### References — cited docs\n- hidden.pdf',
+      ),
+    ).toBe('Visible answer');
   });
 });
 

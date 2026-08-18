@@ -17,14 +17,56 @@ import type { SourceType } from '../components/Icon';
 export type InlineAnswerPart =
   | { type: 'text'; value: string }
   | { type: 'bold'; value: string }
+  | { type: 'italic'; value: string }
   | { type: 'code'; value: string }
+  | { type: 'link'; label: string; href: string }
   | { type: 'cite'; value: number };
 
 export type AnswerPart =
   | InlineAnswerPart
   | { type: 'heading'; level: 1 | 2 | 3; children: readonly InlineAnswerPart[] }
-  | { type: 'listItem'; ordered: boolean; children: readonly InlineAnswerPart[] }
-  | { type: 'lineBreak' };
+  | {
+      type: 'listItem';
+      ordered: boolean;
+      marker: string;
+      children: readonly InlineAnswerPart[];
+    }
+  | { type: 'blockquote'; children: readonly InlineAnswerPart[] }
+  | { type: 'codeBlock'; language?: string; value: string }
+  | {
+      type: 'table';
+      headers: readonly (readonly InlineAnswerPart[])[];
+      rows: readonly (readonly (readonly InlineAnswerPart[])[])[];
+    }
+  | { type: 'lineBreak' }
+  | { type: 'paragraphBreak' };
+
+/**
+ * Intra-chunk paragraph anchor (PARAGRAPH-CITATION-PLAN phase A).
+ * Offsets only, never paragraph text — the chunk content is loaded on
+ * demand through the existing chunk routes, and threads persisted to
+ * localStorage must not grow with the feature. Heuristic and
+ * non-authoritative: every consumer must render correctly without it.
+ *
+ * Offsets count Unicode CODE POINTS (Python string indices — the
+ * backend contract), not UTF-16 units: slice on `Array.from(content)`,
+ * never `String.prototype.slice`, or any astral character before the
+ * paragraph shifts the range.
+ */
+export interface SourceAnchor {
+  /** Start offset (inclusive) into the chunk content, in code points. */
+  start: number;
+  /** End offset (exclusive) into the chunk content, in code points. */
+  end: number;
+  /** 0-based index of the anchored paragraph in the chunk. */
+  paragraph_idx: number;
+  /** Total paragraphs detected in the chunk. */
+  paragraph_count: number;
+  /** Anchor confidence in [0, 1]; low-confidence anchors are not sent. */
+  confidence: number;
+  /** Anchoring method identifier (phase A: "lexical_overlap"). */
+  method: string;
+}
 
 export interface RetrievalSource {
   /** Citation number, 1-indexed. Matches `{cite:n}` in the tokens. */
@@ -34,10 +76,14 @@ export interface RetrievalSource {
   meta?: string | null;
   /** Retrieval metric when exposed by the backend; null/absent means unavailable. */
   score?: number | null;
+  /** Path that grounded this source in the answer. */
+  retrieval_origin?: 'vector' | 'graph' | null;
   /** Optional document id for direct drill-down from citations/sources. */
   doc_id?: string | null;
   /** Optional chunk id cited by the backend. */
   chunk_id?: string | null;
+  /** Optional paragraph anchor inside the cited chunk. */
+  anchor?: SourceAnchor | null;
 }
 
 export type ChatRole = 'user' | 'assistant';
@@ -79,6 +125,19 @@ export interface ChatMessage {
   answerStatus?: AnswerStatus;
   /** Assistant-only: Top K selected when this answer was requested. */
   requestedTopK?: number;
+  /** Assistant-only: immutable execution details captured for this answer. */
+  queryMeta?: QueryRunMetadata;
+}
+
+export interface QueryRunMetadata {
+  /** Deployment-provided LLM name. Absent on legacy backends. */
+  model?: string;
+  mode: QueryMode;
+  topK: number;
+  chunkTopK: number;
+  enableRerank: boolean;
+  /** Client-observed request duration, including streamed delivery. */
+  durationMs: number;
 }
 
 export interface RetrievalThread {
@@ -101,7 +160,7 @@ export const QUERY_MODES: readonly QueryMode[] = [
   'mix',
 ];
 
-function stripTrailingReferencesSection(text: string): string {
+export function stripTrailingReferencesSection(text: string): string {
   const lines = text.split('\n');
   const start = lines.findIndex((line) =>
     /^\s*#{1,6}\s*(?:references|références)\b/i.test(line) ||
@@ -120,7 +179,7 @@ export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
   const out: AnswerPart[] = [];
   const parseInline = (text: string): InlineAnswerPart[] => {
     const parts: InlineAnswerPart[] = [];
-    const re = /(?:\*\*([^*]+)\*\*|\{cite:(\d+)\}|\[\^?(\d+)\]|`([^`]+)`)/g;
+    const re = /(?:\*\*([^*]+)\*\*|\[([^\]]+)]\((https?:\/\/[^)\s]+)\)|\*(\S(?:[^*\n]*\S)?)\*|(?<![\w])_(\S(?:[^_\n]*\S)?)_(?![\w])|\{cite:(\d+)\}|\[\^?(\d+)]|`([^`]+)`)/g;
     let last = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
@@ -129,10 +188,14 @@ export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
       }
       if (m[1]) {
         parts.push({ type: 'bold', value: m[1] });
-      } else if (m[2] || m[3]) {
-        parts.push({ type: 'cite', value: Number.parseInt(m[2] || m[3], 10) });
-      } else if (m[4]) {
-        parts.push({ type: 'code', value: m[4] });
+      } else if (m[2] && m[3]) {
+        parts.push({ type: 'link', label: m[2], href: m[3] });
+      } else if (m[4] || m[5]) {
+        parts.push({ type: 'italic', value: m[4] || m[5] });
+      } else if (m[6] || m[7]) {
+        parts.push({ type: 'cite', value: Number.parseInt(m[6] || m[7], 10) });
+      } else if (m[8]) {
+        parts.push({ type: 'code', value: m[8] });
       }
       last = re.lastIndex;
     }
@@ -152,29 +215,90 @@ export function parseAnswer(tokens: readonly string[]): AnswerPart[] {
     return parseInline(text);
   }
 
-  lines.forEach((line, index) => {
+  const parseTableRow = (line: string): string[] => {
+    let value = line.trim();
+    if (value.startsWith('|')) value = value.slice(1);
+    if (value.endsWith('|')) value = value.slice(0, -1);
+    return value.split('|').map((cell) => cell.trim());
+  };
+  const isTableDivider = (line: string): boolean => {
+    const cells = parseTableRow(line);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  };
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    const nextLine = lines[index + 1];
+
+    if (!line.trim()) {
+      if (out.length > 0 && out.at(-1)?.type !== 'paragraphBreak') {
+        out.push({ type: 'paragraphBreak' });
+      }
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*```/.test(line)) {
+      const language = line.trim().slice(3).trim() || undefined;
+      const code: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```/.test(lines[index])) {
+        code.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      out.push({ type: 'codeBlock', language, value: code.join('\n') });
+      continue;
+    }
+
+    if (line.includes('|') && nextLine !== undefined && isTableDivider(nextLine)) {
+      const headers = parseTableRow(line).map(parseInline);
+      const rows: InlineAnswerPart[][][] = [];
+      index += 2;
+      while (index < lines.length && lines[index].trimStart().startsWith('|')) {
+        rows.push(parseTableRow(lines[index]).map(parseInline));
+        index += 1;
+      }
+      out.push({ type: 'table', headers, rows });
+      continue;
+    }
+
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
-    const ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+    const ordered = /^\s*(\d+)\.\s+(.+)$/.exec(line);
+    const quote = /^\s*>\s?(.*)$/.exec(line);
     if (heading) {
       out.push({
         type: 'heading',
         level: heading[1].length as 1 | 2 | 3,
         children: parseInline(heading[2]),
       });
+    } else if (quote) {
+      out.push({ type: 'blockquote', children: parseInline(quote[1]) });
     } else if (bullet || ordered) {
       out.push({
         type: 'listItem',
         ordered: Boolean(ordered),
-        children: parseInline((bullet ?? ordered)?.[1] ?? ''),
+        marker: ordered ? `${ordered[1]}.` : '•',
+        children: parseInline(bullet?.[1] ?? ordered?.[2] ?? ''),
       });
     } else if (line) {
       out.push(...parseInline(line));
     }
-    if (index < lines.length - 1) {
+    if (
+      index < lines.length - 1 &&
+      lines[index + 1].trim() &&
+      !heading &&
+      !bullet &&
+      !ordered &&
+      !quote
+    ) {
       out.push({ type: 'lineBreak' });
     }
-  });
+    index += 1;
+  }
+  while (out.at(-1)?.type === 'paragraphBreak') out.pop();
   return out;
 }
 

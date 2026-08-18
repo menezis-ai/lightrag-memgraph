@@ -219,11 +219,24 @@ describe('TagsTab — filters', () => {
     expect(screen.queryByTestId('tag-card-oracle')).toBeNull();
   });
 
-  it('status filter narrows to deprecated / pending-promotion only', async () => {
-    render(<TagsTab {...defaultProps()} />);
+  it('status filter omits the redundant Pending option', async () => {
+    const props = defaultProps();
+    render(
+      <TagsTab
+        {...props}
+        tags={props.tags.map((tag) =>
+          tag.tag === 'graphrag' ? { ...tag, status: 'deprecated' } : tag,
+        )}
+      />,
+    );
+    expect(
+      within(screen.getByLabelText('Status filter')).queryByRole('option', {
+        name: 'Pending',
+      }),
+    ).toBeNull();
     await userEvent.selectOptions(
       screen.getByLabelText('Status filter'),
-      'pending-promotion',
+      'deprecated',
     );
     expect(screen.getByTestId('tag-card-graphrag')).toBeInTheDocument();
     expect(screen.queryByTestId('tag-card-rman')).toBeNull();
@@ -276,6 +289,18 @@ describe('TagsTab — selection + detail', () => {
     expect(detail.textContent).toMatch(/Oracle Database engine/);
   });
 
+  it('detail CTA opens Documents filtered by the tag (QA TAG-V7-001)', async () => {
+    const p = defaultProps();
+    render(<TagsTab {...p} />);
+    const detail = document.querySelector('.tag-detail') as HTMLElement;
+    await userEvent.click(
+      within(detail).getByRole('button', {
+        name: /See documents containing this tag/,
+      }),
+    );
+    expect(p.onNavigate).toHaveBeenCalledWith('documents', { tag: 'rman' });
+  });
+
   it('palier 1 detail panel is read-only (shows muted hint)', () => {
     render(<TagsTab {...defaultProps(PALIER1)} />);
     const detail = document.querySelector('.tag-detail') as HTMLElement;
@@ -292,7 +317,7 @@ describe('TagsTab — selection + detail', () => {
     expect(
       within(dialog).getByRole('button', { name: 'Submit suggestion' }),
     ).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText('Short definition'), {
+    fireEvent.change(within(dialog).getByLabelText(/Short definition/), {
       target: { value: 'Updated recovery manager definition' },
     });
     fireEvent.change(within(dialog).getByLabelText(/Proposed synonyms/), {
@@ -325,6 +350,19 @@ describe('TagsTab — selection + detail', () => {
         within(detail).getByRole('button', { name: label }),
       ).toBeInTheDocument();
     });
+  });
+
+  it('usage docs count navigates directly to Documents with the tag filter', async () => {
+    const props = defaultProps();
+    render(<TagsTab {...props} />);
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /View \d+ documents tagged rman/,
+      }),
+    );
+
+    expect(props.onNavigate).toHaveBeenCalledWith('documents', { tag: 'rman' });
   });
 
   it('deprecated tags expose a real Reactivate action instead of another Deprecate action', async () => {
@@ -360,6 +398,58 @@ describe('TagsTab — approve direct (palier 3)', () => {
 });
 
 describe('TagsTab — domain taxonomy editor', () => {
+  it('rejects domain names duplicated by case, accents, or whitespace', async () => {
+    render(<TagsTab {...defaultProps()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Manage domains' }));
+    const editor = screen.getByTestId('domain-rail-editor');
+
+    fireEvent.change(within(editor).getByLabelText('infra domain label'), {
+      target: { value: 'Réseau' },
+    });
+    fireEvent.change(within(editor).getByLabelText('network domain label'), {
+      target: { value: '  RESEAU  ' },
+    });
+    await userEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+
+    expect(within(editor).getByRole('alert')).toHaveTextContent(
+      /duplicates "Réseau" after case, accent, and whitespace normalization/i,
+    );
+  });
+
+  it('renders the backend detail when Unicode case folding rejects the draft', async () => {
+    const originalFetch = globalThis.fetch;
+    const detail =
+      'Domain name "STRASSE" duplicates "Straße" after Unicode normalization.';
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ detail }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      render(<TagsTab {...defaultProps()} />);
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Manage domains' }),
+      );
+      const editor = screen.getByTestId('domain-rail-editor');
+
+      fireEvent.change(within(editor).getByLabelText('infra domain label'), {
+        target: { value: 'Straße' },
+      });
+      fireEvent.change(within(editor).getByLabelText('network domain label'), {
+        target: { value: 'STRASSE' },
+      });
+      await userEvent.click(within(editor).getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(await within(editor).findByRole('alert')).toHaveTextContent(detail);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('edits domains inline from the domain rail', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn<typeof fetch>(async () =>
@@ -442,6 +532,30 @@ describe('TagsTab — modal dispatch', () => {
     expect(p.onCommit.mock.calls[0][0]).toMatchObject({ kind: 'edit' });
   });
 
+  it('Edit modal blocks saving an emptied definition (QA TAG-V8-001)', async () => {
+    const p = defaultProps();
+    render(<TagsTab {...p} />);
+    const detail = document.querySelector('.tag-detail') as HTMLElement;
+    await userEvent.click(within(detail).getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit tag' });
+    const defInput = within(dialog).getByLabelText(/Short definition/);
+    await userEvent.clear(defInput);
+    const submit = within(dialog).getByRole('button', { name: 'Save' });
+    expect(submit).toBeDisabled();
+    expect(
+      within(dialog).getByText(
+        'Definition is required — a tag cannot be saved without one.',
+      ),
+    ).toBeInTheDocument();
+    await userEvent.type(defInput, 'Restored definition');
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+    expect(p.onCommit.mock.calls[0][0]).toMatchObject({
+      kind: 'edit',
+      def: 'Restored definition',
+    });
+  });
+
   it('Delete modal — migrate strategy requires replacement selection', async () => {
     const p = defaultProps();
     render(<TagsTab {...p} />);
@@ -494,7 +608,9 @@ describe('TagsTab — modal dispatch', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Reject request' });
     const submit = within(dialog).getByRole('button', { name: 'Reject request' });
     expect(submit).toBeDisabled();
-    const reasonInput = within(dialog).getByLabelText('Reason');
+    const reasonInput = within(dialog).getByLabelText(/^Reason/);
+    expect(reasonInput).toBeRequired();
+    expect(reasonInput).toHaveAttribute('aria-required', 'true');
     await new Promise((r) => setTimeout(r, 60));
     (reasonInput as HTMLTextAreaElement).focus();
     await userEvent.type(reasonInput, 'duplicate of k8s');

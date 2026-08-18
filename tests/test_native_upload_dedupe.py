@@ -12,23 +12,23 @@ the registered Memgraph backends and asserts the *physical* end state.
 
 Version tolerance is the point (matrix: 1.4.9.11 / 1.4.11 / 1.4.12 / newer).
 The HTTP dedup surface differs per LightRAG family — all branches are handled,
-and every branch (including the SKIP ones) first asserts the no-double-ingestion
-invariants, so the core contract is enforced on every version:
+and every branch first asserts the no-double-ingestion invariants, so the core
+contract is enforced on every version:
 
-- 1.4.x family: same-filename re-upload is deduped at the route (200
-  ``status="duplicated"`` — 1.4.9.11 wheel ``document_routes.py:2104-2115``,
-  1.4.11/1.4.12 identical) through ``doc_status.get_doc_by_file_path`` —
-  which is exactly where our duplicate-share hook fires
-  (``docstatus_impl.py:792-822``). Same-content / different-filename
+- 1.4.x family: same-filename checks pass through
+  ``doc_status.get_doc_by_file_path``. Twin scopes that name-only lookup to
+  the upload folder without mutating membership; only a later content-hash or
+  duplicate-metadata verdict may share the original. Same-content /
+  different-filename
   re-uploads diverge inside the family: the BNP pin 1.4.9.11 silently ignores
-  them at enqueue (wheel ``lightrag.py:1362-1374`` — no duplicate record, no
-  share trigger; the dup-record variants SKIP there with a precise reason
-  after the invariants have been asserted), while 1.4.11/1.4.12 already
+  them at enqueue (wheel ``lightrag.py:1362-1374`` — no duplicate record), so
+  Twin carries the content-derived id through that ``filter_keys`` seam and
+  shares the confirmed match. LightRAG 1.4.11/1.4.12 already
   create a fresh enqueue-time ``dup-`` FAILED record with
   ``metadata.is_duplicate`` (1.4.11 wheel ``lightrag.py:1398-1443``) — the
   interceptable PIPE-7 shape.
-- 1.5.x family: same-filename re-upload is an HTTP 409 (route pre-check via
-  ``get_doc_by_file_basename`` — same share hook). Same-content re-uploads are
+- 1.5.x family: same-filename checks use ``get_doc_by_file_basename`` with the
+  same folder-local, non-mutating rule. Same-content re-uploads are
   accepted (200) and deduped asynchronously with ``metadata.is_duplicate``
   markers that our ``docstatus_impl.upsert`` (:484-498) intercepts into a
   share membership when a folder is bound — the PIPE-7 divergence covered by
@@ -45,8 +45,9 @@ invariants, so the core contract is enforced on every version:
   outcome probe as ``shared_with_residual`` and reported as a real bug (not
   fixed here; 1.5.4 is outside the CI matrix).
 
-NOTE (MG-15): the interception window where the original vanishes between
-dedup detection and the share MERGE is a race, deliberately NOT exercised here.
+MG-15's interception window is covered below: when the original becomes
+delete-claimed between dedup detection and the share MERGE, the duplicate must
+remain visible rather than being falsely reported as shared.
 """
 
 import asyncio
@@ -58,6 +59,7 @@ import sys
 import tempfile
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -70,6 +72,10 @@ from lightrag.utils import EmbeddingFunc, Tokenizer
 
 import twindb_lightrag_memgraph
 from twindb_lightrag_memgraph import _install_storage_folder_capture, _pool
+from twindb_lightrag_memgraph._constants import (
+    duplicate_share_folder_context,
+    storage_folder_context,
+)
 from twindb_lightrag_memgraph.server.auth import configure_auth
 
 twindb_lightrag_memgraph.register()
@@ -104,6 +110,30 @@ BARE_APP_DOC = (
     "Cygnus records the incidents; without the Twin folder capture the native "
     "duplicate record must stay visible instead of being silently absorbed."
 )
+IDENTICAL_SHARE_DOC = (
+    "Upload dedupe contract document four. Atlas re-publishes the exact same "
+    "bulletin under the exact same name into a second folder, so the pinned "
+    "LightRAG filename verdict must remain visible without explicit hash proof."
+)
+SAME_NAME_DIFFERENT_DOC = (
+    "Upload dedupe contract document five. This replacement has deliberately "
+    "different bytes even though it reuses the exact same source filename; "
+    "the original document must never be shared into the second folder."
+)
+
+
+def _lightrag_at_least(minimum: tuple[int, ...]) -> bool:
+    """Version gate on the *base* LightRAG version (register() appends
+    ``+memgraph-…`` to ``__version__``)."""
+    import lightrag
+
+    base = str(lightrag.__version__).split("+", 1)[0]
+    parts: list[int] = []
+    for token in base.split(".")[:3]:
+        if not token.isdigit():
+            break
+        parts.append(int(token))
+    return tuple(parts) >= minimum
 
 
 def _build_extraction_response() -> str:
@@ -222,16 +252,24 @@ async def native_runtime(request, monkeypatch, runtime_dirs):
         create_document_routes,
     )
 
-    from tests.conftest import ensure_fresh_native_document_router
+    from tests.conftest import (
+        ensure_fresh_native_document_router,
+        seed_native_app_state,
+    )
+    from twindb_lightrag_memgraph.server.native_shims import (
+        build_native_shims_router,
+    )
 
     doc_manager = DocumentManager(runtime_dirs["input"], workspace=WORKSPACE)
     app = FastAPI()
+    seed_native_app_state(app)
     if install_capture:
         _install_storage_folder_capture(app)
     ensure_fresh_native_document_router()
     app.include_router(
         create_document_routes(rag, doc_manager, api_key="test-infra-root")
     )
+    app.include_router(build_native_shims_router(lambda: rag))
 
     try:
         yield rag, app
@@ -466,20 +504,18 @@ async def _settle_duplicate_outcome(
 
 
 @pytest.mark.integration
-async def test_same_filename_reupload_shares_membership_not_reingested(
+async def test_same_filename_reupload_never_false_shares_or_reingests(
     native_runtime,
 ):
     """Same file (name + content) uploaded twice over real HTTP.
 
-    Every supported LightRAG family dedupes this synchronously at the route,
-    through a doc_status lookup that carries our duplicate-share hook
-    (docstatus_impl.py:792-822): 1.4.x answers 200 status="duplicated"
-    (wheel document_routes.py:2104-2115, via get_doc_by_file_path), 1.5.x
-    answers HTTP 409 (route pre-check via get_doc_by_file_basename). In both
-    cases the original document must gain the second upload's folder as a
-    membership, and NOTHING may be re-ingested.
+    Filename-only evidence must never attach the original to another folder.
+    Releases that subsequently confirm content equality may share the original;
+    releases that stop at the filename guard retain a visible FAILED attempt in
+    the upload folder. In every family, NOTHING may be re-ingested.
     """
     rag, app = native_runtime
+    duplicate_row: dict = {}
 
     async with _client(app) as client:
         doc_id, track_id, before = await _ingest_original(
@@ -500,8 +536,7 @@ async def test_same_filename_reupload_shares_membership_not_reingested(
                     assert body["track_id"] == track_id
                 outcome = "route_dedup"
             elif body.get("status") == "success":
-                # Unexpected family: async dedup on a same-name re-upload.
-                outcome, _ = await _settle_duplicate_outcome(rag, doc_id)
+                outcome, duplicate_row = await _settle_duplicate_outcome(rag, doc_id)
             else:
                 pytest.fail(f"unexpected 200 body on re-upload: {body}")
         elif second.status_code == 409:
@@ -522,17 +557,141 @@ async def test_same_filename_reupload_shares_membership_not_reingested(
             f"the upload folder: memberships={folders}"
         )
     elif outcome == "silent":
-        pytest.skip(
-            "no-double-ingestion invariants held, but this LightRAG build "
-            "surfaced no duplicate outcome (no share, no duplicate record) "
-            "for a same-name re-upload within the deadline — share contract "
-            "not exercisable on this version"
-        )
-    else:  # dup_record on a same-name re-upload
         pytest.fail(
-            "same-name re-upload persisted a duplicate DocStatus record "
-            "instead of being deduped at the route"
+            "same content was silently suppressed without adding the upload "
+            "folder membership"
         )
+    else:  # explicit filename-only duplicate: visible, but never false-shared
+        assert duplicate_row["metadata"].get("duplicate_kind") == "filename"
+        assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
+        assert await rag.doc_status.get_folders_for_doc(duplicate_row["id"]) == [
+            SHARE_FOLDER
+        ]
+
+
+@pytest.mark.integration
+async def test_same_filename_identical_content_without_hash_stays_visible(
+    native_runtime,
+):
+    """1.5.6 supplies no candidate hash on a filename duplicate.
+
+    Even byte-identical content therefore stays as a visible FAILED attempt:
+    a filename-derived doc id or duplicate-record id is not equality proof.
+    """
+    if not _lightrag_at_least((1, 5, 6)):
+        pytest.skip("strict filename-hash evidence contract starts at 1.5.6")
+    rag, app = native_runtime
+
+    async with _client(app) as client:
+        doc_id, _track_id, before = await _ingest_original(
+            client,
+            rag,
+            "dedupe-identical-share.txt",
+            IDENTICAL_SHARE_DOC,
+            DEFAULT_FOLDER,
+        )
+        assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
+
+        second = await _upload(
+            client, "dedupe-identical-share.txt", IDENTICAL_SHARE_DOC, SHARE_FOLDER
+        )
+        assert second.status_code == 200, second.text
+        assert second.json().get("status") == "success", second.text
+
+        outcome, duplicate_row = await _settle_duplicate_outcome(rag, doc_id)
+
+    await _assert_no_double_ingestion(before, doc_id)
+    assert outcome == "dup_record", (outcome, duplicate_row)
+    assert duplicate_row["metadata"].get("duplicate_kind") == "filename"
+    assert not duplicate_row.get("content_hash")
+    assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
+    assert await rag.doc_status.get_folders_for_doc(duplicate_row["id"]) == [
+        SHARE_FOLDER
+    ]
+
+
+@pytest.mark.integration
+async def test_same_filename_different_content_never_shares_original(native_runtime):
+    """Real 1.5.6 recipe: same path gives both attempts the same doc id.
+
+    Content A followed by content B must still leave the original only in its
+    first folder and expose the filename duplicate in the attempted folder.
+    """
+    if not _lightrag_at_least((1, 5, 6)):
+        pytest.skip("strict filename-hash evidence contract starts at 1.5.6")
+    rag, app = native_runtime
+    filename = "dedupe-same-name-different-content.txt"
+
+    async with _client(app) as client:
+        doc_id, _track_id, before = await _ingest_original(
+            client,
+            rag,
+            filename,
+            IDENTICAL_SHARE_DOC,
+            DEFAULT_FOLDER,
+        )
+        second = await _upload(
+            client,
+            filename,
+            SAME_NAME_DIFFERENT_DOC,
+            SHARE_FOLDER,
+        )
+        assert second.status_code == 200, second.text
+        assert second.json().get("status") == "success", second.text
+        outcome, duplicate_row = await _settle_duplicate_outcome(rag, doc_id)
+
+    await _assert_no_double_ingestion(before, doc_id)
+    assert outcome == "dup_record", (outcome, duplicate_row)
+    metadata = duplicate_row["metadata"]
+    assert metadata.get("duplicate_kind") == "filename"
+    # Upstream's original_doc_id still equals the path-derived original id;
+    # that identity must not cause a membership share.
+    assert metadata.get("original_doc_id") == doc_id
+    assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
+    assert await rag.doc_status.get_folders_for_doc(duplicate_row["id"]) == [
+        SHARE_FOLDER
+    ]
+
+
+@pytest.mark.integration
+async def test_last_folder_delete_removes_stale_filename_and_allows_reupload(
+    native_runtime,
+    runtime_dirs,
+):
+    """Real HTTP regression for the OVH delete → duplicate-name incident.
+
+    Processed imports are normally cleaned immediately. Recreate a historical
+    orphan below INPUT_DIR, then prove the public last-folder delete removes it
+    and the exact same filename can be uploaded and processed again.
+    """
+    rag, app = native_runtime
+    filename = "delete-then-reupload-same-name.txt"
+    source = Path(runtime_dirs["input"]) / filename
+
+    async with _client(app) as client:
+        first_doc_id, _track_id, _before = await _ingest_original(
+            client, rag, filename, SAME_NAME_DOC, DEFAULT_FOLDER
+        )
+        assert not source.exists(), "processed import cleanup should remove sources"
+
+        # Model the stale files observed on OVH before this fix.
+        source.write_text(SAME_NAME_DOC, encoding="utf-8")
+        assert source.exists()
+
+        deleted = await client.delete(
+            f"/documents/{first_doc_id}",
+            headers={"X-Twin-Folder": DEFAULT_FOLDER},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert await rag.doc_status.get_by_id(first_doc_id) is None
+        assert not source.exists(), "last-folder delete left a filename blocker"
+
+        second = await _upload(client, filename, SAME_NAME_DOC, DEFAULT_FOLDER)
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "success", second.text
+        processed = await _poll_track_processed(client, second.json()["track_id"])
+        assert processed["total_count"] == 1
+        assert processed["documents"][0]["id"] == first_doc_id
 
 
 @pytest.mark.integration
@@ -550,10 +709,9 @@ async def test_same_content_new_filename_with_folder_shares_instead_of_dup_recor
     audit's PIPE-7 description) or, on 1.5.4 file uploads, a post-parse
     verdict onto the second upload's already-persisted row — where the
     interception strands that row in a non-terminal status (real residue,
-    asserted explicitly, reported as a bug). On the 1.4.x pin the enqueue
-    silently ignores known content (wheel lightrag.py:1362-1374): the
-    invariants are still asserted, then the share-specific part SKIPs with a
-    precise reason.
+    asserted explicitly, reported as a bug). On 1.4.9.11, Twin uses the
+    content-derived id available at ``filter_keys`` to confirm equality and add
+    the membership before upstream silently drops the known id.
     """
     rag, app = native_runtime
 
@@ -617,15 +775,69 @@ async def test_same_content_new_filename_with_folder_shares_instead_of_dup_recor
             assert dup_row["status"] == DocStatus.FAILED.value, dup_row
             assert not dup_row["chunks_count"], dup_row
         else:  # silent
-            pytest.skip(
-                "no-double-ingestion invariants held; this LightRAG build "
-                "silently ignores re-enqueued known content at enqueue "
-                "(filter_keys drop without a duplicate record — the BNP pin "
-                "1.4.9.11, wheel lightrag.py:1362-1374; 1.4.11+ do emit dup- "
-                "records) — no share trigger reaches storage on this path; "
-                "the share contract for this pin is exercised by the "
-                "same-filename route test and tests/test_folder_membership.py"
+            pytest.fail(
+                "same content was silently suppressed without adding the "
+                "upload folder membership"
             )
+
+
+@pytest.mark.integration
+async def test_content_hash_share_race_preserves_visible_duplicate(
+    native_runtime,
+):
+    """MG-15: a delete claim between lookup and MERGE must not hide the dup."""
+    rag, app = native_runtime
+    content_hash = f"race-{uuid.uuid4().hex}"
+    duplicate_id = f"dup-race-{uuid.uuid4().hex}"
+
+    async with _client(app) as client:
+        doc_id, _track_id, before = await _ingest_original(
+            client, rag, "dedupe-race-a.txt", FOLDER_SHARE_DOC, DEFAULT_FOLDER
+        )
+
+    original = await rag.doc_status.get_by_id(doc_id)
+    assert original is not None
+    await rag.doc_status.upsert({doc_id: {**original, "content_hash": content_hash}})
+
+    async with _pool.get_session() as session:
+        result = await session.run(
+            f"""
+            MATCH (n:`DocStatus_{WORKSPACE}` {{id: $doc_id}})
+            SET n.__delete_claim = $claim
+            """,
+            doc_id=doc_id,
+            claim=f"race-{uuid.uuid4().hex}",
+        )
+        await result.consume()
+
+    with duplicate_share_folder_context(SHARE_FOLDER):
+        duplicate_match = await rag.doc_status.get_doc_by_content_hash(content_hash)
+
+    assert duplicate_match is not None
+    assert duplicate_match[0] == doc_id
+
+    with storage_folder_context(SHARE_FOLDER):
+        await rag.doc_status.upsert(
+            {
+                duplicate_id: {
+                    "status": DocStatus.FAILED.value,
+                    "file_path": "dedupe-race-b.txt",
+                    "content_hash": content_hash,
+                    "metadata": {
+                        "is_duplicate": True,
+                        "duplicate_kind": "content_hash",
+                        "original_doc_id": doc_id,
+                    },
+                }
+            }
+        )
+
+    duplicate = await rag.doc_status.get_by_id(duplicate_id)
+    assert duplicate is not None
+    assert duplicate["status"] == DocStatus.FAILED.value
+    assert await rag.doc_status.get_folders_for_doc(duplicate_id) == [SHARE_FOLDER]
+    assert await rag.doc_status.get_folders_for_doc(doc_id) == [DEFAULT_FOLDER]
+    await _assert_no_double_ingestion(before, doc_id)
 
 
 @pytest.mark.integration

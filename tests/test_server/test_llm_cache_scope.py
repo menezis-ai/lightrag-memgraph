@@ -106,6 +106,7 @@ def test_rag_kwargs_carry_twin_entity_extraction_profile() -> None:
         assert "- Technology:" in kwargs["addon_params"]["entity_types_guidance"]
         for expected in ("UNIX", "grep", "sed", "ssh", "KnowRob", "Accelerate"):
             assert expected in kwargs["addon_params"]["entity_types_guidance"]
+        assert "Latin" in kwargs["addon_params"]["entity_types_guidance"]
     else:
         assert "addon_params" not in kwargs
 

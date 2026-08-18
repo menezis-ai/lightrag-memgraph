@@ -29,7 +29,9 @@ test.describe('Add source validation', () => {
 
     const [request] = await Promise.all([
       page.waitForRequest(
-        (r) => r.url().includes('/documents/upload') && r.method() === 'POST',
+        (r) =>
+          new URL(r.url()).pathname.endsWith('/documents/upload') &&
+          r.method() === 'POST',
       ),
       submit.click(),
     ]);
@@ -84,7 +86,7 @@ test.describe('Add source validation', () => {
     const uploadHeaders: string[] = [];
     page.on('request', (request) => {
       if (
-        request.url().includes('/documents/upload') &&
+        new URL(request.url()).pathname.endsWith('/documents/upload') &&
         request.method() === 'POST'
       ) {
         uploadHeaders.push(request.headers()['x-twin-classification'] ?? '');

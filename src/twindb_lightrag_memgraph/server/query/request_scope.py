@@ -8,45 +8,55 @@ from typing import Any
 
 from ..._constants import (
     RetrievalFilters,
+    retrieval_score_context,
     storage_filter_context,
     storage_folder_context,
 )
 from .models import TwinQueryBody
-from .source_filters import _doc_filter_terms, _tag_filter_terms
+from .source_filters import _doc_filter_terms, _tag_filter_groups
 
 
 def _retrieval_filters_from_body(body: TwinQueryBody) -> RetrievalFilters:
     """Map request filters onto the storage-layer ``RetrievalFilters`` contract.
 
-    Reuses the same term extractors as the post-filter guard-rail so the two
-    stay in lock-step: ``tag_*`` are lower-cased (case-insensitive tag ids),
-    ``doc_*`` are case-preserving.
+    Reuses the same normaliser as the post-filter guard-rail so the two stay
+    in lock-step: ``tag_*`` are lower-cased (case-insensitive tag ids),
+    ``doc_*`` are case-preserving. Anything that normalises to a single
+    group — the flat form, or a grouped form with one effective group — is
+    canonicalised into ``tag_all`` / ``tag_any`` so the storage Cypher stays
+    byte-identical to the flat path; only ≥2 effective groups populate
+    ``tag_groups`` (OR between groups), leaving the flat sets empty.
     """
-    tag_required, tag_optional = _tag_filter_terms(body.tag_filter)
+    tag_groups = _tag_filter_groups(body.tag_filter_payload)
     doc_required, doc_optional = _doc_filter_terms(body.doc_filter)
+    flat_tag_filter = tag_groups if len(tag_groups) == 1 else ()
     return RetrievalFilters(
         doc_all=frozenset(doc_required),
         doc_any=frozenset(doc_optional),
-        tag_all=frozenset(tag_required),
-        tag_any=frozenset(tag_optional),
+        tag_all=flat_tag_filter[0][0] if flat_tag_filter else frozenset(),
+        tag_any=flat_tag_filter[0][1] if flat_tag_filter else frozenset(),
+        tag_groups=tag_groups if len(tag_groups) > 1 else (),
         min_score=body.min_score,
     )
 
 
 @contextmanager
-def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[None]:
+def _retrieval_scope(folder: str, body: TwinQueryBody) -> Iterator[dict[str, float]]:
     """Bind folder membership and retrieval filters during grounding calls.
 
     Every ``aquery_llm`` / ``aquery_data`` / ``aquery`` issued under this scope
     has its vector retrievals constrained at the Memgraph storage layer to the
     active folder and requested docs/tags/``min_score``. The downstream Sources
     post-filter becomes a guard-rail that removes nothing in the nominal case.
+    The yielded mapping captures measured chunk similarities from that same
+    grounding call so source projection does not need a second vector query.
     """
     with (
         storage_folder_context(folder),
         storage_filter_context(_retrieval_filters_from_body(body)),
+        retrieval_score_context() as retrieval_scores,
     ):
-        yield
+        yield retrieval_scores
 
 
 def _is_no_retrieval_mode(body: TwinQueryBody) -> bool:

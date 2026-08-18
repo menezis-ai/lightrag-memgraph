@@ -86,6 +86,36 @@ class TestInMemoryTagStore:
         assert [t["tag"] for t in store.list_tags()] == ["active"]
 
 
+class TestCategoryValidation:
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ("Network", "network"),
+            ("Réseau", "RESEAU"),
+            ("Data   Platform", " data platform "),
+        ],
+    )
+    async def test_rejects_duplicate_normalized_category_names(
+        self, first: str, second: str
+    ):
+        store = MemgraphTagStore(workspace="category_validation")
+        payload = [
+            {"id": "first", "label": first, "color": "#112233"},
+            {"id": "second", "label": second, "color": "#445566"},
+        ]
+
+        with pytest.raises(ValueError, match="duplicate category name"):
+            await store.replace_categories_from_list(payload)
+
+    async def test_rejects_blank_category_name(self):
+        store = MemgraphTagStore(workspace="category_validation")
+
+        with pytest.raises(ValueError, match="label must not be empty"):
+            await store.replace_categories_from_list(
+                [{"id": "blank", "label": "   ", "color": "#112233"}]
+            )
+
+
 # ---------------------------------------------------------------------------
 # Integration — Memgraph backend
 # ---------------------------------------------------------------------------
@@ -180,6 +210,24 @@ class TestMemgraphTagStore:
                     "examples": [],
                 }
             )
+            await store.upsert_tag(
+                {
+                    "tag": "other-folder-only",
+                    "tier": 3,
+                    "category": "infra",
+                    "status": "active",
+                    "def": "tag used outside the active folder",
+                    "aliases": [],
+                    "deprecates": [],
+                    "sources_count": 0,
+                    "chunks_count": 0,
+                    "query_freq_30d": 0,
+                    "created": {"by": "test", "at": "2026-01-01"},
+                    "last_edit": {"by": "test", "at": "2026-01-01"},
+                    "related": [],
+                    "examples": [],
+                }
+            )
             async with _pool.get_session() as session:
                 result = await session.run(
                     f"""
@@ -188,17 +236,23 @@ class TestMemgraphTagStore:
                     CREATE (folder:`Folder_{_ws}` {{id: $folder}})
                     WITH member, other, folder
                     MATCH (tag:`WebuiTag_{_ws}` {{id: 'scoped'}})
+                    MATCH (other_tag:`WebuiTag_{_ws}` {{id: 'other-folder-only'}})
                     MERGE (member)-[:MEMBER_OF]->(folder)
                     MERGE (member)-[:TAGGED_WITH]->(tag)
                     MERGE (other)-[:TAGGED_WITH]->(tag)
+                    MERGE (other)-[:TAGGED_WITH]->(other_tag)
                     """,
                     folder=_ws,
                 )
                 await result.consume()
 
-            scoped = next(t for t in await store.list_tags() if t["tag"] == "scoped")
+            tags = await store.list_tags()
+            scoped = next(t for t in tags if t["tag"] == "scoped")
             assert scoped["sources_count"] == 1
             assert scoped["chunks_count"] == 2
+            other_only = next(t for t in tags if t["tag"] == "other-folder-only")
+            assert other_only["sources_count"] == 0
+            assert other_only["chunks_count"] == 0
         finally:
             await _cleanup(_ws)
 

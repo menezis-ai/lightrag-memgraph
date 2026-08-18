@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from ..idp_jwt import require_admin_user
 from ..webui_models import (
@@ -18,7 +18,21 @@ from ..webui_models import (
 from .events import _make_event
 from .store import get_store
 
-router = APIRouter()
+router = APIRouter(tags=["graph"])
+
+_GRAPH_LABEL_QUERY = Query(
+    description=(
+        "Entity to focus the subgraph on (`*` = whole-graph overview). "
+        "Use `GET /graph/search` to find entity labels."
+    ),
+    examples=["*"],
+)
+_GRAPH_MAX_NODES_QUERY = Query(
+    description="Maximum number of nodes returned.", examples=[1000]
+)
+_GRAPH_MAX_DEPTH_QUERY = Query(
+    description="Traversal depth around the focused entity.", examples=[3]
+)
 
 # 409 detail for a refused mutation on a mixed-provenance (cross-folder) record.
 # The physical node/edge is co-owned by another folder; a global write would
@@ -152,13 +166,20 @@ def _seed_or_empty_entities() -> list[dict[str, Any]]:
     return get_store().list_graph_entities()
 
 
-@router.get("/graph/entities", response_model=list[GraphEntity])
+@router.get(
+    "/graph/entities",
+    response_model=list[GraphEntity],
+    summary="Read knowledge-graph entities",
+)
 async def list_graph_entities(
-    label: str = "*",
-    max_nodes: int = 1000,
-    max_depth: int = 3,
+    label: Annotated[str, _GRAPH_LABEL_QUERY] = "*",
+    max_nodes: Annotated[int, _GRAPH_MAX_NODES_QUERY] = 1000,
+    max_depth: Annotated[int, _GRAPH_MAX_DEPTH_QUERY] = 3,
 ) -> list[dict[str, Any]]:
-    """Live Memgraph entities via LightRAG's native focus+context selection."""
+    """Return the knowledge-graph entities of the requested subgraph
+    (whole-graph overview by default, or focused around `label`). When a
+    folder is bound via `X-Twin-Folder`, only entities grounded in that
+    folder's documents are visible."""
     from ..folder import active_folder_id
 
     result = await _native_graph(label, max_nodes, max_depth)
@@ -175,13 +196,18 @@ async def list_graph_entities(
     return _seed_or_empty_entities()
 
 
-@router.get("/graph/relations", response_model=list[GraphRelation])
+@router.get(
+    "/graph/relations",
+    response_model=list[GraphRelation],
+    summary="Read knowledge-graph relations",
+)
 async def list_graph_relations(
-    label: str = "*",
-    max_nodes: int = 1000,
-    max_depth: int = 3,
+    label: Annotated[str, _GRAPH_LABEL_QUERY] = "*",
+    max_nodes: Annotated[int, _GRAPH_MAX_NODES_QUERY] = 1000,
+    max_depth: Annotated[int, _GRAPH_MAX_DEPTH_QUERY] = 3,
 ) -> list[dict[str, Any]]:
-    """Relations for the same native subgraph as ``/graph/entities``."""
+    """Return the relations of the same subgraph as `GET /graph/entities`
+    (call both with identical parameters to render a consistent graph)."""
     from ..folder import active_folder_id
 
     result = await _native_graph(label, max_nodes, max_depth)
@@ -199,10 +225,23 @@ async def list_graph_relations(
     return get_store().list_graph_relations()
 
 
-@router.get("/graph/search")
-async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
-    """Entity-label search — folder-scoped when a Twin folder is bound so the
-    search box never reveals out-of-folder labels."""
+@router.get(
+    "/graph/search",
+    summary="Search entity labels",
+)
+async def search_graph_entities(
+    q: Annotated[
+        str,
+        Query(
+            description="Case-insensitive substring to match entity labels against.",
+            examples=["firewall"],
+        ),
+    ],
+    limit: Annotated[int, Query(description="Maximum number of labels returned.")] = 50,
+) -> list[str]:
+    """Search entity labels by substring. Folder-scoped when a folder is
+    bound, so the search never reveals out-of-folder entities. Use the
+    result as the `label` parameter of `GET /graph/entities`."""
     from .. import graph_reader
     from .. import webui_router as legacy
 
@@ -219,6 +258,7 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
     "/graph/entities/{entity_id}",
     response_model=GraphEntity,
     dependencies=[Depends(require_admin_user)],
+    summary="Edit a graph entity (admin)",
     responses={
         404: {"description": "Graph entity not found"},
         409: {"description": "Entity shared with another folder (mixed provenance)"},
@@ -226,9 +266,14 @@ async def search_graph_entities(q: str, limit: int = 50) -> list[str]:
     },
 )
 async def update_graph_entity_endpoint(
-    entity_id: str, body: GraphEntityPatch
+    entity_id: Annotated[
+        str, Path(description="Entity id from `GET /graph/entities`.")
+    ],
+    body: GraphEntityPatch,
 ) -> dict[str, Any]:
-    """Persist an edit to a graph entity in Memgraph."""
+    """Edit an entity's name, type, summary or tags. Tags must be
+    active catalog tags (422 lists unknown ones). An entity shared with
+    another folder cannot be edited from this one (409)."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
@@ -264,6 +309,7 @@ async def update_graph_entity_endpoint(
     response_model=GraphEntity,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    summary="Create a graph entity (admin)",
     responses={
         409: {"description": "Graph entity already exists"},
         422: {"description": "Invalid graph entity tags"},
@@ -274,7 +320,9 @@ async def update_graph_entity_endpoint(
 async def create_graph_entity_endpoint(
     body: GraphEntityCreate,
 ) -> dict[str, Any]:
-    """Manually add a new entity to the KB."""
+    """Manually add a new entity to the knowledge graph, alongside the
+    ones extracted automatically at ingestion. The name must be unique in
+    the graph (409); tags must be active catalog tags (422)."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
@@ -327,13 +375,20 @@ async def create_graph_entity_endpoint(
     "/graph/entities/{entity_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
+    summary="Delete a graph entity and its relations (admin)",
     responses={
         404: {"description": "Graph entity not found"},
         409: {"description": "Entity shared with another folder (mixed provenance)"},
     },
 )
-async def delete_graph_entity_endpoint(entity_id: str) -> None:
-    """Remove an entity from the KB and cascade-delete its edges."""
+async def delete_graph_entity_endpoint(
+    entity_id: Annotated[
+        str, Path(description="Entity id from `GET /graph/entities`.")
+    ],
+) -> None:
+    """Remove an entity from the knowledge graph. Its relations are
+    deleted with it. An entity shared with another folder cannot be
+    deleted from this one (409)."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
@@ -364,6 +419,7 @@ async def delete_graph_entity_endpoint(entity_id: str) -> None:
     response_model=GraphRelation,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    summary="Create a relation between two entities (admin)",
     responses={
         409: {"description": "Endpoint shared with another folder (mixed provenance)"},
         422: {"description": "Invalid graph relation"},
@@ -372,7 +428,8 @@ async def delete_graph_entity_endpoint(entity_id: str) -> None:
 async def create_graph_relation_endpoint(
     body: GraphRelationCreate,
 ) -> dict[str, Any]:
-    """Manually add a new relation between two entities."""
+    """Manually link two existing entities with a labelled relation. Both
+    endpoints must exist and the label must be non-empty (422)."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
@@ -410,13 +467,19 @@ async def create_graph_relation_endpoint(
     "/graph/relations/{rel_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
+    summary="Delete a graph relation (admin)",
     responses={
         404: {"description": "Graph relation not found"},
         409: {"description": "Relation shared with another folder (mixed provenance)"},
     },
 )
-async def delete_graph_relation_endpoint(rel_id: str) -> None:
-    """Remove a relation from the KB."""
+async def delete_graph_relation_endpoint(
+    rel_id: Annotated[
+        str, Path(description="Relation id from `GET /graph/relations`.")
+    ],
+) -> None:
+    """Remove a relation from the knowledge graph. The two entities it
+    connected are not affected."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()
@@ -449,15 +512,21 @@ async def delete_graph_relation_endpoint(rel_id: str) -> None:
     "/graph/relations/{rel_id}",
     response_model=GraphRelation,
     dependencies=[Depends(require_admin_user)],
+    summary="Edit a graph relation (admin)",
     responses={
         404: {"description": "Graph relation not found"},
         409: {"description": "Relation shared with another folder (mixed provenance)"},
     },
 )
 async def update_graph_relation_endpoint(
-    rel_id: str, body: GraphRelationPatch
+    rel_id: Annotated[
+        str, Path(description="Relation id from `GET /graph/relations`.")
+    ],
+    body: GraphRelationPatch,
 ) -> dict[str, Any]:
-    """Persist an edit to a graph relation in Memgraph."""
+    """Edit a relation's label, strength or properties. A relation whose
+    endpoints are shared with another folder cannot be edited from this
+    one (409)."""
     from .. import graph_reader
 
     label = _graph_memgraph_label()

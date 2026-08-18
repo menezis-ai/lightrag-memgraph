@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
@@ -69,14 +70,24 @@ def _select_token_source(envelope) -> Any:
     return llm_response.get("content") or ""
 
 
-async def _emit_answer_tokens(envelope, stripper) -> AsyncIterator[str]:
-    """Yield NDJSON ``token`` events from the envelope, marker-stripped."""
+async def _emit_answer_tokens(envelope, stripper, collector=None) -> AsyncIterator[str]:
+    """Yield NDJSON ``token`` events from the envelope, marker-stripped.
+
+    ``collector`` (a ``paragraph_anchor.CitationEvidenceCollector``) is fed
+    the SAME safe text that is emitted to the client, so anchor scoring works
+    on exactly what the operator read — never the raw pre-strip stream
+    (PARAGRAPH-CITATION-PLAN.md §5.1).
+    """
     async for text in _iter_answer_text(_select_token_source(envelope)):
         for safe in stripper.feed(text):
             if safe:
+                if collector is not None:
+                    collector.feed(safe)
                 yield json.dumps({"type": "token", "value": safe}) + "\n"
     for safe in stripper.flush():
         if safe:
+            if collector is not None:
+                collector.feed(safe)
             yield json.dumps({"type": "token", "value": safe}) + "\n"
 
 
@@ -117,6 +128,7 @@ async def _query_stream_fatal_events(
     request: Any,
     folder: str,
     fatal_reason: str,
+    timings: dict[str, int] | None = None,
 ) -> AsyncIterator[str]:
     logger.error(
         "twin_query stream: aquery_llm envelope failure surfaced as "
@@ -128,7 +140,12 @@ async def _query_stream_fatal_events(
     ) + "\n"
     yield json.dumps({"type": "status", "value": ANSWER_STATUS_QUERY_FAILED}) + "\n"
     await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
+        body,
+        request,
+        folder=folder,
+        sources_count=0,
+        stream=True,
+        timings=timings,
     )
     yield json.dumps({"type": "sources", "value": []}) + "\n"
 
@@ -138,10 +155,16 @@ async def _query_stream_empty_sources_events(
     request: Any,
     folder: str,
     status: AnswerStatus,
+    timings: dict[str, int] | None = None,
 ) -> AsyncIterator[str]:
     yield json.dumps({"type": "status", "value": status}) + "\n"
     await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=0, stream=True
+        body,
+        request,
+        folder=folder,
+        sources_count=0,
+        stream=True,
+        timings=timings,
     )
     yield json.dumps({"type": "sources", "value": []}) + "\n"
 
@@ -154,17 +177,44 @@ async def _query_stream_grounded_events(
     envelope: dict[str, Any] | None,
     status: AnswerStatus,
     build_envelope_sources: Any,
+    timings: dict[str, int] | None = None,
+    route_started: float | None = None,
 ) -> AsyncIterator[str]:
+    projection_started = time.perf_counter()
     with _retrieval_scope(folder, body):
         sources, projection_ok = await build_envelope_sources(
             rag, body, folder, envelope
         )
+    completed_timings = dict(timings or {})
+    completed_timings["sources_projection_ms"] = int(
+        (time.perf_counter() - projection_started) * 1000
+    )
+    if route_started is not None:
+        completed_timings["total_ms"] = int(
+            (time.perf_counter() - route_started) * 1000
+        )
     if not projection_ok:
         status = ANSWER_STATUS_SOURCE_PROJECTION_FAILED
         sources = []
+    logger.info(
+        "twin_query stream timings: retrieval_context=%sms generation=%sms "
+        "sources_projection=%sms total=%sms sources=%s mode=%s folder=%s",
+        completed_timings.get("retrieval_context_ms", 0),
+        completed_timings.get("generation_ms", 0),
+        completed_timings["sources_projection_ms"],
+        completed_timings.get("total_ms", 0),
+        len(sources),
+        getattr(body, "mode", "unknown"),
+        folder,
+    )
     yield json.dumps({"type": "status", "value": status}) + "\n"
     await _record_retrieval_activity(
-        body, request, folder=folder, sources_count=len(sources), stream=True
+        body,
+        request,
+        folder=folder,
+        sources_count=len(sources),
+        stream=True,
+        timings=completed_timings,
     )
     yield json.dumps({"type": "sources", "value": _public_sources(sources)}) + "\n"
 

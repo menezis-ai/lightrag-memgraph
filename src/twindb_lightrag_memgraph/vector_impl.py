@@ -26,6 +26,7 @@ import asyncio
 import json
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,11 +37,18 @@ from . import _pool
 from ._constants import (
     VECTOR_INDEX_CAPACITY,
     RetrievalFilters,
+    get_active_chunk_retrieval_scores,
     get_active_retrieval_filters,
     get_active_storage_folder,
     resolve_workspace,
     validate_identifier,
 )
+from ._retry import with_conflict_retry
+from ._prompt_security import neutralize_chunk_payloads
+
+# LightRAG's chunks vector namespace (``lightrag.namespace.NameSpace``) —
+# literal on purpose, same rationale as kv_impl's _KV_TEXT_CHUNKS_NAMESPACE.
+_VEC_CHUNKS_NAMESPACE = "chunks"
 
 # Chunk-id separator LightRAG joins ``source_id`` with on entity/relation vdb
 # records. Imported with a fallback so the storage layer never hard-fails on a
@@ -53,6 +61,10 @@ except Exception:  # pragma: no cover - defensive
 
 # Cypher boolean conjunction used to glue WHERE predicates.
 _CYPHER_AND = " AND "
+
+# (workspace, namespace, folder) triples whose fail-closed scope refusal has
+# already been logged at WARNING — see _log_scoped_refusal_once.
+_SCOPED_REFUSAL_LOGGED: set[tuple[str, str, str]] = set()
 
 # Folder-scoped retrieval over-fetches before the membership inner-join so that
 # dropping non-member candidates still leaves ~top_k members. A folder that is a
@@ -69,6 +81,38 @@ _FOLDER_SCOPE_OVERFETCH_ENV = "TWIN_QUERY_FOLDER_SCOPE_OVERFETCH"
 _FOLDER_SCOPE_OVERFETCH_DEFAULT = 4
 _FOLDER_SCOPE_OVERFETCH_CAP = 500
 _DEFAULT_EMBEDDING_BATCH_NUM = 32
+
+
+def _capture_chunk_retrieval_scores(
+    namespace: str,
+    results: list[dict[str, Any]],
+) -> None:
+    """Record measured chunk similarities for the active grounding request.
+
+    LightRAG strips vector metrics while assembling its final
+    ``aquery_llm.data.chunks`` envelope. Capturing them here preserves the
+    score from the retrieval that actually grounded the answer, without
+    issuing a second vector query. If the same chunk is observed more than
+    once in one grounding call, retain its strongest measured similarity.
+    """
+    scores = get_active_chunk_retrieval_scores()
+    if namespace != "chunks" or scores is None:
+        return
+
+    for result in results:
+        chunk_id = result.get("id")
+        similarity = result.get("similarity")
+        if not isinstance(chunk_id, str) or not chunk_id:
+            continue
+        if not isinstance(similarity, (int, float)) or isinstance(similarity, bool):
+            continue
+        numeric_similarity = float(similarity)
+        if not math.isfinite(numeric_similarity):
+            continue
+        previous = scores.get(chunk_id)
+        if previous is None or numeric_similarity > previous:
+            scores[chunk_id] = numeric_similarity
+
 
 # Ingestion-side embedding retry. A cold embedding endpoint (model still
 # loading / first request of the day) can blow past LightRAG's 60s worker
@@ -158,7 +202,11 @@ def _tag_conditions(
     """Tag-filter conditions over a list of tag ids (``tags_expr``).
 
     ``tag_all`` → every required tag present; ``tag_any`` → ≥1 optional tag
-    present.
+    present. ``tag_groups`` (OR-of-groups) is emitted as ONE parenthesised
+    ``(group0 OR group1 …)`` condition string so every call site — including
+    the ``any(__di IN __docinfos WHERE …)`` wrapper that re-joins the returned
+    list with AND — composes without change. Tag values are always ``$``-bound
+    parameters, never interpolated.
     """
     conds: list[str] = []
     if filters.tag_all:
@@ -167,6 +215,20 @@ def _tag_conditions(
     if filters.tag_any:
         params["tag_any"] = sorted(filters.tag_any)
         conds.append(f"any(__ot IN $tag_any WHERE __ot IN {tags_expr})")
+    if filters.tag_groups:
+        group_conds: list[str] = []
+        for idx, (required, optional) in enumerate(filters.tag_groups):
+            parts: list[str] = []
+            if required:
+                params[f"tag_g{idx}_all"] = sorted(required)
+                parts.append(f"all(__rt IN $tag_g{idx}_all WHERE __rt IN {tags_expr})")
+            if optional:
+                params[f"tag_g{idx}_any"] = sorted(optional)
+                parts.append(f"any(__ot IN $tag_g{idx}_any WHERE __ot IN {tags_expr})")
+            if parts:
+                group_conds.append("(" + _CYPHER_AND.join(parts) + ")")
+        if group_conds:
+            conds.append("(" + " OR ".join(group_conds) + ")")
     return conds
 
 
@@ -360,6 +422,22 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             entry[field_name] = self._parse_meta_field(val) if val is not None else None
         return entry
 
+    def _log_scoped_refusal_once(self, folder: str, message: str) -> None:
+        """Log a folder-scope fail-closed refusal once per (ws, ns, folder).
+
+        The refusal is permanent by design (blended entity/relation payloads
+        cannot be membership-scoped — see ``_build_search_cypher``), so it
+        fires on every scoped query. At ERROR-per-query it buried real errors
+        on the OVH maquette; the design decision deserves one WARNING per
+        folder, then DEBUG.
+        """
+        key = (self.workspace, self.namespace, folder)
+        if key in _SCOPED_REFUSAL_LOGGED:
+            logger.debug(message, self.workspace, self.namespace, folder)
+            return
+        _SCOPED_REFUSAL_LOGGED.add(key)
+        logger.warning(message, self.workspace, self.namespace, folder)
+
     def _effective_search_threshold(
         self,
         filters: RetrievalFilters | None,
@@ -468,6 +546,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         top_k: int,
         folder: str | None,
         filters: RetrievalFilters | None = None,
+        *,
+        filtered_scan_k: int | None = None,
     ) -> tuple[str | None, dict[str, Any]]:
         """Build the vector-search Cypher + params for this query.
 
@@ -517,12 +597,11 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return self._legacy_search_cypher(index_name, top_k, threshold)
 
         if "source_id" in self.meta_fields:
-            logger.error(
-                "[MemgraphVec:%s/%s] refusing blended graph-vector retrieval "
-                "under folder scope %s",
-                self.workspace,
-                self.namespace,
+            self._log_scoped_refusal_once(
                 folder,
+                "[MemgraphVec:%s/%s] refusing blended graph-vector retrieval "
+                "under folder scope %s (by design — see _build_search_cypher "
+                "docstring; logged once per folder, repeats at DEBUG)",
             )
             return None, {}
 
@@ -530,13 +609,20 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             top_k, folder, threshold
         )
 
-        # Product contract: doc/tag filters define the candidate corpus. Running
-        # ANN first and filtering afterwards can miss a tagged document entirely
-        # when untagged neighbours occupy the initial vector window. Use exact
-        # cosine over the filtered candidate set for those paths. The default
-        # cosine floor is not applied here; callers can opt back into a floor via
-        # min_score.
+        # Product contract: doc/tag filters define the candidate corpus. The
+        # caller may provide a bounded ANN window computed as ``global_count -
+        # candidate_count + top_k``. That window contains the requested allowed
+        # top-k if the native search returns the true top-scan_k; Memgraph's
+        # HNSW recall is approximate, so this is not a hard recall guarantee.
+        # If the cheap count plan is unavailable we retain the exact-cosine
+        # fallback rather than weakening the filter.
         if filters is not None and (filters.has_doc or filters.has_tag):
+            if filtered_scan_k is not None:
+                params["overfetch"] = max(top_k, filtered_scan_k)
+                join = self._chunks_membership_join(
+                    doc_label, folder_label, folder, filters, params
+                )
+                return self._scoped_vector_search_cypher(index_name, join), params
             return self._build_exact_filtered_search(
                 ws, doc_label, folder_label, folder, filters, params
             )
@@ -563,6 +649,20 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         params: dict[str, Any],
     ) -> tuple[str, dict[str, Any]]:
         """Exact cosine search over chunks after folder/doc/tag pre-filtering."""
+        base, params = self._build_filtered_chunks_candidates(
+            doc_label, folder_label, folder, filters, params
+        )
+        return base + _exact_cosine_projection(), params
+
+    def _build_filtered_chunks_candidates(
+        self,
+        doc_label: str,
+        folder_label: str,
+        folder: str,
+        filters: RetrievalFilters,
+        params: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Build the shared candidate MATCH used by counts and exact fallback."""
         label = self._label()
         base = f"""
             MATCH (node:`{label}`)
@@ -582,7 +682,45 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             conds += _tag_conditions(filters, params, "__dtags")
         if conds:
             base += "\n            WHERE " + _CYPHER_AND.join(conds)
-        return base + _exact_cosine_projection(), params
+        return base, params
+
+    async def _filtered_chunks_ann_plan(
+        self,
+        top_k: int,
+        folder: str,
+        filters: RetrievalFilters,
+    ) -> tuple[int, int, int]:
+        """Return ``(scan_k, total, candidates)`` without scoring embeddings.
+
+        The count queries only traverse membership/tag metadata. They replace
+        the OVH hot path that interpreted a 1,536-dimension cosine reduction
+        for every candidate chunk in Cypher.
+        """
+        ws = self.workspace
+        doc_label = f"DocStatus_{ws}"
+        folder_label = f"Folder_{ws}"
+        candidate_query, count_params = self._build_filtered_chunks_candidates(
+            doc_label, folder_label, folder, filters, {"folder": folder}
+        )
+        candidate_query += "\n            RETURN count(DISTINCT node) AS count"
+        total_query = f"MATCH (node:`{self._label()}`) RETURN count(node) AS count"
+
+        async with _pool.get_read_session() as session:
+            total_result = await session.run(total_query)
+            total_record = await total_result.single()
+            candidate_result = await session.run(candidate_query, **count_params)
+            candidate_record = await candidate_result.single()
+
+        total = int(total_record["count"] if total_record is not None else 0)
+        candidates = int(
+            candidate_record["count"] if candidate_record is not None else 0
+        )
+        candidates = min(total, max(0, candidates))
+        if candidates == 0:
+            return 0, total, 0
+        excluded = total - candidates
+        scan_k = min(total, excluded + top_k)
+        return max(1, scan_k), total, candidates
 
     def _build_exact_graph_search(
         self,
@@ -729,37 +867,75 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         top_k: int,
         query_embedding: list[float] = None,
     ) -> list[dict[str, Any]]:
+        query_started = time.perf_counter()
+        index_name = self._index_name()
+        folder = get_active_storage_folder()
+        filters = get_active_retrieval_filters()
+        filtered_scan_k: int | None = None
+        filter_total: int | None = None
+        filter_candidates: int | None = None
+        if (
+            folder
+            and filters is not None
+            and (filters.has_doc or filters.has_tag)
+            and "full_doc_id" in self.meta_fields
+        ):
+            try:
+                filtered_scan_k, filter_total, filter_candidates = (
+                    await self._filtered_chunks_ann_plan(top_k, folder, filters)
+                )
+            except Exception:
+                # Correctness fallback: never silently turn a filtered query
+                # into a small post-filtered ANN window.
+                logger.exception(
+                    "[MemgraphVec:%s/%s] filtered ANN count plan failed; "
+                    "falling back to exact filtered cosine",
+                    self.workspace,
+                    self.namespace,
+                )
+                filtered_scan_k = None
+            if filter_candidates == 0:
+                logger.info(
+                    "[MemgraphVec:%s/%s] filtered corpus empty folder=%s total=%d",
+                    self.workspace,
+                    self.namespace,
+                    folder,
+                    filter_total or 0,
+                )
+                return []
+
+        cypher, params = self._build_search_cypher(
+            top_k, folder, filters, filtered_scan_k=filtered_scan_k
+        )
+        if cypher is None:
+            # Fail-closed: the active folder cannot safely scope this VDB shape
+            # (including globally blended entity/relation payloads). Never leak
+            # a global result set into a folder-scoped retrieval.
+            self._log_scoped_refusal_once(
+                folder,
+                "[MemgraphVec:%s/%s] folder=%s active but this vdb category "
+                "cannot be safely scoped — returning empty (fail-closed, by "
+                "design) rather than leaking a global result set. Logged once "
+                "per folder, repeats at DEBUG.",
+            )
+            return []
+
+        embedding_ms = 0
         if query_embedding is None:
+            embedding_started = time.perf_counter()
             embedding_result = await self.embedding_func.func([query])
+            embedding_ms = int((time.perf_counter() - embedding_started) * 1000)
             query_embedding = (
                 embedding_result[0].tolist()
                 if hasattr(embedding_result[0], "tolist")
                 else list(embedding_result[0])
             )
-
-        index_name = self._index_name()
-        folder = get_active_storage_folder()
-        filters = get_active_retrieval_filters()
-        cypher, params = self._build_search_cypher(top_k, folder, filters)
-        if cypher is None:
-            # Fail-closed: the active folder cannot safely scope this VDB shape
-            # (including globally blended entity/relation payloads). Never leak
-            # a global result set into a folder-scoped retrieval.
-            logger.error(
-                "[MemgraphVec:%s/%s] folder=%s active but vdb category cannot "
-                "be safely scoped (meta_fields=%s) — returning empty "
-                "(fail-closed) rather than leaking a global result set.",
-                self.workspace,
-                self.namespace,
-                folder,
-                sorted(self.meta_fields),
-            )
-            return []
         params["embedding"] = query_embedding
         params["query_norm"] = math.sqrt(
             sum(float(v) * float(v) for v in query_embedding)
         )
 
+        search_started = time.perf_counter()
         async with _pool.get_read_session() as session:
             try:
                 result = await session.run(cypher, **params)
@@ -789,6 +965,30 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 result = await session.run(cypher, **params)
                 results = [self._record_to_entry(record) async for record in result]
                 await result.consume()
+            _capture_chunk_retrieval_scores(self.namespace, results)
+            search_ms = int((time.perf_counter() - search_started) * 1000)
+            total_ms = int((time.perf_counter() - query_started) * 1000)
+            timing_log = (
+                logger.warning
+                if filters is not None and total_ms >= 30_000
+                else logger.info if filters is not None else logger.debug
+            )
+            timing_log(
+                "[MemgraphVec:%s/%s] timings embedding=%dms search=%dms "
+                "total=%dms results=%d folder=%s filtered=%s "
+                "filter_total=%s filter_candidates=%s ann_window=%s",
+                self.workspace,
+                self.namespace,
+                embedding_ms,
+                search_ms,
+                total_ms,
+                len(results),
+                folder or "-",
+                filters is not None,
+                filter_total if filter_total is not None else "-",
+                filter_candidates if filter_candidates is not None else "-",
+                filtered_scan_k if filtered_scan_k is not None else "exact-or-default",
+            )
             logger.debug(
                 "[MemgraphVec:%s/%s] query(%r) → %d results (index=%s, "
                 "threshold=%.2f, top_k=%d, folder=%s)",
@@ -925,22 +1125,34 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         label = self._label()
+        if self.namespace == _VEC_CHUNKS_NAMESPACE:
+            # Audit 2026-08-06, R-06: neutralize reserved prompt delimiters
+            # at the storage boundary, BEFORE embedding, so the embedding
+            # matches the stored (neutralized) text.
+            data = neutralize_chunk_payloads(data)
         computed = await self._compute_missing_embeddings(data)
         entries = [
             self._build_entry(eid, item, item.get("embedding") or computed.get(eid))
             for eid, item in data.items()
         ]
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{label}` {{id: e.id}})
-                    SET n += e.props, n.embedding = coalesce(e.embedding, n.embedding)
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{label}` {{id: e.id}})
+                        SET n += e.props,
+                            n.embedding = coalesce(e.embedding, n.embedding)
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+        # Re-runnable: MERGE + SET with the same already-computed entries. The
+        # embeddings were resolved above, so a retry never re-bills the model.
+        await with_conflict_retry(f"MemgraphVec.upsert[{label}]", _write)
 
     async def delete_entity(self, entity_name: str) -> None:
         # REMOVE label before DETACH DELETE: Memgraph 3.10+ keeps vector
@@ -951,35 +1163,47 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # error instead". Removing the indexed label first prunes the vector
         # index entry cleanly; the DETACH DELETE then removes the orphan.
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    MATCH (n:`{label}`) WHERE n.entity_name = $name
-                    REMOVE n:`{label}`
-                    WITH n
-                    DETACH DELETE n
-                    """,
-                    name=entity_name,
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        MATCH (n:`{label}`) WHERE n.entity_name = $name
+                        REMOVE n:`{label}`
+                        WITH n
+                        DETACH DELETE n
+                        """,
+                        name=entity_name,
+                    )
+                    await result.consume()
+
+        # Re-runnable: the label is already gone, so a retry matches nothing.
+        await with_conflict_retry(f"MemgraphVec.delete_entity[{label}]", _write)
 
     async def delete_entity_relation(self, entity_name: str) -> None:
         # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    MATCH (n:`{label}`)
-                    WHERE n.src_id = $name OR n.tgt_id = $name
-                    REMOVE n:`{label}`
-                    WITH n
-                    DETACH DELETE n
-                    """,
-                    name=entity_name,
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        MATCH (n:`{label}`)
+                        WHERE n.src_id = $name OR n.tgt_id = $name
+                        REMOVE n:`{label}`
+                        WITH n
+                        DETACH DELETE n
+                        """,
+                        name=entity_name,
+                    )
+                    await result.consume()
+
+        # Re-runnable: the label is already gone, so a retry matches nothing.
+        await with_conflict_retry(
+            f"MemgraphVec.delete_entity_relation[{label}]", _write
+        )
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         label = self._label()
@@ -1014,19 +1238,24 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
     async def delete(self, ids: list[str]) -> None:
         # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $ids AS target_id
-                    MATCH (n:`{label}` {{id: target_id}})
-                    REMOVE n:`{label}`
-                    WITH n
-                    DETACH DELETE n
-                    """,
-                    ids=list(ids),
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        UNWIND $ids AS target_id
+                        MATCH (n:`{label}` {{id: target_id}})
+                        REMOVE n:`{label}`
+                        WITH n
+                        DETACH DELETE n
+                        """,
+                        ids=list(ids),
+                    )
+                    await result.consume()
+
+        # Re-runnable: the label is already gone, so a retry matches nothing.
+        await with_conflict_retry(f"MemgraphVec.delete[{label}]", _write)
 
     async def get_vectors_by_ids(self, ids: list[str]) -> dict[str, list[float]]:
         label = self._label()
@@ -1052,37 +1281,46 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # pruned cleanly, otherwise the subsequent DROP VECTOR INDEX can
         # leave stale refs that break the next test or the next ingest.
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(f"""
-                    MATCH (n:`{label}`)
-                    REMOVE n:`{label}`
-                    WITH n
-                    DETACH DELETE n
-                    """)
-                await result.consume()
-                try:
-                    result = await session.run(
-                        f"DROP VECTOR INDEX `{self._index_name()}`"
-                    )
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(f"""
+                        MATCH (n:`{label}`)
+                        REMOVE n:`{label}`
+                        WITH n
+                        DETACH DELETE n
+                        """)
                     await result.consume()
-                except Exception as e:
-                    # Swallow ONLY the idempotent "index already gone" case.
-                    # A bare `except Exception: pass` here previously buried
-                    # EVERY failure — connection resets, auth errors, permission
-                    # denials — while drop() still returned {"status": "success"}.
-                    # That false-success hid a half-completed drop (the nodes were
-                    # deleted but the vector index was left behind, the exact stale
-                    # state the REMOVE-before-DELETE dance above tries to avoid) and
-                    # lied to the caller. Match the "does not exist" message like the
-                    # query() auto-create path does, and re-raise anything else so
-                    # real failures surface instead of being reported as success.
-                    msg = str(e).lower()
-                    if "does not exist" not in msg and "doesn't exist" not in msg:
-                        raise
-                    logger.debug(
-                        "[MemgraphVec:%s] Vector index '%s' already absent on drop",
-                        self.workspace,
-                        self._index_name(),
-                    )
+                    try:
+                        result = await session.run(
+                            f"DROP VECTOR INDEX `{self._index_name()}`"
+                        )
+                        await result.consume()
+                    except Exception as e:
+                        # Swallow ONLY the idempotent "index already gone" case.
+                        # A bare `except Exception: pass` here previously buried
+                        # EVERY failure — connection resets, auth errors, permission
+                        # denials — while drop() still returned {"status": "success"}.
+                        # That false-success hid a half-completed drop (the nodes
+                        # were deleted but the vector index was left behind, the
+                        # exact stale state the REMOVE-before-DELETE dance above
+                        # tries to avoid) and lied to the caller. Match the "does not
+                        # exist" message like the query() auto-create path does, and
+                        # re-raise anything else so real failures surface instead of
+                        # being reported as success.
+                        msg = str(e).lower()
+                        if "does not exist" not in msg and "doesn't exist" not in msg:
+                            raise
+                        logger.debug(
+                            "[MemgraphVec:%s] Vector index '%s' already absent on "
+                            "drop",
+                            self.workspace,
+                            self._index_name(),
+                        )
+
+        # Re-runnable: an emptied label matches nothing and the index drop
+        # already tolerates "already absent" — which is exactly the state a
+        # retried attempt finds.
+        await with_conflict_retry(f"MemgraphVec.drop[{label}]", _write)
         return {"status": "success", "message": f"Vector namespace {label} dropped"}

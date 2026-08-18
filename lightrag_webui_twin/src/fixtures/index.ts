@@ -17,7 +17,7 @@ export {
   makeSampleThreads,
 } from './retrieval';
 export { ACTIVITY_FIXTURES, ACTIVITY_NOW_MS } from './activity';
-export { API_VERSION, OPENAPI_GROUPS, API_SERVERS, API_BASE_URL } from './api';
+export { API_VERSION, OPENAPI_GROUPS } from './api';
 export {
   DOC_TO_GRAPH_ENTITIES,
   GRAPH_ENTITY_DOCS,

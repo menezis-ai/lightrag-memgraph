@@ -123,3 +123,92 @@ async def test_reset_clears_cache(monkeypatch):
     _capabilities.reset_capability_cache()
     await _capabilities.get_available_procedures()
     assert run.await_count == 2  # re-probed after reset
+
+
+# ---------------------------------------------------------------------------
+# is_mage_available — the marker-based predicate
+# ---------------------------------------------------------------------------
+
+
+async def test_is_mage_available_false_on_core_only_instance(monkeypatch):
+    """Regression: the base image exposes procedures but NOT MAGE.
+
+    A truthiness test on the probe result (``bool(procedures)``) reported
+    MAGE on every reachable instance, because ``vector_search.search`` /
+    ``mg.procedures`` / ``mg.functions`` are core.
+    """
+    _patch_probe(monkeypatch, _CORE_ONLY)
+    assert await _capabilities.get_available_procedures()  # non-empty…
+    assert await _capabilities.is_mage_available() is False  # …but not MAGE
+
+
+async def test_is_mage_available_true_when_markers_present(monkeypatch):
+    _patch_probe(monkeypatch, _WITH_MAGE)
+    assert await _capabilities.is_mage_available() is True
+
+
+async def test_is_mage_available_honors_override(monkeypatch):
+    _patch_probe(monkeypatch, _WITH_MAGE)
+    monkeypatch.setenv(_capabilities.TWIN_MAGE_ENV, "off")
+    assert await _capabilities.is_mage_available() is False
+
+    _capabilities.reset_capability_cache()
+    _patch_probe(monkeypatch, _CORE_ONLY)
+    monkeypatch.setenv(_capabilities.TWIN_MAGE_ENV, "on")
+    assert await _capabilities.is_mage_available() is True
+
+
+async def test_is_mage_available_false_when_probe_fails(monkeypatch):
+    _patch_probe(monkeypatch, raise_exc=RuntimeError("no server"))
+    assert await _capabilities.is_mage_available() is False
+
+
+async def test_is_mage_available_answers_from_a_supplied_snapshot(monkeypatch):
+    """A caller passing a probed set must not trigger a second probe.
+
+    That second probe is what let ``/twin/api/system/about`` publish a count
+    and a tier taken from two different instants.
+    """
+    run = _patch_probe(monkeypatch, _WITH_MAGE)
+    snapshot = await _capabilities.get_available_procedures()
+    before = run.await_count
+
+    assert await _capabilities.is_mage_available(snapshot) is True
+    assert await _capabilities.is_mage_available(_CORE_ONLY) is False
+    assert run.await_count == before  # no re-probe on either call
+
+
+async def test_supplied_snapshot_still_yields_to_the_override(monkeypatch):
+    monkeypatch.setenv(_capabilities.TWIN_MAGE_ENV, "off")
+    assert await _capabilities.is_mage_available(_WITH_MAGE) is False
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_availability"),
+    [
+        ("on", True),
+        ("off", False),
+    ],
+)
+async def test_diagnostic_snapshot_override_skips_probe(
+    monkeypatch, override, expected_availability
+):
+    """Operator overrides are resolved without touching Memgraph."""
+    monkeypatch.setenv(_capabilities.TWIN_MAGE_ENV, override)
+    run = _patch_probe(monkeypatch, _WITH_MAGE)
+
+    snapshot = await _capabilities.get_mage_capability_snapshot()
+
+    assert snapshot.available is expected_availability
+    assert snapshot.procedures is None
+    run.assert_not_awaited()
+
+
+async def test_diagnostic_snapshot_auto_uses_one_procedure_set(monkeypatch):
+    run = _patch_probe(monkeypatch, _WITH_MAGE)
+
+    snapshot = await _capabilities.get_mage_capability_snapshot()
+
+    assert snapshot.available is True
+    assert snapshot.procedures == frozenset(_WITH_MAGE)
+    assert run.await_count == 1

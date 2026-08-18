@@ -103,7 +103,7 @@ test.describe('Twin folders runtime config', () => {
     ).toBe(true);
   });
 
-  test('@folders empty configured folder list shows the Twincore guidance', async ({
+  test('@folders empty configured folder list shows administrator guidance', async ({
     page,
   }) => {
     await bootWithRuntimeConfig(page, {
@@ -118,7 +118,7 @@ test.describe('Twin folders runtime config', () => {
 
     await page.getByTitle('Switch folder').click();
     await expect(page.getByTestId('topbar-folder-empty')).toHaveText(
-      'No folder available for this KB. Please contact Twincore Team',
+      'No folder is provisioned for this knowledge base. Ask your platform administrator to provision one.',
     );
   });
 });

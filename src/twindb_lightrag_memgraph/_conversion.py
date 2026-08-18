@@ -144,6 +144,16 @@ def conversion_formats() -> frozenset[str]:
     formats = frozenset(
         part.strip().lstrip(".").lower() for part in raw.split(",") if part.strip()
     )
+    # Audit 2026-08-06, R-08c: reintroducing zip via env has no guard —
+    # warn every boot so the decision is at least visible in the logs.
+    if "zip" in formats:
+        logger.warning(
+            "SECURITY: %s reintroduces 'zip' — markitdown 0.1.6 has no "
+            "decompression-size/recursion guard (zip-bomb DoS, audit "
+            "2026-07-10 §B4). Remove it unless the risk is accepted in "
+            "writing.",
+            TWIN_CONVERT_FORMATS_ENV,
+        )
     return formats or DEFAULT_CONVERT_FORMATS
 
 

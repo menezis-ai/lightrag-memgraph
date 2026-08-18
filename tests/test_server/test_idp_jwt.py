@@ -120,6 +120,28 @@ class TestIdpConfigFromEnv:
     def test_returns_none_when_jwks_url_unset(self):
         assert idp_jwt.IdpConfig.from_env(env={}) is None
 
+    def test_plain_http_jwks_url_warns(self, caplog):
+        """Audit 2026-08-06, R-08e: a non-https JWKS endpoint silently
+        downgrades the whole IdP trust anchor — the boot must say so."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            cfg = idp_jwt.IdpConfig.from_env(
+                env={"TWIN_IDP_JWKS_URL": "http://idp/jwks"}
+            )
+        assert cfg is not None
+        assert any(
+            "SECURITY" in record.message and "https" in record.message
+            for record in caplog.records
+        )
+
+    def test_https_jwks_url_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            idp_jwt.IdpConfig.from_env(env={"TWIN_IDP_JWKS_URL": "https://idp/jwks"})
+        assert not any("SECURITY" in record.message for record in caplog.records)
+
     def test_minimal_config(self):
         cfg = idp_jwt.IdpConfig.from_env(env={"TWIN_IDP_JWKS_URL": "https://idp/jwks"})
         assert cfg is not None
@@ -395,7 +417,10 @@ class TestDecode:
         with pytest.raises(idp_jwt.IdpAuthError) as exc:
             idp_jwt.decode_idp_token(token, cfg, cache)
         assert exc.value.status_code == 401
-        assert "Wrong audience" in exc.value.detail
+        # R-05 (audit 2026-08-06): constant client-facing message — the
+        # audience mismatch detail is a token-crafting oracle and is logged
+        # server-side only.
+        assert exc.value.detail == "Invalid token"
 
     def test_wrong_issuer(self, rsa_keypair, fake_jwks):
         cfg = _config_for(fake_jwks)
@@ -403,7 +428,7 @@ class TestDecode:
         token = _make_token(rsa_keypair, iss="https://evil/idp")
         with pytest.raises(idp_jwt.IdpAuthError) as exc:
             idp_jwt.decode_idp_token(token, cfg, cache)
-        assert "Wrong issuer" in exc.value.detail
+        assert exc.value.detail == "Invalid token"
 
     def test_audience_skipped_when_unset(self, rsa_keypair, fake_jwks):
         cfg = idp_jwt.IdpConfig(
@@ -901,3 +926,8 @@ class TestRuntimeConfigDebugUserStripped:
         # Conversion's cap is only a preference: oversized native formats
         # fall back to LightRAG, so it must not become a frontend rejection.
         assert "epub" not in cfg["extraUploadMaxBytes"]
+
+    def test_runtime_config_advertises_procedure_review_capability(self):
+        from twindb_lightrag_memgraph import _build_runtime_config
+
+        assert _build_runtime_config()["procedureReviewEnabled"] is True

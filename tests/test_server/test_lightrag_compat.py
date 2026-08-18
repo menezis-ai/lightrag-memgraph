@@ -364,6 +364,51 @@ class TestBuildSourcesFromRawData:
         sources = build_sources_from_raw_data(result)
 
         assert sources[0]["score"] is None
+        assert sources[0]["retrieval_origin"] is None
+
+    def test_request_trace_restores_measured_vector_similarity(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+            ],
+        )
+
+        sources = build_sources_from_raw_data(result, None, {"c-1": 0.837})
+
+        assert sources[0]["score"] == 0.837
+        assert sources[0]["retrieval_origin"] == "vector"
+
+    def test_empty_request_trace_marks_unscored_reference_as_graph_sourced(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {"reference_id": "1", "chunk_id": "c-1", "file_path": "/a.pdf"},
+            ],
+        )
+
+        sources = build_sources_from_raw_data(result, None, {})
+
+        assert sources[0]["score"] is None
+        assert sources[0]["retrieval_origin"] == "graph"
+
+    def test_envelope_metric_takes_precedence_over_request_trace(self):
+        result = _envelope(
+            references=[{"reference_id": "1", "file_path": "/a.pdf"}],
+            chunks=[
+                {
+                    "reference_id": "1",
+                    "chunk_id": "c-1",
+                    "file_path": "/a.pdf",
+                    "similarity": 0.75,
+                },
+            ],
+        )
+
+        sources = build_sources_from_raw_data(result, None, {"c-1": 0.62})
+
+        assert sources[0]["score"] == 0.75
+        assert sources[0]["retrieval_origin"] == "vector"
 
     @pytest.mark.parametrize("invalid_score", [True, float("nan"), float("inf")])
     def test_invalid_metric_is_not_projected_as_a_score(self, invalid_score):

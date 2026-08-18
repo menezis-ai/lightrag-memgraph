@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+import os
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
@@ -35,6 +37,26 @@ _security = HTTPBearer(auto_error=False)
 DEFAULT_JWT_USERNAME = "admin"
 DEFAULT_JWT_PASSWORD = "".join(("change", "me"))
 _DUMMY_PASSWORD = "\0" * 32
+
+# --- Login brute-force throttle (audit 2026-08-06, R-04) -------------------
+# Three layered, dependency-free controls on POST /login:
+#   1. per-IP sliding-window rate limit (429 + Retry-After),
+#   2. per-account exponential backoff (only failed attempts pay it),
+#   3. a sev=critical audit event + SECURITY log once an account crosses the
+#      consecutive-failure alert threshold (purple-team: the login_failure
+#      telemetry existed but nothing consumed it).
+# The warning-only default-password posture (product decision 2026-06-10) is
+# NOT revisited here — these controls encadre it instead.
+_LOGIN_RATE_LIMIT_DEFAULT = 5  # attempts per minute per source IP; 0 disables
+_LOGIN_BACKOFF_THRESHOLD = 3  # consecutive failures before the first delay
+_LOGIN_BACKOFF_MAX_DEFAULT = 30  # seconds; env TWIN_LOGIN_BACKOFF_MAX_SECONDS
+_LOGIN_ALERT_THRESHOLD = 10  # consecutive failures → critical audit event
+_LOGIN_TRACKING_MAX_KEYS = 10_000  # crude memory cap; state is best-effort
+
+_login_attempts_by_ip: dict[str, deque[float]] = {}
+_login_failures_by_account: dict[str, int] = {}
+_login_rate_limit_per_minute: int = _LOGIN_RATE_LIMIT_DEFAULT
+_login_backoff_max_seconds: int = _LOGIN_BACKOFF_MAX_DEFAULT
 
 # Module-level config -- set by configure_auth()
 _static_api_key: str | None = None
@@ -159,16 +181,25 @@ def configure_auth(
     local_jwt_cookie_name: str = "twin_local_token",
     production_mode: bool = False,
     idp_enabled: bool = False,
+    login_rate_limit_per_minute: int | None = None,
+    login_backoff_max_seconds: int | None = None,
 ) -> None:
     """Configure auth parameters.  Called once at startup.
 
     LightRAG-parity posture (product decision 2026-06-10): insecure
     defaults are tolerated with a loud warning by default. Operators
     can opt into a fail-closed production posture through ``create_app``.
+
+    Login throttle knobs (audit 2026-08-06, R-04): ``None`` defers to the
+    ``TWIN_LOGIN_RATE_LIMIT_PER_MINUTE`` / ``TWIN_LOGIN_BACKOFF_MAX_SECONDS``
+    env vars, then to the module defaults. ``0`` disables the per-IP rate
+    limit (the per-account backoff stays; set the max to 0 to disable it
+    too). Reconfiguring auth resets the throttle state.
     """
     global _static_api_key, _jwt_secret, _jwt_algorithm
     global _jwt_expiration_hours, _jwt_username, _jwt_password, _auth_accounts
     global _auth_enabled, _local_jwt_cookie_name
+    global _login_rate_limit_per_minute, _login_backoff_max_seconds
 
     accounts = (
         dict(auth_accounts)
@@ -198,7 +229,90 @@ def configure_auth(
     _local_jwt_cookie_name = local_jwt_cookie_name
     _auth_enabled = bool(api_key or jwt_secret)
 
+    _login_rate_limit_per_minute = _resolve_login_throttle_knob(
+        login_rate_limit_per_minute,
+        "TWIN_LOGIN_RATE_LIMIT_PER_MINUTE",
+        _LOGIN_RATE_LIMIT_DEFAULT,
+    )
+    _login_backoff_max_seconds = _resolve_login_throttle_knob(
+        login_backoff_max_seconds,
+        "TWIN_LOGIN_BACKOFF_MAX_SECONDS",
+        _LOGIN_BACKOFF_MAX_DEFAULT,
+    )
+    _reset_login_throttle()
+
     _log_auth_mode(api_key, jwt_secret, accounts)
+
+
+def _resolve_login_throttle_knob(
+    explicit: int | None, env_name: str, default: int
+) -> int:
+    if explicit is not None:
+        return max(int(explicit), 0)
+    raw = (os.environ.get(env_name) or "").strip()
+    if raw:
+        try:
+            return max(int(raw), 0)
+        except ValueError:
+            logger.warning("Invalid %s=%r ignored (integer expected)", env_name, raw)
+    return default
+
+
+def _reset_login_throttle() -> None:
+    """Drop all login-throttle state (called by configure_auth and tests)."""
+    _login_attempts_by_ip.clear()
+    _login_failures_by_account.clear()
+
+
+def _login_client_ip(request: Request | None) -> str:
+    """Socket peer for throttle accounting; X-Forwarded-For is NOT trusted."""
+    if request is not None and request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _login_rate_limited(ip: str) -> tuple[int, bool]:
+    """Record one attempt for *ip*.
+
+    Returns ``(retry_after_seconds, just_tripped)`` — ``just_tripped`` is
+    True only for the attempt that first fills the window, so the caller can
+    audit the limit hit once instead of per blocked request (the audit feed
+    flooding was itself an R-04 observation).
+    """
+    if _login_rate_limit_per_minute <= 0:
+        return 0, False
+    if len(_login_attempts_by_ip) > _LOGIN_TRACKING_MAX_KEYS:
+        _login_attempts_by_ip.clear()
+    now = datetime.now(timezone.utc).timestamp()
+    window = _login_attempts_by_ip.setdefault(ip, deque())
+    while window and now - window[0] > 60.0:
+        window.popleft()
+    if len(window) >= _login_rate_limit_per_minute:
+        just_tripped = len(window) == _login_rate_limit_per_minute
+        return max(1, int(60.0 - (now - window[0]))), just_tripped
+    window.append(now)
+    return 0, False
+
+
+def _login_backoff_seconds(username: str) -> float:
+    """Exponential delay owed after the current consecutive-failure count."""
+    if _login_backoff_max_seconds <= 0:
+        return 0.0
+    failures = _login_failures_by_account.get(username, 0)
+    if failures < _LOGIN_BACKOFF_THRESHOLD:
+        return 0.0
+    return float(
+        min(2 ** (failures - _LOGIN_BACKOFF_THRESHOLD), _login_backoff_max_seconds)
+    )
+
+
+def _record_login_failure(username: str) -> int:
+    """Increment the account's consecutive-failure count; return the total."""
+    if len(_login_failures_by_account) > _LOGIN_TRACKING_MAX_KEYS:
+        _login_failures_by_account.clear()
+    failures = _login_failures_by_account.get(username, 0) + 1
+    _login_failures_by_account[username] = failures
+    return failures
 
 
 def _validate_production_auth_config(
@@ -257,7 +371,13 @@ def _create_jwt(payload: dict[str, Any]) -> str:
 
 
 def _decode_jwt(token: str) -> dict[str, Any]:
-    """Decode and verify a JWT token."""
+    """Decode and verify a JWT token.
+
+    Audit 2026-08-06, R-05: the client-facing message is deliberately
+    constant — PyJWT internals (codec bytes, signature-mismatch reasons)
+    are an error oracle that helps token crafting. The detail is logged
+    server-side only.
+    """
     import jwt as pyjwt
 
     try:
@@ -268,9 +388,10 @@ def _decode_jwt(token: str) -> dict[str, Any]:
             detail="Token expired",
         )
     except pyjwt.InvalidTokenError as exc:
+        logger.debug("JWT rejected: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {exc}",
+            detail="Invalid token",
         )
 
 
@@ -307,6 +428,40 @@ async def _emit_login_activity(
             "username": username or "anonymous",
             "success": success,
             "reason": reason if reason else None,
+        },
+    )
+
+
+async def _emit_login_alert(*, username: str, failures: int, source_ip: str) -> None:
+    """sev=critical alert when an account crosses the failure threshold.
+
+    Purple-team gap (audit 2026-08-06): ``login_failure`` warnings existed
+    but no consumer ever escalated. This is the reducer — one critical event
+    per threshold multiple, plus the SECURITY log line ops hooks scrape.
+    """
+    from .activity_events import emit_auth_event
+
+    logger.warning(
+        "SECURITY: %d consecutive login failures for account %r from %s",
+        failures,
+        username,
+        source_ip,
+    )
+    await emit_auth_event(
+        action="login_failure_threshold",
+        sev="critical",
+        actor=username or "anonymous",
+        target_type="auth",
+        target_label="login",
+        summary=(
+            f"{failures} consecutive login failures for "
+            f"{username or 'anonymous'} (source {source_ip})"
+        ),
+        meta={
+            "username": username or "anonymous",
+            "success": False,
+            "reason": "consecutive_failure_threshold",
+            "consecutive_failures": failures,
         },
     )
 
@@ -666,7 +821,16 @@ async def _auth_status_open(credentials) -> AuthStatusResponse:
     )
 
 
-@auth_router.get("/auth-status")
+@auth_router.get(
+    "/auth-status",
+    summary="Session status",
+    # Anonymous access is allowed (the bearer is optional and only enriches
+    # the report). openapi_extra list values are CONCATENATED onto the
+    # generated operation, so appending the empty requirement turns the
+    # auto-emitted [{HTTPBearer}] into [{HTTPBearer}, {}] — OpenAPI's
+    # encoding for "bearer or anonymous".
+    openapi_extra={"security": [{}]},
+)
 async def auth_status(
     request: Request,
     credentials: Annotated[
@@ -674,6 +838,10 @@ async def auth_status(
         Depends(_security),
     ] = None,
 ) -> AuthStatusResponse:
+    """Report whether authentication is enabled on this deployment and
+    whether the caller is currently authenticated (via session cookie,
+    `Bearer` token or API key). `login_required: true` means the caller
+    must go through `POST /login` before using protected endpoints."""
     from . import idp_jwt
 
     idp_config = idp_jwt.get_active_config()
@@ -727,12 +895,33 @@ async def auth_status(
     )
 
 
-@auth_router.post("/login")
+@auth_router.post(
+    "/login",
+    summary="Log in with username and password",
+    responses={
+        401: {"description": "Invalid username or password"},
+        429: {"description": "Too many login attempts (rate limited)"},
+        501: {"description": "Password login is not configured on this deployment"},
+    },
+)
 async def login(  # NOSONAR - async contract.
     body: LoginRequest,
     response: Response,
+    # Bare ``Request`` annotation (not ``Request | None``) so FastAPI keeps
+    # special-casing the injection; the None default preserves the direct
+    # two-arg call contract used by tests and integrations (same pattern as
+    # ``require_auth`` below).
+    request: Request = None,  # type: ignore[assignment]
 ) -> LoginResponse:
-    """Authenticate with username/password and receive a JWT token."""
+    """Authenticate with username and password. On success the response
+    carries a `Bearer` token (`access_token`) and also sets it as an
+    HttpOnly session cookie, so both API clients and the browser UI can
+    use it. `expires_in` is the token lifetime in seconds.
+
+    Brute-force posture (audit 2026-08-06, R-04): per-IP sliding-window
+    rate limit (429 + `Retry-After`), per-account exponential backoff on
+    consecutive failures, and a `sev=critical` audit event past the alert
+    threshold."""
     if not _jwt_secret:
         await _emit_login_activity(
             username=body.username,
@@ -742,6 +931,21 @@ async def login(  # NOSONAR - async contract.
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="JWT auth not configured on this server",
+        )
+
+    source_ip = _login_client_ip(request)
+    retry_after, just_tripped = _login_rate_limited(source_ip)
+    if retry_after:
+        if just_tripped:
+            await _emit_login_activity(
+                username=body.username,
+                success=False,
+                reason="rate_limited",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts; retry later",
+            headers={"Retry-After": str(retry_after)},
         )
 
     if _auth_accounts:
@@ -755,16 +959,27 @@ async def login(  # NOSONAR - async contract.
     )
     password_matches = _secret_equal(body.password, password_to_check)
     if expected_password is None or not password_matches:
+        failures = _record_login_failure(body.username or "anonymous")
+        if failures % _LOGIN_ALERT_THRESHOLD == 0:
+            await _emit_login_alert(
+                username=body.username,
+                failures=failures,
+                source_ip=source_ip,
+            )
+        backoff = _login_backoff_seconds(body.username or "anonymous")
         await _emit_login_activity(
             username=body.username,
             success=False,
             reason="invalid_credentials",
         )
+        if backoff > 0:
+            await asyncio.sleep(backoff)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
 
+    _login_failures_by_account.pop(body.username or "anonymous", None)
     token = _create_jwt({"sub": body.username})
     expires_in = _jwt_expiration_hours * 3600
     response.set_cookie(
@@ -790,6 +1005,12 @@ async def logout(
     return {"ok": True}
 
 
-@auth_router.post("/logout")
+@auth_router.post(
+    "/logout",
+    summary="Log out (clear the session cookie)",
+)
 async def logout_route(request: Request, response: Response) -> dict[str, bool]:
+    """Clear the local session cookie and record the logout in the audit
+    feed. Previously issued `Bearer` tokens are not revoked — they expire
+    on their own schedule."""
     return await logout(response, request)

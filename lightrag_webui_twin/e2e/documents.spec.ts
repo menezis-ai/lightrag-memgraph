@@ -48,6 +48,27 @@ test.describe('Documents RC-1 persistence', () => {
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 
+  test('@documents @regression partial bulk delete keeps failed rows and reports 207 honestly', async ({
+    page,
+  }) => {
+    await setMswScenario(page, { bulkDeleteFailIds: ['d4'] });
+    await page.getByLabel('Select oracle-restart-procedure.pdf').check();
+    await page.getByLabel('Select memgraph-mage-3.8-release-notes.md').check();
+    await page.getByTestId('docs-bulk-delete').click();
+    await page.getByTestId('docs-bulk-delete').click();
+
+    await expect(page.getByRole('alert')).toContainText(
+      'Bulk delete partially completed',
+    );
+    await expect(page.getByRole('alert')).toContainText('1 deleted · 1 failed');
+    await expect(page.getByTestId('docs-row-d1')).toBeHidden();
+    await expect(page.getByTestId('docs-row-d4')).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByTestId('docs-row-d1')).toBeHidden();
+    await expect(page.getByTestId('docs-row-d4')).toBeVisible();
+  });
+
   test('@documents @rc1 deleting state stays visible during the round-trip and the Graph tab refetches', async ({
     page,
   }) => {
@@ -209,9 +230,13 @@ test.describe('Documents classification badge (MIP)', () => {
     await boot(page);
   });
 
-  test('@documents @doctrine @classification C2 shield renders for classified docs and is silent otherwise', async ({
+  test('@documents @doctrine @classification every document shows its confidentiality level (DOC-V4-001)', async ({
     page,
   }) => {
+    // Product decision 2026-08-04 (QA DOC-V4-001): the pill is no longer
+    // silent on legacy strings or unclassified docs — every row shows its
+    // level. Structured MIP labels keep priority and their rich tooltip.
+
     // d1 carries a STRUCTURED MIP classification (class_id "C2",
     // class_name "C2 Confidentiel") → the read-only ClassPill shield renders.
     // C2 maps to the "internal" tone, so getMipDisplayName() shows "Internal"
@@ -232,15 +257,26 @@ test.describe('Documents classification badge (MIP)', () => {
     // The visible label text is the display name only ("Internal").
     await expect(pill.locator('.class-pill-label')).toHaveText('Internal');
 
-    // d5 carries a LEGACY string classification ("restricted"), which is NOT
-    // a structured payload → the pill is silent (renders nothing).
+    // d5 carries a LEGACY string classification ("restricted") — kept
+    // verbatim with the unknown tone so the operator sees what is stored.
     const legacyRow = page.getByTestId('docs-row-d5');
     await expect(legacyRow).toBeVisible();
-    await expect(legacyRow.getByTestId('class-pill-d5')).toHaveCount(0);
+    const legacyPill = legacyRow.getByTestId('class-pill-d5');
+    await expect(legacyPill).toBeVisible();
+    await expect(legacyPill).toHaveAttribute('data-class-tone', 'unknown');
+    await expect(legacyPill.locator('.class-pill-label')).toHaveText(
+      'restricted',
+    );
 
-    // d3 has no classification at all → also silent (pure-absence case).
+    // d3 has no classification at all → the pill falls back to the
+    // document's visibility ("private").
     const unclassifiedRow = page.getByTestId('docs-row-d3');
     await expect(unclassifiedRow).toBeVisible();
-    await expect(unclassifiedRow.getByTestId('class-pill-d3')).toHaveCount(0);
+    const fallbackPill = unclassifiedRow.getByTestId('class-pill-d3');
+    await expect(fallbackPill).toBeVisible();
+    await expect(fallbackPill).toHaveAttribute('data-class-tone', 'private');
+    await expect(fallbackPill.locator('.class-pill-label')).toHaveText(
+      'Private',
+    );
   });
 });

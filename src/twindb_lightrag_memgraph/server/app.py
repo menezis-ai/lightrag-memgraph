@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse
 from lightrag import LightRAG
 from neo4j.exceptions import ClientError as Neo4jClientError
 from neo4j.exceptions import Neo4jError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import auth_router, configure_auth, require_auth
 from .api_wiring import log_api_wiring_sanity
@@ -81,32 +81,70 @@ def _production_auth_required(env: dict[str, str] | None = None) -> bool:
 
 
 class QueryResponse(BaseModel):
-    response: str
-    source_doc_ids: list[str] = []
+    response: str = Field(description="The generated answer, as plain text.")
+    source_doc_ids: list[str] = Field(
+        default=[],
+        description=(
+            "Ids of the documents the answer was grounded on. May be empty "
+            "when the retrieval found no matching sources."
+        ),
+        examples=[["doc-a1b2c3d4"]],
+    )
 
 
 class InsertRequest(BaseModel):
-    text: str
-    file_path: str | None = None
-    metadata: dict[str, Any] | None = None
+    text: str = Field(
+        description="Raw text to ingest as a new document.",
+        examples=[
+            "Remote work policy: employees may work remotely up to 3 days a week."
+        ],
+    )
+    file_path: str | None = Field(
+        default=None,
+        description=(
+            "Optional display name recorded as the document's source path. "
+            "Rejected when source classification is active (upload the "
+            "original file instead)."
+        ),
+        examples=["policies/remote-work.md"],
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Accepted for backward compatibility; this endpoint does not " "persist it."
+        ),
+    )
 
 
 class InsertResponse(BaseModel):
-    status: str
-    doc_id: str | None = None
+    status: str = Field(description='"ok" when the text was accepted for indexing.')
+    doc_id: str | None = Field(
+        default=None, description="Id of the created document, when available."
+    )
 
 
 class HealthResponse(BaseModel):
-    status: str
-    version: str
-    workspace: str
-    storage_backends: dict[str, str]
-    tracing_enabled: bool
+    status: str = Field(description='"ok" when the server is up.')
+    version: str = Field(description="Installed package version.", examples=["1.1.0"])
+    workspace: str = Field(
+        description="Active physical workspace (storage namespace).",
+        examples=["default"],
+    )
+    storage_backends: dict[str, str] = Field(
+        description="Configured storage implementation per slot (kv, vector, graph, doc_status)."
+    )
+    tracing_enabled: bool = Field(
+        description="Whether distributed tracing is currently enabled."
+    )
 
 
 class ReadinessResponse(BaseModel):
-    status: str
-    checks: dict[str, dict[str, Any]]
+    status: str = Field(
+        description='"ready" when every readiness check passes, "degraded" otherwise.'
+    )
+    checks: dict[str, dict[str, Any]] = Field(
+        description="Per-dependency readiness detail (database connectivity, auth posture, ...)."
+    )
 
 
 def _classification_guard_active(env: dict[str, str] | None = None) -> bool:
@@ -199,6 +237,64 @@ def _content_length(headers: Any) -> int | None:
     return value if value >= 0 else None
 
 
+class _BodyLimitExceeded(HTTPException):
+    """Streamed body passed the per-route ceiling (audit 2026-08-06, R-02).
+
+    Subclasses ``HTTPException`` on purpose: FastAPI's body-parsing wrapper
+    swallows generic exceptions into a 400 "error parsing the body", but
+    re-raises HTTPException — so the 413 survives the route layer and is
+    converted by the operational middleware (metric + log + response).
+    """
+
+    def __init__(self, counted: int) -> None:
+        super().__init__(
+            status_code=413,
+            detail=f"Request body too large after {counted} bytes",
+        )
+
+
+def _limited_receive(receive: Any, limit: int, *, path: str = "?") -> Any:
+    """Wrap an ASGI receive callable with a hard byte ceiling.
+
+    Audit 2026-08-06, R-02: the header-only check lets chunked /
+    Content-Length-less bodies of any size through. This mirrors the
+    upstream 1.5.6 pattern (``lightrag.api.asgi_helpers.limited_receive``,
+    which protects the overlay through its own middleware) — the
+    Content-Length fast path is a courtesy, the counting wrapper is the
+    enforcement. Implemented locally rather than imported from
+    ``lightrag.api`` so this module keeps no import-order constraint with
+    the pipmaster security baseline.
+
+    The raise travels through anyio's task group and FastAPI's body
+    parser, which converts it to a 400 "error parsing the body" — the
+    same observable outcome as the overlay's upstream middleware (audit
+    measured exactly that). The rejection (stream cut, bounded memory)
+    is the security property; the metric + warning are recorded HERE, at
+    raise time, because downstream layers re-shape the exception.
+    """
+    counted = 0
+
+    async def _receive() -> dict[str, Any]:
+        nonlocal counted
+        message = await receive()
+        if message.get("type") == "http.request":
+            body = message.get("body", b"")
+            if body:
+                counted += len(body)
+                if counted > limit:
+                    increment_metric("body_limit_rejects_total")
+                    logger.warning(
+                        "body_limit_exceeded path=%s counted=%s limit_bytes=%s",
+                        path,
+                        counted,
+                        limit,
+                    )
+                    raise _BodyLimitExceeded(counted)
+        return message
+
+    return _receive
+
+
 def _record_status_metrics(path: str, status_code: int) -> None:
     route_group = _route_group(path)
     if status_code in {401, 403}:
@@ -255,10 +351,11 @@ async def _memgraph_readiness_check() -> dict[str, Any]:
             result = await session.run("RETURN 1 AS ok")
             await result.consume()
     except Exception as exc:  # noqa: BLE001 - readiness must report dependency state
-        return {
-            "status": "failed",
-            "detail": f"{type(exc).__name__}: {exc}",
-        }
+        # Audit 2026-08-06, R-05: /ready is anonymous — driver exceptions
+        # leak internal hosts/ports/address resolution (recon material).
+        # The detail goes to the server log; the probe gets a bare status.
+        logger.info("readiness: memgraph check failed: %s: %s", type(exc).__name__, exc)
+        return {"status": "failed", "detail": "dependency unreachable"}
     return {"status": "ok"}
 
 
@@ -369,9 +466,11 @@ async def _run_optional_memgraph_command(query: str) -> dict[str, Any]:
                 "status": "skipped",
                 "detail": f"Memgraph command not supported here: {query.rstrip(';')}",
             }
-        return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
+        logger.info("readiness: %s failed: %s: %s", query, type(exc).__name__, exc)
+        return {"status": "failed", "detail": "dependency check failed"}
     except Exception as exc:  # noqa: BLE001 - readiness must report dependency state
-        return {"status": "failed", "detail": f"{type(exc).__name__}: {exc}"}
+        logger.info("readiness: %s failed: %s: %s", query, type(exc).__name__, exc)
+        return {"status": "failed", "detail": "dependency check failed"}
     return {"status": "ok", "rows": rows}
 
 
@@ -692,6 +791,7 @@ def _oversized_response(
     """
     if not (limit and body_bytes is not None and body_bytes > limit):
         return None
+    increment_metric("body_limit_rejects_total")
     response = JSONResponse(
         {
             "detail": "Request body too large",
@@ -759,6 +859,21 @@ def _log_request_completed(
     )
 
 
+async def _call_next_with_actor(request: Request, call_next, route_group: str):
+    """Dispatch downstream, binding the request-resolved actor for ingestion.
+
+    R-03a (audit 2026-08-06): the server-side upload audit event emitted at
+    enqueue reads the actor from this context — never a client claim.
+    """
+    if route_group != "ingestion":
+        return await call_next(request)
+    from .._constants import upload_actor_context
+    from .auth import resolve_auth_actor
+
+    with upload_actor_context(resolve_auth_actor(request)):
+        return await call_next(request)
+
+
 def _make_operational_middleware(
     settings: LightRAGServerSettings, auth_mode_label: str
 ):
@@ -791,8 +906,27 @@ def _make_operational_middleware(
         if oversized is not None:
             return oversized
 
+        if limit:
+            # R-02: enforce the ceiling on the byte stream itself, so a
+            # chunked or Content-Length-less body cannot bypass the header
+            # fast path above. Mutating request._receive is safe here:
+            # BaseHTTPMiddleware's wrapped_receive reads it lazily.
+            request._receive = _limited_receive(request.receive, limit, path=path)
+
         try:
-            response = await call_next(request)
+            response = await _call_next_with_actor(request, call_next, route_group)
+        except _BodyLimitExceeded:
+            # Reached only when the exception propagates unwrapped (a route
+            # reading the raw ASGI stream outside FastAPI's body parser).
+            # The metric + warning were already recorded at raise time.
+            return JSONResponse(
+                {
+                    "detail": "Request body too large",
+                    "limit_bytes": limit,
+                    "request_id": request_id,
+                },
+                status_code=413,
+            )
         except Exception:
             _record_status_metrics(path, 500)
             _log_request_failed(
@@ -917,8 +1051,16 @@ def _register_core_routes(
 ) -> None:
     """Register the auth-protected core routes (/health, /ready, /query, /insert)."""
 
-    @app.get("/health", response_model=HealthResponse)
+    @app.get(
+        "/health",
+        response_model=HealthResponse,
+        tags=["system"],
+        summary="Liveness and runtime identity",
+    )
     def health():
+        """Report that the server is up, with its version, active workspace
+        and configured storage backends. Unauthenticated: intended for load
+        balancers and monitoring probes."""
         from twindb_lightrag_memgraph import __version__ as plugin_version
         from .tracing import is_tracing_enabled
 
@@ -935,27 +1077,48 @@ def _register_core_routes(
             tracing_enabled=is_tracing_enabled(),
         )
 
-    @app.get("/ready", response_model=ReadinessResponse)
+    @app.get(
+        "/ready",
+        response_model=ReadinessResponse,
+        tags=["system"],
+        summary="Readiness with per-dependency checks",
+    )
     async def ready():
+        """Report whether the server is ready to serve traffic. Runs real
+        dependency checks (database connectivity, auth posture) and returns
+        their individual results, so a `degraded` status pinpoints which
+        dependency is failing."""
         return await _readiness_response(
             require_production_auth,
             auth_backend_configured,
             idp_strict_claims_configured,
         )
 
+    from .folder import document_folder_header as _document_folder_header
+
     @app.post(
         "/query",
         response_model=QueryResponse,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_auth), Depends(_document_folder_header)],
+        tags=["core"],
+        summary="Ask a question (legacy envelope)",
+        responses={
+            401: {"description": "Missing or invalid credentials"},
+            403: {"description": "Requested folder is unknown or out of scope"},
+        },
     )
     async def query(body: TwinQueryBody, request: Request):
-        """Legacy response envelope behind the Twin query security boundary.
+        """Answer a question from the knowledge base and return a plain-text
+        answer plus the ids of the source documents.
 
-        The root endpoint remains for standalone-client compatibility, but it
-        deliberately shares the strict request model and retrieval ContextVars
-        with ``/twin/api/query``.  No native prompt-control model reaches the
-        LLM on this path.
+        Legacy envelope kept for pre-WebUI clients: prefer
+        `POST /twin/api/query`, which returns the answer together with its
+        source chunks. Both endpoints accept the same request body and honour
+        the `X-Twin-Folder` scoping header.
         """
+        # Shares the strict request model and retrieval ContextVars with
+        # /twin/api/query; no native prompt-control model reaches the LLM
+        # on this path.
         rag = _get_rag()
 
         # P1: Extract distributed trace context from agent headers
@@ -986,13 +1149,23 @@ def _register_core_routes(
         "/insert",
         response_model=InsertResponse,
         dependencies=[Depends(require_auth)],
+        tags=["core"],
+        summary="Ingest raw text as a document",
         responses={
             400: {
-                "description": "Raw-text insertion is disabled when MIP source classification is active"
+                "description": "Raw-text insertion is disabled when source classification is active"
             },
+            401: {"description": "Missing or invalid credentials"},
         },
     )
     async def insert(body: InsertRequest):
+        """Submit raw text for indexing into the knowledge base.
+
+        The text is chunked, embedded and added to the knowledge graph
+        asynchronously. On deployments where sensitivity-label classification
+        governs ingestion, this endpoint is disabled (400) — upload the
+        original file through the document upload endpoint instead.
+        """
         rag = _get_rag()
         file_path = _usable_file_path(body.file_path)
         if _classification_guard_active():
@@ -1019,10 +1192,116 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
 
     lifespan = _build_lifespan(settings)
 
+    from twindb_lightrag_memgraph import __version__ as _package_version
+
     app = FastAPI(
-        title="LightRAG Server (Memgraph)",
-        description="LightRAG HTTP API with Memgraph backends, chunk routes, and distributed tracing",
-        version="0.3.0",
+        title="Twin KMS API",
+        description=(
+            "HTTP API of the Twin knowledge-management runtime (LightRAG + "
+            "Memgraph).\n\n"
+            "**Authentication** — depending on deployment configuration: a "
+            "`Bearer` token from `POST /login`, or an API key minted under "
+            "Settings → API keys sent as a `Bearer` token "
+            "(`Authorization: Bearer twk_...`). The `X-API-Key` header is "
+            "reserved for the deployment's static infrastructure key. When "
+            "no auth backend is configured the API is open.\n\n"
+            "**Folder scoping** — endpoints that operate inside a folder "
+            "accept the `X-Twin-Folder` header. Omit it to use the default "
+            "folder; list valid ids with `GET /twin/api/folders`."
+        ),
+        version=_package_version,
+        openapi_tags=[
+            {
+                "name": "auth",
+                "description": "Login, logout and session status.",
+            },
+            {
+                "name": "core",
+                "description": (
+                    "LightRAG-compatible core endpoints (legacy envelope). "
+                    "New clients should prefer the `/twin/api/query` family."
+                ),
+            },
+            {
+                "name": "system",
+                "description": (
+                    "Health, readiness, runtime identity and operational " "metrics."
+                ),
+            },
+            {
+                "name": "documents",
+                "description": (
+                    "Document listing, metadata, folder membership and "
+                    "lifecycle (approve / reject / delete)."
+                ),
+            },
+            {
+                "name": "folders",
+                "description": (
+                    "Folder catalog and admin folder management. Folders "
+                    "partition the knowledge base; most other endpoints are "
+                    "scoped by the `X-Twin-Folder` header."
+                ),
+            },
+            {
+                "name": "tags",
+                "description": (
+                    "Tag catalog, categories, and the tag governance "
+                    "workflow (suggest, approve, deprecate, ...)."
+                ),
+            },
+            {
+                "name": "graph",
+                "description": (
+                    "Knowledge-graph entities and relations: read, search, "
+                    "create, edit, delete."
+                ),
+            },
+            {
+                "name": "activity",
+                "description": "Audit feed of operator and system actions.",
+            },
+            {
+                "name": "notifications",
+                "description": "Operator notification inbox.",
+            },
+            {
+                "name": "twin-query",
+                "description": (
+                    "Grounded question answering: answers with their source "
+                    "chunks, plus structured-data and streaming variants."
+                ),
+            },
+            {
+                "name": "chunks",
+                "description": (
+                    "Chunk-level reads: a chunk's surrounding context and "
+                    "its parent document."
+                ),
+            },
+            {
+                "name": "api-keys",
+                "description": "Admin management of generated API keys.",
+            },
+            {
+                "name": "vision-settings",
+                "description": (
+                    "Runtime image curation and admin-controlled procedure "
+                    "ingestion activation."
+                ),
+            },
+            {
+                "name": "procedures",
+                "description": (
+                    "Human-approval workflow for procedure documents: parked "
+                    "bundles are reviewed, then released or refused."
+                ),
+            },
+            {
+                "name": "quota",
+                "description": "Storage quota snapshot for the instance.",
+            },
+        ],
         lifespan=lifespan,
     )
     app.add_exception_handler(Neo4jError, _handle_memgraph_exception)
@@ -1126,7 +1405,10 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         return rag
 
     app.include_router(
-        build_twin_query_router(_get_rag_for_twin_query),
+        build_twin_query_router(
+            _get_rag_for_twin_query,
+            llm_model=settings.llm_model,
+        ),
         prefix=TWIN_API_PREFIX,
         dependencies=[Depends(require_auth)],
     )
@@ -1188,8 +1470,26 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(quota_router, prefix=TWIN_API_PREFIX)
     logger.info("Quota snapshot route mounted at %s/quota", TWIN_API_PREFIX)
 
-    @app.get("/twin/api/ops/metrics", dependencies=[Depends(require_auth)])
+    # -- About / system identity card (Settings -> About). Two-tier payload:
+    # software versions for any caller the backend serves, deployment shape for
+    # admins. Mirrored in patches/registry.py — mount both or the overlay 404s.
+    from .system_info_routes import build_system_info_router
+
+    # Bound to THIS module's _rag: the standalone factory owns its instance
+    # and never populates registry._twindb_state, so the overlay default
+    # would report an empty storage topology here.
+    app.include_router(build_system_info_router(lambda: _rag), prefix=TWIN_API_PREFIX)
+    logger.info("System about route mounted at %s/system/about", TWIN_API_PREFIX)
+
+    @app.get(
+        "/twin/api/ops/metrics",
+        dependencies=[Depends(require_auth)],
+        tags=["system"],
+        summary="Operational metrics snapshot",
+    )
     def operational_metrics():
+        """Return the in-process operational counters (request volumes,
+        latencies, error counts) accumulated since the server started."""
         return metrics_snapshot()
 
     # -- Instance quota + operational middleware. Quota is registered first
@@ -1198,6 +1498,9 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.middleware("http")(_instance_quota_middleware)
     app.middleware("http")(_make_operational_middleware(settings, _auth_mode_label))
 
+    from .openapi_docs import install_openapi_documentation
+
+    install_openapi_documentation(app)
     log_api_wiring_sanity(app, surface="standalone")
 
     return app

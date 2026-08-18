@@ -387,17 +387,39 @@ class TestPrivateCopyDriftCanary:
             "_find_most_related_edges_from_entities",
         }
 
+    def test_final_answer_cache_is_consulted_after_retrieval(self):
+        """Supported LightRAG pins rebuild grounding before a query-cache hit.
+
+        This ordering guarantees that ``references`` and Twin's chunk-query
+        trace describe the same request even when LightRAG reuses the final
+        answer.  Keep this source-order canary in the compatibility matrix:
+        moving ``handle_cache`` ahead of retrieval would make an empty trace
+        ambiguous instead of proving graph-only provenance.
+        """
+        import lightrag.operate as operate
+
+        kg_source = inspect.getsource(operate.kg_query)
+        naive_source = inspect.getsource(operate.naive_query)
+
+        assert kg_source.index("_build_query_context(") < kg_source.index(
+            "cached_result = await handle_cache("
+        )
+        assert naive_source.index("_get_vector_context(") < naive_source.index(
+            "cached_result = await handle_cache("
+        )
+
     def test_recorded_hashes_match_installed_lightrag(self):
         """Independent recomputation (ast over the installed operate.py file,
         immune to runtime monkeypatching) must match the recorded baselines.
-        Only meaningful on the versions we recorded — 1.4.9.11 (BNP pin,
-        computed from the exact PyPI wheel) and 1.5.4 (local dev)."""
+        Only meaningful on the versions we recorded — 1.4.9.11 (historical
+        BNP pin, computed from the exact PyPI wheel) and 1.5.4–1.5.6 (the
+        supported line; identical bodies, recomputation confirmed on 1.5.6)."""
         version = canary.installed_lightrag_version()
-        if version not in ("1.4.9.11", "1.5.4"):
+        if version not in ("1.4.9.11", "1.5.4", "1.5.5", "1.5.6"):
             pytest.skip(
                 f"no recorded hash baseline for lightrag-hku {version} "
-                "(only 1.4.9.11 and 1.5.4 were computed; the drift warning "
-                "is the intended signal on other versions)"
+                "(only 1.4.9.11 and 1.5.4–1.5.6 were computed; the drift "
+                "warning is the intended signal on other versions)"
             )
         import lightrag.operate as operate
 
@@ -436,11 +458,22 @@ class _ReviewedMemgraphStorage:
 
 
 class TestMemgraphInitCanary:
-    @pytest.mark.parametrize("version", ["1.4.9.11", "1.4.11", "1.4.12"])
-    def test_supported_matrix_signature_and_body_are_silent(
-        self, version, monkeypatch, caplog
+    @pytest.mark.parametrize(
+        ("version", "digest"),
+        [
+            (
+                "1.4.9.11",
+                "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d",
+            ),
+            (
+                "1.5.6",
+                "a0c43427a1013f0d24f4e4ce1ad41558a5c13af7a50929faab419c32fb79b47b",
+            ),
+        ],
+    )
+    def test_recorded_signature_and_body_are_silent(
+        self, version, digest, monkeypatch, caplog
     ):
-        digest = "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d"
         monkeypatch.setattr(canary, "installed_lightrag_version", lambda: version)
         monkeypatch.setattr(canary, "normalized_source_hash", lambda _fn: digest)
 
@@ -451,11 +484,12 @@ class TestMemgraphInitCanary:
         assert str(inspect.signature(reviewed)) in canary.KNOWN_MEMGRAPH_INIT_SIGNATURES
         assert _canary_messages(caplog) == []
 
-    def test_reviewed_fingerprint_provenance_covers_supported_matrix(self):
+    def test_reviewed_fingerprint_provenance_covers_recorded_versions(self):
         provenance = " ".join(canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES.values())
         assert "1.4.9.11" in provenance
         assert "1.4.11" in provenance
         assert "1.4.12" in provenance
+        assert "1.5.6" in provenance
         assert (
             "feb3429c45ef0360e25900926b4a132abc6260f7eac6cfb5a5a43c9f398e622d"
             in canary.KNOWN_MEMGRAPH_INIT_SOURCE_HASHES
@@ -467,7 +501,15 @@ class TestMemgraphInitCanary:
 
     def test_recorded_fingerprint_matches_installed_supported_wheel(self):
         version = canary.installed_lightrag_version()
-        recorded_versions = {"1.4.9.11", "1.4.11", "1.4.12", "1.5.3", "1.5.4"}
+        recorded_versions = {
+            "1.4.9.11",
+            "1.4.11",
+            "1.4.12",
+            "1.5.3",
+            "1.5.4",
+            "1.5.5",
+            "1.5.6",
+        }
         if version not in recorded_versions:
             pytest.skip(f"no Memgraph constructor baseline recorded for {version}")
 

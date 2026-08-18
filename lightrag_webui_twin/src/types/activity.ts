@@ -133,7 +133,10 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     color: 'var(--twin-red-vivid)',
   },
   'pipeline-warning': {
-    label: 'Pipeline',
+    // QA ACT-V5-001: labelled "Pipeline warning" (not "Pipeline") so an
+    // empty filter result reads as "no warnings" — the backend emits this
+    // kind only on anomalies (e.g. empty-extraction merges), not per run.
+    label: 'Pipeline warning',
     icon: 'alert-triangle',
     color: 'var(--twin-amber-vivid)',
   },

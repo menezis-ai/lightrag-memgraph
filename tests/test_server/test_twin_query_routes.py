@@ -7,6 +7,7 @@ response with a structured `sources` list pulled from `chunks_vdb`.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -23,6 +24,7 @@ from twindb_lightrag_memgraph.server.twin_query_routes import (
     build_twin_query_router,
 )
 from twindb_lightrag_memgraph.server.webui import router as webui_router
+from twindb_lightrag_memgraph.vector_impl import _capture_chunk_retrieval_scores
 
 
 class FakeChunksVdb:
@@ -93,6 +95,7 @@ class FakeRag:
         chunks: list[dict[str, Any]] | None = None,
         chunk_to_doc: dict[str, str] | None = None,
         docs: dict[str, dict[str, Any]] | None = None,
+        grounding_vector_rows: list[dict[str, Any]] | None = None,
         envelope_status: str = "success",
         envelope_failure_reason: str | None = None,
     ):
@@ -112,6 +115,7 @@ class FakeRag:
         self.text_chunks = FakeChunksVdb(chunks or [])
         self.doc_status = FakeDocStatus(chunk_to_doc or {}, docs)
         self._chunks_fixture = chunks or []
+        self._grounding_vector_rows = grounding_vector_rows
         self._envelope_status = envelope_status
         self._envelope_failure_reason = envelope_failure_reason
 
@@ -183,6 +187,8 @@ class FakeRag:
 
     async def aquery_llm(self, query: str, *, param):
         self.llm_calls.append((query, param))
+        if self._grounding_vector_rows is not None:
+            _capture_chunk_retrieval_scores("chunks", self._grounding_vector_rows)
         return self._build_envelope(is_streaming=bool(getattr(param, "stream", False)))
 
     async def aquery_data(self, query: str, *, param):
@@ -261,6 +267,40 @@ class TestAwaitQueryOrDisconnect:
 
 
 class TestQueryEndpoint:
+    async def test_exposes_runtime_model_on_query_and_stream(self):
+        rag = FakeRag(answer="model-backed answer")
+        rag.llm_model_name = "deepseek-chat"
+        app = FastAPI()
+        app.include_router(build_twin_query_router(lambda: rag))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/query", json={"query": "which model?"})
+            streamed = await client.post(
+                "/query/stream", json={"query": "which model?"}
+            )
+
+        assert response.status_code == 200
+        assert response.json()["model"] == "deepseek-chat"
+        events = [json.loads(line) for line in streamed.text.splitlines() if line]
+        assert events[0] == {
+            "type": "meta",
+            "value": {"model": "deepseek-chat"},
+        }
+
+    async def test_preserves_legacy_wire_contract_without_model(self):
+        rag = FakeRag(answer="legacy answer")
+        app = FastAPI()
+        app.include_router(build_twin_query_router(lambda: rag))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/query", json={"query": "legacy?"})
+            streamed = await client.post("/query/stream", json={"query": "legacy?"})
+
+        assert response.status_code == 200
+        assert "model" not in response.json()
+        events = [json.loads(line) for line in streamed.text.splitlines() if line]
+        assert events[0] == {"type": "stage", "value": "retrieval"}
+
     async def test_returns_response_and_sources(self, make_client):
         rag = FakeRag(
             answer="Restart Oracle by …",
@@ -364,6 +404,16 @@ class TestQueryEndpoint:
         assert event["target"]["type"] == "query"
         assert event["meta"]["sources_count"] == 1
         assert event["meta"]["query"] == "How do I restart Oracle?"
+        # QA RET-V5-001: per-phase timings ride the ledger so a latency
+        # observation can be characterized without re-reproducing it blind.
+        timings = event["meta"]["timings"]
+        assert set(timings) == {
+            "retrieval_llm_ms",
+            "sources_projection_ms",
+            "total_ms",
+        }
+        assert all(isinstance(v, int) and v >= 0 for v in timings.values()), timings
+        assert timings["total_ms"] >= timings["retrieval_llm_ms"]
 
     async def test_records_zero_sources_on_projection_failed_when_sources_incomplete(
         self, make_client
@@ -401,6 +451,38 @@ class TestQueryEndpoint:
         event = store.record_activity.await_args.args[0]
         assert event["kind"] == "retrieval"
         assert event["meta"]["sources_count"] == 0
+
+    async def test_stream_records_retrieval_generation_and_projection_timings(
+        self, make_client
+    ):
+        rag = FakeRag(
+            stream_chunks=["Grounded ", "answer."],
+            chunks=[{"id": "chunk-aa", "file_path": "/runbook.pdf", "score": 0.9}],
+        )
+        store = type("Store", (), {"record_activity": AsyncMock()})()
+        client = await make_client(rag)
+
+        with patch(
+            "twindb_lightrag_memgraph.server.webui_router.get_store",
+            return_value=store,
+        ):
+            async with client:
+                response = await client.post(
+                    "/query/stream",
+                    json={"query": "slow filtered retrieval", "top_k": 1},
+                )
+
+        assert response.status_code == 200
+        store.record_activity.assert_awaited_once()
+        timings = store.record_activity.await_args.args[0]["meta"]["timings"]
+        assert set(timings) == {
+            "retrieval_context_ms",
+            "generation_ms",
+            "sources_projection_ms",
+            "total_ms",
+        }
+        assert all(isinstance(value, int) and value >= 0 for value in timings.values())
+        assert timings["total_ms"] >= timings["retrieval_context_ms"]
 
     async def test_retrieval_activity_is_scoped_to_x_twin_folder(self, monkeypatch):
         configure_auth(api_key="test-infra-root", jwt_secret=None)
@@ -760,8 +842,12 @@ class TestQueryEndpoint:
                 "name": "/oracle",
                 "meta": "1 chunk",
                 "score": 0.9,
+                "retrieval_origin": "vector",
                 "doc_id": "doc-oracle",
                 "chunk_id": "chunk-a",
+                # No paragraph anchor computable here (the envelope chunk
+                # carries no content) — the wire field defaults to null.
+                "anchor": None,
             }
         ]
         assert rag.chunks_vdb.last_query is None
@@ -1142,8 +1228,12 @@ class TestQueryEndpoint:
                 b"safely",
             ],
             chunks=[
-                {"id": "c1", "file_path": "/a/runbook.pdf", "score": 0.9},
-                {"id": "c2", "file_path": "/a/rhel.pdf", "score": 0.7},
+                {"id": "c1", "file_path": "/a/runbook.pdf"},
+                {"id": "c2", "file_path": "/a/rhel.pdf"},
+            ],
+            grounding_vector_rows=[
+                {"id": "c1", "similarity": 0.9},
+                {"id": "c2", "similarity": 0.7},
             ],
         )
         client = await make_client(rag)
@@ -1163,13 +1253,21 @@ class TestQueryEndpoint:
         assert r.headers["content-type"].startswith("application/x-ndjson")
 
         events = [_json.loads(line) for line in r.text.splitlines() if line.strip()]
+        stage_events = [e for e in events if e["type"] == "stage"]
         token_events = [e for e in events if e["type"] == "token"]
         source_events = [e for e in events if e["type"] == "sources"]
         assert "".join(e["value"] for e in token_events) == "Restart Oracle safely"
+        assert [event["value"] for event in stage_events] == [
+            "retrieval",
+            "generation",
+            "sources",
+        ]
         assert len(source_events) == 1
         sources = source_events[0]["value"]
         assert [s["name"] for s in sources] == ["/a/runbook.pdf", "/a/rhel.pdf"]
         assert [s["n"] for s in sources] == [1, 2]
+        assert [s["score"] for s in sources] == [0.9, 0.7]
+        assert [s["retrieval_origin"] for s in sources] == ["vector", "vector"]
 
         # Stream plumbing: param.stream=True is forwarded to aquery_llm,
         # not the legacy aquery.
@@ -2408,6 +2506,25 @@ class TestQueryEndpoint:
         scores = [s["score"] for s in r.json()["sources"]]
         assert scores == [0.82, 0.74, None]
 
+    async def test_score_comes_from_same_grounding_vector_query(self, make_client):
+        rag = FakeRag(
+            answer="Grounded answer [1].",
+            chunks=[{"id": "chunk-a", "file_path": "/a.pdf"}],
+            grounding_vector_rows=[{"id": "chunk-a", "similarity": 0.837}],
+        )
+        client = await make_client(rag)
+
+        async with client:
+            r = await client.post("/query", json={"query": "x", "mode": "mix"})
+
+        assert r.status_code == 200
+        source = r.json()["sources"][0]
+        assert source["score"] == 0.837
+        assert source["retrieval_origin"] == "vector"
+        # The score was captured inside aquery_llm; source projection did not
+        # issue the forbidden second chunks_vdb query.
+        assert rag.chunks_vdb.last_query is None
+
     async def test_missing_file_path_falls_back_to_chunk_id(self, make_client):
         rag = FakeRag(
             answer="x",
@@ -2588,6 +2705,8 @@ class TestAnswerStatusContract:
         assert body["answer_status"] == "grounded"
         assert body["response"] == "A real answer."
         assert len(body["sources"]) == 1
+        assert body["sources"][0]["score"] is None
+        assert body["sources"][0]["retrieval_origin"] == "graph"
         # Audit C3 guard: even on the grounded path, sources come from
         # aquery_llm's references — never from a second chunks_vdb pass.
         assert rag.chunks_vdb.last_query is None

@@ -70,7 +70,7 @@ export function FoldersAdminSection({
     onToast?.({
       kind: 'error',
       title: 'Admin scope required',
-      sub: 'Your account does not have the folder-administration permission. Contact Twincore Team to request it.',
+      sub: 'Your account does not have the folder-administration permission. Ask your platform administrator to grant it.',
     });
   };
 

@@ -183,6 +183,7 @@ class TestQuotaUnconfiguredBypass:
             return {"memory_tracked": 100}
 
         monkeypatch.setattr(quota, "_read_storage_info", _fake_storage_info)
+        monkeypatch.setattr(quota, "_read_database_storage_info", _fake_storage_info)
         app = create_app()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

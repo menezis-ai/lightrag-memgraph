@@ -184,4 +184,84 @@ test.describe('Procedure review journey', () => {
       }),
     ).toHaveCount(0);
   });
+
+  test('@documents @procedure @settings retry is gated on the Settings > Vision toggle', async ({
+    page,
+  }) => {
+    // Procedure ingestion is OFF by default (MSW mirrors the server-surface
+    // default): the failed bundle's retry affordance must be disarmed with
+    // the Settings > Vision pointer, not silently absent.
+    await page.getByTestId('pending-proc-review-proc-2').click();
+    const modal = page.getByTestId('procedure-review-modal');
+    await expect(modal).toBeVisible();
+    await expect(page.getByTestId('procedure-review-retry')).toBeDisabled();
+    await expect(page.getByTestId('procedure-review-retry-disabled')).toContainText(
+      'Enable procedure ingestion in Settings > Vision',
+    );
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+
+    // Admin flips the toggle in Settings > Vision.
+    await openTab(page, 'Settings');
+    await page.getByTestId('settings-rail-vision').click();
+    const toggle = page.getByTestId('settings-vision-procedure-toggle');
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await page.getByTestId('settings-vision-save').click();
+    await expect(page.getByRole('status')).toContainText('Vision settings saved');
+
+    // Back on Documents the SAME bundle is now retryable — the settings save
+    // invalidates the shared ['vision-settings'] query, no reload needed.
+    // The mock rerun succeeds and the bundle returns to pending review.
+    await openTab(page, 'Documents');
+    await page.getByTestId('pending-proc-review-proc-2').click();
+    await expect(page.getByTestId('procedure-review-modal')).toBeVisible();
+    await expect(page.getByTestId('procedure-review-retry-disabled')).toHaveCount(0);
+    await page.getByTestId('procedure-review-retry').click();
+    await expect(page.getByRole('status')).toContainText('Procedure re-processed');
+    await expect(page.getByTestId('procedure-review-modal')).toBeHidden();
+    await expect(page.getByTestId('pending-proc-state-proc-2')).toContainText(
+      'Procedure review',
+    );
+  });
+
+  test('@documents @procedure reroute-standard requires a folder for a folderless bundle, then lands a document', async ({
+    page,
+  }) => {
+    // proc-2 has no requesting folder (folder: null, no duplicate request):
+    // "Treat as standard" must stay disarmed until a target folder is chosen
+    // — mirrors the backend 422 instead of surfacing it.
+    await page.getByTestId('pending-proc-review-proc-2').click();
+    await expect(page.getByTestId('procedure-review-modal')).toBeVisible();
+    const reroute = page.getByTestId('procedure-review-reroute');
+    await expect(reroute).toBeDisabled();
+    await page
+      .getByTestId('procedure-review-folder-select')
+      .selectOption('default');
+    await expect(reroute).toBeEnabled();
+
+    await reroute.click();
+    await expect(page.getByRole('status')).toContainText(
+      'Rerouted to the standard pipeline',
+    );
+
+    // MSW state mutated: rerouted is not a reviewable state → the card leaves
+    // the review section, the pending sibling is untouched…
+    await expect(page.getByTestId('pending-proc-proc-2')).toBeHidden();
+    await expect(page.getByTestId('pending-proc-proc-1')).toBeVisible();
+    // …and the bundle became a real document row through the standard
+    // pipeline (stateful documents mock).
+    await page.getByLabel('Search source').fill('network-segmentation-procedure');
+    await expect(page.getByTestId(/docs-row-proc_doc_proc-2_/)).toBeVisible();
+
+    // The decision lands in the Activity feed.
+    await openTab(page, 'Activity');
+    await expect(
+      page
+        .getByText(
+          "Procedure 'network-segmentation-procedure.pdf' rerouted to the standard pipeline",
+        )
+        .first(),
+    ).toBeVisible();
+  });
 });

@@ -66,6 +66,15 @@ function normalizeDomainId(value: string): string {
   return value.trim().toLowerCase().replaceAll(/\s+/g, '-');
 }
 
+function normalizeDomainName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replaceAll(/\p{M}/gu, '')
+    .trim()
+    .replaceAll(/\s+/g, ' ')
+    .toLowerCase(); // Locale-invariant pre-flight; the server remains authoritative.
+}
+
 function draftFromCategories(categories: readonly TagCategory[]): DomainDraft[] {
   return categories.map((cat) => ({
     key: cat.id,
@@ -99,6 +108,7 @@ function appendNewDomainDraft(current: readonly DomainDraft[]): DomainDraft[] {
 function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
   if (draft.length === 0) return 'At least one domain is required.';
   const seen = new Set<string>();
+  const seenNames = new Map<string, string>();
   for (const row of draft) {
     const id = normalizeDomainId(row.id);
     if (!id || !DOMAIN_ID_RE.test(id)) {
@@ -106,7 +116,14 @@ function validateDomainDraft(draft: readonly DomainDraft[]): string | null {
     }
     if (seen.has(id)) return `Domain id "${id}" is duplicated.`;
     seen.add(id);
-    if (!row.label.trim()) return `Domain "${id}" needs a label.`;
+    const label = row.label.trim();
+    if (!label) return `Domain "${id}" needs a label.`;
+    const normalizedName = normalizeDomainName(label);
+    const conflictingName = seenNames.get(normalizedName);
+    if (conflictingName) {
+      return `Domain name "${label}" duplicates "${conflictingName}" after case, accent, and whitespace normalization.`;
+    }
+    seenNames.set(normalizedName, label);
     if (!DOMAIN_COLOR_RE.test(row.color.trim())) {
       return `Domain "${id}" needs a hex color like #5A7FB4.`;
     }
@@ -680,7 +697,6 @@ export function TagsTab({
         >
           <option value="all">All statuses</option>
           <option value="active">Active</option>
-          <option value="pending-promotion">Pending</option>
           <option value="deprecated">Deprecated</option>
         </select>
       </div>
@@ -1155,10 +1171,16 @@ function TagDetailPanel({
       <div className="detail-section">
         <div className="detail-section-h">Usage</div>
         <div className="usage-grid">
-          <div className="usage-cell">
+          <button
+            type="button"
+            className="usage-cell usage-cell-link"
+            disabled={!onNavigate || t.sources_count === 0}
+            onClick={() => onNavigate?.('documents', { tag: t.tag })}
+            aria-label={`View ${t.sources_count} documents tagged ${t.tag}`}
+          >
             <div className="usage-num">{t.sources_count}</div>
             <div className="usage-lbl">Docs</div>
-          </div>
+          </button>
           <div className="usage-cell">
             <div className="usage-num">{t.chunks_count.toLocaleString()}</div>
             <div className="usage-lbl">Chunks</div>
@@ -1246,6 +1268,21 @@ function TagDetailPanel({
             <span className="hist-who">by {t.created.by}</span>
           </div>
         </div>
+      </div>
+
+      {/* QA TAG-V7-001: the clickable Docs counter above was not read as a
+          link — mirror the Graph inspector's explicit CTA to the filtered
+          Documents list. */}
+      <div className="detail-section detail-cta">
+        <button
+          className="ghost-btn"
+          type="button"
+          disabled={!onNavigate || t.sources_count === 0}
+          onClick={() => onNavigate?.('documents', { tag: t.tag })}
+        >
+          <Icon name="external-link" size={11} /> See documents containing this
+          tag
+        </button>
       </div>
 
       <div className="detail-actions wrap">

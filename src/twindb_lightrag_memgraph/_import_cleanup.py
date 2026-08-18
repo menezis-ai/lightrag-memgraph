@@ -51,6 +51,18 @@ async def cleanup_processed_imports(props_list: list[dict[str, Any]]) -> None:
     await asyncio.to_thread(_cleanup_many_sync, file_paths)
 
 
+async def cleanup_import_paths(file_paths: list[str]) -> None:
+    """Delete known import paths after a successful physical document delete.
+
+    Unlike :func:`cleanup_processed_imports`, this entry point is intentionally
+    status-agnostic: the DocStatus row no longer exists after the cascade.  The
+    same INPUT_DIR confinement and canonical-name handling still apply.
+    """
+    paths = [str(path) for path in file_paths if str(path).strip()]
+    if paths:
+        await asyncio.to_thread(_cleanup_many_sync, paths)
+
+
 def _cleanup_many_sync(file_paths: list[str]) -> None:
     base = configured_input_dir().resolve()
     for file_path in dict.fromkeys(file_paths):
@@ -91,12 +103,19 @@ def _cleanup_one_sync(base: Path, file_path: str) -> int:
 
 def _candidate_paths(base: Path, file_path: str) -> list[Path]:
     raw = Path(str(file_path))
+    if raw.is_absolute() and _confined(raw, base) is None:
+        return []
     basename = raw.name
     names = _cleanup_names(basename)
     parsed_root = base / PARSED_DIR_NAME
 
     candidates: list[Path] = []
-    if not raw.is_absolute():
+    if raw.is_absolute():
+        # Absolute DocStatus paths are allowed only when the confinement check
+        # below proves they live under INPUT_DIR. Older cleanup skipped this
+        # exact path and could leave a same-name upload blocker behind.
+        candidates.append(raw)
+    else:
         candidates.append(base / raw)
     candidates.extend(base / name for name in names)
     candidates.extend(parsed_root / name for name in names)
@@ -151,4 +170,9 @@ def _confined(path: Path, base: Path) -> Path | None:
         resolved = path.resolve(strict=False)
     except OSError:
         return None
-    return resolved if resolved == base or base in resolved.parents else None
+    # ``resolved == base`` is refused (audit 2026-08-06, R-01): the cleanup
+    # targets artifacts UNDER the input tree, never the tree itself — a
+    # ``file_path`` of "." or INPUT_DIR would otherwise rmtree the whole
+    # directory. The confinement must be intrinsically safe rather than rely
+    # on upstream path normalization (which currently blocks this input).
+    return resolved if base in resolved.parents else None

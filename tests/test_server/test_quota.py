@@ -1,12 +1,14 @@
-"""Unit tests for the instance quota module.
+"""Unit tests for the Memgraph 3.12 instance quota module.
 
-Pure logic (parse / index / status mapping) + a mocked snapshot path —
-no Memgraph required. The version-compat tests feed the **real** rows
-captured from ``SHOW STORAGE INFO`` on Memgraph 3.9.0 and 3.10.1, so a
-field rename in either edition is caught here.
+The contract tests feed the real rows captured from both Memgraph 3.12.0
+storage-info queries. This catches regressions in the instance/database field
+split without keeping compatibility logic for superseded Memgraph releases.
 """
 
 from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -21,26 +23,32 @@ def _rows(pairs: list[tuple[str, object]]) -> list[dict[str, object]]:
     return [{"storage info": k, "value": v} for k, v in pairs]
 
 
-# Verbatim from `SHOW STORAGE INFO` on the two versions in play.
-REAL_3_9_0 = _rows(
+# Verbatim from Memgraph 3.12.0 Community Edition.
+REAL_3_12_INSTANCE = _rows(
     [
-        ("memory_res", "741.18MiB"),
-        ("memory_tracked", "252.97MiB"),
-        ("allocation_limit", "7.82GiB"),
-        ("graph_memory_tracked", "252.97MiB"),
+        ("vm_max_map_count", 262144),
+        ("memory_res", "94.26MiB"),
+        ("peak_memory_res", "94.26MiB"),
+        ("disk_usage", "227.43KiB"),
+        ("memory_tracked", "27.61MiB"),
+        ("memory_limit", "7.82GiB"),
+        ("license_memory_limit", "unlimited"),
+        ("query+graph_memory_tracked", "27.61MiB"),
         ("vector_index_memory_tracked", "0B"),
-        ("storage_mode", "IN_MEMORY_TRANSACTIONAL"),
+        ("global_storage_mode", "IN_MEMORY_TRANSACTIONAL"),
     ]
 )
-REAL_3_10_1 = _rows(
+REAL_3_12_DATABASE = _rows(
     [
-        ("memory_res", "925.48MiB"),
-        ("global_memory_tracked", "409.72MiB"),
-        ("global_runtime_allocation_limit", "2.00GiB"),
-        ("global_license_allocation_limit", "unlimited"),
-        ("db_memory_tracked", "86.32MiB"),
-        ("db_storage_memory_tracked", "56.64MiB"),
-        ("db_embedding_memory_tracked", "29.68MiB"),
+        ("name", "memgraph"),
+        ("vertex_count", 0),
+        ("edge_count", 0),
+        ("disk_usage", "82.23KiB"),
+        ("graph_memory_tracked", "112.00KiB"),
+        ("query_memory_tracked", "5.44KiB"),
+        ("vector_index_memory_tracked", "0B"),
+        ("tenant_memory_tracked", "117.44KiB"),
+        ("tenant_memory_limit", "7.82GiB"),
         ("storage_mode", "IN_MEMORY_TRANSACTIONAL"),
     ]
 )
@@ -62,7 +70,7 @@ class TestParseSize:
             ("", None),
             (None, None),
             ("not-a-size", None),
-            (True, None),  # bool is not a size
+            (True, None),
         ],
     )
     def test_parse(self, raw, expected):
@@ -90,37 +98,29 @@ class TestParseMemgraphLimit:
         assert quota.parse_memgraph_limit(raw) is None
 
 
-class TestVersionFieldCompat:
-    """The whole point: the same picks work on 3.9 and 3.10 field sets."""
+class TestMemgraph312FieldContract:
+    """Memgraph 3.12 splits instance limits from database footprint."""
 
-    def test_memgraph_3_9_0(self):
-        idx = quota._index_rows(REAL_3_9_0)
-        assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("252.97MiB")
+    def test_instance_metrics(self):
+        idx = quota._index_rows(REAL_3_12_INSTANCE)
+        assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("27.61MiB")
         assert quota._pick(idx, quota._RAM_LIMIT_KEYS) == quota._parse_size("7.82GiB")
-        assert quota._pick(idx, quota._GRAPH_KEYS) == quota._parse_size("252.97MiB")
-        assert quota._pick(idx, quota._VECTOR_KEYS) == 0  # "0B"
+        assert quota._pick(idx, quota._GRAPH_KEYS) is None
 
-    def test_memgraph_3_10_1(self):
-        idx = quota._index_rows(REAL_3_10_1)
-        assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("409.72MiB")
-        assert quota._pick(idx, quota._RAM_LIMIT_KEYS) == quota._parse_size("2.00GiB")
-        assert quota._pick(idx, quota._GRAPH_KEYS) == quota._parse_size("56.64MiB")
-        assert quota._pick(idx, quota._VECTOR_KEYS) == quota._parse_size("29.68MiB")
+    def test_current_database_metrics(self):
+        idx = quota._index_rows(REAL_3_12_DATABASE)
+        assert quota._pick(idx, quota._GRAPH_KEYS) == 112 * 1024
+        assert quota._pick(idx, quota._VECTOR_KEYS) == 0
+        assert quota._pick(idx, quota._RAM_LIMIT_KEYS) is None
 
-    def test_used_is_tracked_not_rss(self):
-        # The fix: track the allocation Memgraph enforces, NOT process RSS.
-        idx = quota._index_rows(REAL_3_10_1)
-        assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("409.72MiB")
-        assert quota._pick(idx, quota._USED_RSS_KEYS) == quota._parse_size("925.48MiB")
+    def test_used_is_reclamation_aware_tracker_not_rss(self):
+        idx = quota._index_rows(REAL_3_12_INSTANCE)
+        assert quota._pick(idx, quota._USED_KEYS) == quota._parse_size("27.61MiB")
+        assert idx["memory_res"] == quota._parse_size("94.26MiB")
 
     def test_license_unlimited_is_not_a_limit(self):
-        idx = quota._index_rows(REAL_3_10_1)
-        assert "global_license_allocation_limit" not in idx  # "unlimited" → dropped
-
-    def test_rss_only_build_falls_back(self):
-        idx = quota._index_rows(_rows([("memory_res", "500MiB")]))
-        assert quota._pick(idx, quota._USED_KEYS) is None
-        assert quota._pick(idx, quota._USED_RSS_KEYS) == 500 * MIB
+        idx = quota._index_rows(REAL_3_12_INSTANCE)
+        assert "license_memory_limit" not in idx
 
     def test_empty_and_non_size_rows(self):
         assert quota._index_rows([]) == {}
@@ -149,40 +149,39 @@ class TestStatusMapping:
         assert quota._status_from(pct) == expected
 
 
-def _patch_storage(monkeypatch, indexed):
-    async def _fake():
+def _patch_storage(monkeypatch, indexed, database_indexed=None):
+    async def _fake_instance():
         return indexed
 
-    monkeypatch.setattr(quota, "_read_storage_info", _fake)
+    async def _fake_database():
+        return database_indexed or {}
+
+    monkeypatch.setattr(quota, "_read_storage_info", _fake_instance)
+    monkeypatch.setattr(quota, "_read_database_storage_info", _fake_database)
 
 
 class TestSnapshotRamWall:
-    """Community (OVH) / no license → the headline binds on the RAM wall."""
+    """Community / no license → the headline binds on the RAM wall."""
 
-    async def test_3_10_community(self, monkeypatch):
+    async def test_3_12_community(self, monkeypatch):
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
         monkeypatch.delenv("MEMGRAPH_BUDGET_ENFORCE", raising=False)
-        # REAL_3_10_1 has license "unlimited" → no license wall → RAM binds.
-        _patch_storage(monkeypatch, quota._index_rows(REAL_3_10_1))
+        _patch_storage(
+            monkeypatch,
+            quota._index_rows(REAL_3_12_INSTANCE),
+            quota._index_rows(REAL_3_12_DATABASE),
+        )
         snap = await quota.snapshot()
         assert snap["binding"] == "ram"
         assert snap["budget_enforce"] == "reject"
-        assert snap["used_bytes"] == quota._parse_size("409.72MiB")
-        assert snap["limit_bytes"] == 2 * GIB
-        assert snap["ram_basis"] == "tracked"
-        assert snap["license_limit_bytes"] is None  # "unlimited"
-        assert snap["graph_bytes"] == quota._parse_size("56.64MiB")
-        assert snap["vector_bytes"] == quota._parse_size("29.68MiB")
-        assert 0.19 < snap["used_pct"] < 0.21  # ~20% tracked, NOT 45% RSS
-        assert snap["status"] == "ok"
-
-    async def test_3_9(self, monkeypatch):
-        monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
-        _patch_storage(monkeypatch, quota._index_rows(REAL_3_9_0))
-        snap = await quota.snapshot()
-        assert snap["binding"] == "ram"
-        assert snap["used_bytes"] == quota._parse_size("252.97MiB")
+        assert snap["used_bytes"] == quota._parse_size("27.61MiB")
         assert snap["limit_bytes"] == quota._parse_size("7.82GiB")
+        assert snap["ram_basis"] == "tracked"
+        assert snap["license_limit_bytes"] is None
+        assert snap["graph_bytes"] == 112 * 1024
+        assert snap["vector_bytes"] == 0
+        assert 0.003 < snap["used_pct"] < 0.004
+        assert snap["status"] == "ok"
 
     async def test_env_fallback_limit(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "1GiB")
@@ -197,12 +196,13 @@ class TestSnapshotRamWall:
         monkeypatch.setenv("MEMGRAPH_BUDGET_ENFORCE", "  WARN  ")
         assert quota.budget_enforce_mode() == "warn"
 
-    async def test_rss_basis_when_only_rss(self, monkeypatch):
+    async def test_missing_tracker_does_not_fall_back_to_rss(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_MEMORY_LIMIT", "1GiB")
         _patch_storage(monkeypatch, {"memory_res": 100})
         snap = await quota.snapshot()
-        assert snap["ram_basis"] == "rss"
-        assert snap["used_bytes"] == 100
+        assert snap["ram_basis"] is None
+        assert snap["used_bytes"] is None
+        assert snap["used_pct"] is None
 
     async def test_no_limit_anywhere(self, monkeypatch):
         monkeypatch.delenv("MEMGRAPH_MEMORY_LIMIT", raising=False)
@@ -222,35 +222,35 @@ class TestSnapshotRamWall:
 class TestSnapshotLicenseWall:
     """Enterprise → the billed footprint (graph [+vec]) vs the license cap."""
 
-    # license binds: data ~98% of a 1 GiB license, RAM far below its 4 GiB.
     ENT = {
-        "global_memory_tracked": int(1.1 * GIB),
-        "global_runtime_allocation_limit": 4 * GIB,
-        "global_license_allocation_limit": GIB,
-        "db_storage_memory_tracked": 800 * MIB,  # graph
-        "db_embedding_memory_tracked": 200 * MIB,  # vectors
+        "memory_tracked": int(1.1 * GIB),
+        "memory_limit": 4 * GIB,
+        "license_memory_limit": GIB,
+    }
+    DB = {
+        "graph_memory_tracked": 800 * MIB,
+        "vector_index_memory_tracked": 200 * MIB,
     }
 
     async def test_graph_analytics_bills_graph_plus_vectors(self, monkeypatch):
-        monkeypatch.delenv("TWIN_MEMGRAPH_LICENSE_PLAN", raising=False)  # default
-        _patch_storage(monkeypatch, dict(self.ENT))
+        monkeypatch.delenv("TWIN_MEMGRAPH_LICENSE_PLAN", raising=False)
+        _patch_storage(monkeypatch, dict(self.ENT), dict(self.DB))
         snap = await quota.snapshot()
         assert snap["binding"] == "license"
         assert snap["vectors_billed"] is True
-        assert snap["billed_bytes"] == 1000 * MIB  # graph + vectors
+        assert snap["billed_bytes"] == 1000 * MIB
         assert snap["license_limit_bytes"] == GIB
-        assert snap["used_bytes"] == 1000 * MIB  # headline = billed
+        assert snap["used_bytes"] == 1000 * MIB
         assert snap["limit_bytes"] == GIB
-        assert snap["status"] == "warning"  # ~97.6%
+        assert snap["status"] == "warning"
 
     async def test_ai_platform_excludes_vectors(self, monkeypatch):
         monkeypatch.setenv("TWIN_MEMGRAPH_LICENSE_PLAN", "ai-platform")
-        _patch_storage(monkeypatch, dict(self.ENT))
+        _patch_storage(monkeypatch, dict(self.ENT), dict(self.DB))
         snap = await quota.snapshot()
         assert snap["vectors_billed"] is False
-        assert snap["billed_bytes"] == 800 * MIB  # graph only — vectors free
+        assert snap["billed_bytes"] == 800 * MIB
         assert snap["billed_pct"] == 800 * MIB / GIB
-        # 800/1024 = 0.78 (ok) < ram 1.1/4 = 0.275 → license still binds but ok
         assert snap["status"] == "ok"
 
     async def test_ram_binds_when_closer_than_license(self, monkeypatch):
@@ -258,12 +258,11 @@ class TestSnapshotLicenseWall:
         _patch_storage(
             monkeypatch,
             {
-                "global_memory_tracked": int(3.5 * GIB),
-                "global_runtime_allocation_limit": 4 * GIB,  # ram 87.5%
-                "global_license_allocation_limit": 10 * GIB,
-                "db_storage_memory_tracked": 800 * MIB,
-                "db_embedding_memory_tracked": 200 * MIB,  # billed 1G/10G = 10%
+                "memory_tracked": int(3.5 * GIB),
+                "memory_limit": 4 * GIB,
+                "license_memory_limit": 10 * GIB,
             },
+            dict(self.DB),
         )
         snap = await quota.snapshot()
         assert snap["binding"] == "ram"
@@ -307,3 +306,76 @@ class TestEnforceDependency:
 
         monkeypatch.setattr(quota, "snapshot", _snap)
         await quota.enforce_instance_quota()
+
+
+# ── Probe failure log-once (OVH maquette audit 2026-07-28) ─────────────────
+#
+# The WebUI polls /twin/api/quota continuously; a steadily failing probe
+# (e.g. a pre-3.11 Memgraph that cannot parse the per-database query) was
+# logging a full traceback per poll — 163/day on the maquette. Contract:
+# full exception once per outage, DEBUG for repeats, re-armed by the next
+# success. Fail-open behaviour ({} on failure) is unchanged.
+
+
+class _FailingSession:
+    async def run(self, *_a, **_k):
+        raise RuntimeError("mismatched input 'ON' expecting")
+
+
+class _OkResult:
+    async def data(self):
+        return []
+
+    async def consume(self):
+        return None
+
+
+class _OkSession:
+    async def run(self, *_a, **_k):
+        return _OkResult()
+
+
+class TestProbeFailureLogOnce:
+    def _install_session(self, monkeypatch, holder):
+        @asynccontextmanager
+        async def _cm():
+            yield holder["session"]
+
+        monkeypatch.setattr(quota._pool, "get_read_session", _cm)
+        monkeypatch.setattr(quota, "_PROBE_FAILURE_LOGGED", set())
+
+    async def test_repeat_failures_log_full_exception_once(self, monkeypatch, caplog):
+        holder = {"session": _FailingSession()}
+        self._install_session(monkeypatch, holder)
+        with caplog.at_level(logging.DEBUG, logger=quota.logger.name):
+            assert await quota._read_database_storage_info() == {}
+            assert await quota._read_database_storage_info() == {}
+            assert await quota._read_database_storage_info() == {}
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(errors) == 1
+        assert errors[0].exc_info is not None  # full traceback kept
+        assert len(debugs) == 2
+
+    async def test_success_rearms_the_loud_log(self, monkeypatch, caplog):
+        holder = {"session": _FailingSession()}
+        self._install_session(monkeypatch, holder)
+        with caplog.at_level(logging.DEBUG, logger=quota.logger.name):
+            await quota._read_database_storage_info()  # outage 1 → ERROR
+            holder["session"] = _OkSession()
+            await quota._read_database_storage_info()  # recovery
+            holder["session"] = _FailingSession()
+            await quota._read_database_storage_info()  # outage 2 → ERROR again
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 2
+
+    async def test_instance_and_database_probes_tracked_separately(
+        self, monkeypatch, caplog
+    ):
+        holder = {"session": _FailingSession()}
+        self._install_session(monkeypatch, holder)
+        with caplog.at_level(logging.DEBUG, logger=quota.logger.name):
+            await quota._read_database_storage_info()
+            await quota._read_storage_info()
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 2  # one loud log per distinct probe query

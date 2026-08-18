@@ -12,16 +12,14 @@ argv-based config init, which aborts when ``register()`` is imported under
 pytest's argv. This test mirrors that by doing all lightrag imports inside the
 fixture under a neutralized argv, so the module stays import-safe at collection.
 
-Known limitation (documented, not a correctness bug for the BNP Linux target):
-the cache is keyed on the input-dir ``st_mtime_ns``. On a coarse-mtime
-filesystem a file added within the same mtime tick as the last index build can
-be missed until the next dir change. The upload flow writes the file (bumping
-dir mtime) before the dedupe lookup, so a single upload is always fresh; only
-concurrent uploads on a coarse-mtime FS share the window.
+A cached miss or stale hit forces an ordered rescan. This preserves native
+first-match semantics for parser-hinted aliases and observes newly-created
+uploads even on filesystems whose directory timestamps are coarse.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -131,13 +129,26 @@ def test_missing_input_dir_parity(patched, tmp_path):
     assert _assert_parity(patched, missing, "report.pdf") is None
 
 
-def test_cache_refreshes_on_dir_change(patched, tmp_path):
-    # First lookup misses; after a new file lands (dir mtime bumps) the cache
-    # rebuilds and the patched impl sees it — parity with native throughout.
+@pytest.mark.parametrize("stored_name", ("late.pdf", "late.[native].pdf"))
+def test_cached_miss_rescans_when_dir_mtime_is_unchanged(
+    patched, tmp_path, stored_name
+):
+    initial_stat = tmp_path.stat()
     assert _assert_parity(patched, tmp_path, "late.pdf") is None
-    (tmp_path / "late.pdf").write_text("x")
+    (tmp_path / stored_name).write_text("x")
+    os.utime(
+        tmp_path,
+        ns=(initial_stat.st_atime_ns, initial_stat.st_mtime_ns),
+    )
     found = _assert_parity(patched, tmp_path, "late.pdf")
-    assert found is not None and found.name == "late.pdf"
+    assert found is not None and found.name == stored_name
+
+
+def test_collision_preserves_native_first_match(patched, tmp_path):
+    (tmp_path / "report.[native].pdf").write_text("hinted")
+    (tmp_path / "report.pdf").write_text("exact")
+
+    assert _assert_parity(patched, tmp_path, "report.pdf") is not None
 
 
 def test_stale_positive_revalidated(patched, tmp_path):
@@ -148,6 +159,23 @@ def test_stale_positive_revalidated(patched, tmp_path):
     assert _assert_parity(patched, tmp_path, "gone.pdf") is not None
     target.unlink()
     assert _assert_parity(patched, tmp_path, "gone.pdf") is None
+
+
+def test_stale_hit_rescans_for_canonical_replacement(patched, tmp_path):
+    hinted = tmp_path / "report.[native].pdf"
+    hinted.write_text("hinted")
+    assert _assert_parity(patched, tmp_path, "report.pdf") == hinted
+
+    initial_stat = tmp_path.stat()
+    hinted.unlink()
+    exact = tmp_path / "report.pdf"
+    exact.write_text("exact")
+    os.utime(
+        tmp_path,
+        ns=(initial_stat.st_atime_ns, initial_stat.st_mtime_ns),
+    )
+
+    assert _assert_parity(patched, tmp_path, "report.pdf") == exact
 
 
 def test_idempotent_patch(patched):

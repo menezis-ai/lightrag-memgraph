@@ -7,8 +7,7 @@ of a vector-indexed vertex; a later ``vector_search`` then raises 50N42
 "property from a deleted object". The impl mitigation (REMOVE the indexed
 label before DETACH DELETE) exists on every delete path of ``vector_impl.py``
 (:850-859, :866-876, :913-923, :951-957) — what was missing is the CI test of
-the exact sequence. Local Memgraph 3.9.0 masks the failure mode; the test's
-real target is the CI 3.10.1 integration matrix leg
+the exact sequence. The test's target is the pinned CI Memgraph 3.12.0 leg
 (``reference_memgraph_310_vector_delete``).
 
 Both tests drive the PUBLIC LightRAG path: real ``ainsert`` (mock LLM /
@@ -299,8 +298,8 @@ async def test_delete_then_reingest_same_content_vector_query_succeeds(rag):
 
     Re-ingesting identical content re-creates the same content-derived chunk
     ids on freshly indexed vertices. If the earlier delete left a stale index
-    entry, the post-re-ingest vector_search trips 50N42 on Memgraph 3.10+
-    (masked on 3.9.0 — the CI 3.10.1 leg is the real target). Also guards the
+    entry, the post-re-ingest vector_search trips 50N42 on Memgraph 3.10+.
+    The pinned 3.12.0 CI leg guards this behavior. Also guards the
     dedup side: the deleted doc must NOT be treated as still-existing content
     by the enqueue dedup, i.e. re-ingest must reach PROCESSED again.
     """

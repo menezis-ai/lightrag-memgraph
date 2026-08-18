@@ -19,7 +19,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from twindb_lightrag_memgraph import _vision
+from twindb_lightrag_memgraph import _procedure, _vision
 
 
 def _overlay_client() -> TestClient:
@@ -44,6 +44,8 @@ class TestOverlayMountsVisionSettings:
         body = resp.json()
         assert body["source"] == "env-default"
         assert body["min_ocr_chars"] == _vision.DEFAULT_MIN_OCR_CHARS
+        assert isinstance(body["procedure_enabled"], bool)
+        assert isinstance(body["procedure_available"], bool)
 
     def test_put_is_mounted_not_404(self):
         # Empty body fails validation (422) before any store call — proves
@@ -54,6 +56,7 @@ class TestOverlayMountsVisionSettings:
         assert resp.status_code == 422
 
     def test_mount_installs_runtime_settings_provider(self):
+        _procedure.reset_caches()
         _vision.reset_caches()
         try:
             _overlay_client()
@@ -61,5 +64,10 @@ class TestOverlayMountsVisionSettings:
                 "overlay mount must wire the _vision runtime-settings "
                 "provider (install_settings_provider)"
             )
+            assert _procedure._settings_provider is not None, (
+                "overlay mount must wire the _procedure runtime-settings "
+                "provider (install_settings_provider)"
+            )
         finally:
+            _procedure.reset_caches()
             _vision.reset_caches()

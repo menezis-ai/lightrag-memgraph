@@ -23,19 +23,67 @@ function mkCls(overrides: Partial<ClassificationResult> = {}): ClassificationRes
 }
 
 describe('ClassPill — silence', () => {
-  it('renders nothing when classification is undefined', () => {
+  it('renders nothing when no classification and no visibility exist', () => {
     const { container } = render(<ClassPill cls={undefined} />);
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders nothing when classification is a legacy string (no MIP extraction)', () => {
-    const { container } = render(<ClassPill cls="internal" />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders nothing when structured payload has no MIP class id', () => {
+  it('renders nothing when structured payload has no class id and no visibility', () => {
     const { container } = render(<ClassPill cls={mkCls({ class_id: null })} />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+// Product decision 2026-08-04 (QA DOC-V4-001): the two-level public/interne
+// model is badged too — legacy strings and the visibility fallback render.
+describe('ClassPill — two-level model (DOC-V4-001)', () => {
+  it('renders a legacy string classification as its ladder pill', () => {
+    render(<ClassPill cls="internal" docId="d-legacy" />);
+    const pill = screen.getByTestId('class-pill-d-legacy');
+    expect(pill.textContent).toBe('Internal');
+    expect(pill.className).toContain('class-internal');
+  });
+
+  it('renders a Public pill from the legacy string', () => {
+    render(<ClassPill cls="public" docId="d-public" />);
+    const pill = screen.getByTestId('class-pill-d-public');
+    expect(pill.textContent).toBe('Public');
+    expect(pill.className).toContain('class-public');
+  });
+
+  it('keeps a non-ladder legacy string verbatim with the unknown tone', () => {
+    render(<ClassPill cls="restricted" docId="d-raw" />);
+    const pill = screen.getByTestId('class-pill-d-raw');
+    expect(pill.textContent).toBe('restricted');
+    expect(pill.className).toContain('class-unknown');
+  });
+
+  it('falls back to the document visibility when nothing was extracted', () => {
+    render(<ClassPill cls={undefined} visibility="internal" docId="d-vis" />);
+    const pill = screen.getByTestId('class-pill-d-vis');
+    expect(pill.textContent).toBe('Internal');
+    expect(pill.className).toContain('class-internal');
+  });
+
+  it('falls back to visibility when the structured payload has no class id', () => {
+    render(
+      <ClassPill
+        cls={mkCls({ class_id: null })}
+        visibility="public"
+        docId="d-vis2"
+      />,
+    );
+    const pill = screen.getByTestId('class-pill-d-vis2');
+    expect(pill.textContent).toBe('Public');
+  });
+
+  it('a structured MIP label always wins over visibility', () => {
+    render(
+      <ClassPill cls={mkCls({ class_id: 'C3' })} visibility="public" docId="d-mip" />,
+    );
+    const pill = screen.getByTestId('class-pill-d-mip');
+    expect(pill.textContent).toBe('Confidential');
+    expect(pill.className).toContain('class-confidential');
   });
 });
 

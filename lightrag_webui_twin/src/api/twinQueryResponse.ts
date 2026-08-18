@@ -9,9 +9,45 @@
  * trivially unit-testable in isolation.
  */
 
-import type { RetrievalSource } from '../types/retrieval';
+import type { RetrievalSource, SourceAnchor } from '../types/retrieval';
 
-import type { TwinAnswerStatus, TwinQueryResponse } from './resources';
+import type {
+  TwinAnswerStatus,
+  TwinQueryResponse,
+  TwinQuerySourceAnchor,
+} from './resources';
+
+/**
+ * Shape-validate an anchor before letting it into the UI contract.
+ * The backend only publishes structurally valid anchors, but the anchor is
+ * an explicitly non-authoritative hint — a malformed one (legacy backend,
+ * fixture drift) must degrade to "no anchor", never to NaN offsets reaching
+ * a slice call. Bounds against the actual chunk text are checked at render
+ * time, where the text is known.
+ */
+function sanitizeAnchor(
+  anchor: TwinQuerySourceAnchor | null | undefined,
+): SourceAnchor | undefined {
+  if (!anchor) return undefined;
+  const { start, end, paragraph_idx, paragraph_count, confidence, method } =
+    anchor;
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end <= start ||
+    !Number.isInteger(paragraph_idx) ||
+    paragraph_idx < 0 ||
+    !Number.isInteger(paragraph_count) ||
+    paragraph_count < 1 ||
+    typeof confidence !== 'number' ||
+    !Number.isFinite(confidence) ||
+    typeof method !== 'string'
+  ) {
+    return undefined;
+  }
+  return { start, end, paragraph_idx, paragraph_count, confidence, method };
+}
 
 /**
  * Project a Twin overlay ``/twin/api/query`` (or ``/stream``) response
@@ -32,6 +68,7 @@ export function mapTwinQueryResponseForRetrievalTab(
   response: string;
   sources: RetrievalSource[];
   answer_status?: TwinAnswerStatus;
+  model?: string;
 } {
   const sources: RetrievalSource[] = (res.sources ?? []).map((s) => ({
     n: s.n,
@@ -45,12 +82,15 @@ export function mapTwinQueryResponseForRetrievalTab(
     name: s.name,
     meta: s.meta ?? undefined,
     score: s.score,
+    retrieval_origin: s.retrieval_origin ?? undefined,
     doc_id: s.doc_id ?? undefined,
     chunk_id: s.chunk_id ?? undefined,
+    anchor: sanitizeAnchor(s.anchor),
   }));
   return {
     response: res.response,
     sources,
     answer_status: res.answer_status,
+    model: res.model,
   };
 }

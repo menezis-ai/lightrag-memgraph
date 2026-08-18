@@ -304,7 +304,7 @@ describe('useBulkDeleteDocuments', () => {
     });
   });
 
-  it('invalidates all 4 cascade query keys on settle', async () => {
+  it('invalidates all 5 cascade query keys on settle', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ deleted: 1 }));
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -322,6 +322,7 @@ describe('useBulkDeleteDocuments', () => {
     expect(invalidatedKeys).toEqual(
       expect.arrayContaining([
         'documents',
+        'folders',
         'graph-entities',
         'graph-relations',
         'activity',
@@ -358,11 +359,14 @@ describe('useUploadDocumentsBatch', () => {
   it('limits concurrent uploads and invalidates once after the batch', async () => {
     let active = 0;
     let maxActive = 0;
-    fetchMock.mockImplementation(async () => {
+    fetchMock.mockImplementation(async (url) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setTimeout(resolve, 1));
       active -= 1;
+      if (String(url).includes('/documents/resolve-upload')) {
+        return jsonResponse({ action: 'upload' });
+      }
       return jsonResponse({
         status: 'success',
         message: 'queued',
@@ -388,10 +392,12 @@ describe('useUploadDocumentsBatch', () => {
       expect(uploadResults.every((r) => r.status === 'fulfilled')).toBe(true);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(20);
+    // One authenticated resolution + one native multipart request per file.
+    expect(fetchMock).toHaveBeenCalledTimes(40);
     expect(maxActive).toBeLessThanOrEqual(4);
-    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['documents'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['folders'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pipeline_status'] });
     // A batch may contain PARKED procedures: their review cards live under
     // ['procedures'], never under documents.

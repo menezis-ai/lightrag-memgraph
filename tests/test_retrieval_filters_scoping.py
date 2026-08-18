@@ -20,6 +20,9 @@ Pinned semantics (the sharp one is ``doc_filter`` ``all``):
   with ≥2 docs is *impossible on a single chunk* → empty; NOT union-as-any).
 - ``tag_filter`` (doc-level via ``TAGGED_WITH`` → ``WebuiTag_{folder}``):
   ``all`` → doc has every required tag; ``any`` → doc has ≥1 optional tag.
+- ``tag_groups`` (OR-of-groups): emitted as ONE parenthesised
+  ``(group0 OR group1 …)`` condition so the surrounding WHERE stays a pure
+  AND-join; a doc matches when at least one group matches.
 - ``min_score``: unfiltered / folder-only retrieval keeps the configured cosine
   floor. Doc/tag filtered retrieval treats the filter as the candidate corpus
   and uses ``min_score`` only when the caller explicitly sends one.
@@ -34,17 +37,23 @@ their payloads are globally blended across source documents.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 
+from twindb_lightrag_memgraph import vector_impl
 from twindb_lightrag_memgraph._constants import (
     RetrievalFilters,
+    get_active_chunk_retrieval_scores,
     get_active_retrieval_filters,
+    retrieval_score_context,
     storage_filter_context,
     storage_folder_context,
 )
 from twindb_lightrag_memgraph.vector_impl import (
     GRAPH_FIELD_SEP,
     MemgraphVectorDBStorage,
+    _capture_chunk_retrieval_scores,
 )
 
 
@@ -74,10 +83,47 @@ class TestRetrievalFilterContext:
         assert RetrievalFilters().is_empty is True
         assert RetrievalFilters(min_score=0.0).is_empty is True
 
+    def test_groups_only_filters_are_not_empty(self):
+        f = RetrievalFilters(tag_groups=((frozenset({"x"}), frozenset()),))
+        assert f.has_tag
+        assert not f.is_empty
+
     def test_non_empty_predicates(self):
         assert RetrievalFilters(min_score=0.3).is_empty is False
         assert RetrievalFilters(doc_any=frozenset({"a"})).has_doc is True
         assert RetrievalFilters(tag_all=frozenset({"oracle"})).has_tag is True
+
+
+class TestRetrievalScoreContext:
+    def test_context_sets_reuses_and_resets_request_trace(self):
+        assert get_active_chunk_retrieval_scores() is None
+
+        with retrieval_score_context() as outer_scores:
+            outer_scores["chunk-a"] = 0.81
+            with retrieval_score_context() as nested_scores:
+                assert nested_scores is outer_scores
+                assert nested_scores == {"chunk-a": 0.81}
+
+        assert get_active_chunk_retrieval_scores() is None
+
+    def test_capture_keeps_measured_chunk_scores_only(self):
+        with retrieval_score_context() as scores:
+            _capture_chunk_retrieval_scores(
+                "chunks",
+                [
+                    {"id": "chunk-a", "similarity": 0.71},
+                    {"id": "chunk-a", "similarity": 0.84},
+                    {"id": "chunk-b", "similarity": True},
+                    {"id": "chunk-c", "similarity": float("nan")},
+                    {"id": "", "similarity": 0.93},
+                ],
+            )
+            _capture_chunk_retrieval_scores(
+                "entities",
+                [{"id": "chunk-d", "similarity": 0.99}],
+            )
+
+        assert scores == {"chunk-a": 0.84}
 
 
 # ── Strict compat: filters absent ⇒ byte-for-byte ─────────────────────────
@@ -152,6 +198,67 @@ class TestDocFilterChunks:
         assert set(params["doc_any"]) == {"A", "B"}
         assert "overfetch" not in params
 
+    def test_counted_window_uses_native_index_without_weakening_filter(self):
+        st = _store("chunks", {"full_doc_id"})
+        cypher, params = st._build_search_cypher(
+            20,
+            "f",
+            RetrievalFilters(doc_any=frozenset({"A", "B"})),
+            filtered_scan_k=37,
+        )
+        assert "CALL vector_search.search" in cypher
+        assert "reduce(__dot" not in cypher
+        assert "d.id IN $doc_any" in cypher
+        assert params["overfetch"] == 37
+
+    @pytest.mark.parametrize(
+        ("total", "candidates", "top_k", "expected"),
+        [
+            (372, 352, 20, 40),
+            (372, 1, 20, 372),
+            (10, 10, 20, 10),
+        ],
+    )
+    def test_ann_window_covers_all_excluded_predecessors(
+        self, total, candidates, top_k, expected
+    ):
+        excluded = total - candidates
+        assert min(total, excluded + top_k) == expected
+
+    async def test_runtime_count_plan_sizes_ovh_broad_filter_window(self, monkeypatch):
+        calls: list[tuple[str, dict]] = []
+
+        class _Result:
+            def __init__(self, count):
+                self.count = count
+
+            async def single(self):
+                return {"count": self.count}
+
+        class _Session:
+            async def run(self, cypher, **params):
+                calls.append((cypher, params))
+                return _Result(372 if "count(node)" in cypher else 352)
+
+        @asynccontextmanager
+        async def _read_session():
+            yield _Session()
+
+        monkeypatch.setattr(vector_impl._pool, "get_read_session", _read_session)
+        st = _store("chunks", {"full_doc_id"})
+
+        plan = await st._filtered_chunks_ann_plan(
+            20,
+            "f",
+            RetrievalFilters(tag_any=frozenset({"twin-test"})),
+        )
+
+        assert plan == (40, 372, 352)
+        assert len(calls) == 2
+        assert "reduce(__dot" not in calls[1][0]
+        assert "TAGGED_WITH" in calls[1][0]
+        assert calls[1][1]["tag_any"] == ["twin-test"]
+
     def test_doc_all_is_strict_not_union(self):
         st = _store("chunks", {"full_doc_id"})
         cypher, params = st._build_search_cypher(
@@ -195,6 +302,58 @@ class TestTagFilter:
         assert set(params["tag_all"]) == {"oracle"}
         assert set(params["tag_any"]) == {"rman", "asm"}
 
+    def test_flat_filters_emit_no_group_params(self):
+        # Strict compat: the flat form must not gain group artifacts.
+        st = _store("chunks", {"full_doc_id"})
+        cypher, params = st._build_search_cypher(
+            20, "f", RetrievalFilters(tag_all=frozenset({"oracle"}))
+        )
+        assert "tag_g" not in cypher
+        assert not any(key.startswith("tag_g") for key in params)
+
+    def test_tag_groups_emit_single_or_condition(self):
+        # The (all…) OR (any…) case from the BNP integration report: one
+        # retrieval, union of both groups, OR contained in ONE parenthesised
+        # condition so the surrounding WHERE stays a pure AND-join.
+        st = _store("chunks", {"full_doc_id"})
+        cypher, params = st._build_search_cypher(
+            20,
+            "folderX",
+            RetrievalFilters(
+                tag_groups=(
+                    (frozenset({"cft_vm", "client"}), frozenset()),
+                    (frozenset(), frozenset({"transverse"})),
+                )
+            ),
+        )
+        flat = " ".join(cypher.split())
+        assert (
+            "((all(__rt IN $tag_g0_all WHERE __rt IN __dtags)) OR "
+            "(any(__ot IN $tag_g1_any WHERE __ot IN __dtags)))" in flat
+        )
+        assert params["tag_g0_all"] == ["cft_vm", "client"]
+        assert params["tag_g1_any"] == ["transverse"]
+        assert "TAGGED_WITH" in cypher
+        assert "WebuiTag_folderX" in cypher
+
+    def test_tag_group_inner_all_and_any_are_anded(self):
+        # Inside a group the flat semantics hold: all AND any.
+        st = _store("chunks", {"full_doc_id"})
+        cypher, params = st._build_search_cypher(
+            20,
+            "f",
+            RetrievalFilters(
+                tag_groups=((frozenset({"oracle"}), frozenset({"rman"})),)
+            ),
+        )
+        flat = " ".join(cypher.split())
+        assert (
+            "((all(__rt IN $tag_g0_all WHERE __rt IN __dtags) AND "
+            "any(__ot IN $tag_g0_any WHERE __ot IN __dtags)))" in flat
+        )
+        assert params["tag_g0_all"] == ["oracle"]
+        assert params["tag_g0_any"] == ["rman"]
+
 
 # ── entity/relation: globally blended payloads fail closed ────────────────
 
@@ -210,6 +369,12 @@ class TestEntityRelationFilters:
             RetrievalFilters(
                 doc_any=frozenset({"doc-a"}),
                 tag_any=frozenset({"oracle"}),
+            ),
+            RetrievalFilters(
+                tag_groups=(
+                    (frozenset({"oracle"}), frozenset()),
+                    (frozenset(), frozenset({"vmware"})),
+                )
             ),
         ],
     )
@@ -423,3 +588,38 @@ async def test_live_entity_tag_filter_set_semantics(stores):
     assert (
         await _ids(entities, RetrievalFilters(tag_any=frozenset({"oracle"}))) == set()
     )
+
+
+@pytestmark_integration
+async def test_live_tag_groups_union_both_groups(stores):
+    # The BNP integration case: one retrieval returning the union of
+    # (group 1: doc tagged oracle) OR (group 2: doc tagged vmware).
+    ds, chunks, entities = stores
+    await _seed(ds, chunks, entities)
+    from twindb_lightrag_memgraph import _pool
+
+    async with _pool.get_session() as s:
+        await (
+            await s.run(
+                f"MATCH (d:`DocStatus_{_WS}` {{id: 'doc-b'}}) "
+                f"MERGE (t:`WebuiTag_{_FOLDER}` {{id: 'vmware'}}) "
+                f"MERGE (d)-[:TAGGED_WITH]->(t)"
+            )
+        ).consume()
+    union = RetrievalFilters(
+        tag_groups=(
+            (frozenset({"oracle"}), frozenset()),
+            (frozenset(), frozenset({"vmware"})),
+        )
+    )
+    assert await _ids(chunks, union) == {"chunk-a", "chunk-b"}
+    # A group matching nothing contributes nothing — no vacuous match-all.
+    half = RetrievalFilters(
+        tag_groups=(
+            (frozenset({"oracle"}), frozenset()),
+            (frozenset(), frozenset({"absent"})),
+        )
+    )
+    assert await _ids(chunks, half) == {"chunk-a"}
+    # Blended graph vectors stay fail-closed under grouped filters too.
+    assert await _ids(entities, union) == set()

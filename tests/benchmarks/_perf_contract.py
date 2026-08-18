@@ -54,6 +54,15 @@ PERF_BENCHMARKS = [
     "query_data_batch_resolution",
     "graph_reader_metadata_gather",
     "notifications_mark_all_read_batch",
+    "chunk_route_docstatus_reuse",
+    "folder_source_counts_batch",
+    "graph_search_direct_rows_reuse",
+    "classification_ingestion_pipeline",
+    "tag_catalog_query_batch",
+    "ingestion_catalog_epic",
+    "query_postprocessing_batching",
+    "native_document_filter_single_pass",
+    "citation_anchor_streaming_election",
 ]
 
 

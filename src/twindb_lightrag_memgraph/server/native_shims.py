@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from ._lightrag_compat import PipelineBusyDeletionError
 from .auth import LoginRequest, LoginResponse
 from .document_hash import enrich_metadata_with_document_hash
 from .status_vocab import to_native_count_key, to_native_lowercase
@@ -143,47 +144,42 @@ def _filter_docs(
     from .folder import load_folder_catalog
 
     default_folder = load_folder_catalog().default_folder_id
-    out = [
-        d
-        for d in items
-        if (
+    needle = q.lower() if q else None
+    source_needle = source.lower() if source else None
+    out: list[dict[str, Any]] = []
+    for d in items:
+        visible_folder = (
             d.get("folder") or (d.get("metadata") or {}).get("folder") or default_folder
         )
-        == folder
-    ]
-    if q:
-        needle = q.lower()
-        out = [
-            d
-            for d in out
-            if needle
-            in " ".join(
-                str(d.get(key) or "")
-                for key in (
-                    "doc_id",
-                    "id",
-                    "file_path",
-                    "source",
-                    "content_summary",
-                    "summary",
+        if visible_folder != folder:
+            continue
+        if needle:
+            searchable = " ".join(
+                (
+                    str(d.get("doc_id") or ""),
+                    str(d.get("id") or ""),
+                    str(d.get("file_path") or ""),
+                    str(d.get("source") or ""),
+                    str(d.get("content_summary") or ""),
+                    str(d.get("summary") or ""),
                 )
             ).lower()
-        ]
-    if source:
-        source_needle = source.lower()
-        out = [
-            d
-            for d in out
-            if source_needle in str(d.get("file_path") or d.get("source") or "").lower()
-        ]
-    if doc_id:
-        out = [d for d in out if doc_id == str(d.get("doc_id") or d.get("id") or "")]
-    if tag:
-        # Tags now come from the [:TAGGED_WITH] graph relation and are
-        # injected on top of each doc dict by the list endpoint
-        # (see :func:`_attach_tags_via_graph`). The filter respects
-        # whichever representation is on the dict.
-        out = [d for d in out if tag in (d.get("tags") or [])]
+            if needle not in searchable:
+                continue
+        if (
+            source_needle
+            and source_needle
+            not in str(d.get("file_path") or d.get("source") or "").lower()
+        ):
+            continue
+        if doc_id and doc_id != str(d.get("doc_id") or d.get("id") or ""):
+            continue
+        # Tags come from the [:TAGGED_WITH] graph relation and are injected by
+        # the list endpoint (see :func:`_attach_tags_via_graph`). Preserve that
+        # representation and input ordering.
+        if tag and tag not in (d.get("tags") or []):
+            continue
+        out.append(d)
     return out
 
 
@@ -645,6 +641,17 @@ async def _delete_document_impl(get_rag, request, doc_id: str) -> _OkResponse:
         await _delete_or_unshare(rag, doc_id, folder)
     except HTTPException:
         raise
+    except PipelineBusyDeletionError as exc:
+        # Transient LightRAG refusal (pipeline held by an ingestion job):
+        # the doc is untouched — answer "retry later", not "backend broken".
+        raise HTTPException(
+            status_code=423,
+            detail=(
+                "Deletion not started: the ingestion pipeline is busy "
+                "processing documents. The document was not deleted; retry "
+                "once the current processing finishes."
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("twindb shim: delete_document(%s) failed", doc_id)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -685,6 +692,7 @@ def build_native_shims_router(
     get_rag,
     *,
     auth_dependency: Callable | None = None,
+    admin_dependency: Callable | None = None,
 ) -> APIRouter:
     """Build the shim APIRouter.
 
@@ -699,10 +707,18 @@ def build_native_shims_router(
             ``server.auth.require_auth`` in production. ``None`` leaves
             the routes public — only acceptable in test setups that
             explicitly assert the unprotected shape.
+        admin_dependency: FastAPI dependency callable ADDITIONALLY applied
+            to the destructive ``DELETE /documents/{id}`` shim (audit
+            2026-08-06, R-03b). Pass ``server.idp_jwt.require_admin_user``
+            in production; when omitted the delete shim falls back to the
+            auth-only shape (test setups).
     """
     protected_deps: list = []
     if auth_dependency is not None:
         protected_deps = [Depends(auth_dependency)]
+    delete_deps: list = list(protected_deps)
+    if admin_dependency is not None:
+        delete_deps.append(Depends(admin_dependency))
     router = APIRouter(tags=["twin-shim"])
 
     @router.get("/auth-status")
@@ -729,6 +745,7 @@ def build_native_shims_router(
     async def login_shim(
         body: LoginRequest,
         response: Response,
+        request: Request,
     ) -> LoginResponse:
         """Shadow LightRAG's native login without minting guest JWTs.
 
@@ -738,7 +755,7 @@ def build_native_shims_router(
         """
         from .auth import login
 
-        return await login(body, response)
+        return await login(body, response, request)
 
     @router.post("/logout", response_model=_OkResponse)
     async def logout_shim(response: Response, request: Request) -> dict[str, bool]:
@@ -827,10 +844,16 @@ def build_native_shims_router(
 
     @router.delete(
         "/documents/{doc_id}",
-        dependencies=protected_deps,
+        dependencies=delete_deps,
         responses={
             404: {"description": "Document not found"},
             409: {"description": "Document membership changed concurrently"},
+            423: {
+                "description": (
+                    "Ingestion pipeline busy; the document was not deleted — "
+                    "retry after processing finishes"
+                )
+            },
             500: {"description": "Document deletion failed"},
         },
     )

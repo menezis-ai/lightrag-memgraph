@@ -14,10 +14,10 @@ from typing import TypeVar
 
 from ._constants import validate_identifier
 from ._pool import _is_closed_transport_error, acquire_write_slot, get_session
+from ._retry import with_conflict_retry
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 _T = TypeVar("_T")
-_MAX_FLUSH_ATTEMPTS = 3
 _flush_lock: asyncio.Lock | None = None
 _flush_lock_loop_id: int | None = None
 
@@ -39,10 +39,6 @@ def _get_flush_lock() -> asyncio.Lock:
         _flush_lock = asyncio.Lock()
         _flush_lock_loop_id = current_loop_id
     return _flush_lock
-
-
-def _is_memgraph_conflicting_transaction(exc: BaseException) -> bool:
-    return "cannot resolve conflicting transactions" in str(exc).lower()
 
 
 class _BufferedGraphProxy:
@@ -158,29 +154,15 @@ class _BufferedGraphProxy:
         node_count = len(self._node_buffer)
         edge_count = len(self._edge_buffer)
         async with _get_flush_lock():
-            for attempt in range(1, _MAX_FLUSH_ATTEMPTS + 1):
-                try:
-                    await self._flush_once()
-                    break
-                except Exception as exc:
-                    if (
-                        attempt < _MAX_FLUSH_ATTEMPTS
-                        and _is_memgraph_conflicting_transaction(exc)
-                    ):
-                        logger.warning(
-                            "Buffered flush hit Memgraph transaction conflict "
-                            "(attempt %d/%d); retrying",
-                            attempt,
-                            _MAX_FLUSH_ATTEMPTS,
-                        )
-                        await asyncio.sleep(0.05 * attempt)
-                        continue
-                    logger.error(
-                        "Buffered flush FAILED: %d nodes, %d edges",
-                        node_count,
-                        edge_count,
-                    )
-                    raise
+            try:
+                await with_conflict_retry("Buffered flush", self._flush_once)
+            except Exception:
+                logger.error(
+                    "Buffered flush FAILED: %d nodes, %d edges",
+                    node_count,
+                    edge_count,
+                )
+                raise
         self._node_buffer.clear()
         self._node_types.clear()
         self._edge_buffer.clear()

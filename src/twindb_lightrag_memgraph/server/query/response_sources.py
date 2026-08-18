@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any
 
 from .._lightrag_compat import (
     GraphAnswerEnvelopeError,
+    _index_chunks_by_ref,
+    _parse_envelope_references,
     build_sources_from_raw_data,
     collect_chunk_ids,
 )
@@ -16,16 +19,23 @@ from .doc_lookup import (
     _resolve_chunk_to_doc_id,
     _resolve_doc_for_chunk,
     _resolve_doc_for_file_path,
+    _resolve_file_paths_to_doc_ids,
     _safe_get_score,
+)
+from .paragraph_anchor import (
+    CitationEvidence,
+    compute_best_anchor,
+    compute_best_structural_anchor,
 )
 from .source_filters import (
     UNKNOWN_SOURCE_NAME,
+    TagFilter,
     _doc_filter_terms,
     _doc_tags_match_filter,
     _source_doc_candidates,
     _source_file_path_candidate,
     _source_matches_doc_filter,
-    _tag_filter_terms,
+    _tag_filter_active,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,6 +74,29 @@ def _filter_sources_by_min_score(
     ]
 
 
+def _sort_sources_by_score(
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return sources by descending measured relevance, stably.
+
+    Reference numbers are intentionally left untouched: answer citations keep
+    pointing at the same ``source.n`` even when the display list is reordered.
+    Sources without a real metric stay visible after scored sources, in their
+    original order.
+    """
+
+    def key(source: dict[str, Any]) -> tuple[bool, float]:
+        score = source.get("score")
+        measured = (
+            isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            and math.isfinite(float(score))
+        )
+        return (not measured, -float(score) if measured else 0.0)
+
+    return sorted(sources, key=key)
+
+
 def _same_reference_projection(
     original: list[dict[str, Any]],
     candidate: list[dict[str, Any]],
@@ -89,14 +122,7 @@ async def _enrich_sources_doc_ids_from_file_path(
     if not file_paths:
         return
 
-    unique = list(dict.fromkeys(file_paths))
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_file_path(rag, file_path) for file_path in unique),
-        return_exceptions=False,
-    )
-    file_path_to_doc_id = {
-        file_path: doc_id for file_path, doc_id in zip(unique, resolved) if doc_id
-    }
+    file_path_to_doc_id = await _resolve_file_paths_to_doc_ids(rag, file_paths)
     if not file_path_to_doc_id:
         return
     for source in sources:
@@ -109,13 +135,12 @@ async def _enrich_sources_doc_ids_from_file_path(
 
 async def _source_matches_tag_filter(
     source: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     folder: str,
     tags_cache: dict[str, set[str]],
     fetch_doc_tags: Any,
 ) -> bool:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
+    if not _tag_filter_active(tag_filter):
         return True
     doc_id = source.get("doc_id")
     if not isinstance(doc_id, str) or not doc_id:
@@ -169,7 +194,7 @@ def _apply_tag_filter(
     *,
     tag_active: bool,
     tags_cache: dict[str, set[str]],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Second pass: keep doc-matched sources whose tags also match."""
     kept: list[dict[str, Any]] = []
@@ -191,27 +216,35 @@ def _apply_tag_filter(
 async def _filter_sources_by_advanced_filters(
     sources: list[dict[str, Any]],
     *,
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     doc_filter: dict[str, list[str]] | None,
     folder: str,
     fetch_doc_tags: Any,
+    fetch_doc_tags_batch: Any = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    tag_required, tag_optional = _tag_filter_terms(tag_filter)
+    tag_active = _tag_filter_active(tag_filter)
     doc_required, doc_optional = _doc_filter_terms(doc_filter)
-    if not tag_required and not tag_optional and not doc_required and not doc_optional:
+    if not tag_active and not doc_required and not doc_optional:
         return sources, False
 
-    tag_active = bool(tag_required or tag_optional)
     matches, prefetch_doc_ids, has_unverified_docs = _doc_filter_pass(
         sources, doc_filter=doc_filter, tag_active=tag_active
     )
 
     tags_cache: dict[str, set[str]] = {}
     if tag_active and prefetch_doc_ids:
-        resolved_tags = await asyncio.gather(
-            *(fetch_doc_tags(doc_id, folder) for doc_id in prefetch_doc_ids)
-        )
-        tags_cache.update(zip(prefetch_doc_ids, resolved_tags))
+        if callable(fetch_doc_tags_batch):
+            resolved_tags = await fetch_doc_tags_batch(prefetch_doc_ids, folder)
+            resolved_tags = resolved_tags if isinstance(resolved_tags, dict) else {}
+            tags_cache.update(
+                (doc_id, set(resolved_tags.get(doc_id) or set()))
+                for doc_id in prefetch_doc_ids
+            )
+        else:
+            resolved_tags = await asyncio.gather(
+                *(fetch_doc_tags(doc_id, folder) for doc_id in prefetch_doc_ids)
+            )
+            tags_cache.update(zip(prefetch_doc_ids, resolved_tags))
 
     kept, has_unverified_tags = _apply_tag_filter(
         sources,
@@ -223,12 +256,138 @@ async def _filter_sources_by_advanced_filters(
     return kept, has_unverified_docs or has_unverified_tags
 
 
+def _anchor_candidates(
+    matching_chunks: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    """Every ``(chunk_id, content)`` pair behind one reference, in order.
+
+    LightRAG reference ids are per *file*, so a single reference routinely
+    covers several chunks — the anchor election must see all of them, not
+    just the one ``_first_chunk_id`` happens to project (PR #418 review,
+    finding 1).
+    """
+    candidates: list[tuple[str, str]] = []
+    for chunk in matching_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_id = chunk.get("chunk_id")
+        content = chunk.get("content")
+        if (
+            isinstance(chunk_id, str)
+            and chunk_id
+            and isinstance(content, str)
+            and content
+        ):
+            candidates.append((chunk_id, content))
+    return candidates
+
+
+async def _fetch_chunk_boundaries(
+    rag: Any, chunk_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Batch-read ``twin_block_boundaries`` for the envelope's chunks.
+
+    Phase B1: ONE ``text_chunks.get_by_ids`` call over the already-elected
+    chunk ids — never a second retrieval. Chunks ingested before the
+    preconverted-parse seam (or on the 1.4.x line) simply have no
+    boundaries; any storage hiccup degrades to an empty mapping and the
+    lexical anchors of phase A still apply.
+    """
+    if not chunk_ids:
+        return {}
+    try:
+        rows = await rag.text_chunks.get_by_ids(chunk_ids)
+        if isinstance(rows, dict):
+            rows = [rows.get(chunk_id) for chunk_id in chunk_ids]
+        boundaries_by_chunk: dict[str, list[dict[str, Any]]] = {}
+        for chunk_id, row in zip(chunk_ids, rows or []):
+            if not isinstance(row, dict):
+                continue
+            boundaries = row.get("twin_block_boundaries")
+            if isinstance(boundaries, list) and boundaries:
+                boundaries_by_chunk[chunk_id] = boundaries
+        return boundaries_by_chunk
+    except Exception:  # noqa: BLE001 - enrichment-only data, fail-soft
+        logger.exception(
+            "twin_query: twin_block_boundaries batch read failed; structural "
+            "anchors skipped, lexical anchors unaffected"
+        )
+        return {}
+
+
+def _enrich_sources_with_anchors(
+    sources: list[dict[str, Any]],
+    envelope: Any,
+    citation_evidence: dict[int, CitationEvidence] | None,
+    boundaries_by_chunk: dict[str, list[dict[str, Any]]] | None = None,
+) -> None:
+    """Attach intra-chunk paragraph anchors, in place, fail-soft.
+
+    PARAGRAPH-CITATION-PLAN.md §5: pure enrichment AFTER the fail-closed
+    validations — an exception here must leave every source intact and must
+    never flip the projection verdict, so the whole pass is wrapped and any
+    failure is logged and swallowed. Sources without evidence, without a
+    chunk to anchor into, or scored below the confidence floor simply carry
+    no ``anchor`` key (the wire model defaults it to null).
+
+    The election runs across every chunk behind the reference and the
+    winning ``chunk_id`` is published together with its ``anchor`` — the
+    two fields move atomically, so a citation grounded in the second chunk
+    of a file repoints the source at that chunk instead of anchoring a
+    lookalike paragraph in the first.
+    """
+    if not citation_evidence:
+        return
+    try:
+        parsed = _parse_envelope_references(envelope or {})
+        if parsed is None:
+            return
+        _, chunks = parsed
+        chunks_by_ref = _index_chunks_by_ref(chunks)
+        for source in sources:
+            n = source.get("n")
+            evidence = citation_evidence.get(n) if isinstance(n, int) else None
+            if evidence is None or not source.get("chunk_id"):
+                continue
+            candidates = _anchor_candidates(chunks_by_ref.get(str(n), []))
+            if not candidates:
+                continue
+            # Phase B1: structural election over ingestion-persisted block
+            # boundaries first; anything short of a confident structural
+            # anchor falls back to the phase A lexical election unchanged.
+            elected = None
+            if boundaries_by_chunk:
+                structural_candidates = [
+                    (chunk_id, content, boundaries_by_chunk[chunk_id])
+                    for chunk_id, content in candidates
+                    if chunk_id in boundaries_by_chunk
+                ]
+                if structural_candidates:
+                    elected = compute_best_structural_anchor(
+                        structural_candidates, evidence
+                    )
+            if elected is None:
+                elected = compute_best_anchor(candidates, evidence)
+            if elected is not None:
+                winning_chunk_id, anchor = elected
+                source["chunk_id"] = winning_chunk_id
+                source["anchor"] = anchor
+    except Exception:
+        logger.exception(
+            "twin_query: paragraph-anchor enrichment failed; publishing "
+            "sources without anchors (fail-soft, projection verdict untouched)"
+        )
+
+
 async def _build_envelope_sources(
     rag: Any,
     body: Any,
     folder: str,
     envelope: Any,
     fetch_doc_tags: Any,
+    fetch_doc_tags_batch: Any = None,
+    citation_evidence: dict[int, CitationEvidence] | None = None,
+    retrieval_scores: dict[str, float] | None = None,
 ) -> tuple[list, bool]:
     """Project sources from the answer envelope and validate them fail-closed.
 
@@ -244,7 +403,11 @@ async def _build_envelope_sources(
     chunk_ids = collect_chunk_ids(envelope or {})
     chunk_to_doc = await _resolve_chunk_to_doc_id(rag, chunk_ids)
     try:
-        sources = build_sources_from_raw_data(envelope or {}, chunk_to_doc)
+        sources = build_sources_from_raw_data(
+            envelope or {},
+            chunk_to_doc,
+            retrieval_scores,
+        )
     except GraphAnswerEnvelopeError as exc:
         logger.warning(
             "twin_query: aquery_llm references unprojectable, surfacing empty "
@@ -272,10 +435,11 @@ async def _build_envelope_sources(
 
     validated, filter_projection_incomplete = await _filter_sources_by_advanced_filters(
         score_validated,
-        tag_filter=body.tag_filter,
+        tag_filter=body.tag_filter_payload,
         doc_filter=body.doc_filter,
         folder=folder,
         fetch_doc_tags=fetch_doc_tags,
+        fetch_doc_tags_batch=fetch_doc_tags_batch,
     )
     if filter_projection_incomplete or not _same_reference_projection(
         sources, validated
@@ -286,7 +450,13 @@ async def _build_envelope_sources(
             "source_projection_failed"
         )
         return [], False
-    return sources, True
+    boundaries_by_chunk = (
+        await _fetch_chunk_boundaries(rag, chunk_ids) if citation_evidence else {}
+    )
+    _enrich_sources_with_anchors(
+        sources, envelope, citation_evidence, boundaries_by_chunk
+    )
+    return _sort_sources_by_score(sources), True
 
 
 async def _build_sources_legacy_fallback(
@@ -354,15 +524,17 @@ async def _build_sources_legacy_fallback(
                 "chunk_id": chunk_id or None,
             }
         )
-    return sources
+    return _sort_sources_by_score(sources)
 
 
 __all__ = [
     "_build_envelope_sources",
     "_build_sources_legacy_fallback",
     "_enrich_sources_doc_ids_from_file_path",
+    "_enrich_sources_with_anchors",
     "_filter_sources_by_advanced_filters",
     "_filter_sources_by_min_score",
     "_public_sources",
     "_source_matches_tag_filter",
+    "_sort_sources_by_score",
 ]

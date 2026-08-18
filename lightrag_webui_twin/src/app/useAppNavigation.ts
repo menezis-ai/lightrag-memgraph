@@ -12,6 +12,9 @@ export interface DetailRequest {
   doc?: string;
   source?: string;
   chunk?: string;
+  /** Paragraph-anchor offsets for the requested chunk (URL param strings). */
+  anchorStart?: string;
+  anchorEnd?: string;
 }
 
 interface UseAppNavigationOptions {
@@ -75,6 +78,8 @@ export function useAppNavigation({
         doc: params.doc,
         source: params.source,
         chunk: params.chunk,
+        anchorStart: params.astart,
+        anchorEnd: params.aend,
       });
     } else {
       setDetailRequest(null);

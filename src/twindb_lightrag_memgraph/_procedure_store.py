@@ -65,6 +65,8 @@ except ImportError:  # pragma: no cover - Windows dev fallback
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
 
+_CORRUPT_SUFFIX_GLOB = ".corrupt-*"
+
 BUNDLE_STATES = frozenset(
     {"processing", "pending", "failed", "approved", "rejected", "rerouted"}
 )
@@ -153,7 +155,7 @@ def _quarantine(path: Path) -> None:
 
 def _degraded_marker_exists(path: Path) -> bool:
     try:
-        return any(path.parent.glob(path.name + ".corrupt-*"))
+        return any(path.parent.glob(path.name + _CORRUPT_SUFFIX_GLOB))
     except FileNotFoundError:
         return False
     except OSError:
@@ -587,7 +589,9 @@ def quarantine_files() -> list[str]:
     """Names of the ``.corrupt-*`` quarantine files next to the store."""
     path = store_path()
     try:
-        return sorted(p.name for p in path.parent.glob(path.name + ".corrupt-*"))
+        return sorted(
+            p.name for p in path.parent.glob(path.name + _CORRUPT_SUFFIX_GLOB)
+        )
     except FileNotFoundError:
         return []
 
@@ -602,7 +606,7 @@ def recover_store() -> list[str]:
     path = store_path()
     removed: list[str] = []
     with _store_lock(path):
-        for marker in sorted(path.parent.glob(path.name + ".corrupt-*")):
+        for marker in sorted(path.parent.glob(path.name + _CORRUPT_SUFFIX_GLOB)):
             marker.unlink()
             removed.append(marker.name)
     if removed:

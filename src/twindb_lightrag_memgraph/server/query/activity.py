@@ -32,27 +32,35 @@ async def _record_retrieval_activity(
     folder: str,
     sources_count: int,
     stream: bool,
+    timings: dict[str, int] | None = None,
 ) -> None:
-    """Best-effort Activity write for completed retrieval calls."""
+    """Best-effort Activity write for completed retrieval calls.
+
+    ``timings`` (QA RET-V5-001) carries per-phase wall-clock in ms so a
+    latency observation can be characterized from the Activity ledger.
+    """
     try:
         from ..webui_router import _make_event, get_store
 
         actor = _actor_from_request(body, request)
+        meta = {
+            "query": body.query,
+            "mode": body.mode,
+            "top_k": body.top_k,
+            "sources_count": sources_count,
+            "stream": stream,
+            "tag_filter": body.tag_filter_payload,
+            "doc_filter": body.doc_filter,
+        }
+        if timings:
+            meta["timings"] = timings
         event = _make_event(
             kind="retrieval",
             sev="info",
             actor=actor,
             target_label=body.query[:120],
             summary=f"retrieval completed ({body.mode})",
-            meta={
-                "query": body.query,
-                "mode": body.mode,
-                "top_k": body.top_k,
-                "sources_count": sources_count,
-                "stream": stream,
-                "tag_filter": body.tag_filter,
-                "doc_filter": body.doc_filter,
-            },
+            meta=meta,
             target_type="query",
         )
         await get_store(folder).record_activity(event)

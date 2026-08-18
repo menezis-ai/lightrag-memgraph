@@ -28,6 +28,7 @@ Override via ``TWIN_MAGE`` (see :data:`TWIN_MAGE_ENV`):
 operator that MAGE is present and skips the probe entirely.
 """
 
+from dataclasses import dataclass
 import logging
 import os
 import threading
@@ -53,6 +54,20 @@ _thread_lock = threading.Lock()
 # None = not yet probed; frozenset = probed procedure-name set (may be empty).
 _available_procedures: frozenset[str] | None = None
 _tier_logged = False
+
+
+@dataclass(frozen=True)
+class MageCapabilitySnapshot:
+    """Atomic MAGE diagnostics for operator-facing status surfaces.
+
+    ``procedures=None`` means no procedure probe was performed or its result
+    was unavailable. A resolved ``available`` beside that value therefore
+    comes from the explicit ``TWIN_MAGE`` override, not from a fabricated
+    procedure count.
+    """
+
+    available: bool | None
+    procedures: frozenset[str] | None
 
 
 def _mage_override() -> bool | None:
@@ -144,6 +159,62 @@ async def has_all_procedures(*names: str) -> bool:
         return True
     procedures = await get_available_procedures()
     return all(name in procedures for name in names)
+
+
+def _has_mage_markers(procedures: frozenset[str]) -> bool:
+    """Return whether a procedure snapshot contains a known MAGE marker."""
+    return any(marker in procedures for marker in _KNOWN_MAGE_MARKERS)
+
+
+async def is_mage_available(procedures: frozenset[str] | None = None) -> bool:
+    """Return True when the instance exposes the MAGE query-module tier.
+
+    Discriminates on :data:`_KNOWN_MAGE_MARKERS`, NOT on "the probe returned a
+    non-empty set". The base ``memgraph/memgraph`` image already exposes core
+    procedures (``vector_search.search``, ``mg.procedures``, ``mg.functions``),
+    so a truthiness test on the probe result reports MAGE on every reachable
+    instance — see the ``_CORE_ONLY`` fixture in ``tests/test_capabilities.py``,
+    which pins exactly that set as the no-MAGE case.
+
+    Honors ``TWIN_MAGE`` like the other public predicates.
+
+    Args:
+        procedures: An already-probed procedure set to answer from. Pass it
+            when a caller needs the count AND the tier to describe the SAME
+            instant: a probe failure is deliberately not cached, so two
+            consecutive calls can straddle a reconnection and publish a
+            contradictory pair (``procedures=0`` with ``mage=True``). Omit it
+            for feature gating, where the self-healing re-probe is the point.
+    """
+    forced = _mage_override()
+    if forced is not None:
+        return forced
+    if procedures is None:
+        procedures = await get_available_procedures()
+    return _has_mage_markers(procedures)
+
+
+async def get_mage_capability_snapshot() -> MageCapabilitySnapshot:
+    """Return one coherent MAGE tier/procedure snapshot for diagnostics.
+
+    Explicit overrides are authoritative and skip the procedure probe, just
+    like :func:`has_procedure` and :func:`is_mage_available`. In automatic
+    mode, one procedure snapshot backs both the tier and the count. The probe
+    API fails closed to an uncached empty set; because every reachable
+    Memgraph exposes at least ``mg.procedures`` itself, that state is reported
+    as unknown rather than as a confirmed floor tier.
+    """
+    forced = _mage_override()
+    if forced is not None:
+        return MageCapabilitySnapshot(available=forced, procedures=None)
+
+    procedures = await get_available_procedures()
+    if not procedures:
+        return MageCapabilitySnapshot(available=None, procedures=None)
+    return MageCapabilitySnapshot(
+        available=_has_mage_markers(procedures),
+        procedures=procedures,
+    )
 
 
 def reset_capability_cache() -> None:

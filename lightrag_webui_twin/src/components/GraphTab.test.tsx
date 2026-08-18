@@ -235,6 +235,34 @@ describe('GraphTab — rendering', () => {
 });
 
 describe('GraphTab — filters', () => {
+  it('excludes deprecated tags from suggestions and marks historical occurrences', async () => {
+    window.history.replaceState(null, '', '/?gtag=retired');
+    renderWithClient(
+      <GraphTab
+        {...defaultProps()}
+        entities={[
+          { ...GRAPH_ENTITY_FIXTURES[0], tags: ['retired'] },
+        ]}
+        relations={[]}
+        tagCatalog={[
+          { tag: 'oracle', tier: 1, status: 'active' },
+          { tag: 'retired', tier: 1, status: 'deprecated' },
+        ]}
+      />,
+    );
+
+    const historicalFilter = screen.getByTestId('kg-picked-retired');
+    expect(historicalFilter).toHaveClass('is-deprecated');
+    expect(within(historicalFilter).getByText('deprecated')).toBeInTheDocument();
+    expect(document.querySelector('.kg-detail .tag-chip.is-deprecated')).toHaveTextContent(
+      'retireddeprecated',
+    );
+
+    await userEvent.click(screen.getByLabelText('Filter by tag'));
+    expect(screen.getByTestId('kg-pick-oracle')).toBeInTheDocument();
+    expect(screen.queryByTestId('kg-pick-retired')).toBeNull();
+  });
+
   it('toggling PRODUCT off hides PRODUCT nodes', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     expect(screen.getByTestId('kg-node-e_oracle')).toBeInTheDocument();
@@ -659,6 +687,24 @@ describe('GraphTab — selection + detail', () => {
 });
 
 describe('GraphTab — zoom + reset', () => {
+  it('focus mode limits the canvas to the selected entity and one-hop neighbors', async () => {
+    renderWithClient(<GraphTab {...defaultProps()} />);
+
+    expect(screen.getByTestId('kg-node-e_cypher')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('kg-focus-mode'));
+
+    expect(screen.getByTestId('kg-focus-mode')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByTestId('kg-node-e_oracle')).toBeInTheDocument();
+    expect(screen.getByTestId('kg-node-e_rman')).toBeInTheDocument();
+    expect(screen.queryByTestId('kg-node-e_cypher')).toBeNull();
+
+    await userEvent.click(screen.getByTestId('kg-focus-mode'));
+    expect(screen.getByTestId('kg-node-e_cypher')).toBeInTheDocument();
+  });
+
   it('zoom in button increases zoom percentage', async () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
     const value0 = screen.getByTestId('kg-zoom-value').textContent;

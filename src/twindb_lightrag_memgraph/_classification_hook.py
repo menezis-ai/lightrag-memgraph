@@ -74,6 +74,8 @@ Design notes
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import logging
 import os
 from contextvars import ContextVar
@@ -106,6 +108,11 @@ _AINSERT_GATE_ACTIVE: ContextVar[bool] = ContextVar(
 # Placeholder "path" recorded for rejections of in-memory ingestion calls
 # (no source file on disk, hence no trustworthy classification signal).
 _IN_MEMORY_INGESTION_PATH = "<in-memory-ingestion>"
+_CLASSIFICATION_METADATA_KEYS = (
+    "classification",
+    "classification_rejected",
+    "classification_ceiling",
+)
 
 
 class ClassificationRejection(Exception):
@@ -175,16 +182,38 @@ def classify_for_ingestion(
     if ceiling is None:
         ceiling = os.environ.get("TWIN_MIP_MAX_CLASSIFICATION", "C2")
 
+    result = _probe_classification(path_str, label_map)
+    return _evaluate_classification_for_ingestion(
+        path_str,
+        result,
+        ceiling=ceiling,
+        audit_emit=audit_emit,
+    )
+
+
+def _probe_classification(
+    path_str: str, label_map: dict[str, str]
+) -> ClassificationResult:
+    """Run the potentially blocking file/classification probe."""
     try:
-        result = detect_classification(path_str, label_map=label_map)
+        return detect_classification(path_str, label_map=label_map)
     except Exception as exc:  # belt-and-suspenders — classifier should never raise
         log.warning("Classifier raised for %s: %s — treating as UNKNOWN", path_str, exc)
-        result = ClassificationResult(
+        return ClassificationResult(
             class_id="UNKNOWN",
             source_format="unknown",
             reason=f"extraction-failed: {exc.__class__.__name__}",
         )
 
+
+def _evaluate_classification_for_ingestion(
+    path_str: str,
+    result: ClassificationResult,
+    *,
+    ceiling: str,
+    audit_emit: AuditEmitter | None,
+) -> dict[str, Any]:
+    """Apply policy and emit audit events on the caller's thread."""
     # Validate the immutable source signal before considering mutable operator
     # input. Otherwise an operator-selected C1/C2 could turn a missing or
     # unparseable label into an apparently authorised classification before the
@@ -263,17 +292,28 @@ def install_classification_hook(
     label_map = load_label_map(label_map_path)
     resolved_ceiling = ceiling or os.environ.get("TWIN_MIP_MAX_CLASSIFICATION", "C2")
 
-    def _hook(file_path: str) -> dict[str, Any]:
-        return classify_for_ingestion(
+    def _probe(file_path: str) -> ClassificationResult:
+        return _probe_classification(file_path, label_map)
+
+    def _evaluate(file_path: str, result: ClassificationResult) -> dict[str, Any]:
+        return _evaluate_classification_for_ingestion(
             file_path,
-            label_map=label_map,
+            result,
             ceiling=resolved_ceiling,
             audit_emit=audit_emit,
         )
 
+    def _hook(file_path: str) -> dict[str, Any]:
+        return _evaluate(file_path, _probe(file_path))
+
     # The patched LightRAG entry points need the same explicitly configured
     # ceiling when constructing a rejection for source-less ingestion.
     setattr(_hook, "_twin_classification_ceiling", resolved_ceiling)
+    # The async ingestion path offloads only this probe. Policy evaluation,
+    # operator ContextVar access, and the public audit callback stay on the
+    # caller's event-loop thread.
+    setattr(_hook, "_twin_classification_probe", _probe)
+    setattr(_hook, "_twin_classification_evaluate", _evaluate)
 
     log.info(
         "Classification hook installed (ceiling=%s, label_map_size=%d)",
@@ -294,16 +334,44 @@ def _as_list(value: Any) -> list[Any]:
 def _doc_id_for_insert(
     content: str, explicit_id: str | None, file_path: str | None = None
 ) -> str:
-    """Deterministic doc id: explicit id > content hash > file-path hash.
+    """Mirror the installed LightRAG enqueue's deterministic document id.
 
-    The file-path fallback covers enqueue calls whose content is blank at
-    enqueue time (LightRAG 1.5.x ``pending_parse`` upload deferral) — without
-    it every blank-content rejection in a workspace would collide on the
-    md5 of the empty string.
+    LightRAG 1.5.x keys every known-source document on its canonical file
+    path, including RAW inserts. The supported 1.4.x line keys non-empty RAW
+    inserts on content instead. Detect the 1.5.x enqueue capability rather
+    than the package version so accepted metadata and rejected status rows
+    use the same id as the active runtime.
+
+    The blank-content file-path fallback remains for runtimes whose upload
+    path defers parsing without exposing the 1.5.x ``docs_format`` argument.
     """
     if explicit_id:
         return explicit_id
     from lightrag.utils import compute_mdhash_id, sanitize_text_for_encoding
+
+    if file_path:
+        try:
+            import inspect
+
+            from lightrag import LightRAG
+            from lightrag.utils_pipeline import (
+                has_known_document_source,
+                normalize_document_file_path,
+            )
+
+            enqueue = getattr(LightRAG, "_twin_original_enqueue", None)
+            if enqueue is None:
+                enqueue = getattr(LightRAG, "apipeline_enqueue_documents", None)
+            supports_document_formats = (
+                callable(enqueue)
+                and "docs_format" in inspect.signature(enqueue).parameters
+            )
+            canonical_path = normalize_document_file_path(file_path)
+            if supports_document_formats and has_known_document_source(canonical_path):
+                return compute_mdhash_id(canonical_path, prefix="doc-")
+        except (ImportError, TypeError, ValueError):
+            # Older LightRAG builds do not expose these helpers/signature.
+            pass
 
     if not content.strip() and file_path:
         return compute_mdhash_id(file_path, prefix="doc-")
@@ -412,22 +480,100 @@ async def _merge_classification_metadata(
         existing = await rag.doc_status.get_by_id(doc_id)
         if not existing:
             return
-        if isinstance(existing, dict):
-            doc = dict(existing)
-        else:
-            import dataclasses
-
-            doc = (
-                dataclasses.asdict(existing)
-                if dataclasses.is_dataclass(existing)
-                else {}
-            )
+        doc = _doc_status_to_dict(existing)
         metadata = dict(doc.get("metadata") or {})
         metadata["classification"] = payload
         doc["metadata"] = metadata
         await rag.doc_status.upsert({doc_id: doc})
     except Exception as exc:
         log.warning("Failed to persist classification metadata for %s: %s", doc_id, exc)
+
+
+def _doc_status_to_dict(existing: Any) -> dict[str, Any]:
+    if isinstance(existing, dict):
+        return dict(existing)
+    if dataclasses.is_dataclass(existing):
+        return dataclasses.asdict(existing)
+    return {}
+
+
+async def _merge_classification_metadata_batch(
+    rag: Any,
+    payloads_by_doc_id: dict[str, dict[str, Any]],
+) -> None:
+    """Merge accepted-document classification metadata with bounded I/O.
+
+    Memgraph's DocStatus backend exposes ``get_by_ids`` and a set-based
+    ``upsert``. Use both once for the whole accepted batch instead of issuing a
+    read plus two write queries per document. Alternate LightRAG stores keep
+    the old per-document path through capability/error fallbacks.
+    """
+    if not payloads_by_doc_id:
+        return
+
+    get_by_ids = getattr(rag.doc_status, "get_by_ids", None)
+    if not callable(get_by_ids):
+        for doc_id, payload in payloads_by_doc_id.items():
+            await _merge_classification_metadata(rag, doc_id, payload)
+        return
+
+    doc_ids = list(payloads_by_doc_id)
+    try:
+        existing_rows = await get_by_ids(doc_ids)
+    except Exception as exc:
+        log.warning(
+            "Batch classification metadata read failed; retrying individually: %s",
+            exc,
+        )
+        for doc_id, payload in payloads_by_doc_id.items():
+            await _merge_classification_metadata(rag, doc_id, payload)
+        return
+
+    if isinstance(existing_rows, dict):
+        identified_rows = [
+            (str(doc_id), _doc_status_to_dict(existing))
+            for doc_id, existing in existing_rows.items()
+            if existing
+        ]
+    else:
+        identified_rows = []
+        for existing in existing_rows or []:
+            doc = _doc_status_to_dict(existing)
+            doc_id = doc.get("id")
+            if not doc_id:
+                # An alternate store returned records without stable ids. The
+                # result cannot be safely aligned to payloads, so preserve the
+                # original capability-neutral path.
+                for fallback_id, payload in payloads_by_doc_id.items():
+                    await _merge_classification_metadata(rag, fallback_id, payload)
+                return
+            identified_rows.append((str(doc_id), doc))
+
+    updates: dict[str, dict[str, Any]] = {}
+    for doc_id, doc in identified_rows:
+        payload = payloads_by_doc_id.get(doc_id)
+        if payload is None:
+            continue
+        metadata = dict(doc.get("metadata") or {})
+        metadata["classification"] = payload
+        doc["metadata"] = metadata
+        updates[doc_id] = doc
+    if not updates:
+        log.warning(
+            "Classification metadata targets were not found in DocStatus: %s",
+            ", ".join(payloads_by_doc_id),
+        )
+        return
+
+    try:
+        await rag.doc_status.upsert(updates)
+    except Exception as exc:
+        log.warning(
+            "Batch classification metadata write failed; retrying individually: %s",
+            exc,
+        )
+        for doc_id, payload in payloads_by_doc_id.items():
+            await _merge_classification_metadata(rag, doc_id, payload)
 
 
 def _partition_inputs(
@@ -444,6 +590,43 @@ def _partition_inputs(
         path_str = str(path or "").strip() or "unknown_source"
         try:
             payload = active_hook(_resolve_detection_path(path_str))
+        except ClassificationRejection as exc:
+            rejected.append((idx, exc))
+            continue
+        accepted.append((idx, payload))
+    return accepted, rejected
+
+
+def _probe_inputs(
+    probe: Callable[[str], Any], paths: list[Any]
+) -> list[tuple[int, str, Any]]:
+    """Resolve paths and probe one ordered batch in a worker thread."""
+    probed: list[tuple[int, str, Any]] = []
+    for idx, path in enumerate(paths):
+        path_str = str(path or "").strip() or "unknown_source"
+        resolved_path = _resolve_detection_path(path_str)
+        probed.append((idx, resolved_path, probe(resolved_path)))
+    return probed
+
+
+async def _partition_inputs_async(
+    active_hook, paths: list[Any]
+) -> tuple[list[tuple[int, dict[str, Any]]], list[tuple[int, ClassificationRejection]]]:
+    """Offload file probes while keeping policy/audit on the event loop."""
+    probe = getattr(active_hook, "_twin_classification_probe", None)
+    evaluate = getattr(active_hook, "_twin_classification_evaluate", None)
+    if not callable(probe) or not callable(evaluate):
+        # Third-party hooks are opaque: running them in a worker could change
+        # callback/thread affinity. Preserve their synchronous caller-thread
+        # behavior unless they explicitly expose the split protocol above.
+        return _partition_inputs(active_hook, paths)
+
+    probed = await asyncio.to_thread(_probe_inputs, probe, paths)
+    accepted: list[tuple[int, dict[str, Any]]] = []
+    rejected: list[tuple[int, ClassificationRejection]] = []
+    for idx, path_str, result in probed:
+        try:
+            payload = evaluate(path_str, result)
         except ClassificationRejection as exc:
             rejected.append((idx, exc))
             continue
@@ -487,13 +670,15 @@ async def _apply_classification_metadata(
     self, accepted, inputs, explicit_ids, ids_provided, paths=None
 ) -> None:
     """Write ``metadata.classification`` for each accepted document."""
+    payloads_by_doc_id: dict[str, dict[str, Any]] = {}
     for idx, payload in accepted:
         doc_id = _doc_id_for_insert(
             str(inputs[idx]),
             str(explicit_ids[idx]) if ids_provided else None,
             file_path=_raw_path_at(paths, idx),
         )
-        await _merge_classification_metadata(self, doc_id, payload)
+        payloads_by_doc_id[doc_id] = payload
+    await _merge_classification_metadata_batch(self, payloads_by_doc_id)
 
 
 async def _record_rejections(
@@ -636,7 +821,7 @@ async def _gated_ainsert(
         )
         return resolved_track_id
 
-    accepted, rejected = _partition_inputs(active_hook, paths)
+    accepted, rejected = await _partition_inputs_async(active_hook, paths)
 
     if not rejected:
         result_track_id = await original_ainsert(
@@ -810,7 +995,7 @@ async def _patched_apipeline_enqueue_documents(
         )
         return resolved_track_id
 
-    accepted, rejected = _partition_inputs(active_hook, paths)
+    accepted, rejected = await _partition_inputs_async(active_hook, paths)
 
     if not rejected:
         result = await original_enqueue(
@@ -883,6 +1068,44 @@ def _install_enqueue_gate(cls) -> None:
         )
 
 
+def _install_classification_metadata_carry_over() -> None:
+    """Keep Twin security metadata across LightRAG 1.5.x state transitions.
+
+    LightRAG 1.5.x rebuilds ``doc_status.metadata`` from a private carry-over
+    tuple at every pipeline transition. Without registering Twin's fields,
+    accepted classification is present at PENDING and silently disappears at
+    PARSING. Older LightRAG versions do not expose this mechanism and need no
+    patch.
+    """
+    from importlib import import_module
+
+    try:
+        utils_pipeline = import_module("lightrag.utils_pipeline")
+    except ModuleNotFoundError:
+        return
+
+    try:
+        attribute = "_DOC_STATUS_METADATA_CARRY_OVER_KEYS"
+        keys = getattr(utils_pipeline, attribute, None)
+        if not isinstance(keys, tuple):
+            return
+        missing = tuple(key for key in _CLASSIFICATION_METADATA_KEYS if key not in keys)
+        if missing:
+            setattr(utils_pipeline, attribute, (*keys, *missing))
+            log.info(
+                "Registered Twin classification fields for DocStatus "
+                "metadata carry-over: %s",
+                ", ".join(missing),
+            )
+    except Exception as exc:
+        # This is compatibility wiring: installation must retain the module's
+        # historical non-raising contract, but the omission must stay visible.
+        log.warning(
+            "Failed to register classification metadata carry-over: %s",
+            exc,
+        )
+
+
 def install_lightrag_ingestion_hook(
     *,
     label_map_path: str | os.PathLike[str] | None = None,
@@ -909,6 +1132,7 @@ def install_lightrag_ingestion_hook(
         audit_emit=audit_emit,
     )
     setattr(LightRAG, "_twin_classification_hook", hook)
+    _install_classification_metadata_carry_over()
 
     if not getattr(LightRAG, "_twin_classification_patched", False):
         setattr(LightRAG, "_twin_original_ainsert", LightRAG.ainsert)

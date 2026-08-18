@@ -7,7 +7,7 @@ call, answer + structured retrieval in one pass) and projects the
 envelope into the Twin contract.
 
 Wire shape returned by ``/query`` and ``/query/stream``:
-``{response, sources, answer_status}`` where each source carries
+``{response, sources, answer_status, model?}`` where each source carries
 ``n, type, name, meta, score, doc_id?, chunk_id?``.
 
 Doctrine (TR-RET-02 step 2 / audit C3):
@@ -44,7 +44,9 @@ the structured envelope this module projects. It reports
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -52,7 +54,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .._lightrag_compat import (
-    ANSWER_STATUS_GROUNDED,
     ANSWER_STATUS_INSUFFICIENT,
     ANSWER_STATUS_NO_RETRIEVAL,
     ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
@@ -61,8 +62,9 @@ from .._lightrag_compat import (
     classify_answer,
     classify_aquery_llm_result,
 )
-from .activity import _actor_from_request, _record_retrieval_activity
+from .activity import _record_retrieval_activity
 from .models import TwinQueryBody, TwinQueryDataResponse, TwinQueryResponse
+from .paragraph_anchor import CitationEvidenceCollector, collect_citation_evidence
 from .params import _make_query_param, _query_param_kwargs
 from .query_data import (
     _annotate_query_data_chunk_scores,
@@ -84,11 +86,10 @@ from .response_sources import (
     _build_sources_legacy_fallback as _build_sources_legacy_fallback_impl,
     _enrich_sources_doc_ids_from_file_path as _enrich_sources_doc_ids_from_file_path_impl,
     _filter_sources_by_advanced_filters as _filter_sources_by_advanced_filters_impl,
-    _filter_sources_by_min_score,
     _public_sources,
     _source_matches_tag_filter as _source_matches_tag_filter_impl,
 )
-from .source_filters import _source_matches_doc_filter
+from .source_filters import TagFilter, _source_matches_doc_filter
 from .streaming import (
     _determine_stream_status,
     _emit_answer_tokens,
@@ -96,7 +97,6 @@ from .streaming import (
     _query_stream_failure_events,
     _query_stream_fatal_events,
     _query_stream_grounded_events,
-    _select_token_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,12 +106,16 @@ class ClientDisconnectedDuringQuery(Exception):
     """Raised when the HTTP client drops a query while retrieval is running."""
 
 
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
 async def _await_query_or_disconnect(awaitable, request: Request):
     """Await a costly query call while polling for client disconnect.
 
     FastAPI does not automatically cancel an in-flight Python coroutine when
-    the browser aborts a fetch. Filtered retrieval can be expensive because the
-    storage layer performs exact cosine scoring over the pre-filtered corpus; if
+    the browser aborts a fetch. Retrieval can still be expensive for a very
+    narrow filter (the ANN window may need to cover most global neighbours); if
     the operator abandons the thread, stop waiting and cancel the underlying
     task instead of letting it run to a late response.
     """
@@ -140,7 +144,7 @@ async def _enrich_sources_doc_ids_from_file_path(
 
 async def _source_matches_tag_filter(
     source: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     folder: str,
     tags_cache: dict[str, set[str]],
 ) -> bool:
@@ -156,7 +160,7 @@ async def _source_matches_tag_filter(
 async def _filter_sources_by_advanced_filters(
     sources: list[dict[str, Any]],
     *,
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     doc_filter: dict[str, list[str]] | None,
     folder: str,
 ) -> tuple[list[dict[str, Any]], bool]:
@@ -166,6 +170,7 @@ async def _filter_sources_by_advanced_filters(
         doc_filter=doc_filter,
         folder=folder,
         fetch_doc_tags=_fetch_doc_graph_tags,
+        fetch_doc_tags_batch=_active_tag_batch_fetcher(),
     )
 
 
@@ -221,10 +226,62 @@ async def _fetch_doc_graph_tags(doc_id: str, folder: str) -> set[str]:
     }
 
 
+_DEFAULT_FETCH_DOC_GRAPH_TAGS = _fetch_doc_graph_tags
+
+
+async def _fetch_doc_graph_tags_batch(
+    doc_ids: list[str], folder: str
+) -> dict[str, set[str]]:
+    """Read canonical tags for many documents in one set-based query."""
+    unique = list(dict.fromkeys(doc_id for doc_id in doc_ids if doc_id))
+    tags_by_doc = {doc_id: set() for doc_id in unique}
+    if not unique or not folder:
+        return tags_by_doc
+
+    try:
+        from ... import _pool
+        from ..._constants import resolve_workspace
+
+        workspace = resolve_workspace()
+        doc_label = f"DocStatus_{workspace}"
+        tag_label = f"WebuiTag_{folder}"
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                UNWIND $doc_ids AS doc_id
+                MATCH (d:`{doc_label}` {{id: doc_id}})
+                OPTIONAL MATCH (d)-[:TAGGED_WITH]->(t:`{tag_label}`)
+                RETURN doc_id, collect(t.id) AS tags
+                """,
+                doc_ids=unique,
+            )
+            async for record in result:
+                tags_by_doc[record["doc_id"]] = {
+                    str(tag).strip().lower()
+                    for tag in (record["tags"] or [])
+                    if isinstance(tag, str) and tag.strip()
+                }
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "twin_query: batch TAGGED_WITH lookup failed for %d docs folder=%s",
+            len(unique),
+            folder,
+        )
+    return tags_by_doc
+
+
+def _active_tag_batch_fetcher():
+    """Preserve custom/monkeypatched per-doc fetch semantics."""
+    if _fetch_doc_graph_tags is not _DEFAULT_FETCH_DOC_GRAPH_TAGS:
+        return None
+    return _fetch_doc_graph_tags_batch
+
+
 async def _filter_query_data_by_tags(
     rag: Any,
     response: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     folder: str,
 ) -> dict[str, Any]:
     return await _filter_query_data_by_tags_impl(
@@ -233,6 +290,7 @@ async def _filter_query_data_by_tags(
         tag_filter,
         folder,
         _fetch_doc_graph_tags,
+        _active_tag_batch_fetcher(),
     )
 
 
@@ -256,6 +314,12 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     param_kwargs = _query_param_kwargs(body)
     param = _make_query_param(QueryParam, param_kwargs)
 
+    # QA RET-V5-001: per-phase wall-clock, surfaced in the retrieval Activity
+    # event (`meta.timings`, ms) and the server log so a latency report can be
+    # characterized from the ledger (volumetry? filter shape? backend stall?)
+    # instead of re-reproduced blind.
+    route_started = time.perf_counter()
+
     if body.only_need_context:
         try:
             # Folder-scoped retrieval: the storage layer constrains candidate
@@ -271,7 +335,12 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
         )
         cleaned, _ = classify_answer(answer_text)
         await _record_retrieval_activity(
-            body, request, folder=folder, sources_count=0, stream=False
+            body,
+            request,
+            folder=folder,
+            sources_count=0,
+            stream=False,
+            timings={"total_ms": _elapsed_ms(route_started)},
         )
         return {
             "response": cleaned,
@@ -282,11 +351,12 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # --- Nominal path: aquery_llm gives answer + grounding context in a single
     #     call. The sources panel is built from data.references — the chunks
     #     LightRAG actually used. No second vector retrieval (audit C3).
+    retrieval_started = time.perf_counter()
     try:
         # Folder-scoped grounding: every vector retrieval LightRAG issues inside
         # aquery_llm (chunks + entity/relation vdb) is filtered to the active
         # folder's membership at the storage layer (batch-2 cloisonnement).
-        with _retrieval_scope(folder, body):
+        with _retrieval_scope(folder, body) as retrieval_scores:
             envelope = await _await_query_or_disconnect(
                 rag.aquery_llm(body.query, param=param),
                 request,
@@ -297,6 +367,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     except Exception as exc:
         logger.exception("twin_query: aquery_llm failed")
         raise HTTPException(500, f"Query failed: {exc}") from exc
+    retrieval_llm_ms = _elapsed_ms(retrieval_started)
 
     try:
         clean_answer, answer_status = classify_aquery_llm_result(envelope)
@@ -311,7 +382,15 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # grounded default the envelope would otherwise imply) and skip projection.
     if body.mode == "bypass":
         await _record_retrieval_activity(
-            body, request, folder=folder, sources_count=0, stream=False
+            body,
+            request,
+            folder=folder,
+            sources_count=0,
+            stream=False,
+            timings={
+                "retrieval_llm_ms": retrieval_llm_ms,
+                "total_ms": _elapsed_ms(route_started),
+            },
         )
         return {
             "response": clean_answer,
@@ -321,7 +400,15 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
 
     if answer_status == ANSWER_STATUS_INSUFFICIENT:
         await _record_retrieval_activity(
-            body, request, folder=folder, sources_count=0, stream=False
+            body,
+            request,
+            folder=folder,
+            sources_count=0,
+            stream=False,
+            timings={
+                "retrieval_llm_ms": retrieval_llm_ms,
+                "total_ms": _elapsed_ms(route_started),
+            },
         )
         return {
             "response": clean_answer,
@@ -334,10 +421,20 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # data.references (no second chunks_vdb pass — that structural lie was
     # removed in audit C3). The _retrieval_scope wrapper is retained
     # defensively so any future retrieval added here stays folder-scoped.
+    # clean_answer is available before projection on this path, so the
+    # paragraph-anchor evidence is collected from the exact text the
+    # operator receives (PARAGRAPH-CITATION-PLAN.md §5.1, /query leg).
+    projection_started = time.perf_counter()
     with _retrieval_scope(folder, body):
         sources, projection_ok = await _build_envelope_sources(
-            rag, body, folder, envelope
+            rag,
+            body,
+            folder,
+            envelope,
+            citation_evidence=collect_citation_evidence(clean_answer),
+            retrieval_scores=retrieval_scores,
         )
+    sources_projection_ms = _elapsed_ms(projection_started)
     # A grounded answer whose references could not be projected is surfaced
     # honestly (answer kept, sources empty, explicit status) — never silently as
     # grounded + [] (which reads as "no sources") nor as a 500 (which would hide
@@ -348,12 +445,29 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     else:
         sources_for_activity = sources
 
+    timings = {
+        "retrieval_llm_ms": retrieval_llm_ms,
+        "sources_projection_ms": sources_projection_ms,
+        "total_ms": _elapsed_ms(route_started),
+    }
+    logger.info(
+        "twin_query timings: total=%sms retrieval_llm=%sms sources_projection=%sms "
+        "sources=%s mode=%s folder=%s filtered=%s",
+        timings["total_ms"],
+        retrieval_llm_ms,
+        sources_projection_ms,
+        len(sources_for_activity),
+        body.mode,
+        folder,
+        _has_advanced_filter(body),
+    )
     await _record_retrieval_activity(
         body,
         request,
         folder=folder,
         sources_count=len(sources_for_activity),
         stream=False,
+        timings=timings,
     )
     return {
         "response": clean_answer,
@@ -421,7 +535,9 @@ async def _twin_query_data(
     elif isinstance(result.get("data"), dict):
         result = dict(result)
         result["data"] = _annotate_query_data_chunk_scores(result["data"])
-    result = await _filter_query_data_by_tags(rag, result, body.tag_filter, folder)
+    result = await _filter_query_data_by_tags(
+        rag, result, body.tag_filter_payload, folder
+    )
     return {
         "status": result.get("status", "success"),
         "message": result.get("message", "Query executed successfully"),
@@ -433,7 +549,12 @@ async def _twin_query_data(
 
 
 async def _build_envelope_sources(
-    rag, body: TwinQueryBody, folder, envelope
+    rag,
+    body: TwinQueryBody,
+    folder,
+    envelope,
+    citation_evidence=None,
+    retrieval_scores=None,
 ) -> tuple[list, bool]:
     """Project + filter sources from an aquery_llm envelope (shared by /query
     and /query/stream).
@@ -443,13 +564,21 @@ async def _build_envelope_sources(
     ``([], False)`` — the caller then surfaces ``answer_status =
     source_projection_failed`` rather than a silent ``grounded`` + ``[]`` (which
     would look like a genuinely source-less answer). No second vector pass — the
-    structural lie this path deliberately avoids."""
+    structural lie this path deliberately avoids.
+
+    ``citation_evidence`` (per-citation lexical evidence from
+    ``paragraph_anchor``) drives the optional intra-chunk ``anchor``
+    enrichment — additive and fail-soft, applied only after the fail-closed
+    validations passed."""
     return await _build_envelope_sources_impl(
         rag,
         body,
         folder,
         envelope,
         _fetch_doc_graph_tags,
+        _active_tag_batch_fetcher(),
+        citation_evidence=citation_evidence,
+        retrieval_scores=retrieval_scores,
     )
 
 
@@ -460,19 +589,35 @@ async def _generate_twin_query_stream(
     folder: str,
     query_param_cls: Any,
 ) -> AsyncIterator[str]:
+    route_started = time.perf_counter()
     stripper = AnswerMarkerStripper()
+    # Fed the same stripper-safe text the client receives; finalized lazily
+    # inside the grounded-events closure below, so the insufficient/disconnect
+    # paths never pay for (nor trigger) anchor scoring (§5.1).
+    evidence_collector = CitationEvidenceCollector()
     envelope: dict[str, Any] | None = None
     try:
+        # Flush an explicit stage before the expensive filtered lookup. Besides
+        # powering current/future UI feedback, this commits the stream quickly
+        # so a slow vector/graph resolution no longer looks like a dead click.
+        yield json.dumps({"type": "stage", "value": "retrieval"}) + "\n"
         param = _make_query_param(
             query_param_cls, _query_param_kwargs(body, stream=True)
         )
-        with _retrieval_scope(folder, body):
+        retrieval_started = time.perf_counter()
+        with _retrieval_scope(folder, body) as retrieval_scores:
             envelope = await _await_query_or_disconnect(
                 rag.aquery_llm(body.query, param=param),
                 request,
             )
-        async for line in _emit_answer_tokens(envelope, stripper):
+        retrieval_context_ms = _elapsed_ms(retrieval_started)
+        yield json.dumps({"type": "stage", "value": "generation"}) + "\n"
+        generation_started = time.perf_counter()
+        async for line in _emit_answer_tokens(
+            envelope, stripper, collector=evidence_collector
+        ):
             yield line
+        generation_ms = _elapsed_ms(generation_started)
     except ClientDisconnectedDuringQuery:
         logger.info(
             "twin_query stream: client disconnected while aquery_llm was running"
@@ -484,9 +629,14 @@ async def _generate_twin_query_stream(
         return
 
     status, fatal_reason = _determine_stream_status(envelope, stripper)
+    timings = {
+        "retrieval_context_ms": retrieval_context_ms,
+        "generation_ms": generation_ms,
+    }
     if fatal_reason is not None:
+        timings["total_ms"] = _elapsed_ms(route_started)
         async for line in _query_stream_fatal_events(
-            body, request, folder, fatal_reason
+            body, request, folder, fatal_reason, timings
         ):
             yield line
         return
@@ -495,12 +645,27 @@ async def _generate_twin_query_stream(
     if no_retrieval:
         status = ANSWER_STATUS_NO_RETRIEVAL
     if no_retrieval or status == ANSWER_STATUS_INSUFFICIENT:
+        timings["total_ms"] = _elapsed_ms(route_started)
         async for line in _query_stream_empty_sources_events(
-            body, request, folder, status
+            body, request, folder, status, timings
         ):
             yield line
         return
 
+    async def _build_sources_with_anchor_evidence(rag_, body_, folder_, envelope_):
+        # Same callable contract _query_stream_grounded_events always had;
+        # the collector's evidence is bound here so anchors ride the nominal
+        # grounded path only, and finalize() runs exactly once, lazily.
+        return await _build_envelope_sources(
+            rag_,
+            body_,
+            folder_,
+            envelope_,
+            citation_evidence=evidence_collector.finalize(),
+            retrieval_scores=retrieval_scores,
+        )
+
+    yield json.dumps({"type": "stage", "value": "sources"}) + "\n"
     async for line in _query_stream_grounded_events(
         rag,
         body,
@@ -508,12 +673,20 @@ async def _generate_twin_query_stream(
         folder,
         envelope,
         status,
-        _build_envelope_sources,
+        _build_sources_with_anchor_evidence,
+        timings,
+        route_started,
     ):
         yield line
 
 
-def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
+def _twin_query_stream(
+    get_rag,
+    body: TwinQueryBody,
+    request: Request,
+    *,
+    llm_model: str | None = None,
+):
     """Body of ``POST /twin/api/query/stream`` (NDJSON tokens + sources event)."""
     try:
         rag = get_rag()
@@ -524,13 +697,26 @@ def _twin_query_stream(get_rag, body: TwinQueryBody, request: Request):
     from ..folder import resolve_folder_for_request
 
     folder = resolve_folder_for_request(request)
-    return StreamingResponse(
-        _generate_twin_query_stream(rag, body, request, folder, QueryParam),
-        media_type="application/x-ndjson",
-    )
+    events = _generate_twin_query_stream(rag, body, request, folder, QueryParam)
+    resolved_llm_model = llm_model or getattr(rag, "llm_model_name", None)
+
+    async def _events_with_metadata():
+        if resolved_llm_model:
+            yield json.dumps(
+                {"type": "meta", "value": {"model": resolved_llm_model}}
+            ) + "\n"
+        async for event in events:
+            yield event
+
+    return StreamingResponse(_events_with_metadata(), media_type="application/x-ndjson")
 
 
-def build_twin_query_router(get_rag, *, auth_dependency=None) -> APIRouter:
+def build_twin_query_router(
+    get_rag,
+    *,
+    auth_dependency=None,
+    llm_model: str | None = None,
+) -> APIRouter:
     """Mount the Twin overlay query endpoints.
 
     Args:
@@ -538,19 +724,41 @@ def build_twin_query_router(get_rag, *, auth_dependency=None) -> APIRouter:
             instance. Raises a 500 if the host bootstrap didn't capture
             one (same pattern as the native shims).
     """
-    dependencies = [Depends(auth_dependency)] if auth_dependency is not None else None
+    from ..folder import document_folder_header
+
+    # ``document_folder_header`` is documentation-only: the handlers resolve
+    # the folder themselves via ``resolve_folder_for_request(request)``, but
+    # without the declared dependency the spec would advertise no parameters
+    # while the routes honour ``X-Twin-Folder``.
+    dependencies = [Depends(document_folder_header)]
+    if auth_dependency is not None:
+        dependencies.insert(0, Depends(auth_dependency))
     router = APIRouter(tags=["twin-query"], dependencies=dependencies)
 
     @router.post(
         "/query",
         response_model=TwinQueryResponse,
+        summary="Ask a question, get a grounded answer with sources",
         responses={
             499: {"description": "Client closed request"},
             500: {"description": "Query backend error"},
         },
     )
     async def query_endpoint(body: TwinQueryBody, request: Request) -> dict[str, Any]:
-        return await _twin_query(get_rag, body, request)
+        """Answer a question from the knowledge base. The response pairs
+        the generated answer with `sources` — the chunks that actually
+        grounded it, each with its source document, relevance score and
+        `chunk_id` (fetch the chunk text and its surroundings via
+        `GET /chunks/{chunk_id}/context`) — so every claim can be traced
+        back to its origin. Scope the search with the `X-Twin-Folder`
+        header and the optional `tag_filter` / `doc_filter` / `min_score`
+        body fields. For token-by-token delivery use
+        `POST /query/stream`."""
+        result = await _twin_query(get_rag, body, request)
+        resolved_llm_model = llm_model or getattr(get_rag(), "llm_model_name", None)
+        if resolved_llm_model:
+            result["model"] = resolved_llm_model
+        return result
 
     @router.post(
         "/query/data",
@@ -577,13 +785,25 @@ def build_twin_query_router(get_rag, *, auth_dependency=None) -> APIRouter:
     ) -> StreamingResponse:
         """Stream the LightRAG answer as NDJSON and emit a final sources event.
 
-        Wire format (one JSON object per line):
+        Nominal grounded wire format (one JSON object per line):
+          {"type":"meta","value":{"model":"<configured model>"}}
+          {"type":"stage","value":"retrieval"}
+          {"type":"stage","value":"generation"}
           {"type":"token","value":"<chunk text>"}
           ... repeated for every LLM chunk ...
+          {"type":"stage","value":"sources"}
           {"type":"status","value":"grounded"|"insufficient_information"
                                     |"source_projection_failed"|"no_retrieval"
                                     |"query_failed"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
+
+        ``meta`` is optional when no model name is configured. ``retrieval``
+        is the first query-stage event, ``generation`` precedes every answer
+        token, and ``sources`` follows all answer tokens immediately before
+        grounded-source projection. Failure, disconnect, no-retrieval and
+        insufficient-information paths may terminate before the ``sources``
+        stage, but their terminal ``status`` still precedes the final
+        ``sources`` payload.
 
         The ``status`` event lands exactly once, before the final
         ``sources`` event, so the client can branch its rendering
@@ -619,7 +839,7 @@ def build_twin_query_router(get_rag, *, auth_dependency=None) -> APIRouter:
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
-        return _twin_query_stream(get_rag, body, request)
+        return _twin_query_stream(get_rag, body, request, llm_model=llm_model)
 
     return router
 

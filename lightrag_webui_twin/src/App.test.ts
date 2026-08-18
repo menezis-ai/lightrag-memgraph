@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { shouldUseFixtureFallback } from './App';
 import { mapTwinQueryResponseForRetrievalTab } from './api/twinQueryResponse';
 import { TAG_FIXTURES } from './fixtures';
-import { tagCatalogForSuggestions } from './utils/tags';
+import { isActiveCatalogTag, tagCatalogForSuggestions } from './utils/tags';
 
 describe('shouldUseFixtureFallback', () => {
   it('allows fixture fallbacks in dev when MSW is active', () => {
@@ -26,6 +26,12 @@ describe('shouldUseFixtureFallback', () => {
 });
 
 describe('tagCatalogForSuggestions', () => {
+  it('centralizes the steward-approved active-tag predicate', () => {
+    expect(isActiveCatalogTag({ status: 'active', tier: 2 })).toBe(true);
+    expect(isActiveCatalogTag({ status: 'active', tier: 'requested' })).toBe(false);
+    expect(isActiveCatalogTag({ status: 'deprecated', tier: 2 })).toBe(false);
+  });
+
   it('uses governance tags as the single runtime suggestion catalog', () => {
     const catalog = tagCatalogForSuggestions(TAG_FIXTURES);
     const names = catalog.map((tag) => tag.tag);
@@ -126,7 +132,13 @@ describe('mapTwinQueryResponseForRetrievalTab — answer_status wiring', () => {
     const out = mapTwinQueryResponseForRetrievalTab({
       response: 'x',
       sources: [
-        { n: 1, type: 'file', name: 'null.pdf', score: null },
+        {
+          n: 1,
+          type: 'file',
+          name: 'null.pdf',
+          score: null,
+          retrieval_origin: 'graph',
+        },
         { n: 2, type: 'file', name: 'absent.pdf' },
         { n: 3, type: 'file', name: 'zero.pdf', score: 0 },
         { n: 4, type: 'file', name: 'ranked.pdf', score: 0.82 },
@@ -139,6 +151,64 @@ describe('mapTwinQueryResponseForRetrievalTab — answer_status wiring', () => {
       undefined,
       0,
       0.82,
+    ]);
+    expect(out.sources[0].retrieval_origin).toBe('graph');
+  });
+
+  it('passes a structurally valid paragraph anchor through', () => {
+    const anchor = {
+      start: 216,
+      end: 640,
+      paragraph_idx: 1,
+      paragraph_count: 4,
+      confidence: 0.62,
+      method: 'lexical_overlap',
+    };
+    const out = mapTwinQueryResponseForRetrievalTab({
+      response: 'x',
+      sources: [
+        { n: 1, type: 'file', name: 'a.pdf', score: 0.9, anchor },
+        { n: 2, type: 'file', name: 'b.pdf', score: 0.8, anchor: null },
+        { n: 3, type: 'file', name: 'c.pdf', score: 0.7 },
+      ],
+      answer_status: 'grounded',
+    });
+    expect(out.sources[0].anchor).toEqual(anchor);
+    expect(out.sources[1].anchor).toBeUndefined();
+    expect(out.sources[2].anchor).toBeUndefined();
+  });
+
+  it('drops malformed anchors instead of letting bad offsets reach the UI', () => {
+    const base = {
+      paragraph_idx: 0,
+      paragraph_count: 1,
+      confidence: 0.5,
+      method: 'lexical_overlap',
+    };
+    const out = mapTwinQueryResponseForRetrievalTab({
+      response: 'x',
+      sources: [
+        // end <= start
+        { n: 1, type: 'file', name: 'a.pdf', anchor: { ...base, start: 10, end: 10 } },
+        // negative start
+        { n: 2, type: 'file', name: 'b.pdf', anchor: { ...base, start: -1, end: 5 } },
+        // non-integer offsets
+        { n: 3, type: 'file', name: 'c.pdf', anchor: { ...base, start: 0.5, end: 5 } },
+        // non-finite confidence
+        {
+          n: 4,
+          type: 'file',
+          name: 'd.pdf',
+          anchor: { ...base, start: 0, end: 5, confidence: Number.NaN },
+        },
+      ],
+      answer_status: 'grounded',
+    });
+    expect(out.sources.map((source) => source.anchor)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     ]);
   });
 });

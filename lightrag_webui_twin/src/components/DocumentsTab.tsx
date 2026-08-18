@@ -22,6 +22,12 @@ import { ClassPill } from './ClassPill';
 import { QuotaBanner } from './QuotaBanner';
 import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
 import { statusCountFor } from '../lib/docStatus';
+import { ingestionFailureMessage } from '../lib/errorMessages';
+import {
+  isPolicyRejected,
+  policyRejectionKind,
+  policyRejectionGuidance,
+} from '../lib/policyRejection';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useUrlArrayParam, useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
@@ -130,7 +136,8 @@ function documentMatchesStatus(doc: Document, statusFilter: StatusFilterKey) {
 
 function failedDocumentSummary(doc: Document): string {
   const summary = doc.content_summary.trim();
-  const error = doc.error_msg?.trim() ?? '';
+  const rawError = doc.error_msg?.trim() ?? '';
+  const error = rawError ? ingestionFailureMessage(rawError) : '';
 
   if (!error) {
     return summary || 'Indexing failed.';
@@ -336,17 +343,19 @@ function PipelineLatest({
 
 function RetryFailedButton({
   failedCount,
+  rejectedCount,
   ingestionDisabled,
   onScanRetry,
   onAddToast,
 }: Readonly<{
   failedCount: number;
+  rejectedCount: number;
   ingestionDisabled: boolean;
   onScanRetry?: (failedCount: number) => void;
   onAddToast: (title: string, sub?: string) => void;
 }>) {
   const disabled = failedCount === 0 || ingestionDisabled;
-  const title = retryButtonTitle(failedCount, ingestionDisabled);
+  const title = retryButtonTitle(failedCount, ingestionDisabled, rejectedCount);
   const retry = () => {
     if (disabled) return;
     if (onScanRetry) {
@@ -374,11 +383,22 @@ function RetryFailedButton({
   );
 }
 
-function retryButtonTitle(failedCount: number, ingestionDisabled: boolean) {
+function retryButtonTitle(
+  failedCount: number,
+  ingestionDisabled: boolean,
+  rejectedCount: number,
+) {
   if (ingestionDisabled) {
     return 'Memgraph instance quota reached — free space before re-processing';
   }
-  if (failedCount === 0) return 'No failed sources to re-process';
+  if (failedCount === 0) {
+    // Keep the story consistent with the Failed (N) filter pill: a queue
+    // made only of policy verdicts still shows N there, so say why the
+    // action is disarmed instead of denying the failures exist.
+    return rejectedCount > 0
+      ? 'No retryable failed sources — policy-rejected sources cannot be reprocessed'
+      : 'No failed sources to re-process';
+  }
   return `Re-process all ${failedCount} failed source${
     failedCount > 1 ? 's' : ''
   } visible in the current folder view (POST /documents/reprocess_failed)`;
@@ -481,6 +501,8 @@ export interface DocumentsTabProps {
   onRefreshPipeline?: () => void;
   /** Open the document detail panel with chunks, lineage, audit and delete actions. */
   onOpenDetail?: (doc: Document) => void;
+  /** Open a failed document directly on its Lineage diagnostic. */
+  onOpenLineage?: (doc: Document) => void;
   onDeleteDoc?: (doc: Document) => void;
   /** Bulk delete the selected documents (cascade), per #149. */
   onBulkDelete?: (docs: readonly Document[]) => void;
@@ -531,6 +553,7 @@ export function DocumentsTab({
   onTogglePipeline,
   onRefreshPipeline,
   onOpenDetail,
+  onOpenLineage,
   onDeleteDoc,
   onBulkDelete,
   nowMs,
@@ -629,6 +652,31 @@ export function DocumentsTab({
     );
   }, [allDocumentsCount, docs.length, searchAndTagFiltered, statusCounts]);
   const failedCount = counts.failed;
+  // Policy verdicts are stored as FAILED but are not retryable — reprocess
+  // cannot change them (lib/policyRejection), and LightRAG preserves them
+  // from /documents/reprocess_failed anyway. Subtract the rejected docs we
+  // can see so a queue made only of verdicts does not keep the retry action
+  // armed (the observed maquette loop). Best-effort by construction: the
+  // status aggregate is server-side and may count rejected docs beyond the
+  // loaded page — that mixed-batch residual leaves the button armed, which
+  // is safe (the backend re-enqueues only retryable docs) but can overstate
+  // the badge. Server-side split is the follow-up if that residual matters.
+  const visibleRejectedFailedCount = useMemo(() => {
+    // Subtract over the SAME population failedCount was computed from:
+    // with a server aggregate the count covers the whole folder (docs is
+    // the loaded best-effort view of it); without one, statusCountsFor
+    // counted searchAndTagFiltered, so a rejected doc excluded by the
+    // active search/tag filter must not be subtracted either — otherwise
+    // a search that isolates a retryable failure would disarm the button.
+    const population = statusCounts ? docs : searchAndTagFiltered;
+    return population.filter(
+      (d) => d.status === 'FAILED' && isPolicyRejected(d),
+    ).length;
+  }, [statusCounts, docs, searchAndTagFiltered]);
+  const retryableFailedCount = Math.max(
+    0,
+    failedCount - visibleRejectedFailedCount,
+  );
 
   const filtered = useMemo(() => {
     return searchAndTagFiltered.filter((doc) =>
@@ -787,7 +835,8 @@ export function DocumentsTab({
               only when at least one source is failed and is labelled
               for that exact batch retry. */}
           <RetryFailedButton
-            failedCount={failedCount}
+            failedCount={retryableFailedCount}
+            rejectedCount={visibleRejectedFailedCount}
             ingestionDisabled={ingestionDisabled}
             onScanRetry={onScanRetry}
             onAddToast={onAddToast}
@@ -1036,6 +1085,7 @@ export function DocumentsTab({
               onOpenFolders={(doc) => setFolderDialogDoc(doc)}
               onClickTag={clickTagOnRow}
               onOpenDetail={openDetail}
+              onOpenLineage={onOpenLineage}
               nowMs={nowMs}
             />
           ))}
@@ -1100,6 +1150,7 @@ interface DocRowProps {
   onOpenFolders: (doc: Document) => void;
   onClickTag: (e: React.MouseEvent, tag: string) => void;
   onOpenDetail?: (doc: Document) => void;
+  onOpenLineage?: (doc: Document) => void;
   nowMs?: number;
 }
 
@@ -1128,9 +1179,11 @@ function DocRow({
   onOpenFolders,
   onClickTag,
   onOpenDetail,
+  onOpenLineage,
   nowMs,
 }: Readonly<DocRowProps>) {
   const isFail = doc.status === 'FAILED';
+  const rejectionKind = policyRejectionKind(doc);
   const isDeleting = doc._deleting === true;
   const isOptimisticUpload = doc._optimisticUpload === true;
   const canOpenDetail = Boolean(onOpenDetail && !isOptimisticUpload);
@@ -1186,6 +1239,7 @@ function DocRow({
         )}
         <ClassPill
           cls={doc.metadata?.classification as ClassificationValue}
+          visibility={doc.visibility}
           docId={doc.doc_id}
         />
       </div>
@@ -1200,16 +1254,32 @@ function DocRow({
             // class already paints everything red.
           />
         )}
-        <span
-          className="summary-text"
-          style={isFail ? { marginLeft: 6 } : undefined}
-          title={summaryText}
-          data-testid={
-            isFail && doc.error_msg ? `docs-row-error-${doc.doc_id}` : undefined
-          }
-        >
-          {summaryText}
-        </span>
+        {isFail && onOpenLineage ? (
+          <button
+            type="button"
+            className="summary-text summary-error-link"
+            style={{ marginLeft: 6 }}
+            title={`${summaryText} — open Lineage`}
+            data-testid={
+              doc.error_msg ? `docs-row-error-${doc.doc_id}` : undefined
+            }
+            onClick={() => onOpenLineage(doc)}
+            aria-label={`Open Lineage error for ${doc.file_path}`}
+          >
+            {summaryText}
+          </button>
+        ) : (
+          <span
+            className="summary-text"
+            style={isFail ? { marginLeft: 6 } : undefined}
+            title={summaryText}
+            data-testid={
+              isFail && doc.error_msg ? `docs-row-error-${doc.doc_id}` : undefined
+            }
+          >
+            {summaryText}
+          </span>
+        )}
       </div>
       <div className="cell-tags">
         {visibleTags.map((t) => (
@@ -1246,6 +1316,17 @@ function DocRow({
         {isDeleting ? (
           <span className="status-text deleting" data-testid="status-deleting">
             deleting…
+          </span>
+        ) : rejectionKind !== null ? (
+          // A policy verdict, not a transient failure: same red styling
+          // (`failed` class), but the word tells the operator that a retry
+          // will not change anything. Guidance lives in DocDetailPanel.
+          <span
+            className="status-text failed"
+            data-testid={`status-rejected-${doc.doc_id}`}
+            title={policyRejectionGuidance(rejectionKind)}
+          >
+            rejected
           </span>
         ) : (
           <span className={`status-text ${filterStatus}`}>{filterStatus}</span>
@@ -1383,8 +1464,10 @@ function BulkFolderDialog({
     : '';
   const activeLabel = folderLabel(folderList, activeFolder);
   const actionLabel = action === 'copy' ? 'Copy' : 'Move';
+  // Explicit gerunds — `${actionLabel}ing` rendered "Moveing" (QA DOC-V7-004).
+  const runningLabel = action === 'copy' ? 'Copying...' : 'Moving...';
   const sourceCountLabel = `${docs.length} source${docs.length === 1 ? '' : 's'}`;
-  const submitLabel = isRunning ? `${actionLabel}ing...` : `${actionLabel} ${sourceCountLabel}`;
+  const submitLabel = isRunning ? runningLabel : `${actionLabel} ${sourceCountLabel}`;
 
   const runBulkFolderAction = async () => {
     if (!selectedTargetFolder || isRunning) return;

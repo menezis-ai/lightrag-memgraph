@@ -147,7 +147,9 @@ describe('DocumentsTab — rendering', () => {
     expect(badge).toHaveAccessibleName('Classification: Secret · C4 Secret');
   });
 
-  it('does not render a MIP badge for legacy string classifications', () => {
+  // Product decision 2026-08-04 (QA DOC-V4-001): legacy string
+  // classifications render a pill too — the level must be visible on rows.
+  it('renders a badge for legacy string classifications', () => {
     const legacyDoc = {
       ...DOCUMENT_FIXTURES[0],
       doc_id: 'legacy-classification',
@@ -159,7 +161,25 @@ describe('DocumentsTab — rendering', () => {
 
     renderTab(<DocumentsTab {...defaultProps()} docs={[legacyDoc]} />);
 
-    expect(screen.queryByTestId('class-pill-legacy-classification')).toBeNull();
+    const pill = screen.getByTestId('class-pill-legacy-classification');
+    expect(pill.textContent).toBe('restricted');
+  });
+
+  it('falls back to the document visibility badge when unclassified', () => {
+    const plainDoc = {
+      ...DOCUMENT_FIXTURES[0],
+      doc_id: 'plain-visibility',
+      visibility: 'internal' as const,
+      metadata: {
+        ...DOCUMENT_FIXTURES[0].metadata,
+        classification: undefined,
+      },
+    };
+
+    renderTab(<DocumentsTab {...defaultProps()} docs={[plainDoc]} />);
+
+    const pill = screen.getByTestId('class-pill-plain-visibility');
+    expect(pill.textContent).toBe('Internal');
   });
 });
 
@@ -758,6 +778,47 @@ describe('DocumentsTab — folder membership admin actions', () => {
     }
   });
 
+  it('bulk move shows "Moving..." while running (QA DOC-V7-004: was "Moveing...")', async () => {
+    const props = defaultProps();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/quota')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              used_bytes: 1,
+              limit_bytes: 10,
+              used_pct: 0.1,
+              status: 'ok',
+              warn_threshold: 0.85,
+              configured: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        );
+      }
+      // Never resolve membership calls — freezes the modal in its running state.
+      return new Promise<Response>(() => {});
+    });
+
+    renderTab(
+      <DocumentsTab
+        {...props}
+        activeFolder="default"
+        folderList={folderList}
+        canManageFolders
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText(`Select ${DOCUMENT_FIXTURES[0].file_path}`));
+    await userEvent.click(screen.getByTestId('docs-bulk-move'));
+    const submit = screen.getByTestId('bulk-folder-move');
+    expect(submit).toHaveTextContent('Move 1 source');
+    await userEvent.click(submit);
+    await waitFor(() => expect(submit).toHaveTextContent('Moving...'));
+    expect(submit).not.toHaveTextContent('Moveing');
+  });
+
   it('adds a document to another folder from the admin modal', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1075,10 +1136,47 @@ describe('DocumentsTab — failed row surfaces error_msg (TR-ING-01)', () => {
     expect(err.textContent?.match(/unsupported MIME/gi)).toHaveLength(1);
   });
 
+  it('opens the failed document directly on Lineage when its reason is clicked', async () => {
+    const onOpenLineage = vi.fn();
+    renderTab(
+      <DocumentsTab
+        {...defaultProps()}
+        onOpenLineage={onOpenLineage}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /Open Lineage error for huge-archive\.zip/i,
+      }),
+    );
+
+    expect(onOpenLineage).toHaveBeenCalledOnce();
+    expect(onOpenLineage).toHaveBeenCalledWith(
+      expect.objectContaining({ doc_id: 'd3' }),
+    );
+  });
+
   it('omits the error line on a row that has no error_msg', () => {
     // d1 = PROCESSED, no error_msg → the slot must not render at all.
     renderTab(<DocumentsTab {...defaultProps()} />);
     expect(screen.queryByTestId('docs-row-error-d1')).toBeNull();
+  });
+
+  it('explains an OCR image rejection instead of exposing the pipeline code', () => {
+    const failedImage = {
+      ...DOCUMENT_FIXTURES[2],
+      doc_id: 'failed-logo',
+      file_path: 'logo.jpg',
+      content_summary: 'Image ingestion refused',
+      error_msg: 'vision-prefilter: OCR text below 20 chars (9)',
+    };
+    renderTab(<DocumentsTab {...defaultProps()} docs={[failedImage]} />);
+
+    const err = screen.getByTestId('docs-row-error-failed-logo');
+    expect(err).toHaveTextContent('9 text characters detected');
+    expect(err).toHaveTextContent('configured minimum is 20');
+    expect(err).not.toHaveTextContent('vision-prefilter');
   });
 
   it('labels chunks "created before failure" when FAILED with chunks > 0', () => {
@@ -1149,5 +1247,102 @@ describe('DocumentsTab — page pagination', () => {
     expect(screen.getByTestId('docs-page-prev')).toBeDisabled();
     expect(screen.getByTestId('docs-page-next')).toBeDisabled();
     expect(screen.getByTestId('docs-page-next')).toHaveTextContent('Loading');
+  });
+});
+
+describe('DocumentsTab — policy-rejected rows (OVH audit 2026-07-28)', () => {
+  const rejectedDoc = {
+    ...DOCUMENT_FIXTURES[0],
+    doc_id: 'error-rejected-logo',
+    file_path: 'logo-starbucks.jpg',
+    content_summary: 'Image ingestion refused',
+    status: 'FAILED' as const,
+    chunks_count: 0,
+    error_msg:
+      'vision-prefilter: image rejected before vision analysis; ' +
+      'OCR detected 0 text characters, below configured minimum 20',
+  };
+
+  it('renders a "rejected" status pill instead of "failed"', () => {
+    renderTab(<DocumentsTab {...defaultProps()} docs={[rejectedDoc]} />);
+    const pill = screen.getByTestId('status-rejected-error-rejected-logo');
+    expect(pill).toHaveTextContent('rejected');
+    expect(pill.title).toMatch(/will not change the verdict/i);
+  });
+
+  it('keeps the plain "failed" pill for a transient failure', () => {
+    const transientDoc = {
+      ...rejectedDoc,
+      doc_id: 'error-transient',
+      error_msg: 'vision-llm-error: APIConnectionError: endpoint down',
+    };
+    renderTab(<DocumentsTab {...defaultProps()} docs={[transientDoc]} />);
+    expect(screen.queryByTestId('status-rejected-error-transient')).toBeNull();
+    expect(
+      within(screen.getByTestId('docs-row-error-transient')).getByText('failed'),
+    ).toBeInTheDocument();
+  });
+
+  it('disarms the global re-process action when every failure is a verdict', async () => {
+    // Review blocker on PR #416: the rejected row was badged but still
+    // counted, keeping /documents/reprocess_failed armed — the exact
+    // maquette loop the audit set out to fix.
+    const p = { ...defaultProps(), docs: [rejectedDoc], onScanRetry: vi.fn() };
+    renderTab(<DocumentsTab {...p} />);
+    const btn = screen.getByRole('button', { name: /Re-process failed/ });
+    expect(btn).toBeDisabled();
+    // The Failed (N) pill still counts the verdict, so the tooltip must
+    // explain the disarmed action rather than deny the failure exists.
+    expect(btn.getAttribute('title')).toMatch(
+      /No retryable failed sources — policy-rejected sources cannot be reprocessed/,
+    );
+    expect(btn.textContent).not.toMatch(/\d+/);
+    await userEvent.click(btn);
+    expect(p.onScanRetry).not.toHaveBeenCalled();
+  });
+
+  it('keeps the button armed when a search isolates a retryable failure', async () => {
+    // Review blocker (round 2): without a server aggregate, failedCount is
+    // computed from the search/tag-filtered view while the rejected count
+    // scanned ALL docs — searching for the transient failure subtracted the
+    // out-of-view rejected logo and wrongly disarmed the button.
+    const transientDoc = {
+      ...rejectedDoc,
+      doc_id: 'error-transient-report',
+      file_path: 'rapport-q3.pdf',
+      error_msg: 'vision-llm-error: APIConnectionError: endpoint down',
+    };
+    const p = {
+      ...defaultProps(),
+      docs: [rejectedDoc, transientDoc],
+      onScanRetry: vi.fn(),
+    };
+    renderTab(<DocumentsTab {...p} />);
+    await userEvent.type(screen.getByLabelText('Search source'), 'rapport');
+    expect(screen.queryByTestId('docs-row-error-rejected-logo')).toBeNull();
+    const btn = screen.getByRole('button', { name: /Re-process failed/ });
+    expect(btn).toBeEnabled();
+    expect(btn.getAttribute('title')).toContain('1 failed source');
+    await userEvent.click(btn);
+    expect(p.onScanRetry).toHaveBeenCalledWith(1);
+  });
+
+  it('counts only retryable failures in a mixed failed queue', async () => {
+    const transientDoc = {
+      ...rejectedDoc,
+      doc_id: 'error-transient',
+      error_msg: 'vision-llm-error: APIConnectionError: endpoint down',
+    };
+    const p = {
+      ...defaultProps(),
+      docs: [rejectedDoc, transientDoc],
+      onScanRetry: vi.fn(),
+    };
+    renderTab(<DocumentsTab {...p} />);
+    const btn = screen.getByRole('button', { name: /Re-process failed/ });
+    expect(btn).toBeEnabled();
+    expect(btn.getAttribute('title')).toContain('1 failed source');
+    await userEvent.click(btn);
+    expect(p.onScanRetry).toHaveBeenCalledWith(1);
   });
 });

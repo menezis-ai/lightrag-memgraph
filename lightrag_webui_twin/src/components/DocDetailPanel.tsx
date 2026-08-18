@@ -16,13 +16,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/resources';
+import { ClassPill } from './ClassPill';
 import { Icon, SourceIcon } from './Icon';
 import { TagChip } from './TagChip';
 import { relativeTime } from '../utils/relativeTime';
 import { documentContentHash } from '../utils/documents';
+import { ingestionFailureMessage } from '../lib/errorMessages';
+import { policyRejectionKind, policyRejectionGuidance } from '../lib/policyRejection';
+import type { ClassificationValue } from '../types/classification';
 import type { Document } from '../types/document';
 
 export type DetailTab = 'chunks' | 'lineage' | 'audit';
+
+/** Half-open character range to highlight inside the drilled-down chunk. */
+export interface ChunkAnchorRange {
+  start: number;
+  end: number;
+}
 
 export interface DocDetailPanelProps {
   doc: Document | null;
@@ -31,6 +41,9 @@ export interface DocDetailPanelProps {
   onReprocess?: (doc: Document) => void;
   onDelete?: (doc: Document) => void;
   initialExpandedChunkId?: string | null;
+  /** Paragraph anchor for `initialExpandedChunkId` (citation drill-down). */
+  initialAnchor?: ChunkAnchorRange | null;
+  initialTab?: DetailTab;
   nowMs?: number;
 }
 
@@ -41,6 +54,8 @@ export function DocDetailPanel({
   onReprocess,
   onDelete,
   initialExpandedChunkId,
+  initialAnchor,
+  initialTab = 'chunks',
   nowMs,
 }: Readonly<DocDetailPanelProps>) {
   const [tabState, setTabState] = useState<{
@@ -62,9 +77,10 @@ export function DocDetailPanel({
   }, [doc, onClose]);
 
   if (!doc) return null;
+  const rejectionKind = policyRejectionKind(doc);
   const deleteArmed =
     deleteConfirm?.docId === doc.doc_id && deleteConfirm.armed;
-  const tab = tabState.docId === doc.doc_id ? tabState.tab : 'chunks';
+  const tab = tabState.docId === doc.doc_id ? tabState.tab : initialTab;
   const setTab = (next: DetailTab) =>
     setTabState({ docId: doc.doc_id, tab: next });
 
@@ -80,6 +96,13 @@ export function DocDetailPanel({
           <strong className={doc.type === 'file' ? '' : 'mono'}>
             {doc.file_path}
           </strong>
+          {/* QA DOC-V4-001: the confidentiality level must be visible from
+              the detail panel too, not only on the list rows. */}
+          <ClassPill
+            cls={doc.metadata?.classification as ClassificationValue}
+            visibility={doc.visibility}
+            docId={`detail-${doc.doc_id}`}
+          />
         </div>
         <button
           type="button"
@@ -111,6 +134,7 @@ export function DocDetailPanel({
           <ChunksTab
             docId={doc.doc_id}
             initialExpandedChunkId={initialExpandedChunkId}
+            initialAnchor={initialAnchor}
           />
         )}
         {tab === 'lineage' && <LineageTab doc={doc} nowMs={nowMs} />}
@@ -139,6 +163,12 @@ export function DocDetailPanel({
           className="btn small"
           onClick={() => onReprocess?.(doc)}
           data-testid="doc-detail-reprocess"
+          disabled={rejectionKind !== null}
+          title={
+            rejectionKind !== null
+              ? 'This document was rejected by policy — reprocessing cannot change the verdict.'
+              : undefined
+          }
         >
           <Icon name="refresh" size={12} /> Re-process
         </button>
@@ -217,9 +247,48 @@ export function DocDetailPanel({
 interface ChunksTabProps {
   docId: string;
   initialExpandedChunkId?: string | null;
+  initialAnchor?: ChunkAnchorRange | null;
 }
 
-function ChunksTab({ docId, initialExpandedChunkId }: Readonly<ChunksTabProps>) {
+/**
+ * Render a chunk's text with the anchored paragraph highlighted.
+ * The anchor is a non-authoritative hint carried through URL params: any
+ * range that does not fit the actual loaded text (stale offsets after a
+ * re-index, hand-edited URL) degrades to the plain text, never to a
+ * mis-sliced render.
+ *
+ * Offsets are Unicode CODE POINTS (Python string indices, the backend
+ * contract in `TwinSourceAnchor`) — NOT UTF-16 units. `String.slice`
+ * would drift by one for every astral character (emoji, some CJK)
+ * before the paragraph, so both the bounds check and the slicing run
+ * on `Array.from(text)` (PR #418 review, finding 2).
+ */
+function renderChunkText(text: string, anchor: ChunkAnchorRange | null) {
+  if (!anchor) return text;
+  const codePoints = Array.from(text);
+  if (
+    anchor.start < 0 ||
+    anchor.end <= anchor.start ||
+    anchor.end > codePoints.length
+  ) {
+    return text;
+  }
+  return (
+    <>
+      {codePoints.slice(0, anchor.start).join('')}
+      <mark className="chunk-anchor-mark" data-testid="chunk-anchor-highlight">
+        {codePoints.slice(anchor.start, anchor.end).join('')}
+      </mark>
+      {codePoints.slice(anchor.end).join('')}
+    </>
+  );
+}
+
+function ChunksTab({
+  docId,
+  initialExpandedChunkId,
+  initialAnchor,
+}: Readonly<ChunksTabProps>) {
   const [manualExpanded, setManualExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -282,7 +351,12 @@ function ChunksTab({ docId, initialExpandedChunkId }: Readonly<ChunksTabProps>) 
               data-testid="doc-detail-chunk-text"
             >
               {hasText ? (
-                c.text
+                renderChunkText(
+                  c.text,
+                  c.chunk_id === initialExpandedChunkId
+                    ? (initialAnchor ?? null)
+                    : null,
+                )
               ) : (
                 <span className="muted">No text stored for this chunk.</span>
               )}
@@ -330,6 +404,7 @@ interface LineageTabProps {
 
 function LineageTab({ doc, nowMs }: Readonly<LineageTabProps>) {
   const hash = documentContentHash(doc);
+  const rejectionKind = policyRejectionKind(doc);
   return (
     <div className="doc-lineage" data-testid="doc-detail-lineage">
       <dl className="settings-dl">
@@ -371,7 +446,17 @@ function LineageTab({ doc, nowMs }: Readonly<LineageTabProps>) {
               data-testid="doc-detail-error-msg"
               style={{ color: 'var(--twin-red-vivid)' }}
             >
-              Indexing failed: {doc.error_msg}
+              {rejectionKind !== null
+                ? doc.error_msg
+                : `Indexing failed: ${ingestionFailureMessage(doc.error_msg)}`}
+            </dd>
+          </>
+        )}
+        {rejectionKind !== null && (
+          <>
+            <dt>Verdict</dt>
+            <dd data-testid="doc-detail-policy-rejection">
+              {policyRejectionGuidance(rejectionKind)}
             </dd>
           </>
         )}

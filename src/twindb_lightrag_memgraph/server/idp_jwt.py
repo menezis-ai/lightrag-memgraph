@@ -111,6 +111,22 @@ _DEFAULT_ADMIN_GROUPS: frozenset[str] = frozenset({"twin-admin", "twin-steward"}
 # ``lightrag_webui_twin/src/lib/permissions.ts``).
 ADMIN_FOLDERS_SCOPE = "admin:folders"
 
+# Client-facing description for every local token rejection (R-05): a
+# constant string denies the PyJWT-internals error oracle.
+_INVALID_TOKEN_DESCRIPTION = "Invalid token"
+
+
+def _warn_if_plain_http_jwks(jwks_url: str) -> None:
+    """Audit 2026-08-06, R-08e: the JWKS URL is fetched verbatim by
+    PyJWKClient. Plain-http (or exotic-scheme) endpoints silently
+    downgrade the whole IdP trust anchor — warn loudly at boot."""
+    if not jwks_url.lower().startswith("https://"):
+        logger.warning(
+            "SECURITY: TWIN_IDP_JWKS_URL=%r is not https:// — JWKS keys "
+            "fetched over an unauthenticated channel can be substituted",
+            jwks_url,
+        )
+
 
 @dataclass(frozen=True)
 class IdpConfig:
@@ -158,6 +174,7 @@ class IdpConfig:
         jwks_url = (env.get("TWIN_IDP_JWKS_URL") or "").strip()
         if not jwks_url:
             return None
+        _warn_if_plain_http_jwks(jwks_url)
         algorithms_raw = env.get("TWIN_IDP_ALGORITHMS", "RS256")
         algorithms = tuple(
             a.strip() for a in algorithms_raw.split(",") if a.strip()
@@ -315,7 +332,13 @@ def decode_idp_token(
     token: str, config: IdpConfig, jwks_cache: JwksCache
 ) -> dict[str, Any]:
     """Verify + decode a JWT against the configured IdP, raising
-    ``IdpAuthError`` on any failure."""
+    ``IdpAuthError`` on any failure.
+
+    Audit 2026-08-06, R-05: client-facing descriptions are constant —
+    the specific failure reason (codec bytes, audience/issuer mismatch
+    details) is an error oracle for token crafting and is logged
+    server-side only. RFC 6750 ``error`` codes are kept.
+    """
     import jwt as pyjwt
 
     try:
@@ -324,7 +347,7 @@ def decode_idp_token(
         logger.exception("idp_jwt: signing key lookup failed")
         raise IdpAuthError(
             error="invalid_token",
-            description=f"Cannot resolve signing key: {exc}",
+            description=_INVALID_TOKEN_DESCRIPTION,
         ) from exc
 
     options: dict[str, Any] = {}
@@ -345,24 +368,27 @@ def decode_idp_token(
             description="Token expired",
         ) from exc
     except pyjwt.InvalidAudienceError as exc:
+        logger.debug("idp_jwt: audience rejected: %s", exc)
         raise IdpAuthError(
             error="invalid_token",
-            description=f"Wrong audience: {exc}",
+            description=_INVALID_TOKEN_DESCRIPTION,
         ) from exc
     except pyjwt.InvalidIssuerError as exc:
+        logger.debug("idp_jwt: issuer rejected: %s", exc)
         raise IdpAuthError(
             error="invalid_token",
-            description=f"Wrong issuer: {exc}",
+            description=_INVALID_TOKEN_DESCRIPTION,
         ) from exc
     except pyjwt.InvalidSignatureError as exc:
         raise IdpAuthError(
             error="invalid_token",
-            description="Signature mismatch",
+            description=_INVALID_TOKEN_DESCRIPTION,
         ) from exc
     except pyjwt.InvalidTokenError as exc:
+        logger.debug("idp_jwt: token rejected: %s", exc)
         raise IdpAuthError(
             error="invalid_token",
-            description=f"Invalid token: {exc}",
+            description=_INVALID_TOKEN_DESCRIPTION,
         ) from exc
 
 

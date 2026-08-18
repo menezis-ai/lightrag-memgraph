@@ -18,15 +18,13 @@ fault, and asserts three invariants:
      cleanup behavior ever changes); where the pipeline is clean we assert
      cleanliness.
 
-Version tolerance (memory ``feedback_lightrag_version_skew``): local dev runs
-lightrag 1.5.4, CI runs 1.4.9.11 / 1.4.11 / 1.4.12. All interactions go
-through the public API (``ainsert``, storage instances, ``doc_status``).
-Graph-merge faults are injected by monkeypatching INSTANCE methods on
+The supported runtime and CI pin is LightRAG 1.5.6. All interactions go through
+the public API (``ainsert``, storage instances, ``doc_status``). Graph-merge
+faults are injected by monkeypatching INSTANCE methods on
 ``rag.chunk_entity_relation_graph`` — never module-level functions — because
-``merge_nodes_and_edges`` is called from ``lightrag/lightrag.py`` in 1.4.9.11
-but from ``lightrag/pipeline.py`` (module-local binding, audit SKEW-1) in
-1.5.x; instance patching sidesteps that skew entirely. Assertions that are
-genuinely version- or race-dependent are tolerant, with the reason inline.
+the merge implementation carries module-local bindings; instance patching
+keeps the fault at the storage contract boundary. Assertions that are genuinely
+race-dependent are tolerant, with the reason inline.
 
 Requires a running Memgraph (MEMGRAPH_URI); auto-skipped otherwise.
 """
@@ -269,18 +267,38 @@ async def _doc_statuses(rag) -> dict[str, tuple[DocStatus, object]]:
     return out
 
 
-async def _settled_statuses(rag) -> dict[str, tuple[DocStatus, object]]:
-    """Statuses after letting orphaned sibling tasks drain.
+async def _settled_statuses(
+    rag, *, timeout_seconds: float = 5.0
+) -> dict[str, tuple[DocStatus, object]]:
+    """Poll until every visible document reaches a terminal status.
 
-    On failure, stage-1 sibling tasks (doc_status / chunks_vdb / text_chunks
-    upserts run in one asyncio.gather — PIPE-5) may still be in flight when
-    ainsert() returns: 1.4.9.11 never cancels them, 1.5.x cancels but a task
-    may already be past its Bolt write. The short sleep makes the residue
-    snapshot deterministic to read (not deterministic in content — see the
-    tolerant text_chunks assertions).
+    On failure, ``ainsert()`` can return before the cancelled stage-1 tasks and
+    the failure finalizer have completed their Bolt writes. A fixed sleep made
+    this assertion depend on runner and Memgraph load. The bounded poll still
+    fails a genuinely stuck pipeline while allowing its eventual terminal
+    write to become visible.
     """
-    await asyncio.sleep(0.5)
-    return await _doc_statuses(rag)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    statuses: dict[str, tuple[DocStatus, object]] = {}
+
+    while True:
+        statuses = await _doc_statuses(rag)
+        if statuses and all(
+            status in TERMINAL_STATUSES for status, _ in statuses.values()
+        ):
+            return statuses
+
+        if loop.time() >= deadline:
+            observed = {
+                doc_id: status.value for doc_id, (status, _) in statuses.items()
+            }
+            raise AssertionError(
+                "document statuses did not become terminal within "
+                f"{timeout_seconds:.1f}s: {observed}"
+            )
+
+        await asyncio.sleep(0.05)
 
 
 def _assert_all_terminal(statuses: dict) -> None:
@@ -356,17 +374,21 @@ class TestIngestionCollapse:
         ):
             assert snap[key] == 0, f"unexpected downstream residue {key}: {snap}"
 
-    async def test_failed_doc_is_implicitly_retried_on_next_pipeline_trigger(
+    async def test_failed_doc_is_NOT_implicitly_retried_on_next_pipeline_trigger(
         self, collapse_env
     ):
-        """PIPE-12 pin: a FAILED doc is silently retried by ANY later trigger.
+        """1.5.5 contract flip: FAILED docs are retried ONLY by manual retry.
 
-        No operator action, no reprocess endpoint: inserting an unrelated
-        second document re-runs the pipeline, which selects FAILED docs whose
-        full_docs payload survives (that residue is the retry fuel) and resets
-        them to PENDING. Source-confirmed on the 1.4.9.11 wheel
-        (_validate_and_fix_document_consistency) and on 1.5.4
-        (_INFLIGHT_DOC_STATUSES includes FAILED); runtime-confirmed on 1.5.4.
+        PIPE-12 (implicit FAILED retry on any later pipeline trigger) was the
+        1.4.x/1.5.4 behavior this test used to pin. LightRAG 1.5.5 removed it
+        by design — the consistency validator "never carries FAILED (those
+        are reset only by the manual EXCLUSIVE_RESET)"
+        (pipeline.py:_validate_and_fix_document_consistency), and FAILED
+        recovery goes through the manual retry protocol
+        (freeze → DRAIN_TO_IDLE → EXCLUSIVE_RESET, i.e. the reprocess
+        endpoint). The new pin: an unrelated ainsert() must process ITS doc
+        and leave the FAILED one untouched — a silent auto-retry reappearing
+        would be an upstream regression worth noticing.
         """
         rag, faults, ws = collapse_env
 
@@ -383,16 +405,16 @@ class TestIngestionCollapse:
         statuses = await _settled_statuses(rag)
         _assert_all_terminal(statuses)
         assert len(statuses) == 2
-        retried_status, _ = statuses[failed_doc_id]
-        assert retried_status == DocStatus.PROCESSED, (
-            "implicit FAILED-retry (PIPE-12) did not occur: the previously "
-            f"FAILED doc is {retried_status} after an unrelated ainsert()"
+        retried_status, retried_doc = statuses[failed_doc_id]
+        assert retried_status == DocStatus.FAILED, (
+            "LightRAG 1.5.5 removed implicit FAILED retry (manual-only "
+            f"EXCLUSIVE_RESET); the FAILED doc unexpectedly became "
+            f"{retried_status} after an unrelated ainsert()"
         )
-
-        # The healed retry rebuilt the chunk stores for both docs.
+        # The retry fuel (full_docs payload) must still be there for the
+        # manual reprocess path.
         snap = await _residue_snapshot(ws)
-        assert snap["vec_chunks"] >= 2, f"retry did not rebuild vectors: {snap}"
-        assert snap["text_chunks"] >= 2, f"retry did not rebuild chunks: {snap}"
+        assert snap["full_docs"] >= 1, f"retry fuel purged: {snap}"
 
     async def test_graph_merge_failure_degrades_to_failed_chunks_resident(
         self, collapse_env, monkeypatch

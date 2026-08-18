@@ -22,7 +22,7 @@ import logging
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from lightrag import LightRAG
 from pydantic import BaseModel
 
@@ -78,6 +78,11 @@ async def _get_ordered_chunk_ids(rag: LightRAG, doc_id: str) -> list[str]:
     Falls back to 404 when unavailable.
     """
     doc_status_data = await rag.doc_status.get_by_id(doc_id)
+    return _ordered_chunk_ids(doc_status_data, doc_id)
+
+
+def _ordered_chunk_ids(doc_status_data: Any, doc_id: str) -> list[str]:
+    """Extract chunk ordering from an already-loaded DocStatus record."""
 
     if doc_status_data is not None:
         chunks_list: list[str] | None = None
@@ -222,21 +227,31 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         responses={404: {"description": "Chunk or parent document not found"}},
     )
     async def get_chunk_context(
-        chunk_id: str,
+        chunk_id: Annotated[
+            str,
+            Path(
+                description="Chunk identifier returned in a query source.",
+                examples=["chunk-4f1a2b"],
+            ),
+        ],
         window: Annotated[
             int,
             Query(
                 ge=1,
                 le=50,
-                description="Chunks before/after to include",
+                description="Number of chunks before and after to include (1-50).",
             ),
         ] = 3,
     ) -> ChunkContextResponse:
+        """Return the chunk's neighbours inside its document — `window`
+        chunks before and after, in document order. Useful to read the
+        surrounding context of a chunk cited as an answer source. Chunk
+        ids come from the `sources` of `POST /twin/api/query`."""
         active_rag = current_rag()
         anchor = await _resolve_chunk(active_rag, chunk_id)
         doc_id = _parent_doc_id(anchor, chunk_id)
-        await _require_doc_in_active_folder(active_rag, doc_id)
-        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
+        doc_status_data = await _require_doc_in_active_folder(active_rag, doc_id)
+        ordered_ids = _ordered_chunk_ids(doc_status_data, doc_id)
         window_ids = _chunk_context_window(ordered_ids, chunk_id, doc_id, window)
         items = await _fetch_chunks_by_ids(active_rag, window_ids)
         return ChunkContextResponse(
@@ -252,12 +267,22 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         summary="All chunks of the parent document for a given chunk",
         responses={404: {"description": "Chunk or parent document not found"}},
     )
-    async def get_chunk_document(chunk_id: str) -> ChunkContextResponse:
+    async def get_chunk_document(
+        chunk_id: Annotated[
+            str,
+            Path(
+                description="Chunk identifier whose parent document is requested.",
+                examples=["chunk-4f1a2b"],
+            ),
+        ],
+    ) -> ChunkContextResponse:
+        """Return every chunk of the document the given chunk belongs to,
+        in document order — the full text a cited chunk was taken from."""
         active_rag = current_rag()
         anchor = await _resolve_chunk(active_rag, chunk_id)
         doc_id = _parent_doc_id(anchor, chunk_id)
-        await _require_doc_in_active_folder(active_rag, doc_id)
-        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
+        doc_status_data = await _require_doc_in_active_folder(active_rag, doc_id)
+        ordered_ids = _ordered_chunk_ids(doc_status_data, doc_id)
         items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
         return ChunkContextResponse(
             chunks=items,
@@ -273,19 +298,29 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         responses={404: {"description": "Document chunk ordering not found"}},
     )
     async def get_document_chunks(
-        doc_id: str,
+        doc_id: Annotated[
+            str,
+            Path(
+                description="Document identifier returned by the document list.",
+                examples=["doc-7c91e2"],
+            ),
+        ],
         start: Annotated[
             int | None,
-            Query(ge=0, description="Start index (inclusive)"),
+            Query(ge=0, description="First chunk position to return (inclusive)."),
         ] = None,
         end: Annotated[
             int | None,
-            Query(ge=0, description="End index (inclusive)"),
+            Query(ge=0, description="Last chunk position to return (inclusive)."),
         ] = None,
     ) -> ChunkContextResponse:
+        """Return the document's chunks in order. Without `start`/`end`
+        the whole document is returned; with them, only the requested
+        positional range. `total_chunks_in_doc` always reports the full
+        count."""
         active_rag = current_rag()
-        await _require_doc_in_active_folder(active_rag, doc_id)
-        ordered_ids = await _get_ordered_chunk_ids(active_rag, doc_id)
+        doc_status_data = await _require_doc_in_active_folder(active_rag, doc_id)
+        ordered_ids = _ordered_chunk_ids(doc_status_data, doc_id)
         total = len(ordered_ids)
 
         if start is not None or end is not None:

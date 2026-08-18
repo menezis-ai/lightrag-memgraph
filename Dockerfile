@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.6
 
-# BNP runtime image. The export branch commits the prebuilt Twin WebUI under
-# src/twindb_lightrag_memgraph/webui_dist/, so this Dockerfile must not run Bun
-# or perform editable package installation during the BNP build.
-FROM fr2.icr.io/a100575-hprd/hkuds/lightrag:v1.4.9.11
+# BNP runtime-only image. The export branch commits the prebuilt Twin WebUI
+# under src/twindb_lightrag_memgraph/webui_dist/; no frontend or dependency
+# build is performed in the BNP runtime image.
+FROM fr2.icr.io/a100575-hprd/hkuds/lightrag:v1.5.6
 
 COPY src /app/src
 COPY src/twindb_lightrag_memgraph /app/twindb_lightrag_memgraph
@@ -18,7 +18,12 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app:/app/src:${PYTHONPATH}
 
-# twindb_lightrag_memgraph.lightrag_server calls:
-#   register(replace_ui=True, mount_server=True, shim_native_routes=True)
-# before importing LightRAG's native server entrypoint.
+# Audit 2026-08-06, B-01: run the runtime and native parsers as an
+# unprivileged user. Deployment paths outside /app must be writable by twin.
+RUN useradd --system --create-home --shell /usr/sbin/nologin twin \
+ && chown -R twin:twin /app
+USER twin
+
+# This entrypoint registers the Twin UI, API overlay and native route shims
+# before importing LightRAG's server.
 ENTRYPOINT ["python", "-m", "twindb_lightrag_memgraph.lightrag_server"]

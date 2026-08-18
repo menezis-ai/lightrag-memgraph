@@ -16,8 +16,24 @@ from typing import Any
 from lightrag.base import BaseKVStorage
 from lightrag.utils import logger
 
+try:  # LightRAG 1.5.5+
+    from lightrag.exceptions import StorageControlPlaneError
+except ImportError:  # pragma: no cover - pre-1.5.5 LightRAG
+
+    class StorageControlPlaneError(RuntimeError):
+        """Fallback shim so raise-sites stay importable pre-1.5.5."""
+
+
 from . import _pool
 from ._constants import resolve_workspace, validate_identifier
+from ._prompt_security import neutralize_chunk_payloads
+from ._retry import with_conflict_retry
+
+# LightRAG's text-chunks KV namespace (``lightrag.namespace.NameSpace``);
+# duplicated as a literal so this backend stays importable even if upstream
+# renames the constant holder — the namespace string itself is the storage
+# contract and cannot change without a data migration anyway.
+_KV_TEXT_CHUNKS_NAMESPACE = "text_chunks"
 
 
 @dataclass
@@ -70,6 +86,13 @@ class MemgraphKVStorage(BaseKVStorage):
     async def index_done_callback(self):  # NOSONAR - async contract.
         pass  # Memgraph persists automatically
 
+    # LightRAG 1.5.5 strict point reads: the manual FAILED-retry protocol
+    # gates on this to distinguish "content really absent" from "storage
+    # failure" — without it every retry leaves FAILED docs untouched. This
+    # read is one indexed query whose errors propagate, so the strict
+    # contract (miss = confirmed absence, failure = raise) already holds.
+    supports_strict_point_reads = True
+
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         label = self._label()
         async with _pool.get_read_session() as session:
@@ -82,6 +105,50 @@ class MemgraphKVStorage(BaseKVStorage):
             if record and record["data"]:
                 return json.loads(record["data"])
             return None
+
+    async def get_by_id_strict(self, id: str) -> dict[str, Any] | None:
+        """Point read, complete-or-raise (LightRAG 1.5.5 base contract).
+
+        Unlike the lenient ``get_by_id`` (which reports a miss for an
+        existing node whose ``data`` payload is empty or JSON null), the
+        strict path distinguishes the two: ``None`` ONLY for a confirmed
+        missing node; an existing node with an unusable payload raises —
+        the manual FAILED-retry protocol treats ``None`` as "content really
+        absent" and would silently drop the doc otherwise.
+        """
+        label = self._label()
+        async with _pool.get_read_session() as session:
+            result = await session.run(
+                f"""
+                OPTIONAL MATCH (n:`{label}` {{id: $id}})
+                RETURN n IS NOT NULL AS found, n.data AS data
+                """,
+                id=id,
+            )
+            record = await result.single()
+            await result.consume()
+        if not record or not record["found"]:
+            return None  # confirmed absent
+        data = record["data"]
+        if not data:
+            raise StorageControlPlaneError(
+                f"[MemgraphKV:{self.workspace}] strict read of {id!r}: node "
+                "exists but its data payload is empty — unusable, not absent"
+            )
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise StorageControlPlaneError(
+                f"[MemgraphKV:{self.workspace}] strict read of {id!r}: node "
+                f"exists but its data payload does not decode: {exc}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise StorageControlPlaneError(
+                f"[MemgraphKV:{self.workspace}] strict read of {id!r}: node "
+                f"exists but its payload decodes to {type(parsed).__name__}, "
+                "not an object"
+            )
+        return parsed
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         label = self._label()
@@ -125,6 +192,11 @@ class MemgraphKVStorage(BaseKVStorage):
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         label = self._label()
         now = datetime.now(timezone.utc).isoformat()
+        if self.namespace == _KV_TEXT_CHUNKS_NAMESPACE:
+            # Audit 2026-08-06, R-06: chunk text is untrusted, stored content
+            # that lands verbatim in LLM prompts — neutralize reserved prompt
+            # delimiters at the storage boundary (see _prompt_security).
+            data = neutralize_chunk_payloads(data)
         entries = [
             {
                 "id": k,
@@ -133,32 +205,42 @@ class MemgraphKVStorage(BaseKVStorage):
             }
             for k, v in data.items()
         ]
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $entries AS e
-                    MERGE (n:`{label}` {{id: e.id}})
-                    ON CREATE SET n.__created_at = e.ts
-                    SET n.data = e.data, n.__updated_at = e.ts
-                    """,
-                    entries=entries,
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        UNWIND $entries AS e
+                        MERGE (n:`{label}` {{id: e.id}})
+                        ON CREATE SET n.__created_at = e.ts
+                        SET n.data = e.data, n.__updated_at = e.ts
+                        """,
+                        entries=entries,
+                    )
+                    await result.consume()
+
+        # Re-runnable: MERGE + SET, and ON CREATE only fires on insert.
+        await with_conflict_retry(f"MemgraphKV.upsert[{label}]", _write)
 
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
-                    UNWIND $ids AS target_id
-                    MATCH (n:`{label}` {{id: target_id}})
-                    DETACH DELETE n
-                    """,
-                    ids=list(ids),
-                )
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(
+                        f"""
+                        UNWIND $ids AS target_id
+                        MATCH (n:`{label}` {{id: target_id}})
+                        DETACH DELETE n
+                        """,
+                        ids=list(ids),
+                    )
+                    await result.consume()
+
+        # Re-runnable: deleting an already-deleted node matches nothing.
+        await with_conflict_retry(f"MemgraphKV.delete[{label}]", _write)
 
     async def is_empty(self) -> bool:
         label = self._label()
@@ -172,8 +254,13 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def drop(self) -> dict[str, str]:
         label = self._label()
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                await result.consume()
+
+        async def _write() -> None:
+            async with _pool.acquire_write_slot():
+                async with _pool.get_session() as session:
+                    result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+                    await result.consume()
+
+        # Re-runnable: a second pass matches an empty label set.
+        await with_conflict_retry(f"MemgraphKV.drop[{label}]", _write)
         return {"status": "success", "message": f"KV namespace {label} dropped"}

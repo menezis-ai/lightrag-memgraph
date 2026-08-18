@@ -441,6 +441,16 @@ class TestRequestTag:
         )
         assert r.status_code == 409
 
+    # QA TAG-V8-001 — creation previously relied on the UI alone for the
+    # required-definition invariant; the API must refuse a blank def too.
+    async def test_blank_definition_is_422(self, client):
+        r = await client.post(
+            "/tags",
+            json={"tag": "blankdef", "def": "   ", "category": "infra"},
+        )
+        assert r.status_code == 422
+        assert await _get_tag(client, "blankdef") is None
+
     async def test_emits_activity_event_without_trusting_client_actor(self, client):
         await client.post(
             "/tags",
@@ -642,6 +652,27 @@ class TestEditTag:
         )
         assert r.status_code == 409
 
+    # QA TAG-V8-001 — the `required` definition invariant enforced at creation
+    # must hold on the edit path too: an explicit blank def is a 422, and the
+    # stored definition survives the attempt.
+    async def test_blank_definition_is_422_and_preserves_stored_def(self, client):
+        before = await _get_tag(client, "rman")
+        for blank in ("", "   ", "\n\t"):
+            r = await client.patch(
+                "/tags/rman",
+                json={"def": blank, "actor": "claire.benoit"},
+            )
+            assert r.status_code == 422, blank
+        after = await _get_tag(client, "rman")
+        assert after["def"] == before["def"]
+
+    async def test_blank_name_rename_is_400(self, client):
+        r = await client.patch(
+            "/tags/rman",
+            json={"tag": "   ", "actor": "claire.benoit"},
+        )
+        assert r.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # POST /tags/{name}/suggest-edit
@@ -649,6 +680,15 @@ class TestEditTag:
 
 
 class TestSuggestTagEdit:
+    # QA TAG-V8-001 — an edit proposal must not smuggle a blank definition
+    # past the approval flow.
+    async def test_blank_definition_is_422(self, client):
+        r = await client.post(
+            "/tags/rman/suggest-edit",
+            json={"def": "  ", "actor": "alberto"},
+        )
+        assert r.status_code == 422
+
     async def test_creates_pending_edit_proposal(self, client):
         r = await client.post(
             "/tags/rman/suggest-edit",

@@ -141,6 +141,14 @@ export function TagActionModal({
   const requestNameMissing = action.kind === 'request' && !name.trim();
   const requestDefinitionMissing =
     action.kind === 'request' && !definition.trim();
+  // QA TAG-V8-001: the `required` contract enforced at creation must hold
+  // symmetrically on the edit paths — an existing tag could be saved with an
+  // emptied definition (and a blanked name request a 400 rename).
+  const editDefinitionMissing =
+    (action.kind === 'edit' || action.kind === 'edit-approve') &&
+    !definition.trim();
+  const editNameMissing =
+    (action.kind === 'edit' || action.kind === 'edit-approve') && !name.trim();
   const removeAlias = (alias: string) => {
     setAliases((current) => current.filter((x) => x !== alias));
   };
@@ -194,6 +202,8 @@ export function TagActionModal({
     (action.kind === 'reject' && !reason.trim()) ||
     (action.kind === 'request' &&
       (requestNameMissing || requestDefinitionMissing)) ||
+    editDefinitionMissing ||
+    editNameMissing ||
     (action.kind === 'suggest' &&
       (!definition.trim() ||
         !tag ||
@@ -256,7 +266,10 @@ export function TagActionModal({
                   disabled={action.kind !== 'edit-approve' && action.kind !== 'edit'}
                 />
                 <label className="field-label" htmlFor="tagaction-def">
-                  Short definition
+                  Short definition{' '}
+                  <span className="required-indicator" aria-hidden="true">
+                    required
+                  </span>
                 </label>
                 <textarea
                   id="tagaction-def"
@@ -264,7 +277,22 @@ export function TagActionModal({
                   rows={3}
                   value={definition}
                   onChange={(e) => setDefinition(e.target.value)}
+                  required
+                  aria-required="true"
+                  aria-invalid={editDefinitionMissing || undefined}
+                  aria-describedby={
+                    editDefinitionMissing ? 'tagaction-def-error' : undefined
+                  }
                 />
+                {editDefinitionMissing && (
+                  <div
+                    id="tagaction-def-error"
+                    className="field-error"
+                    role="alert"
+                  >
+                    Definition is required — a tag cannot be saved without one.
+                  </div>
+                )}
                 <label className="field-label" htmlFor="tagaction-longdef">
                   Long description (optional)
                 </label>
@@ -464,7 +492,10 @@ export function TagActionModal({
           {action.kind === 'reject' && tag && (
             <>
               <label className="field-label" htmlFor="tagaction-reason">
-                Reason
+                Reason{' '}
+                <span className="required-indicator" aria-hidden="true">
+                  required
+                </span>
               </label>
               <textarea
                 id="tagaction-reason"
@@ -473,6 +504,8 @@ export function TagActionModal({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="The author of the request will receive this message. Be specific."
+                required
+                aria-required="true"
               />
               <div className="impact-box">
                 <Icon name="info-circle" size={13} color="var(--twin-accent)" />

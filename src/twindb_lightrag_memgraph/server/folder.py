@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Mapping
+from typing import Annotated, Mapping
 
-from fastapi import HTTPException, Request
+from fastapi import Header, HTTPException, Request
 
 from .._constants import validate_identifier
 from .._folders import (
@@ -82,7 +82,10 @@ def resolve_folder_from_headers(headers: Mapping[str, str]) -> str:
     if folder_id not in catalog.ids:
         raise HTTPException(
             status_code=403,
-            detail="No folder available for this KB. Please contact Twincore Team",
+            detail=(
+                "No folder is provisioned for this knowledge base. Ask your "
+                "platform administrator to provision one."
+            ),
         )
     return folder_id
 
@@ -152,7 +155,40 @@ def resolve_folder_for_request(request: Request) -> str:
     return base_folder
 
 
-async def bind_request_folder(request: Request):  # NOSONAR - async contract.
+# Shared OpenAPI declaration for the folder-scoping header. Documentation
+# only: the actual resolution reads the raw request headers so non-FastAPI
+# callers (shim handlers, smoke runner) share one code path.
+_FOLDER_HEADER = Header(
+    alias="X-Twin-Folder",
+    description=(
+        "Folder to scope this request to. Must be a folder id from "
+        "`GET /twin/api/folders`. Omitted: the catalog default folder "
+        "is used. Unknown or out-of-scope folder ids are rejected "
+        "with 403."
+    ),
+    examples=["general"],
+)
+
+
+async def document_folder_header(
+    x_twin_folder: Annotated[str | None, _FOLDER_HEADER] = None,
+) -> None:
+    """No-op dependency that surfaces ``X-Twin-Folder`` in OpenAPI.
+
+    For routes that resolve the folder manually inside their handler
+    (``resolve_folder_for_request(request)``) instead of depending on
+    :func:`bind_request_folder` — e.g. the query routes. Without it those
+    operations advertise no parameters while honouring the header."""
+    del x_twin_folder
+
+
+async def bind_request_folder(  # NOSONAR - async contract.
+    request: Request,
+    x_twin_folder: Annotated[str | None, _FOLDER_HEADER] = None,
+):
+    # ``x_twin_folder`` is declared for OpenAPI documentation only — see
+    # ``document_folder_header``.
+    del x_twin_folder
     folder_id = resolve_folder_for_request(request)
     request.state.folder = folder_id
     token = _active_folder_id.set(folder_id)
@@ -183,6 +219,7 @@ __all__ = [
     "TwinFolderCatalog",
     "active_folder_id",
     "bind_request_folder",
+    "document_folder_header",
     "build_runtime_folder_config",
     "current_folder_id",
     "is_env_seeded_folder",

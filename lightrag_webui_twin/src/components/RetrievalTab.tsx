@@ -30,11 +30,13 @@ import {
   parseAnswer,
   QUERY_MODES,
   relTime,
+  stripTrailingReferencesSection,
   type AnswerPart,
   type InlineAnswerPart,
   type AnswerStatus,
   type ChatMessage,
   type QueryMode,
+  type QueryRunMetadata,
   type RetrievalSource,
   type RetrievalThread,
 } from '../types/retrieval';
@@ -65,8 +67,21 @@ function loadThreads(
 const STREAM_TICK_MS = 70;
 const INITIAL_VISIBLE_SOURCES = 5;
 const MAX_CONVERSATION_MESSAGE_CHARS = 2_000;
+type QueryPhase = 'searching' | 'generating' | 'sources' | null;
+
+const QUERY_PHASE_LABELS: Readonly<Record<Exclude<QueryPhase, null>, string>> = {
+  searching: 'Searching vector and graph context…',
+  generating: 'Generating answer…',
+  sources: 'Finalizing sources…',
+};
+
+function queryPhaseLabel(phase: QueryPhase): string {
+  return QUERY_PHASE_LABELS[phase ?? 'searching'];
+}
 
 const makeThreadId = () => 'th_' + Math.random().toString(16).slice(2, 8);
+/** Event-time clock. Kept behind a helper so render remains purely declarative. */
+const monotonicNow = () => performance.now();
 
 function ensureThread(
   threads: readonly RetrievalThread[],
@@ -126,6 +141,7 @@ export interface RetrievalTabProps {
   }) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
+    model?: string;
     /** TR-RET-02: propagated from the backend ``answer_status`` field
      *  so the host can suppress the Sources panel on
      *  ``insufficient_information`` answers. */
@@ -148,10 +164,12 @@ export interface RetrievalTabProps {
       docFilter?: RetrievalAdvancedFilter;
     },
     onChunk: (chunk: string) => void,
+    onStage: (stage: 'retrieval' | 'generation' | 'sources') => void,
   ) => Promise<{
     response: string;
     sources?: readonly RetrievalSource[];
     answer_status?: AnswerStatus;
+    model?: string;
   }>;
   /** Seed threads when localStorage is empty. */
   initialThreads?: readonly RetrievalThread[];
@@ -206,11 +224,12 @@ function chatMessageKeyBase(message: ChatMessage): string {
 
 function inlineAnswerPartKeyBase(part: InlineAnswerPart): string {
   if (part.type === 'cite') return `cite:${part.value}`;
+  if (part.type === 'link') return `link:${part.label}:${part.href}`;
   return `${part.type}:${part.value}`;
 }
 
 function answerPartKeyBase(part: AnswerPart): string {
-  if (part.type === 'lineBreak') return 'lineBreak';
+  if (part.type === 'lineBreak' || part.type === 'paragraphBreak') return part.type;
   if (part.type === 'heading') {
     return `heading:${part.level}:${part.children
       .map(inlineAnswerPartKeyBase)
@@ -220,6 +239,15 @@ function answerPartKeyBase(part: AnswerPart): string {
     return `list:${part.ordered}:${part.children
       .map(inlineAnswerPartKeyBase)
       .join('|')}`;
+  }
+  if (part.type === 'blockquote') {
+    return `quote:${part.children.map(inlineAnswerPartKeyBase).join('|')}`;
+  }
+  if (part.type === 'codeBlock') return `codeBlock:${part.language}:${part.value}`;
+  if (part.type === 'table') {
+    return `table:${part.headers
+      .flatMap((cell) => cell.map(inlineAnswerPartKeyBase))
+      .join('|')}:${part.rows.length}`;
   }
   return inlineAnswerPartKeyBase(part);
 }
@@ -311,6 +339,7 @@ function NumericParameterInput({
       </label>
       <input
         id={id}
+        className="parameter-input"
         type={integer ? 'number' : 'text'}
         inputMode={integer ? 'numeric' : 'decimal'}
         min={min}
@@ -351,6 +380,12 @@ function sourceDrilldownParams(source: RetrievalSource): Record<string, string> 
     : { q: source.name };
   if (source.doc_id) params.doc = source.doc_id;
   if (source.chunk_id) params.chunk = source.chunk_id;
+  // Paragraph anchor rides the drill-down only when a chunk to highlight
+  // is identified; DocDetailPanel bounds-checks against the loaded text.
+  if (source.chunk_id && source.anchor) {
+    params.astart = String(source.anchor.start);
+    params.aend = String(source.anchor.end);
+  }
   return params;
 }
 
@@ -376,6 +411,7 @@ export function RetrievalTab({
   const [streaming, setStreaming] = useState(false);
   const [streamingThreadId, setStreamingThreadId] = useState<string | null>(null);
   const [streamedTokens, setStreamedTokens] = useState<readonly string[]>([]);
+  const [queryPhase, setQueryPhase] = useState<QueryPhase>(null);
   const [highlightSrc, setHighlightSrc] = useState<number | null>(null);
 
   const [queryMode, setQueryMode] = useUrlParam<QueryMode>('mode', 'mix', {
@@ -438,6 +474,7 @@ export function RetrievalTab({
     if (streamTimerRef.current) clearInterval(streamTimerRef.current);
     streamTimerRef.current = null;
     setStreaming(false);
+    setQueryPhase(null);
     setStreamingThreadId(null);
     setStreamedTokens([]);
     loadedKeyRef.current = threadsKey;
@@ -499,17 +536,6 @@ export function RetrievalTab({
     return id;
   };
 
-  const appendToThread = (
-    id: string,
-    updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
-  ) => {
-    setThreads((ts) =>
-      ensureThread(ts, id).map((thread) =>
-        updateThreadMessages(thread, id, updater),
-      ),
-    );
-  };
-
   const appendToExistingThread = (
     id: string,
     updater: (msgs: readonly ChatMessage[]) => readonly ChatMessage[],
@@ -529,6 +555,7 @@ export function RetrievalTab({
     setStreamedTokens([]);
     setStreamingThreadId(null);
     setStreaming(false);
+    setQueryPhase(null);
   };
 
   const isCurrentRequest = (
@@ -543,6 +570,7 @@ export function RetrievalTab({
     if (!isCurrentRequest(threadId, controller)) return false;
     activeRequestRef.current = null;
     setStreaming(false);
+    setQueryPhase(null);
     setStreamingThreadId(null);
     setStreamedTokens([]);
     return true;
@@ -586,6 +614,7 @@ export function RetrievalTab({
     sources: readonly RetrievalSource[],
     answerStatus: AnswerStatus = 'grounded',
     requestedTopK?: number,
+    queryMeta?: QueryRunMetadata,
     controller?: AbortController,
   ) => {
     if (controller && !isCurrentRequest(threadId, controller)) return;
@@ -597,7 +626,14 @@ export function RetrievalTab({
       }
       appendToExistingThread(threadId, (c) => [
         ...c,
-        { role: 'assistant', tokens: [], sources, answerStatus, requestedTopK },
+        {
+          role: 'assistant',
+          tokens: [],
+          sources,
+          answerStatus,
+          requestedTopK,
+          queryMeta,
+        },
       ]);
       return;
     }
@@ -620,7 +656,14 @@ export function RetrievalTab({
         }
         appendToExistingThread(threadId, (c) => [
           ...c,
-          { role: 'assistant', tokens, sources, answerStatus, requestedTopK },
+          {
+            role: 'assistant',
+            tokens,
+            sources,
+            answerStatus,
+            requestedTopK,
+            queryMeta,
+          },
         ]);
         setStreamedTokens([]);
       }
@@ -675,51 +718,77 @@ export function RetrievalTab({
     docFilter: filterPayload(docFilter, docFilterMode),
   });
 
-  const send = (text?: string) => {
-    if (streaming) return;
-    const q = (text ?? query).trim();
-    if (!q) return;
-    setQuery('');
-    const threadId = ensureActiveThread();
-    const currentMessages =
-      threads.find((t) => t.id === threadId)?.messages ?? [];
-    const conversationHistory = conversationHistoryFor(currentMessages);
+  const runMetadata = (startedAt: number, model?: string): QueryRunMetadata => ({
+    model,
+    mode: queryMode,
+    topK,
+    chunkTopK,
+    enableRerank,
+    durationMs: Math.max(0, monotonicNow() - startedAt),
+  });
+
+  /** Start a query from an explicit history prefix. Editing and regenerating
+   * use this same path so the visible branch and the LLM history cannot drift. */
+  const runQuery = (
+    threadId: string,
+    q: string,
+    baseMessages: readonly ChatMessage[],
+  ) => {
+    const conversationHistory = conversationHistoryFor(baseMessages);
     const requestedTopK = topK;
     const controller = new AbortController();
+    const startedAt = monotonicNow();
     activeRequestRef.current = { threadId, controller };
-    appendToThread(threadId, (c) => [...c, { role: 'user', text: q }]);
+    setThreads((current) =>
+      ensureThread(current, threadId).map((thread) =>
+        updateThreadMessages(thread, threadId, () => [
+          ...baseMessages,
+          { role: 'user', text: q },
+        ]),
+      ),
+    );
     setStreamedTokens([]);
     setStreamingThreadId(threadId);
     setStreaming(true);
+    setQueryPhase('searching');
 
     if (onStreamQuery) {
       const streamed: string[] = [];
-      onStreamQuery(activeParams(q, conversationHistory, controller.signal), (chunk) => {
-        if (!isCurrentRequest(threadId, controller)) return;
-        streamed.push(chunk);
-        setStreamedTokens([...streamed]);
-      })
-        .then(({ sources, answer_status }) => {
+      onStreamQuery(
+        activeParams(q, conversationHistory, controller.signal),
+        (chunk) => {
+          if (!isCurrentRequest(threadId, controller)) return;
+          setQueryPhase('generating');
+          streamed.push(chunk);
+          setStreamedTokens([...streamed]);
+        },
+        (stage) => {
+          if (!isCurrentRequest(threadId, controller)) return;
+          setQueryPhase(
+            stage === 'retrieval'
+              ? 'searching'
+              : stage === 'generation'
+                ? 'generating'
+                : 'sources',
+          );
+        },
+      )
+        .then(({ sources, answer_status, model }) => {
           if (!finishRequest(threadId, controller)) return;
           const finalTokens = streamed.join('')
             .split(/(\s+)/)
-            .filter((t) => t.length > 0);
+            .filter((token) => token.length > 0);
           const status: AnswerStatus = answer_status ?? 'grounded';
-          // Only a grounded answer carries meaningful sources. For every
-          // other status (insufficient_information, source_projection_failed,
-          // no_retrieval, query_failed) drop any sources that slipped through
-          // so neither the Sources panel NOR the inline [N] citations can
-          // surface or navigate to them — defends against a future backend
-          // regression.
           const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
-          appendToExistingThread(threadId, (c) => [
-            ...c,
+          appendToExistingThread(threadId, (messages) => [
+            ...messages,
             {
               role: 'assistant',
               tokens: finalTokens,
               sources: effectiveSources,
               answerStatus: status,
               requestedTopK,
+              queryMeta: runMetadata(startedAt, model),
             },
           ]);
         })
@@ -733,6 +802,7 @@ export function RetrievalTab({
             [],
             'query_failed',
             requestedTopK,
+            runMetadata(startedAt),
             controller,
           );
         });
@@ -740,35 +810,22 @@ export function RetrievalTab({
     }
 
     const sendQuery = onSendQuery ?? missingRetrievalBackend;
-
     sendQuery(activeParams(q, conversationHistory, controller.signal))
-      .then(({ response, sources, answer_status }) => {
+      .then(({ response, sources, answer_status, model }) => {
         if (!isCurrentRequest(threadId, controller)) return;
-        const tokens = response
-          .split(/(\s+)/)
-          .filter((t) => t.length > 0);
+        setQueryPhase('generating');
+        const tokens = response.split(/(\s+)/).filter((token) => token.length > 0);
         const status: AnswerStatus = answer_status ?? 'grounded';
-        // Only a grounded answer carries meaningful sources (see the
-        // streaming path above) — drop them for every other status so the
-        // inline [N] citations cannot navigate to leaked sources either.
         const effectiveSources = status === 'grounded' ? (sources ?? []) : [];
-        if (tokens.length === 0) {
-          streamTokens(
-            threadId,
-            ['⚠ The backend returned an empty answer. Sources below.'],
-            effectiveSources,
-            status,
-            requestedTopK,
-            controller,
-          );
-          return;
-        }
         streamTokens(
           threadId,
-          tokens,
+          tokens.length > 0
+            ? tokens
+            : ['⚠ The backend returned an empty answer. Sources below.'],
           effectiveSources,
           status,
           requestedTopK,
+          runMetadata(startedAt, model),
           controller,
         );
       })
@@ -782,9 +839,59 @@ export function RetrievalTab({
           [],
           'query_failed',
           requestedTopK,
+          runMetadata(startedAt),
           controller,
         );
       });
+  };
+
+  const send = (text?: string) => {
+    if (streaming) return;
+    const q = (text ?? query).trim();
+    if (!q) return;
+    setQuery('');
+    const threadId = ensureActiveThread();
+    const baseMessages = threads.find((thread) => thread.id === threadId)?.messages ?? [];
+    runQuery(threadId, q, baseMessages);
+  };
+
+  const regenerateAt = (messageIndex: number) => {
+    if (streaming || !activeThreadId) return;
+    let userIndex = messageIndex - 1;
+    while (userIndex >= 0 && convo[userIndex]?.role !== 'user') userIndex -= 1;
+    const prompt = convo[userIndex]?.text?.trim();
+    if (userIndex < 0 || !prompt) return;
+    runQuery(activeThreadId, prompt, convo.slice(0, userIndex));
+  };
+
+  const editAt = (messageIndex: number, text: string) => {
+    if (streaming || !activeThreadId) return;
+    const prompt = text.trim();
+    if (!prompt || convo[messageIndex]?.role !== 'user') return;
+    runQuery(activeThreadId, prompt, convo.slice(0, messageIndex));
+  };
+
+  const branchAt = (messageIndex: number) => {
+    if (streaming) return;
+    const messages = convo.slice(0, messageIndex + 1).map((message) => ({
+      ...message,
+      tokens: message.tokens ? [...message.tokens] : undefined,
+      sources: message.sources ? [...message.sources] : undefined,
+    }));
+    const id = makeThreadId();
+    const firstPrompt = messages.find((message) => message.role === 'user')?.text;
+    const now = Date.now();
+    setThreads((current) => [
+      {
+        id,
+        title: firstPrompt ? `${firstPrompt.slice(0, 56)} · branch` : 'Branched chat',
+        created: now,
+        updated: now,
+        messages,
+      },
+      ...current,
+    ]);
+    setActiveThreadId(id);
   };
 
   const onCiteHover = (n: number) => setHighlightSrc(n);
@@ -905,20 +1012,29 @@ export function RetrievalTab({
               </div>
             </div>
           )}
-          {withOccurrenceKeys(convo, chatMessageKeyBase).map(({ item, key }) => (
+          {withOccurrenceKeys(convo, chatMessageKeyBase).map(({ item, key }, messageIndex) => (
             <Turn
               key={key}
               msg={item}
+              messageIndex={messageIndex}
               highlightSrc={highlightSrc}
               onCiteHover={onCiteHover}
               onCiteLeave={onCiteLeave}
               onCiteClick={onCiteClick}
               onSourceClick={onSourceClick}
+              onEditUser={editAt}
+              onRegenerate={regenerateAt}
+              onBranch={branchAt}
             />
           ))}
           {streaming &&
             activeThreadId === streamingThreadId &&
             streamedTokens.length > 0 && (
+            <>
+            <div className="retrieval-stage-inline" role="status" aria-live="polite">
+              <span className="retrieval-stage-spinner" aria-hidden="true" />
+              {queryPhaseLabel(queryPhase)}
+            </div>
             <Turn
               streaming
               msg={{
@@ -926,16 +1042,18 @@ export function RetrievalTab({
                 tokens: streamedTokens,
                 sources: [],
               }}
+              messageIndex={convo.length}
               highlightSrc={highlightSrc}
               onCiteHover={onCiteHover}
               onCiteLeave={onCiteLeave}
               onCiteClick={onCiteClick}
               onSourceClick={onSourceClick}
             />
+            </>
           )}
           {streaming &&
             activeThreadId === streamingThreadId &&
-            streamedTokens.length === 0 && <ThinkingTurn />}
+            streamedTokens.length === 0 && <ThinkingTurn phase={queryPhase} />}
         </div>
         <div className="querybar">
           <textarea
@@ -1105,7 +1223,20 @@ export function RetrievalTab({
   );
 }
 
-function ThinkingTurn() {
+function ThinkingTurn({
+  phase,
+}: Readonly<{
+  phase: QueryPhase;
+}>) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => setSlow(true), 8_000);
+    return () => globalThis.clearTimeout(timer);
+  }, []);
+  const label =
+    slow && (phase === null || phase === 'searching')
+      ? 'Retrieval is taking longer than usual…'
+      : queryPhaseLabel(phase);
   return (
     <div
       className="msg-assistant thinking-turn"
@@ -1113,10 +1244,11 @@ function ThinkingTurn() {
       aria-live="polite"
       data-testid="retrieval-thinking"
     >
-      <div className="thinking-bubble" aria-label="Thinking">
+      <div className="thinking-bubble" aria-label={label}>
         <span />
         <span />
         <span />
+        <strong>{label}</strong>
       </div>
     </div>
   );
@@ -1127,9 +1259,19 @@ function collectCitedSourceNumbers(parts: readonly AnswerPart[]): Set<number> {
   parts.forEach((part) => {
     if (part.type === 'cite') {
       out.add(part.value);
-    } else if (part.type === 'heading' || part.type === 'listItem') {
+    } else if (
+      part.type === 'heading' ||
+      part.type === 'listItem' ||
+      part.type === 'blockquote'
+    ) {
       part.children.forEach((child) => {
         if (child.type === 'cite') out.add(child.value);
+      });
+    } else if (part.type === 'table') {
+      [...part.headers, ...part.rows.flat()].forEach((cell) => {
+        cell.forEach((child) => {
+          if (child.type === 'cite') out.add(child.value);
+        });
       });
     }
   });
@@ -1155,6 +1297,7 @@ function collapsedSources(
 
 interface TurnProps {
   msg: ChatMessage;
+  messageIndex: number;
   streaming?: boolean;
   highlightSrc: number | null;
   onCiteHover: (n: number) => void;
@@ -1162,25 +1305,144 @@ interface TurnProps {
   onCiteClick: (n: number, sources: readonly RetrievalSource[] | undefined) => void;
   /** Click on a source card in the sidebar — host navigates to docs. */
   onSourceClick?: (source: RetrievalSource) => void;
+  onEditUser?: (messageIndex: number, text: string) => void;
+  onRegenerate?: (messageIndex: number) => void;
+  onBranch?: (messageIndex: number) => void;
+}
+
+function markdownToPlainText(markdown: string): string {
+  const withoutTableSyntax = markdown
+    .split('\n')
+    .filter((line) => {
+      const cells = line.trim().replace(/^\||\|$/g, '').split('|');
+      return !(
+        cells.length > 1 &&
+        cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell))
+      );
+    })
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!(trimmed.startsWith('|') || trimmed.endsWith('|'))) return line;
+      return trimmed
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((cell) => cell.trim())
+        .join('\t');
+    })
+    .join('\n');
+  return withoutTableSyntax
+    .replaceAll(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, '')
+    .replaceAll(/^```[^\n]*\n?/gm, '')
+    .replaceAll(/^\s*#{1,6}\s+/gm, '')
+    .replaceAll(/^\s*>\s?/gm, '')
+    .replaceAll(/^\s*[-*+]\s+/gm, '• ')
+    .replaceAll(/^\s*(\d+)\.\s+/gm, '$1. ')
+    .replaceAll(/\*\*([^*]+)\*\*/g, '$1')
+    .replaceAll(/__([^_]+)__/g, '$1')
+    .replaceAll(/`([^`]+)`/g, '$1')
+    .replaceAll(/\[([^\]]+)]\(([^)]+)\)/g, '$1 ($2)')
+    .replaceAll(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function copyText(value: string): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard) return false;
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function Turn({
   msg,
+  messageIndex,
   streaming,
   highlightSrc,
   onCiteHover,
   onCiteLeave,
   onCiteClick,
   onSourceClick,
+  onEditUser,
+  onRegenerate,
+  onBranch,
 }: Readonly<TurnProps>) {
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(msg.text ?? '');
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = (kind: string, value: string) => {
+    void copyText(value).then((ok) => {
+      if (!ok) return;
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1400);
+    });
+  };
 
   if (msg.role === 'user') {
-    return <div className="msg-user">{msg.text}</div>;
+    return (
+      <div className="message-turn user-turn">
+        {editing ? (
+          <div className="message-editor">
+            <textarea
+              aria-label="Edit prompt"
+              value={editDraft}
+              onChange={(event) => setEditDraft(event.target.value)}
+              autoFocus
+            />
+            <div className="message-editor-actions">
+              <button type="button" className="turn-action" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="turn-action primary-action"
+                disabled={!editDraft.trim()}
+                onClick={() => {
+                  setEditing(false);
+                  onEditUser?.(messageIndex, editDraft);
+                }}
+              >
+                Save &amp; submit
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="msg-user">{msg.text}</div>
+        )}
+        {!editing && (
+          <div className="turn-actions user-actions" aria-label="Prompt actions">
+            <button
+              type="button"
+              className="turn-action"
+              onClick={() => copy('prompt', msg.text ?? '')}
+              title="Copy prompt"
+            >
+              <Icon name={copied === 'prompt' ? 'check' : 'copy'} size={13} />
+              {copied === 'prompt' ? 'Copied' : 'Copy prompt'}
+            </button>
+            <button
+              type="button"
+              className="turn-action"
+              onClick={() => {
+                setEditDraft(msg.text ?? '');
+                setEditing(true);
+              }}
+              title="Edit prompt"
+            >
+              <Icon name="edit" size={13} /> Edit
+            </button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const answerText = (msg.tokens ?? []).join('');
   const { visible, thoughts } = splitThinkBlocks(answerText);
+  const displayMarkdown = stripTrailingReferencesSection(visible);
   const parts: AnswerPart[] = parseAnswer([visible]);
   const sources = msg.sources ?? [];
   const availableSourceNumbers = new Set(sources.map((source) => source.n));
@@ -1200,7 +1462,15 @@ function Turn({
     withOccurrenceKeys(inlineParts, inlineAnswerPartKeyBase).map(({ item: p, key }) => {
       if (p.type === 'text') return <span key={key}>{p.value}</span>;
       if (p.type === 'bold') return <strong key={key}>{p.value}</strong>;
+      if (p.type === 'italic') return <em key={key}>{p.value}</em>;
       if (p.type === 'code') return <code key={key}>{p.value}</code>;
+      if (p.type === 'link') {
+        return (
+          <a key={key} href={p.href} target="_blank" rel="noreferrer">
+            {p.label}
+          </a>
+        );
+      }
       // A ``[N]`` marker with no matching source (LLM hallucination, an
       // external bibliographic ref, or any non-grounded answer whose sources
       // are empty) must NOT masquerade as a live Twin anchor. Render it inert:
@@ -1235,9 +1505,13 @@ function Turn({
 
   return (
     <div className="msg-assistant">
-      <div className="msg-text">
+      <div className="assistant-card">
+        <div className="msg-text">
         {withOccurrenceKeys(parts, answerPartKeyBase).map(({ item: p, key }) => {
           if (p.type === 'lineBreak') return <br key={key} />;
+          if (p.type === 'paragraphBreak') {
+            return <span key={key} className="answer-paragraph-break" />;
+          }
           if (p.type === 'heading') {
             const children = renderInlineParts(p.children);
             if (p.level === 1) {
@@ -1266,10 +1540,47 @@ function Turn({
                 key={key}
                 className={`answer-list-item${p.ordered ? ' ordered' : ''}`}
               >
-                <span className="answer-list-marker">
-                  {p.ordered ? '1.' : '•'}
-                </span>
+                <span className="answer-list-marker">{p.marker}</span>
                 <span>{renderInlineParts(p.children)}</span>
+              </div>
+            );
+          }
+          if (p.type === 'blockquote') {
+            return (
+              <blockquote key={key} className="answer-blockquote">
+                {renderInlineParts(p.children)}
+              </blockquote>
+            );
+          }
+          if (p.type === 'codeBlock') {
+            return (
+              <div key={key} className="answer-code-block">
+                {p.language && <span className="answer-code-language">{p.language}</span>}
+                <pre><code>{p.value}</code></pre>
+              </div>
+            );
+          }
+          if (p.type === 'table') {
+            return (
+              <div key={key} className="answer-table-wrap">
+                <table className="answer-table">
+                  <thead>
+                    <tr>
+                      {p.headers.map((cell, cellIndex) => (
+                        <th key={`head-${cellIndex}`}>{renderInlineParts(cell)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {p.rows.map((row, rowIndex) => (
+                      <tr key={`row-${rowIndex}`}>
+                        {row.map((cell, cellIndex) => (
+                          <td key={`cell-${cellIndex}`}>{renderInlineParts(cell)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             );
           }
@@ -1289,7 +1600,7 @@ function Turn({
             }}
           />
         )}
-      </div>
+        </div>
       {thoughts.length > 0 && (
         <details className="reasoning-reveal" data-testid="retrieval-thinking-detail">
           <summary>
@@ -1351,6 +1662,57 @@ function Turn({
           The query could not be completed — no answer was retrieved.
         </div>
       )}
+      </div>
+      {!streaming && (
+        <div className="turn-actions assistant-actions" aria-label="Answer actions">
+          <button
+            type="button"
+            className="turn-action"
+            onClick={() => copy('plain', markdownToPlainText(displayMarkdown))}
+            title="Copy answer as plain text"
+          >
+            <Icon name={copied === 'plain' ? 'check' : 'copy'} size={13} />
+            {copied === 'plain' ? 'Copied' : 'Plain text'}
+          </button>
+          <button
+            type="button"
+            className="turn-action"
+            onClick={() => copy('markdown', displayMarkdown.trim())}
+            title="Copy answer as Markdown"
+          >
+            <Icon name={copied === 'markdown' ? 'check' : 'markdown'} size={13} />
+            {copied === 'markdown' ? 'Copied' : 'Markdown'}
+          </button>
+          <button
+            type="button"
+            className="turn-action"
+            onClick={() => onRegenerate?.(messageIndex)}
+            title="Regenerate answer"
+          >
+            <Icon name="refresh" size={13} /> Regenerate
+          </button>
+          <button
+            type="button"
+            className="turn-action"
+            onClick={() => onBranch?.(messageIndex)}
+            title="Branch to a new chat from here"
+          >
+            <Icon name="git-branch" size={13} /> Branch
+          </button>
+        </div>
+      )}
+      {!streaming && msg.queryMeta && (
+        <div className="answer-run-meta" data-testid="answer-run-meta">
+          <span className="run-ok" aria-label="Query completed" />
+          {msg.queryMeta.model && <span>{msg.queryMeta.model}</span>}
+          <span>{msg.queryMeta.mode}</span>
+          <span>top_k {msg.queryMeta.topK}</span>
+          <span>chunk_k {msg.queryMeta.chunkTopK}</span>
+          <span>{sources.length} sources</span>
+          <span>{msg.queryMeta.enableRerank ? 'reranked' : 'no rerank'}</span>
+          <span>{(msg.queryMeta.durationMs / 1000).toFixed(1)}s</span>
+        </div>
+      )}
       {!streaming &&
         msg.answerStatus !== 'insufficient_information' &&
         msg.answerStatus !== 'source_projection_failed' &&
@@ -1400,11 +1762,19 @@ function Turn({
                   {s.meta && <span className="src-meta">{s.meta}</span>}
                   <span
                     className="src-score"
-                    title={s.score == null ? 'Score unavailable' : undefined}
+                    title={
+                      s.retrieval_origin === 'graph'
+                        ? 'Grounded through graph retrieval'
+                        : s.score == null
+                          ? 'Score unavailable'
+                          : undefined
+                    }
                   >
                     {typeof s.score === 'number' && Number.isFinite(s.score)
                       ? s.score.toFixed(2)
-                      : '—'}
+                      : s.retrieval_origin === 'graph'
+                        ? 'graph sourced'
+                        : '—'}
                   </span>
                   <span className="src-ext" title="Open source">
                     <Icon name="external-link" size={12} />

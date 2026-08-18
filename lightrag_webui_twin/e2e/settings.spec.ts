@@ -138,6 +138,43 @@ test.describe('Settings guardrails', () => {
     await expect(reloadedRow.getByText('revoke-me')).toBeVisible();
   });
 
+  test('TWIN-SET-09 vision procedure toggle persists through save and reload', async ({
+    page,
+  }) => {
+    await page.getByTestId('settings-rail-vision').click();
+    const section = page.getByTestId('settings-vision');
+    await expect(section).toBeVisible();
+
+    // Fresh state: env-default provenance, procedure ingestion off, no
+    // unavailable warning (MSW reports the deployment as procedure-ready).
+    await expect(page.getByTestId('settings-vision-provenance-env')).toBeVisible();
+    const toggle = page.getByTestId('settings-vision-procedure-toggle');
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await expect(
+      page.getByTestId('settings-vision-procedure-unavailable'),
+    ).toHaveCount(0);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('settings-vision-save').click();
+    await expect(page.getByRole('status')).toContainText('Vision settings saved');
+    await expect(page.getByTestId('settings-vision-provenance-runtime')).toBeVisible();
+
+    // The PUT reached the stateful mock, not just local component state: the
+    // audit entry carries the enabled wording…
+    await openTab(page, 'Activity');
+    await expect(page.getByText('procedure ingestion enabled').first()).toBeVisible();
+
+    // …and the runtime value survives a full reload (server-side state).
+    await page.reload();
+    await openTab(page, 'Settings');
+    await page.getByTestId('settings-rail-vision').click();
+    await expect(
+      page.getByTestId('settings-vision-procedure-toggle'),
+    ).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('settings-vision-provenance-runtime')).toBeVisible();
+  });
+
   test('TWIN-SET-04/05/06 editable settings remain out of scope', async ({ page }) => {
     await expect(page.getByTestId('settings-rail-profile')).toBeVisible();
     await expect(page.getByTestId('settings-rail-api')).toBeVisible();

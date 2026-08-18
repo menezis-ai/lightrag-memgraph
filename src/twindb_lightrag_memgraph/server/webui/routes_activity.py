@@ -5,31 +5,75 @@ from __future__ import annotations
 from typing import Annotated, Any
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..idp_jwt import require_admin_user
 from ..webui_models import AckResponse, ActivityEnvelope
 from .events import _make_event, _request_actor
 from .store import get_store
 
-router = APIRouter()
+router = APIRouter(tags=["activity"])
 
 
 @router.post(
     "/documents/uploads/activity",
     response_model=AckResponse,
+    summary="Record an upload in the audit feed (admin only)",
+    # Audit 2026-08-06, R-03a: client-declared audit writes are admin-only.
+    # The authoritative `source-uploaded` event is emitted server-side by the
+    # ingestion pipeline (registry ``_patch_upload_activity_emission``) with
+    # ``emitted_by: server`` — this route remains for admin tooling/backfill
+    # and is stamped ``emitted_by: client`` so a forensics query can tell the
+    # two apart. Non-admin WebUI uploads rely on the server-side event; the
+    # frontend swallows this call's 403 (Promise.allSettled).
+    dependencies=[Depends(require_admin_user)],
     responses={400: {"description": "Missing upload source"}},
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["source"],
+                        "properties": {
+                            "source": {
+                                "type": "string",
+                                "description": "Uploaded file name.",
+                            },
+                            "track_id": {
+                                "type": "string",
+                                "description": (
+                                    "Ingestion tracking id returned by the "
+                                    "upload endpoint."
+                                ),
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": 'Upload outcome (default "accepted").',
+                            },
+                        },
+                    },
+                    "example": {
+                        "source": "employee-handbook.pdf",
+                        "track_id": "upload-20260728-0001",
+                        "status": "accepted",
+                    },
+                }
+            },
+        }
+    },
 )
 async def record_source_uploaded(
     body: dict[str, Any],
     request: Request,
 ) -> dict[str, bool]:
-    """Record Activity for LightRAG-native upload accepts.
+    """Record a durable `source-uploaded` audit event (admin tooling only).
 
-    The actual upload endpoint is the native LightRAG
-    ``/documents/upload`` route, outside this Twin router. The WebUI
-    calls this route only after that native endpoint accepts a file so
-    the audit feed still has a durable ``source-uploaded`` event.
-    """
+    Normal uploads are traced server-side by the ingestion pipeline; this
+    route only remains for admin backfill/tooling and stamps the event
+    `emitted_by: client` so it stays distinguishable from the probative
+    server-side records."""
     source = str(body.get("source") or "").strip()
     if not source:
         raise HTTPException(
@@ -45,26 +89,71 @@ async def record_source_uploaded(
         actor=actor,
         target_label=source,
         summary=f"uploaded by {actor}",
-        meta={"source": source, "track_id": track_id, "status": status},
+        meta={
+            "source": source,
+            "track_id": track_id,
+            "status": status,
+            "emitted_by": "client",
+        },
         target_type="source",
     )
     await get_store().record_activity(event)
     return {"ok": True}
 
 
-@router.get("/activity", response_model=ActivityEnvelope)
+@router.get(
+    "/activity",
+    response_model=ActivityEnvelope,
+    summary="List audit-feed events",
+)
 async def list_activity(
-    kind: Annotated[str | None, Query()] = None,
-    sev: Annotated[str | None, Query()] = None,
-    actor: Annotated[str | None, Query()] = None,
-    q: Annotated[str | None, Query()] = None,
+    kind: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Only events of this kind (e.g. `source-uploaded`, "
+                "`doc-approved`, `tag-created`)."
+            ),
+            examples=["doc-approved"],
+        ),
+    ] = None,
+    sev: Annotated[
+        str | None,
+        Query(
+            description="Only events with this severity (`info`, `warning`, `error`).",
+            examples=["warning"],
+        ),
+    ] = None,
+    actor: Annotated[
+        str | None,
+        Query(description="Only events performed by this actor."),
+    ] = None,
+    q: Annotated[
+        str | None,
+        Query(description="Case-insensitive substring match on the event summary."),
+    ] = None,
     activity_range: Annotated[
         Literal["24h", "7d", "30d", "all"] | None,
-        Query(alias="range"),
+        Query(
+            alias="range",
+            description="Time window to search (default: all).",
+        ),
     ] = None,
-    resource_id: Annotated[str | None, Query(alias="resource.id")] = None,
-    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    resource_id: Annotated[
+        str | None,
+        Query(
+            alias="resource.id",
+            description="Only events targeting this resource (e.g. a document id).",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=1000, description="Maximum number of events returned."),
+    ] = 200,
 ) -> dict[str, Any]:
+    """Return the audit feed of the active folder, most recent first.
+    Filters combine with AND. `total` counts the matches before `limit`
+    is applied."""
     items, total, now_ms = await get_store().list_activity(
         kind=kind,
         sev=sev,

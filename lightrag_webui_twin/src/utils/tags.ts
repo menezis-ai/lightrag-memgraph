@@ -1,14 +1,18 @@
 import type { TagEntry } from '../types/tag';
 
-export function tagCatalogForSuggestions(
-  tags: readonly TagEntry[],
-): readonly TagEntry[] {
+export function isActiveCatalogTag(
+  tag: Pick<TagEntry, 'status' | 'tier'>,
+): boolean {
   // TAGGED_WITH is operational governance state. Pending/promotion-requested
   // catalog rows remain visible in TagsTab, but must never become selectable
   // on source mutation surfaces before steward approval.
-  return tags.filter(
-    (tag) => tag.tier !== 'requested' && tag.status === 'active',
-  );
+  return tag.tier !== 'requested' && tag.status === 'active';
+}
+
+export function tagCatalogForSuggestions(
+  tags: readonly TagEntry[],
+): readonly TagEntry[] {
+  return tags.filter(isActiveCatalogTag);
 }
 
 function rankTag(tag: TagEntry, query: string): number {

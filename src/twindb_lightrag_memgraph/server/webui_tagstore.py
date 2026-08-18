@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import unicodedata
 from typing import Any, Protocol
 
 from .. import _pool
@@ -38,6 +39,20 @@ _ARCHIVED_TAG_STATUSES = {"rejected", "deleted"}
 
 def _visible_catalog_tag(entry: dict[str, Any]) -> bool:
     return str(entry.get("status") or "").lower() not in _ARCHIVED_TAG_STATUSES
+
+
+def _normalized_category_name(value: object) -> str:
+    """Canonical category label used by the uniqueness invariant.
+
+    Governance labels are human-facing names, so case, accents, and repeated
+    whitespace must not create visually duplicate categories (for example
+    ``"Réseau"``, ``"RESEAU"``, and ``"  reseau  "``).
+    """
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    without_accents = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return " ".join(without_accents.split()).casefold()
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +320,7 @@ class MemgraphTagStore:
             )
 
         seen_ids: set[str] = set()
+        seen_labels: dict[str, str] = {}
         normalized: list[dict[str, Any]] = []
         for i, entry in enumerate(raw):
             if not isinstance(entry, dict):
@@ -325,10 +341,21 @@ class MemgraphTagStore:
             if cat_id in seen_ids:
                 raise ValueError(f"{source}[{i}]: duplicate id {cat_id!r}.")
             seen_ids.add(cat_id)
+            label = str(entry["label"]).strip()
+            normalized_label = _normalized_category_name(label)
+            if not normalized_label:
+                raise ValueError(f"{source}[{i}].label must not be empty.")
+            if normalized_label in seen_labels:
+                raise ValueError(
+                    f"{source}[{i}]: duplicate category name {label!r}; "
+                    f"it conflicts with {seen_labels[normalized_label]!r} "
+                    "after case, accent, and whitespace normalization."
+                )
+            seen_labels[normalized_label] = label
             normalized.append(
                 {
                     "id": cat_id,
-                    "label": str(entry["label"]),
+                    "label": label,
                     "color": str(entry["color"]),
                 }
             )
@@ -410,38 +437,26 @@ class MemgraphTagStore:
         folder_label = f"Folder_{doc_workspace}"
         folder = self._workspace
         async with _pool.get_read_session() as session:
-            result = await session.run(f"""
-                MATCH (t:`{self._tag_label}`)
-                RETURN
-                  t.id AS id,
-                  t.data AS data
-                ORDER BY t.`__created_at`, t.id
-                """)
-            rows = await result.data()
-            await result.consume()
-
-            usage_result = await session.run(
+            result = await session.run(
                 f"""
-                MATCH (d:`{doc_label}`)-[:TAGGED_WITH]->(t:`{self._tag_label}`)
-                WHERE EXISTS((d)-[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}}))
+                MATCH (t:`{self._tag_label}`)
+                OPTIONAL MATCH
+                  (d:`{doc_label}`)-[:TAGGED_WITH]->(t)
+                WHERE EXISTS(
+                  (d)-[:MEMBER_OF]->(:`{folder_label}` {{id: $folder}})
+                )
                 RETURN
                   t.id AS id,
+                  t.data AS data,
+                  t.`__created_at` AS created_at,
                   count(DISTINCT d) AS sources_count,
                   sum(coalesce(d.chunks_count, 0)) AS chunks_count
+                ORDER BY created_at, id
                 """,
                 folder=folder,
             )
-            usage_rows = await usage_result.data()
-            await usage_result.consume()
-
-        usage_by_id = {
-            row.get("id"): {
-                "sources_count": int(row.get("sources_count") or 0),
-                "chunks_count": int(row.get("chunks_count") or 0),
-            }
-            for row in usage_rows
-            if row.get("id")
-        }
+            rows = await result.data()
+            await result.consume()
 
         out: list[dict[str, Any]] = []
         for row in rows:
@@ -457,9 +472,8 @@ class MemgraphTagStore:
                     row.get("id"),
                 )
                 continue
-            usage = usage_by_id.get(row.get("id"), {})
-            item["sources_count"] = usage.get("sources_count", 0)
-            item["chunks_count"] = usage.get("chunks_count", 0)
+            item["sources_count"] = int(row.get("sources_count") or 0)
+            item["chunks_count"] = int(row.get("chunks_count") or 0)
             if _visible_catalog_tag(item):
                 out.append(item)
         return out

@@ -67,6 +67,138 @@ describe('RetrievalTab — empty state', () => {
   });
 });
 
+describe('RetrievalTab — message actions and Markdown', () => {
+  const actionThread = () => [{
+    id: 'actions',
+    title: 'Action thread',
+    created: 1,
+    updated: 1,
+    messages: [
+      { role: 'user' as const, text: 'Original prompt' },
+      {
+        role: 'assistant' as const,
+        tokens: ['| Step | Command |\n| --- | --- |\n| Stop | `shutdown immediate` |'],
+        sources: [],
+        queryMeta: {
+          model: 'deepseek-chat',
+          mode: 'mix' as const,
+          topK: 20,
+          chunkTopK: 12,
+          enableRerank: true,
+          durationMs: 1400,
+        },
+      },
+    ],
+  }];
+
+  it('renders a table, all requested actions, and query metadata', () => {
+    render(<RetrievalTab initialThreads={actionThread()} />);
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByTitle('Copy prompt')).toBeInTheDocument();
+    expect(screen.getByTitle('Edit prompt')).toBeInTheDocument();
+    expect(screen.getByTitle('Copy answer as plain text')).toBeInTheDocument();
+    expect(screen.getByTitle('Copy answer as Markdown')).toBeInTheDocument();
+    expect(screen.getByTitle('Regenerate answer')).toBeInTheDocument();
+    expect(screen.getByTitle('Branch to a new chat from here')).toBeInTheDocument();
+    expect(screen.getByTestId('answer-run-meta')).toHaveTextContent('deepseek-chat');
+    expect(screen.getByTestId('answer-run-meta')).toHaveTextContent('top_k 20');
+    expect(screen.getByTestId('answer-run-meta')).toHaveTextContent('1.4s');
+  });
+
+  it('copies the raw Markdown independently from plain text', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<RetrievalTab initialThreads={actionThread()} />);
+
+    await userEvent.click(screen.getByTitle('Copy answer as Markdown'));
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('| Step |'));
+
+    await userEvent.click(screen.getByTitle('Copy answer as plain text'));
+    expect(writeText).toHaveBeenLastCalledWith(expect.not.stringContaining('`'));
+    expect(writeText).toHaveBeenLastCalledWith(expect.not.stringContaining('| ---'));
+  });
+
+  it('edits and resubmits a prompt from the correct history point', async () => {
+    const onSendQuery = vi.fn<NonNullable<RetrievalTabProps['onSendQuery']>>(
+      async () => ({ response: 'Updated answer', sources: [] }),
+    );
+    render(<RetrievalTab initialThreads={actionThread()} onSendQuery={onSendQuery} />);
+
+    await userEvent.click(screen.getByTitle('Edit prompt'));
+    const editor = screen.getByLabelText('Edit prompt');
+    await userEvent.clear(editor);
+    await userEvent.type(editor, 'Edited prompt');
+    await userEvent.click(screen.getByRole('button', { name: 'Save & submit' }));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery.mock.calls[0]?.[0]).toMatchObject({
+      query: 'Edited prompt',
+      conversationHistory: [],
+    });
+  });
+
+  it('regenerates from the original user turn without replaying that turn', async () => {
+    const onSendQuery = vi.fn<NonNullable<RetrievalTabProps['onSendQuery']>>(
+      async () => ({ response: 'Regenerated answer', sources: [] }),
+    );
+    render(<RetrievalTab initialThreads={actionThread()} onSendQuery={onSendQuery} />);
+
+    await userEvent.click(screen.getByTitle('Regenerate answer'));
+
+    await waitFor(() => expect(onSendQuery).toHaveBeenCalledTimes(1));
+    expect(onSendQuery.mock.calls[0]?.[0]).toMatchObject({
+      query: 'Original prompt',
+      conversationHistory: [],
+    });
+  });
+
+  it('copies the same answer that is displayed when References has a suffix', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const thread = actionThread();
+    const messages = [...thread[0].messages];
+    messages[1] = {
+      role: 'assistant',
+      tokens: ['Visible answer\n\n### References — cited docs\n- hidden.pdf'],
+      sources: [],
+      queryMeta: {
+        model: 'deepseek-chat',
+        mode: 'mix',
+        topK: 20,
+        chunkTopK: 12,
+        enableRerank: true,
+        durationMs: 1400,
+      },
+    };
+    render(
+      <RetrievalTab
+        initialThreads={[{ ...thread[0], messages }]}
+      />,
+    );
+
+    expect(screen.getByText('Visible answer')).toBeInTheDocument();
+    expect(screen.queryByText(/hidden\.pdf/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTitle('Copy answer as Markdown'));
+    expect(writeText).toHaveBeenLastCalledWith('Visible answer');
+    await userEvent.click(screen.getByTitle('Copy answer as plain text'));
+    expect(writeText).toHaveBeenLastCalledWith('Visible answer');
+  });
+
+  it('branches the conversation into a new active chat', async () => {
+    render(<RetrievalTab initialThreads={actionThread()} />);
+    await userEvent.click(screen.getByTitle('Branch to a new chat from here'));
+    expect(screen.getByText(/Original prompt · branch/)).toBeInTheDocument();
+    expect(screen.getByText('Original prompt')).toBeInTheDocument();
+  });
+});
+
 describe('RetrievalTab — thread switcher', () => {
   it('renders all threads from props', () => {
     render(<RetrievalTab {...defaultProps()} />);
@@ -109,12 +241,19 @@ describe('RetrievalTab — thread switcher', () => {
             messages: [
               {
                 role: 'assistant',
-                tokens: ['Answer [1] [2] [3] [4]'],
+                tokens: ['Answer [1] [2] [3] [4] [5]'],
                 sources: [
                   { n: 1, type: 'file', name: 'null.pdf', score: null },
                   { n: 2, type: 'file', name: 'absent.pdf' },
                   { n: 3, type: 'file', name: 'zero.pdf', score: 0 },
                   { n: 4, type: 'file', name: 'ranked.pdf', score: 0.82 },
+                  {
+                    n: 5,
+                    type: 'file',
+                    name: 'graph.pdf',
+                    score: null,
+                    retrieval_origin: 'graph',
+                  },
                 ],
               },
             ],
@@ -134,6 +273,11 @@ describe('RetrievalTab — thread switcher', () => {
     expect(displayedScore(3)).not.toHaveAttribute('title');
     expect(displayedScore(4)).toHaveTextContent('0.82');
     expect(displayedScore(4)).not.toHaveAttribute('title');
+    expect(displayedScore(5)).toHaveTextContent('graph sourced');
+    expect(displayedScore(5)).toHaveAttribute(
+      'title',
+      'Grounded through graph retrieval',
+    );
   });
 });
 
@@ -213,6 +357,50 @@ describe('RetrievalTab — send', () => {
     await userEvent.click(screen.getByRole('button', { name: /Send/ }));
 
     expect(await screen.findByTestId('retrieval-thinking')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Searching vector and graph context',
+    );
+  });
+
+  it('keeps pre-token progress labels aligned with backend stage events', async () => {
+    let emitStage:
+      | ((stage: 'retrieval' | 'generation' | 'sources') => void)
+      | undefined;
+    const onStreamQuery = vi.fn(
+      (
+        _params: unknown,
+        _onChunk: (chunk: string) => void,
+        onStage: (stage: 'retrieval' | 'generation' | 'sources') => void,
+      ) => {
+        emitStage = onStage;
+        return new Promise<{ response: string; sources: [] }>(() => {
+          // Keep the request pending while stage labels are asserted.
+        });
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'Stage probe');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+    expect(await screen.findByTestId('retrieval-thinking')).toHaveTextContent(
+      'Searching vector and graph context',
+    );
+
+    act(() => emitStage?.('generation'));
+    expect(screen.getByTestId('retrieval-thinking')).toHaveTextContent(
+      'Generating answer',
+    );
+
+    act(() => emitStage?.('sources'));
+    expect(screen.getByTestId('retrieval-thinking')).toHaveTextContent(
+      'Finalizing sources',
+    );
   });
 
   it('does not show transient stream chunks in a different active thread', async () => {
@@ -1050,6 +1238,58 @@ describe('RetrievalTab — source cards', () => {
       source: 'runbook.pdf',
       doc: 'doc-runbook',
       chunk: 'chunk-runbook-2',
+    });
+  });
+
+  it('forwards paragraph-anchor offsets in the drill-down params', async () => {
+    const onNavigate = vi.fn();
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        onNavigate={onNavigate}
+        initialThreads={[
+          {
+            id: 'th_anchor_drilldown',
+            title: 'Anchor drilldown',
+            created: Date.now(),
+            updated: Date.now(),
+            messages: [
+              {
+                role: 'assistant',
+                tokens: ['answer [1]'],
+                sources: [
+                  {
+                    n: 1,
+                    type: 'file' as const,
+                    name: 'runbook.pdf',
+                    score: 0.9,
+                    doc_id: 'doc-runbook',
+                    chunk_id: 'chunk-runbook-2',
+                    anchor: {
+                      start: 216,
+                      end: 640,
+                      paragraph_idx: 1,
+                      paragraph_count: 4,
+                      confidence: 0.62,
+                      method: 'lexical_overlap',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('source-1'));
+
+    expect(onNavigate).toHaveBeenCalledWith('documents', {
+      source: 'runbook.pdf',
+      doc: 'doc-runbook',
+      chunk: 'chunk-runbook-2',
+      astart: '216',
+      aend: '640',
     });
   });
 

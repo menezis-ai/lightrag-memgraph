@@ -14,6 +14,7 @@ Three layers:
 
 import asyncio
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ import pytest
 
 from twindb_lightrag_memgraph import _conversion
 from twindb_lightrag_memgraph.patches import registry
+from tests.procedure_pdf_fixture import build_pdf
 
 # ---------------------------------------------------------------------------
 # _conversion unit tests (no LightRAG)
@@ -36,6 +38,9 @@ def _clean_convert_env(monkeypatch):
         "TWIN_CONVERT_TIMEOUT",
     ):
         monkeypatch.delenv(var, raising=False)
+    # This suite pins the RAW enqueue contract on every LightRAG line; the
+    # preconverted-parse seam has its own suite (test_preconverted_parse.py).
+    monkeypatch.setenv("TWIN_PRECONVERTED_PARSE", "off")
     _conversion.reset_caches()
     yield
     _conversion.reset_caches()
@@ -62,12 +67,107 @@ def test_mode_on_without_markitdown_degrades_off(monkeypatch, caplog):
     assert "TWIN_CONVERT=on but markitdown is not importable" in caplog.text
 
 
+def test_availability_probe_is_cached_for_success(monkeypatch):
+    fake_module = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "markitdown", fake_module)
+
+    assert _conversion.is_available() is True
+
+    monkeypatch.delitem(sys.modules, "markitdown")
+    assert _conversion.is_available() is True
+
+
+def test_availability_probe_is_cached_for_import_error(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+    attempts = []
+
+    def controlled_import(name, *args, **kwargs):
+        if name == "markitdown":
+            attempts.append(name)
+            raise ImportError("optional dependency absent")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", controlled_import)
+
+    assert _conversion.is_available() is False
+    assert _conversion.is_available() is False
+    assert attempts == ["markitdown"]
+
+
+def test_reset_caches_restores_all_sentinels():
+    _conversion._availability = True
+    _conversion._converter = object()
+    _conversion._forced_on_warned = True
+
+    _conversion.reset_caches()
+
+    assert _conversion._availability is None
+    assert _conversion._converter is None
+    assert _conversion._forced_on_warned is False
+
+
+def test_forced_on_warning_is_exact_and_emitted_once(monkeypatch, caplog):
+    monkeypatch.setenv("TWIN_CONVERT", "on")
+    monkeypatch.setattr(_conversion, "is_available", lambda: False)
+
+    with caplog.at_level("WARNING"):
+        assert _conversion.is_enabled() is False
+        assert _conversion.is_enabled() is False
+
+    records = [
+        record for record in caplog.records if record.name == _conversion.logger.name
+    ]
+    assert len(records) == 1
+    assert records[0].msg == (
+        "twindb: %s=on but markitdown is not importable — install the "
+        "[convert] extra; falling back to native extraction"
+    )
+    assert records[0].args == ("TWIN_CONVERT",)
+
+
+def test_auto_unavailable_does_not_emit_forced_on_warning(monkeypatch, caplog):
+    monkeypatch.setattr(_conversion, "is_available", lambda: False)
+
+    with caplog.at_level("WARNING"):
+        assert _conversion.is_enabled() is False
+
+    assert caplog.records == []
+
+
 def test_formats_default_and_env_override(monkeypatch):
     assert _conversion.conversion_formats() == _conversion.DEFAULT_CONVERT_FORMATS
     monkeypatch.setenv("TWIN_CONVERT_FORMATS", " PDF, .docx ,html ")
     assert _conversion.conversion_formats() == frozenset({"pdf", "docx", "html"})
     monkeypatch.setenv("TWIN_CONVERT_FORMATS", " , ")
     assert _conversion.conversion_formats() == _conversion.DEFAULT_CONVERT_FORMATS
+    monkeypatch.setenv("TWIN_CONVERT_FORMATS", "Xls")
+    assert _conversion.conversion_formats() == frozenset({"xls"})
+
+
+def test_zip_format_reintroduction_warns_loudly(monkeypatch, caplog):
+    """Audit 2026-08-06, R-08c: zip stays allowed via env (deployer trust
+    boundary) but the zip-bomb risk must be visible in the boot logs."""
+    import logging
+
+    monkeypatch.setenv("TWIN_CONVERT_FORMATS", "pdf,zip")
+    with caplog.at_level(logging.WARNING):
+        formats = _conversion.conversion_formats()
+    assert "zip" in formats
+    assert any(
+        "SECURITY" in record.message and "zip" in record.message
+        for record in caplog.records
+    )
+
+
+def test_default_formats_do_not_warn(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.delenv("TWIN_CONVERT_FORMATS", raising=False)
+    with caplog.at_level(logging.WARNING):
+        _conversion.conversion_formats()
+    assert not any("SECURITY" in record.message for record in caplog.records)
 
 
 def test_numeric_envs_fall_back_on_garbage(monkeypatch):
@@ -81,6 +181,24 @@ def test_numeric_envs_fall_back_on_garbage(monkeypatch):
     monkeypatch.setenv("TWIN_CONVERT_TIMEOUT", "5.5")
     assert _conversion.max_convert_bytes() == 1024
     assert _conversion.convert_timeout_seconds() == 5.5
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("0", _conversion.DEFAULT_MAX_BYTES), ("1", 1), ("2", 2)],
+)
+def test_max_convert_bytes_positive_boundary(monkeypatch, raw, expected):
+    monkeypatch.setenv("TWIN_CONVERT_MAX_BYTES", raw)
+    assert _conversion.max_convert_bytes() == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("0", _conversion.DEFAULT_TIMEOUT_SECONDS), ("0.1", 0.1)],
+)
+def test_convert_timeout_positive_boundary(monkeypatch, raw, expected):
+    monkeypatch.setenv("TWIN_CONVERT_TIMEOUT", raw)
+    assert _conversion.convert_timeout_seconds() == expected
 
 
 def test_extra_supported_extensions_follow_format_set(monkeypatch):
@@ -106,6 +224,72 @@ def test_should_convert_gates(monkeypatch, tmp_path):
     monkeypatch.setenv("TWIN_CONVERT", "off")
     monkeypatch.delenv("TWIN_CONVERT_MAX_BYTES")
     assert _conversion.should_convert(covered) is False
+
+
+def test_should_convert_accepts_file_exactly_at_cap(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(_conversion, "is_available", lambda: True)
+    path = tmp_path / "exact.DOCX"
+    path.write_bytes(b"12345")
+    monkeypatch.setenv("TWIN_CONVERT_MAX_BYTES", "5")
+
+    with caplog.at_level("WARNING"):
+        assert _conversion.should_convert(path) is True
+
+    assert caplog.records == []
+
+
+def test_should_convert_oversize_warning_contract(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(_conversion, "is_available", lambda: True)
+    path = tmp_path / "large.docx"
+    path.write_bytes(b"123456")
+    monkeypatch.setenv("TWIN_CONVERT_MAX_BYTES", "5")
+
+    with caplog.at_level("WARNING"):
+        assert _conversion.should_convert(path) is False
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.msg == "twindb convert: %s exceeds %s (%d bytes) — native path"
+    assert record.args == ("large.docx", "TWIN_CONVERT_MAX_BYTES", 6)
+
+
+def test_converter_singleton_disables_plugins(monkeypatch):
+    calls = []
+
+    class FakeMarkItDown:
+        def __init__(self, *, enable_plugins):
+            calls.append(enable_plugins)
+
+    monkeypatch.setitem(
+        sys.modules, "markitdown", SimpleNamespace(MarkItDown=FakeMarkItDown)
+    )
+
+    first = _conversion._get_converter()
+    second = _conversion._get_converter()
+
+    assert first is second
+    assert calls == [False]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (SimpleNamespace(markdown="# preferred", text_content="legacy"), "# preferred"),
+        (SimpleNamespace(markdown=None, text_content="legacy"), "legacy"),
+        (SimpleNamespace(), ""),
+    ],
+)
+def test_convert_sync_result_contract(monkeypatch, tmp_path, result, expected):
+    path = tmp_path / "source.docx"
+
+    class FakeConverter:
+        def convert_local(self, received):
+            assert received == path
+            return result
+
+    monkeypatch.setattr(_conversion, "_get_converter", lambda: FakeConverter())
+
+    assert _conversion._convert_sync(path) == expected
 
 
 async def test_aconvert_file_degrades_to_none_on_error(monkeypatch, tmp_path):
@@ -136,6 +320,71 @@ async def test_aconvert_file_times_out(monkeypatch, tmp_path):
         _conversion, "_convert_sync", lambda _p: time.sleep(1) or "late"
     )
     assert await _conversion.aconvert_file(path) is None
+
+
+async def test_aconvert_timeout_warning_contract(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "slow.docx"
+    monkeypatch.setenv("TWIN_CONVERT_TIMEOUT", "7")
+
+    async def force_timeout(awaitable, *, timeout):
+        assert timeout == 7.0
+        awaitable.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", force_timeout)
+
+    with caplog.at_level("WARNING"):
+        assert await _conversion.aconvert_file(path) is None
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.msg == "twindb convert: %s timed out after %.0fs — native path"
+    assert record.args == ("slow.docx", 7.0)
+
+
+async def test_aconvert_failure_warning_contract(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "broken.docx"
+
+    def fail(_path):
+        raise LookupError("bad payload")
+
+    monkeypatch.setattr(_conversion, "_convert_sync", fail)
+
+    with caplog.at_level("WARNING"):
+        assert await _conversion.aconvert_file(path) is None
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.msg == "twindb convert: %s failed (%s: %s) — native path"
+    assert record.args[0:2] == ("broken.docx", "LookupError")
+    assert isinstance(record.args[2], LookupError)
+    assert str(record.args[2]) == "bad payload"
+
+
+async def test_aconvert_empty_warning_contract(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "empty.docx"
+    monkeypatch.setattr(_conversion, "_convert_sync", lambda _path: " \n ")
+
+    with caplog.at_level("WARNING"):
+        assert await _conversion.aconvert_file(path) is None
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.msg == "twindb convert: %s produced empty markdown — native path"
+    assert record.args == ("empty.docx",)
+
+
+async def test_aconvert_success_info_contract(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "good.docx"
+    monkeypatch.setattr(_conversion, "_convert_sync", lambda _path: "# Good")
+
+    with caplog.at_level("INFO"):
+        assert await _conversion.aconvert_file(path) == "# Good"
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.msg == "twindb convert: %s → markdown (%d chars)"
+    assert record.args == ("good.docx", 6)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +616,12 @@ def test_whitelist_patch_degrades_on_readonly_property(
 ):
     if _whitelist_is_settable(dr_module):
         pytest.skip("1.4.x whitelist is a plain settable attribute")
-    monkeypatch.setenv("TWIN_CONVERT_FORMATS", "xls,msg")
+    # LightRAG 1.5 may already register xls/msg natively. Force one genuinely
+    # missing tier extension so this test exercises the read-only assignment,
+    # rather than depending on the upstream parser set of a specific release.
+    monkeypatch.setattr(
+        registry, "_tier_extra_extensions", lambda: (".twin-readonly-probe",)
+    )
     dr_module._twindb_doc_manager_ext_patched = False
     registry._patch_document_manager_extensions()
 
@@ -457,3 +711,39 @@ async def test_real_csv_conversion_builds_table(monkeypatch, tmp_path):
     assert markdown is not None
     assert "|" in markdown  # markdown table, not raw CSV
     assert "alpha" in markdown and "beta" in markdown
+
+
+async def test_real_large_pdf_and_docx_conversion(monkeypatch, tmp_path):
+    """Valid PDF/DOCX files above the ordinary 1 MiB tier still convert."""
+    _require_markitdown()
+    docx = pytest.importorskip("docx", reason="[convert] DOCX dependency missing")
+    monkeypatch.setattr(_conversion, "is_available", lambda: True)
+
+    sentinel = "large-format-qualification-sentinel"
+    pdf_path = tmp_path / "large.pdf"
+    pdf = build_pdf(((sentinel,),))
+    xref_offset = pdf.index(b"xref\n")
+    padding = b"%" + b"x" * 1_100_000 + b"\n"
+    pdf = pdf[:xref_offset] + padding + pdf[xref_offset:]
+    pdf = pdf.replace(
+        f"startxref\n{xref_offset}\n".encode(),
+        f"startxref\n{xref_offset + len(padding)}\n".encode(),
+        1,
+    )
+    pdf_path.write_bytes(pdf)
+
+    docx_path = tmp_path / "large.docx"
+    document = docx.Document()
+    document.add_paragraph(sentinel)
+    document.save(docx_path)
+    # Use an unreferenced stored media payload so the OPC document stays valid
+    # and the on-disk upload genuinely exceeds the ordinary request ceiling.
+    with zipfile.ZipFile(docx_path, "a", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("word/media/qualification.bin", b"x" * 1_100_000)
+
+    for path in (pdf_path, docx_path):
+        assert path.stat().st_size > 1024 * 1024
+        assert _conversion.should_convert(path) is True
+        markdown = await _conversion.aconvert_file(path)
+        assert markdown is not None
+        assert sentinel in markdown

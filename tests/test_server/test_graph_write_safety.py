@@ -140,6 +140,215 @@ class TestCreateMergeRaceContract:
 
 
 # ----------------------------------------------------------------------
+# Write/write conflict retry — every graph_reader write must absorb
+# Memgraph's "Cannot resolve conflicting transactions" abort instead of
+# propagating it (observed live: _persist_relation_ids failing 3× on the
+# OVH maquette, 2026-07-21..28). The retried thunk re-acquires its own
+# slot + session per _retry.py invariant 2.
+# ----------------------------------------------------------------------
+
+CONFLICT_MESSAGE = (
+    "Cannot resolve conflicting transactions. Retry this transaction when "
+    "the conflicting transaction is finished."
+)
+
+
+class _ScriptedSession:
+    """Session whose ``run`` follows a script: each entry is either an
+    exception to raise or a row list to return. Records every query."""
+
+    def __init__(self, script: list[Any]):
+        self._script = list(script)
+        self.queries: list[str] = []
+
+    async def run(self, query, *_args, **_kwargs):
+        self.queries.append(query)
+        step = self._script.pop(0) if self._script else []
+        if isinstance(step, BaseException):
+            raise step
+        return _FakeResult(step)
+
+
+def _patch_write_path(monkeypatch, session: _ScriptedSession) -> None:
+    monkeypatch.setattr(gr, "acquire_write_slot", _fake_write_slot())
+    monkeypatch.setattr(gr, "get_session", _fake_session_cm(session))
+
+
+class TestConflictRetryContract:
+    async def test_persist_relation_ids_retries_conflict(self, monkeypatch):
+        """The exact failure observed on the maquette: one conflict abort,
+        then success — must report the bindings as persisted, not 0."""
+        session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
+        _patch_write_path(monkeypatch, session)
+        count = await gr._persist_relation_ids(
+            "cib", [{"source_id": "A", "target_id": "B"}]
+        )
+        assert count == 1
+        assert len(session.queries) == 2
+
+    async def test_entity_override_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "cib"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._upsert_entity_override("cib", "cib", "E1", {}, deleted=False)
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_entity_props_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"entity_id": "E1"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._write_entity_props(
+            workspace="cib", entity_id="E1", props={"description": "d"}
+        )
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_rel_override_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "cib"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._upsert_rel_override("cib", "cib", "A", "B", {}, deleted=False)
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_relation_props_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"source_id": "A"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._write_relation_props(
+            workspace="cib", src="A", tgt="B", props={"weight": 0.7}
+        )
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_relation_vdb_cascade_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._cascade_relation_vdb_row("cib", "A", "B")
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_entity_physical_delete_retries_conflict(self, monkeypatch):
+        async def fake_member_context(workspace):
+            return None, {}
+
+        async def fake_exists(workspace, entity_id):
+            return True
+
+        async def fake_cascade(workspace, entity_id):
+            return True
+
+        monkeypatch.setattr(gr, "_member_context", fake_member_context)
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+        monkeypatch.setattr(gr, "_cascade_entity_vdb_rows", fake_cascade)
+        session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
+        _patch_write_path(monkeypatch, session)
+        ok = await gr.delete_graph_entity("cib", "E1")
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_relation_physical_delete_retries_conflict(self, monkeypatch):
+        async def fake_endpoints(workspace, rel_id):
+            return ("cib", "A", "B")
+
+        async def fake_member_context(workspace):
+            return None, {}
+
+        async def fake_cascade(workspace, src, tgt):
+            return True
+
+        monkeypatch.setattr(gr, "_resolve_relation_endpoints", fake_endpoints)
+        monkeypatch.setattr(gr, "_member_context", fake_member_context)
+        monkeypatch.setattr(gr, "_cascade_relation_vdb_row", fake_cascade)
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"source_id": "A"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr.delete_graph_relation("cib", "r1")
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_merge_relation_retries_conflict(self, monkeypatch):
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE), [{"source_id": "A"}]]
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._merge_relation(workspace="cib", src="A", tgt="B", props={})
+        assert ok is True
+        assert len(session.queries) == 2
+
+    async def test_entity_vdb_cascade_retries_conflict(self, monkeypatch):
+        # First statement conflicts; the replay re-runs BOTH statements
+        # (idempotent deletes), so the script sees 3 runs total.
+        session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), [], []])
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._cascade_entity_vdb_rows("cib", "E1")
+        assert ok is True
+        assert len(session.queries) == 3
+
+    async def test_non_conflict_error_does_not_retry(self, monkeypatch):
+        session = _ScriptedSession([RuntimeError("syntax error"), [{"x": 1}]])
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._write_entity_props(
+            workspace="cib", entity_id="E1", props={"description": "d"}
+        )
+        assert ok is False
+        assert len(session.queries) == 1
+
+    async def test_conflict_exhaustion_maps_to_failure_contract(self, monkeypatch):
+        from twindb_lightrag_memgraph._retry import MAX_WRITE_ATTEMPTS
+
+        session = _ScriptedSession(
+            [RuntimeError(CONFLICT_MESSAGE)] * MAX_WRITE_ATTEMPTS
+        )
+        _patch_write_path(monkeypatch, session)
+        ok = await gr._write_entity_props(
+            workspace="cib", entity_id="E1", props={"description": "d"}
+        )
+        assert ok is False
+        assert len(session.queries) == MAX_WRITE_ATTEMPTS
+
+    async def test_create_stamp_conflict_does_not_replay_merge(self, monkeypatch):
+        """A conflict on the folder-membership stamp must retry the stamp
+        ALONE. Replaying the whole create block would re-run the MERGE
+        against the node the first attempt committed and misreport the
+        create as a 409 duplicate."""
+
+        async def fake_exists(workspace, entity_id):
+            return False
+
+        async def fake_read_one(workspace, entity_id, *args, **kwargs):
+            return {"id": f"node-{entity_id}"}
+
+        from twindb_lightrag_memgraph.server import folder as folder_mod
+
+        monkeypatch.setattr(gr, "entity_exists", fake_exists)
+        monkeypatch.setattr(gr, "_read_one_entity", fake_read_one)
+        monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "cib")
+        session = _ScriptedSession(
+            [
+                [{"entity_id": "E1", "created": True}],  # MERGE — once only
+                RuntimeError(CONFLICT_MESSAGE),  # stamp, attempt 1
+                [],  # stamp, attempt 2
+            ]
+        )
+        _patch_write_path(monkeypatch, session)
+
+        projected = await gr.create_graph_entity(
+            "cib", {"name": "E1", "type": "PRODUCT"}
+        )
+        assert projected == {"id": "node-E1"}
+        assert len(session.queries) == 3
+        merge_queries = [q for q in session.queries if "MERGE (n:" in q]
+        assert len(merge_queries) == 1
+
+
+# ----------------------------------------------------------------------
 # Integration (real Memgraph) — Cypher → API route → observable effect
 # ----------------------------------------------------------------------
 
@@ -427,7 +636,7 @@ class TestMg2DeleteCascadesVectorRows:
 
         # vector_search: no grounding on E1, and no 50N42-style stale-index
         # error on the post-delete queries (the Memgraph 3.10+ landmine the
-        # REMOVE-label mitigation exists for; CI runs 3.10.1).
+        # REMOVE-label mitigation exists for; CI runs 3.12.0).
         ent_hits = await entities_vdb.query("E1 seeded description", top_k=10)
         assert all(h.get("entity_name") != "E1" for h in ent_hits)
         rel_hits = await relationships_vdb.query("links seeded", top_k=10)

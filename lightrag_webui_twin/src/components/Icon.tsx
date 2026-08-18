@@ -64,6 +64,26 @@ const paths: Record<string, ReactNode> = {
       <path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1l1 -4l9.5 -9.5z" />
     </>
   ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0 -2 -2H6a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2" />
+    </>
+  ),
+  markdown: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M7 15V9l2 2l2 -2v6M15 9v6M13 13l2 2l2 -2" />
+    </>
+  ),
+  'git-branch': (
+    <>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <path d="M6 7v10M8 10h5a5 5 0 0 0 5 -2" />
+    </>
+  ),
   'info-circle': (
     <>
       <circle cx="12" cy="12" r="9" />

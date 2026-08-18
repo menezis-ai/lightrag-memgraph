@@ -8,24 +8,21 @@ accounting and surfaces the pressure so an operator sees ``warning``
 (≥85 %) before the ``blocked`` wall, and so ingestion endpoints can
 refuse uploads with a clear 507 before partial writes corrupt state.
 
-What it measures (verified empirically against Memgraph 3.9.0 **and**
-3.10.1 — ``SHOW STORAGE INFO`` field names differ across versions, see
-the ``_*_KEYS`` tuples):
+What it measures (verified empirically against Memgraph 3.12.0):
 
-- **used**  = ``global_memory_tracked`` (3.10) / ``memory_tracked`` (3.9)
-  — the allocation count Memgraph enforces its limit against. NOT the
-  process RSS (``memory_res``, which includes allocator overhead and
-  over-reports ~2×), and NOT the sum of ingested file sizes (originals
-  are deleted; only chunks + graph + vectors remain).
-- **limit** = ``global_runtime_allocation_limit`` (3.10) /
-  ``allocation_limit`` (3.9) — read straight from Memgraph, so it tracks
-  the real ``--memory-limit`` and the Enterprise license cap without a
-  hand-maintained env. Falls back to ``MEMGRAPH_MEMORY_LIMIT`` only when
-  Memgraph reports no limit.
+- **used** = instance-level ``memory_tracked`` — the allocation count
+  Memgraph enforces its limit against. Memgraph 3.12 accounts for pages
+  reclaimed by jemalloc's background decay, so this is the corrected
+  post-reclamation value. It is deliberately not the process RSS
+  (``memory_res``), which includes allocator/process overhead.
+- **limit** = instance-level ``memory_limit`` — the effective runtime
+  allocation limit reported by Memgraph 3.12. Falls back to
+  ``MEMGRAPH_MEMORY_LIMIT`` only when Memgraph reports no limit.
 - **graph_bytes / vector_bytes** — the actual data footprint
-  (``db_storage_memory_tracked`` + ``db_embedding_memory_tracked`` on
-  3.10; ``graph_memory_tracked`` + ``vector_index_memory_tracked`` on
-  3.9), surfaced for capacity visibility.
+  (``graph_memory_tracked`` + ``vector_index_memory_tracked``) from
+  ``SHOW STORAGE INFO ON CURRENT DATABASE``. Since Memgraph 3.11 those
+  per-database fields are no longer returned by bare
+  ``SHOW STORAGE INFO``.
 
 Values come back as unit strings (``"409.72MiB"``, ``"2.00GiB"``,
 ``"unlimited"``, ``"0B"``) — :func:`_parse_size` handles those plus raw
@@ -73,21 +70,22 @@ _UNIT_FACTORS: Final[dict[str, int]] = {
     "TIB": 1024**4,
 }
 
-# ``SHOW STORAGE INFO`` keys, newest name first, older name(s) after.
-# Verified on 3.10.1 and 3.9.0 — note graph/vector keys are *swapped*
-# between the two releases, hence both must be tried.
-_USED_KEYS: Final = ("global_memory_tracked", "memory_tracked")
-_USED_RSS_KEYS: Final = ("memory_res",)  # coarse last resort (process RSS)
-_RAM_LIMIT_KEYS: Final = ("global_runtime_allocation_limit", "allocation_limit")
-# The Enterprise license cap, billed on data. 3.10+ only; absent on 3.9 and
-# "unlimited" on Community (→ parsed to None, no license wall).
-_LICENSE_LIMIT_KEYS: Final = ("global_license_allocation_limit",)
-_GRAPH_KEYS: Final = ("db_storage_memory_tracked", "graph_memory_tracked")
-_VECTOR_KEYS: Final = (
-    "db_embedding_memory_tracked",
-    "vector_index_memory_tracked",
-    "embeddings_memory_tracked",
-)
+# Memgraph 3.12 ``SHOW STORAGE INFO`` contract. The instance and database
+# queries intentionally use different key sets; mixing them is the exact bug
+# introduced by the 3.11 field split/rename.
+_USED_KEYS: Final = ("memory_tracked",)
+_RAM_LIMIT_KEYS: Final = ("memory_limit",)
+# "unlimited" on Community is parsed to None (no license wall).
+_LICENSE_LIMIT_KEYS: Final = ("license_memory_limit",)
+_GRAPH_KEYS: Final = ("graph_memory_tracked",)
+_VECTOR_KEYS: Final = ("vector_index_memory_tracked",)
+
+# Probe queries whose current outage has already been logged loudly.
+# Cleared per query on the next success (see _run_storage_info).
+_PROBE_FAILURE_LOGGED: set[str] = set()
+
+_INSTANCE_STORAGE_INFO_QUERY: Final = "SHOW STORAGE INFO"
+_DATABASE_STORAGE_INFO_QUERY: Final = "SHOW STORAGE INFO ON CURRENT DATABASE"
 
 # Which Memgraph Enterprise plan BNP is on — decides whether vector index
 # memory counts toward the *billed* footprint:
@@ -176,9 +174,9 @@ def get_limit_bytes() -> int | None:
 def _index_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Parse ``SHOW STORAGE INFO`` rows → ``{lower_key: bytes}``.
 
-    Pure (no I/O) so version compatibility is unit-testable against the
-    real 3.9 and 3.10 field sets. Each row is ``{"storage info": <key>,
-    "value": <unit-string|number>}`` (older builds vary the column names).
+    Pure (no I/O) so the 3.12 contract is unit-testable against captured
+    instance and current-database field sets. Each row is
+    ``{"storage info": <key>, "value": <unit-string|number>}``.
     """
     indexed: dict[str, int] = {}
     for row in rows:
@@ -199,22 +197,50 @@ def _index_rows(rows: list[dict[str, Any]]) -> dict[str, int]:
     return indexed
 
 
-async def _read_storage_info() -> dict[str, int]:
-    """One ``SHOW STORAGE INFO`` probe → ``{key: bytes}`` (lower-cased keys).
+async def _run_storage_info(query: str) -> dict[str, int]:
+    """Run one storage-info query → ``{key: bytes}`` (lower-cased keys).
 
     Fail-open: returns ``{}`` on any error so the guard never blocks on
     its own malfunction.
     """
     try:
         async with _pool.get_read_session() as session:
-            result = await session.run("SHOW STORAGE INFO")
+            result = await session.run(query)
             rows = await result.data()
             await result.consume()
     except Exception:  # noqa: BLE001
-        # Fail-open, never propagate quota guard failures.
-        logger.exception("[quota] SHOW STORAGE INFO failed; guard inactive")
+        # Fail-open, never propagate quota guard failures. Log the full
+        # exception once per outage, not per poll: the WebUI polls this
+        # endpoint continuously, and a steadily failing probe (observed on
+        # the OVH maquette: a pre-3.11 Memgraph that cannot parse the
+        # per-database query — 163 tracebacks/day) buries every other error
+        # in the log. The probe keeps running either way, so a live Memgraph
+        # upgrade self-heals; the next success re-arms the loud log.
+        if query not in _PROBE_FAILURE_LOGGED:
+            _PROBE_FAILURE_LOGGED.add(query)
+            logger.exception(
+                "[quota] %s failed; affected quota metrics unavailable "
+                "(repeats logged at DEBUG until the probe recovers)",
+                query,
+            )
+        else:
+            logger.debug(
+                "[quota] %s failed again; affected quota metrics still unavailable",
+                query,
+            )
         return {}
+    _PROBE_FAILURE_LOGGED.discard(query)
     return _index_rows(rows)
+
+
+async def _read_storage_info() -> dict[str, int]:
+    """Read Memgraph 3.12 instance-level storage and limit metrics."""
+    return await _run_storage_info(_INSTANCE_STORAGE_INFO_QUERY)
+
+
+async def _read_database_storage_info() -> dict[str, int]:
+    """Read Memgraph 3.12 metrics for the connection's current database."""
+    return await _run_storage_info(_DATABASE_STORAGE_INFO_QUERY)
 
 
 def _pick(indexed: dict[str, int], keys: tuple[str, ...]) -> int | None:
@@ -225,12 +251,9 @@ def _pick(indexed: dict[str, int], keys: tuple[str, ...]) -> int | None:
 
 
 async def get_used_bytes() -> int | None:
-    """Tracked memory Memgraph enforces its limit against
-    (``global_memory_tracked`` / ``memory_tracked``), falling back to the
-    process RSS (``memory_res``) only if the tracker isn't exposed."""
+    """Tracked memory Memgraph 3.12 enforces its instance limit against."""
     indexed = await _read_storage_info()
-    used = _pick(indexed, _USED_KEYS)
-    return used if used is not None else _pick(indexed, _USED_RSS_KEYS)
+    return _pick(indexed, _USED_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -258,32 +281,30 @@ def _pct(used: int | None, limit: int | None) -> float | None:
 async def snapshot() -> dict[str, Any]:
     """Full quota payload for ``GET /twin/api/quota`` and the 507 guard.
 
-    Two distinct walls are computed from one probe and the binding one
+    Two distinct walls are computed and the binding one
     becomes the headline (``used_bytes`` / ``limit_bytes`` / ``status``):
 
     - **license** — the *billed* footprint (graph [+ vectors, unless the
-      AI-Platform plan]) vs ``global_license_allocation_limit``. This is
+      AI-Platform plan]) vs ``license_memory_limit``. This is
       what Memgraph charges for and what triggers read-only writes on
       Enterprise once exceeded. Absent on Community (license "unlimited").
     - **ram** — Memgraph's tracked allocation vs the effective
-      ``--memory-limit`` (``global_runtime_allocation_limit``). Binds on
+      ``--memory-limit`` (``memory_limit``). Binds on
       Community, or when ``--memory-limit`` is lower than the license.
 
     Every field is surfaced so the operator can see *which* wall binds
     and what the data actually weighs — never a hand-waved number.
     """
     indexed = await _read_storage_info()
+    database_indexed = await _read_database_storage_info()
 
-    graph = _pick(indexed, _GRAPH_KEYS)
-    vector = _pick(indexed, _VECTOR_KEYS)
+    graph = _pick(database_indexed, _GRAPH_KEYS)
+    vector = _pick(database_indexed, _VECTOR_KEYS)
     vectors_billed = _vectors_are_billed()
 
     # --- RAM wall: tracked allocation vs the effective allocation limit ---
     ram_used = _pick(indexed, _USED_KEYS)
     ram_basis: str | None = "tracked" if ram_used is not None else None
-    if ram_used is None:
-        ram_used = _pick(indexed, _USED_RSS_KEYS)
-        ram_basis = "rss" if ram_used is not None else None
     ram_limit = _pick(indexed, _RAM_LIMIT_KEYS)
     if ram_limit is None:
         ram_limit = get_limit_bytes()  # MEMGRAPH_MEMORY_LIMIT env fallback

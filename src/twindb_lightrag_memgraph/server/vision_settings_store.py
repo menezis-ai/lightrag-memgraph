@@ -1,12 +1,14 @@
 """Runtime store for the operator-tunable vision-ingestion settings.
 
 Backs ``/twin/api/settings/vision`` (see ``vision_settings_routes.py``).
-Only the two CURATION knobs are runtime-mutable — the infrastructure wiring
-(endpoint URL, API key, model, timeouts, size caps) stays env-only by
-design (secrets + SSRF surface, see MARKITDOWN-INGESTION-PLAN.md):
+Only curation and procedure activation are runtime-mutable — the
+infrastructure wiring (endpoint URL, API key, model, timeouts, size caps)
+stays env-only by design (secrets + SSRF surface, see
+MARKITDOWN-INGESTION-PLAN.md):
 
 - ``min_ocr_chars`` — RapidOCR pre-filter threshold,
 - ``drop_classes`` — vision classifications refused after the LLM call.
+- ``procedure_enabled`` — whether new procedure PDFs enter review.
 
 One node per workspace: label ``WebuiSettings_{workspace}`` (mirrors the
 ``WebuiApiKey_{workspace}`` overlay namespacing), ``id="vision"``, payload
@@ -80,6 +82,7 @@ async def update_settings(
     *,
     min_ocr_chars: int,
     drop_classes: list[str],
+    procedure_enabled: bool,
     updated_by: str,
 ) -> dict[str, Any]:
     """Persist the settings node (MERGE — single node per workspace)."""
@@ -87,6 +90,7 @@ async def update_settings(
     data = {
         "min_ocr_chars": int(min_ocr_chars),
         "drop_classes": sorted({c.strip().lower() for c in drop_classes if c.strip()}),
+        "procedure_enabled": bool(procedure_enabled),
         "updated_at": _now_ms(),
         "updated_by": updated_by,
     }

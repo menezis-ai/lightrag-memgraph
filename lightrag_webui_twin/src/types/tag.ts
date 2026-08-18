@@ -96,7 +96,6 @@ export interface TagCurrentUser {
 export const TAG_STATUS_FILTERS = [
   'all',
   'active',
-  'pending-promotion',
   'deprecated',
   'rejected',
 ] as const;

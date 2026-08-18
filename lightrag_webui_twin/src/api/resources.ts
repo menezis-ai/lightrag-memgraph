@@ -38,6 +38,7 @@ import type {
   VisionSettingsPublic,
 } from '../types/visionSettings';
 import type { QuotaSnapshot } from '../types/quota';
+import type { AboutResponse } from '../types/systemInfo';
 import type {
   ProcedureBundle,
   ProcedureBundleSummary,
@@ -134,6 +135,21 @@ export interface UploadDocumentInput {
   docType?: UploadDocType;
 }
 
+export interface UploadDocumentResponse {
+  status: string;
+  message: string;
+  track_id: string;
+  /** Present when upload selection shared an already-ingested document. */
+  doc_id?: string;
+}
+
+interface ResolveUploadResponse {
+  action: 'upload' | 'shared' | 'already_present';
+  message?: string;
+  track_id?: string;
+  doc_id?: string;
+}
+
 interface RawDocumentChunk {
   chunk_id: string;
   order?: number;
@@ -168,6 +184,16 @@ export interface TwinQueryRequest {
   fallback_to_mix?: boolean;
 }
 
+/** Wire twin of the backend ``TwinSourceAnchor`` model (offsets only). */
+export interface TwinQuerySourceAnchor {
+  start: number;
+  end: number;
+  paragraph_idx: number;
+  paragraph_count: number;
+  confidence: number;
+  method: string;
+}
+
 export interface TwinQuerySource {
   n: number;
   type: string;
@@ -175,8 +201,12 @@ export interface TwinQuerySource {
   meta?: string | null;
   /** Real retrieval metric, when the backend can expose one. */
   score?: number | null;
+  /** Explicit grounding provenance; absent on legacy backends. */
+  retrieval_origin?: 'vector' | 'graph' | null;
   doc_id?: string | null;
   chunk_id?: string | null;
+  /** Optional intra-chunk paragraph anchor; null on legacy backends. */
+  anchor?: TwinQuerySourceAnchor | null;
 }
 
 /**
@@ -197,10 +227,14 @@ export type TwinAnswerStatus =
 export interface TwinQueryResponse {
   response: string;
   sources: readonly TwinQuerySource[];
+  /** Deployment-provided synthesis model name. */
+  model?: string;
   /** Backend default is ``"grounded"``. Optional in the TS contract
    *  so a legacy backend without the field still parses cleanly. */
   answer_status?: TwinAnswerStatus;
 }
+
+export type TwinQueryProgressStage = 'retrieval' | 'generation' | 'sources';
 
 export interface TwinQueryDataResponse {
   status: string;
@@ -352,7 +386,38 @@ export const lightragApi = {
   uploadDocument: async (
     file: File,
     init?: UploadDocumentOptions,
-  ): Promise<{ status: string; message: string; track_id: string }> => {
+  ): Promise<UploadDocumentResponse> => {
+    const resolveExisting = () =>
+      apiFetch<ResolveUploadResponse>(`${TWIN}/documents/resolve-upload`, {
+        method: 'POST',
+        body: { file_name: file.name },
+        signal: init?.signal,
+      });
+    const asResolvedUpload = (
+      resolved: ResolveUploadResponse,
+    ): UploadDocumentResponse | null => {
+      if (resolved.action === 'upload') return null;
+      if (
+        resolved.action !== 'shared' &&
+        resolved.action !== 'already_present'
+      ) {
+        throw new ApiError(
+          'POST /twin/api/documents/resolve-upload returned an invalid action',
+          502,
+          resolved,
+        );
+      }
+      return {
+        status: resolved.action === 'shared' ? 'shared' : 'duplicated',
+        message: resolved.message ?? '',
+        track_id: resolved.track_id ?? '',
+        ...(resolved.doc_id ? { doc_id: resolved.doc_id } : {}),
+      };
+    };
+
+    const resolvedBeforeUpload = asResolvedUpload(await resolveExisting());
+    if (resolvedBeforeUpload) return resolvedBeforeUpload;
+
     const formData = new FormData();
     formData.append('file', file);
     const headers = buildApiHeaders();
@@ -397,13 +462,30 @@ export const lightragApi = {
       /* keep as text */
     }
     if (!res.ok) {
+      // Close the preflight/upload race: another request may have created the
+      // canonical source after our first resolution but before LightRAG's
+      // strict name check. Re-resolve only for a collision response; unrelated
+      // upload failures retain their original detail.
+      const detail =
+        body && typeof body === 'object' && 'detail' in body
+          ? (body as { detail?: unknown }).detail
+          : undefined;
+      const isNameCollision =
+        res.status === 409 &&
+        typeof detail === 'string' &&
+        (detail.includes('Document storage already contains') ||
+          detail.includes('Input directory already contains'));
+      if (isNameCollision) {
+        const resolvedAfterCollision = asResolvedUpload(await resolveExisting());
+        if (resolvedAfterCollision) return resolvedAfterCollision;
+      }
       throw new ApiError(
         `POST /documents/upload → ${res.status} ${res.statusText}`,
         res.status,
         body,
       );
     }
-    return body as { status: string; message: string; track_id: string };
+    return body as UploadDocumentResponse;
   },
   deleteDocument: (docId: string, init?: ApiRequestInit) =>
     apiFetch<{ ok: true }>(`/documents/${encodeURIComponent(docId)}`, {
@@ -461,6 +543,7 @@ export const twinApi = {
     body: TwinQueryRequest,
     onChunk: (chunk: string) => void,
     init?: ApiRequestInit,
+    onStage?: (stage: TwinQueryProgressStage) => void,
   ): Promise<TwinQueryResponse> => {
     const res = await fetch(buildApiUrl(`${TWIN}/query/stream`), {
       method: 'POST',
@@ -488,6 +571,7 @@ export const twinApi = {
     //   {"type":"status","value":"grounded"|"insufficient_information"
     //                            |"source_projection_failed"|"no_retrieval"
     //                            |"query_failed"}
+    //   {"type":"meta","value":{"model":"<llm model>"}}
     //   {"type":"sources","value":[<RetrievalSource>, ...]}
     // Token events stream the LLM answer (call onChunk for live UI);
     // the status event arrives exactly once before the final sources
@@ -498,6 +582,7 @@ export const twinApi = {
     let response = '';
     let sources: TwinQuerySource[] = [];
     let answerStatus: TwinAnswerStatus = 'grounded';
+    let model: string | undefined;
     let buffer = '';
 
     const consumeLine = (line: string) => {
@@ -514,6 +599,20 @@ export const twinApi = {
         onChunk(event.value);
       } else if (event.type === 'sources' && Array.isArray(event.value)) {
         sources = event.value as TwinQuerySource[];
+      } else if (
+        event.type === 'stage' &&
+        (event.value === 'retrieval' ||
+          event.value === 'generation' ||
+          event.value === 'sources')
+      ) {
+        onStage?.(event.value);
+      } else if (
+        event.type === 'meta' &&
+        typeof event.value === 'object' &&
+        event.value !== null &&
+        typeof (event.value as { model?: unknown }).model === 'string'
+      ) {
+        model = (event.value as { model: string }).model;
       } else if (
         event.type === 'status' &&
         (event.value === 'grounded' ||
@@ -538,7 +637,7 @@ export const twinApi = {
     }
     buffer += decoder.decode();
     if (buffer) consumeLine(buffer);
-    return { response, sources, answer_status: answerStatus };
+    return { response, sources, answer_status: answerStatus, model };
   },
   createFolder: (
     body: { id: string; label: string; kind?: string; description?: string },
@@ -586,6 +685,12 @@ export const twinApi = {
   // surfaces. Polled every 30s by the WebUI; cheap server-side.
   getQuotaSnapshot: (init?: ApiRequestInit) =>
     apiFetch<QuotaSnapshot>(`${TWIN}/quota`, init),
+
+  // ── About / system identity card (Settings → About) ───────────────
+  // Two-tier payload: versions for any caller the backend serves, deployment
+  // shape (Memgraph, Python, storage topology) only for admins.
+  getAbout: (init?: ApiRequestInit) =>
+    apiFetch<AboutResponse>(`${TWIN}/system/about`, init),
 
   // ── API key management ───────────────────────────────────────────
   // Per-operator keys minted via Settings → API keys. Distinct from
@@ -830,18 +935,25 @@ export const twinApi = {
       `${TWIN}/documents/${encodeURIComponent(docId)}/reject`,
       { ...init, method: 'POST', body },
     ),
+  /**
+   * `busy` lists ids the backend deferred because the ingestion pipeline
+   * was held by a processing job — those documents are untouched and the
+   * same call succeeds after the pipeline drains (the host auto-retries).
+   * An all-deferred batch is a 423 ApiError instead (nothing deleted).
+   */
   bulkDeleteDocuments: (
     body: { doc_ids: readonly string[]; actor?: string },
     init?: ApiRequestInit,
   ) =>
-    apiFetch<{ deleted: number; failed: readonly string[] }>(
-      `${TWIN}/documents/bulk-delete`,
-      {
-        ...init,
-        method: 'POST',
-        body,
-      },
-    ),
+    apiFetch<{
+      deleted: number;
+      failed: readonly string[];
+      busy?: readonly string[];
+    }>(`${TWIN}/documents/bulk-delete`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
 
   /**
    * Persist a tag mutation (single or bulk) on a list of documents.
@@ -1031,8 +1143,8 @@ export const api = {
   uploadDocument: lightragApi.uploadDocument,
   deleteDocument: (docId: string, init?: ApiRequestInit) =>
     twinApi.bulkDeleteDocuments({ doc_ids: [docId] }, init).then((res) => {
-      // bulk-delete returns HTTP 200 even on a per-doc failure (it reports
-      // {deleted, failed}). Surface a per-doc failure as a thrown error so the
+      // bulk-delete reports per-doc failures in {deleted, failed} (HTTP 207 for
+      // partial success). Surface a single-doc failure as a thrown error so the
       // mutation's optimistic rollback fires and the toast is honest, instead
       // of a false "Document removed" on {deleted: 0, failed: [docId]}.
       if (res.deleted !== 1 || (res.failed ?? []).includes(docId)) {
@@ -1101,6 +1213,7 @@ export const api = {
   getVisionSettings: twinApi.getVisionSettings,
   updateVisionSettings: twinApi.updateVisionSettings,
   getQuotaSnapshot: twinApi.getQuotaSnapshot,
+  getAbout: twinApi.getAbout,
 };
 
 export type ApiClient = typeof api;

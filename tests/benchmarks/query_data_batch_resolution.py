@@ -13,6 +13,7 @@ import tracemalloc
 from typing import Any
 
 from twindb_lightrag_memgraph.server.query import query_data_filters as qdf
+from twindb_lightrag_memgraph.server.query.source_filters import _tag_filter_terms
 
 ITERATIONS = 80
 SMALL_ROW_COUNT = 4
@@ -26,14 +27,14 @@ class _Rag:
     doc_status = object()
 
 
-async def _fake_chunk(_rag: Any, chunk_id: str) -> str:
+async def _fake_chunk_batch(_rag: Any, chunk_ids: set[str]) -> dict[str, str]:
     await asyncio.sleep(LOOKUP_DELAY_SECONDS)
-    return f"doc:{chunk_id}"
+    return {chunk_id: f"doc:{chunk_id}" for chunk_id in chunk_ids}
 
 
-async def _fake_file(_rag: Any, file_path: str) -> str:
+async def _fake_file_batch(_rag: Any, file_paths: set[str]) -> dict[str, str]:
     await asyncio.sleep(LOOKUP_DELAY_SECONDS)
-    return f"doc:{file_path}"
+    return {file_path: f"doc:{file_path}" for file_path in file_paths}
 
 
 async def _fetch_doc_tags(doc_id: str, _folder: str) -> set[str]:
@@ -60,7 +61,7 @@ async def _baseline_filter_rows_by_tags(
     tags_cache: dict[str, set[str]],
     fetch_doc_tags: Any,
 ) -> tuple[list, set[str]]:
-    required, optional = qdf._tag_filter_terms(tag_filter)
+    required, optional = _tag_filter_terms(tag_filter)
     if not required and not optional:
         return rows, set()
 
@@ -209,16 +210,16 @@ async def measure(iterations: int | None = None) -> list[dict[str, Any]]:
     (``test_filter_rows_by_tags_resolves_chunk_and_file_batches_concurrently``),
     so this benchmark contributes the ratio case only and does not duplicate it.
 
-    Patches the module-level chunk/file resolvers to sleep-only fakes and
+    Patches the module-level chunk/file batch resolvers to sleep-only fakes and
     restores them, so calling this from the pytest process leaves no global
     residue (the CLI ``main()`` deliberately keeps its patch — the process exits
     right after).
     """
     n = iterations or ITERATIONS
-    orig_chunk = qdf._resolve_doc_for_chunk
-    orig_file = qdf._resolve_doc_for_file_path
-    qdf._resolve_doc_for_chunk = _fake_chunk
-    qdf._resolve_doc_for_file_path = _fake_file
+    orig_chunk = qdf._resolve_doc_ids_for_chunk_ids
+    orig_file = qdf._resolve_doc_ids_for_file_paths
+    qdf._resolve_doc_ids_for_chunk_ids = _fake_chunk_batch
+    qdf._resolve_doc_ids_for_file_paths = _fake_file_batch
     try:
         rows = _rows(SMALL_ROW_COUNT)
         baseline = await _measure_isolated(
@@ -228,8 +229,8 @@ async def measure(iterations: int | None = None) -> list[dict[str, Any]]:
             "optimized", qdf._filter_rows_by_tags, rows, iterations=n
         )
     finally:
-        qdf._resolve_doc_for_chunk = orig_chunk
-        qdf._resolve_doc_for_file_path = orig_file
+        qdf._resolve_doc_ids_for_chunk_ids = orig_chunk
+        qdf._resolve_doc_ids_for_file_paths = orig_file
     return [
         {
             "name": (
@@ -244,8 +245,8 @@ async def measure(iterations: int | None = None) -> list[dict[str, Any]]:
 
 
 async def main() -> None:
-    qdf._resolve_doc_for_chunk = _fake_chunk
-    qdf._resolve_doc_for_file_path = _fake_file
+    qdf._resolve_doc_ids_for_chunk_ids = _fake_chunk_batch
+    qdf._resolve_doc_ids_for_file_paths = _fake_file_batch
     small_rows = _rows(SMALL_ROW_COUNT)
     serial_guard_rows = _rows(SERIAL_GUARD_ROW_COUNT)
 

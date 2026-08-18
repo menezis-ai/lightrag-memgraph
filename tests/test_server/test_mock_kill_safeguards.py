@@ -18,6 +18,7 @@ Covers the safeguards landed during the 2026-06-04 mock-kill hardening:
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -208,6 +209,116 @@ class TestForFolderMemgraphModeIntegration:
         assert '.for_folder(folder.id, mode="memgraph")' in source, (
             "register() memgraph branch must pass mode='memgraph' to "
             "for_folder — see mock-kill F6."
+        )
+
+    async def test_overlay_boot_keeps_taxonomy_when_config_labels_collide(
+        self,
+        tmp_path,
+        monkeypatch,
+        caplog,
+    ):
+        """A rejected Config-as-Code taxonomy must not crash the lifespan."""
+        import json
+
+        from twindb_lightrag_memgraph.patches.registry import (
+            _init_overlay_memgraph_stores,
+        )
+        from twindb_lightrag_memgraph.server import (
+            folder as folder_module,
+            webui_activitystore,
+            webui_notificationstore,
+            webui_tagstore,
+        )
+
+        config_path = tmp_path / "categories.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {"id": "network-a", "label": "Réseau", "color": "#112233"},
+                    {"id": "network-b", "label": "RESEAU", "color": "#445566"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        calls: list[str] = []
+        replace_from_config = (
+            webui_tagstore.MemgraphTagStore.replace_categories_from_config
+        )
+        replace_from_list = webui_tagstore.MemgraphTagStore.replace_categories_from_list
+
+        class FakeTagStore:
+            replace_categories_from_config = replace_from_config
+            replace_categories_from_list = replace_from_list
+
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def initialize(self) -> None:
+                calls.append("tag:init")
+
+            async def bootstrap_categories_if_empty(self) -> bool:
+                calls.append("tag:bootstrap")
+                return False
+
+        class FakeActivityStore:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def initialize(self) -> None:
+                calls.append("activity:init")
+
+        class FakeNotificationStore:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def initialize(self) -> None:
+                calls.append("notification:init")
+
+        class FakeWebuiStore:
+            @classmethod
+            def for_folder(cls, folder: str, *, mode: str):
+                assert folder == "default"
+                assert mode == "memgraph"
+                return SimpleNamespace()
+
+        registered: list[tuple[object, str]] = []
+        monkeypatch.setattr(
+            folder_module,
+            "load_folder_catalog",
+            lambda: SimpleNamespace(
+                folders=(SimpleNamespace(id="default"),),
+            ),
+        )
+        monkeypatch.setattr(webui_tagstore, "MemgraphTagStore", FakeTagStore)
+        monkeypatch.setattr(
+            webui_activitystore,
+            "MemgraphActivityStore",
+            FakeActivityStore,
+        )
+        monkeypatch.setattr(
+            webui_notificationstore,
+            "MemgraphNotificationStore",
+            FakeNotificationStore,
+        )
+
+        with caplog.at_level(logging.ERROR):
+            await _init_overlay_memgraph_stores(
+                str(config_path),
+                FakeWebuiStore,
+                lambda store, *, folder: registered.append((store, folder)),
+            )
+
+        assert calls == [
+            "tag:init",
+            "tag:bootstrap",
+            "activity:init",
+            "notification:init",
+        ]
+        assert len(registered) == 1
+        assert registered[0][1] == "default"
+        assert any(
+            "keeping the existing taxonomy" in record.getMessage()
+            for record in caplog.records
         )
 
     def test_app_lifespan_uses_memgraph_mode(self):

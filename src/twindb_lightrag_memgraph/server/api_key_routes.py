@@ -22,7 +22,8 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import Path as FastapiPath
+from pydantic import BaseModel, ConfigDict, Field
 
 from .._constants import resolve_workspace
 from . import api_key_store
@@ -56,7 +57,16 @@ router = APIRouter(
 
 
 class ApiKeyCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    model_config = ConfigDict(
+        json_schema_extra={"examples": [{"name": "reporting-script"}]}
+    )
+
+    name: str = Field(
+        min_length=1,
+        max_length=120,
+        description="Display name identifying what the key is for.",
+        examples=["reporting-script"],
+    )
 
 
 class ApiKeyPublic(BaseModel):
@@ -64,19 +74,86 @@ class ApiKeyPublic(BaseModel):
     absent; ``full_value`` is only present in the POST response (see
     :class:`ApiKeyCreated`)."""
 
-    id: str
-    name: str
-    prefix: str
-    created_at: int
-    created_by: str
-    last_used_at: int | None = None
-    revoked_at: int | None = None
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "19ab42f01d0-8d7c6b5a",
+                    "name": "reporting-script",
+                    "prefix": "twk_Pu6s9K2a…",
+                    "created_at": 1785283200000,
+                    "created_by": "operator@example.test",
+                    "last_used_at": None,
+                    "revoked_at": None,
+                }
+            ]
+        }
+    )
+
+    id: str = Field(
+        description="Opaque identifier used to revoke this key.",
+        examples=["19ab42f01d0-8d7c6b5a"],
+    )
+    name: str = Field(
+        description="Operator-supplied display name for the key.",
+        examples=["reporting-script"],
+    )
+    prefix: str = Field(
+        description="Non-secret preview used to identify the key in listings.",
+        examples=["twk_Pu6s9K2a…"],
+    )
+    created_at: int = Field(
+        description="Creation time as Unix epoch milliseconds.",
+        examples=[1785283200000],
+    )
+    created_by: str = Field(
+        description="Identity that created the key.",
+        examples=["operator@example.test"],
+    )
+    last_used_at: int | None = Field(
+        default=None,
+        description=(
+            "Most recent successful authentication time as Unix epoch "
+            "milliseconds, or null when unused."
+        ),
+        examples=[1785286800000],
+    )
+    revoked_at: int | None = Field(
+        default=None,
+        description=(
+            "Revocation time as Unix epoch milliseconds, or null while active."
+        ),
+        examples=[1785290400000],
+    )
 
 
 class ApiKeyCreated(ApiKeyPublic):
     """POST response. ``full_value`` is shown ONCE; store it client-side."""
 
-    full_value: str
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "19ab42f01d0-8d7c6b5a",
+                    "name": "reporting-script",
+                    "prefix": "twk_Pu6s9K2a…",
+                    "created_at": 1785283200000,
+                    "created_by": "operator@example.test",
+                    "last_used_at": None,
+                    "revoked_at": None,
+                    "full_value": "twk_example_value_returned_only_at_creation",
+                }
+            ]
+        }
+    )
+
+    full_value: str = Field(
+        description=(
+            "Complete bearer secret. This value is returned only by the "
+            "creation response and cannot be retrieved later."
+        ),
+        examples=["twk_example_value_returned_only_at_creation"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +203,22 @@ def _actor_from_user(user: dict[str, Any] | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=list[ApiKeyPublic])
+@router.get(
+    "",
+    response_model=list[ApiKeyPublic],
+    summary="List API keys (admin)",
+    response_description=(
+        "Generated API keys, including revoked entries, with secrets omitted."
+    ),
+    responses={
+        401: {"description": "Authentication is missing or invalid"},
+        403: {"description": "Administrator privileges are required"},
+    },
+)
 async def list_api_keys() -> list[dict[str, Any]]:
-    """Return every key for the active workspace (revoked included)."""
+    """Return every generated API key, revoked ones included, with
+    creation and last-use timestamps. Only the public prefix is exposed —
+    the secret value is shown once, at creation."""
     workspace = resolve_workspace()
     try:
         await api_key_store.initialize(workspace)
@@ -137,14 +227,29 @@ async def list_api_keys() -> list[dict[str, Any]]:
     return await api_key_store.list_keys(workspace)
 
 
-@router.post("", response_model=ApiKeyCreated, status_code=201)
+@router.post(
+    "",
+    response_model=ApiKeyCreated,
+    status_code=201,
+    summary="Create an API key (admin)",
+    response_description=(
+        "API key metadata plus the complete secret, returned this one time only."
+    ),
+    responses={
+        401: {"description": "Authentication is missing or invalid"},
+        403: {"description": "Administrator privileges are required"},
+    },
+)
 async def create_api_key(
     body: ApiKeyCreate,
     admin: Annotated[dict[str, Any], Depends(require_admin_user)],
 ) -> dict[str, Any]:
-    """Mint a new API key. The ``full_value`` is returned ONCE — clients
-    MUST store it client-side immediately. Subsequent list/get calls
-    expose only the prefix."""
+    """Mint a new API key. The secret (`full_value`) is returned **once,
+    in this response only** — store it immediately; every later listing
+    exposes only the prefix. Use the key as a `Bearer` token
+    (`Authorization: Bearer twk_...`); the `X-API-Key` header is reserved
+    for the deployment's static infrastructure key and does not accept
+    generated keys."""
     workspace = resolve_workspace()
     try:
         await api_key_store.initialize(workspace)
@@ -168,15 +273,26 @@ async def create_api_key(
 @router.delete(
     "/{key_id}",
     response_model=ApiKeyPublic,
-    responses={404: {"description": "API key not found"}},
+    summary="Revoke an API key (admin)",
+    response_description="The revoked API key metadata and revocation timestamp.",
+    responses={
+        401: {"description": "Authentication is missing or invalid"},
+        403: {"description": "Administrator privileges are required"},
+        404: {"description": "API key not found"},
+    },
 )
 async def revoke_api_key(
-    key_id: str,
+    key_id: Annotated[
+        str,
+        FastapiPath(
+            description="Key id, as returned by the list endpoint.",
+        ),
+    ],
     admin: Annotated[dict[str, Any], Depends(require_admin_user)],
 ) -> dict[str, Any]:
-    """Mark a key as revoked. Subsequent auth attempts with that key
-    reject. The entry stays in the listing with a ``revoked_at`` stamp
-    so the audit trail is preserved."""
+    """Revoke a key: authentication attempts with it are rejected from
+    now on. The entry stays in the listing with its `revoked_at`
+    timestamp so the audit trail is preserved."""
     workspace = resolve_workspace()
     entry = await api_key_store.revoke_key(workspace, key_id)
     if entry is None:

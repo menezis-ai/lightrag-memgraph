@@ -2,7 +2,7 @@
  * Unit tests for ApiTab and its helper utilities.
  *
  * Covers: groups render, filter narrows, endpoint expand, Try it out flow
- * (mock success + unauthorized), authorize dialog flow, curl/mock helpers.
+ * (mock success + unauthorized), authorize dialog flow, curl/request helpers.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -11,9 +11,9 @@ import userEvent from '@testing-library/user-event';
 import {
   ApiTab,
   curlFor,
-  mockResponseFor,
-  mockUnauthorized,
   requestBodyFor,
+  responsesFor,
+  resolveRequestTarget,
 } from './ApiTab';
 import { setActiveFolder, setSessionAuthToken } from '../api/client';
 import { API_VERSION, OPENAPI_GROUPS } from '../fixtures';
@@ -31,7 +31,7 @@ function defaultProps() {
 describe('ApiTab — rendering', () => {
   it('renders the title, version and OAS badge', () => {
     render(<ApiTab {...defaultProps()} />);
-    expect(screen.getByText('LightRAG Server API')).toBeInTheDocument();
+    expect(screen.getByText('Twin KMS API')).toBeInTheDocument();
     expect(screen.getByText(API_VERSION)).toBeInTheDocument();
     expect(screen.getByText('OAS 3.1')).toBeInTheDocument();
   });
@@ -91,12 +91,155 @@ describe('ApiTab — filter', () => {
 });
 
 describe('ApiTab — endpoint expand + Try it out', () => {
-  it('expanding an endpoint reveals Parameters/Request body/Responses sections', async () => {
+  it('omits empty Parameters and Request body sections', async () => {
     render(<ApiTab {...defaultProps()} />);
     const row = screen.getByTestId('endpoint-GET-/health');
     await userEvent.click(within(row).getByRole('button'));
-    expect(within(row).getByText('Parameters')).toBeInTheDocument();
+    expect(within(row).queryByText('Parameters')).toBeNull();
+    expect(within(row).queryByText('Request body')).toBeNull();
+    expect(within(row).queryByText('No parameters')).toBeNull();
     expect(within(row).getByText('Responses')).toBeInTheDocument();
+  });
+
+  it('renders spec-declared description, parameters and responses', async () => {
+    const groups = [
+      {
+        id: 'docs',
+        name: 'docs',
+        desc: '',
+        endpoints: [
+          {
+            m: 'GET' as const,
+            p: '/documents',
+            s: 'List documents',
+            desc: 'List the documents of the active folder.',
+            params: [
+              {
+                name: 'X-Twin-Folder',
+                in: 'header' as const,
+                type: 'string',
+                required: false,
+                desc: 'Folder to scope this request to.',
+                example: 'general',
+              },
+              {
+                name: 'status',
+                in: 'query' as const,
+                type: 'string',
+                required: true,
+                desc: 'Only documents with this status.',
+              },
+            ],
+            responses: [
+              { code: '200', desc: 'The document list' },
+              { code: '403', desc: 'Folder out of scope' },
+            ],
+          },
+        ],
+      },
+    ];
+    render(<ApiTab {...defaultProps()} groups={groups} />);
+    const row = screen.getByTestId('endpoint-GET-/documents');
+    await userEvent.click(within(row).getByRole('button'));
+    expect(
+      within(row).getByText('List the documents of the active folder.'),
+    ).toBeInTheDocument();
+    expect(within(row).getByText('X-Twin-Folder')).toBeInTheDocument();
+    expect(within(row).getByText(/Example:/)).toBeInTheDocument();
+    expect(within(row).getByText('header')).toBeInTheDocument();
+    expect(within(row).queryByText('No parameters')).toBeNull();
+    expect(within(row).getByText('Folder out of scope')).toBeInTheDocument();
+    // Spec-declared responses replace the generic fallback rows.
+    expect(within(row).queryByText('Successful Response')).toBeNull();
+  });
+
+  it('gates Execute on required parameters and applies them to the request', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const groups = [
+      {
+        id: 'docs',
+        name: 'docs',
+        desc: '',
+        endpoints: [
+          {
+            m: 'GET' as const,
+            p: '/documents/{doc_id}/metadata',
+            s: 'Metadata',
+            params: [
+              {
+                name: 'doc_id',
+                in: 'path' as const,
+                type: 'string',
+                required: true,
+                desc: '',
+              },
+              {
+                name: 'X-Twin-Folder',
+                in: 'header' as const,
+                type: 'string',
+                required: false,
+                desc: '',
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    render(<ApiTab {...defaultProps()} groups={groups} />);
+    const row = screen.getByTestId('endpoint-GET-/documents/{doc_id}/metadata');
+    await userEvent.click(within(row).getByRole('button'));
+    await userEvent.click(within(row).getByRole('button', { name: 'Try it out' }));
+
+    // Required path param empty → Execute disabled with a hint.
+    const executeBtn = within(row).getByRole('button', { name: /Execute/ });
+    expect(executeBtn).toBeDisabled();
+    expect(within(row).getByText(/Fill the required parameter/)).toBeInTheDocument();
+
+    await userEvent.type(
+      within(row).getByLabelText('Parameter doc_id'),
+      'doc-42',
+    );
+    await userEvent.type(
+      within(row).getByLabelText('Parameter X-Twin-Folder'),
+      'general',
+    );
+    expect(executeBtn).toBeEnabled();
+    await userEvent.click(executeBtn);
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    // Path param substituted, header param applied.
+    expect(String(url)).toContain('/documents/doc-42/metadata');
+    expect(String(url)).not.toContain('{doc_id}');
+    expect((init.headers as Record<string, string>)['X-Twin-Folder']).toBe(
+      'general',
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it('prefers the spec-declared body example in the request body preview', async () => {
+    const groups = [
+      {
+        id: 'tags',
+        name: 'tags',
+        desc: '',
+        endpoints: [
+          {
+            m: 'POST' as const,
+            p: '/tags',
+            s: 'Request a tag',
+            hasBody: true,
+            bodyExample: JSON.stringify({ tag: 'from-spec' }, null, 2),
+          },
+        ],
+      },
+    ];
+    render(<ApiTab {...defaultProps()} groups={groups} />);
+    const row = screen.getByTestId('endpoint-POST-/tags');
+    await userEvent.click(within(row).getByRole('button'));
+    expect(within(row).getByText(/from-spec/)).toBeInTheDocument();
   });
 
   it('Try it out fires a real fetch against baseUrl + path and renders the response', async () => {
@@ -263,6 +406,86 @@ describe('ApiTab — Authorize dialog', () => {
   });
 });
 
+describe('Helpers — resolveRequestTarget', () => {
+  const ep = {
+    m: 'GET' as const,
+    p: '/graph/search',
+    s: '',
+    params: [
+      {
+        name: 'q',
+        in: 'query' as const,
+        type: 'string',
+        required: true,
+        desc: '',
+      },
+      {
+        name: 'limit',
+        in: 'query' as const,
+        type: 'integer',
+        required: false,
+        desc: '',
+      },
+    ],
+  };
+
+  it('reports missing required params and leaves the path untouched', () => {
+    const t = resolveRequestTarget(ep, {});
+    expect(t.missingRequired).toEqual(['q']);
+    expect(t.path).toBe('/graph/search');
+  });
+
+  it('serializes provided query params and skips empty optional ones', () => {
+    const t = resolveRequestTarget(ep, { 'query:q': 'firewall' });
+    expect(t.missingRequired).toEqual([]);
+    expect(t.path).toBe('/graph/search?q=firewall');
+  });
+
+  it('URL-encodes substituted path params', () => {
+    const t = resolveRequestTarget(
+      {
+        m: 'DELETE' as const,
+        p: '/tags/{name}',
+        s: '',
+        params: [
+          {
+            name: 'name',
+            in: 'path' as const,
+            type: 'string',
+            required: true,
+            desc: '',
+          },
+        ],
+      },
+      { 'path:name': 'a/b' },
+    );
+    expect(t.path).toBe('/tags/a%2Fb');
+  });
+});
+
+describe('ApiTab — per-endpoint security', () => {
+  it('spec-declared public endpoints show no lock even in a secured group', async () => {
+    const groups = [
+      {
+        id: 'auth',
+        name: 'auth',
+        desc: '',
+        endpoints: [
+          { m: 'POST' as const, p: '/login', s: 'Log in', secured: false },
+          { m: 'POST' as const, p: '/x', s: 'Locked', secured: true },
+        ],
+      },
+    ];
+    render(<ApiTab {...defaultProps()} groups={groups} />);
+    const loginRow = screen.getByTestId('endpoint-POST-/login');
+    const lockedRow = screen.getByTestId('endpoint-POST-/x');
+    expect(within(loginRow).getByTitle('Public')).toBeInTheDocument();
+    expect(
+      within(lockedRow).getByTitle('Requires bearer token'),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('Helpers — requestBodyFor', () => {
   it('builds a native /query payload with hybrid mode and no Twin tag_filter', () => {
     // Plain native routes keep the upstream-shaped sample. Twin-prefixed routes
@@ -319,6 +542,24 @@ describe('Helpers — requestBodyFor', () => {
   });
 });
 
+describe('Helpers — responsesFor', () => {
+  it('uses operator-readable descriptions when an endpoint omits responses', () => {
+    expect(
+      responsesFor({ m: 'POST', p: '/whatever', s: 'Do work' }, true),
+    ).toEqual([
+      { code: '200', desc: 'Request completed successfully.' },
+      {
+        code: '422',
+        desc: 'The request body or parameters failed validation.',
+      },
+      {
+        code: '401',
+        desc: 'Authentication credentials are missing, invalid, or expired.',
+      },
+    ]);
+  });
+});
+
 describe('Helpers — curlFor', () => {
   it('emits a GET curl without -d / -H Content-Type / -d body', () => {
     const c = curlFor(
@@ -343,68 +584,5 @@ describe('Helpers — curlFor', () => {
     expect(c).toMatch(/Content-Type: application\/json/);
     expect(c).toMatch(/Authorization: Bearer eyJabc…/);
     expect(c).toMatch(/-d '\{"q":"x"\}'/);
-  });
-});
-
-describe('Helpers — mockResponseFor / mockUnauthorized', () => {
-  it('mockUnauthorized returns 401 with bearer hint', () => {
-    const r = mockUnauthorized();
-    expect(r.status).toBe(401);
-    expect(JSON.parse(r.body).detail).toMatch(/Bearer token/);
-  });
-
-  it('mockResponseFor native /query returns sources but no Twin tag_filter echo', () => {
-    const r = mockResponseFor(
-      { m: 'POST', p: '/query', s: '' },
-      '{}',
-      200,
-    );
-    expect(r.status).toBe(200);
-    const body = JSON.parse(r.body);
-    expect(body.sources).toHaveLength(2);
-    expect(body.mode).toBe('hybrid');
-    // Native /query samples stay upstream-shaped; Twin routes carry tag_filter.
-    expect(body).not.toHaveProperty('tag_filter');
-  });
-
-  it('mockResponseFor /query/stream also omits tag_filter in the response body', () => {
-    const r = mockResponseFor(
-      { m: 'POST', p: '/twin/api/query/stream', s: '' },
-      '{}',
-      200,
-    );
-    const body = JSON.parse(r.body);
-    expect(body).not.toHaveProperty('tag_filter');
-  });
-
-  it('mockResponseFor /query/data returns structured retrieval data with metadata.tag_filter', () => {
-    const r = mockResponseFor(
-      { m: 'POST', p: '/twin/api/query/data', s: '' },
-      '{}',
-      200,
-    );
-    expect(r.status).toBe(200);
-    const body = JSON.parse(r.body);
-    expect(body.status).toBe('success');
-    expect(body.data.chunks).toHaveLength(1);
-    expect(body.data.chunks[0].score).toBe(0.91);
-    // /query/data is the one endpoint that legitimately echoes
-    // tag_filter in metadata (audit C2 wired it via TAGGED_WITH).
-    expect(body.metadata.tag_filter.all).toEqual(['tag-name']);
-  });
-
-  it('mockResponseFor /documents (GET) returns the production list envelope', () => {
-    const r = mockResponseFor(
-      { m: 'GET', p: '/documents', s: '' },
-      '',
-      200,
-    );
-    const body = JSON.parse(r.body);
-    expect(body.total).toBe(1);
-    expect(body.page).toBe(1);
-    expect(body.page_size).toBe(50);
-    expect(body.status_counts.completed).toBe(1);
-    expect(body.next_cursor).toBeNull();
-    expect(body.items[0].source).toBe('source-document.pdf');
   });
 });

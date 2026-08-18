@@ -26,6 +26,7 @@ import {
   type MockResponse,
   type OpenApiEndpoint,
   type OpenApiGroup,
+  type OpenApiParam,
 } from '../types/api';
 
 export interface ApiTabProps {
@@ -63,7 +64,7 @@ export function ApiTab({ apiVersion, groups, baseUrl }: Readonly<ApiTabProps>) {
     <div className="swagger">
       <div className="swagger-topbar">
         <div className="swagger-title">
-          <span className="swagger-title-main">LightRAG Server API</span>
+          <span className="swagger-title-main">Twin KMS API</span>
           <span className="swagger-version">{apiVersion}</span>
           <span className="swagger-oas">OAS 3.1</span>
         </div>
@@ -71,7 +72,7 @@ export function ApiTab({ apiVersion, groups, baseUrl }: Readonly<ApiTabProps>) {
           <code>/openapi.json</code>
           <span className="swagger-sep">·</span>
           <span>
-            Providing API for LightRAG core, Web UI and Ollama Model Emulation
+            Documents, folders, tags, knowledge graph and grounded retrieval
           </span>
         </div>
         <div className="swagger-servers">
@@ -207,22 +208,31 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
   const [open, setOpen] = useState(false);
   const [tryOpen, setTryOpen] = useState(false);
   const [reqBody, setReqBody] = useState(() => requestBodyFor(ep));
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [resp, setResp] = useState<MockResponse | null>(null);
   const [running, setRunning] = useState(false);
+
+  // Spec-declared auth state wins; the group heuristic only covers
+  // sparse specs that say nothing about security.
+  const rowSecured = ep.secured ?? secured;
+  const requestHasBody = endpointHasBody(ep);
+  const target = resolveRequestTarget(ep, paramValues);
 
   const execute = async () => {
     setRunning(true);
     setResp(null);
     const start = nowForTiming();
-    const methodAllowsBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(ep.m);
     try {
-      const r = await fetch(buildApiUrl(ep.p), {
+      const r = await fetch(buildApiUrl(target.path), {
         method: ep.m,
-        headers: buildApiHeaders(
-          { token: token || undefined },
-          { json: methodAllowsBody },
-        ),
-        body: methodAllowsBody ? reqBody : undefined,
+        headers: {
+          ...buildApiHeaders(
+            { token: token || undefined },
+            { json: requestHasBody },
+          ),
+          ...target.headers,
+        },
+        body: requestHasBody ? reqBody : undefined,
         credentials: 'include',
       });
       const text = await r.text();
@@ -247,6 +257,7 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
   };
   const reset = () => {
     setReqBody(requestBodyFor(ep));
+    setParamValues({});
     setResp(null);
   };
 
@@ -265,10 +276,10 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
         <span className="swagger-summary">{ep.s}</span>
         <span
           className="swagger-lock"
-          title={secured ? 'Requires bearer token' : 'Public'}
+          title={rowSecured ? 'Requires bearer token' : 'Public'}
         >
           <Icon
-            name={secured ? 'lock' : 'lock-open'}
+            name={rowSecured ? 'lock' : 'lock-open'}
             size={13}
             color="var(--color-text-tertiary)"
           />
@@ -289,9 +300,10 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
       </button>
       {open && (
         <div className="swagger-row-body">
-          <div className="swagger-section">
-            <div className="swagger-section-h">Parameters</div>
-            {ep.m === 'GET' && ep.p.includes('label') ? (
+          {ep.desc && <p className="swagger-desc">{ep.desc}</p>}
+          {!!ep.params?.length && (
+            <div className="swagger-section">
+              <div className="swagger-section-h">Parameters</div>
               <table className="swagger-params">
                 <thead>
                   <tr>
@@ -302,56 +314,58 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td>
-                      <code>limit</code>
-                    </td>
-                    <td>integer</td>
-                    <td>query</td>
-                    <td>Default 50. Max 500.</td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <code>q</code>
-                    </td>
-                    <td>string</td>
-                    <td>query</td>
-                    <td>Substring filter (case-insensitive).</td>
-                  </tr>
+                  {ep.params.map((p) => (
+                    <tr key={`${p.in}-${p.name}`}>
+                      <td>
+                        <code>{p.name}</code>
+                        {p.required && (
+                          <span
+                            className="swagger-param-required"
+                            title="Required"
+                          >
+                            {' '}
+                            *
+                          </span>
+                        )}
+                      </td>
+                      <td>{p.type || '—'}</td>
+                      <td>{p.in}</td>
+                      <td>
+                        {p.desc}
+                        {p.example !== undefined && (
+                          <span className="swagger-param-example">
+                            {p.desc ? ' ' : ''}Example: <code>{p.example}</code>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            ) : (
-              <div className="swagger-empty">No parameters</div>
-            )}
-          </div>
-          <div className="swagger-section">
-            <div className="swagger-section-h">Request body</div>
-            {ep.m === 'POST' ? (
+            </div>
+          )}
+          {requestHasBody && (
+            <div className="swagger-section">
+              <div className="swagger-section-h">Request body</div>
               <pre className="swagger-code">{requestBodyFor(ep)}</pre>
-            ) : (
-              <div className="swagger-empty">—</div>
-            )}
-          </div>
+            </div>
+          )}
           <div className="swagger-section">
             <div className="swagger-section-h">Responses</div>
             <table className="swagger-responses">
               <tbody>
-                <tr>
-                  <td className="code-cell ok">200</td>
-                  <td>Successful Response</td>
-                </tr>
-                {ep.m !== 'GET' && (
-                  <tr>
-                    <td className="code-cell err">422</td>
-                    <td>Validation Error</td>
+                {responsesFor(ep, rowSecured).map((r) => (
+                  <tr key={r.code}>
+                    <td
+                      className={
+                        'code-cell ' + (r.code.startsWith('2') ? 'ok' : 'err')
+                      }
+                    >
+                      {r.code}
+                    </td>
+                    <td>{r.desc}</td>
                   </tr>
-                )}
-                {secured && (
-                  <tr>
-                    <td className="code-cell err">401</td>
-                    <td>Unauthorized</td>
-                  </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>
@@ -365,13 +379,51 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
           </div>
           {tryOpen && (
             <div className="swagger-tryit-panel">
+              {(ep.params?.length ?? 0) > 0 && (
+                <>
+                  <div className="swagger-section-h">Parameters</div>
+                  <div className="swagger-tryit-params">
+                    {ep.params!.map((p) => (
+                      <label
+                        key={paramKey(p)}
+                        className="swagger-tryit-param"
+                      >
+                        <span className="swagger-tryit-param-name">
+                          <code>{p.name}</code>
+                          <span className="swagger-tryit-param-in">{p.in}</span>
+                          {p.required && (
+                            <span
+                              className="swagger-param-required"
+                              title="Required"
+                            >
+                              *
+                            </span>
+                          )}
+                        </span>
+                        <input
+                          value={paramValues[paramKey(p)] ?? ''}
+                          onChange={(e) =>
+                            setParamValues((v) => ({
+                              ...v,
+                              [paramKey(p)]: e.target.value,
+                            }))
+                          }
+                          placeholder={p.example ?? ''}
+                          spellCheck="false"
+                          aria-label={`Parameter ${p.name}`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
               <div className="swagger-section-h">
                 Request <span className="swagger-curl-hint">curl preview</span>
               </div>
               <pre className="swagger-code curl">
-                {curlFor(ep, reqBody, token, baseUrl)}
+                {curlFor(ep, reqBody, token, baseUrl, target)}
               </pre>
-              {ep.m !== 'GET' && (
+              {requestHasBody && (
                 <>
                   <div className="swagger-section-h">Body</div>
                   <textarea
@@ -387,7 +439,7 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
                 <button
                   className="primary-btn"
                   onClick={execute}
-                  disabled={running}
+                  disabled={running || target.missingRequired.length > 0}
                 >
                   {running ? (
                     <>
@@ -402,7 +454,14 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
                 <button className="ghost-btn" onClick={reset}>
                   Reset
                 </button>
-                {secured && !token && (
+                {target.missingRequired.length > 0 && (
+                  <span className="swagger-warn">
+                    Fill the required parameter
+                    {target.missingRequired.length > 1 ? 's' : ''}:{' '}
+                    {target.missingRequired.join(', ')}
+                  </span>
+                )}
+                {rowSecured && !token && (
                   <span className="swagger-warn">
                     <Icon name="lock" size={12} /> Endpoint requires bearer — click
                     Authorize
@@ -410,7 +469,7 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
                 )}
               </div>
               {resp && (
-                <div className="swagger-resp">
+                <div className="swagger-resp" data-testid="swagger-response">
                   <div className="swagger-resp-h">
                     <span
                       className={
@@ -508,9 +567,9 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<Authoriz
         </div>
         <div className="modal-body">
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
-            Paste your bearer token. It's attached to every request from "Try it
-            out". In production this is delegated to the Twin gateway (Keycloak
-            OIDC).
+            Paste a bearer token (from <code>POST /login</code>) or an API key
+            (Settings → API keys). It's attached to every request from "Try it
+            out".
           </p>
           <label
             className="field-label"
@@ -547,8 +606,8 @@ function AuthorizeDialog({ token, onSave, onLogout, onClose }: Readonly<Authoriz
               color: 'var(--color-text-tertiary)',
             }}
           >
-            Scopes: <code>read:documents</code> <code>read:query</code>{' '}
-            <code>write:documents</code> (palier 2+)
+            Endpoints marked with a lock require authentication; admin
+            endpoints additionally require an administrator identity.
           </div>
         </div>
         <div className="modal-footer">
@@ -610,8 +669,98 @@ const QUERY_ENDPOINTS = new Set([
   '/twin/api/query/stream',
 ]);
 
+/** Methods that carry a request body even when a sparse spec omits
+ *  `requestBody` (fallback display only). */
+const METHODS_WITH_BODY = new Set<HttpMethod>(['POST', 'PUT', 'PATCH']);
+
+/** The real OpenAPI parser always sets `hasBody`, including `false`.
+ *  The method fallback exists only for old hand-written fixtures. */
+function endpointHasBody(ep: OpenApiEndpoint): boolean {
+  return ep.hasBody ?? METHODS_WITH_BODY.has(ep.m);
+}
+
+/** Stable form key for a parameter (name alone can collide across `in`s). */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function paramKey(p: OpenApiParam): string {
+  return `${p.in}:${p.name}`;
+}
+
+export interface ResolvedTarget {
+  /** Request path with path params substituted and query params appended. */
+  path: string;
+  /** Declared header parameters with a non-empty value. */
+  headers: Record<string, string>;
+  /** Names of required parameters still missing a value. */
+  missingRequired: string[];
+}
+
+/**
+ * Apply the operator-provided parameter values to the endpoint: substitute
+ * `{path}` params, serialize query params, collect declared headers, and
+ * report which required parameters are still empty (Execute stays disabled
+ * until that list is empty). Exported for unit testing.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function resolveRequestTarget(
+  ep: OpenApiEndpoint,
+  values: Record<string, string>,
+): ResolvedTarget {
+  let path = ep.p;
+  const headers: Record<string, string> = {};
+  const query = new URLSearchParams();
+  const missingRequired: string[] = [];
+  for (const p of ep.params ?? []) {
+    const raw = (values[paramKey(p)] ?? '').trim();
+    if (!raw) {
+      if (p.required) missingRequired.push(p.name);
+      continue;
+    }
+    if (p.in === 'path') {
+      path = path.replaceAll(`{${p.name}}`, encodeURIComponent(raw));
+    } else if (p.in === 'query') {
+      query.append(p.name, raw);
+    } else if (p.in === 'header') {
+      headers[p.name] = raw;
+    }
+  }
+  const qs = query.toString();
+  return { path: qs ? `${path}?${qs}` : path, headers, missingRequired };
+}
+
+/**
+ * Responses to display: the ones documented in the spec when present,
+ * otherwise an operator-readable safe fallback (200, 422 on write, 401
+ * when the group is secured). Exported for unit testing.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function responsesFor(
+  ep: OpenApiEndpoint,
+  secured: boolean,
+): { code: string; desc: string }[] {
+  if (ep.responses?.length) {
+    return ep.responses.map((r) => ({ code: r.code, desc: r.desc }));
+  }
+  const rows = [{ code: '200', desc: 'Request completed successfully.' }];
+  if (ep.m !== 'GET') {
+    rows.push({
+      code: '422',
+      desc: 'The request body or parameters failed validation.',
+    });
+  }
+  if (secured) {
+    rows.push({
+      code: '401',
+      desc: 'Authentication credentials are missing, invalid, or expired.',
+    });
+  }
+  return rows;
+}
+
 // eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
 export function requestBodyFor(ep: OpenApiEndpoint): string {
+  if (!endpointHasBody(ep)) return '';
+  // The spec's own example is authoritative when the backend declares one.
+  if (ep.bodyExample) return ep.bodyExample;
   if (QUERY_ENDPOINTS.has(ep.p)) {
     const dataEndpoint = ep.p.endsWith('/query/data');
     const twinEndpoint = ep.p.startsWith('/twin/api/query');
@@ -644,19 +793,27 @@ export function requestBodyFor(ep: OpenApiEndpoint): string {
   return JSON.stringify({}, null, 2);
 }
 
-/** Build a curl preview for the given endpoint. Exported for testing. */
+/** Build a curl preview for the given endpoint. Exported for testing.
+ *  `target` (optional) carries the parameter-resolved path and declared
+ *  header values from `resolveRequestTarget`. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function curlFor(
   ep: OpenApiEndpoint,
   body: string,
   token: string,
   baseUrl: string,
+  target?: Pick<ResolvedTarget, 'path' | 'headers'>,
 ): string {
-  const lines = [`curl -X ${ep.m} '${baseUrl}${ep.p}' \\`];
+  const path = target?.path ?? ep.p;
+  const lines = [`curl -X ${ep.m} '${baseUrl}${path}' \\`];
   lines.push("  -H 'Accept: application/json' \\");
-  if (ep.m !== 'GET') lines.push("  -H 'Content-Type: application/json' \\");
+  const requestHasBody = endpointHasBody(ep);
+  if (requestHasBody) lines.push("  -H 'Content-Type: application/json' \\");
+  for (const [name, value] of Object.entries(target?.headers ?? {})) {
+    lines.push(`  -H '${name}: ${value}' \\`);
+  }
   if (token) lines.push(`  -H 'Authorization: Bearer ${token.slice(0, 6)}…' \\`);
-  if (ep.m === 'GET') {
+  if (!requestHasBody) {
     lines[lines.length - 1] = lines.at(-1)?.replace(/ \\$/, '') ?? '';
   } else {
     lines.push(`  -d '${(body || '').replaceAll(/\n\s*/g, ' ')}'`);
@@ -679,166 +836,4 @@ function tryPrettyJson(text: string): string {
   } catch {
     return text;
   }
-}
-
-/** @deprecated kept for `ApiTab.test.tsx` legacy coverage of the mock
- *  request-body templates. The component now uses real `fetch` (mock-kill F2). */
-// eslint-disable-next-line react-refresh/only-export-components
-export function mockUnauthorized(): MockResponse {
-  return {
-    status: 401,
-    statusText: 'Unauthorized',
-    tookMs: 12,
-    body: JSON.stringify(
-      {
-        detail:
-          'Missing or invalid Bearer token. Use Authorize to attach one.',
-      },
-      null,
-      2,
-    ),
-  };
-}
-
-/** Mock success response. Body shape varies by endpoint. Exported for testing. */
-// eslint-disable-next-line react-refresh/only-export-components
-export function mockResponseFor(
-  ep: OpenApiEndpoint,
-  _body: string,
-  tookMsOverride?: number,
-): MockResponse {
-  const tookMs = tookMsOverride ?? 120 + Math.floor(Math.random() * 380);
-  if (QUERY_ENDPOINTS.has(ep.p)) {
-    if (ep.p.endsWith('/query/data')) {
-      return {
-        status: 200,
-        statusText: 'OK',
-        tookMs,
-        body: JSON.stringify(
-          {
-            status: 'success',
-            message: 'Query executed successfully',
-            data: {
-              entities: [],
-              relationships: [],
-              chunks: [
-                {
-                  chunk_id: 'chunk_4a12',
-                  file_path: 'source-document.pdf',
-                  reference_id: '1',
-                  score: 0.91,
-                },
-              ],
-              references: [
-                { reference_id: '1', file_path: 'source-document.pdf' },
-              ],
-            },
-            metadata: {
-              query_mode: 'hybrid',
-              tag_filter: { all: ['tag-name'] },
-            },
-          },
-          null,
-          2,
-        ),
-      };
-    }
-    return {
-      status: 200,
-      statusText: 'OK',
-      tookMs,
-      body: JSON.stringify(
-        {
-          // Audit C8: ``/query`` and ``/query/stream`` do not honor
-          // ``tag_filter`` server-side (twin returns 422 if sent,
-          // native LightRAG silently ignores it). The mock response
-          // therefore must not echo it — that would suggest a
-          // scoping capability the backend does not provide.
-          response:
-            'Answer generated from the indexed knowledge base … [truncated]',
-          sources: [
-            {
-              id: 'chunk_4a12',
-              source: 'source-document.pdf',
-              score: 0.91,
-              tags: ['tag-name'],
-            },
-            {
-              id: 'chunk_88e0',
-              source: 'related-source.pdf',
-              score: 0.84,
-              tags: ['tag-name'],
-            },
-          ],
-          mode: 'hybrid',
-          took_ms: tookMs,
-        },
-        null,
-        2,
-      ),
-    };
-  }
-  if (ep.m === 'GET' && ep.p === '/documents') {
-    return {
-      status: 200,
-      statusText: 'OK',
-      tookMs,
-      body: JSON.stringify(
-        {
-          items: [
-            { id: 'doc_001', source: 'source-document.pdf', status: 'completed' },
-          ],
-          total: 1,
-          page: 1,
-          page_size: 50,
-          status_counts: { completed: 1 },
-          next_cursor: null,
-        },
-        null,
-        2,
-      ),
-    };
-  }
-  if (ep.p === '/documents/upload' || ep.p === '/documents/text') {
-    return {
-      status: 200,
-      statusText: 'OK',
-      tookMs,
-      body: JSON.stringify(
-        {
-          id: 'doc_' + Math.random().toString(16).slice(2, 8),
-          status: 'pending',
-          queued_at: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    };
-  }
-  if (ep.p === '/health') {
-    return {
-      status: 200,
-      statusText: 'OK',
-      tookMs,
-      body: JSON.stringify({ status: 'ok', uptime_s: 184_213 }, null, 2),
-    };
-  }
-  if (ep.p === '/auth-status') {
-    return {
-      status: 200,
-      statusText: 'OK',
-      tookMs,
-      body: JSON.stringify(
-        { authorized: true, scopes: ['read:documents', 'read:query'] },
-        null,
-        2,
-      ),
-    };
-  }
-  return {
-    status: 200,
-    statusText: 'OK',
-    tookMs,
-    body: JSON.stringify({ ok: true }, null, 2),
-  };
 }

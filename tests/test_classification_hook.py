@@ -10,6 +10,7 @@ import pytest
 
 from twindb_lightrag_memgraph._classification_hook import (
     ClassificationRejection,
+    _install_classification_metadata_carry_over,
     classify_for_ingestion,
     install_classification_hook,
 )
@@ -178,3 +179,14 @@ class TestInstallClassificationHook:
         # C2 > C1 ceiling → rejection
         with pytest.raises(ClassificationRejection):
             hook(str(path))
+
+    def test_lightrag_hook_preserves_security_metadata_on_1_5(self):
+        _install_classification_metadata_carry_over()
+
+        utils_pipeline = pytest.importorskip("lightrag.utils_pipeline")
+
+        carry_over = getattr(utils_pipeline, "_DOC_STATUS_METADATA_CARRY_OVER_KEYS", ())
+        if carry_over:
+            assert "classification" in carry_over
+            assert "classification_rejected" in carry_over
+            assert "classification_ceiling" in carry_over

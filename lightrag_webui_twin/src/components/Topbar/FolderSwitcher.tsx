@@ -128,7 +128,8 @@ export function FolderSwitcher({
                   className="muted topbar-empty-state"
                   data-testid="topbar-folder-empty"
                 >
-                  No folder available for this KB. Please contact Twincore Team
+                  No folder is provisioned for this knowledge base. Ask your
+                  platform administrator to provision one.
                 </div>
               </li>
             )}

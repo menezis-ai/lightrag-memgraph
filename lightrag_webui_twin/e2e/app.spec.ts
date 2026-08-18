@@ -309,8 +309,14 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('endpoint-GET-/graph/label/list')).toBeVisible();
     await page.getByTestId('endpoint-GET-/graph/label/list').getByRole('button').first().click();
     await page.getByRole('button', { name: 'Try it out' }).click();
+    // Secured endpoint, no token yet: the try-it panel surfaces the auth
+    // affordance. (The old assertion on a static "401 Unauthorized" table
+    // row died when Responses became spec-driven — that row was hardcoded
+    // scenery, not backend behavior.)
+    await expect(page.getByText('Endpoint requires bearer')).toBeVisible();
     await page.getByRole('button', { name: /Execute/ }).click();
-    await expect(page.getByText('Unauthorized')).toBeVisible();
+    // The execute loop renders a real response block (status + body).
+    await expect(page.getByTestId('swagger-response')).toBeVisible();
 
     await page.getByRole('button', { name: 'Authorize' }).click();
     await page.getByLabel('Value').fill('e2e-token');

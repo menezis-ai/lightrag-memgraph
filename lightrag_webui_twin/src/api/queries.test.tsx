@@ -355,6 +355,7 @@ describe('document folder membership hooks', () => {
         ['documents', 'default'],
         ['documents', 'sandbox'],
         ['documents'],
+        ['folders'],
         ['activity'],
       ]),
     );
@@ -387,6 +388,7 @@ describe('document folder membership hooks', () => {
         ['document-folders', 'd1'],
         ['documents', 'default'],
         ['documents'],
+        ['folders'],
         ['activity'],
         ['graph-entities'],
         ['graph-relations'],
@@ -877,10 +879,12 @@ describe('useBulkRetagDocuments', () => {
 // ── Upload hooks: single + batch concurrency / rejection ────────────────────
 
 describe('useUploadDocument', () => {
-  it('uploads a single file and invalidates documents + pipeline', async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ status: 'success', message: 'ok', track_id: 't1' }),
-    );
+  it('uploads a single file and invalidates documents, folders + pipeline', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ action: 'upload' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ status: 'success', message: 'ok', track_id: 't1' }),
+      );
     const client = newClient();
     const spy = vi.spyOn(client, 'invalidateQueries');
     const { result } = renderHook(() => useUploadDocument(), {
@@ -890,6 +894,7 @@ describe('useUploadDocument', () => {
       await result.current.mutateAsync(new File(['x'], 'a.txt'));
     });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['documents'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['folders'] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['pipeline_status'] });
   });
 });
@@ -898,8 +903,10 @@ describe('useUploadDocumentsBatch', () => {
   it('normalizes both File and UploadDocumentInput entries', async () => {
     // Fresh Response per call — a Response body can only be read once, so a
     // shared mockResolvedValue would reject the second upload's .text().
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
+    fetchMock.mockImplementation(async (url) =>
+      String(url).includes('/documents/resolve-upload')
+        ? jsonResponse({ action: 'upload' })
+        : jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
     );
     const { result } = renderHook(() => useUploadDocumentsBatch(), {
       wrapper: wrapper(),
@@ -911,12 +918,14 @@ describe('useUploadDocumentsBatch', () => {
       ]);
       expect(res.every((r) => r.status === 'fulfilled')).toBe(true);
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('uploads every item in a batch larger than ten', async () => {
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
+    fetchMock.mockImplementation(async (url) =>
+      String(url).includes('/documents/resolve-upload')
+        ? jsonResponse({ action: 'upload' })
+        : jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
     );
     const { result } = renderHook(() => useUploadDocumentsBatch(), {
       wrapper: wrapper(),
@@ -931,15 +940,20 @@ describe('useUploadDocumentsBatch', () => {
       expect(res.every((r) => r.status === 'fulfilled')).toBe(true);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(fetchMock).toHaveBeenCalledTimes(24);
   });
 
   it('captures per-file failures as rejected settled results', async () => {
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({ status: 'success', message: 'ok', track_id: 't' }),
-      )
-      .mockResolvedValueOnce(jsonResponse({ detail: 'bad file' }, 400));
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url).includes('/documents/resolve-upload')) {
+        return jsonResponse({ action: 'upload' });
+      }
+      const file =
+        init?.body instanceof FormData ? init.body.get('file') : undefined;
+      return file instanceof File && file.name === 'b.txt'
+        ? jsonResponse({ detail: 'bad file' }, 400)
+        : jsonResponse({ status: 'success', message: 'ok', track_id: 't' });
+    });
     const { result } = renderHook(() => useUploadDocumentsBatch(), {
       wrapper: wrapper(),
     });

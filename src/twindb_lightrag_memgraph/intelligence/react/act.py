@@ -12,7 +12,7 @@ Differences from CNCAC:
 
 import logging
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from lightrag import LightRAG, QueryParam
@@ -292,9 +292,13 @@ class SearchEngine:
                 "retrieval_scores": retrieval_scores,
             }
         )
-        return replace(
-            representative,
+        return ChunkResult(
+            chunk_id=representative.chunk_id,
+            text=representative.text,
             score=fused_score,
             source_workspace=representative_workspace,
+            document_id=representative.document_id,
+            document_path=representative.document_path,
             metadata=metadata,
+            rerank_score=representative.rerank_score,
         )

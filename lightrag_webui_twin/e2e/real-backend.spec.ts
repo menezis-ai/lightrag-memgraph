@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openTab } from './helpers';
 
 const backendUrl = process.env.REAL_BACKEND_URL?.replace(/\/$/, '') ?? '';
 const authToken = process.env.REAL_BACKEND_AUTH_TOKEN ?? process.env.VITE_AUTH_TOKEN;
@@ -47,6 +48,25 @@ interface TrackStatusEnvelope {
 interface TagEntry {
   tag: string;
   status?: string;
+}
+
+interface GraphEntity {
+  id: string;
+  name: string;
+  type: string;
+  x: number;
+  y: number;
+  mentions: number;
+  sources: number;
+  summary: string;
+}
+
+interface GraphRelation {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  strength: number;
 }
 
 function authHeaders(): Record<string, string> {
@@ -209,6 +229,10 @@ test.describe('real backend smoke', () => {
           idpLogoutUrl: 'https://idp.example.invalid/logout',
           defaultFolderId: folder,
           maxFolders: 5,
+          // The real server always injects this (registry
+          // _build_runtime_config); the e2e override must mirror it or the
+          // procedure review section silently disappears from the app.
+          procedureReviewEnabled: true,
           folders: [
             {
               id: folder,
@@ -231,7 +255,16 @@ test.describe('real backend smoke', () => {
             idp_realm: 'real-backend',
             sub: 'real-e2e',
             session_expires: '2099-12-31T23:59:00Z',
-            gateway_scopes: ['read:documents', 'read:query', 'read:activity'],
+            // admin:folders mirrors the dev persona AND the palier-1 server
+            // reality (IdP dormant: the static-key identity passes the admin
+            // gates) — without it the admin affordances (procedure Review,
+            // folder admin) are invisible and untestable here.
+            gateway_scopes: [
+              'read:documents',
+              'read:query',
+              'read:activity',
+              'admin:folders',
+            ],
           },
         };
       },
@@ -282,6 +315,220 @@ test.describe('real backend smoke', () => {
     );
     expect(graphEntities.ok, JSON.stringify(graphEntities.body)).toBe(true);
     expect(Array.isArray(graphEntities.body)).toBe(true);
+  });
+
+  test('focus mode consumes the real graph API and cached one-hop topology', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const createdEntityIds: string[] = [];
+    let createdRelationId: string | null = null;
+
+    try {
+      const createEntity = async (name: string) => {
+        const response = await fetchFromBrowser<GraphEntity>(
+          page,
+          '/twin/api/graph/entities',
+          {
+            method: 'POST',
+            body: {
+              name,
+              type: 'TECHNOLOGY',
+              summary: `Real graph focus contract ${suffix}`,
+            },
+          },
+        );
+        expect(response.status, JSON.stringify(response.body)).toBe(201);
+        expect(response.body).toMatchObject({
+          name,
+          type: 'TECHNOLOGY',
+        });
+        expect(typeof response.body.id).toBe('string');
+        expect(typeof response.body.x).toBe('number');
+        expect(typeof response.body.y).toBe('number');
+        expect(typeof response.body.mentions).toBe('number');
+        expect(typeof response.body.sources).toBe('number');
+        createdEntityIds.push(response.body.id);
+        return response.body;
+      };
+
+      const selected = await createEntity(`Focus selected ${suffix}`);
+      const neighbor = await createEntity(`Focus neighbor ${suffix}`);
+      const unrelated = await createEntity(`Focus unrelated ${suffix}`);
+
+      const relation = await fetchFromBrowser<GraphRelation>(
+        page,
+        '/twin/api/graph/relations',
+        {
+          method: 'POST',
+          body: {
+            source: selected.id,
+            target: neighbor.id,
+            label: 'FOCUS_NEIGHBOR',
+            strength: 0.9,
+          },
+        },
+      );
+      expect(relation.status, JSON.stringify(relation.body)).toBe(201);
+      expect(relation.body).toMatchObject({
+        source: selected.id,
+        target: neighbor.id,
+        label: 'FOCUS_NEIGHBOR',
+      });
+      createdRelationId = relation.body.id;
+
+      await page
+        .getByRole('navigation')
+        .getByRole('button', { name: 'Graph', exact: true })
+        .click();
+
+      await expect(page.getByTestId(`kg-node-${selected.id}`)).toBeVisible();
+      await expect(page.getByTestId(`kg-node-${neighbor.id}`)).toBeVisible();
+      await expect(page.getByTestId(`kg-node-${unrelated.id}`)).toBeVisible();
+
+      const cache = await page.evaluate(
+        ({ folder }) => {
+          const client = (
+            window as Window & {
+              __TWIN_E2E_QUERY_CLIENT?: {
+                getQueryData: (key: readonly string[]) => unknown;
+              };
+            }
+          ).__TWIN_E2E_QUERY_CLIENT;
+          return {
+            entities: client?.getQueryData(['graph-entities', folder]),
+            relations: client?.getQueryData(['graph-relations', folder]),
+          };
+        },
+        { folder: defaultFolder },
+      );
+      expect(cache.entities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: selected.id }),
+          expect.objectContaining({ id: neighbor.id }),
+          expect.objectContaining({ id: unrelated.id }),
+        ]),
+      );
+      expect(cache.relations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: relation.body.id,
+            source: selected.id,
+            target: neighbor.id,
+          }),
+        ]),
+      );
+
+      await page.getByTestId(`kg-node-${selected.id}`).click();
+      await page.getByTestId('kg-focus-mode').click();
+
+      await expect(page.getByTestId('kg-focus-mode')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await expect(page.getByTestId(`kg-node-${selected.id}`)).toBeVisible();
+      await expect(page.getByTestId(`kg-node-${neighbor.id}`)).toBeVisible();
+      await expect(page.getByTestId(`kg-node-${unrelated.id}`)).toBeHidden();
+
+      // Exercise the complete doctrine chain after the initial cache fill:
+      // UI mutation -> real DELETE -> query invalidation/refetch -> cache + DOM.
+      await page.getByTestId(`kg-node-${neighbor.id}`).click();
+      await page.getByTestId('kg-entity-delete').click();
+
+      const deleteResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === 'DELETE' &&
+          url.pathname.endsWith(
+            `/twin/api/graph/entities/${encodeURIComponent(neighbor.id)}`,
+          )
+        );
+      });
+      const entitiesRefetch = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === 'GET' &&
+          url.pathname === '/twin/api/graph/entities'
+        );
+      });
+      const relationsRefetch = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === 'GET' &&
+          url.pathname === '/twin/api/graph/relations'
+        );
+      });
+
+      await page.getByTestId('kg-entity-delete').click();
+      const [deleted, entitiesReloaded, relationsReloaded] = await Promise.all([
+        deleteResponse,
+        entitiesRefetch,
+        relationsRefetch,
+      ]);
+      expect(deleted.ok()).toBe(true);
+      expect(entitiesReloaded.ok()).toBe(true);
+      expect(relationsReloaded.ok()).toBe(true);
+
+      await expect(page.getByTestId(`kg-node-${neighbor.id}`)).toBeHidden();
+      await expect(page.getByTestId(`kg-node-${selected.id}`)).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ folder, entityId, relationId }) => {
+              const client = (
+                window as Window & {
+                  __TWIN_E2E_QUERY_CLIENT?: {
+                    getQueryData: (key: readonly string[]) => unknown;
+                  };
+                }
+              ).__TWIN_E2E_QUERY_CLIENT;
+              const entities =
+                (client?.getQueryData([
+                  'graph-entities',
+                  folder,
+                ]) as GraphEntity[]) ?? [];
+              const relations =
+                (client?.getQueryData([
+                  'graph-relations',
+                  folder,
+                ]) as GraphRelation[]) ?? [];
+              return {
+                entityPresent: entities.some((entity) => entity.id === entityId),
+                relationPresent: relations.some(
+                  (candidate) => candidate.id === relationId,
+                ),
+              };
+            },
+            {
+              folder: defaultFolder,
+              entityId: neighbor.id,
+              relationId: relation.body.id,
+            },
+          ),
+        )
+        .toEqual({ entityPresent: false, relationPresent: false });
+
+      // The test mutation, not finally cleanup, owns these deletions.
+      createdEntityIds.splice(createdEntityIds.indexOf(neighbor.id), 1);
+      createdRelationId = null;
+    } finally {
+      if (createdRelationId) {
+        await fetchFromBrowser<unknown>(
+          page,
+          `/twin/api/graph/relations/${encodeURIComponent(createdRelationId)}`,
+          { method: 'DELETE' },
+        );
+      }
+      for (const entityId of createdEntityIds.reverse()) {
+        await fetchFromBrowser<unknown>(
+          page,
+          `/twin/api/graph/entities/${encodeURIComponent(entityId)}`,
+          { method: 'DELETE' },
+        );
+      }
+    }
   });
 
   test('auth failures reject missing and invalid bearer tokens when production auth is enabled', async ({
@@ -476,5 +723,175 @@ test.describe('real backend smoke', () => {
     expect(Array.isArray(body.sources)).toBe(true);
     await expect(page.locator('.msg-user')).toContainText('health check');
     await expect(page.locator('.msg-assistant')).toBeVisible();
+  });
+
+  test('procedure-typed upload parks a real failed bundle; reject persists in the store', async ({
+    page,
+  }) => {
+    // Upload + park + review + reload does not fit the default 30s budget.
+    test.setTimeout(120_000);
+    // Composition test for the approval workflow against the REAL seam +
+    // fcntl-locked procedure store. The CI backend installs neither
+    // [procedure] nor [vision] and has no model credentials — which is the
+    // point: an explicit `X-Twin-Doc-Type: procedure` request must route to
+    // the profile anyway and park an actionable FAILED bundle. A silent
+    // standard enqueue here would be an approval bypass (and would start
+    // indexing against the intentionally disabled LLM credentials).
+    await page.goto('/');
+    await expect(
+      page.getByRole('button', { name: 'Documents', exact: true }),
+    ).toBeVisible();
+
+    const filename = `real-e2e-procedure-${Date.now()}.pdf`;
+
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await page.getByTestId('addsource-file-input').setInputFiles({
+      name: filename,
+      mimeType: 'application/pdf',
+      buffer: Buffer.from(`%PDF-1.4 real e2e parked procedure ${filename}`),
+    });
+    await page.getByTestId('addsource-doc-type').selectOption('procedure');
+    await page.getByRole('button', { name: 'Add 1 source' }).click();
+
+    // The parked bundle surfaces through the real /twin/api/procedures.
+    // (`processing` is skipped: a deps-less park writes `failed` directly,
+    // but a local run with real vision deps transits through processing.)
+    let bundleId: string | null = null;
+    const parkDeadline = Date.now() + 60_000;
+    while (Date.now() < parkDeadline) {
+      const list = await fetchFromBrowser<
+        { id: string; file_name: string; state: string }[]
+      >(page, '/twin/api/procedures');
+      expect(list.ok, JSON.stringify(list.body)).toBe(true);
+      const bundle = list.body.find(
+        (b) => b.file_name === filename && b.state !== 'processing',
+      );
+      if (bundle) {
+        expect(bundle.state, JSON.stringify(bundle)).toBe('failed');
+        bundleId = bundle.id;
+        break;
+      }
+      await page.waitForTimeout(2_000);
+    }
+    expect(bundleId, 'parked bundle never appeared in /twin/api/procedures').toBeTruthy();
+
+    // The upload reconciliation resolves it into a review card without a
+    // manual refresh, with the failed pill.
+    const card = page.getByTestId(`pending-proc-${bundleId}`);
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId(`pending-proc-state-${bundleId}`)).toContainText(
+      'Procedure failed',
+    );
+
+    // Real review modal: the admin detail route serves the bundle, and the
+    // retry affordance is disarmed through the same /settings/vision contract
+    // the WebUI reads (procedure ingestion off/unavailable on this backend).
+    await page.getByTestId(`pending-proc-review-${bundleId}`).click();
+    const modal = page.getByTestId('procedure-review-modal');
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText(filename);
+    await expect(page.getByTestId('procedure-review-retry')).toBeDisabled();
+    await expect(page.getByTestId('procedure-review-retry-disabled')).toBeVisible();
+
+    // Reject through the UI — the decision must land in the real store.
+    await page
+      .getByTestId('procedure-review-reject-comment')
+      .fill('real e2e reject');
+    await page.getByTestId('procedure-review-reject').click();
+    await expect(page.getByRole('status')).toContainText('Procedure rejected');
+    await expect(modal).toBeHidden();
+    await expect(page.getByTestId(`pending-proc-state-${bundleId}`)).toContainText(
+      'Procedure rejected',
+    );
+
+    // Full reload: the rejected state survives — file-backed store, not
+    // client cache or optimistic UI.
+    await page.reload();
+    await expect(page.getByTestId(`pending-proc-state-${bundleId}`)).toContainText(
+      'Procedure rejected',
+      { timeout: 15_000 },
+    );
+
+    // The seam never enqueued: no document exists for the parked file. The
+    // shim filters server-side BEFORE paginating, so the filtered `total`
+    // covers the whole corpus — a first-page-only scan could miss a
+    // wrongly-created document beyond the page size on a populated backend.
+    const documents = await fetchFromBrowser<DocumentListEnvelope>(
+      page,
+      `/documents?q=${encodeURIComponent(filename)}`,
+    );
+    expect(documents.ok, JSON.stringify(documents.body)).toBe(true);
+    expect(documents.body.total, JSON.stringify(documents.body.items)).toBe(0);
+    expect(documents.body.items).toEqual([]);
+
+    // And the store itself reports healthy after the whole journey.
+    const health = await fetchFromBrowser<{
+      degraded: boolean;
+      quarantine_files: string[];
+    }>(page, '/twin/api/procedures/store/health');
+    expect(health.ok, JSON.stringify(health.body)).toBe(true);
+    expect(health.body.degraded).toBe(false);
+  });
+
+  test('vision settings surface mirrors the real backend readiness contract', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await expect(
+      page.getByRole('button', { name: 'Documents', exact: true }),
+    ).toBeVisible();
+
+    const settings = await fetchFromBrowser<{
+      min_ocr_chars: number;
+      drop_classes: string[];
+      procedure_enabled: boolean;
+      procedure_available: boolean;
+    }>(page, '/twin/api/settings/vision');
+    expect(settings.ok, JSON.stringify(settings.body)).toBe(true);
+
+    // The Settings > Vision toggle renders the REAL backend state, not a
+    // fixture: enabled mirrors procedure_enabled, readiness mirrors
+    // procedure_available.
+    await openTab(page, 'Settings');
+    await page.getByTestId('settings-rail-vision').click();
+    await expect(page.getByTestId('settings-vision')).toBeVisible();
+    const toggle = page.getByTestId('settings-vision-procedure-toggle');
+    await expect(toggle).toHaveAttribute(
+      'aria-checked',
+      String(settings.body.procedure_enabled),
+    );
+
+    if (!settings.body.procedure_available) {
+      await expect(
+        page.getByTestId('settings-vision-procedure-unavailable'),
+      ).toBeVisible();
+      if (settings.body.procedure_enabled) {
+        // Enabled BEFORE the prerequisites went away: the toggle must stay
+        // operable so an admin can turn it off, and the backend only 409s
+        // the false→true transition — a PUT keeping true is a legitimate
+        // no-op, so no 409 is expected here.
+        await expect(toggle).toBeEnabled();
+      } else {
+        // CI backend (no [procedure]/[vision] deps, toggle off): enabling is
+        // refused end to end — locked toggle in the UI, 409 from the API on
+        // the false→true attempt. The PUT echoes the current stored values
+        // so a (correctly) rejected request cannot mutate anything even if
+        // the guard regressed.
+        await expect(toggle).toBeDisabled();
+        const put = await fetchFromBrowser<unknown>(
+          page,
+          '/twin/api/settings/vision',
+          {
+            method: 'PUT',
+            body: {
+              min_ocr_chars: settings.body.min_ocr_chars,
+              drop_classes: settings.body.drop_classes,
+              procedure_enabled: true,
+            },
+          },
+        );
+        expect(put.status, JSON.stringify(put.body)).toBe(409);
+      }
+    }
   });
 });

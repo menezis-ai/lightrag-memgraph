@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
 from ..folder import current_folder_id
 from ..idp_jwt import require_admin_user
@@ -30,21 +30,45 @@ from ..webui_tagstore import MemgraphTagStore
 from .events import _make_event, _make_notification, _request_actor, _utcnow_iso
 from .store import WebuiStore, get_store
 
-router = APIRouter()
+router = APIRouter(tags=["tags"])
+
+_TAG_NAME_PATH = Path(
+    description="Tag name, as listed by `GET /tags`.",
+    examples=["network-segmentation"],
+)
 
 
-@router.get("/thesaurus", response_model=list[ThesaurusEntry])
+@router.get(
+    "/thesaurus",
+    response_model=list[ThesaurusEntry],
+    summary="List thesaurus term expansions",
+)
 async def list_thesaurus() -> list[dict[str, Any]]:
+    """Return the thesaurus of the active folder: canonical terms with
+    the synonyms that queries expand through."""
     return await get_store().list_thesaurus()
 
 
-@router.get("/tags", response_model=list[TagEntry])
+@router.get(
+    "/tags",
+    response_model=list[TagEntry],
+    summary="List the tag catalog",
+)
 async def list_tags() -> list[dict[str, Any]]:
+    """Return every tag of the active folder with its definition,
+    category, governance status (`active`, `pending-review`,
+    `deprecated`, ...) and usage counters."""
     return await get_store().list_tags()
 
 
-@router.get("/tags/categories", response_model=list[TagCategory])
+@router.get(
+    "/tags/categories",
+    response_model=list[TagCategory],
+    summary="List tag categories",
+)
 async def list_tag_categories() -> list[dict[str, Any]]:
+    """Return the tag categories (id, label, colour) used to group tags
+    in the catalog."""
     return await get_store().list_tag_categories()
 
 
@@ -58,9 +82,14 @@ _CATEGORIES_TEMPLATE: list[dict[str, Any]] = [
 ]
 
 
-@router.get("/tags/categories/template")
+@router.get(
+    "/tags/categories/template",
+    summary="Download the category template file",
+)
 def get_categories_template():
-    """Return the canonical template JSON that operators can save + edit."""
+    """Download a starter `twin-categories.template.json` file. Edit it,
+    then upload it through `POST /tags/categories/_import` to replace the
+    folder's category taxonomy."""
     from fastapi.responses import JSONResponse
 
     return JSONResponse(
@@ -77,13 +106,43 @@ def get_categories_template():
     "/tags/categories/_import",
     response_model=AckResponse,
     dependencies=[Depends(require_admin_user)],
+    summary="Replace the category taxonomy (admin)",
     responses={
         400: {"description": "Invalid categories payload"},
         503: {"description": "Categories backend unavailable"},
     },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "label"],
+                            "properties": {
+                                "id": {"type": "string"},
+                                "label": {"type": "string"},
+                                "color": {
+                                    "type": "string",
+                                    "description": "Hex colour, e.g. #1F8A7A.",
+                                },
+                            },
+                        },
+                    },
+                    "example": [
+                        {"id": "network", "label": "Network", "color": "#1F8A7A"},
+                        {"id": "compliance", "label": "Compliance", "color": "#9C2D8E"},
+                    ],
+                }
+            },
+        }
+    },
 )
 async def import_categories(body: list[dict[str, Any]]) -> dict[str, Any]:
-    """Mirror the uploaded JSON into the active folder's categories store."""
+    """Replace (not merge) the active folder's tag categories with the
+    uploaded list. Start from `GET /tags/categories/template`."""
     backend = get_store().tags
     if not isinstance(backend, MemgraphTagStore):
         raise HTTPException(
@@ -278,17 +337,60 @@ async def _emit_bulk_retag_events(
 @router.post(
     "/documents/_bulk-retag",
     dependencies=[Depends(require_admin_user)],
+    summary="Add/remove tags on several documents (admin)",
     responses={
         400: {"description": "Invalid bulk retag payload"},
         422: {"description": "One or more added tags are not active"},
-        413: {"description": "Bulk retag payload too large"},
+        413: {"description": "More than 500 documents or 50 tag mutations"},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["targets"],
+                        "properties": {
+                            "targets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Document ids to retag (1 to 500).",
+                            },
+                            "adds": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Tags to add. Must be active, approved "
+                                    "catalog tags."
+                                ),
+                            },
+                            "removes": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Tags to remove.",
+                            },
+                        },
+                    },
+                    "example": {
+                        "targets": ["doc-a1b2c3d4", "doc-e5f6a7b8"],
+                        "adds": ["gdpr"],
+                        "removes": ["draft"],
+                    },
+                }
+            },
+        }
     },
 )
 async def bulk_retag_documents(
     body: dict[str, Any],
     request: Request,
 ) -> dict[str, Any]:
-    """Apply tag adds/removes to a list of documents as graph edges."""
+    """Apply tag additions and removals to up to 500 documents of the
+    active folder in one operation. Only active, approved tags can be
+    added (422 lists the offending ones). Documents not visible in the
+    folder are reported in `failed`; each retagged document gets a
+    `doc-retagged` audit event."""
     from ... import _pool
     from ..._constants import resolve_workspace
 
@@ -392,10 +494,13 @@ async def _emit_tag_audit(
     response_model=TagEntry,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    summary="Request a new tag (admin)",
     responses={409: {"description": "Tag already exists"}},
 )
 async def request_tag(body: TagRequestBody, request: Request) -> dict[str, Any]:
-    """Propose a new tag (tier='requested', status='pending-review')."""
+    """Propose a new tag for the catalog. The tag is created in
+    `pending-review` status and only becomes usable on documents after a
+    reviewer approves it (`POST /tags/{name}/approve`)."""
     store = get_store()
     existing = await store.tags.get_tag(body.tag)
     if existing is not None:
@@ -557,15 +662,22 @@ async def _approve_tag_edit(
     response_model=TagEntry,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    summary="Suggest an edit to a tag (admin)",
     responses={
         400: {"description": "No edit provided"},
         404: {"description": "Tag not found"},
     },
 )
 async def suggest_tag_edit(
-    name: str, body: TagSuggestEditBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagSuggestEditBody,
+    request: Request,
 ) -> dict[str, Any]:
-    """Queue a palier-2 edit proposal for palier-3 review."""
+    """Queue an edit proposal (definition, description, category or
+    aliases) against an existing tag. The proposal waits in
+    `pending-review`; approving it applies the changed fields to the
+    target tag, rejecting it discards them. At least one field must
+    differ from the current values (400 otherwise)."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -632,11 +744,17 @@ async def suggest_tag_edit(
     "/tags/{name}/approve",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Approve a pending tag or edit proposal (admin)",
     responses={404: {"description": "Tag not found"}},
 )
 async def approve_tag(
-    name: str, body: TagApproveBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagApproveBody,
+    request: Request,
 ) -> dict[str, Any]:
+    """Approve a pending tag request (the tag becomes `active` and usable
+    on documents) or a pending edit proposal (the proposed fields are
+    applied to the target tag and the proposal is removed)."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -681,11 +799,17 @@ async def approve_tag(
     "/tags/{name}/reject",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Reject a pending tag or edit proposal (admin)",
     responses={404: {"description": "Tag not found"}},
 )
 async def reject_tag(
-    name: str, body: TagRejectBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagRejectBody,
+    request: Request,
 ) -> dict[str, Any]:
+    """Reject a pending tag request or edit proposal with a reason. The
+    entry is removed from the catalog; the reason is recorded in the
+    audit feed and the returned entry."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -778,13 +902,22 @@ async def _cascade_tag_rename(
     "/tags/{name}",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Edit a tag directly (admin)",
     responses={
         400: {"description": "Invalid tag edit"},
         404: {"description": "Tag not found"},
         409: {"description": "Tag rename conflict"},
     },
 )
-async def edit_tag(name: str, body: TagEditBody, request: Request) -> dict[str, Any]:
+async def edit_tag(
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagEditBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Apply changes to a tag immediately (no review step): definition,
+    description, category, aliases, deprecation list, or a rename. A
+    rename migrates the tag's document links to the new name; the new
+    name must not collide with an existing tag (409)."""
     from .. import webui_router as legacy
 
     store = get_store()
@@ -837,11 +970,17 @@ async def edit_tag(name: str, body: TagEditBody, request: Request) -> dict[str, 
     "/tags/{name}/deprecate",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Deprecate a tag (admin)",
     responses={404: {"description": "Tag not found"}},
 )
 async def deprecate_tag(
-    name: str, body: TagDeprecateBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagDeprecateBody,
+    request: Request,
 ) -> dict[str, Any]:
+    """Mark a tag as deprecated: it stays on already-tagged documents but
+    can no longer be added to new ones. Reversible with
+    `POST /tags/{name}/reactivate`."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -875,11 +1014,16 @@ async def deprecate_tag(
     "/tags/{name}/reactivate",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Reactivate a deprecated tag (admin)",
     responses={404: {"description": "Tag not found"}},
 )
 async def reactivate_tag(
-    name: str, body: TagReactivateBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagReactivateBody,
+    request: Request,
 ) -> dict[str, Any]:
+    """Return a deprecated tag to `active` status so it can be added to
+    documents again."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -912,11 +1056,17 @@ async def reactivate_tag(
     "/tags/{name}/synonyms",
     response_model=TagEntry,
     dependencies=[Depends(require_admin_user)],
+    summary="Replace a tag's synonyms (admin)",
     responses={404: {"description": "Tag not found"}},
 )
 async def update_synonyms(
-    name: str, body: TagSynonymsBody, request: Request
+    name: Annotated[str, _TAG_NAME_PATH],
+    body: TagSynonymsBody,
+    request: Request,
 ) -> dict[str, Any]:
+    """Replace the tag's alias list. Aliases feed the thesaurus, so
+    queries mentioning an alias also match content tagged with the
+    canonical name."""
     store = get_store()
     entry = await store.tags.get_tag(name)
     if entry is None:
@@ -948,15 +1098,21 @@ async def update_synonyms(
     "/tags/{name}",
     response_model=AckResponse,
     dependencies=[Depends(require_admin_user)],
+    summary="Delete a tag, untagging or migrating its documents (admin)",
     responses={
-        404: {"description": "Tag not found"},
+        404: {"description": "Tag (or migration target) not found"},
         422: {"description": "Invalid tag deletion strategy"},
     },
 )
 async def delete_tag(
-    name: str, request: Request, body: TagDeleteBody | None = None
+    name: Annotated[str, _TAG_NAME_PATH],
+    request: Request,
+    body: TagDeleteBody | None = None,
 ) -> dict[str, bool]:
-    """Delete a tag and cascade the selected migration strategy to documents."""
+    """Delete a tag from the catalog. The `strategy` decides what happens
+    to the documents that carry it: `untag` (default) removes the tag
+    from them, `migrate` re-links them to the tag given in `to` (which
+    must exist and differ from the deleted one)."""
     from .. import webui_router as legacy
 
     store = get_store()

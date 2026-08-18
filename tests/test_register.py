@@ -139,6 +139,35 @@ class TestRegister:
         finally:
             configure_auth(api_key=None, jwt_secret=None)
 
+    def test_overlay_installs_procedure_seam_before_admin_activation(self, monkeypatch):
+        """A cold-started disabled profile must still react to a later toggle."""
+        from twindb_lightrag_memgraph.patches import registry
+
+        calls = []
+        app = object()
+        monkeypatch.setattr(registry, "_patch_native_entity_taxonomy", lambda: None)
+        monkeypatch.setattr(registry, "_patch_upload_duplicate_lookup", lambda: None)
+        monkeypatch.setattr(
+            registry,
+            "_patch_pipeline_enqueue_conversion",
+            lambda: calls.append("procedure-seam"),
+        )
+        monkeypatch.setattr(registry._conversion, "is_enabled", lambda: False)
+        monkeypatch.setattr(registry._vision, "is_enabled", lambda: False)
+
+        result = registry._wrapped_create_app_impl(
+            object(),
+            orig_create_app=lambda _args: app,
+            webui_dist=None,
+            twin_api_prefix=None,
+            shim_native_routes=False,
+            webui_stores="seed",
+            webui_categories_config=None,
+        )
+
+        assert result is app
+        assert calls == ["procedure-seam"]
+
 
 class TestEnvDrivenFlags:
     """register() overlay flags resolve from env when not passed explicitly.

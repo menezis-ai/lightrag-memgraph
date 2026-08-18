@@ -100,6 +100,38 @@ class TestMemgraphDocStatusStorage:
         assert result is not None
         assert result["file_path"] == "/special.pdf"
 
+    async def test_get_docs_by_file_paths_batches_and_preserves_oldest(self, doc_store):
+        await doc_store.upsert(
+            {
+                "doc-newer": {
+                    "status": "processed",
+                    "file_path": "dup.pdf",
+                    "created_at": "2025-02-01T00:00:00",
+                    "updated_at": "2025-02-01T00:00:00",
+                },
+                "doc-older": {
+                    "status": "processed",
+                    "file_path": "dup.pdf",
+                    "created_at": "2025-01-01T00:00:00",
+                    "updated_at": "2025-01-01T00:00:00",
+                },
+                "doc-other": {
+                    "status": "processed",
+                    "file_path": "other.pdf",
+                    "created_at": "2025-01-15T00:00:00",
+                    "updated_at": "2025-01-15T00:00:00",
+                },
+            }
+        )
+
+        resolved = await doc_store.get_docs_by_file_paths(
+            ["dup.pdf", "missing.pdf", "other.pdf", "dup.pdf"]
+        )
+
+        assert resolved["dup.pdf"]["id"] == "doc-older"
+        assert resolved["other.pdf"]["id"] == "doc-other"
+        assert "missing.pdf" not in resolved
+
     async def test_duplicate_lookups_return_oldest_deterministically(self, doc_store):
         """file_path / basename / content_hash are not unique; the duplicate
         getters must return the oldest match (the original), not a

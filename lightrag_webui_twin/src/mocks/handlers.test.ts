@@ -155,6 +155,33 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
 });
 
 describe('MSW handlers — Twin overlay endpoints', () => {
+  it(`PUT ${TWIN}/settings/vision preserves procedure activation when omitted`, async () => {
+    const put = (body: object) =>
+      fetch(BASE + `${TWIN}/settings/vision`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const enable = await put({
+      min_ocr_chars: 20,
+      drop_classes: ['invalid'],
+      procedure_enabled: true,
+    });
+    expect(enable.ok).toBe(true);
+
+    const legacyUpdate = await put({
+      min_ocr_chars: 40,
+      drop_classes: ['logo'],
+    });
+    expect(legacyUpdate.ok).toBe(true);
+    await expect(legacyUpdate.json()).resolves.toMatchObject({
+      min_ocr_chars: 40,
+      drop_classes: ['logo'],
+      procedure_enabled: true,
+    });
+  });
+
   it(`GET ${TWIN}/folders returns the provisioned default folder`, async () => {
     const data = await getJson<unknown[]>(`${TWIN}/folders`);
     expect(data).toHaveLength(1);
@@ -477,7 +504,7 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
     }
   });
 
-  it(`POST ${TWIN}/query/stream emits NDJSON token + sources events`, async () => {
+  it(`POST ${TWIN}/query/stream mirrors the ordered backend NDJSON contract`, async () => {
     const res = await fetch(`${BASE}${TWIN}/query/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -492,6 +519,20 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
       .map((l) => JSON.parse(l) as { type: string; value: unknown });
     const tokens = events.filter((e) => e.type === 'token');
     const sources = events.filter((e) => e.type === 'sources');
+    expect(events.map((event) => event.type)).toEqual([
+      'meta',
+      'stage',
+      'stage',
+      'token',
+      'stage',
+      'status',
+      'sources',
+    ]);
+    expect(events.filter((event) => event.type === 'stage').map((event) => event.value)).toEqual([
+      'retrieval',
+      'generation',
+      'sources',
+    ]);
     expect(tokens.length).toBeGreaterThan(0);
     expect(sources.length).toBe(1);
     expect(Array.isArray(sources[0].value)).toBe(true);

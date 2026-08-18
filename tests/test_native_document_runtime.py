@@ -157,10 +157,14 @@ async def native_runtime(monkeypatch, runtime_dirs):
         create_document_routes,
     )
 
-    from tests.conftest import ensure_fresh_native_document_router
+    from tests.conftest import (
+        ensure_fresh_native_document_router,
+        seed_native_app_state,
+    )
 
     doc_manager = DocumentManager(runtime_dirs["input"], workspace=WORKSPACE)
     app = FastAPI()
+    seed_native_app_state(app)
     _install_storage_folder_capture(app)
     ensure_fresh_native_document_router()
     app.include_router(
@@ -350,13 +354,14 @@ async def test_native_upload_batch_registers_every_accepted_track(
 
     import lightrag.api.routers.document_routes as document_routes
 
-    async def allow_enqueue(_rag):
+    # Variadic: 1.5.5 passes (rag, enqueue_token) / admission kwargs.
+    async def allow_enqueue(_rag, *_args, **_kwargs):
         return True
 
-    async def release_enqueue(_rag):
+    async def release_enqueue(_rag, *_args, **_kwargs):
         return None
 
-    async def register_pending_track(_rag, file_path, track_id=None):
+    async def register_pending_track(_rag, file_path, track_id=None, **_kwargs):
         assert track_id is not None
         now = datetime.now(timezone.utc).isoformat()
         await _rag.doc_status.upsert(

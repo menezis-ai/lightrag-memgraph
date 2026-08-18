@@ -21,6 +21,9 @@ from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph._constants import DEFAULT_PAGE_SIZE
 from twindb_lightrag_memgraph.server import native_shims
+from twindb_lightrag_memgraph.server._lightrag_compat import (
+    PipelineBusyDeletionError,
+)
 from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.native_shims import build_native_shims_router
 
@@ -460,6 +463,36 @@ class TestSingleDeleteRefCounted:
         await native_shims._delete_or_unshare(rag, "doc1", "A")
         assert rag.physically_deleted == ["doc1"]
 
+    async def test_pipeline_busy_last_membership_raises_busy_and_releases_claim(
+        self,
+    ):
+        """LightRAG's not_allowed refusal must surface as the typed busy
+        error (the route maps it to 423), and must not strand the doc
+        behind its delete claim."""
+
+        class _BusyRag:
+            def __init__(self, doc_status: Any) -> None:
+                self.doc_status = doc_status
+
+            async def adelete_by_doc_id(self, doc_id: str):
+                class _Result:
+                    status = "not_allowed"
+                    status_code = 403
+                    message = (
+                        "Deletion not allowed: current job 'ingest' "
+                        "is not a document deletion job"
+                    )
+
+                return _Result()
+
+        ds = _MembershipDocStatus({"doc1": ["A"]})
+        rag = _BusyRag(ds)
+
+        with pytest.raises(PipelineBusyDeletionError):
+            await native_shims._delete_or_unshare(rag, "doc1", "A")
+
+        assert ds.claims == {}
+
 
 class TestNativeDeleteFolderGate:
     """The native DELETE /documents/{id} gate must be membership-first: a doc
@@ -780,3 +813,81 @@ class TestNativeDeleteRouteGate:
         assert r.status_code == 404
         assert rag.physically_deleted == []
         assert rag.doc_status.removed == []
+
+    async def test_pipeline_busy_delete_route_returns_423(self, monkeypatch):
+        """End-to-end: not_allowed from LightRAG → HTTP 423 with the
+        pipeline-busy prose, doc untouched and claim released."""
+        client, rag = _make_delete_client(monkeypatch, ["B"])
+
+        rag.doc_status.claims = {}
+
+        async def _claim(doc_id: str, folder: str, claim: str) -> bool:
+            rag.doc_status.claims[doc_id] = claim
+            return True
+
+        async def _release(doc_id: str, claim: str) -> None:
+            if rag.doc_status.claims.get(doc_id) == claim:
+                rag.doc_status.claims.pop(doc_id)
+
+        rag.doc_status.claim_last_membership_delete = _claim
+        rag.doc_status.release_delete_claim = _release
+
+        async def _busy_delete(doc_id: str):
+            class _Result:
+                status = "not_allowed"
+                status_code = 403
+                message = (
+                    "Deletion not allowed: current job 'ingest' "
+                    "is not a document deletion job"
+                )
+
+            return _Result()
+
+        rag.adelete_by_doc_id = _busy_delete
+
+        async with client:
+            r = await client.delete("/documents/doc1", headers={"X-Twin-Folder": "B"})
+
+        assert r.status_code == 423
+        detail = r.json()["detail"]
+        assert "ingestion pipeline" in detail
+        assert "busy" in detail
+        assert rag.physically_deleted == []
+        assert rag.doc_status.claims == {}
+
+    async def test_recovery_required_delete_route_remains_503(self, monkeypatch):
+        client, rag = _make_delete_client(monkeypatch, ["B"])
+
+        rag.doc_status.claims = {}
+
+        async def _claim(doc_id: str, folder: str, claim: str) -> bool:
+            rag.doc_status.claims[doc_id] = claim
+            return True
+
+        async def _release(doc_id: str, claim: str) -> None:
+            if rag.doc_status.claims.get(doc_id) == claim:
+                rag.doc_status.claims.pop(doc_id)
+
+        rag.doc_status.claim_last_membership_delete = _claim
+        rag.doc_status.release_delete_claim = _release
+
+        async def _recovery_required_delete(doc_id: str):
+            class _Result:
+                status = "not_allowed"
+                status_code = 503
+                message = "Pipeline recovery is required for this workspace."
+
+            return _Result()
+
+        rag.adelete_by_doc_id = _recovery_required_delete
+
+        async with client:
+            r = await client.delete("/documents/doc1", headers={"X-Twin-Folder": "B"})
+
+        assert r.status_code == 503
+        detail = r.json()["detail"]
+        assert "operator recovery is required" in detail.lower()
+        assert "documented recovery procedure" in detail.lower()
+        assert "ingestion pipeline is busy" not in detail.lower()
+        assert rag.physically_deleted == []
+        assert rag.doc_status.claims == {}

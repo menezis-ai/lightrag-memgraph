@@ -12,12 +12,88 @@ import { ApiError } from '../api/client';
 import {
   backendDetail,
   describeError,
+  ingestionFailureMessage,
   loginErrorMessage,
   logTechnicalError,
   unsupportedFileMessage,
   uploadFailureMessage,
   userErrorMessage,
 } from './errorMessages';
+
+describe('ingestionFailureMessage', () => {
+  it('explains the legacy OCR pre-filter reason with measured and configured values', () => {
+    expect(
+      ingestionFailureMessage(
+        'vision-prefilter: OCR text below 20 chars (9) — set TWIN_VISION_MIN_OCR_CHARS=0 to caption everything',
+      ),
+    ).toBe(
+      'Image rejected by the OCR pre-filter: 9 text characters detected; the configured minimum is 20. Images with too little readable text are excluded before Vision analysis.',
+    );
+  });
+
+  it('explains the current OCR and size reasons only from their stable codes', () => {
+    expect(
+      ingestionFailureMessage(
+        'vision-prefilter: image rejected before vision analysis; OCR detected 7 text characters, below configured minimum 20',
+      ),
+    ).toBe(
+      'Image rejected by the OCR pre-filter: 7 text characters detected; the configured minimum is 20. Images with too little readable text are excluded before Vision analysis.',
+    );
+    expect(
+      ingestionFailureMessage(
+        'vision-size-limit: image rejected because file size is 200 bytes; configured maximum is 100 bytes',
+      ),
+    ).toBe(
+      'Image rejected: file size is 200 bytes; the configured maximum is 100 bytes.',
+    );
+  });
+
+  it('explains both legacy and current excluded-class reasons', () => {
+    const expected =
+      'Image rejected by the Vision filter: classified as “logo”, which is excluded by the active Vision settings.';
+    expect(
+      ingestionFailureMessage("image-dropped: classification 'Logo'"),
+    ).toBe(expected);
+    expect(
+      ingestionFailureMessage(
+        "image-dropped: image rejected by active Vision policy; classified as 'logo', an excluded class",
+      ),
+    ).toBe(expected);
+  });
+
+  it('explains an all-visuals-rejected PDF with page and classification', () => {
+    expect(
+      ingestionFailureMessage(
+        "pdf-vision-dropped: all visual candidates excluded by policy; first rejected page(s) 2,5: pdf-image-dropped: classified as 'logo', an excluded class",
+      ),
+    ).toBe(
+      'PDF rejected: it contains no usable text and all detected visual content was excluded. The first rejected visual is on page(s) 2, 5, classified as “logo”.',
+    );
+  });
+
+  it('preserves unknown ingestion failures verbatim', () => {
+    expect(ingestionFailureMessage('LLM extractor: invalid JSON')).toBe(
+      'LLM extractor: invalid JSON',
+    );
+  });
+
+  it('does not rewrite lure text without a stable pipeline reason prefix', () => {
+    const lures = [
+      "Unknown policy error: classified as 'confidential' but not rejected by Vision",
+      'Parser copied vision-prefilter: OCR detected 2 text characters, below configured minimum 20',
+      'Proxy note: file size is 99 bytes; configured maximum is 10 bytes',
+      "Wrapper saw pdf-vision-dropped: first rejected page(s) 4: classified as 'logo'",
+    ];
+    for (const lure of lures) {
+      expect(ingestionFailureMessage(lure)).toBe(lure);
+    }
+  });
+
+  it('handles long adversarial ingestion errors without ambiguous regex backtracking', () => {
+    const hostile = `pdf-vision-dropped:${' first rejected page(s) 1'.repeat(20_000)}`;
+    expect(ingestionFailureMessage(hostile)).toBe(hostile);
+  });
+});
 
 function apiError(status: number, body: unknown = null, path = '/twin/api/x'): ApiError {
   return new ApiError(`POST ${path} → ${status} Error`, status, body);
@@ -36,7 +112,7 @@ describe('describeError / userErrorMessage', () => {
   it('maps 5xx to the backend-unavailable copy and ignores 5xx details', () => {
     const out = describeError(apiError(503, { detail: 'bolt driver ServiceUnavailable at pool.py:88' }));
     expect(out.message).toBe(
-      'The Twin backend is temporarily unavailable. Please retry in a moment or contact Twincore Team.',
+      'The backend is temporarily unavailable. Retry in a moment. If the problem continues, contact your platform administrator.',
     );
   });
 
@@ -50,7 +126,7 @@ describe('describeError / userErrorMessage', () => {
     expect(
       userErrorMessage(apiError(403, { detail: "Folder 'secret' is not in your scope" })),
     ).toBe(
-      'You do not have access to this folder. Contact Twincore Team if you need access.',
+      'You do not have access to this folder. Ask your platform administrator to grant access.',
     );
   });
 
@@ -58,7 +134,7 @@ describe('describeError / userErrorMessage', () => {
     expect(
       userErrorMessage(apiError(403, { detail: "Admin scope 'admin:folders' required" })),
     ).toBe(
-      'You do not have permission to perform this action. Contact Twincore Team if you believe you should.',
+      'You do not have permission to perform this action. Ask your platform administrator if you believe you should have access.',
     );
   });
 
@@ -96,13 +172,24 @@ describe('describeError / userErrorMessage', () => {
     );
   });
 
+  it('promotes a structured recovery-required 503 instead of advising a retry', () => {
+    const detail =
+      'Operator recovery is required before deletion can resume; 1 earlier document change was already committed.';
+    const msg = userErrorMessage(
+      apiError(503, { detail, recovery_required: true }),
+      { action: 'deleting the selected sources' },
+    );
+    expect(msg).toBe(detail);
+    expect(msg).not.toContain('temporarily unavailable');
+  });
+
   it('skips Pydantic array details and falls back to the action copy', () => {
     const out = userErrorMessage(
       apiError(422, { detail: [{ loc: ['body', 'name'], msg: 'field required' }] }),
       { action: 'creating the tag' },
     );
     expect(out).toBe(
-      'Something went wrong while creating the tag. Please retry or contact Twincore Team.',
+      'Something went wrong while creating the tag. Please retry. If the problem continues, contact your platform administrator.',
     );
   });
 
@@ -117,10 +204,10 @@ describe('describeError / userErrorMessage', () => {
 
   it('maps unknown errors and non-Errors to the generic fallback', () => {
     expect(userErrorMessage(new Error('kaput'), { action: 'saving the graph' })).toBe(
-      'Something went wrong while saving the graph. Please retry or contact Twincore Team.',
+      'Something went wrong while saving the graph. Please retry. If the problem continues, contact your platform administrator.',
     );
     expect(userErrorMessage('weird string throw')).toBe(
-      'Something went wrong. Please retry or contact Twincore Team.',
+      'Something went wrong. Please retry. If the problem continues, contact your platform administrator.',
     );
   });
 });
@@ -141,10 +228,10 @@ describe('loginErrorMessage', () => {
 
   it('falls back to a clean sign-in failure for anything else', () => {
     expect(loginErrorMessage(apiError(418))).toBe(
-      'Sign-in failed. Please retry or contact Twincore Team.',
+      'Sign-in failed. Please retry. If the problem continues, contact your platform administrator.',
     );
     expect(loginErrorMessage('boom')).toBe(
-      'Sign-in failed. Please retry or contact Twincore Team.',
+      'Sign-in failed. Please retry. If the problem continues, contact your platform administrator.',
     );
   });
 });

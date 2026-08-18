@@ -49,6 +49,7 @@ def api_wiring_probes(api_prefix: str = "/twin/api") -> tuple[ApiWiringProbe, ..
             "api-keys:revoke",
         ),
         ApiWiringProbe("GET", f"{prefix}/quota", "quota:snapshot"),
+        ApiWiringProbe("GET", f"{prefix}/system/about", "system:about"),
     )
 
 

@@ -427,11 +427,15 @@ describe('PendingDocsSection — procedure bundles (third variant)', () => {
       screen.queryByTestId('pending-proc-reject-pb-1'),
     ).not.toBeInTheDocument();
 
-    // Recovery path stays reachable: Review opens the modal with Retry.
+    // Recovery path stays reachable, but retry honestly reflects the
+    // admin-controlled activation setting (off by default).
     await userEvent.click(screen.getByTestId('pending-proc-review-pb-1'));
     expect(await screen.findByTestId('procedure-review-modal')).toBeInTheDocument();
     expect(
       await screen.findByTestId('procedure-review-retry'),
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId('procedure-review-retry-disabled'),
     ).toBeInTheDocument();
   });
 
@@ -459,10 +463,41 @@ describe('PendingDocsSection — procedure bundles (third variant)', () => {
     );
 
     const errorCard = await screen.findByTestId('pending-procedures-error');
-    expect(errorCard.textContent).toContain('NOT an empty queue');
+    expect(errorCard).not.toHaveClass('pending-card');
+    expect(errorCard.textContent).toContain(
+      'Existing parked procedures are not being shown',
+    );
+    expect(errorCard.textContent).toContain('503');
+    expect(errorCard.textContent).not.toContain('Twincore');
+    expect(screen.getByText('Procedure count unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/0 documents awaiting/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId('pending-procedures-retry'));
     expect(await screen.findByTestId('pending-proc-pb-1')).toBeInTheDocument();
+  });
+
+  it('does not poll procedure routes when the backend disables the capability', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/twin/api/procedures', () => {
+        calls += 1;
+        return HttpResponse.json([], { status: 404 });
+      }),
+    );
+    const Wrap = wrap(queryClientNoRetry());
+    const { container } = render(
+      <Wrap>
+        <PendingDocsSection
+          docs={[]}
+          onToast={() => {}}
+          procedureReviewEnabled={false}
+        />
+      </Wrap>,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toBe(0);
+    expect(container.firstChild).toBeNull();
   });
 });
 

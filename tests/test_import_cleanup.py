@@ -2,7 +2,10 @@ from contextlib import asynccontextmanager
 
 from twindb_lightrag_memgraph import _pool
 from twindb_lightrag_memgraph import docstatus_impl
-from twindb_lightrag_memgraph._import_cleanup import cleanup_processed_imports
+from twindb_lightrag_memgraph._import_cleanup import (
+    cleanup_import_paths,
+    cleanup_processed_imports,
+)
 from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
 
@@ -70,6 +73,58 @@ async def test_cleanup_processed_import_ignores_non_processed_status(
     )
 
     assert source.exists()
+
+
+async def test_physical_delete_cleanup_is_status_agnostic_and_accepts_confined_absolute_path(
+    monkeypatch, tmp_path
+):
+    input_dir = tmp_path / "inputs"
+    workspace_dir = input_dir / "cib"
+    workspace_dir.mkdir(parents=True)
+    source = workspace_dir / "historical.pdf"
+    source.write_text("stale upload", encoding="utf-8")
+    monkeypatch.setenv("INPUT_DIR", str(input_dir))
+
+    await cleanup_import_paths([str(source)])
+
+    assert not source.exists()
+
+
+async def test_physical_delete_cleanup_rejects_outside_absolute_path(
+    monkeypatch, tmp_path
+):
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    source = input_dir / "evil.pdf"
+    source.write_text("keep", encoding="utf-8")
+    monkeypatch.setenv("INPUT_DIR", str(input_dir))
+
+    await cleanup_import_paths(["/outside/evil.pdf"])
+
+    assert source.exists()
+
+
+async def test_cleanup_never_targets_the_input_dir_itself(monkeypatch, tmp_path):
+    """Audit 2026-08-06, R-01: ``file_path="."`` used to satisfy the
+    confinement check (``resolved == base``) and rmtree the whole INPUT_DIR.
+    The guarantee must rest on the confinement itself, not on upstream path
+    normalization blocking the input."""
+    input_dir = tmp_path / "inputs"
+    input_dir.mkdir()
+    for name in ("a.pdf", "b.txt", "c.md", "d.docx"):
+        (input_dir / name).write_text("keep", encoding="utf-8")
+    monkeypatch.setenv("INPUT_DIR", str(input_dir))
+
+    await cleanup_import_paths(["."])
+    await cleanup_import_paths([str(input_dir)])
+    await cleanup_import_paths([str(input_dir.resolve()) + "/"])
+
+    assert sorted(p.name for p in input_dir.iterdir()) == [
+        "a.pdf",
+        "b.txt",
+        "c.md",
+        "d.docx",
+    ]
 
 
 async def test_docstatus_upsert_cleans_processed_import_after_write(monkeypatch):

@@ -43,11 +43,20 @@ class QuotaSnapshot(BaseModel):
     ram_used_bytes: int | None = None
     ram_limit_bytes: int | None = None
     ram_pct: float | None = None
-    ram_basis: str | None = None  # "tracked" | "rss"
+    ram_basis: str | None = None  # "tracked"
 
 
-@router.get("", response_model=QuotaSnapshot)
+@router.get(
+    "",
+    response_model=QuotaSnapshot,
+    summary="Storage quota snapshot",
+)
 async def get_quota_snapshot() -> dict[str, Any]:
+    """Return the instance's storage usage against its configured limits.
+    The headline `used_bytes` / `limit_bytes` / `used_pct` reflect the
+    binding constraint (`binding` says which one); `status` flips to
+    `warning` past the warn threshold. `configured: false` means no quota
+    is enforced on this deployment."""
     return await quota.snapshot()
 
 

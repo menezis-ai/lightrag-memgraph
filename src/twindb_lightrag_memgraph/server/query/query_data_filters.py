@@ -5,12 +5,18 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from .doc_lookup import _resolve_doc_for_chunk, _resolve_doc_for_file_path
+from .doc_lookup import (
+    _resolve_chunk_to_doc_id,
+    _resolve_doc_for_chunk,
+    _resolve_doc_for_file_path,
+    _resolve_file_paths_to_doc_ids,
+)
 from .source_filters import (
     UNKNOWN_SOURCE_NAME,
+    TagFilter,
     _doc_tags_match_filter,
     _split_source_ids,
-    _tag_filter_terms,
+    _tag_filter_active,
 )
 
 # Budget for overlapping the two resolver groups. The per-id fan-out is inside
@@ -62,14 +68,7 @@ async def _resolve_doc_ids_for_chunk_ids(
 ) -> dict[str, str]:
     if not chunk_ids:
         return {}
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in chunk_ids)
-    )
-    return {
-        chunk_id: doc_id
-        for chunk_id, doc_id in zip(chunk_ids, resolved)
-        if isinstance(doc_id, str) and doc_id
-    }
+    return await _resolve_chunk_to_doc_id(rag, list(chunk_ids))
 
 
 async def _resolve_doc_ids_for_file_paths(
@@ -77,26 +76,26 @@ async def _resolve_doc_ids_for_file_paths(
 ) -> dict[str, str]:
     if not file_paths:
         return {}
-    resolved = await asyncio.gather(
-        *(_resolve_doc_for_file_path(rag, file_path) for file_path in file_paths)
-    )
-    return {
-        file_path: doc_id
-        for file_path, doc_id in zip(file_paths, resolved)
-        if isinstance(doc_id, str) and doc_id
-    }
+    return await _resolve_file_paths_to_doc_ids(rag, list(file_paths))
 
 
 async def _doc_ids_from_chunk_ids(rag: Any, chunk_ids: set[str]) -> set[str]:
-    doc_ids_by_chunk = await _resolve_doc_ids_for_chunk_ids(rag, chunk_ids)
-    return set(doc_ids_by_chunk.values())
+    if not chunk_ids:
+        return set()
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_chunk(rag, chunk_id) for chunk_id in chunk_ids)
+    )
+    return {doc_id for doc_id in resolved if isinstance(doc_id, str) and doc_id}
 
 
 async def _doc_ids_from_file_paths(rag: Any, file_paths: list[str]) -> set[str]:
     if not file_paths:
         return set()
-    doc_ids_by_path = await _resolve_doc_ids_for_file_paths(rag, set(file_paths))
-    return set(doc_ids_by_path.values())
+    unique = set(file_paths)
+    resolved = await asyncio.gather(
+        *(_resolve_doc_for_file_path(rag, file_path) for file_path in unique)
+    )
+    return {doc_id for doc_id in resolved if isinstance(doc_id, str) and doc_id}
 
 
 async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]:
@@ -116,13 +115,12 @@ async def _doc_ids_for_query_data_row(rag: Any, row: dict[str, Any]) -> set[str]
 async def _row_matches_tag_filter(
     rag: Any,
     row: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     folder: str,
     tags_cache: dict[str, set[str]],
     fetch_doc_tags: Any,
 ) -> bool:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
+    if not _tag_filter_active(tag_filter):
         return True
     doc_ids = await _doc_ids_for_query_data_row(rag, row)
     if not doc_ids:
@@ -213,7 +211,7 @@ async def _resolve_row_doc_maps(
 def _keep_rows_matching_tags(
     rows_for_filter: list[dict[str, Any]],
     row_doc_ids: list[set[str]],
-    tag_filter,
+    tag_filter: TagFilter | None,
     tags_cache: dict[str, set[str]],
 ) -> tuple[list, set[str]]:
     """Keep rows with at least one tag-matching doc; collect reference_ids."""
@@ -236,14 +234,16 @@ def _keep_rows_matching_tags(
 async def _filter_rows_by_tags(
     rag: Any,
     rows: list,
-    tag_filter,
+    tag_filter: TagFilter | None,
     folder: str,
     tags_cache: dict[str, set[str]],
     fetch_doc_tags: Any,
+    fetch_doc_tags_batch: Any = None,
+    chunk_docs_cache: dict[str, str] | None = None,
+    file_docs_cache: dict[str, str] | None = None,
 ) -> tuple[list, set[str]]:
     """Keep rows whose doc tags match the filter; collect their reference_ids."""
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
+    if not _tag_filter_active(tag_filter):
         return rows, set()
 
     rows_for_filter, row_direct_doc_ids, row_chunk_ids, row_file_paths = (
@@ -255,7 +255,15 @@ async def _filter_rows_by_tags(
     chunk_ids: set[str] = set().union(*row_chunk_ids)
     file_paths: set[str] = set().union(*row_file_paths)
 
-    chunk_docs, file_docs = await _resolve_row_doc_maps(rag, chunk_ids, file_paths)
+    chunk_docs = chunk_docs_cache if chunk_docs_cache is not None else {}
+    file_docs = file_docs_cache if file_docs_cache is not None else {}
+    resolved_chunks, resolved_files = await _resolve_row_doc_maps(
+        rag,
+        chunk_ids - chunk_docs.keys(),
+        file_paths - file_docs.keys(),
+    )
+    chunk_docs.update(resolved_chunks)
+    file_docs.update(resolved_files)
 
     row_doc_ids, all_doc_ids = _combine_row_doc_ids(
         row_direct_doc_ids,
@@ -267,10 +275,18 @@ async def _filter_rows_by_tags(
 
     unresolved_doc_ids = [doc_id for doc_id in all_doc_ids if doc_id not in tags_cache]
     if unresolved_doc_ids:
-        resolved_tags = await asyncio.gather(
-            *(fetch_doc_tags(doc_id, folder) for doc_id in unresolved_doc_ids)
-        )
-        tags_cache.update(zip(unresolved_doc_ids, resolved_tags))
+        if callable(fetch_doc_tags_batch):
+            resolved_tags = await fetch_doc_tags_batch(unresolved_doc_ids, folder)
+            resolved_tags = resolved_tags if isinstance(resolved_tags, dict) else {}
+            tags_cache.update(
+                (doc_id, set(resolved_tags.get(doc_id) or set()))
+                for doc_id in unresolved_doc_ids
+            )
+        else:
+            resolved_tags = await asyncio.gather(
+                *(fetch_doc_tags(doc_id, folder) for doc_id in unresolved_doc_ids)
+            )
+            tags_cache.update(zip(unresolved_doc_ids, resolved_tags))
 
     return _keep_rows_matching_tags(
         rows_for_filter, row_doc_ids, tag_filter, tags_cache
@@ -280,12 +296,12 @@ async def _filter_rows_by_tags(
 async def _filter_query_data_by_tags(
     rag: Any,
     response: dict[str, Any],
-    tag_filter: dict[str, list[str]] | None,
+    tag_filter: TagFilter | None,
     folder: str,
     fetch_doc_tags: Any,
+    fetch_doc_tags_batch: Any = None,
 ) -> dict[str, Any]:
-    required, optional = _tag_filter_terms(tag_filter)
-    if not required and not optional:
+    if not _tag_filter_active(tag_filter):
         return response
 
     data = response.get("data")
@@ -295,6 +311,25 @@ async def _filter_query_data_by_tags(
     # Cache shared across all rows in this single request, bounded by the number
     # of unique doc_ids in the result set.
     tags_cache: dict[str, set[str]] = {}
+    chunk_docs_cache: dict[str, str] = {}
+    file_docs_cache: dict[str, str] = {}
+    chunk_rows = data.get("chunks")
+    if isinstance(chunk_rows, list):
+        for row in chunk_rows:
+            if not isinstance(row, dict):
+                continue
+            direct_doc_ids = _direct_doc_ids_for_query_data_row(row)
+            if len(direct_doc_ids) != 1:
+                continue
+            doc_id = next(iter(direct_doc_ids))
+            for chunk_key in ("chunk_id", "id"):
+                chunk_id = row.get(chunk_key)
+                if isinstance(chunk_id, str) and chunk_id:
+                    chunk_docs_cache.setdefault(chunk_id, doc_id)
+            file_path = row.get("file_path")
+            if not isinstance(file_path, str) or not file_path:
+                continue
+            file_docs_cache.setdefault(file_path, doc_id)
 
     filtered_data = dict(data)
     kept_reference_ids: set[str] = set()
@@ -303,7 +338,15 @@ async def _filter_query_data_by_tags(
         if not isinstance(rows, list):
             continue
         kept_rows, ref_ids = await _filter_rows_by_tags(
-            rag, rows, tag_filter, folder, tags_cache, fetch_doc_tags
+            rag,
+            rows,
+            tag_filter,
+            folder,
+            tags_cache,
+            fetch_doc_tags,
+            fetch_doc_tags_batch,
+            chunk_docs_cache,
+            file_docs_cache,
         )
         filtered_data[key] = kept_rows
         kept_reference_ids |= ref_ids

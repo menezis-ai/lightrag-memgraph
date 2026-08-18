@@ -213,6 +213,67 @@ describe('ProcedureReviewModal — rendering', () => {
     // Failed bundle → Approve stays disabled (pending-only decision).
     expect(screen.getByTestId('procedure-review-approve')).toBeDisabled();
   });
+
+  it('keeps Retry visible but disabled while procedure ingestion is off', async () => {
+    const Wrap = wrap();
+    render(
+      <Wrap>
+        <ProcedureReviewModal
+          bundleId="proc-2"
+          folderList={FOLDER_FIXTURES}
+          procedureIngestionEnabled={false}
+          onClose={() => {}}
+          onToast={() => {}}
+        />
+      </Wrap>,
+    );
+
+    expect(await screen.findByTestId('procedure-review-retry')).toBeDisabled();
+    expect(
+      screen.getByTestId('procedure-review-retry-disabled'),
+    ).toHaveTextContent(/Settings > Vision/);
+  });
+
+  it('disables Retry when the procedure prerequisites are unavailable', async () => {
+    const Wrap = wrap();
+    render(
+      <Wrap>
+        <ProcedureReviewModal
+          bundleId="proc-2"
+          folderList={FOLDER_FIXTURES}
+          procedureIngestionEnabled
+          procedureIngestionAvailable={false}
+          onClose={() => {}}
+          onToast={() => {}}
+        />
+      </Wrap>,
+    );
+
+    expect(await screen.findByTestId('procedure-review-retry')).toBeDisabled();
+    expect(
+      screen.getByTestId('procedure-review-retry-disabled'),
+    ).toHaveTextContent(/prerequisites are unavailable/);
+  });
+
+  it('disables Retry when procedure settings could not be verified', async () => {
+    const Wrap = wrap();
+    render(
+      <Wrap>
+        <ProcedureReviewModal
+          bundleId="proc-2"
+          folderList={FOLDER_FIXTURES}
+          procedureSettingsKnown={false}
+          onClose={() => {}}
+          onToast={() => {}}
+        />
+      </Wrap>,
+    );
+
+    expect(await screen.findByTestId('procedure-review-retry')).toBeDisabled();
+    expect(
+      screen.getByTestId('procedure-review-retry-disabled'),
+    ).toHaveTextContent(/could not be verified/);
+  });
 });
 
 describe('ProcedureReviewModal — Approve', () => {

@@ -95,7 +95,12 @@ def rag():
 
 
 @pytest.fixture
-def client(rag):
+def client(rag, monkeypatch):
+    async def enabled_settings():
+        return {"procedure_enabled": True}
+
+    _procedure.set_settings_provider(enabled_settings)
+    monkeypatch.setattr(_procedure, "is_available", lambda: True)
     app = FastAPI()
     app.include_router(build_procedure_router(lambda: rag), prefix="/twin/api")
     configure_auth(api_key=ROOT_KEY)
@@ -331,6 +336,39 @@ def test_retry_with_missing_original_fails_visibly(client, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["state"] == "failed"
     assert "original-missing" in resp.json()["reason"]
+
+
+def test_retry_is_blocked_while_admin_toggle_is_off(client, tmp_path):
+    bundle_id = _park(
+        state="failed",
+        original_path=str(tmp_path / "still-parked.pdf"),
+    )
+
+    async def disabled_settings():
+        return {"procedure_enabled": False}
+
+    _procedure.set_settings_provider(disabled_settings)
+    resp = client.post(f"/twin/api/procedures/{bundle_id}/retry")
+
+    assert resp.status_code == 409
+    assert "Settings > Vision" in resp.json()["detail"]
+    assert _procedure_store.get_bundle(bundle_id)["state"] == "failed"
+
+
+def test_retry_is_blocked_when_prerequisites_are_unavailable(
+    client, monkeypatch, tmp_path
+):
+    bundle_id = _park(
+        state="failed",
+        original_path=str(tmp_path / "still-parked.pdf"),
+    )
+    monkeypatch.setattr(_procedure, "is_available", lambda: False)
+
+    resp = client.post(f"/twin/api/procedures/{bundle_id}/retry")
+
+    assert resp.status_code == 409
+    assert "prerequisites are unavailable" in resp.json()["detail"]
+    assert _procedure_store.get_bundle(bundle_id)["state"] == "failed"
 
 
 def test_reroute_standard_uses_standard_context(client, rag, monkeypatch, tmp_path):

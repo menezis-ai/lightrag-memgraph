@@ -10,6 +10,7 @@ build/
 .vscode/
 .coverage
 coverage.xml
+.vision-live-artifacts/
 .menezis/
 proto/
 
@@ -35,3 +36,8 @@ deploy/ovh-twin/
 # .lock, mkstemp temporaries, .corrupt-* quarantines)
 twin_procedure_bundles.json
 twin_procedure_bundles.json.*
+
+# Mutation testing (mutmut 3.x) — source copy + session state, regenerated per run
+mutants/
+.mutmut-cache
+mutmut-stats.json

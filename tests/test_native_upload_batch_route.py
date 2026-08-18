@@ -73,18 +73,25 @@ def native_upload_batch_app(monkeypatch, tmp_path):
         DocumentManager,
         create_document_routes,
     )
-    from tests.conftest import ensure_fresh_native_document_router
+    from tests.conftest import (
+        ensure_fresh_native_document_router,
+        seed_native_app_state,
+    )
 
     indexed: list[tuple[str, str]] = []
     rag = FakeRag()
 
-    async def reserve_enqueue_slot(_rag: Any) -> bool:
+    # Variadic on purpose: 1.5.5 passes (rag, enqueue_token) where 1.4.x
+    # passed (rag) — the stubs must survive the signature drift.
+    async def reserve_enqueue_slot(_rag: Any, *_args: Any, **_kwargs: Any) -> bool:
         return True
 
-    async def release_enqueue_slot(_rag: Any) -> None:
+    async def release_enqueue_slot(_rag: Any, *_args: Any, **_kwargs: Any) -> None:
         return None
 
-    async def pipeline_index_file(rag: FakeRag, file_path: Path, track_id: str) -> None:
+    async def pipeline_index_file(
+        rag: FakeRag, file_path: Path, track_id: str, **_kwargs: Any
+    ) -> None:
         indexed.append((file_path.name, track_id))
         now = datetime.now(timezone.utc).isoformat()
         await rag.doc_status.upsert(
@@ -117,6 +124,7 @@ def native_upload_batch_app(monkeypatch, tmp_path):
 
     doc_manager = DocumentManager(tmp_path / "input", workspace=rag.workspace)
     app = FastAPI()
+    seed_native_app_state(app)
     ensure_fresh_native_document_router()
     app.include_router(create_document_routes(rag, doc_manager, api_key=None))
 

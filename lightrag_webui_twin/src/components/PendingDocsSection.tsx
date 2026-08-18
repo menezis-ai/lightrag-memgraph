@@ -1,11 +1,12 @@
 /**
  * PendingDocsSection — top-of-DocumentsTab card list for docs the operator
- * must validate. Two card variants are rendered side-by-side:
+ * must validate. Three card variants are rendered side-by-side:
  *
  *   - `requested`  : new source awaiting first sign-off (`review.state === 'pending-review'`)
  *   - `modified`   : Confluence/SharePoint source edited upstream after
  *                    first approval; needs re-validation (`review.state === 'modified'`).
  *                    The diff summary comes from `review.update.summary_diff`.
+ *   - procedure    : parked procedure PDF awaiting an admin decision.
  *
  * Visual structure mirrors the design-prototype handoff (Bucket B1):
  *   section.pending-section[.is-open]
@@ -29,8 +30,12 @@ import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { getActiveFolder } from '../api/client';
 import { api } from '../api/resources';
-import { useProcedures } from '../api/queries';
-import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
+import { useProcedures, useVisionSettings } from '../api/queries';
+import {
+  describeError,
+  logTechnicalError,
+  userErrorMessage,
+} from '../lib/errorMessages';
 import { Icon, SourceIcon } from './Icon';
 import { ClassPill } from './ClassPill';
 import { ProcedureReviewModal } from './ProcedureReviewModal';
@@ -66,6 +71,9 @@ export interface PendingDocsSectionProps {
    * (open-access deployments) so a 403 still surfaces as an honest toast.
    */
   canReviewProcedures?: boolean;
+  /** Backend-advertised capability. False prevents unsupported deployments
+   *  from polling a route they do not expose. */
+  procedureReviewEnabled?: boolean;
 }
 
 function fmtDate(iso: string | undefined): string {
@@ -80,6 +88,7 @@ export function PendingDocsSection({
   defaultOpen = false,
   folderList = [],
   canReviewProcedures = true,
+  procedureReviewEnabled = true,
 }: Readonly<PendingDocsSectionProps>) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Document | null>(null);
@@ -234,8 +243,19 @@ export function PendingDocsSection({
   // fetches the full admin bundle on open. A degraded store answers 503
   // precisely so pending work is never presented as an empty queue — the
   // error state below keeps the section visible with a retry.
-  const proceduresQuery = useProcedures();
+  const proceduresQuery = useProcedures(
+    {},
+    { enabled: procedureReviewEnabled },
+  );
+  const visionSettingsQuery = useVisionSettings({
+    enabled: procedureReviewEnabled,
+  });
   const proceduresUnavailable = proceduresQuery.isError;
+  const procedureFailure = proceduresUnavailable
+    ? describeError(proceduresQuery.error, {
+        action: 'loading the procedure review queue',
+      })
+    : null;
   const procedureBundles = (proceduresQuery.data ?? []).filter((b) =>
     REVIEWABLE_BUNDLE_STATES.has(String(b.state)),
   );
@@ -290,8 +310,21 @@ export function PendingDocsSection({
         <Icon name="alert-triangle" size={14} color="var(--twin-amber-vivid)" />
         <span className="pending-title">To be validated by your reviewer</span>
         <span className="pending-counts">
-          <b>{pendingCount}</b> document{pendingCount === 1 ? '' : 's'}{' '}
-          awaiting your sign-off
+          {proceduresUnavailable ? (
+            docs.length > 0 ? (
+              <>
+                <b>{docs.length}</b> known document{docs.length === 1 ? '' : 's'}
+                ; procedure count unavailable
+              </>
+            ) : (
+              <>Procedure count unavailable</>
+            )
+          ) : (
+            <>
+              <b>{pendingCount}</b> document{pendingCount === 1 ? '' : 's'}{' '}
+              awaiting your sign-off
+            </>
+          )}
         </span>
         <span
           style={{
@@ -310,24 +343,25 @@ export function PendingDocsSection({
       </button>
       {open && proceduresUnavailable && (
         <div
-          className="pending-card modified"
+          className="pending-procedure-error"
           role="alert"
           data-testid="pending-procedures-error"
-          style={{ marginBottom: 8 }}
         >
-          <div className="pending-card-h">
+          <div className="pending-procedure-error-h">
             <Icon name="alert-triangle" size={14} color="var(--twin-red-600)" />
-            <span className="pending-card-title">
-              Procedure review queue unavailable
-            </span>
+            <span>Procedure review queue could not be loaded</span>
           </div>
-          <div className="pending-body">
-            {userErrorMessage(proceduresQuery.error, {
-              action: 'loading the procedure review queue',
-            })}{' '}
-            Parked procedures may be hidden — this is NOT an empty queue.
+          <div className="pending-procedure-error-body">
+            Existing parked procedures are not being shown. Retry the request;
+            if it continues to fail, give the diagnostic below to your platform
+            administrator.
           </div>
-          <div className="pending-actions grid2">
+          {procedureFailure?.technical && (
+            <code className="pending-procedure-error-diagnostic">
+              {procedureFailure.technical}
+            </code>
+          )}
+          <div className="pending-procedure-error-actions">
             <button
               type="button"
               className="pbtn ghost"
@@ -474,11 +508,9 @@ export function PendingDocsSection({
             const state = String(bundle.state);
             const failed = state === 'failed';
             const rejected = state === 'rejected';
-            const pillLabel = rejected
-              ? 'Procedure rejected'
-              : failed
-                ? 'Procedure failed'
-                : 'Procedure review';
+            let pillLabel = 'Procedure review';
+            if (rejected) pillLabel = 'Procedure rejected';
+            else if (failed) pillLabel = 'Procedure failed';
             return (
               <div
                 key={bundle.id}
@@ -554,6 +586,13 @@ export function PendingDocsSection({
         <ProcedureReviewModal
           bundleId={reviewingBundleId}
           folderList={folderList}
+          procedureIngestionEnabled={
+            visionSettingsQuery.data?.procedure_enabled === true
+          }
+          procedureIngestionAvailable={
+            visionSettingsQuery.data?.procedure_available === true
+          }
+          procedureSettingsKnown={visionSettingsQuery.isSuccess}
           onClose={() => setReviewingBundleId(null)}
           onToast={onToast}
         />

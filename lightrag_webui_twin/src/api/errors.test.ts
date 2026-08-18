@@ -83,7 +83,7 @@ describe('mapCreateEntityError', () => {
     expect(out.kind).toBe('unknown');
     // Error-UX pass 2026-07-03: raw technical messages no longer leak.
     expect(out.message).toBe(
-      'Something went wrong while creating the entity. Please retry or contact Twincore Team.',
+      'Something went wrong while creating the entity. Please retry. If the problem continues, contact your platform administrator.',
     );
   });
 

@@ -34,6 +34,7 @@ from typing import Any, Iterable, Sequence
 import json
 
 from .._pool import acquire_write_slot, get_read_session, get_session
+from .._retry import with_conflict_retry
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +155,11 @@ _TYPE_MAP: dict[str, str] = {
     "framework": "TECHNOLOGY",
     "frameworks": "TECHNOLOGY",
     "technical framework": "TECHNOLOGY",
-    "language": "TECHNOLOGY",
+    # Bare "language" is NOT technology: runtime evidence (OVH maquette,
+    # QA GRA-tech) shows the LLM uses it for natural languages (Spanish,
+    # Portuguese, Italian…), which the taxonomy classifies as Concept.
+    # Programming languages keep their explicit key below.
+    "language": "CONCEPT",
     "programming language": "TECHNOLOGY",
     "library": "TECHNOLOGY",
     "framework library": "TECHNOLOGY",
@@ -803,7 +808,8 @@ async def _upsert_entity_override(
         "SET o.deleted = $deleted "
         "RETURN o.folder AS folder"
     )
-    try:
+
+    async def _write() -> bool:
         async with acquire_write_slot():
             async with get_session() as session:
                 result = await session.run(
@@ -816,6 +822,11 @@ async def _upsert_entity_override(
                 rows = [record async for record in result]
                 await result.consume()
         return bool(rows)
+
+    try:
+        return await with_conflict_retry(
+            f"graph_reader.entity_override[{entity_id}]", _write
+        )
     except Exception:
         logger.exception(
             "graph_reader: entity override upsert failed (%s, folder=%s)",
@@ -847,7 +858,8 @@ async def _upsert_rel_override(
         "SET o.deleted = $deleted "
         "RETURN o.folder AS folder"
     )
-    try:
+
+    async def _write() -> bool:
         async with acquire_write_slot():
             async with get_session() as session:
                 result = await session.run(
@@ -861,6 +873,11 @@ async def _upsert_rel_override(
                 rows = [record async for record in result]
                 await result.consume()
         return bool(rows)
+
+    try:
+        return await with_conflict_retry(
+            f"graph_reader.rel_override[{src}->{tgt}]", _write
+        )
     except Exception:
         logger.exception(
             "graph_reader: rel override upsert failed (%s→%s, folder=%s)",
@@ -1304,11 +1321,15 @@ async def _persist_relation_ids(
         f"(t:`{label}` {{entity_id: rel.tgt}}) "
         f"SET r.`{_REL_ID_PROP}` = rel.rid"
     )
-    try:
+
+    async def _write() -> None:
         async with acquire_write_slot():
             async with get_session() as session:
                 result = await session.run(query, relations=bindings)
                 await result.consume()
+
+    try:
+        await with_conflict_retry(f"graph_reader.relation_ids[{label}]", _write)
     except Exception:
         logger.exception(
             "graph_reader: relation-id persistence failed (ws=%s)", workspace
@@ -1938,9 +1959,9 @@ async def _search_labels_scoped(
     overrides = await _load_folder_overrides(workspace, folder)
     tombstoned = {eid for eid, override in overrides.items() if override.get("deleted")}
     out = [eid for eid in out if eid not in tombstoned]
-    await _append_direct_label_matches(
-        workspace=workspace,
-        folder=folder,
+    direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+    _append_direct_label_matches(
+        direct_rows=direct_rows,
         q=q,
         limit=limit,
         out=out,
@@ -1954,6 +1975,9 @@ async def _search_labels_scoped(
         limit=limit,
         out=out,
         overrides=overrides,
+        direct_members={
+            str(row["entity_id"]) for row in direct_rows if row.get("entity_id")
+        },
     )
     return out
 
@@ -2007,10 +2031,9 @@ def _append_label_match(
         out.append(eid)
 
 
-async def _append_direct_label_matches(
+def _append_direct_label_matches(
     *,
-    workspace: str,
-    folder: str,
+    direct_rows: Sequence[dict[str, Any]],
     q: str,
     limit: int,
     out: list[str],
@@ -2019,7 +2042,6 @@ async def _append_direct_label_matches(
 ) -> None:
     # #1a + #1b: direct-member manual entities have no chunk provenance, and a
     # folder-local display_name override should be searchable in that folder.
-    direct_rows = await _load_direct_member_entity_rows(workspace, folder)
     for row in direct_rows:
         eid = str(row.get("entity_id") or "")
         if not eid:
@@ -2047,12 +2069,11 @@ async def _append_override_label_matches(
     limit: int,
     out: list[str],
     overrides: dict[str, dict[str, Any]],
+    direct_members: set[str],
 ) -> None:
     # Overlay display names on chunk-backed entities may be the only text that
     # matches the query. Verify visibility through the same gate used by writes
     # so the overlay never grants cross-folder search visibility by itself.
-    direct_rows = await _load_direct_member_entity_rows(workspace, folder)
-    direct_members = {str(r["entity_id"]) for r in direct_rows if r.get("entity_id")}
     chunk_to_doc = await _load_chunk_to_doc_index(workspace)
     member_docs = await _load_member_docs(workspace, folder)
     for eid, override in overrides.items():
@@ -2300,26 +2321,32 @@ async def _write_entity_props(
     *, workspace: str, entity_id: str, props: dict[str, Any]
 ) -> bool:
     label = _sanitize_workspace(workspace)
-    async with acquire_write_slot():
-        async with get_session() as session:
-            update_query = (
-                f"MATCH (n:`{label}` {{entity_id: $entity_id}}) "
-                "SET n += $props "
-                "RETURN n.entity_id AS entity_id"
-            )
-            try:
+    update_query = (
+        f"MATCH (n:`{label}` {{entity_id: $entity_id}}) "
+        "SET n += $props "
+        "RETURN n.entity_id AS entity_id"
+    )
+
+    async def _write() -> bool:
+        async with acquire_write_slot():
+            async with get_session() as session:
                 result = await session.run(
                     update_query, entity_id=entity_id, props=props
                 )
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.update_graph_entity: write failed for %s",
-                    entity_id,
-                )
-                return False
-    return bool(rows)
+        return bool(rows)
+
+    try:
+        return await with_conflict_retry(
+            f"graph_reader.entity_props[{entity_id}]", _write
+        )
+    except Exception:
+        logger.exception(
+            "graph_reader.update_graph_entity: write failed for %s",
+            entity_id,
+        )
+        return False
 
 
 async def update_graph_entity(
@@ -2392,26 +2419,32 @@ async def _write_relation_props(
     *, workspace: str, src: str, tgt: str, props: dict[str, Any]
 ) -> bool:
     label = _sanitize_workspace(workspace)
-    async with acquire_write_slot():
-        async with get_session() as session:
-            update_query = (
-                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
-                f"(t:`{label}` {{entity_id: $tgt}}) "
-                "SET r += $props "
-                "RETURN s.entity_id AS source_id"
-            )
-            try:
+    update_query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+        f"(t:`{label}` {{entity_id: $tgt}}) "
+        "SET r += $props "
+        "RETURN s.entity_id AS source_id"
+    )
+
+    async def _write() -> bool:
+        async with acquire_write_slot():
+            async with get_session() as session:
                 result = await session.run(update_query, src=src, tgt=tgt, props=props)
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.update_graph_relation: write failed for %s→%s",
-                    src,
-                    tgt,
-                )
-                return False
-    return bool(rows)
+        return bool(rows)
+
+    try:
+        return await with_conflict_retry(
+            f"graph_reader.relation_props[{src}->{tgt}]", _write
+        )
+    except Exception:
+        logger.exception(
+            "graph_reader.update_graph_relation: write failed for %s→%s",
+            src,
+            tgt,
+        )
+        return False
 
 
 async def update_graph_relation(
@@ -2627,18 +2660,32 @@ def _entity_create_props(
 
 
 async def _stamp_entity_folder_membership(
-    session, label: str, entity_id: str, folder: str
+    label: str, entity_id: str, folder: str
 ) -> None:
     """#1a: stamp explicit folder membership so a chunk-less manual entity
     survives a folder-scoped refresh. Only called on a genuine create — a
-    matched pre-existing node raised ``EntityExistsError`` before this."""
+    matched pre-existing node raised ``EntityExistsError`` before this.
+
+    Owns its write slot/session (and conflict retry) rather than sharing the
+    create-MERGE's: the two statements are separate autocommit transactions,
+    so replaying them as one block after a stamp-side conflict would re-run
+    the MERGE against the node the first attempt already committed and
+    misreport the create as ``EntityExistsError``."""
     stamp = (
         f"MATCH (n:`{label}` {{entity_id: $eid}}) "
         f"MERGE (f:`Folder_{label}` {{id: $folder}}) "
         f"MERGE (n)-[:`{_GRAPH_MEMBER_REL}`]->(f)"
     )
+
+    async def _write() -> None:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                await (await session.run(stamp, eid=entity_id, folder=folder)).consume()
+
     try:
-        await (await session.run(stamp, eid=entity_id, folder=folder)).consume()
+        await with_conflict_retry(
+            f"graph_reader.entity_folder_stamp[{entity_id}]", _write
+        )
     except Exception as exc:
         logger.exception(
             "graph_reader.create_graph_entity: folder stamp failed for %s",
@@ -2682,48 +2729,53 @@ async def create_graph_entity(
     from .folder import active_folder_id
 
     folder = active_folder_id()
-    async with acquire_write_slot():
-        async with get_session() as session:
-            # MG-1 (audit 2026-07-02): this used to be a check-then-CREATE —
-            # the `entity_exists` probe above, then a bare CREATE. Two
-            # concurrent POSTs (or a client retry after a timeout whose write
-            # had landed) could both pass the probe and mint two nodes with
-            # the same entity_id, turning every downstream MATCH multi-row.
-            # The atomic MERGE keyed on entity_id closes that window: ON
-            # CREATE-only SET guarantees an existing node's properties are
-            # never rewritten by a duplicate request. The transient marker
-            # distinguishes created-vs-matched and is removed in the same
-            # statement (single implicit transaction — no residue possible).
-            query = (
-                f"MERGE (n:`{label}` {{entity_id: $eid}}) "
-                "ON CREATE SET n = $props, n.`__twin_create_marker` = true "
-                "WITH n, coalesce(n.`__twin_create_marker`, false) AS created "
-                "REMOVE n.`__twin_create_marker` "
-                "RETURN n.entity_id AS entity_id, created AS created"
-            )
-            try:
+    # MG-1 (audit 2026-07-02): this used to be a check-then-CREATE —
+    # the `entity_exists` probe above, then a bare CREATE. Two
+    # concurrent POSTs (or a client retry after a timeout whose write
+    # had landed) could both pass the probe and mint two nodes with
+    # the same entity_id, turning every downstream MATCH multi-row.
+    # The atomic MERGE keyed on entity_id closes that window: ON
+    # CREATE-only SET guarantees an existing node's properties are
+    # never rewritten by a duplicate request. The transient marker
+    # distinguishes created-vs-matched and is removed in the same
+    # statement (single implicit transaction — no residue possible).
+    query = (
+        f"MERGE (n:`{label}` {{entity_id: $eid}}) "
+        "ON CREATE SET n = $props, n.`__twin_create_marker` = true "
+        "WITH n, coalesce(n.`__twin_create_marker`, false) AS created "
+        "REMOVE n.`__twin_create_marker` "
+        "RETURN n.entity_id AS entity_id, created AS created"
+    )
+
+    async def _merge_node() -> list[Any]:
+        async with acquire_write_slot():
+            async with get_session() as session:
                 result = await session.run(query, eid=entity_id, props=props)
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception as exc:
-                logger.exception(
-                    "graph_reader.create_graph_entity: insert failed for %s",
-                    entity_id,
-                )
-                raise EntityCreateBackendError(str(exc)) from exc
-            if not rows:
-                raise EntityCreateBackendError(
-                    f"MERGE returned no rows for {entity_id!r}"
-                )
-            if not rows[0]["created"]:
-                # Lost the check-then-write race: the probe missed but the
-                # MERGE matched an existing node — ON CREATE did not fire,
-                # nothing was written. Same observable contract as the
-                # sequential duplicate (route maps to 409), but no second
-                # node can be minted.
-                raise EntityExistsError(entity_id)
-            if folder:
-                await _stamp_entity_folder_membership(session, label, entity_id, folder)
+        return rows
+
+    try:
+        rows = await with_conflict_retry(
+            f"graph_reader.entity_create[{entity_id}]", _merge_node
+        )
+    except Exception as exc:
+        logger.exception(
+            "graph_reader.create_graph_entity: insert failed for %s",
+            entity_id,
+        )
+        raise EntityCreateBackendError(str(exc)) from exc
+    if not rows:
+        raise EntityCreateBackendError(f"MERGE returned no rows for {entity_id!r}")
+    if not rows[0]["created"]:
+        # Lost the check-then-write race: the probe missed but the
+        # MERGE matched an existing node — ON CREATE did not fire,
+        # nothing was written. Same observable contract as the
+        # sequential duplicate (route maps to 409), but no second
+        # node can be minted.
+        raise EntityExistsError(entity_id)
+    if folder:
+        await _stamp_entity_folder_membership(label, entity_id, folder)
     try:
         projected = await _read_one_entity(workspace, entity_id)
     except Exception as exc:
@@ -2792,7 +2844,10 @@ async def _cascade_entity_vdb_rows(workspace: str, entity_id: str) -> bool:
             workspace,
         )
         return True
-    try:
+
+    async def _write() -> None:
+        # Both statements are idempotent deletes, so replaying the whole
+        # block after a conflict on either one is safe.
         async with acquire_write_slot():
             async with get_session() as session:
                 result = await session.run(
@@ -2810,6 +2865,11 @@ async def _cascade_entity_vdb_rows(workspace: str, entity_id: str) -> bool:
                     name=entity_id,
                 )
                 await result.consume()
+
+    try:
+        await with_conflict_retry(
+            f"graph_reader.entity_vdb_cascade[{entity_id}]", _write
+        )
     except Exception:
         logger.exception(
             "graph_reader: vdb cascade failed for entity %s (ws=%s)",
@@ -2837,7 +2897,8 @@ async def _cascade_relation_vdb_row(workspace: str, src: str, tgt: str) -> bool:
             workspace,
         )
         return True
-    try:
+
+    async def _write() -> None:
         async with acquire_write_slot():
             async with get_session() as session:
                 result = await session.run(
@@ -2850,6 +2911,11 @@ async def _cascade_relation_vdb_row(workspace: str, src: str, tgt: str) -> bool:
                     tgt=tgt,
                 )
                 await result.consume()
+
+    try:
+        await with_conflict_retry(
+            f"graph_reader.relation_vdb_cascade[{src}->{tgt}]", _write
+        )
     except Exception:
         logger.exception(
             "graph_reader: vdb cascade failed for relation %s→%s (ws=%s)",
@@ -2859,6 +2925,281 @@ async def _cascade_relation_vdb_row(workspace: str, src: str, tgt: str) -> bool:
         )
         return False
     return True
+
+
+def _partition_source_refs(
+    source_id: str, live_chunk_ids: set[str], sep: str
+) -> tuple[list[str], bool]:
+    """Split a ``source_id`` into (kept refs, changed?) against live chunks.
+
+    Pure: order preserved, duplicates deduped (a doubled dead ref must not
+    survive as a doubled live one), empty segments dropped. ``changed`` is
+    True when at least one ref was dead or a duplicate was collapsed.
+    """
+    refs = [ref for ref in source_id.split(sep) if ref]
+    kept = [ref for ref in dict.fromkeys(refs) if ref in live_chunk_ids]
+    return kept, kept != refs
+
+
+async def sweep_stale_source_refs(workspace: str) -> dict[str, int]:
+    """Purge dead chunk refs from entity/relation ``source_id`` (OVH §4).
+
+    LightRAG's post-delete rebuild (``_rebuild_single_entity``, same shape
+    on 1.4.x and 1.5.x) exits WITHOUT rewriting ``source_id`` when no
+    cached extraction covers an entity's surviving chunks — so refs to the
+    deleted doc's chunks accumulate forever (measured 10.5% of refs on the
+    OVH maquette), weaken grounding, and an all-dead entity becomes
+    invisible to folder-scoped graph reads while its vector rows keep
+    grounding answers. This Twin hygiene sweep runs after every document
+    delete and self-heals the historical residue too:
+
+    - refs whose chunk id no longer exists in ``KV_{ws}_text_chunks`` are
+      removed from every entity node and relation edge ``source_id``;
+    - an entity whose refs ALL died is deleted with the MG-2 vector
+      cascade (:func:`_cascade_entity_vdb_rows` first — the REMOVE-label
+      dance included — then the graph node);
+    - a relation whose refs ALL died is deleted with its
+      ``Vec_{ws}_relationships`` row.
+
+    Read-compute-write: the partition happens in Python (no APOC on
+    Memgraph), writes are batched UNWIND under the write slot with
+    conflict retry, and EVERY write is compare-and-set guarded on the
+    ``source_id`` value the snapshot read (``with_conflict_retry`` only
+    covers overlapping write/write transactions — an ingestion commit
+    landing between our read and our write raises no conflict, and an
+    unguarded SET would erase its fresh refs, or DETACH DELETE a revived
+    entity; same CAS standard as ``claim_last_membership_delete``). A
+    guard miss simply skips that row — the next sweep re-decides from a
+    fresh read. Accepted micro-window, MG-2 direction: if the guarded
+    node delete misses AFTER its vector cascade ran, the node survives
+    visibly without vdb rows (re-sweepable; a revival re-upserts the
+    vector row through LightRAG's merge flow anyway).
+
+    Returns counters for logging/tests. Raises on backend failure — the
+    caller decides (the delete path wraps it fail-soft: a failed sweep
+    must never fail the user's delete; the next delete retries it by
+    construction). Callers on the delete path go through
+    :func:`request_source_ref_sweep`, which coalesces concurrent
+    requests per workspace.
+    """
+    from .._constants import validate_identifier
+
+    try:
+        from lightrag.constants import GRAPH_FIELD_SEP
+    except ImportError:  # pragma: no cover - pre-1.4.9 fallback
+        GRAPH_FIELD_SEP = "<SEP>"
+
+    label = _sanitize_workspace(workspace)
+    kv_label = f"KV_{validate_identifier(workspace, 'workspace')}_text_chunks"
+
+    async with get_read_session() as session:
+        result = await session.run(f"MATCH (k:`{kv_label}`) RETURN k.id AS id")
+        live = {record["id"] async for record in result if record["id"]}
+        result = await session.run(
+            f"MATCH (n:`{label}`) WHERE n.source_id IS NOT NULL "
+            "RETURN n.entity_id AS entity_id, n.source_id AS source_id"
+        )
+        entities = [
+            (record["entity_id"], record["source_id"])
+            async for record in result
+            if record["entity_id"]
+        ]
+        result = await session.run(
+            f"MATCH (a:`{label}`)-[r]->(b:`{label}`) "
+            "WHERE r.source_id IS NOT NULL "
+            "RETURN a.entity_id AS src, b.entity_id AS tgt, "
+            "r.source_id AS source_id"
+        )
+        relations = [
+            (record["src"], record["tgt"], record["source_id"])
+            async for record in result
+            if record["src"] and record["tgt"]
+        ]
+
+    entity_updates: list[dict[str, str]] = []
+    entity_removals: list[tuple[str, str]] = []
+    for entity_id, source_id in entities:
+        kept, changed = _partition_source_refs(str(source_id), live, GRAPH_FIELD_SEP)
+        if not changed:
+            continue
+        if kept:
+            entity_updates.append(
+                {
+                    "id": entity_id,
+                    "expected": str(source_id),
+                    "source_id": GRAPH_FIELD_SEP.join(kept),
+                }
+            )
+        else:
+            entity_removals.append((entity_id, str(source_id)))
+    relation_updates: list[dict[str, str]] = []
+    relation_removals: list[tuple[str, str, str]] = []
+    relations_dropped_with_entities = 0
+    removed_entities = {entity_id for entity_id, _ in entity_removals}
+    for src, tgt, source_id in relations:
+        if src in removed_entities or tgt in removed_entities:
+            # The entity DETACH DELETE takes the edge with it; its vector
+            # row is covered by the entity cascade (second statement of
+            # _cascade_entity_vdb_rows). Counted separately so the log
+            # line stays exact for the recette convergence check.
+            relations_dropped_with_entities += 1
+            continue
+        kept, changed = _partition_source_refs(str(source_id), live, GRAPH_FIELD_SEP)
+        if not changed:
+            continue
+        if kept:
+            relation_updates.append(
+                {
+                    "src": src,
+                    "tgt": tgt,
+                    "expected": str(source_id),
+                    "source_id": GRAPH_FIELD_SEP.join(kept),
+                }
+            )
+        else:
+            relation_removals.append((src, tgt, str(source_id)))
+
+    async def _write_updates() -> None:
+        # CAS guards: only touch a row whose source_id is still exactly
+        # the snapshot value — an ingestion commit in the read→write
+        # window must win. A guard miss is silently skipped (next sweep
+        # re-decides). The guards also make the conflict-retry replay
+        # idempotent.
+        async with acquire_write_slot():
+            async with get_session() as session:
+                if entity_updates:
+                    result = await session.run(
+                        "UNWIND $rows AS row "
+                        f"MATCH (n:`{label}` {{entity_id: row.id}}) "
+                        "WHERE n.source_id = row.expected "
+                        "SET n.source_id = row.source_id",
+                        rows=entity_updates,
+                    )
+                    await result.consume()
+                if relation_updates:
+                    result = await session.run(
+                        "UNWIND $rows AS row "
+                        f"MATCH (a:`{label}` {{entity_id: row.src}})"
+                        f"-[r]->(b:`{label}` {{entity_id: row.tgt}}) "
+                        "WHERE r.source_id = row.expected "
+                        "SET r.source_id = row.source_id",
+                        rows=relation_updates,
+                    )
+                    await result.consume()
+
+    if entity_updates or relation_updates:
+        await with_conflict_retry(
+            f"graph_reader.source_ref_sweep[{workspace}]", _write_updates
+        )
+
+    for src, tgt, expected in relation_removals:
+        if not await _cascade_relation_vdb_row(workspace, src, tgt):
+            raise RuntimeError(f"relation vdb cascade failed for {src}->{tgt}")
+
+        async def _drop_edge(
+            src: str = src, tgt: str = tgt, expected: str = expected
+        ) -> None:
+            async with acquire_write_slot():
+                async with get_session() as session:
+                    result = await session.run(
+                        f"MATCH (a:`{label}` {{entity_id: $src}})"
+                        f"-[r]->(b:`{label}` {{entity_id: $tgt}}) "
+                        "WHERE r.source_id = $expected DELETE r",
+                        src=src,
+                        tgt=tgt,
+                        expected=expected,
+                    )
+                    await result.consume()
+
+        await with_conflict_retry(
+            f"graph_reader.source_ref_sweep_edge[{src}->{tgt}]", _drop_edge
+        )
+
+    for entity_id, expected in entity_removals:
+        # Re-check right before the cascade: the MG-2 ordering (vectors
+        # first) makes the cascade the destructive point of no return, so
+        # an entity revived by ingestion since the snapshot must be left
+        # alone entirely — the next sweep re-decides.
+        async with get_read_session() as session:
+            result = await session.run(
+                f"MATCH (n:`{label}` {{entity_id: $id}}) RETURN n.source_id AS s",
+                id=entity_id,
+            )
+            record = await result.single()
+        if record is None or record["s"] != expected:
+            continue
+        # Vector rows FIRST (MG-2 ordering), graph node second — a mid-flow
+        # failure leaves a visible, re-sweepable node, never an invisible
+        # one whose vectors keep grounding answers.
+        if not await _cascade_entity_vdb_rows(workspace, entity_id):
+            raise RuntimeError(f"entity vdb cascade failed for {entity_id}")
+
+        async def _drop_node(
+            entity_id: str = entity_id, expected: str = expected
+        ) -> None:
+            async with acquire_write_slot():
+                async with get_session() as session:
+                    result = await session.run(
+                        f"MATCH (n:`{label}` {{entity_id: $id}}) "
+                        "WHERE n.source_id = $expected DETACH DELETE n",
+                        id=entity_id,
+                        expected=expected,
+                    )
+                    await result.consume()
+
+        await with_conflict_retry(
+            f"graph_reader.source_ref_sweep_entity[{entity_id}]", _drop_node
+        )
+
+    counters = {
+        "entities_rewritten": len(entity_updates),
+        "entities_removed": len(entity_removals),
+        "relations_rewritten": len(relation_updates),
+        "relations_removed": len(relation_removals),
+        "relations_dropped_with_entities": relations_dropped_with_entities,
+    }
+    if any(counters.values()):
+        logger.info(
+            "graph_reader: source_id hygiene sweep (ws=%s): %s",
+            workspace,
+            counters,
+        )
+    return counters
+
+
+_SWEEP_LOCKS: dict[str, asyncio.Lock] = {}
+_SWEEP_PENDING: set[str] = set()
+
+
+async def request_source_ref_sweep(workspace: str) -> dict[str, int] | None:
+    """Coalescing front door: one sweep per workspace at a time.
+
+    The webui bulk-delete gathers up to 500 concurrent deletes, each of
+    which would otherwise run a full workspace-global sweep inline — N
+    concurrent triple scans racing each other on the write slots. A
+    caller arriving mid-sweep marks the workspace dirty and returns
+    immediately (its chunks may have died after the running sweep's
+    read); the lock holder re-runs once before releasing — a burst of N
+    deletes costs 2 sweeps, not N. The ``lock.locked()`` check and the
+    pending-add are atomic on the event loop (no await between them).
+
+    Per-process only; cross-worker overlap is exactly what the CAS
+    guards inside :func:`sweep_stale_source_refs` cover. Honest residue:
+    a delete landing between the last pending check and the release
+    leaves the flag for the next delete — which is already the wiring's
+    contract ("the next delete retries it by construction").
+    """
+    lock = _SWEEP_LOCKS.setdefault(workspace, asyncio.Lock())
+    if lock.locked():
+        _SWEEP_PENDING.add(workspace)
+        return None
+    async with lock:
+        _SWEEP_PENDING.discard(workspace)
+        counters = await sweep_stale_source_refs(workspace)
+        while workspace in _SWEEP_PENDING:
+            _SWEEP_PENDING.discard(workspace)
+            counters = await sweep_stale_source_refs(workspace)
+        return counters
 
 
 async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
@@ -2899,18 +3240,22 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     if not await _cascade_entity_vdb_rows(workspace, entity_id):
         return False
 
-    async with acquire_write_slot():
-        async with get_session() as session:
-            query = f"MATCH (n:`{label}` {{entity_id: $eid}}) DETACH DELETE n"
-            try:
-                result = await session.run(query, eid=entity_id)
+    delete_query = f"MATCH (n:`{label}` {{entity_id: $eid}}) DETACH DELETE n"
+
+    async def _write() -> None:
+        async with acquire_write_slot():
+            async with get_session() as session:
+                result = await session.run(delete_query, eid=entity_id)
                 await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.delete_graph_entity: delete failed for %s",
-                    entity_id,
-                )
-                return False
+
+    try:
+        await with_conflict_retry(f"graph_reader.entity_delete[{entity_id}]", _write)
+    except Exception:
+        logger.exception(
+            "graph_reader.delete_graph_entity: delete failed for %s",
+            entity_id,
+        )
+        return False
 
     # Evict any cached relations that referenced this entity so future
     # PATCH requests on stale edges return a clean 404 instead of
@@ -2972,27 +3317,33 @@ async def _merge_relation(
     *, workspace: str, src: str, tgt: str, props: dict[str, Any]
 ) -> bool:
     label = _sanitize_workspace(workspace)
-    async with acquire_write_slot():
-        async with get_session() as session:
-            query = (
-                f"MATCH (s:`{label}` {{entity_id: $src}}), "
-                f"(t:`{label}` {{entity_id: $tgt}}) "
-                "MERGE (s)-[r:DIRECTED]->(t) "
-                "SET r += $props "
-                "RETURN s.entity_id AS source_id"
-            )
-            try:
+    query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}}), "
+        f"(t:`{label}` {{entity_id: $tgt}}) "
+        "MERGE (s)-[r:DIRECTED]->(t) "
+        "SET r += $props "
+        "RETURN s.entity_id AS source_id"
+    )
+
+    async def _write() -> bool:
+        async with acquire_write_slot():
+            async with get_session() as session:
                 result = await session.run(query, src=src, tgt=tgt, props=props)
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.create_graph_relation: insert failed for %s→%s",
-                    src,
-                    tgt,
-                )
-                return False
-    return bool(rows)
+        return bool(rows)
+
+    try:
+        return await with_conflict_retry(
+            f"graph_reader.relation_merge[{src}->{tgt}]", _write
+        )
+    except Exception:
+        logger.exception(
+            "graph_reader.create_graph_relation: insert failed for %s→%s",
+            src,
+            tgt,
+        )
+        return False
 
 
 async def create_graph_relation(
@@ -3081,26 +3432,33 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
         return False
 
     label = _sanitize_workspace(workspace)
-    async with acquire_write_slot():
-        async with get_session() as session:
-            query = (
-                f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
-                f"(t:`{label}` {{entity_id: $tgt}}) "
-                "DELETE r "
-                "RETURN s.entity_id AS source_id"
-            )
-            try:
+    query = (
+        f"MATCH (s:`{label}` {{entity_id: $src}})-[r:DIRECTED]->"
+        f"(t:`{label}` {{entity_id: $tgt}}) "
+        "DELETE r "
+        "RETURN s.entity_id AS source_id"
+    )
+
+    async def _write() -> bool:
+        async with acquire_write_slot():
+            async with get_session() as session:
                 result = await session.run(query, src=src, tgt=tgt)
                 rows = [record async for record in result]
                 await result.consume()
-            except Exception:
-                logger.exception(
-                    "graph_reader.delete_graph_relation: delete failed for %s",
-                    rel_id,
-                )
-                return False
-            if not rows:
-                return False
+        return bool(rows)
+
+    try:
+        deleted = await with_conflict_retry(
+            f"graph_reader.relation_delete[{src}->{tgt}]", _write
+        )
+    except Exception:
+        logger.exception(
+            "graph_reader.delete_graph_relation: delete failed for %s",
+            rel_id,
+        )
+        return False
+    if not deleted:
+        return False
 
     _RELATION_ENDPOINT_CACHE.pop(rel_id, None)
     return True

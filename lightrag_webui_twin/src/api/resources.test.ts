@@ -31,6 +31,43 @@ afterEach(() => {
 });
 
 describe('queryStream parser — answer_status propagation', () => {
+  it('forwards retrieval progress stage events without polluting answer text', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'stage', value: 'retrieval' }),
+        JSON.stringify({ type: 'stage', value: 'generation' }),
+        JSON.stringify({ type: 'token', value: 'Answer.' }),
+        JSON.stringify({ type: 'stage', value: 'sources' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+    const onStage = vi.fn();
+
+    const result = await api.queryStream(
+      { query: 'slow?' },
+      () => undefined,
+      undefined,
+      onStage,
+    );
+
+    expect(onStage.mock.calls.flat()).toEqual(['retrieval', 'generation', 'sources']);
+    expect(result.response).toBe('Answer.');
+  });
+
+  it('preserves deployment model metadata from the stream', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'meta', value: { model: 'deepseek-chat' } }),
+        JSON.stringify({ type: 'token', value: 'Answer.' }),
+        JSON.stringify({ type: 'status', value: 'grounded' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+
+    const res = await api.queryStream({ query: 'model?' }, () => undefined);
+    expect(res.model).toBe('deepseek-chat');
+  });
+
   it('returns answer_status=insufficient_information when the stream carries the status event', async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       ndjsonResponse([
@@ -242,8 +279,14 @@ describe('uploadDocument', () => {
   } {
     const bodies: FormData[] = [];
     const headers: Headers[] = [];
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(
       async (_url: string | URL | Request, init?: RequestInit) => {
+        if (String(_url).includes('/documents/resolve-upload')) {
+          return new Response(JSON.stringify({ action: 'upload' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
         if (init?.body instanceof FormData) bodies.push(init.body);
         headers.push(new Headers(init?.headers));
         return new Response(
@@ -328,6 +371,99 @@ describe('uploadDocument', () => {
       'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig',
     );
     expect(headers[0].has('X-API-Key')).toBe(false);
+  });
+
+  it('shares an existing document without sending multipart content again', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          action: 'shared',
+          message: "'known.pdf' was added to folder 'sandbox'.",
+          doc_id: 'doc-known',
+          track_id: 'track-known',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    await expect(
+      api.uploadDocument(new File(['same bytes'], 'known.pdf')),
+    ).resolves.toEqual({
+      status: 'shared',
+      message: "'known.pdf' was added to folder 'sandbox'.",
+      doc_id: 'doc-known',
+      track_id: 'track-known',
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1]?.body,
+    ).not.toBeInstanceOf(FormData);
+  });
+
+  it('re-resolves a native name collision to close the preflight race', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ action: 'upload' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail: "Document storage already contains 'known.pdf'",
+          }),
+          {
+            status: 409,
+            statusText: 'Conflict',
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            action: 'shared',
+            message: 'added',
+            doc_id: 'doc-known',
+            track_id: 'track-known',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+    await expect(
+      api.uploadDocument(new File(['payload'], 'known.pdf')),
+    ).resolves.toMatchObject({ status: 'shared', doc_id: 'doc-known' });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not mask a pipeline-busy 409 with an unrelated preflight retry', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ action: 'upload' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: 'Pipeline is busy' }), {
+          status: 409,
+          statusText: 'Conflict',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    await expect(
+      api.uploadDocument(new File(['payload'], 'new.pdf')),
+    ).rejects.toMatchObject({ status: 409, body: { detail: 'Pipeline is busy' } });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 });
 

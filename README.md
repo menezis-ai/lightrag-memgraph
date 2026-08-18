@@ -29,40 +29,58 @@ delivered through the `export-1.0.0` snapshot.
 
 Production target:
 
-- LightRAG: `lightrag-hku==1.4.9.11`
-- Memgraph MAGE: `3.9.0`
-- Forward-compat CI: LightRAG `1.4.11` / `1.4.12`, Memgraph MAGE `3.10.1`
+- LightRAG: `lightrag-hku==1.5.6` (single supported version since 2026-08-06)
+- Memgraph MAGE: `3.12.0`
+- Forward-compat CI: Memgraph MAGE `latest`
 
 The public GitHub workflow is intentionally reduced. The compatibility gate is
 Forgejo CI in `.forgejo/workflows/ci.yml`.
 
 ## Compatibility Matrix
 
-| | Memgraph MAGE 3.9.0 | Memgraph MAGE 3.10.1 |
+| | Memgraph MAGE 3.12.0 | Memgraph MAGE latest |
 |---|:-:|:-:|
-| **LightRAG 1.4.9.11** | OK | OK |
-| **LightRAG 1.4.11** | OK | OK |
-| **LightRAG 1.4.12** | OK | OK |
+| **LightRAG 1.5.6** | OK | OK |
 
 Forgejo CI runs:
 
-- unit tests on Python `3.10` / `3.11` / `3.12` / `3.13` across the LightRAG
-  matrix;
-- integration tests across the LightRAG matrix and Memgraph `3.9.0` / `3.10.1`;
+- unit tests on Python `3.12` / `3.13` against the pinned LightRAG `1.5.6`;
+- integration tests against LightRAG `1.5.6` and Memgraph `3.12.0` / `latest`;
+- a dedicated live OCR/Vision gate using real RapidOCR, PDFium and OpenRouter
+  `google/gemma-4-31b-it` on synthetic representative documents;
 - WebUI lint, typecheck, unit tests, build, MSW Playwright e2e, and real-backend
   Playwright smoke.
 
-`1.4.10` is deliberately excluded because it had intermittent integration-load
-failures fixed upstream in `1.4.11+`. Memgraph `latest` is deliberately not used:
-CI pins the coverage points.
+The paid OCR/Vision gate runs for same-repository pull requests and pushes to
+`main`. Fork pull requests skip it because Forgejo does not expose repository
+secrets to untrusted code; the aggregate CI explicitly accepts that skip.
+
+The 1.4.x LightRAG line was retired on 2026-08-04 (single supported version).
+Memgraph `3.12.0` is the support contract; `latest` is kept as a
+forward-compatibility canary, never as a runtime target.
 
 ## Install
 
 For local development with the server and tests:
 
 ```bash
-pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==1.4.12"
+pip install -c requirements/constraints-dev.txt "lightrag-hku[api]==1.5.6"
 pip install -c requirements/constraints-dev.txt -e ".[server,intelligence,test]"
+```
+
+Install the versioned Python lint hook once per clone:
+
+```bash
+pip install -c requirements/constraints-dev.txt -e ".[lint]"
+pre-commit install
+```
+
+The hook runs Black, then Ruff, on staged Python files before every commit.
+Black may rewrite a file; when it does, review and stage the formatted result,
+then commit again. To check the entire repository manually:
+
+```bash
+pre-commit run --all-files
 ```
 
 For the reproducible production target:
@@ -89,6 +107,7 @@ runtime extras are:
 
 | Extra | Purpose |
 |---|---|
+| `lint` | Black, Ruff, and the versioned pre-commit hook. |
 | `server` | FastAPI/uvicorn runtime and LightRAG upload dependencies. |
 | `intelligence` | OpenAI/Pydantic settings for the Twin intelligence layer. |
 | `tracing` | LangSmith tracing integration. |
@@ -375,7 +394,7 @@ coverage xml
 Local Memgraph:
 
 ```bash
-docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:3.9.0
+docker run -d --name memgraph-test -p 7687:7687 memgraph/memgraph-mage:3.12.0
 ```
 
 Restricted-runtime smoke:
@@ -447,7 +466,7 @@ mgconsole --host localhost --port 7687 \
 
 Vector search does **not** require MAGE — `CREATE VECTOR INDEX` and
 `vector_search.search` are core Memgraph features (stable since 3.0.0). The
-plain `memgraph/memgraph:3.9.0` image is sufficient; `memgraph/memgraph-mage`
+plain `memgraph/memgraph:3.12.0` image is sufficient; `memgraph/memgraph-mage`
 also works (superset). This package calls no MAGE-only procedure — KV,
 DocStatus and the graph backend are plain Cypher.
 
@@ -464,6 +483,7 @@ src/twindb_lightrag_memgraph/
   _pool.py                    Shared read/write Bolt pools.
   _constants.py               Env names, validators, folder/workspace context.
   _buffered_graph.py          Buffered graph write proxy.
+  _retry.py                   Write/write transaction-conflict retry.
   kv_impl.py                  MemgraphKVStorage.
   vector_impl.py              MemgraphVectorDBStorage.
   docstatus_impl.py           MemgraphDocStatusStorage + folder membership.

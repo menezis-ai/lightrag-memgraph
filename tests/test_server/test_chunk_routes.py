@@ -658,6 +658,27 @@ class TestHTTPDocumentChunks:
         returned = [c["chunk_id"] for c in body["chunks"]]
         assert returned == chunk_ids
 
+    @pytest.mark.parametrize(
+        "path",
+        (
+            "/chunks/c1/context",
+            "/chunks/c1/document",
+            "/documents/doc-1/chunks",
+        ),
+    )
+    async def test_authorized_docstatus_is_reused_for_chunk_ordering(self, path):
+        chunk_ids = ["c0", "c1", "c2"]
+        rag = _make_rag_with_anchor(chunk_ids, "c1")
+        rag.doc_status.get_folders_for_doc = AsyncMock(return_value=["default"])
+        app = _make_chunk_app(rag)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(path)
+
+        assert response.status_code == 200
+        rag.doc_status.get_by_id.assert_awaited_once_with("doc-1")
+
     async def test_with_start_and_end(self):
         chunk_ids = [f"c{i}" for i in range(10)]
         rag = _make_rag_with_doc(chunk_ids)

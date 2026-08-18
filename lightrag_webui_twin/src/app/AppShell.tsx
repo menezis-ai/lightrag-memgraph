@@ -16,7 +16,10 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { DocDetailPanel } from '../components/DocDetailPanel';
+import {
+  DocDetailPanel,
+  type DetailTab,
+} from '../components/DocDetailPanel';
 import { DocumentsTab } from '../components/DocumentsTab';
 import { PendingDocsSection } from '../components/PendingDocsSection';
 import { LoginScreen } from '../components/LoginScreen';
@@ -90,6 +93,10 @@ declare global {
       intervalMs?: number;
       maxPolls?: number;
     };
+    __TWIN_E2E_UPLOAD_REFRESH?: {
+      intervalMs?: number;
+      maxPolls?: number;
+    };
   }
 }
 
@@ -111,6 +118,8 @@ export function AppShell() {
   const [retagBulk, setRetagBulk] = useState<readonly Document[] | null>(null);
   const [detailDoc, setDetailDoc] = useState<Document | null>(null);
   const [detailChunkId, setDetailChunkId] = useState<string | null>(null);
+  const [detailInitialTab, setDetailInitialTab] =
+    useState<DetailTab>('chunks');
   const [detailRequest, setDetailRequest] = useState<DetailRequest | null>(() => {
     const params = new URLSearchParams(globalThis.location.search);
     const doc = params.get('doc') ?? undefined;
@@ -120,6 +129,8 @@ export function AppShell() {
       doc,
       source,
       chunk: params.get('chunk') ?? undefined,
+      anchorStart: params.get('astart') ?? undefined,
+      anchorEnd: params.get('aend') ?? undefined,
     };
   });
   const [readSourceDoc, setReadSourceDoc] = useState<Document | null>(null);
@@ -405,15 +416,18 @@ export function AppShell() {
     const backendTrackIds = new Set(
       backendDocList.map((doc) => doc.track_id).filter(Boolean),
     );
-    const backendKeys = new Set(
-      backendDocList.map((doc) => `${doc.folder}:${doc.file_path}`),
-    );
+    // QA DOC-V5-001: match on the basename — the backend may re-project
+    // file_path with a directory prefix while the optimistic upload row only
+    // knows the bare upload name, which left ghost pending rows unmasked.
+    const fileKey = (doc: Document) =>
+      `${doc.folder}:${doc.file_path.split('/').pop()}`;
+    const backendKeys = new Set(backendDocList.map(fileKey));
     const pendingUploads = optimisticUploadDocs.filter(
       (doc) =>
         doc.folder === effectiveFolder &&
         !(
           (doc.track_id && backendTrackIds.has(doc.track_id)) ||
-          backendKeys.has(`${doc.folder}:${doc.file_path}`)
+          backendKeys.has(fileKey(doc))
         ),
     );
     return dedupeDocumentsBySource([...pendingUploads, ...backendDocList]);
@@ -429,6 +443,19 @@ export function AppShell() {
   const activeDetailDoc = detailDoc ?? requestedDetailDoc;
   const activeDetailChunkId =
     detailDoc === null ? (detailRequest?.chunk ?? null) : detailChunkId;
+  // Paragraph anchor for the drilled-down chunk. Parsed defensively from
+  // the URL-borne strings; DocDetailPanel re-checks bounds against the
+  // actual chunk text before highlighting (non-authoritative hint).
+  const activeDetailAnchor = useMemo(() => {
+    if (detailDoc !== null || !activeDetailChunkId || !detailRequest) {
+      return null;
+    }
+    const start = Number(detailRequest.anchorStart);
+    const end = Number(detailRequest.anchorEnd);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
+    if (start < 0 || end <= start) return null;
+    return { start, end };
+  }, [activeDetailChunkId, detailDoc, detailRequest]);
   // Pending = "needs reviewer attention", covers both first-time approval
   // (pending-review) AND Confluence/SharePoint upstream-edit re-validation
   // (modified — upstream re-validation spec). Sort so pending-review cards come
@@ -609,6 +636,9 @@ export function AppShell() {
                   defaultOpen
                   folderList={folderList}
                   canReviewProcedures={canManageFolders(auth.user)}
+                  procedureReviewEnabled={
+                    runtimeConfig.procedureReviewEnabled === true
+                  }
                   onReadSource={(d) => setReadSourceDoc(d)}
                   onToast={(kind, title, sub) =>
                     pushToast({ kind, title, sub })
@@ -622,6 +652,13 @@ export function AppShell() {
               onOpenDetail={(d) => {
                 setDetailRequest(null);
                 setDetailChunkId(null);
+                setDetailInitialTab('chunks');
+                setDetailDoc(d);
+              }}
+              onOpenLineage={(d) => {
+                setDetailRequest(null);
+                setDetailChunkId(null);
+                setDetailInitialTab('lineage');
                 setDetailDoc(d);
               }}
               onBulkDelete={onDeleteBulk}
@@ -671,7 +708,7 @@ export function AppShell() {
                 }, { signal: params.signal });
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
-              onStreamQuery={async (params, onChunk) => {
+              onStreamQuery={async (params, onChunk, onStage) => {
                 const res = await api.queryStream(
                   {
                     query: params.query,
@@ -690,6 +727,7 @@ export function AppShell() {
                   },
                   onChunk,
                   { signal: params.signal },
+                  onStage,
                 );
                 return mapTwinQueryResponseForRetrievalTab(res);
               }}
@@ -723,7 +761,7 @@ export function AppShell() {
               relations={graphRelationList}
               docLabels={graphDocLabels}
               docTags={graphDocTags}
-              tagCatalog={tagCatalog.map((tag) => tag.tag)}
+              tagCatalog={tagList}
               folderLabel={kbName || effectiveFolder}
               onNavigate={onNavigate}
               onToast={pushToast}
@@ -774,18 +812,29 @@ export function AppShell() {
           />
         )}
       </Suspense>
+      {/* Remount so a lineage reopen reapplies initialTab even when the
+          panel's tab state already holds this document. */}
       <DocDetailPanel
+        key={
+          activeDetailDoc
+            ? `${activeDetailDoc.doc_id}:${detailInitialTab}`
+            : 'closed'
+        }
         doc={activeDetailDoc}
         initialExpandedChunkId={activeDetailChunkId}
+        initialAnchor={activeDetailAnchor}
+        initialTab={detailInitialTab}
         onClose={() => {
           setDetailDoc(null);
           setDetailChunkId(null);
           setDetailRequest(null);
+          setDetailInitialTab('chunks');
         }}
         onRetag={(d) => {
           setDetailDoc(null);
           setDetailChunkId(null);
           setDetailRequest(null);
+          setDetailInitialTab('chunks');
           setRetagDoc(d);
         }}
         onReprocess={(d) => {

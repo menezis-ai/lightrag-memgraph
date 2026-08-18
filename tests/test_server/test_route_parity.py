@@ -18,6 +18,9 @@ from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_rou
 from twindb_lightrag_memgraph.server.auth import auth_router
 from twindb_lightrag_memgraph.server.procedure_routes import build_procedure_router
 from twindb_lightrag_memgraph.server.quota_routes import router as quota_router
+from twindb_lightrag_memgraph.server.system_info_routes import (
+    router as system_info_router,
+)
 from twindb_lightrag_memgraph.server.vision_settings_routes import (
     router as vision_settings_router,
 )
@@ -82,6 +85,7 @@ def _backend_routes() -> set[Route]:
         )
         | _fastapi_routes_from_router(api_key_router, prefix="/twin/api")
         | _fastapi_routes_from_router(quota_router, prefix="/twin/api")
+        | _fastapi_routes_from_router(system_info_router, prefix="/twin/api")
         | _fastapi_routes_from_router(vision_settings_router, prefix="/twin/api")
         | _fastapi_routes_from_router(
             build_procedure_router(_fake_rag), prefix="/twin/api"
@@ -159,6 +163,7 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/twin/api/settings/vision"),
     Route("PUT", "/twin/api/settings/vision"),
     Route("GET", "/twin/api/quota"),
+    Route("GET", "/twin/api/system/about"),
     Route("GET", "/twin/api/folders"),
     Route("POST", "/twin/api/folders"),
     Route("PATCH", "/twin/api/folders/{param}"),
@@ -190,6 +195,7 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("POST", "/twin/api/documents/{param}/reject"),
     Route("POST", "/twin/api/documents/bulk-delete"),
     Route("POST", "/twin/api/documents/_bulk-retag"),
+    Route("POST", "/twin/api/documents/resolve-upload"),
     Route("POST", "/twin/api/documents/uploads/activity"),
     Route("POST", "/twin/api/auth/logout"),
     Route("GET", "/twin/api/procedures"),

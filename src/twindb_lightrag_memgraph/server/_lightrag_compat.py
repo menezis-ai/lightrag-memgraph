@@ -34,8 +34,8 @@ nominal path was the structural lie of TR-RET-02 / audit C3.
 Compatibility
 -------------
 
-- Tested against LightRAG ``1.4.9.11 / 1.4.11 / 1.4.12`` (the CI
-  matrix). If LightRAG changes the marker placement or the
+- Tested against LightRAG ``1.5.6`` (the single supported pin since
+  2026-08-06). If LightRAG changes the marker placement or the
   ``aquery_llm`` envelope shape, the contract tests in
   ``tests/test_server/test_lightrag_compat.py`` and
   ``test_twin_query_routes.py`` will start failing on the integration
@@ -210,6 +210,20 @@ class GraphAnswerEnvelopeError(Exception):
     """
 
 
+class PipelineBusyDeletionError(RuntimeError):
+    """LightRAG refused a deletion because its pipeline is reserved.
+
+    ``adelete_by_doc_id`` returns ``DeletionResult(status="not_allowed")``
+    with ``status_code=403`` when the shared pipeline is held by a non-deletion
+    job. The document is untouched and the refusal is bounded — the same call
+    succeeds once the current job finishes. A ``status_code=503`` refusal is a
+    distinct recovery-required fence and must never use this exception. This
+    type subclasses ``RuntimeError`` so pre-existing callers that caught the
+    generic deletion failure keep working; delete routes catch it specifically
+    to answer 423 (retry later) instead of 5xx.
+    """
+
+
 _SCORE_KEYS = ("score", "similarity", "cosine_similarity")
 
 
@@ -226,15 +240,17 @@ def _first_numeric_metric(d: dict[str, Any], keys) -> float | None:
 
 def _reference_score(
     chunks: list[dict[str, Any]],
+    chunk_id_to_score: dict[str, float] | None = None,
 ) -> float | None:
     """Return an explicit retrieval metric, never a rank-derived proxy.
 
     ``data.references`` does not carry a score of its own.  When LightRAG
-    exposes a numeric metric on one of the chunks behind the reference, the
-    first such metric (in retrieval-envelope order) is safe to project.  When
-    it does not, ``None`` is the only epistemically honest value: synthesising
-    ``0.95 .. 0.5`` from display rank made the wire field look like cosine
-    similarity even though no similarity measurement existed.
+    exposes a numeric metric on one of the chunks behind the reference, or the
+    request-local storage trace captured the chunk's measured similarity, the
+    first such metric (in retrieval-envelope order) is safe to project. When
+    neither exists, ``None`` is the only epistemically honest value:
+    synthesising ``0.95 .. 0.5`` from display rank made the wire field look
+    like cosine similarity even though no similarity measurement existed.
     """
     for chunk in chunks:
         direct = _first_numeric_metric(chunk, _SCORE_KEYS)
@@ -245,6 +261,15 @@ def _reference_score(
             nested = _first_numeric_metric(metrics, _SCORE_KEYS)
             if nested is not None:
                 return nested
+        chunk_id = chunk.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id_to_score:
+            traced = chunk_id_to_score.get(chunk_id)
+            if (
+                isinstance(traced, (int, float))
+                and not isinstance(traced, bool)
+                and math.isfinite(float(traced))
+            ):
+                return float(traced)
     return None
 
 
@@ -391,7 +416,12 @@ def _chunk_count_label(chunk_count: int) -> str | None:
     return None
 
 
-def _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id) -> dict[str, Any]:
+def _build_source_entry(
+    reference,
+    chunks_by_ref,
+    chunk_id_to_doc_id,
+    chunk_id_to_score,
+) -> dict[str, Any]:
     """Project one ``data.references`` entry into a WebUI source dict."""
     if not isinstance(reference, dict):
         raise GraphAnswerEnvelopeError(
@@ -415,13 +445,28 @@ def _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id) -> dict[st
     )
     source_name = file_path or (chunk_id or f"reference-{n_value}")
     source_name_is_fallback = not file_path and not chunk_id
+    score = _reference_score(matching_chunks, chunk_id_to_score)
     return {
         "n": n_value,
         "type": "file",
         "name": source_name,
         "_lightrag_reference_name_fallback": source_name_is_fallback,
         "meta": _chunk_count_label(len(matching_chunks)),
-        "score": _reference_score(matching_chunks),
+        "score": score,
+        # An empty request-local trace is meaningful: LightRAG grounded this
+        # reference through the graph path without a chunk-vector similarity.
+        # Query-cache hits cannot create a false empty trace on the supported
+        # 1.4.9.11/1.4.11/1.4.12 matrix (or 1.5.4): kg_query builds retrieval
+        # context, and naive_query runs its chunk-vector lookup, before either
+        # consults the final-answer cache. The source-order canary in
+        # test_register_canary.py locks that upstream contract. ``None`` means
+        # no trace was supplied, so callers must keep treating a missing score
+        # as unknown rather than mislabelling it as graph.
+        "retrieval_origin": (
+            "vector"
+            if score is not None
+            else ("graph" if chunk_id_to_score is not None else None)
+        ),
         "doc_id": doc_id,
         "chunk_id": chunk_id,
     }
@@ -430,6 +475,7 @@ def _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id) -> dict[st
 def build_sources_from_raw_data(
     result: dict[str, Any],
     chunk_id_to_doc_id: dict[str, str] | None = None,
+    chunk_id_to_score: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Project ``aquery_llm`` ``data.references`` into the WebUI source list.
 
@@ -443,7 +489,12 @@ def build_sources_from_raw_data(
     reference (informational), and ``chunk_id`` (best-effort) is the
     first chunk that produced this reference so the React port can
     drill into chunk views. ``doc_id`` is resolved via the optional
-    ``chunk_id_to_doc_id`` map if provided.
+    ``chunk_id_to_doc_id`` map if provided. ``score`` prefers a metric already
+    present in the envelope, then the optional request-local
+    ``chunk_id_to_score`` trace captured during the same grounding call.
+    ``retrieval_origin`` distinguishes a measured vector score from a
+    graph-grounded reference; it remains null when no request trace was
+    supplied.
 
     Raises ``GraphAnswerEnvelopeError`` on a missing or malformed
     ``data.references``/``data.chunks`` block so the route can choose
@@ -455,7 +506,12 @@ def build_sources_from_raw_data(
     references, chunks = parsed
     chunks_by_ref = _index_chunks_by_ref(chunks)
     entries = [
-        _build_source_entry(reference, chunks_by_ref, chunk_id_to_doc_id)
+        _build_source_entry(
+            reference,
+            chunks_by_ref,
+            chunk_id_to_doc_id,
+            chunk_id_to_score,
+        )
         for reference in references
     ]
     # Defense-in-depth: ``n`` mirrors LightRAG's ``reference_id`` and the React

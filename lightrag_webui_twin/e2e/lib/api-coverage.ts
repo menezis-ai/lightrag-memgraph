@@ -77,6 +77,12 @@ const ADMIN_ONLY_TWIN_OPERATIONS = new Set([
   'PATCH /twin/api/graph/relations/{rel_id}',
   'POST /twin/api/tags/categories/_import',
   'POST /twin/api/documents/_bulk-retag',
+  // Audit 2026-08-06 remediation (R-03a/R-03b): destructive document
+  // mutations and the client-side audit-write route are admin-gated.
+  'POST /twin/api/documents/bulk-delete',
+  'POST /twin/api/documents/{doc_id}/approve',
+  'POST /twin/api/documents/{doc_id}/reject',
+  'POST /twin/api/documents/uploads/activity',
   'POST /twin/api/tags',
   'POST /twin/api/tags/{name}/suggest-edit',
   'POST /twin/api/tags/{name}/approve',
@@ -110,7 +116,7 @@ export const SHIM_ROUTES: CoverageRoute[] = [
   { method: 'GET', path: '/documents', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
   { method: 'GET', path: '/documents/{doc_id}/chunks', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
   { method: 'POST', path: '/documents/{doc_id}/scan', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
-  { method: 'DELETE', path: '/documents/{doc_id}', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
+  { method: 'DELETE', path: '/documents/{doc_id}', hasBody: false, isPublic: false, isAdminOnly: true, preLlmOnly: false },
   { method: 'GET', path: '/pipeline_status', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
   { method: 'GET', path: '/openapi', hasBody: false, isPublic: false, isAdminOnly: false, preLlmOnly: false },
 ];

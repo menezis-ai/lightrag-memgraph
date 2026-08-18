@@ -37,7 +37,7 @@ def test_bnp_dockerfile_applies_cve_remediation_overlay():
     assert "libcap2" in dockerfile
     assert "libssl3t64" in dockerfile
     assert "requirements/cve-remediation.txt" in dockerfile
-    assert 'm.version("lightrag-hku") == "1.4.9.11"' in dockerfile
+    assert 'm.version("lightrag-hku") == "1.5.6"' in dockerfile
 
 
 def _job_block(ci_text: str, job_name: str) -> str:

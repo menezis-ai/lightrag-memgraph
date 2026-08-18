@@ -131,7 +131,7 @@ describe('onTagApprove', () => {
         kind: 'error',
         title: 'Tag approval failed',
         tagname: 'k8s',
-        sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while approving the tag. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -145,7 +145,7 @@ describe('onTagApprove', () => {
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'error',
-        sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while approving the tag. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -504,7 +504,7 @@ describe('onTagCommit error paths (commitTagMutation onError)', () => {
           kind: 'error',
           title: 'Tag edit failed',
           tagname: 'argocd',
-          sub: 'Something went wrong while updating the tag. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while updating the tag. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );
@@ -521,7 +521,7 @@ describe('onTagCommit error paths (commitTagMutation onError)', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Tag reject failed',
-          sub: 'Something went wrong while updating the tag. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while updating the tag. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );
@@ -574,7 +574,7 @@ describe('onTagCommit edit-approve path', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Tag edit-approve failed',
-          sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while approving the tag. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );
@@ -594,7 +594,7 @@ describe('onTagCommit edit-approve path', () => {
       expect(pushToast).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: 'error',
-          sub: 'Something went wrong while approving the tag. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while approving the tag. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );

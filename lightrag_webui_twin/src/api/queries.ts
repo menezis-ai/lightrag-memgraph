@@ -202,6 +202,7 @@ function invalidateDocumentMembershipSideEffects(
     void qc.invalidateQueries({ queryKey: ['documents', targetFolder] });
   }
   void qc.invalidateQueries({ queryKey: ['documents'] });
+  void qc.invalidateQueries({ queryKey: ['folders'] });
   void qc.invalidateQueries({ queryKey: ['activity'] });
 }
 
@@ -240,6 +241,17 @@ export function useInstanceQuota(options: QueryGate = {}) {
   });
 }
 
+// About / system identity card. Not polled: versions only change on a
+// redeploy, and the panel is opened on demand when filing a ticket.
+export function useAbout(options: QueryGate = {}) {
+  return useQuery({
+    queryKey: ['system-about'] as const,
+    queryFn: ({ signal }) => api.getAbout({ signal }),
+    ...DEFAULTS,
+    ...gateOptions(options),
+  });
+}
+
 // API keys — per-operator, distinct from the static LIGHTRAG_API_KEY.
 export function useApiKeys(options: QueryGate = {}) {
   return useQuery({
@@ -273,9 +285,9 @@ export function useRevokeApiKey() {
   });
 }
 
-// Vision ingestion settings — the two curation knobs of the image
-// pipeline. GET is open to authenticated operators; PUT is admin-gated
-// server-side (403 surfaces through the mutation error).
+// Vision/procedure ingestion settings — image curation plus the admin
+// procedure-activation toggle. GET is open to authenticated operators;
+// PUT is admin-gated server-side (403 surfaces through the mutation error).
 export function useVisionSettings(options: QueryGate = {}) {
   return useQuery({
     queryKey: ['vision-settings'] as const,
@@ -822,8 +834,10 @@ function invalidateDeleteSideEffects(qc: ReturnType<typeof useQueryClient>) {
   // The bulk-delete cascade nukes documents, graph entities, graph
   // relations, and emits an audit event. Stale-cache on any of these
   // produces the "I deleted the doc but nothing changed in the Graph
-  // tab" symptom (2026-06-08 prod report). Keep all four in sync.
+  // tab" symptom (2026-06-08 prod report). Folder source counts are derived
+  // from the same memberships, so keep all five cache families in sync.
   qc.invalidateQueries({ queryKey: ['documents'] });
+  qc.invalidateQueries({ queryKey: ['folders'] });
   qc.invalidateQueries({ queryKey: ['graph-entities'] });
   qc.invalidateQueries({ queryKey: ['graph-relations'] });
   qc.invalidateQueries({ queryKey: ['activity'] });
@@ -875,6 +889,7 @@ export function useUploadDocument() {
     mutationFn: (file: File) => api.uploadDocument(file),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['folders'] });
       qc.invalidateQueries({ queryKey: ['pipeline_status'] });
       // An upload may have been PARKED as a procedure bundle (detected or
       // forced): the review card lives under ['procedures'], not documents.
@@ -900,6 +915,7 @@ export function useUploadDocumentsBatch() {
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['documents'] });
+      qc.invalidateQueries({ queryKey: ['folders'] });
       qc.invalidateQueries({ queryKey: ['pipeline_status'] });
       // An upload may have been PARKED as a procedure bundle (detected or
       // forced): the review card lives under ['procedures'], not documents.

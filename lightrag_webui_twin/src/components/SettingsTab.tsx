@@ -1,9 +1,13 @@
 /**
- * SettingsTab — 3 sections only (review 2026-05-30):
+ * SettingsTab — 6 sections (base trimmed by the 2026-05-30 review; the
+ * three later additions each came with their own backend surface):
  *
  *   - Profile   : read-only, lit useAuth()
  *   - API       : OpenAPI browser (delegates to ApiTab)
- *   - Folder    : env vars + retention table read-only
+ *   - API keys  : per-operator key CRUD (api_key_store)
+ *   - Vision    : runtime curation + admin procedure-ingestion toggle
+ *   - Folder    : env vars read-only + admin folder CRUD
+ *   - About     : runtime identity card (versions, Memgraph, topology)
  *
  * REMOVED pre-30/05:
  *   - Providers (removed 30/05 cleanup)
@@ -25,6 +29,7 @@ import { ProfileSection } from './Settings/ProfileSection';
 import { FoldersAdminSection } from './Settings/FoldersAdminSection';
 import { FolderSection } from './Settings/FolderSection';
 import { VisionSection } from './Settings/VisionSection';
+import { AboutSection } from './Settings/AboutSection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
 import { userErrorMessage } from '../lib/errorMessages';
@@ -36,18 +41,20 @@ export type SettingsSectionKey =
   | 'api'
   | 'api-keys'
   | 'vision'
-  | 'folder';
+  | 'folder'
+  | 'about';
 
 const SECTIONS: {
   key: SettingsSectionKey;
   label: string;
-  icon: 'circle-dot' | 'world' | 'folder' | 'lock' | 'eye';
+  icon: 'circle-dot' | 'world' | 'folder' | 'lock' | 'eye' | 'info-circle';
 }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
   { key: 'api-keys', label: 'API keys', icon: 'lock' },
   { key: 'vision', label: 'Vision', icon: 'eye' },
   { key: 'folder', label: 'Folder', icon: 'folder' },
+  { key: 'about', label: 'About', icon: 'info-circle' },
 ];
 
 export interface SettingsTabProps {
@@ -119,6 +126,7 @@ export function SettingsTab({
             <FoldersAdminSection user={user} onToast={onToast} />
           </>
         )}
+        {section === 'about' && <AboutSection />}
       </main>
     </div>
   );

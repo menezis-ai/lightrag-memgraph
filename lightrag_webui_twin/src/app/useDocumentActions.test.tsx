@@ -17,7 +17,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { useDocumentActions } from './useDocumentActions';
+import {
+  BULK_DELETE_BUSY_DEADLINE_MS,
+  BULK_DELETE_BUSY_RETRY_MS,
+  useDocumentActions,
+} from './useDocumentActions';
 import { ApiError } from '../api/client';
 import { queryClient } from './queryClient';
 import type { RetagAction } from '../components/RetagModal';
@@ -250,7 +254,7 @@ describe('onRetagSubmit', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Tag update failed',
-        sub: 'Something went wrong while updating tags on 1 source. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while updating tags on 1 source. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -296,7 +300,7 @@ describe('onRetagSubmit', () => {
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'error',
-        sub: 'Something went wrong while updating tags on 2 sources. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while updating tags on 2 sources. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -356,7 +360,7 @@ describe('onToastUndo', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Undo failed',
-        sub: 'Something went wrong while undoing the tag change. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while undoing the tag change. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -369,7 +373,7 @@ describe('onToastUndo', () => {
     });
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        sub: 'Something went wrong while undoing the tag change. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while undoing the tag change. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -404,7 +408,7 @@ describe('onDeleteSingle', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Delete failed',
-        sub: 'Something went wrong while deleting a.pdf. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while deleting a.pdf. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -420,7 +424,7 @@ describe('onDeleteSingle', () => {
     });
     expect(pushToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        sub: 'Something went wrong while deleting a.pdf. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while deleting a.pdf. Please retry. If the problem continues, contact your platform administrator.',
       }),
     );
   });
@@ -497,6 +501,30 @@ describe('onDeleteBulk', () => {
     );
   });
 
+  it('partial backend result names committed and failed deletions honestly', async () => {
+    bulkDeleteDocumentsMock.mockResolvedValueOnce({
+      deleted: 1,
+      failed: ['b'],
+    });
+    const { result, pushToast } = setup();
+    await act(async () => {
+      await result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+      ]);
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Bulk delete partially completed',
+        sub: '1 deleted · 1 failed and still visible — retry the failed sources',
+      }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: '1 source deleted' }),
+    );
+  });
+
   it('error → "Bulk delete failed" toast', async () => {
     bulkDeleteDocumentsMock.mockRejectedValueOnce(new Error('cascade boom'));
     const { result, pushToast } = setup();
@@ -507,7 +535,252 @@ describe('onDeleteBulk', () => {
       expect.objectContaining({
         kind: 'error',
         title: 'Bulk delete failed',
-        sub: 'Something went wrong while deleting the selected sources. Please retry or contact Twincore Team.',
+        sub: 'Something went wrong while deleting the selected sources. Please retry. If the problem continues, contact your platform administrator.',
+      }),
+    );
+  });
+
+  it('pipeline-busy 423 → queued toast, auto-retries and completes once the pipeline drains', async () => {
+    vi.useFakeTimers();
+    bulkDeleteDocumentsMock
+      .mockRejectedValueOnce(
+        new ApiError('POST /twin/api/documents/bulk-delete → 423 Locked', 423, {
+          detail:
+            'Deletion not started: the ingestion pipeline is busy processing documents.',
+        }),
+      )
+      .mockResolvedValueOnce({ deleted: 2, failed: [], busy: [] });
+    const { result, pushToast } = setup();
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'propagating',
+        title: 'Deletion queued — pipeline busy',
+        sub: expect.stringContaining('retry automatically'),
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BULK_DELETE_BUSY_RETRY_MS);
+      await done;
+    });
+    expect(bulkDeleteDocumentsMock).toHaveBeenCalledTimes(2);
+    expect(bulkDeleteDocumentsMock).toHaveBeenNthCalledWith(2, {
+      doc_ids: ['a', 'b'],
+      actor: ACTOR,
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'done', title: '2 sources deleted' }),
+    );
+  });
+
+  it('207 with busy subset → retries only the deferred ids and accumulates the deleted count', async () => {
+    vi.useFakeTimers();
+    bulkDeleteDocumentsMock
+      .mockResolvedValueOnce({ deleted: 1, failed: [], busy: ['b'] })
+      .mockResolvedValueOnce({ deleted: 1, failed: [], busy: [] });
+    const { result, pushToast } = setup();
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BULK_DELETE_BUSY_RETRY_MS);
+      await done;
+    });
+    expect(bulkDeleteDocumentsMock).toHaveBeenNthCalledWith(2, {
+      doc_ids: ['b'],
+      actor: ACTOR,
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'done', title: '2 sources deleted' }),
+    );
+  });
+
+  it('mixed failed + busy result preserves failures after the busy retry succeeds', async () => {
+    vi.useFakeTimers();
+    bulkDeleteDocumentsMock
+      .mockResolvedValueOnce({ deleted: 1, failed: ['c'], busy: ['b'] })
+      .mockResolvedValueOnce({ deleted: 1, failed: [], busy: [] });
+    const { result, pushToast } = setup();
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+        { doc_id: 'c', file_path: 'c' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BULK_DELETE_BUSY_RETRY_MS);
+      await done;
+    });
+    expect(bulkDeleteDocumentsMock).toHaveBeenNthCalledWith(2, {
+      doc_ids: ['b'],
+      actor: ACTOR,
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Bulk delete partially completed',
+        sub: '2 deleted · 1 failed and still visible — retry the failed sources',
+      }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'done', title: '2 sources deleted' }),
+    );
+  });
+
+  it('later non-busy error keeps earlier partial-success and failure counts', async () => {
+    vi.useFakeTimers();
+    bulkDeleteDocumentsMock
+      .mockResolvedValueOnce({ deleted: 1, failed: ['c'], busy: ['b'] })
+      .mockRejectedValueOnce(new Error('retry backend failed'));
+    const { result, pushToast } = setup();
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+        { doc_id: 'c', file_path: 'c' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BULK_DELETE_BUSY_RETRY_MS);
+      await done;
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Bulk delete partially completed',
+        sub: expect.stringContaining(
+          '1 deleted · 1 failed and still visible · deletion stopped:',
+        ),
+      }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Bulk delete failed' }),
+    );
+  });
+
+  it('structured recovery 503 reports committed progress and never enters retry', async () => {
+    bulkDeleteDocumentsMock.mockRejectedValueOnce(
+      new ApiError('POST /twin/api/documents/bulk-delete → 503', 503, {
+        detail:
+          'Operator recovery is required before deletion can resume; 1 earlier document change was already committed (a).',
+        recovery_required: true,
+        deleted: 1,
+        committed_doc_ids: ['a'],
+        failed: ['b'],
+        busy: ['c'],
+        unattempted: ['d'],
+      }),
+    );
+    const { result, pushToast } = setup();
+    await act(async () => {
+      await result.current.onDeleteBulk([
+        { doc_id: 'a', file_path: 'a' },
+        { doc_id: 'b', file_path: 'b' },
+        { doc_id: 'c', file_path: 'busy.pdf' },
+        { doc_id: 'd', file_path: 'not-attempted.pdf' },
+      ]);
+    });
+    expect(bulkDeleteDocumentsMock).toHaveBeenCalledTimes(1);
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Workspace recovery required',
+        sub: expect.stringContaining(
+          '1 deleted · 1 failed and still visible · 1 deferred (busy.pdf) · 1 not attempted (not-attempted.pdf) · Operator recovery is required',
+        ),
+      }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Deletion queued — pipeline busy' }),
+    );
+  });
+
+  it('structured recovery bounds long outstanding-document lists', async () => {
+    bulkDeleteDocumentsMock.mockRejectedValueOnce(
+      new ApiError('POST /twin/api/documents/bulk-delete → 503', 503, {
+        detail: 'Operator recovery is required before deletion can resume.',
+        recovery_required: true,
+        deleted: 0,
+        failed: ['failed'],
+        busy: ['busy-a', 'busy-b', 'busy-c', 'busy-d'],
+        unattempted: ['later-a', 'later-b', 'later-c', 'later-d', 'later-e'],
+      }),
+    );
+    const docs = [
+      { doc_id: 'failed', file_path: 'failed.pdf' },
+      { doc_id: 'busy-a', file_path: 'busy-a.pdf' },
+      { doc_id: 'busy-b', file_path: 'busy-b.pdf' },
+      { doc_id: 'busy-c', file_path: 'busy-c.pdf' },
+      { doc_id: 'busy-d', file_path: 'busy-d.pdf' },
+      { doc_id: 'later-a', file_path: 'later-a.pdf' },
+      { doc_id: 'later-b', file_path: 'later-b.pdf' },
+      { doc_id: 'later-c', file_path: 'later-c.pdf' },
+      { doc_id: 'later-d', file_path: 'later-d.pdf' },
+      { doc_id: 'later-e', file_path: 'later-e.pdf' },
+    ];
+    const { result, pushToast } = setup();
+
+    await act(async () => {
+      await result.current.onDeleteBulk(docs);
+    });
+
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Workspace recovery required',
+        sub: expect.stringContaining(
+          '4 deferred (busy-a.pdf, busy-b.pdf, busy-c.pdf, +1 more) · 5 not attempted (later-a.pdf, later-b.pdf, later-c.pdf, +2 more)',
+        ),
+      }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sub: expect.stringContaining('busy-d.pdf') }),
+    );
+    expect(pushToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sub: expect.stringContaining('later-e.pdf') }),
+    );
+  });
+
+  it('pipeline stays busy past the deadline → honest "still waiting" toast', async () => {
+    vi.useFakeTimers();
+    bulkDeleteDocumentsMock.mockResolvedValue({
+      deleted: 0,
+      failed: [],
+      busy: ['a'],
+    });
+    const { result, pushToast } = setup();
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.onDeleteBulk([{ doc_id: 'a', file_path: 'a' }]);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        BULK_DELETE_BUSY_DEADLINE_MS + BULK_DELETE_BUSY_RETRY_MS,
+      );
+      await done;
+    });
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Deletion still waiting on the pipeline',
+        sub: expect.stringContaining('1 source was not deleted'),
       }),
     );
   });
@@ -579,7 +852,7 @@ describe('onScanRetry', () => {
         expect.objectContaining({
           kind: 'error',
           title: 'Re-process failed',
-          sub: 'Something went wrong while re-processing failed sources. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while re-processing failed sources. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );
@@ -641,7 +914,7 @@ describe('onAddSourceSubmit — file upload path', () => {
     };
   }
 
-  it('uploads, patches optimistic docs, pushes success toast, records audit', async () => {
+  it('uploads, patches optimistic docs, pushes success toast, refreshes audit feed', async () => {
     uploadDocumentMock.mockResolvedValue({
       status: 'success',
       message: 'queued',
@@ -677,7 +950,11 @@ describe('onAddSourceSubmit — file upload path', () => {
         title: 'Sources queued for ingestion',
       }),
     );
-    await waitFor(() => expect(recordSourceUploadedMock).toHaveBeenCalled());
+    // R-03a (security audit 2026-08-06): the client no longer writes the
+    // upload audit event — the server emits it at ingestion time. The hook
+    // only refreshes the feed.
+    await waitFor(() => expect(recordSourceUploadedMock).not.toHaveBeenCalled());
+    expect(refetchActivity).toHaveBeenCalled();
   });
 
   it('patchOptimisticUploadDocs: stamps accepted docs with track_id + upload_state and drops failed ones', async () => {
@@ -869,6 +1146,37 @@ describe('onAddSourceSubmit — file upload path', () => {
     );
   });
 
+  it('shared upload removes the pending ghost and confirms the folder copy', async () => {
+    uploadDocumentMock.mockResolvedValueOnce({
+      status: 'shared',
+      message: 'added to sandbox',
+      track_id: 'track-existing',
+      doc_id: 'doc-existing',
+    });
+    const setOptimisticUploadDocs = vi.fn();
+    const { result, pushToast } = setup({ setOptimisticUploadDocs });
+
+    await act(async () => {
+      await result.current.onAddSourceSubmit(fileAction());
+      await Promise.resolve();
+    });
+
+    const insert = setOptimisticUploadDocs.mock.calls[0][0] as (
+      docs: readonly Document[],
+    ) => readonly Document[];
+    const patch = setOptimisticUploadDocs.mock.calls[1][0] as (
+      docs: readonly Document[],
+    ) => readonly Document[];
+    expect(patch(insert([]))).toEqual([]);
+    expect(pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'done',
+        title: 'Sources added to folder',
+        sub: expect.stringContaining('copied to this folder'),
+      }),
+    );
+  });
+
   it('uses the folder visibility fallback when folder is not in folderList', async () => {
     const setOptimisticUploadDocs = vi.fn();
     const { result } = setup({
@@ -886,6 +1194,89 @@ describe('onAddSourceSubmit — file upload path', () => {
     const inserted = inserter([]);
     expect(inserted[0].visibility).toBe('internal');
     expect(inserted[0].status).toBe('PENDING');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// QA DOC-V5-001: optimistic upload rows must be REMOVED from state once
+// their track resolves (or the reconciliation window ends) — the render-time
+// mask alone left ghost "pending" rows on any projection mismatch.
+describe('refreshDocumentsUntilUploadsLand — ghost pending reconciliation', () => {
+  function ghostFileAction(): AddSourceAction {
+    return {
+      files: [],
+      rawFiles: [new File(['hi'], 'a.txt', { type: 'text/plain' })],
+      fileOptions: [],
+      urls: [],
+      tags: [],
+      readyCount: 1,
+    };
+  }
+
+  function foldOptimisticState(
+    calls: readonly unknown[][],
+  ): readonly Document[] {
+    let state: readonly Document[] = [];
+    for (const [arg] of calls) {
+      state =
+        typeof arg === 'function'
+          ? (arg as (p: readonly Document[]) => readonly Document[])(state)
+          : (arg as readonly Document[]);
+    }
+    return state;
+  }
+
+  beforeEach(() => {
+    (
+      globalThis.window as unknown as Record<string, unknown>
+    ).__TWIN_E2E_UPLOAD_REFRESH = { intervalMs: 1, maxPolls: 2 };
+  });
+
+  afterEach(() => {
+    delete (globalThis.window as unknown as Record<string, unknown>)
+      .__TWIN_E2E_UPLOAD_REFRESH;
+  });
+
+  it('drops the optimistic row from state once its track lands in the list', async () => {
+    uploadDocumentMock.mockResolvedValue({
+      status: 'success',
+      message: 'queued',
+      track_id: 'trk-9',
+    });
+    const setOptimisticUploadDocs = vi.fn();
+    const refetchDocs = vi.fn().mockResolvedValue({
+      data: { items: [makeDoc({ doc_id: 'landed', track_id: 'trk-9' })] },
+    });
+    const { result } = setup({ setOptimisticUploadDocs, refetchDocs });
+    await act(async () => {
+      await result.current.onAddSourceSubmit(ghostFileAction());
+    });
+    await waitFor(() => {
+      const state = foldOptimisticState(setOptimisticUploadDocs.mock.calls);
+      expect(state.filter((d) => d.track_id === 'trk-9')).toHaveLength(0);
+    });
+    expect(refetchDocs).toHaveBeenCalled();
+  });
+
+  it('drops leftover optimistic rows when the reconciliation window ends', async () => {
+    // A deduplicated upload never surfaces its own track_id in /documents —
+    // exactly the ghost class QA observed. After the polling window, the row
+    // must leave the state instead of dangling until a manual reload.
+    uploadDocumentMock.mockResolvedValue({
+      status: 'duplicated',
+      message: 'dup',
+      track_id: 'trk-dup',
+    });
+    const setOptimisticUploadDocs = vi.fn();
+    const refetchDocs = vi.fn().mockResolvedValue({ data: { items: [] } });
+    const { result } = setup({ setOptimisticUploadDocs, refetchDocs });
+    await act(async () => {
+      await result.current.onAddSourceSubmit(ghostFileAction());
+    });
+    await waitFor(() => {
+      const state = foldOptimisticState(setOptimisticUploadDocs.mock.calls);
+      expect(state).toHaveLength(0);
+    });
   });
 });
 
@@ -986,7 +1377,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
         expect.objectContaining({
           kind: 'error',
           title: 'Initial tags failed',
-          sub: 'Something went wrong while applying initial tags. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while applying initial tags. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );
@@ -1043,7 +1434,7 @@ describe('onAddSourceSubmit — initial tags poll (applyInitialTagsAfterIngestio
         expect.objectContaining({
           kind: 'error',
           title: 'Initial tags failed',
-          sub: 'Something went wrong while applying initial tags. Please retry or contact Twincore Team.',
+          sub: 'Something went wrong while applying initial tags. Please retry. If the problem continues, contact your platform administrator.',
         }),
       ),
     );

@@ -57,6 +57,10 @@ from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import ASGITransport, AsyncClient
+from lightrag.constants import (
+    DEFAULT_MAX_REQUEST_BODY_BYTES,
+    MULTIPART_OVERHEAD_BYTES,
+)
 
 import twindb_lightrag_memgraph.server.app as app_module
 from twindb_lightrag_memgraph.server.app import (
@@ -190,7 +194,7 @@ class TestProductionAuthMode:
     def test_production_with_static_api_key_boots(self, monkeypatch):
         monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
         app = create_app(_make_settings(api_key="test-key", jwt_secret=None))
-        assert app.title.startswith("LightRAG Server")
+        assert app.title == "Twin KMS API"
 
     def test_production_with_strong_local_jwt_boots(self, monkeypatch):
         monkeypatch.setenv("TWIN_ENV", "production")
@@ -201,13 +205,13 @@ class TestProductionAuthMode:
                 jwt_password="not-the-default",
             )
         )
-        assert app.title.startswith("LightRAG Server")
+        assert app.title == "Twin KMS API"
 
     def test_production_with_idp_backend_boots(self, monkeypatch):
         monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp.example/jwks")
         app = create_app(_make_settings(api_key=None, jwt_secret=None))
-        assert app.title.startswith("LightRAG Server")
+        assert app.title == "Twin KMS API"
 
     def test_production_rejects_default_local_jwt_password(self, monkeypatch):
         monkeypatch.setenv("TWIN_REQUIRE_AUTH", "true")
@@ -412,6 +416,28 @@ class TestReadinessEndpoint:
         assert body["checks"]["memgraph_role"]["status"] == "skipped"
         assert body["checks"]["memgraph_replication"]["status"] == "skipped"
 
+    async def test_memgraph_readiness_failure_detail_is_sanitized(self, monkeypatch):
+        """Audit 2026-08-06, R-05: /ready is anonymous — driver exceptions
+        leak internal hosts/ports (recon material). The probe returns a
+        bare status; the detail goes to the server log."""
+        from contextlib import asynccontextmanager
+
+        from twindb_lightrag_memgraph import _pool
+
+        @asynccontextmanager
+        async def failing_session():
+            raise OSError("ServiceUnavailable: could not resolve 10.0.0.7:7687 (IPv4)")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(_pool, "get_session", failing_session)
+
+        check = await app_module._memgraph_readiness_check()
+
+        assert check["status"] == "failed"
+        assert check["detail"] == "dependency unreachable"
+        assert "10.0.0.7" not in str(check)
+        assert "ServiceUnavailable" not in str(check)
+
     async def test_ready_returns_503_when_memgraph_is_unreachable(
         self, monkeypatch, _mock_rag
     ):
@@ -553,6 +579,14 @@ class TestMemgraphErrorPayload:
 
 
 class TestOperationalMiddleware:
+    def test_default_body_limits_match_lightrag_156_tiering(self):
+        settings = LightRAGServerSettings()
+
+        assert settings.max_request_body_bytes == DEFAULT_MAX_REQUEST_BODY_BYTES
+        assert settings.max_upload_body_bytes == (
+            100 * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES
+        )
+
     async def test_request_id_header_and_access_log_do_not_include_body(self, caplog):
         app = create_app(_make_settings(api_key=None, jwt_secret=None))
         caplog.set_level(logging.INFO, logger=app_module.__name__)
@@ -598,6 +632,59 @@ class TestOperationalMiddleware:
         assert resp.json()["limit_bytes"] == 8
         assert "x-request-id" in resp.headers
 
+    async def test_chunked_body_over_limit_is_rejected_mid_stream(self):
+        """Audit 2026-08-06, R-02: a chunked (Content-Length-less) body used
+        to bypass the header-only check entirely — 200 MB went through in
+        the audit. The receive wrapper now counts streamed bytes and cuts
+        the request at the ceiling. The observable status is 400 (FastAPI's
+        body parser re-shapes the mid-stream exception) — the SAME behavior
+        as the overlay's upstream middleware (measured in the audit); the
+        security property is the cut, not the status code."""
+        reset_metrics()
+        app = create_app(
+            _make_settings(
+                api_key=None,
+                jwt_secret=None,
+                max_request_body_bytes=8,
+                max_upload_body_bytes=100,
+            )
+        )
+
+        async def stream():
+            yield b"12345"
+            yield b"6789"  # cumulative 10 bytes > 8-byte ceiling
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/insert", content=stream())
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "There was an error parsing the body"
+        assert metrics_snapshot()["body_limit_rejects_total"] == 1
+
+    async def test_chunked_body_under_limit_passes(self):
+        app = create_app(
+            _make_settings(
+                api_key=None,
+                jwt_secret=None,
+                max_request_body_bytes=100,
+                max_upload_body_bytes=100,
+            )
+        )
+
+        async def stream():
+            yield b'{"text": "hi"}'
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/insert", content=stream())
+
+        assert resp.status_code != 413
+
     async def test_upload_path_uses_upload_limit(self):
         app = create_app(
             _make_settings(
@@ -615,6 +702,40 @@ class TestOperationalMiddleware:
             resp = await client.post("/documents/upload", content=b"123456789")
 
         assert resp.status_code != 413
+
+    @pytest.mark.parametrize(
+        ("filename", "media_type"),
+        [
+            ("large-qualification.pdf", "application/pdf"),
+            (
+                "large-qualification.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        ],
+    )
+    async def test_large_pdf_docx_uploads_do_not_use_regular_body_limit(
+        self, filename, media_type
+    ):
+        """1.5.6 gives uploads a separate multipart-aware ceiling.
+
+        A PDF/DOCX larger than the ordinary 1 MiB request tier must reach the
+        upload route instead of being rejected by Twin's inner middleware.
+        Parsing is covered by the ingestion suites; this pins the double-limit
+        seam introduced by the upstream 1.5.6 BodyLimitMiddleware.
+        """
+        app = create_app(_make_settings(api_key=None, jwt_secret=None))
+        payload = b"x" * (DEFAULT_MAX_REQUEST_BODY_BYTES + 1024)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post(
+                "/documents/upload",
+                files={"file": (filename, payload, media_type)},
+            )
+
+        assert resp.status_code != 413, resp.text
 
     async def test_auth_reject_counter_increments(self):
         reset_metrics()

@@ -224,12 +224,70 @@ class TestFolders:
         assert by_id["default"]["sources"] == 4
         assert by_id["sandbox"]["sources"] == 2
 
+    async def test_folders_endpoint_batches_live_docstatus_counts(
+        self, monkeypatch, client
+    ):
+        self._configure_folders(monkeypatch)
+        calls = []
+
+        class FakeDocStatus:
+            async def get_folder_counts(self, folders):
+                calls.append(folders)
+                return {"default": 4, "sandbox": 2}
+
+            async def get_status_counts(self, folder=None):
+                raise AssertionError("batch-capable stores must not use N reads")
+
+        class FakeRag:
+            doc_status = FakeDocStatus()
+
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: FakeRag())
+
+        r = await client.get("/folders")
+
+        assert r.status_code == 200
+        by_id = {folder["id"]: folder for folder in r.json()}
+        assert by_id["default"]["sources"] == 4
+        assert by_id["sandbox"]["sources"] == 2
+        assert calls == [["default", "sandbox"]]
+
+    async def test_folders_endpoint_falls_back_when_batch_counts_fail(
+        self, monkeypatch, client, caplog
+    ):
+        self._configure_folders(monkeypatch)
+        calls = []
+
+        class FakeDocStatus:
+            async def get_folder_counts(self, folders):
+                calls.append(("batch", folders))
+                raise RuntimeError("batch unavailable")
+
+            async def get_status_counts(self, folder=None):
+                calls.append(("single", folder))
+                return {"processed": 1}
+
+        class FakeRag:
+            doc_status = FakeDocStatus()
+
+        monkeypatch.setattr(webui_router, "_get_rag", lambda: FakeRag())
+
+        r = await client.get("/folders")
+
+        assert r.status_code == 200
+        assert [folder["sources"] for folder in r.json()] == [1, 1]
+        assert calls == [
+            ("batch", ["default", "sandbox"]),
+            ("single", "default"),
+            ("single", "sandbox"),
+        ]
+        assert "Batched DocStatus folder counts failed" in caplog.text
+
     async def test_rejects_unknown_folder_header(self, monkeypatch, client):
         self._configure_folders(monkeypatch)
         r = await client.get("/tags", headers={"X-Twin-Folder": "rogue"})
         assert r.status_code == 403
         assert r.json()["detail"] == (
-            "No folder available for this KB. Please contact Twincore Team"
+            "No folder is provisioned for this knowledge base. Ask your platform administrator to provision one."
         )
 
     async def test_folder_header_is_accepted(self, monkeypatch, client):

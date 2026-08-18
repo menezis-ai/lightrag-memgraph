@@ -28,6 +28,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
     jpg: 20 * 1024 * 1024,
     png: 20 * 1024 * 1024,
   },
+  procedureReviewEnabled: true,
   folders: [
     {
       id: 'default',

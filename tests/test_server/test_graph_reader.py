@@ -50,6 +50,12 @@ class TestMapEntityType:
             ("robotics framework", "TECHNOLOGY"),
             ("concept", "CONCEPT"),
             ("event", "CONCEPT"),
+            # QA GRA-tech (V8): bare "language" is what the LLM uses for
+            # NATURAL languages (Spanish/Portuguese/Italian on the maquette
+            # graph) — Concept per the taxonomy, never a Technology
+            # promotion. Programming languages keep their explicit key.
+            ("language", "CONCEPT"),
+            ("Language", "CONCEPT"),
         ],
     )
     def test_maps_common_lightrag_types(self, raw, expected):

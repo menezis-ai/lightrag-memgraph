@@ -33,7 +33,6 @@ import { Icon } from './Icon';
 import {
   bundleFolders,
   type PassPayload,
-  type ProcedureBundle,
   type SchematicEntry,
 } from '../types/procedure';
 import type { Folder } from '../types/topbar';
@@ -41,6 +40,13 @@ import type { Folder } from '../types/topbar';
 export interface ProcedureReviewModalProps {
   bundleId: string;
   folderList?: readonly Folder[];
+  /** Retry re-runs extraction + Vision and is blocked while ingestion is off.
+   *  Approval, rejection and standard rerouting remain available. */
+  procedureIngestionEnabled?: boolean;
+  /** Deployment readiness for PDF extraction + Vision prerequisites. */
+  procedureIngestionAvailable?: boolean;
+  /** Whether the activation/readiness settings were loaded successfully. */
+  procedureSettingsKnown?: boolean;
   onClose: () => void;
   onToast: (kind: 'done' | 'error', title: string, sub?: string) => void;
 }
@@ -257,6 +263,9 @@ function SchematicPane({
 export function ProcedureReviewModal({
   bundleId,
   folderList = [],
+  procedureIngestionEnabled = true,
+  procedureIngestionAvailable = true,
+  procedureSettingsKnown = true,
   onClose,
   onToast,
 }: Readonly<ProcedureReviewModalProps>) {
@@ -374,14 +383,19 @@ export function ProcedureReviewModal({
   // Mirrors the backend `_resolve_primary_folder` 422: a bundle with no
   // requesting folder (scan-created, no operator duplicate request) needs
   // an explicit target before Approve / Treat as standard.
-  const needsFolder =
-    bundle !== undefined && bundleFolders(bundle as ProcedureBundle).length === 0;
+  const needsFolder = bundle !== undefined && bundleFolders(bundle).length === 0;
   const folderMissing = needsFolder && !folderChoice;
   const canApprove = state === 'pending' && !folderMissing && !busy;
   const canReject = (state === 'pending' || state === 'failed') && !busy;
   const canReroute =
     ['pending', 'failed', 'rejected'].includes(state) && !folderMissing && !busy;
-  const canRetry = (state === 'failed' || state === 'rejected') && !busy;
+  const retryEligible = state === 'failed' || state === 'rejected';
+  const canRetry =
+    retryEligible &&
+    procedureSettingsKnown &&
+    procedureIngestionEnabled &&
+    procedureIngestionAvailable &&
+    !busy;
 
   const schematics = bundle?.schematics ?? [];
   const safeIndex = Math.min(schematicIndex, Math.max(schematics.length - 1, 0));
@@ -440,7 +454,7 @@ export function ProcedureReviewModal({
               })}
             </p>
           )}
-          {bundle && bundle.reason && (
+          {bundle?.reason && (
             <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
               {bundle.reason}
             </p>
@@ -505,16 +519,33 @@ export function ProcedureReviewModal({
             data-testid="procedure-review-reject-comment"
             style={{ flex: 1, minWidth: 160 }}
           />
-          {canRetry && (
-            <button
-              type="button"
-              className="btn"
-              disabled={!canRetry}
-              onClick={() => retryMut.mutate()}
-              data-testid="procedure-review-retry"
-            >
-              {retryMut.isPending ? 'Retrying…' : 'Retry'}
-            </button>
+          {retryEligible && (
+            <>
+              {(!procedureSettingsKnown ||
+                !procedureIngestionEnabled ||
+                !procedureIngestionAvailable) && (
+                <span
+                  className="muted"
+                  data-testid="procedure-review-retry-disabled"
+                  style={{ flexBasis: '100%', fontSize: 11.5 }}
+                >
+                  {!procedureSettingsKnown
+                    ? 'Procedure settings could not be verified. Reload them before retrying.'
+                    : procedureIngestionEnabled
+                      ? 'Procedure ingestion is enabled, but its PDF or Vision prerequisites are unavailable.'
+                      : 'Enable procedure ingestion in Settings > Vision before retrying.'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn"
+                disabled={!canRetry}
+                onClick={() => retryMut.mutate()}
+                data-testid="procedure-review-retry"
+              >
+                {retryMut.isPending ? 'Retrying…' : 'Retry'}
+              </button>
+            </>
           )}
           <button
             type="button"

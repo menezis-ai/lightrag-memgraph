@@ -74,6 +74,10 @@ export interface TwinRuntimeConfig {
    *  applies the stricter of this tier cap and its global upload cap,
    *  preventing an accepted image from reaching a tier that must reject it. */
   extraUploadMaxBytes?: Readonly<Record<string, number>>;
+  /** Whether this deployment can park and review procedure documents.
+   *  Missing means unsupported (important when a newer UI is served by an
+   *  older backend). */
+  procedureReviewEnabled?: boolean;
   /** Debug-only: bypass IdP and pretend to be this user. Stripped in prod. */
   debugUser?: AuthenticatedUser;
 }

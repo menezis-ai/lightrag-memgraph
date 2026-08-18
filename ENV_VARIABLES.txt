@@ -38,7 +38,12 @@ LightRAG UI loads and redirects to /webui/#/login.
 --------------------------------------------------------------------------------
 MEMGRAPH_URI                 Bolt URI, e.g. bolt://memgraph:7687  [REQUIRED]
 MEMGRAPH_USERNAME            Username. Default: "" (no auth)
+MEMGRAPH_USERNAME_FILE       File containing the username. Mutually exclusive
+                             with MEMGRAPH_USERNAME (Docker secrets compatible).
 MEMGRAPH_PASSWORD            Password. Default: ""
+MEMGRAPH_PASSWORD_FILE       File containing the password. Mutually exclusive
+                             with MEMGRAPH_PASSWORD. Missing/empty files fail
+                             closed; prefer this in production.
 MEMGRAPH_DATABASE            Logical database. Default: memgraph default.
                              With bolt:// the package issues USE DATABASE
                              (silently skipped on Memgraph Community);
@@ -47,6 +52,9 @@ MEMGRAPH_ENCRYPTED           "true" to force TLS on plain bolt://. A WARNING
                              is logged when credentials would transit in
                              clear to a remote host.
 MEMGRAPH_TRUST               Trust policy for TLS certificates.
+                             TRUST_SYSTEM_CA (default), TRUST_CUSTOM_CA, or
+                             TRUST_ALL (verification disabled; never production).
+MEMGRAPH_CA_FILE             CA certificate path required by TRUST_CUSTOM_CA.
 MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 50.
 MEMGRAPH_READ_POOL_SIZE      Connection pool size (read pool). Default: 20.
 MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 8.
@@ -65,6 +73,14 @@ MEMGRAPH_OPERATION_TIMEOUT   Maximum seconds for one pooled or graph-storage Bol
 MEMGRAPH_IDLE_DISCONNECT_SECONDS
                              Force write/read driver recreation after this many
                              seconds without pool activity. Default: 3600.
+MEMGRAPH_MAX_CONNECTION_LIFETIME
+                             Max age (seconds) of a pooled Bolt connection before
+                             the driver recycles it without I/O. Lower it below the
+                             network path's idle-kill window (Docker Swarm
+                             overlay/IPVS resets idle TCP around 900s; e.g. 600) to
+                             silence reset-by-peer log noise — the liveness probe
+                             already keeps defunct sockets from reaching callers.
+                             Default: 1800.
 TWIN_PURGE_LLM_CACHE_ON_FAILED
                              "0"/"false" disables the purge of LLM
                              entity-extraction cache rows tied to a document
@@ -100,11 +116,20 @@ TWIN_CONVERT                 MarkItDown pre-conversion tier
 TWIN_CONVERT_FORMATS         Comma list of extensions routed through
                              conversion. Default: pdf,docx,pptx,xlsx,xls,msg,
                              epub,html,htm,csv. ZIP is deliberately excluded
-                             (no upstream zip-bomb guard).
+                             (no upstream zip-bomb guard); reintroducing it
+                             here logs a SECURITY warning (audit 2026-08-06,
+                             R-08c).
 TWIN_CONVERT_MAX_BYTES       Size cap above which conversion is skipped
                              (native path). Default: 104857600 (100 MB).
 TWIN_CONVERT_TIMEOUT         Per-conversion timeout in seconds (native path
                              on expiry). Default: 120.
+TWIN_PRECONVERTED_PARSE      Kill-switch for the 1.5.x preconverted-markdown
+                             parse seam (paragraph-citation phase B1). Unset
+                             or any value but "off": the seam engages
+                             automatically when the installed LightRAG
+                             supports docs_format/parse_engine (never on the
+                             1.4.x line). "off": converted markdown keeps the
+                             historical raw enqueue, no block provenance.
 TWIN_VISION                  Vision image-ingestion tier (PR 2). "auto"
                              (default) enables it iff openai is importable
                              AND TWIN_VISION_BASE_URL + TWIN_VISION_MODEL
@@ -113,7 +138,11 @@ TWIN_VISION                  Vision image-ingestion tier (PR 2). "auto"
                              native LightRAG behavior (rejected extension).
 TWIN_VISION_BASE_URL         OpenAI-compatible endpoint serving a
                              vision-capable model (BNP: Gemma 4 31B-it via
-                             LLMaaS/vLLM). Required for the tier.
+                             LLMaaS/vLLM). Required for the tier. Passed
+                             verbatim to the vision client — pin the host at
+                             the deployer level; a compromised env turns it
+                             into SSRF (audit 2026-08-06, R-08a: accepted
+                             trust boundary, runbook-documented).
 TWIN_VISION_API_KEY          API key for that endpoint. Default: dummy
                              ("twin-vision" — vLLM does not check it).
 TWIN_VISION_MODEL            Model name on the endpoint. Required.
@@ -122,7 +151,9 @@ TWIN_VISION_FORMATS          Comma list of image extensions. Default:
 TWIN_VISION_MAX_BYTES        Image size cap (refused above). Default:
                              20971520 (20 MB).
 TWIN_VISION_TIMEOUT          Whole-pipeline timeout per image (OCR + LLM),
-                             seconds. Default: 60.
+                             seconds. The same timeout is enforced on the
+                             OpenAI transport and SDK retries are disabled.
+                             Default: 60.
 TWIN_VISION_MIN_OCR_CHARS    RapidOCR pre-filter: an image whose OCR text is
                              below this many chars is refused WITHOUT a
                              vision call (Knowledge-Bot economics). Default:
@@ -137,17 +168,57 @@ env defaults, effective immediately across workers (re-read per image).
 Endpoint/key/model/timeouts/caps stay env-only by design (secrets + SSRF
 surface do not belong in a UI-mutable store).
 
+TWIN_PDF_VISION              Generic visual enrichment for standard PDFs.
+                             "auto" (default) enables it when pypdfium2 and
+                             the Vision tier are available; "off" restores
+                             the previous text-only PDF path. The procedure
+                             profile always has priority. OCR is enrichment,
+                             never a minimum-text rejection gate here.
+TWIN_PDF_VISION_MAX_BYTES    PDF size cap for visual inspection. Existing
+                             converted text still ingests above the cap.
+                             Default: 104857600 (100 MB).
+TWIN_PDF_VISION_MAX_PAGES    Maximum pages inspected per PDF. Default: 200.
+TWIN_PDF_VISION_MAX_VISUALS  Maximum distinct visual candidates described
+                             per PDF. Default: 40.
+TWIN_PDF_VISION_MAX_RENDERS  Maximum regions rendered and fingerprinted per
+                             PDF, including duplicates. This separate budget
+                             lets duplicates found after the distinct cap
+                             retain page provenance without unbounded work.
+                             Default: 400.
+TWIN_PDF_VISION_RENDER_SCALE PDFium render scale for images/scans/composite
+                             pages (1.0 = 72 dpi). Default: 2.0; accepted
+                             range: 0.5–4.0. Renders are capped at 16 MP.
+TWIN_PDF_VISION_TIMEOUT      Whole-document enrichment timeout in seconds.
+                             Default: 300.
+TWIN_PDF_VISION_CONCURRENCY  Concurrent generic-PDF Vision transport calls
+                             across the worker process. A timed-out coroutine
+                             keeps its slot until the sync HTTP call stops.
+                             Transport uses a dedicated bounded thread pool,
+                             so queued calls cannot starve unrelated async
+                             conversion, OCR or PDF-discovery work.
+                             Default: 2; hard maximum: 8.
+
 TWIN_PROCEDURE               Procedure-PDF ingestion profile
-                             (PROCEDURE-PROFILE-PLAN.md). "auto" (default)
-                             enables it iff pypdfium2 + pypdf are importable
-                             AND the vision tier is enabled (same
-                             gemma-4-31b-it endpoint); "on" forces (warns
-                             when unusable); "off" disables — procedure PDFs
-                             then follow the standard conversion path.
+                             (PROCEDURE-PROFILE-PLAN.md). On Twin server
+                             surfaces, activation is controlled per workspace
+                             by the admin toggle in Settings > Vision and a
+                             workspace with no saved choice starts OFF.
+                             "on" seeds that unsaved default to ON when the
+                             PDF + Vision prerequisites are available; "auto"
+                             (default) and "off" seed it OFF. Once saved, the
+                             runtime choice is authoritative. On direct
+                             non-server surfaces only, the legacy behavior
+                             remains: "auto" enables when pypdfium2 + pypdf
+                             and Vision are ready, "on" requests enablement,
+                             and "off" disables.
                              When active, a detected (or X-Twin-Doc-Type:
                              procedure forced) document is parked as an
                              approval bundle and NOT enqueued until a human
-                             approves it.
+                             approves it. When inactive, new auto-detected
+                             files use the standard path; an explicitly forced
+                             procedure is parked failed, and paths already
+                             claimed by a bundle remain claimed so a rescan
+                             cannot bypass approval.
 TWIN_PROCEDURE_STORE_FILE    Approval-bundle store (JSON file, atomic
                              writes, PNGs base64-inline). Default:
                              {WORKING_DIR}/twin_procedure_bundles.json.
@@ -162,6 +233,25 @@ TWIN_PROCEDURE_RENDER_SCALE  pypdfium2 page-render scale for schematic
 TWIN_PROCEDURE_MAX_SCHEMATICS  Cap on "Schematic:" pages processed per
                              document (excess logged and skipped).
                              Default: 8.
+TWIN_VISION_EXTRA_BODY       Vendor-specific request extensions, as a JSON
+                             object merged into the chat-completions call.
+                             Empty by default: the product knows about no
+                             particular gateway. Exists because one model id
+                             can be served by several backends with different
+                             behaviour, and only the deployment knows which it
+                             trusts. CI uses it to pin an OpenRouter provider
+                             (see .forgejo/workflows/ci.yml); BNP's vLLM sets
+                             nothing.
+
+TWIN_PROCEDURE_MAX_TOKENS    Completion cap for the two vision passes and
+                             the comparator. Default 16384; values below 2048
+                             are ignored. Sized for the WORST realistic
+                             schematic, not the average: hitting the cap is
+                             not a graceful degradation, a JSON object cut
+                             mid-structure is unparseable and the whole
+                             schematic is lost. Runaway protection belongs to
+                             TWIN_VISION_TIMEOUT, not to this value.
+
 TWIN_PROCEDURE_MAX_BYTES     Size cap above which the profile is skipped
                              (standard path). Default: 104857600 (100 MB).
 Upload header X-Twin-Doc-Type: "procedure" forces the profile, "standard"
@@ -181,10 +271,12 @@ LIGHTRAG_VECTOR_STORAGE             Default: MemgraphVectorDBStorage
 LIGHTRAG_GRAPH_STORAGE              Default: MemgraphStorage (LightRAG built-in)
 LIGHTRAG_DOC_STATUS_STORAGE         Default: MemgraphDocStatusStorage
 LIGHTRAG_MAX_REQUEST_BODY_BYTES     Max Content-Length for ordinary request
-                                    bodies. Default: 16777216 (16 MiB).
+                                    bodies. Default: 1048576 (1 MiB), aligned
+                                    with LightRAG 1.5.6's global ASGI ceiling.
                                     0 disables the guard.
 LIGHTRAG_MAX_UPLOAD_BODY_BYTES      Max Content-Length for /documents/upload.
-                                    Default: 104857600 (100 MiB).
+                                    Default: 105906176 (101 MiB): LightRAG's
+                                    100 MiB file cap plus 1 MiB multipart slack.
                                     0 disables the guard.
 
 LLM / embeddings / rerank (used by the overlay; LightRAG-native equivalents
@@ -262,9 +354,25 @@ TOKEN_SECRET                 Legacy alias for the JWT secret (LightRAG native).
 TOKEN_EXPIRE_HOURS           Legacy alias for the TTL.
 AUTH_ACCOUNTS                LightRAG-native "user:pass,user2:pass2" list.
 
+Login brute-force throttle (audit 2026-08-06, R-04):
+TWIN_LOGIN_RATE_LIMIT_PER_MINUTE  Per-source-IP sliding-window limit on
+                             POST /login attempts; excess gets 429 +
+                             Retry-After. Default: 5. 0 disables (NOT
+                             recommended outside tests). The limiter keys on
+                             the socket peer and deliberately does not trust
+                             X-Forwarded-For.
+TWIN_LOGIN_BACKOFF_MAX_SECONDS  Cap on the per-account exponential backoff
+                             applied to consecutive failed logins (1s from
+                             the 3rd failure, doubling, capped here).
+                             Default: 30. 0 disables the backoff. A
+                             sev=critical audit event + SECURITY log fire
+                             every 10 consecutive failures per account.
+
 Mode C — corporate IdP (JWKS). Setting TWIN_IDP_JWKS_URL activates the strict
 RBAC posture; leaving it unset keeps the middleware dormant:
 TWIN_IDP_JWKS_URL            JWKS endpoint URL.                [activation switch]
+                             Must be https:// — a plain-http endpoint logs a
+                             SECURITY warning at boot (audit 2026-08-06, R-08e).
 TWIN_IDP_ISSUER              Expected issuer claim.
 TWIN_IDP_AUDIENCE            Expected audience claim.
 TWIN_IDP_ALGORITHMS          Allowed algorithms. Default: RS256

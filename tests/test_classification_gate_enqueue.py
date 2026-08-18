@@ -30,6 +30,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import uuid
 import zipfile
 from pathlib import Path
@@ -204,6 +205,38 @@ async def test_enqueue_gate_allows_below_ceiling_untouched(enqueue_gate, tmp_pat
     (row,) = merged.values()
     assert row["metadata"]["classification"]["class_id"] == "C2"
     assert len(await _rejected_events()) == 0
+
+
+async def test_enqueue_gate_audit_callback_keeps_event_loop_affinity(
+    enqueue_gate, tmp_path
+):
+    """The public emitter must run on the patched ingestion caller's loop."""
+    rag, enqueued = enqueue_gate
+    ok = _build_docx_with_label(tmp_path, "C2 Confidentiel", C2_GUID)
+    label_map = tmp_path / "affinity-labels.json"
+    label_map.write_text(f'{{"{C2_GUID}": "C2", "{C3_GUID}": "C3"}}')
+    caller_loop = asyncio.get_running_loop()
+    caller_thread = threading.get_ident()
+    observed: list[tuple[asyncio.AbstractEventLoop, int, str]] = []
+
+    def audit_emit(kind: str, _payload: dict) -> None:
+        observed.append((asyncio.get_running_loop(), threading.get_ident(), kind))
+
+    install_lightrag_ingestion_hook(
+        label_map_path=label_map,
+        ceiling="C2",
+        audit_emit=audit_emit,
+    )
+
+    await rag.apipeline_enqueue_documents(
+        "body text", file_paths=str(ok), track_id="track-affinity"
+    )
+
+    assert len(enqueued) == 1
+    assert observed
+    assert {kind for _, _, kind in observed} == {"classification-detected"}
+    assert all(loop is caller_loop for loop, _, _ in observed)
+    assert all(thread_id == caller_thread for _, thread_id, _ in observed)
 
 
 async def test_enqueue_gate_mixed_batch_slices_aligned_extras(enqueue_gate, tmp_path):
@@ -820,7 +853,9 @@ async def test_direct_enqueue_mixed_batch_and_failed_row_survives_pipeline(
     # The rejected doc: FAILED row present, content never stored.
     from twindb_lightrag_memgraph._classification_hook import _doc_id_for_insert
 
-    rejected_id = _doc_id_for_insert("embedded secret body", None)
+    rejected_id = _doc_id_for_insert(
+        "embedded secret body", None, file_path=secret.name
+    )
     rejected_row = await rag.doc_status.get_by_id(rejected_id)
     assert rejected_row is not None
     assert str(_row_field(rejected_row, "status")).lower().endswith("failed")

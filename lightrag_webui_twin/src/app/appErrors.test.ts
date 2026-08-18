@@ -18,7 +18,7 @@ import {
 } from './appErrors';
 
 const GENERIC_LOAD_MESSAGE =
-  'Something went wrong while loading data from the backend. Please retry or contact Twincore Team.';
+  'Something went wrong while loading data from the backend. Please retry. If the problem continues, contact your platform administrator.';
 
 function query<T>(overrides: Partial<QueryLike<T>>): QueryLike<T> {
   return {
@@ -69,7 +69,7 @@ describe('resourceError', () => {
     }));
     expect(out?.label).toBe('Quota');
     expect(out?.message).toBe(
-      'The Twin backend is temporarily unavailable. Please retry in a moment or contact Twincore Team.',
+      'The backend is temporarily unavailable. Retry in a moment. If the problem continues, contact your platform administrator.',
     );
     expect(out?.message).not.toContain('503');
   });

@@ -34,10 +34,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
-import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,10 +52,13 @@ from ._constants import (
     TWIN_VISION_MAX_BYTES_ENV,
     TWIN_VISION_MIN_OCR_CHARS_ENV,
     TWIN_VISION_MODEL_ENV,
+    TWIN_VISION_EXTRA_BODY_ENV,
     TWIN_VISION_TIMEOUT_ENV,
 )
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
+
+_VISION_WARNING_FORMAT = "twindb vision: %s — %s"
 
 _TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
 
@@ -64,6 +67,12 @@ DEFAULT_DROP_CLASSES = frozenset({"invalid", "logo", "signature"})
 DEFAULT_MIN_OCR_CHARS = 20
 DEFAULT_MAX_BYTES = 20 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 60.0
+
+# Pixel budget for the OCR re-decode retry (see ``_ocr_text_sync``). A 600 dpi
+# A4 scan is ~35 MP, so no real document is excluded; a highly compressible
+# decompression bomb is tiny on disk (it clears ``max_image_bytes``) yet blows
+# past this, and is skipped before Pillow materialises a single pixel.
+OCR_REDECODE_MAX_PIXELS = 60_000_000
 
 _MIME_BY_EXT = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
@@ -291,8 +300,13 @@ def should_process(file_path: Path | str) -> bool:
     return True
 
 
-def _ocr_text_sync(path: Path) -> str | None:
-    """RapidOCR text, ``None`` when the engine is unavailable (bypass)."""
+def _ocr_source_sync(source, label: str) -> str | None:
+    """RapidOCR text for a path or ndarray; ``None`` means bypass.
+
+    RapidOCR/ONNX sessions are kept behind the same lock as lazy creation.
+    The standalone-image and PDF-visual tiers can run concurrently, while a
+    single shared engine is not documented as thread-safe.
+    """
     global _ocr_engine, _ocr_missing_warned
     with _ocr_lock:
         if _ocr_engine is None:
@@ -310,34 +324,180 @@ def _ocr_text_sync(path: Path) -> str | None:
                     )
                 return None
         engine = _ocr_engine
+        try:
+            result, _ = engine(source)
+        except Exception as exc:
+            logger.warning(
+                "twindb vision: OCR failed for %s (%s) — pre-filter bypassed",
+                label,
+                exc,
+            )
+            return None
+    if not result:
+        return ""
     try:
-        result, _ = engine(str(path))
+        text_parts = []
+        for line in result:
+            if (
+                not isinstance(line, (list, tuple))
+                or len(line) < 2
+                or not isinstance(line[1], str)
+            ):
+                raise ValueError("unexpected RapidOCR line shape")
+            text_parts.append(line[1])
+        return " ".join(text_parts)
     except Exception as exc:
+        # A successful transport with an aberrant payload is not evidence that
+        # the image has no text. Degrade open exactly like an OCR engine error:
+        # bypass the cheap pre-filter and let the semantic vision pass decide.
         logger.warning(
-            "twindb vision: OCR failed for %s (%s) — pre-filter bypassed",
-            path.name,
+            "twindb vision: OCR returned malformed data for %s (%s) — "
+            "pre-filter bypassed",
+            label,
             exc,
         )
         return None
-    if not result:
-        return ""
-    return " ".join(line[1] for line in result)
+
+
+def _decode_rgb_pixels(path: Path):
+    """RGB pixel array for an OCR re-decode; ``None`` when it must be skipped.
+
+    ``Image.open`` is lazy — the size guard below reads the header only, so a
+    decompression bomb is rejected before any pixel is materialised.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+
+        with Image.open(path) as image:
+            width, height = image.size
+            if width * height > OCR_REDECODE_MAX_PIXELS:
+                logger.warning(
+                    "twindb vision: %s is %dx%d — skipping OCR re-decode above "
+                    "the %d pixel budget",
+                    path.name,
+                    width,
+                    height,
+                    OCR_REDECODE_MAX_PIXELS,
+                )
+                return None
+            return np.asarray(image.convert("RGB"))
+    except Exception as exc:
+        logger.debug(
+            "twindb vision: cannot re-decode %s for OCR (%s: %s)",
+            path.name,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+
+def _ocr_text_sync(path: Path) -> str | None:
+    """RapidOCR text from a file path (standalone-image compatibility).
+
+    RapidOCR's own file loader silently yields *nothing* for colour modes it
+    cannot decode — CMYK JPEG, the standard output of print/scan and prepress
+    pipelines, is the confirmed case. That empty result is indistinguishable
+    from "this image genuinely has no text", so the pre-filter would refuse a
+    perfectly legible document as noise and it would never reach the vision
+    model: a decoder miss fails CLOSED, while a missing OCR engine correctly
+    degrades open. When the fast path comes back empty we therefore decode once
+    through Pillow — the exact conversion :func:`ocr_png_bytes_sync` already
+    performs for PDF visuals, so both OCR entry points now agree — and retry
+    before concluding the image carries no text.
+
+    Nominal images never reach the retry: it only runs where the current result
+    is empty, i.e. on a document that would otherwise have been dropped.
+    """
+    text = _ocr_source_sync(str(path), path.name)
+    if text:
+        return text
+    pixels = _decode_rgb_pixels(path)
+    if pixels is None:
+        return text
+    retried = _ocr_source_sync(pixels, f"{path.name} (re-decoded)")
+    return retried or text
+
+
+def ocr_png_bytes_sync(png_bytes: bytes, *, label: str = "PDF visual") -> str | None:
+    """RapidOCR text from an in-memory rendered PDF visual.
+
+    The generic PDF tier uses OCR as enrichment only: unlike standalone
+    images, a short result never prevents the subsequent semantic Vision
+    classification.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+
+        with Image.open(io.BytesIO(png_bytes)) as image:
+            pixels = np.asarray(image.convert("RGB"))
+    except Exception as exc:
+        logger.warning("twindb vision: cannot decode %s for OCR (%s)", label, exc)
+        return None
+    return _ocr_source_sync(pixels, label)
 
 
 def _get_client():
     global _client
     if _client is None:
-        from openai import OpenAI
+        with _client_lock:
+            if _client is None:
+                from openai import OpenAI
 
-        _client = OpenAI(
-            base_url=os.environ[TWIN_VISION_BASE_URL_ENV].strip(),
-            api_key=os.environ.get(TWIN_VISION_API_KEY_ENV, "twin-vision").strip()
-            or "twin-vision",
-        )
+                # asyncio cancellation cannot stop a sync request already
+                # running in a worker thread.  The transport must therefore
+                # enforce the same deadline itself, with SDK retries disabled
+                # so one advertised attempt cannot silently become three.
+                _client = OpenAI(
+                    base_url=os.environ[TWIN_VISION_BASE_URL_ENV].strip(),
+                    api_key=os.environ.get(
+                        TWIN_VISION_API_KEY_ENV, "twin-vision"
+                    ).strip()
+                    or "twin-vision",
+                    timeout=vision_timeout_seconds(),
+                    max_retries=0,
+                )
     return _client
 
 
-def vision_chat_sync(messages: list[dict]) -> str:
+def vision_extra_body() -> dict:
+    """Vendor-specific request extensions, as JSON in ``TWIN_VISION_EXTRA_BODY``.
+
+    Deliberately opaque: the product must not know about any one gateway. It
+    exists because the same model id can be served by several backends with
+    different behaviour, and only the deployment knows which it trusts.
+
+    Concrete case (measured 2026-07-25): the CI gate points at OpenRouter,
+    which routes ``google/gemma-4-31b-it`` across providers. Cerebras returned
+    valid JSON 6/6 times on an identical request; DeepInfra returned
+    unparseable output 3/3 and, on one run, a 54525-character repetition loop
+    that blew the document timeout. Four CI failures with four different
+    symptoms were that routing roulette, not a pipeline defect. The gate now
+    pins its provider through this variable; BNP's own vLLM sets nothing.
+    """
+    raw = os.environ.get(TWIN_VISION_EXTRA_BODY_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        logger.warning(
+            "twindb vision: %s is not valid JSON (%s) — ignored",
+            TWIN_VISION_EXTRA_BODY_ENV,
+            exc,
+        )
+        return {}
+    if not isinstance(data, dict):
+        logger.warning(
+            "twindb vision: %s must be a JSON object — ignored",
+            TWIN_VISION_EXTRA_BODY_ENV,
+        )
+        return {}
+    return data
+
+
+def vision_chat_sync(messages: list[dict], *, max_tokens: int | None = None) -> str:
     """One JSON-mode chat call against the configured vision endpoint.
 
     Shared entry point for every tier that talks to the vision LLM (image
@@ -345,12 +505,26 @@ def vision_chat_sync(messages: list[dict]) -> str:
     model resolution and the strict-JSON posture (``temperature=0``,
     ``response_format=json_object``) stay defined in exactly one place.
     Returns the raw model text; callers parse with :func:`_parse_vision_json`.
+
+    ``max_tokens`` is opt-in and left unset by default so the short-output
+    image tier keeps its current behaviour. Callers that ask for a large
+    structured object must set it: with no explicit cap the provider's own
+    default decides, and a completion cut mid-object yields an unparseable
+    reply *deterministically* — retrying the identical request then fails
+    the same way, which is exactly what the procedure passes hit.
     """
+    kwargs = {}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    extra = vision_extra_body()
+    if extra:
+        kwargs["extra_body"] = extra
     response = _get_client().chat.completions.create(
         model=os.environ[TWIN_VISION_MODEL_ENV].strip(),
         temperature=0,
         response_format={"type": "json_object"},
         messages=messages,
+        **kwargs,
     )
     return response.choices[0].message.content or ""
 
@@ -374,26 +548,92 @@ def _call_vision_llm_sync(path: Path) -> str:
     )
 
 
-def _parse_vision_json(raw: str) -> dict | None:
-    """Tolerant parse of the model reply (bare JSON or fenced block)."""
-    for candidate in (raw, _strip_code_fence(raw)):
-        if not candidate:
+def _widest_embedded_object(raw: str) -> dict | None:
+    """Return the widest decodable object embedded in ``raw``."""
+    decoder = json.JSONDecoder()
+    best: dict | None = None
+    best_span = -1
+    empty_fallback: dict | None = None
+    for index, char in enumerate(raw):
+        if char != "{":
             continue
         try:
-            data = json.loads(candidate)
-        except (TypeError, ValueError):
+            data, end = decoder.raw_decode(raw, index)
+        except ValueError:
             continue
+        if not isinstance(data, dict):
+            continue
+        if not data:
+            if empty_fallback is None:
+                empty_fallback = data
+            continue
+        # Widest span wins, NOT the first hit. Returning the first decodable
+        # object looks right until the outer one is truncated: the scan then
+        # walks into the object's own body and happily returns an inner
+        # fragment — one entry of a `tasks` array — which parses cleanly and
+        # fails the contract check downstream. That turns a loud "unparseable
+        # reply" into a quiet "wrong shape", which is worse. The outermost
+        # object always spans the most characters.
+        span = end - index
+        if span > best_span:
+            best, best_span = data, span
+    return best if best is not None else empty_fallback
+
+
+def _parse_vision_json(raw: str) -> dict | None:
+    """Tolerant parse of the model reply (bare JSON, fenced block, or noise).
+
+    Real replies are not always the clean object the prompt asks for. The live
+    gate observed one opening with a junk prefix before the fence::
+
+        {";}```json\\n{\\n  "title": "Qualify and resolve the incident", ...
+
+    The previous fallback was a single greedy ``\\{.*\\}`` search, which anchors
+    on the FIRST brace — the junk one — and therefore produced an invalid span
+    while the real object sat intact a few characters later. It also required a
+    CLOSING fence, so a reply cut at the token cap was unrecoverable even when
+    its JSON object had completed.
+
+    Both are fixed by scanning every ``{`` and letting the decoder tell us where
+    a real value starts: ``raw_decode`` parses one value and ignores whatever
+    trails it, so a junk prefix, an unterminated fence and trailing prose all
+    stop mattering. A non-empty object wins over an empty one — ``{}`` stays
+    reachable so the downstream contract validator keeps reporting it as a
+    malformed payload rather than a parse failure.
+    """
+    if not raw:
+        return None
+
+    try:
+        data = json.loads(raw)
         if isinstance(data, dict):
             return data
-    return None
+    except (TypeError, ValueError):
+        pass
+
+    return _widest_embedded_object(raw)
 
 
-def _strip_code_fence(raw: str) -> str | None:
-    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw or "", re.DOTALL)
-    if match:
-        return match.group(1)
-    match = re.search(r"\{.*\}", raw or "", re.DOTALL)
-    return match.group(0) if match else None
+def validate_vision_payload(data: object, *, stage: str = "vision") -> tuple[str, str]:
+    """Validate the shared ``{image_classification, content}`` contract.
+
+    Parsing JSON is not sufficient: coercing arrays, objects or numbers with
+    ``str()`` would turn a malformed model response into trusted document
+    content.  Both generic image tiers use this validator before applying
+    semantic drop rules.
+    """
+    if not isinstance(data, dict):
+        raise ValueError(f"{stage}: reply does not match the expected shape")
+    classification = data.get("image_classification")
+    content = data.get("content")
+    if not isinstance(classification, str) or not isinstance(content, str):
+        raise ValueError(
+            f"{stage}: reply must contain string image_classification and content"
+        )
+    # Keep both image pipelines consistent when the model returns a blank
+    # classification. The content remains usable and gets an explicit,
+    # stable label instead of producing ``_Image type: _`` in markdown.
+    return classification.strip() or "unknown", content.strip()
 
 
 def _compose_markdown(
@@ -419,11 +659,11 @@ async def aprocess_image(file_path: Path | str) -> VisionOutcome:
         )
     except asyncio.TimeoutError:
         reason = f"vision-timeout: no result within {vision_timeout_seconds():.0f}s"
-        logger.warning("twindb vision: %s — %s", path.name, reason)
+        logger.warning(_VISION_WARNING_FORMAT, path.name, reason)
         return VisionOutcome(markdown=None, reason=reason)
     except Exception as exc:  # defensive: the seam must never crash
         reason = f"vision-error: {type(exc).__name__}: {exc}"
-        logger.warning("twindb vision: %s — %s", path.name, reason)
+        logger.warning(_VISION_WARNING_FORMAT, path.name, reason)
         return VisionOutcome(markdown=None, reason=reason)
 
 
@@ -439,22 +679,23 @@ async def _aprocess_inner(path: Path) -> VisionOutcome:
     size_limit = max_image_bytes()
     if size > size_limit:
         reason = (
-            f"vision-size-limit: {size} bytes exceeds "
-            f"{TWIN_VISION_MAX_BYTES_ENV}={size_limit}"
+            "vision-size-limit: image rejected because file size is "
+            f"{size} bytes; configured maximum is {size_limit} bytes"
         )
-        logger.warning("twindb vision: %s — %s", path.name, reason)
+        logger.warning(_VISION_WARNING_FORMAT, path.name, reason)
         return VisionOutcome(markdown=None, reason=reason)
 
     threshold, active_drop_classes = await _effective_settings()
     ocr_text = await asyncio.to_thread(_ocr_text_sync, path)
 
     if ocr_text is not None and threshold > 0 and len(ocr_text.strip()) < threshold:
+        detected_chars = len(ocr_text.strip())
         return VisionOutcome(
             markdown=None,
             reason=(
-                f"vision-prefilter: OCR text below {threshold} chars "
-                f"({len(ocr_text.strip())}) — set "
-                f"{TWIN_VISION_MIN_OCR_CHARS_ENV}=0 to caption everything"
+                "vision-prefilter: image rejected before vision analysis; "
+                f"OCR detected {detected_chars} text characters, below "
+                f"configured minimum {threshold}"
             ),
         )
 
@@ -472,19 +713,31 @@ async def _aprocess_inner(path: Path) -> VisionOutcome:
             markdown=None, reason="vision-llm-error: unparseable JSON reply"
         )
 
-    classification = str(data.get("image_classification") or "unknown").strip()
-    content = str(data.get("content") or "").strip()
-
-    if classification.lower() in active_drop_classes:
+    try:
+        classification, content = validate_vision_payload(data, stage="vision-image")
+    except ValueError as exc:
         return VisionOutcome(
             markdown=None,
-            reason=f"image-dropped: classification {classification!r}",
+            reason=f"vision-llm-error: {exc}",
+        )
+
+    classification_slug = classification.lower()
+    if classification_slug in active_drop_classes:
+        return VisionOutcome(
+            markdown=None,
+            reason=(
+                "image-dropped: image rejected by active Vision policy; "
+                f"classified as {classification_slug!r}, an excluded class"
+            ),
             classification=classification,
         )
     if not content or content.lower() == "invalid":
         return VisionOutcome(
             markdown=None,
-            reason="image-dropped: no informational content",
+            reason=(
+                "image-dropped: image rejected by active Vision policy; "
+                "no informational content was detected"
+            ),
             classification=classification,
         )
 

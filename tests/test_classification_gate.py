@@ -17,6 +17,7 @@ All LightRAG/driver calls are faked — no Memgraph and no real index needed.
 
 from __future__ import annotations
 
+import asyncio
 import zipfile
 from pathlib import Path
 from textwrap import dedent
@@ -100,17 +101,28 @@ def test_doc_id_for_insert_computes_deterministic_id_when_absent():
     assert a.startswith("doc-")
 
 
-def test_doc_id_for_insert_falls_back_to_file_path_on_blank_content():
-    """1.5.x pending_parse enqueues blank content — ids must not collide on
-    the md5 of the empty string across distinct files."""
+def test_doc_id_for_insert_matches_active_lightrag_source_id_rule():
+    """Blank pending parses never collide; non-blank sources follow the
+    active LightRAG generation (content on 1.4.x, canonical path on 1.5.x)."""
+    import inspect
+
+    from lightrag import LightRAG
+
     a = _doc_id_for_insert("", None, file_path="report-a.docx")
     b = _doc_id_for_insert("", None, file_path="report-b.docx")
     assert a != b
     assert a.startswith("doc-") and b.startswith("doc-")
-    # Non-blank content keeps the historical content-keyed id.
-    assert _doc_id_for_insert("body", None, file_path="report-a.docx") == (
-        _doc_id_for_insert("body", None)
+
+    enqueue = getattr(
+        LightRAG,
+        "_twin_original_enqueue",
+        LightRAG.apipeline_enqueue_documents,
     )
+    actual = _doc_id_for_insert("body", None, file_path="report-a.docx")
+    if "docs_format" in inspect.signature(enqueue).parameters:
+        assert actual == a
+    else:
+        assert actual == _doc_id_for_insert("body", None)
 
 
 def test_failed_status_for_rejection_shape():
@@ -187,6 +199,106 @@ async def test_merge_classification_metadata_swallows_errors():
     rag.doc_status.get_by_id = AsyncMock(side_effect=RuntimeError("db down"))
     # Must not raise into the ingestion path.
     await _merge_classification_metadata(rag, "doc-1", {"class_id": "C2"})
+
+
+async def test_merge_classification_metadata_batch_reads_and_writes_once():
+    rag = MagicMock()
+    rag.doc_status.get_by_ids = AsyncMock(
+        return_value=[
+            {"id": "doc-1", "metadata": {"existing": 1}},
+            {"id": "doc-2", "metadata": {"existing": 2}},
+        ]
+    )
+    rag.doc_status.get_by_id = AsyncMock()
+    rag.doc_status.upsert = AsyncMock()
+
+    await hook_mod._merge_classification_metadata_batch(
+        rag,
+        {
+            "doc-1": {"class_id": "C1"},
+            "doc-2": {"class_id": "C2"},
+        },
+    )
+
+    rag.doc_status.get_by_ids.assert_awaited_once_with(["doc-1", "doc-2"])
+    rag.doc_status.get_by_id.assert_not_awaited()
+    rag.doc_status.upsert.assert_awaited_once()
+    updates = rag.doc_status.upsert.call_args.args[0]
+    assert updates["doc-1"]["metadata"] == {
+        "existing": 1,
+        "classification": {"class_id": "C1"},
+    }
+    assert updates["doc-2"]["metadata"] == {
+        "existing": 2,
+        "classification": {"class_id": "C2"},
+    }
+
+
+async def test_merge_classification_metadata_batch_falls_back_after_read_error():
+    rag = MagicMock()
+    rag.doc_status.get_by_ids = AsyncMock(side_effect=RuntimeError("batch down"))
+    rag.doc_status.get_by_id = AsyncMock(
+        side_effect=[
+            {"id": "doc-1", "metadata": {}},
+            {"id": "doc-2", "metadata": {}},
+        ]
+    )
+    rag.doc_status.upsert = AsyncMock()
+
+    await hook_mod._merge_classification_metadata_batch(
+        rag,
+        {
+            "doc-1": {"class_id": "C1"},
+            "doc-2": {"class_id": "C2"},
+        },
+    )
+
+    assert rag.doc_status.get_by_id.await_count == 2
+    assert rag.doc_status.upsert.await_count == 2
+
+
+async def test_partition_inputs_async_offloads_and_copies_context():
+    import contextvars
+    import threading
+
+    marker = contextvars.ContextVar("classification_test_marker", default="missing")
+    running_loop = asyncio.get_running_loop()
+    main_thread = threading.get_ident()
+    probe_threads: list[int] = []
+    evaluation_threads: list[int] = []
+    evaluation_loops: list[asyncio.AbstractEventLoop] = []
+
+    def probe(path: str) -> dict[str, str]:
+        assert marker.get() == "copied"
+        probe_threads.append(threading.get_ident())
+        return {"class_id": "C2", "path": path}
+
+    def evaluate(path: str, result: dict[str, str]) -> dict[str, str]:
+        assert result["path"] == path
+        evaluation_threads.append(threading.get_ident())
+        evaluation_loops.append(asyncio.get_running_loop())
+        return result
+
+    def active_hook(path: str) -> dict[str, str]:
+        return evaluate(path, probe(path))
+
+    setattr(active_hook, "_twin_classification_probe", probe)
+    setattr(active_hook, "_twin_classification_evaluate", evaluate)
+
+    token = marker.set("copied")
+    try:
+        accepted, rejected = await hook_mod._partition_inputs_async(
+            active_hook, ["first.docx", "second.docx"]
+        )
+    finally:
+        marker.reset(token)
+
+    assert [index for index, _ in accepted] == [0, 1]
+    assert rejected == []
+    assert probe_threads
+    assert all(thread_id != main_thread for thread_id in probe_threads)
+    assert evaluation_threads == [main_thread, main_thread]
+    assert evaluation_loops == [running_loop, running_loop]
 
 
 async def test_emit_rejection_event_swallows_errors(monkeypatch):

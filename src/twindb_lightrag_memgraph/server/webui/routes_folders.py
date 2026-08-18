@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from .. import folder_store
 from ..folder import current_folder_id, is_env_seeded_folder, load_folder_catalog
@@ -16,11 +16,19 @@ from .store import _stores, deployment_store_mode, ensure_folder_store, get_stor
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["folders"])
 
 
-@router.get("/folders", response_model=list[Folder])
+@router.get(
+    "/folders",
+    response_model=list[Folder],
+    summary="List the folder catalog",
+)
 async def list_folders() -> list[dict[str, Any]]:
+    """Return every provisioned folder with its label, kind, live document
+    count (`sources`) and whether it is the folder the current request
+    resolved to (`current`). Use the returned ids as `X-Twin-Folder`
+    values."""
     active = current_folder_id()
     folders = [
         folder.as_api(current=folder.id == active)
@@ -44,6 +52,24 @@ async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]
         from .. import webui_router as legacy
 
         rag = legacy._get_rag()
+        folder_ids = [folder["id"] for folder in folders]
+        get_folder_counts = getattr(rag.doc_status, "get_folder_counts", None)
+        if callable(get_folder_counts):
+            try:
+                totals = await get_folder_counts(folder_ids)
+            except Exception:
+                logger.exception(
+                    "Batched DocStatus folder counts failed; falling back to "
+                    "single-folder reads"
+                )
+            else:
+                return {
+                    folder_id: int(totals.get(folder_id, 0) or 0)
+                    for folder_id in folder_ids
+                }
+
+        # Compatibility with alternate/upstream DocStatus implementations
+        # that only expose LightRAG's single-folder status breakdown.
         get_status_counts = getattr(rag.doc_status, "get_status_counts", None)
         if not callable(get_status_counts):
             return {}
@@ -53,6 +79,7 @@ async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]
             counts[folder["id"]] = sum(int(value or 0) for value in by_status.values())
         return counts
     except Exception:
+        logger.exception("DocStatus folder source-count lookup failed")
         return {}
 
 
@@ -61,21 +88,20 @@ async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]
     response_model=Folder,
     status_code=201,
     dependencies=[Depends(require_admin_user)],
+    summary="Create a folder (admin)",
     responses={
-        409: {"description": "Folder conflict"},
-        422: {"description": "Invalid folder payload"},
+        409: {"description": "Folder id already exists"},
+        422: {"description": "Invalid folder payload or catalog at capacity"},
     },
 )
 async def create_folder(body: FolderCreate) -> dict[str, Any]:
-    """Admin: provision a new Twin folder at runtime.
+    """Provision a new folder at runtime.
 
-    Returns 201 + the new folder. Errors:
-    - 409 if an env-seeded folder already owns this id (operator cannot
-      shadow an SRE-provisioned default).
-    - 409 if a runtime folder with this id already exists.
-    - 422 if the id fails the safe-identifier rule.
-    - 422 if adding this folder would exceed `maxFolders` from the env
-      configuration.
+    Returns 201 with the new folder. Errors:
+    - 409 if a folder with this id already exists (deployment-provisioned
+      ids cannot be shadowed).
+    - 422 if the id contains unsafe characters, or if adding the folder
+      would exceed the deployment's folder limit.
     """
     catalog = load_folder_catalog()
     if len(catalog.folders) >= catalog.max_folders:
@@ -132,17 +158,26 @@ async def create_folder(body: FolderCreate) -> dict[str, Any]:
     "/folders/{folder_id}",
     response_model=Folder,
     dependencies=[Depends(require_admin_user)],
+    summary="Edit a folder's label, kind or description (admin)",
     responses={
-        403: {"description": "Env-seeded folder cannot be edited"},
+        403: {"description": "Deployment-provisioned folder cannot be edited"},
         404: {"description": "Folder not found"},
     },
 )
-async def update_folder(folder_id: str, body: FolderPatch) -> dict[str, Any]:
-    """Admin: edit label / kind / description of a runtime folder.
-
-    Env-seeded folders are 403 — those changes must go through the
-    deploy env (`TWIN_FOLDERS_JSON`).
-    """
+async def update_folder(
+    folder_id: Annotated[
+        str,
+        Path(
+            description="Identifier of the runtime-created folder to update.",
+            examples=["project-docs"],
+        ),
+    ],
+    body: FolderPatch,
+) -> dict[str, Any]:
+    """Edit the label, kind and/or description of a runtime-created
+    folder. Folders provisioned by the deployment configuration are
+    read-only through the API (403) — change them in the deployment
+    environment instead."""
     if is_env_seeded_folder(folder_id):
         raise HTTPException(
             403,
@@ -339,32 +374,40 @@ async def _guard_memgraph_folder_residual(folder_id: str) -> None:
     "/folders/{folder_id}",
     status_code=204,
     dependencies=[Depends(require_admin_user)],
+    summary="Delete an empty runtime folder (admin)",
     responses={
-        403: {"description": "Env-seeded folder cannot be deleted"},
+        403: {"description": "Deployment-provisioned folder cannot be deleted"},
         404: {"description": "Folder not found"},
         409: {"description": "Folder still has data"},
-        503: {"description": "Residual-data probe failed; delete refused"},
+        503: {"description": "Residual-data check failed; delete refused"},
     },
 )
-async def delete_folder(folder_id: str) -> None:
-    """Admin: remove a runtime folder.
+async def delete_folder(
+    folder_id: Annotated[
+        str,
+        Path(
+            description="Identifier of the empty runtime-created folder to delete.",
+            examples=["project-docs"],
+        ),
+    ],
+) -> None:
+    """Remove a runtime-created folder. The folder must be empty:
 
-    - 403 if env-seeded (only the deploy env can remove those).
+    - 403 if the folder is provisioned by the deployment configuration
+      (only the deployment environment can remove those).
     - 404 if no runtime folder with this id exists.
-    - 409 if the folder still has data: WebUI tags scoped to it, and — on a
-      Memgraph deployment — real DocStatus ``MEMBER_OF`` memberships or
-      operator-created graph entities. Refusing to delete avoids orphaning
-      state: a doc whose only membership is this folder would become
-      invisible everywhere (MG-4).
-    - 503 if the deployment is Memgraph-backed but the residual-data probe or
-      the residue cleanup cannot reach the database (fail-closed — never
-      delete unverified; the folder stays and the delete can be retried).
-
-    On a permitted delete in a Memgraph deployment the folder's store labels
-    (``WebuiTag_*``, ``WebuiTagCategory_*``, ``WebuiActivity_*``,
-    ``WebuiNotification_*``) and its ``Folder_{workspace}`` node are removed
-    so nothing is stranded.
+    - 409 if the folder still holds documents, tags or graph entities —
+      remove or un-share its contents first. This protects against
+      orphaning: a document whose only folder this is would become
+      invisible everywhere.
+    - 503 if the database cannot be reached to verify the folder is
+      empty (the delete is refused rather than performed unverified;
+      retry later).
     """
+    # On a permitted delete in a Memgraph deployment the folder's store
+    # labels (WebuiTag_*, WebuiTagCategory_*, WebuiActivity_*,
+    # WebuiNotification_*) and its Folder_{workspace} node are removed so
+    # nothing is stranded (MG-4, audit 2026-07-02).
     if is_env_seeded_folder(folder_id):
         raise HTTPException(
             403,

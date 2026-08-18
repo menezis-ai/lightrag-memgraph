@@ -119,6 +119,25 @@ describe('DocDetailPanel — visibility', () => {
 });
 
 describe('DocDetailPanel — tabs', () => {
+  it('can open directly on the Lineage tab', () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialTab="lineage"
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+
+    expect(screen.getByTestId('doc-detail-tab-lineage')).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByTestId('doc-detail-lineage')).toBeInTheDocument();
+  });
+
   it('Chunks tab fetches and renders chunk list', async () => {
     const Wrap = wrap(new QueryClient());
     render(
@@ -368,6 +387,26 @@ describe('DocDetailPanel — footer actions', () => {
       );
     });
 
+    it('explains an excluded logo classification in the error section', async () => {
+      const Wrap = wrap(new QueryClient());
+      render(
+        <Wrap>
+          <DocDetailPanel
+            doc={makeDoc({
+              status: 'FAILED',
+              error_msg: "image-dropped: classification 'Logo'",
+            })}
+            onClose={() => {}}
+          />
+        </Wrap>,
+      );
+      await openLineage();
+      const errDd = screen.getByTestId('doc-detail-error-msg');
+      expect(errDd).toHaveTextContent('classified as “logo”');
+      expect(errDd).toHaveTextContent('excluded by the active Vision settings');
+      expect(errDd).not.toHaveTextContent('image-dropped');
+    });
+
     it('labels chunks "(created before failure)" when FAILED with chunks > 0', async () => {
       const Wrap = wrap(new QueryClient());
       render(
@@ -426,5 +465,175 @@ describe('DocDetailPanel — footer actions', () => {
       await openLineage();
       expect(screen.queryByTestId('doc-detail-error-msg')).toBeNull();
     });
+  });
+});
+
+describe('policy-rejected docs (OVH audit 2026-07-28 — logo-starbucks case)', () => {
+  const rejectedDoc = () =>
+    makeDoc({
+      status: 'FAILED',
+      chunks_count: 0,
+      content_summary: 'Image ingestion refused',
+      error_msg:
+        'vision-prefilter: image rejected before vision analysis; ' +
+        'OCR detected 0 text characters, below configured minimum 20',
+    });
+
+  it('shows the verdict guidance and disables Re-process', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel doc={rejectedDoc()} onClose={() => {}} />
+      </Wrap>,
+    );
+    expect(screen.getByTestId('doc-detail-reprocess')).toBeDisabled();
+    await userEvent.click(screen.getByTestId('doc-detail-tab-lineage'));
+    const verdict = screen.getByTestId('doc-detail-policy-rejection');
+    expect(verdict.textContent).toMatch(/will not change the verdict/i);
+    // The raw reason stays visible, un-mangled by ingestionFailureMessage.
+    expect(screen.getByTestId('doc-detail-error-msg').textContent).toContain(
+      'vision-prefilter',
+    );
+  });
+
+  it('keeps a transient vision failure fully retryable', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc({
+            status: 'FAILED',
+            chunks_count: 0,
+            content_summary: 'Image ingestion refused',
+            error_msg: 'vision-llm-error: APIConnectionError: endpoint down',
+          })}
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+    expect(screen.getByTestId('doc-detail-reprocess')).toBeEnabled();
+    await userEvent.click(screen.getByTestId('doc-detail-tab-lineage'));
+    expect(screen.queryByTestId('doc-detail-policy-rejection')).toBeNull();
+  });
+});
+
+describe('paragraph-anchor highlight (PARAGRAPH-CITATION phase A)', () => {
+  const CHUNK_TEXT = 'Chunk 1 text content for the document.';
+
+  it('highlights the anchored range inside the drilled-down chunk only', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialExpandedChunkId="d-test-1_c0"
+          initialAnchor={{ start: 8, end: 12 }}
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chunk-anchor-highlight')).toBeInTheDocument(),
+    );
+    const marks = screen.getAllByTestId('chunk-anchor-highlight');
+    expect(marks).toHaveLength(1);
+    // Offsets are verifiable against the loaded text: slice(8, 12).
+    expect(marks[0].textContent).toBe(CHUNK_TEXT.slice(8, 12));
+    const anchoredChunk = screen.getByTestId('doc-detail-chunk-d-test-1_c0');
+    expect(within(anchoredChunk).getByTestId('chunk-anchor-highlight')).toBe(
+      marks[0],
+    );
+    // The full text is still rendered around the mark.
+    expect(
+      within(anchoredChunk).getByTestId('doc-detail-chunk-text').textContent,
+    ).toBe(CHUNK_TEXT);
+  });
+
+  it('degrades to plain text when the anchor does not fit the loaded text', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialExpandedChunkId="d-test-1_c0"
+          initialAnchor={{ start: 8, end: 9999 }}
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('doc-detail-chunk-d-test-1_c0'),
+      ).toBeInTheDocument(),
+    );
+    // Stale offsets (re-indexed chunk, hand-edited URL) must never
+    // mis-slice the render: no mark, text intact.
+    expect(screen.queryByTestId('chunk-anchor-highlight')).toBeNull();
+    const chunk = screen.getByTestId('doc-detail-chunk-d-test-1_c0');
+    expect(
+      within(chunk).getByTestId('doc-detail-chunk-text').textContent,
+    ).toBe(CHUNK_TEXT);
+  });
+
+  it('slices on code points — an astral char before the paragraph must not shift the range', async () => {
+    // Backend offsets are Unicode code points (Python indices). '😀' is one
+    // code point but two UTF-16 units: a String.slice implementation would
+    // start the mark one unit late and drop the final period (PR #418
+    // review, finding 2).
+    const emojiText =
+      '😀 intro\n\nThe approval process requires two signatures.';
+    const paragraph = 'The approval process requires two signatures.';
+    const start = 9; // code points: '😀 intro' (7) + '\n\n' (2)
+    const end = start + paragraph.length; // 54 == Array.from(emojiText).length
+    server.use(
+      http.get('*/documents/:id/chunks', () =>
+        HttpResponse.json([
+          { chunk_id: 'd-test-1_c0', order: 0, text: emojiText },
+        ]),
+      ),
+    );
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialExpandedChunkId="d-test-1_c0"
+          initialAnchor={{ start, end }}
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chunk-anchor-highlight')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('chunk-anchor-highlight').textContent).toBe(
+      paragraph,
+    );
+    const chunk = screen.getByTestId('doc-detail-chunk-d-test-1_c0');
+    expect(
+      within(chunk).getByTestId('doc-detail-chunk-text').textContent,
+    ).toBe(emojiText);
+  });
+
+  it('renders no highlight when no anchor is provided', async () => {
+    const Wrap = wrap(new QueryClient());
+    render(
+      <Wrap>
+        <DocDetailPanel
+          doc={makeDoc()}
+          initialExpandedChunkId="d-test-1_c0"
+          onClose={() => {}}
+        />
+      </Wrap>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('doc-detail-chunk-d-test-1_c0'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('chunk-anchor-highlight')).toBeNull();
   });
 });

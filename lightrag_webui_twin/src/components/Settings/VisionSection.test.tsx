@@ -4,6 +4,7 @@
  * Drives the full mutation loop through the MSW handlers:
  *   - renders GET values (min OCR chars + drop-class chips)
  *   - env-default provenance hint, flipped to runtime after a save
+ *   - admin-only procedure-ingestion toggle
  *   - editing + save sends the right PUT body
  *   - chip add (input + Enter) / remove (chip ✕)
  *   - 403 from PUT surfaces the "Admin scope required" toast
@@ -14,6 +15,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { VisionSection } from './VisionSection';
 import { handlers, resetDocumentsState } from '../../mocks/handlers';
@@ -84,6 +86,9 @@ describe('VisionSection — rendering', () => {
     expect(within(chips).getByText('invalid')).toBeInTheDocument();
     expect(within(chips).getByText('logo')).toBeInTheDocument();
     expect(within(chips).getByText('signature')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('settings-vision-procedure-toggle'),
+    ).toHaveAttribute('aria-checked', 'false');
   });
 
   it('shows the env-default provenance hint when nothing was ever saved', async () => {
@@ -93,6 +98,30 @@ describe('VisionSection — rendering', () => {
     expect(
       screen.queryByTestId('settings-vision-provenance-runtime'),
     ).not.toBeInTheDocument();
+  });
+
+  it('stays clean when an older backend omits the procedure flag', async () => {
+    server.use(
+      http.get('*/twin/api/settings/vision', () =>
+        HttpResponse.json({
+          min_ocr_chars: 20,
+          drop_classes: ['invalid', 'logo', 'signature'],
+          source: 'runtime',
+          updated_at: null,
+          updated_by: null,
+        }),
+      ),
+    );
+
+    renderSection({ user: adminUser });
+    await screen.findByTestId('settings-vision-min-ocr');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-vision-save')).toBeDisabled(),
+    );
+    expect(
+      screen.getByTestId('settings-vision-procedure-toggle'),
+    ).toHaveAttribute('aria-checked', 'false');
   });
 
   it('disables inputs and shows the read-only badge for non-admin users', async () => {
@@ -106,6 +135,9 @@ describe('VisionSection — rendering', () => {
       screen.queryByTestId('settings-vision-class-input'),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId('settings-vision-save')).toBeDisabled();
+    expect(
+      screen.getByTestId('settings-vision-procedure-toggle'),
+    ).toBeDisabled();
   });
 });
 
@@ -146,6 +178,7 @@ describe('VisionSection — editing + save', () => {
         ),
       ).toBeInTheDocument(),
     );
+    await user.click(screen.getByTestId('settings-vision-procedure-toggle'));
 
     await user.click(screen.getByTestId('settings-vision-save'));
 
@@ -158,6 +191,7 @@ describe('VisionSection — editing + save', () => {
     expect(requests[0]).toEqual({
       min_ocr_chars: 120,
       drop_classes: ['invalid', 'signature', 'screenshot'],
+      procedure_enabled: true,
     });
     expect(onToast).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'done', title: 'Vision settings saved' }),
@@ -166,6 +200,9 @@ describe('VisionSection — editing + save', () => {
     const chips = screen.getByTestId('settings-vision-classes');
     expect(within(chips).queryByText('logo')).not.toBeInTheDocument();
     expect(within(chips).getByText('screenshot')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('settings-vision-procedure-toggle'),
+    ).toHaveAttribute('aria-checked', 'true');
   });
 
   it('rejects an invalid drop class client-side without round-tripping', async () => {

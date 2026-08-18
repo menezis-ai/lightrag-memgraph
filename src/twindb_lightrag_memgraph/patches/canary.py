@@ -68,29 +68,29 @@ STORAGE_IMPLEMENTATION_KEYS = (
 #: hashes to none of these triggers a drift warning (never a failure).
 #:
 #: Computed with :func:`normalized_source_hash` over:
-#: * the exact PyPI wheel ``lightrag-hku==1.4.9.11`` (BNP prod pin);
-#: * the locally installed ``lightrag-hku==1.5.4``.
+#: * the exact PyPI wheel ``lightrag-hku==1.4.9.11`` (historical BNP pin);
+#: * the locally installed ``lightrag-hku==1.5.4``, whose bodies are
+#:   byte-identical on ``1.5.5`` and ``1.5.6`` — the current single supported
+#:   pin (recomputed and confirmed against the exact 1.5.6 PyPI wheel).
 #:
-#: 1.4.11 / 1.4.12 (CI matrix) are deliberately absent — not computable from
-#: this workstation. The CI matrix surfaces them through the drift warning;
-#: once reviewed, record their hashes here.
-#:
-#: NB: ``_get_node_data`` differs between 1.4.9.11 and 1.5.4 (1.5.4 added the
-#: ``query_embedding`` passthrough parameter — the private copy already
-#: implements the 1.5.4 body and is arg-compatible with both).
-#: ``_find_most_related_edges_from_entities`` is byte-identical across the two.
+#: NB: ``_get_node_data`` differs between 1.4.9.11 and 1.5.4–1.5.6 (1.5.x
+#: added the ``query_embedding`` passthrough parameter — the private copy
+#: implements the 1.5.x body and is arg-compatible with both).
+#: ``_find_most_related_edges_from_entities`` is byte-identical across all
+#: recorded versions.
 KNOWN_PRIVATE_COPY_SOURCE_HASHES: dict[str, dict[str, str]] = {
     "_get_node_data": {
         "ec4e925117576ef600aa0dc8ae6d474785425778471879aa9ee47a82970ebf9a": (
             "lightrag-hku 1.4.9.11 (PyPI wheel)"
         ),
         "063fe2a6dba05bc2472c3b0b132237e47d94ea4bc3c91dd24cc5fd1d80ab0a11": (
-            "lightrag-hku 1.5.4"
+            "lightrag-hku 1.5.4 == 1.5.5 == 1.5.6 (identical body)"
         ),
     },
     "_find_most_related_edges_from_entities": {
         "de7f1680d7b215accaed9adaaeb6a95a3f60e5b070480f6af6d43cb05176d842": (
-            "lightrag-hku 1.4.9.11 (PyPI wheel) == 1.5.4 (identical body)"
+            "lightrag-hku 1.4.9.11 (PyPI wheel) == 1.5.4 == 1.5.5 == 1.5.6 "
+            "(identical body)"
         ),
     },
 }
@@ -103,7 +103,7 @@ KNOWN_PRIVATE_COPY_SOURCE_HASHES: dict[str, dict[str, str]] = {
 #: the explicit per-instance value.
 KNOWN_MEMGRAPH_INIT_SIGNATURES: dict[str, str] = {
     "(self, namespace, global_config, embedding_func, workspace=None)": (
-        "lightrag-hku 1.4.9.11 / 1.4.11 / 1.4.12 / 1.5.3 / 1.5.4"
+        "lightrag-hku 1.4.9.11 / 1.4.11 / 1.4.12 / 1.5.3 / 1.5.4 / 1.5.5 / 1.5.6"
     ),
 }
 
@@ -112,7 +112,7 @@ KNOWN_MEMGRAPH_INIT_SOURCE_HASHES: dict[str, str] = {
         "lightrag-hku 1.4.9.11 / 1.4.11 / 1.4.12 (exact cached PyPI wheel bodies)"
     ),
     "a0c43427a1013f0d24f4e4ce1ad41558a5c13af7a50929faab419c32fb79b47b": (
-        "lightrag-hku 1.5.3 / 1.5.4 "
+        "lightrag-hku 1.5.3 / 1.5.4 / 1.5.5 / 1.5.6 "
         "(same body plus upstream validate_workspace call)"
     ),
 }
@@ -162,8 +162,8 @@ def assert_storage_registries(kg_module: object) -> None:
             f"{version}. register() cannot plug the Memgraph KV/Vector/"
             "DocStatus backends without them — the runtime would boot on "
             "LightRAG's default storages and silently write elsewhere. "
-            "Pin a lightrag-hku version that still exposes these dicts "
-            "(1.4.9.11 / 1.4.11 / 1.4.12 are known-good) or port "
+            "Pin the supported lightrag-hku 1.5.6, whose registry layout "
+            "is known-good, or port "
             "twindb-lightrag-memgraph to the new registry layout."
         )
 
@@ -177,8 +177,8 @@ def assert_storage_registries(kg_module: object) -> None:
                 f"{_CANARY_PREFIX} lightrag.kg.STORAGE_IMPLEMENTATIONS[{key!r}] "
                 "no longer has the {'implementations': [...]} shape in the "
                 f"installed lightrag-hku {version}. register() cannot declare "
-                "the Memgraph backends as valid implementations. Pin a "
-                "known-good lightrag-hku (1.4.9.11 / 1.4.11 / 1.4.12) or port "
+                "the Memgraph backends as valid implementations. Pin the "
+                "supported known-good lightrag-hku 1.5.6 or port "
                 "twindb-lightrag-memgraph to the new registry layout."
             )
 

@@ -26,17 +26,19 @@ import asyncio
 import inspect
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from .._lightrag_compat import PipelineBusyDeletionError
 from ..auth import require_auth
 from ..folder import (
     bind_request_folder,
     current_folder_id,
     load_folder_catalog,
 )
+from ..idp_jwt import require_admin_user
 from ..status_vocab import storage_status_filter, to_twin_uppercase
 from ..webui_models import (
     AckResponse,
@@ -630,11 +632,29 @@ async def _purge_query_llm_cache(rag: Any) -> None:
         return
     try:
         await clear()
-    except Exception:  # noqa: BLE001 (cache purge is best-effort, never fatal)
+    # Cache purge is best-effort and must never fail the primary delete.
+    except Exception:
         logger.warning("query-cache purge after document delete failed", exc_info=True)
 
 
 async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
+    # Keep the source path before LightRAG removes the DocStatus row. Native
+    # upload rejects a filename that is still present below INPUT_DIR, so a
+    # successful last-folder delete must remove that source as well as vectors.
+    source_path: str | None = None
+    get_doc = getattr(getattr(rag, "doc_status", None), "get_by_id", None)
+    if get_doc is not None:
+        try:
+            doc = await get_doc(doc_id)
+            if isinstance(doc, dict) and doc.get("file_path"):
+                source_path = str(doc["file_path"])
+        except Exception:
+            logger.warning(
+                "webui: could not resolve source path before deleting doc %s",
+                doc_id,
+                exc_info=True,
+            )
+
     if hasattr(rag, "adelete_by_doc_id"):
         result = await rag.adelete_by_doc_id(doc_id)
         result_status = getattr(result, "status", None)
@@ -643,11 +663,63 @@ async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
             message = getattr(result, "message", None) or (
                 f"LightRAG deletion returned {result_status!r}"
             )
+            if str(result_status).lower() == "not_allowed":
+                status_code = getattr(result, "status_code", None)
+                if status_code == 403:
+                    # Bounded contention: the document is intact and the same
+                    # call succeeds once the current ingestion job releases
+                    # the pipeline reservation.
+                    raise PipelineBusyDeletionError(str(message))
+                if status_code == 503:
+                    # LightRAG 1.5.6 fences a workspace after an interrupted
+                    # mutation. Waiting for ingestion cannot clear that state;
+                    # preserve the upstream 503 and direct the operator toward
+                    # recovery instead of starting the WebUI's ten-minute retry.
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            f"{message} Operator recovery is required before "
+                            "deletion can resume; inspect the pipeline recovery "
+                            "state and complete the documented recovery procedure."
+                        ),
+                    )
             raise RuntimeError(str(message))
     else:
         await rag.doc_status.delete([doc_id])
+    if source_path:
+        try:
+            from ..._import_cleanup import cleanup_import_paths
+
+            await cleanup_import_paths([source_path])
+        except Exception:
+            # Disk cleanup is best effort after the authoritative storage
+            # cascade. Log it prominently: an orphan can block same-name
+            # re-upload, but must never turn a completed delete into a 5xx.
+            logger.exception(
+                "webui: post-delete source cleanup failed for doc %s (%s)",
+                doc_id,
+                source_path,
+            )
     # A physically-deleted doc must stop being cited by cached answers.
     await _purge_query_llm_cache(rag)
+    # OVH audit §4: LightRAG's rebuild leaves dead chunk refs in entity /
+    # relation source_id forever. Best-effort hygiene sweep — a sweep
+    # failure must never fail the user's delete (the next delete retries
+    # it by construction, the sweep is workspace-global and idempotent).
+    try:
+        from .. import graph_reader
+        from ..._constants import resolve_workspace
+
+        workspace = getattr(rag, "workspace", "") or resolve_workspace()
+        # Coalescing front door: bulk-delete gathers up to 500 concurrent
+        # deletes — a burst must cost 2 sweeps, not N.
+        await graph_reader.request_source_ref_sweep(workspace)
+    except Exception:
+        logger.exception(
+            "webui: post-delete source_id hygiene sweep failed (doc %s); "
+            "the delete itself succeeded",
+            doc_id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +737,6 @@ async def _require_auth_except_health(
 
 
 router = APIRouter(
-    tags=["webui"],
     dependencies=[Depends(_require_auth_except_health), Depends(bind_request_folder)],
 )
 
@@ -675,9 +746,19 @@ router.include_router(documents_router)
 
 @router.get(
     "/health",
-    responses={503: {"description": "LightRAG instance unavailable"}},
+    tags=["system"],
+    summary="Overlay health and active folder",
+    responses={503: {"description": "Backend unavailable"}},
+    # Public by design (``_require_auth_except_health``). openapi_extra list
+    # values are concatenated onto the generated operation, so the empty
+    # requirement appended to the router-level [{HTTPBearer}] documents
+    # anonymous access: [{HTTPBearer}, {}].
+    openapi_extra={"security": [{}]},
 )
 def twin_health() -> dict[str, Any]:
+    """Report the overlay's health: whether the retrieval engine is
+    captured, which folder the request resolved to, and which store
+    implementations back tags, activity and notifications."""
     try:
         _get_rag()
         rag_captured = True
@@ -722,15 +803,18 @@ def _get_rag():
     return rag
 
 
-@router.post("/auth/logout")
+@router.post(
+    "/auth/logout",
+    tags=["auth"],
+    summary="Sign out (clear local session cookies)",
+)
 async def logout(request: Request) -> dict[str, Any]:
-    """Sign out the current operator.
-
-    This endpoint clears Twin-owned local cookies and records the audit
-    event. It does not claim to perform global SSO logout: IdP sessions
-    owned by the upstream SSO remain authoritative until the browser is
-    redirected through that provider's own logout flow.
-    """
+    """Sign out the current operator by clearing the local session
+    cookies and recording an audit event. Does **not** perform a global
+    SSO logout: an IdP session owned by the upstream SSO remains
+    authoritative until the browser goes through that provider's own
+    logout flow (`sso_logout: false` in the response makes this
+    explicit)."""
     from fastapi.responses import JSONResponse
     from ..auth import logout as auth_logout
     from ..idp_jwt import get_active_config
@@ -763,26 +847,54 @@ async def logout(request: Request) -> dict[str, Any]:
 
 @router.post(
     "/documents/{doc_id}/approve",
+    tags=["documents"],
+    summary="Approve a document (reviewer sign-off)",
+    # Audit 2026-08-06, R-03b: review decisions mutate the record and are
+    # admin-gated, uniform with the other mutation surfaces. A dedicated
+    # reviewer role was weighed and deferred (product decision 2026-08-06).
+    dependencies=[Depends(require_admin_user)],
     responses={
         404: {"description": "Document not found"},
-        503: {"description": "LightRAG instance unavailable"},
+        503: {"description": "Backend unavailable"},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "edits": {
+                                "type": "object",
+                                "description": (
+                                    "Optional corrections applied together "
+                                    "with the approval."
+                                ),
+                            }
+                        },
+                    },
+                    "example": {"edits": {"title": "Corrected title"}},
+                }
+            },
+        }
     },
 )
 async def approve_document(
-    doc_id: str,
+    doc_id: Annotated[
+        str,
+        Path(
+            description="Identifier of the document receiving reviewer approval.",
+            examples=["doc-7c91e2"],
+        ),
+    ],
     request: Request,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Mark a document as reviewer-approved.
-
-    Persists ``DocStatus.metadata.review = {state: 'approved',
-    actor, at, edits?}`` on the Memgraph node and emits a
-    ``doc-approved`` activity event. The ``edits`` (optional) carries
-    operator-supplied corrections that were applied at the same time
-    as the approval — the front-end's EditApproveModal sends these
-    alongside the approve when the reviewer needed to fix something
-    before signing off.
-    """
+    """Record the reviewer's approval on the document (`review.state =
+    "approved"`, with actor and timestamp) and emit a `doc-approved`
+    audit event. Optional `edits` carries corrections the reviewer
+    applied at the same time as the sign-off."""
     rag = _get_rag()
     body = body or {}
     actor = _request_actor(request)
@@ -824,26 +936,54 @@ async def approve_document(
 
 @router.post(
     "/documents/{doc_id}/reject",
+    tags=["documents"],
+    summary="Reject a document with a justification",
+    # Audit 2026-08-06, R-03b: admin-gated, uniform with approve (same
+    # product decision — no separate reviewer role for now).
+    dependencies=[Depends(require_admin_user)],
     responses={
         400: {"description": "Missing rejection reason"},
         404: {"description": "Document not found"},
-        503: {"description": "LightRAG instance unavailable"},
+        503: {"description": "Backend unavailable"},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["reason"],
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Why the document is rejected.",
+                            }
+                        },
+                    },
+                    "example": {
+                        "reason": "Outdated version; upload the 2026 revision."
+                    },
+                }
+            },
+        }
     },
 )
 async def reject_document(
-    doc_id: str,
+    doc_id: Annotated[
+        str,
+        Path(
+            description="Identifier of the document being rejected.",
+            examples=["doc-7c91e2"],
+        ),
+    ],
     body: dict[str, Any],
     request: Request,
 ) -> dict[str, Any]:
-    """Mark a document as reviewer-rejected.
-
-    Persists ``DocStatus.metadata.review = {state: 'rejected',
-    actor, at, justification}`` on the Memgraph node and emits a
-    ``doc-rejected`` activity event with the rejection reason in the
-    summary (visible in the audit feed). The doc itself is NOT
-    deleted — it stays in DocStatus with its rejected review so the
-    operator can still see it in the table with the right badge.
-    """
+    """Record the reviewer's rejection on the document (`review.state =
+    "rejected"`, with actor, timestamp and the justification) and emit a
+    `doc-rejected` audit event carrying the reason. The document is
+    **not** deleted — it stays visible with its rejected badge."""
     rag = _get_rag()
     actor = _request_actor(request)
     reason = body.get("reason") or ""
@@ -886,8 +1026,16 @@ async def reject_document(
     return {"doc_id": doc_id, "review": review}
 
 
-@router.get("/openapi", response_model=OpenApiEnvelope)
+@router.get(
+    "/openapi",
+    response_model=OpenApiEnvelope,
+    tags=["system"],
+    summary="Curated endpoint catalog (WebUI API tab fallback)",
+)
 def get_openapi_groups() -> dict[str, Any]:
+    """Return a small, curated grouping of the main endpoints. This is a
+    fallback catalog for the WebUI's API tab; the complete machine-readable
+    specification lives at `/openapi.json`."""
     groups, version = get_store().openapi()
     return {"groups": groups, "version": version}
 

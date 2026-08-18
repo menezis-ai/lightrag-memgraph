@@ -13,6 +13,7 @@ import tracemalloc
 from typing import Any
 
 from twindb_lightrag_memgraph.server.query import response_sources as rs
+from twindb_lightrag_memgraph.server.query.source_filters import _tag_filter_terms
 
 ITERATIONS = 50
 SOURCE_COUNT = 20
@@ -27,7 +28,7 @@ async def _baseline_filter_sources_by_advanced_filters(
     folder: str,
     fetch_doc_tags: Any,
 ) -> tuple[list[dict[str, Any]], bool]:
-    tag_required, tag_optional = rs._tag_filter_terms(tag_filter)
+    tag_required, tag_optional = _tag_filter_terms(tag_filter)
     doc_required, doc_optional = rs._doc_filter_terms(doc_filter)
     if not tag_required and not tag_optional and not doc_required and not doc_optional:
         return sources, False

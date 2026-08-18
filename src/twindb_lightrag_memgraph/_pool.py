@@ -13,17 +13,19 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 from time import monotonic
 from typing import Any
 from urllib.parse import urlparse
 
-from neo4j import AsyncGraphDatabase, TrustAll, TrustSystemCAs
+from neo4j import AsyncGraphDatabase, TrustAll, TrustCustomCAs, TrustSystemCAs
 from neo4j.exceptions import ClientError as Neo4jClientError
 
 from ._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     DEFAULT_IDLE_DISCONNECT_SECONDS,
+    DEFAULT_MAX_CONNECTION_LIFETIME,
     DEFAULT_MEMGRAPH_URI,
     DEFAULT_OPERATION_TIMEOUT,
     DEFAULT_READ_POOL_SIZE,
@@ -31,6 +33,7 @@ from ._constants import (
     DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT,
     MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV,
     MEMGRAPH_IDLE_DISCONNECT_SECONDS_ENV,
+    MEMGRAPH_MAX_CONNECTION_LIFETIME_ENV,
     MEMGRAPH_OPERATION_TIMEOUT_ENV,
     MEMGRAPH_POOL_SIZE_ENV,
     MEMGRAPH_READ_POOL_SIZE_ENV,
@@ -159,6 +162,23 @@ def _read_connection_acquire_timeout() -> float:
         return DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
 
 
+def _read_max_connection_lifetime() -> float:
+    """Read MEMGRAPH_MAX_CONNECTION_LIFETIME from env, default 1800s.
+
+    Lower it below the network path's idle-kill window (Docker Swarm
+    overlay/IPVS resets idle TCP around 900s) to recycle pooled connections
+    by age check instead of by a logged reset-by-peer on next use.
+    """
+    raw = os.environ.get(MEMGRAPH_MAX_CONNECTION_LIFETIME_ENV, "")
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError(_MUST_BE_STRICTLY_POSITIVE)
+        return val
+    except (ValueError, TypeError):
+        return DEFAULT_MAX_CONNECTION_LIFETIME
+
+
 def _read_operation_timeout() -> float:
     """Read the deadline for work performed with an acquired Bolt session."""
     raw = os.environ.get(MEMGRAPH_OPERATION_TIMEOUT_ENV, "")
@@ -187,7 +207,9 @@ def _read_write_slot_acquire_timeout() -> float:
 async def _operation_deadline(seconds: float):
     """Bound an async block without requiring Python 3.11 ``asyncio.timeout``.
 
-    Python 3.10 is part of the supported and tested matrix.  A loop timer
+    Kept although the supported floor is now Python 3.12 (2026-07-25) —
+    ``asyncio.timeout`` exists there, but this helper predates the floor
+    bump and swapping it is churn without behavior change.  A loop timer
     cancels the current task when the deadline expires; only that cancellation
     is translated to ``asyncio.TimeoutError``.  Cancellation requested by a
     caller remains ``CancelledError``.
@@ -265,6 +287,48 @@ def _read_read_pool_size() -> int:
         return DEFAULT_READ_POOL_SIZE
 
 
+def _read_secret(name: str, default: str = "") -> str:
+    """Read a credential from ``NAME`` or Docker-style ``NAME_FILE``.
+
+    Exactly one source may be configured. File errors and empty secret files
+    are fatal: silently falling back to an empty password would disable the
+    authentication posture the operator intended to deploy.
+    """
+    direct_value = os.environ.get(name)
+    file_path = os.environ.get(f"{name}_FILE", "").strip()
+
+    if direct_value is not None and file_path:
+        raise ValueError(f"Set either {name} or {name}_FILE, not both")
+    if not file_path:
+        return default if direct_value is None else direct_value
+
+    try:
+        value = Path(file_path).read_text(encoding="utf-8").rstrip("\r\n")
+    except OSError as exc:
+        raise RuntimeError(f"Unable to read secret configured by {name}_FILE") from exc
+    if not value:
+        raise ValueError(f"Secret configured by {name}_FILE is empty")
+    return value
+
+
+def _warn_for_unencrypted_remote_connection(uri: str, encrypted_env: str) -> None:
+    parsed_uri = urlparse(uri)
+    localhost = {"localhost", "127.0.0.1", "::1"}
+    remote_plaintext = (
+        parsed_uri.scheme in ("bolt", "neo4j")
+        and parsed_uri.hostname
+        and parsed_uri.hostname not in localhost
+        and encrypted_env != "true"
+    )
+    if remote_plaintext:
+        logger.warning(
+            "Plaintext Bolt connection to remote host %s — credentials "
+            "will be sent unencrypted. Use bolt+s:// or set "
+            "MEMGRAPH_ENCRYPTED=true for TLS.",
+            parsed_uri.hostname,
+        )
+
+
 def _read_connection_config(*, pool_size_override: int | None = None):
     """Read Memgraph connection parameters from environment variables.
 
@@ -280,26 +344,16 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         to be passed to ``AsyncGraphDatabase.driver(uri, **driver_kwargs)``.
     """
     uri = os.environ.get("MEMGRAPH_URI", DEFAULT_MEMGRAPH_URI)
-    username = os.environ.get("MEMGRAPH_USERNAME", "")
-    password = os.environ.get("MEMGRAPH_PASSWORD", "")
+    username = _read_secret("MEMGRAPH_USERNAME")
+    password = _read_secret("MEMGRAPH_PASSWORD")
     database = os.environ.get("MEMGRAPH_DATABASE", "memgraph")
     validate_identifier(database, "database")
 
-    _parsed_uri = urlparse(uri)
-    _localhost = {"localhost", "127.0.0.1", "::1"}
-    if (
-        _parsed_uri.scheme in ("bolt", "neo4j")
-        and _parsed_uri.hostname
-        and _parsed_uri.hostname not in _localhost
-    ):
-        logger.warning(
-            "Plaintext Bolt connection to remote host %s — credentials "
-            "will be sent unencrypted. Use bolt+s:// or set "
-            "MEMGRAPH_ENCRYPTED=true for TLS.",
-            _parsed_uri.hostname,
-        )
+    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").strip().lower()
+    if encrypted_env not in {"", "true", "false"}:
+        raise ValueError("MEMGRAPH_ENCRYPTED must be 'true' or 'false'")
 
-    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").lower()
+    _warn_for_unencrypted_remote_connection(uri, encrypted_env)
 
     driver_kwargs = {
         "auth": (username, password),
@@ -316,7 +370,7 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         # sockets. (Dropped from 30 s to 5 s after a 2026-06-08 reset
         # surfaced during a doc delete that idled longer than 5 s but
         # less than 30.) Requires neo4j-driver >= 5.17 (pinned >= 5.0,<7).
-        "max_connection_lifetime": 1800,
+        "max_connection_lifetime": _read_max_connection_lifetime(),
         "liveness_check_timeout": 5,
     }
 
@@ -329,8 +383,20 @@ def _read_connection_config(*, pool_size_override: int | None = None):
                 "verification is DISABLED. Do not use in production."
             )
             driver_kwargs["trusted_certificates"] = TrustAll()
-        else:
+        elif trust_env == "TRUST_SYSTEM_CA":
             driver_kwargs["trusted_certificates"] = TrustSystemCAs()
+        elif trust_env == "TRUST_CUSTOM_CA":
+            ca_file = os.environ.get("MEMGRAPH_CA_FILE", "").strip()
+            if not ca_file:
+                raise ValueError("MEMGRAPH_CA_FILE is required with TRUST_CUSTOM_CA")
+            if not Path(ca_file).is_file():
+                raise ValueError("MEMGRAPH_CA_FILE must reference a readable file")
+            driver_kwargs["trusted_certificates"] = TrustCustomCAs(ca_file)
+        else:
+            raise ValueError(
+                "MEMGRAPH_TRUST must be TRUST_SYSTEM_CA, TRUST_CUSTOM_CA, "
+                "or TRUST_ALL"
+            )
         logger.info("Memgraph TLS enabled (trust=%s)", trust_env)
     elif encrypted_env == "false":
         driver_kwargs["encrypted"] = False
@@ -614,6 +680,17 @@ def _get_write_semaphore() -> asyncio.Semaphore:
         return _write_semaphore
 
 
+async def _cancel_and_reap_acquire(acquire_task: asyncio.Task[bool]) -> bool:
+    """Cancel an acquire task and return whether it had already won a permit."""
+    acquire_task.cancel()
+    # gather(return_exceptions=True) consumes cancellation of the child only.
+    # Cancellation of this cleanup coroutine still propagates normally.
+    await asyncio.gather(acquire_task, return_exceptions=True)
+    if acquire_task.cancelled():
+        return False
+    return acquire_task.result()
+
+
 @asynccontextmanager
 async def acquire_write_slot():
     """Gate write operations to ``MEMGRAPH_WRITE_CONCURRENCY`` slots.
@@ -630,29 +707,13 @@ async def acquire_write_slot():
     except asyncio.CancelledError:
         # A cancellation can race with the semaphore granting the permit. If
         # the acquire completed, return that permit before propagating.
-        acquire_task.cancel()
-        try:
-            acquired = await acquire_task
-        except asyncio.CancelledError:
-            if not acquire_task.cancelled():
-                # The current task was cancelled, not the reaped acquire —
-                # cancellation must propagate (S7497).
-                raise
-            acquired = False
+        acquired = await _cancel_and_reap_acquire(acquire_task)
         if acquired:
             sem.release()
         raise
 
     if acquire_task not in done:
-        acquire_task.cancel()
-        try:
-            acquired = await acquire_task
-        except asyncio.CancelledError:
-            if not acquire_task.cancelled():
-                # The current task was cancelled, not the reaped acquire —
-                # cancellation must propagate (S7497).
-                raise
-            acquired = False
+        acquired = await _cancel_and_reap_acquire(acquire_task)
         if acquired:
             sem.release()
         raise asyncio.TimeoutError("Memgraph write queue exhausted")

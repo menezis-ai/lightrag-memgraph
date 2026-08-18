@@ -62,6 +62,7 @@ def test_standalone_app_logs_api_wiring_ok(caplog):
     assert "GET /twin/api/folders" in caplog.text
     assert "POST /twin/api/settings/api-keys" in caplog.text
     assert "GET /twin/api/quota" in caplog.text
+    assert "GET /twin/api/system/about" in caplog.text
 
 
 def test_overlay_logs_api_wiring_ok(caplog):
@@ -80,3 +81,6 @@ def test_overlay_logs_api_wiring_ok(caplog):
     assert "GET /twin/api/folders" in caplog.text
     assert "POST /twin/api/settings/api-keys" in caplog.text
     assert "GET /twin/api/quota" in caplog.text
+    # The probe list is maintained by hand and has drifted in production;
+    # router-level parity does not cover this mount point.
+    assert "GET /twin/api/system/about" in caplog.text

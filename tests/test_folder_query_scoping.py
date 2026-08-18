@@ -22,6 +22,8 @@ vector retrieval fails closed until vectors are materialized per security scope.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from twindb_lightrag_memgraph._constants import storage_folder_context
@@ -332,3 +334,55 @@ async def test_relationships_fail_closed_when_folder_scoped(stores):
         assert await _ids(rels) == set()
     with storage_folder_context("C"):
         assert await _ids(rels) == set()
+
+
+# ── Fail-closed refusal log demotion (OVH maquette audit 2026-07-28) ──────
+#
+# The refusal is permanent by design, so it fires on every folder-scoped
+# entity/relation query. Logged at ERROR per query it buried real errors
+# (22 identical ERRORs in one week on the maquette); the contract is now
+# one WARNING per (workspace, namespace, folder), then DEBUG.
+
+
+class TestScopedRefusalLogDemotion:
+    def _fresh_registry(self, monkeypatch):
+        from twindb_lightrag_memgraph import vector_impl as vi
+
+        monkeypatch.setattr(vi, "_SCOPED_REFUSAL_LOGGED", set())
+
+    def _refusals(self, caplog, level):
+        return [
+            r
+            for r in caplog.records
+            if r.levelno == level and "refusing blended" in r.getMessage()
+        ]
+
+    def test_refusal_logs_warning_once_then_debug(self, monkeypatch, caplog):
+        self._fresh_registry(monkeypatch)
+        st = _store("entities", {"entity_name", "source_id", "content", "file_path"})
+        with caplog.at_level(logging.DEBUG, logger="lightrag"):
+            st._build_search_cypher(20, "A")
+            st._build_search_cypher(20, "A")
+        assert len(self._refusals(caplog, logging.WARNING)) == 1
+        assert len(self._refusals(caplog, logging.DEBUG)) == 1
+        assert not self._refusals(caplog, logging.ERROR)
+
+    def test_distinct_folder_logs_warning_again(self, monkeypatch, caplog):
+        self._fresh_registry(monkeypatch)
+        st = _store("entities", {"entity_name", "source_id", "content", "file_path"})
+        with caplog.at_level(logging.DEBUG, logger="lightrag"):
+            st._build_search_cypher(20, "A")
+            st._build_search_cypher(20, "B")
+        assert len(self._refusals(caplog, logging.WARNING)) == 2
+
+    async def test_unknown_category_refusal_demoted_too(self, monkeypatch, caplog):
+        self._fresh_registry(monkeypatch)
+        st = _store("misc", {"content"})
+        with caplog.at_level(logging.DEBUG, logger="lightrag"):
+            with storage_folder_context("A"):
+                await st.query("q", top_k=5, query_embedding=[0.0])
+                await st.query("q", top_k=5, query_embedding=[0.0])
+        scoped = [
+            r for r in caplog.records if "cannot be safely scoped" in r.getMessage()
+        ]
+        assert [r.levelno for r in scoped] == [logging.WARNING, logging.DEBUG]

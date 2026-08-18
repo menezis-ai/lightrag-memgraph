@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../Icon';
 import { GRAPH_TYPE_LABEL, type GraphEntityType } from '../../types/graph';
 import { TYPE_KEYS } from './graphLayout';
@@ -9,6 +9,7 @@ interface GraphFiltersProps {
   typeCounts: Partial<Record<GraphEntityType, number>>;
   colors: Record<GraphEntityType, string>;
   allTags: readonly string[];
+  deprecatedTags?: readonly string[];
   tagFilter: readonly string[];
   onTagFilterChange: (next: string[]) => void;
   tagMatchMode: MatchMode;
@@ -27,6 +28,7 @@ export function GraphFilters({
   typeCounts,
   colors,
   allTags,
+  deprecatedTags = [],
   tagFilter,
   onTagFilterChange,
   tagMatchMode,
@@ -72,6 +74,7 @@ export function GraphFilters({
           <FilterPicker
             label="Filter by tag"
             options={allTags}
+            deprecatedOptions={deprecatedTags}
             selected={tagFilter}
             onChange={setTagFilter}
             placeholder="Search tags…"
@@ -169,6 +172,9 @@ interface FilterPickerProps {
   placeholder: string;
   format?: (x: string) => string;
   listboxId?: string;
+  /** Lifecycle decoration for historical values already selected through a
+   * saved URL. Deprecated values are deliberately absent from `options`. */
+  deprecatedOptions?: readonly string[];
 }
 
 export function FilterPicker({
@@ -179,12 +185,17 @@ export function FilterPicker({
   placeholder,
   format,
   listboxId,
+  deprecatedOptions = [],
 }: Readonly<FilterPickerProps>) {
   const fmt = format ?? ((x: string) => x);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const deprecatedSet = useMemo(
+    () => new Set(deprecatedOptions),
+    [deprecatedOptions],
+  );
   const listId =
     listboxId ??
     `${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}-filter-suggestions`;
@@ -318,23 +329,29 @@ export function FilterPicker({
       {/* Selected pills BELOW the search bar (per 2026-05-31 user request) */}
       {selected.length > 0 && (
         <div className="kg-picker-pills">
-          {selected.map((o) => (
-            <span
-              key={o}
-              className="kg-picker-pill"
-              title={o}
-              data-testid={`kg-picked-${o}`}
-            >
-              <span className="lbl">{fmt(o)}</span>
-              <button
-                type="button"
-                onClick={() => remove(o)}
-                aria-label={`Remove ${fmt(o)}`}
+          {selected.map((o) => {
+            const isDeprecated = deprecatedSet.has(o);
+            return (
+              <span
+                key={o}
+                className={`kg-picker-pill${isDeprecated ? ' is-deprecated' : ''}`}
+                title={o}
+                data-testid={`kg-picked-${o}`}
               >
-                <Icon name="x" size={10} />
-              </button>
-            </span>
-          ))}
+                <span className="lbl">{fmt(o)}</span>
+                {isDeprecated && (
+                  <span className="kg-deprecated-badge">deprecated</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => remove(o)}
+                  aria-label={`Remove ${fmt(o)}`}
+                >
+                  <Icon name="x" size={10} />
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

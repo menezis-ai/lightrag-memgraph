@@ -1,13 +1,15 @@
 /**
  * Settings → Vision (image-ingestion curation knobs).
  *
- * Surfaces the two operator-tunable settings of the image pipeline:
+ * Surfaces the operator-tunable settings of the image/procedure pipeline:
  *
  *   - min OCR chars : RapidOCR pre-filter threshold. Images with less
  *     OCR text are refused without a vision-LLM call (0 = caption
  *     everything).
  *   - drop classes  : image classifications refused *after* the vision
  *     LLM call (env defaults: invalid / logo / signature).
+ *   - procedures    : admin-controlled activation for NEW procedure PDFs.
+ *     Parked bundles remain reviewable while ingestion is disabled.
  *
  * Backend contract (`server/vision_settings_routes.py`):
  *   GET /twin/api/settings/vision → effective values + provenance
@@ -54,6 +56,7 @@ export function VisionSection({
 
   const [minOcrChars, setMinOcrChars] = useState('0');
   const [dropClasses, setDropClasses] = useState<readonly string[]>([]);
+  const [procedureEnabled, setProcedureEnabled] = useState(false);
   const [newClass, setNewClass] = useState('');
   const [classError, setClassError] = useState<string | null>(null);
 
@@ -65,6 +68,7 @@ export function VisionSection({
     if (!data) return;
     setMinOcrChars(String(data.min_ocr_chars));
     setDropClasses(data.drop_classes);
+    setProcedureEnabled(data.procedure_enabled === true);
   }, [data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -78,7 +82,8 @@ export function VisionSection({
     data !== undefined &&
     (data.source === 'env-default' ||
       parsedMin !== data.min_ocr_chars ||
-      !sameList(dropClasses, data.drop_classes));
+      !sameList(dropClasses, data.drop_classes) ||
+      procedureEnabled !== (data.procedure_enabled === true));
   const canSave =
     canManage && minValid && dirty && !updateMutation.isPending && !isLoading;
 
@@ -112,13 +117,17 @@ export function VisionSection({
   const save = (): void => {
     if (!canSave) return;
     updateMutation.mutate(
-      { min_ocr_chars: parsedMin, drop_classes: [...dropClasses] },
+      {
+        min_ocr_chars: parsedMin,
+        drop_classes: [...dropClasses],
+        procedure_enabled: procedureEnabled,
+      },
       {
         onSuccess: () => {
           onToast?.({
             kind: 'done',
             title: 'Vision settings saved',
-            sub: 'The new curation thresholds apply to the next ingested image.',
+            sub: 'The new image and procedure settings apply to the next ingestion.',
           });
         },
         onError: (err) => {
@@ -126,7 +135,7 @@ export function VisionSection({
             onToast?.({
               kind: 'error',
               title: 'Admin scope required',
-              sub: 'Your account does not have the administration permission required to change vision settings. Contact Twincore Team to request it.',
+              sub: 'Your account does not have the administration permission required to change vision settings. Ask your platform administrator to grant it.',
             });
             return;
           }
@@ -202,6 +211,45 @@ export function VisionSection({
                 ? `, ${relativeTime(new Date(data.updated_at).toISOString())}`
                 : ''}
               .
+            </div>
+          )}
+
+          <div className="settings-toggle-row">
+            <div className="settings-toggle-copy">
+              <span className="field-label">Procedure ingestion</span>
+              <span className="muted" id="procedure-ingestion-help">
+                Park eligible procedure PDFs for admin review before they enter
+                the knowledge base. Turning this off does not hide or release
+                existing parked procedures.
+              </span>
+            </div>
+            <div className="settings-toggle-control">
+              <span>{procedureEnabled ? 'Enabled' : 'Disabled'}</span>
+              <button
+                type="button"
+                role="switch"
+                className={`switch settings-switch${procedureEnabled ? ' on' : ''}`}
+                aria-checked={procedureEnabled}
+                aria-label="Procedure ingestion"
+                aria-describedby="procedure-ingestion-help"
+                onClick={() => setProcedureEnabled((enabled) => !enabled)}
+                disabled={
+                  !canManage ||
+                  (!data.procedure_available && !procedureEnabled)
+                }
+                data-testid="settings-vision-procedure-toggle"
+              />
+            </div>
+          </div>
+          {!data.procedure_available && (
+            <div
+              className="settings-warning"
+              role="status"
+              data-testid="settings-vision-procedure-unavailable"
+            >
+              <Icon name="alert-triangle" size={12} /> Procedure ingestion is
+              unavailable until the deployment has its PDF dependencies and
+              vision endpoint configured.
             </div>
           )}
 

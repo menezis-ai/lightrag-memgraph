@@ -52,6 +52,19 @@ const MIP_CLASS_NAMES: Readonly<Record<string, string>> = {
 };
 const OPERATOR_UPLOAD_CLASSES = new Set(['C1', 'C2']);
 
+function uploadHeaderError(
+  operatorClass: string | null,
+  docType: string | null,
+): string | null {
+  if (operatorClass && !OPERATOR_UPLOAD_CLASSES.has(operatorClass)) {
+    return 'X-Twin-Classification accepts only C1 or C2; C3/C4 uploads are rejected by policy.';
+  }
+  if (docType && docType !== 'procedure' && docType !== 'standard') {
+    return "X-Twin-Doc-Type accepts only 'procedure' or 'standard' (omit for auto-detect).";
+  }
+  return null;
+}
+
 const E2E_DOCUMENTS_STORAGE_KEY = 'twin.e2e.documentsState.v1';
 const E2E_TAG_CATEGORIES_STORAGE_KEY = 'twin.e2e.tagCategoriesState.v1';
 const E2E_TAGS_STORAGE_KEY = 'twin.e2e.tagsState.v1';
@@ -63,6 +76,7 @@ const E2E_GRAPH_ENTITIES_STORAGE_KEY = 'twin.e2e.graphEntitiesState.v1';
 const E2E_GRAPH_RELATIONS_STORAGE_KEY = 'twin.e2e.graphRelationsState.v1';
 const E2E_API_KEYS_STORAGE_KEY = 'twin.e2e.apiKeysState.v1';
 const E2E_PROCEDURES_STORAGE_KEY = 'twin.e2e.proceduresState.v1';
+const E2E_VISION_SETTINGS_STORAGE_KEY = 'twin.e2e.visionSettingsState.v1';
 
 function cloneDocuments(docs: readonly Document[]): Document[] {
   return docs.map((doc) => ({
@@ -574,13 +588,14 @@ export function setMockQuotaState(patch: Partial<MockQuotaState>): void {
         : quotaState.used_bytes / quotaState.limit_bytes;
   }
 }
-// Vision ingestion settings — the two curation knobs of the image
-// pipeline. In-memory snapshot (like quota); defaults mirror the backend
-// env defaults (`_vision.DEFAULT_MIN_OCR_CHARS` / `DEFAULT_DROP_CLASSES`)
-// with `source: 'env-default'` until a PUT lands a runtime override.
+// Vision/procedure ingestion settings — image curation plus the admin
+// activation toggle. In-memory snapshot (like quota); defaults mirror the
+// backend deployment defaults until a PUT lands a runtime override.
 interface MockVisionSettingsState {
   min_ocr_chars: number;
   drop_classes: string[];
+  procedure_enabled: boolean;
+  procedure_available: boolean;
   source: 'runtime' | 'env-default';
   updated_at: number | null;
   updated_by: string | null;
@@ -589,12 +604,38 @@ function defaultVisionSettingsState(): MockVisionSettingsState {
   return {
     min_ocr_chars: 20,
     drop_classes: ['invalid', 'logo', 'signature'],
+    procedure_enabled: false,
+    procedure_available: true,
     source: 'env-default',
     updated_at: null,
     updated_by: null,
   };
 }
-let visionSettingsState: MockVisionSettingsState = defaultVisionSettingsState();
+function loadVisionSettingsState(): MockVisionSettingsState {
+  const raw = e2eStorage()?.getItem(E2E_VISION_SETTINGS_STORAGE_KEY);
+  if (!raw) return defaultVisionSettingsState();
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        ...defaultVisionSettingsState(),
+        ...(parsed as Partial<MockVisionSettingsState>),
+      };
+    }
+  } catch {
+    // Ignore corrupt e2e state and fall back to the defaults.
+  }
+  return defaultVisionSettingsState();
+}
+
+// Persisted across reloads (like procedures/api-keys): the real backend
+// stores runtime vision settings server-side, so a reload-survival
+// assertion must hold against the mock too.
+let visionSettingsState: MockVisionSettingsState = loadVisionSettingsState();
+
+function persistVisionSettingsState(): void {
+  persistState(E2E_VISION_SETTINGS_STORAGE_KEY, visionSettingsState);
+}
 const VISION_DROP_CLASS_RE = /^[a-z0-9][a-z0-9 _-]{0,39}$/;
 
 // ---------------------------------------------------------------------------
@@ -607,9 +648,7 @@ const VISION_DROP_CLASS_RE = /^[a-z0-9][a-z0-9 _-]{0,39}$/;
 function cloneProcedures(
   items: readonly ProcedureBundle[],
 ): ProcedureBundle[] {
-  // Bundles nest schematics/tasks/divergences — JSON round-trip is the
-  // simplest faithful deep clone for this plain-data shape.
-  return JSON.parse(JSON.stringify(items)) as ProcedureBundle[];
+  return structuredClone(items) as ProcedureBundle[];
 }
 
 function loadProceduresState(): ProcedureBundle[] {
@@ -753,6 +792,8 @@ interface E2eScenario {
    *  Playwright "DELETING badge" test to assert the optimistic state
    *  is visible while the round-trip is in flight. */
   bulkDeleteDelayMs?: number;
+  /** Force selected ids to fail without mutating them, exercising HTTP 207. */
+  bulkDeleteFailIds?: string[];
 }
 
 // Scenario + local auth survive a page reload (sessionStorage) so e2e specs
@@ -849,6 +890,7 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_GRAPH_RELATIONS_STORAGE_KEY);
   storage?.removeItem(E2E_API_KEYS_STORAGE_KEY);
   storage?.removeItem(E2E_PROCEDURES_STORAGE_KEY);
+  storage?.removeItem(E2E_VISION_SETTINGS_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
   proceduresState = cloneProcedures(PROCEDURE_BUNDLE_FIXTURES);
   procedureDocSeq = 0;
@@ -874,6 +916,7 @@ export function resetDocumentsState(): void {
   e2eScenario.authGate = undefined;
   e2eScenario.uploadFailureNames = undefined;
   e2eScenario.bulkDeleteDelayMs = undefined;
+  e2eScenario.bulkDeleteFailIds = undefined;
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
   e2eStats.folderRequests = [];
@@ -1476,31 +1519,13 @@ export const handlers = [
       file instanceof File && file.name
         ? file.name
         : `uploaded-${Date.now()}.txt`;
-    // Operator MIP classification rides as an HTTP header. Mirror the real
-    // backend: operators may only choose C1/C2. C3/C4 uploads are rejected
-    // categorically before ingestion.
     const operatorClass = request.headers.get('X-Twin-Classification');
-    if (operatorClass && !OPERATOR_UPLOAD_CLASSES.has(operatorClass)) {
-      return HttpResponse.json(
-        {
-          detail:
-            'X-Twin-Classification accepts only C1 or C2; C3/C4 uploads are rejected by policy.',
-        },
-        { status: 400 },
-      );
-    }
-    // Operator-forced ingestion profile — mirrors the backend seam: only
-    // procedure|standard are valid; absent = auto-detect. Recorded in the
-    // e2e stats so specs can assert the header actually rode the request.
     const docType = request.headers.get('X-Twin-Doc-Type');
-    if (docType && docType !== 'procedure' && docType !== 'standard') {
-      return HttpResponse.json(
-        {
-          detail:
-            "X-Twin-Doc-Type accepts only 'procedure' or 'standard' (omit for auto-detect).",
-        },
-        { status: 400 },
-      );
+    // Mirror the real upload contract: only operator C1/C2 and the two
+    // explicit ingestion profiles are accepted before any state mutation.
+    const headerError = uploadHeaderError(operatorClass, docType);
+    if (headerError) {
+      return HttpResponse.json({ detail: headerError }, { status: 400 });
     }
     e2eStats.uploadRequests.push({
       name,
@@ -1676,6 +1701,15 @@ export const handlers = [
   // 3.1 doc from the local OPENAPI_GROUPS fixture so the standalone demo
   // demo still renders the API tab.
   http.get(`${ANY}/openapi.json`, () => {
+    // Mirror the real backend's per-operation security: public handshake
+    // routes carry no requirement, everything else requires the bearer.
+    const publicPaths = new Set([
+      '/login',
+      '/logout',
+      '/auth-status',
+      '/health',
+      '/ready',
+    ]);
     const paths: Record<string, Record<string, unknown>> = {};
     for (const g of OPENAPI_GROUPS) {
       for (const ep of g.endpoints) {
@@ -1684,6 +1718,7 @@ export const handlers = [
           tags: [g.id],
           summary: ep.s,
           responses: { '200': { description: 'OK' } },
+          security: publicPaths.has(ep.p) ? [] : [{ HTTPBearer: [] }],
         };
       }
     }
@@ -1750,6 +1785,19 @@ export const handlers = [
       score: Number((0.95 - i * 0.1).toFixed(2)),
       doc_id: `mock-doc-${i + 1}`,
       chunk_id: `mock-chunk-${i + 1}`,
+      // First source carries a paragraph anchor so the passthrough
+      // (sanitize → drill-down params) stays exercised in MSW runs.
+      anchor:
+        i === 0
+          ? {
+              start: 0,
+              end: 24,
+              paragraph_idx: 0,
+              paragraph_count: 1,
+              confidence: 0.62,
+              method: 'lexical_overlap',
+            }
+          : null,
     }));
     return HttpResponse.json({ response: responseText, sources });
   }),
@@ -1797,7 +1845,11 @@ export const handlers = [
   }),
   http.post(`${ANY}${TWIN}/query/stream`, async ({ request }) => {
     // Wire format matches the real backend: NDJSON, one event per line.
+    //   {"type":"stage","value":"retrieval"}
+    //   {"type":"stage","value":"generation"}
     //   {"type":"token","value":"<chunk>"}
+    //   {"type":"stage","value":"sources"}
+    //   {"type":"status","value":"grounded"}
     //   {"type":"sources","value":[<RetrievalSource>, ...]}
     // The client parses line-by-line and ignores anything else, so
     // returning plain text here used to silently produce an empty
@@ -1828,7 +1880,17 @@ export const handlers = [
       };
     });
     const ndjson =
+      JSON.stringify({ type: 'meta', value: { model: 'deepseek-chat' } }) +
+      '\n' +
+      JSON.stringify({ type: 'stage', value: 'retrieval' }) +
+      '\n' +
+      JSON.stringify({ type: 'stage', value: 'generation' }) +
+      '\n' +
       JSON.stringify({ type: 'token', value: text }) +
+      '\n' +
+      JSON.stringify({ type: 'stage', value: 'sources' }) +
+      '\n' +
+      JSON.stringify({ type: 'status', value: 'grounded' }) +
       '\n' +
       JSON.stringify({ type: 'sources', value: sources }) +
       '\n';
@@ -1859,6 +1921,47 @@ export const handlers = [
     handleDeleteFolder(String(params.id)),
   ),
   http.get(`${ANY}${TWIN}/quota`, () => HttpResponse.json(quotaState)),
+
+  // About / system identity card. Fixture is the ADMIN shape (all blocks
+  // present) so the panel renders fully in dev and e2e; the reduced
+  // non-admin shape is covered by the AboutSection unit tests.
+  http.get(`${ANY}${TWIN}/system/about`, () =>
+    HttpResponse.json({
+      twin: '1.1.0',
+      lightrag: {
+        native: '1.4.9.11',
+        composite: '1.4.9.11+memgraph-1.1.0',
+      },
+      admin: true,
+      memgraph: {
+        // A base memgraph/memgraph image: reachable, core procedures
+        // exposed, no MAGE. `procedures: 0` next to a resolved `mage` is
+        // NOT a state the backend can emit — a failed probe reports both
+        // as null. Keep the fixture on a shape the server can produce.
+        reachable: true,
+        version: '3.12.0',
+        mage: false,
+        procedures: 3,
+        error: null,
+      },
+      runtime: {
+        python: '3.12.13',
+        implementation: 'CPython',
+        platform: 'Linux-6.1.0-x86_64-with-glibc2.36',
+      },
+      storage: {
+        kv: 'MemgraphKVStorage',
+        vector: 'MemgraphVectorDBStorage',
+        docstatus: 'MemgraphDocStatusStorage',
+        graph: 'MemgraphGraphStorage',
+      },
+      overlay: {
+        replace_ui: true,
+        mount_server: true,
+        shim_native_routes: true,
+      },
+    }),
+  ),
   http.get(`${ANY}${TWIN}/settings/api-keys`, () =>
     HttpResponse.json(apiKeyState.map(publicApiKey)),
   ),
@@ -1914,6 +2017,7 @@ export const handlers = [
     const body = (await request.json().catch(() => null)) as {
       min_ocr_chars?: unknown;
       drop_classes?: unknown;
+      procedure_enabled?: unknown;
     } | null;
     const minOcr = body?.min_ocr_chars;
     if (
@@ -1946,13 +2050,31 @@ export const handlers = [
       }
       cleaned.push(slug);
     }
+    if (
+      body?.procedure_enabled !== undefined &&
+      typeof body.procedure_enabled !== 'boolean'
+    ) {
+      return HttpResponse.json(
+        { detail: 'procedure_enabled must be a boolean' },
+        { status: 422 },
+      );
+    }
+    // Match the backend's old-client compatibility contract: omitting the
+    // newly added flag preserves the current workspace activation choice.
+    const procedureEnabled =
+      typeof body?.procedure_enabled === 'boolean'
+        ? body.procedure_enabled
+        : visionSettingsState.procedure_enabled;
     visionSettingsState = {
       min_ocr_chars: minOcr,
       drop_classes: [...new Set(cleaned)].sort((a, b) => a.localeCompare(b)),
+      procedure_enabled: procedureEnabled,
+      procedure_available: visionSettingsState.procedure_available,
       source: 'runtime',
       updated_at: Date.now(),
       updated_by: 'mock-operator',
     };
+    persistVisionSettingsState();
     recordActivity({
       id: `evt_vision_settings_${Date.now()}`,
       ts: new Date().toISOString(),
@@ -1962,10 +2084,11 @@ export const handlers = [
       sev: 'info',
       actor: { user: 'mock-operator', role: 'admin' },
       target: { type: 'settings', label: 'vision' },
-      summary: `Vision settings updated: min OCR chars ${visionSettingsState.min_ocr_chars}, drop classes ${visionSettingsState.drop_classes.join(', ') || '(none)'}`,
+      summary: `Vision settings updated: min OCR chars ${visionSettingsState.min_ocr_chars}, drop classes ${visionSettingsState.drop_classes.join(', ') || '(none)'}, procedure ingestion ${visionSettingsState.procedure_enabled ? 'enabled' : 'disabled'}`,
       meta: {
         min_ocr_chars: visionSettingsState.min_ocr_chars,
         drop_classes: visionSettingsState.drop_classes,
+        procedure_enabled: visionSettingsState.procedure_enabled,
       },
     });
     return HttpResponse.json(visionSettingsState);
@@ -2077,6 +2200,15 @@ export const handlers = [
   http.post(`${ANY}${TWIN}/procedures/:id/retry`, ({ params }) => {
     const denied = rejectFolderAdminMutationIfNeeded();
     if (denied) return denied;
+    if (!visionSettingsState.procedure_enabled) {
+      return HttpResponse.json(
+        {
+          detail:
+            'procedure ingestion is disabled; enable it in Settings > Vision before retrying',
+        },
+        { status: 409 },
+      );
+    }
     const bundle = proceduresState.find((b) => b.id === String(params.id));
     if (!bundle || !['failed', 'rejected'].includes(String(bundle.state))) {
       return HttpResponse.json(
@@ -2469,6 +2601,46 @@ export const handlers = [
   }),
 
   // Document overlay
+  http.post(`${ANY}${TWIN}/documents/resolve-upload`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      file_name?: unknown;
+    };
+    if (typeof body.file_name !== 'string' || !body.file_name.trim()) {
+      return HttpResponse.json({ detail: 'file_name is required' }, { status: 400 });
+    }
+    const fileName = body.file_name;
+    const unsafeCharacter = Array.from(fileName).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127;
+    });
+    if (
+      fileName !== fileName.trim() ||
+      fileName.includes('/') ||
+      fileName.includes('\\') ||
+      fileName.includes(':') ||
+      unsafeCharacter
+    ) {
+      return HttpResponse.json({ detail: 'Unsafe filename detected' }, { status: 400 });
+    }
+    const existing = documentsState.find(
+      (doc) => doc.file_path.split(/[/\\]/u).at(-1) === fileName,
+    );
+    if (!existing) return HttpResponse.json({ action: 'upload' });
+
+    const activeFolder = request.headers.get('X-Twin-Folder') ?? 'default';
+    const memberships = new Set(foldersForDoc(existing));
+    const alreadyPresent = memberships.has(activeFolder);
+    memberships.add(activeFolder);
+    documentMemberships[existing.doc_id] = Array.from(memberships);
+    return HttpResponse.json({
+      action: alreadyPresent ? 'already_present' : 'shared',
+      doc_id: existing.doc_id,
+      track_id: existing.track_id ?? '',
+      message: alreadyPresent
+        ? `'${fileName}' is already present in folder '${activeFolder}'.`
+        : `'${fileName}' was added to folder '${activeFolder}'.`,
+    });
+  }),
   http.get(
     `${ANY}${TWIN}/documents/:id/metadata`,
     ({ params }) => {
@@ -2620,6 +2792,10 @@ export const handlers = [
     const physicallyDeletedIds = new Set<string>();
     for (const rawId of body.doc_ids) {
       const id = String(rawId);
+      if (e2eScenario.bulkDeleteFailIds?.includes(id)) {
+        failed.push(id);
+        continue;
+      }
       const outcome = applyBulkDeleteForDoc(request, id);
       if (!outcome) {
         failed.push(id);

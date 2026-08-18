@@ -213,6 +213,28 @@ class TestJWT:
             _decode_jwt("not-a-valid-jwt-token")
         assert exc_info.value.status_code == 401
 
+    def test_invalid_token_message_is_a_constant_oracle_free_string(self):
+        """Audit 2026-08-06, R-05: PyJWT internals (codec bytes, signature
+        mismatch reasons) must not leak to the client — the constant
+        message denies the token-crafting oracle."""
+        from fastapi import HTTPException
+
+        for bad in ("not-a-valid-jwt-token", "Bearer.x.y", "", "a.b.c"):
+            with pytest.raises(HTTPException) as exc_info:
+                _decode_jwt(bad)
+            assert exc_info.value.detail == "Invalid token"
+
+    def test_wrong_signature_also_gets_the_constant_message(self):
+        import jwt as pyjwt
+        from fastapi import HTTPException
+
+        token = pyjwt.encode(
+            {"sub": "admin"}, "a-different-secret-than-the-server", algorithm="HS256"
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _decode_jwt(token)
+        assert exc_info.value.detail == "Invalid token"
+
 
 class TestRequireAuth:
     async def test_disabled_returns_none(self):

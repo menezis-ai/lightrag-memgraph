@@ -6,6 +6,7 @@ No Memgraph required — all DB interactions are mocked.
 import asyncio
 
 import pytest
+from neo4j import TrustCustomCAs
 
 import twindb_lightrag_memgraph._pool as pool
 from twindb_lightrag_memgraph._constants import (
@@ -192,6 +193,74 @@ class TestReadReadPoolSize:
 
 
 class TestConnectionConfig:
+    def test_password_read_from_docker_secret(self, monkeypatch, tmp_path):
+        password_file = tmp_path / "memgraph-password"
+        password_file.write_text("strong-password\n", encoding="utf-8")
+        monkeypatch.delenv("MEMGRAPH_PASSWORD", raising=False)
+        monkeypatch.setenv("MEMGRAPH_PASSWORD_FILE", str(password_file))
+
+        _, _, kwargs = pool._read_connection_config()
+
+        assert kwargs["auth"][1] == "strong-password"
+
+    def test_direct_and_file_password_are_rejected(self, monkeypatch, tmp_path):
+        password_file = tmp_path / "memgraph-password"
+        password_file.write_text("file-password", encoding="utf-8")
+        monkeypatch.setenv("MEMGRAPH_PASSWORD", "direct-password")
+        monkeypatch.setenv("MEMGRAPH_PASSWORD_FILE", str(password_file))
+
+        with pytest.raises(ValueError, match="either MEMGRAPH_PASSWORD"):
+            pool._read_connection_config()
+
+    def test_missing_password_file_fails_closed(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("MEMGRAPH_PASSWORD", raising=False)
+        monkeypatch.setenv("MEMGRAPH_PASSWORD_FILE", str(tmp_path / "does-not-exist"))
+
+        with pytest.raises(RuntimeError, match="MEMGRAPH_PASSWORD_FILE"):
+            pool._read_connection_config()
+
+    def test_empty_password_file_fails_closed(self, monkeypatch, tmp_path):
+        password_file = tmp_path / "memgraph-password"
+        password_file.write_text("\n", encoding="utf-8")
+        monkeypatch.delenv("MEMGRAPH_PASSWORD", raising=False)
+        monkeypatch.setenv("MEMGRAPH_PASSWORD_FILE", str(password_file))
+
+        with pytest.raises(ValueError, match="is empty"):
+            pool._read_connection_config()
+
+    def test_custom_ca_configures_verified_tls(self, monkeypatch, tmp_path):
+        ca_file = tmp_path / "memgraph-ca.crt"
+        ca_file.write_text("test-ca", encoding="utf-8")
+        monkeypatch.setenv("MEMGRAPH_ENCRYPTED", "true")
+        monkeypatch.setenv("MEMGRAPH_TRUST", "TRUST_CUSTOM_CA")
+        monkeypatch.setenv("MEMGRAPH_CA_FILE", str(ca_file))
+
+        _, _, kwargs = pool._read_connection_config()
+
+        assert kwargs["encrypted"] is True
+        assert isinstance(kwargs["trusted_certificates"], TrustCustomCAs)
+
+    def test_custom_ca_requires_existing_file(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MEMGRAPH_ENCRYPTED", "true")
+        monkeypatch.setenv("MEMGRAPH_TRUST", "TRUST_CUSTOM_CA")
+        monkeypatch.setenv("MEMGRAPH_CA_FILE", str(tmp_path / "missing.crt"))
+
+        with pytest.raises(ValueError, match="readable file"):
+            pool._read_connection_config()
+
+    def test_unknown_tls_policy_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_ENCRYPTED", "true")
+        monkeypatch.setenv("MEMGRAPH_TRUST", "TRUST_SOMETHING_ELSE")
+
+        with pytest.raises(ValueError, match="MEMGRAPH_TRUST"):
+            pool._read_connection_config()
+
+    def test_invalid_encrypted_value_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_ENCRYPTED", "yes")
+
+        with pytest.raises(ValueError, match="MEMGRAPH_ENCRYPTED"):
+            pool._read_connection_config()
+
     def test_timeout_in_driver_kwargs(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT", "7.5")
         monkeypatch.delenv("MEMGRAPH_POOL_SIZE", raising=False)
@@ -236,6 +305,22 @@ class TestConnectionConfig:
         _, _, kwargs = pool._read_connection_config()
         assert kwargs["liveness_check_timeout"] == 5
         assert kwargs["max_connection_lifetime"] == 1800
+
+    def test_max_connection_lifetime_env_override(self, monkeypatch):
+        """Deployments behind an idle-killing network path (Docker Swarm
+        overlay/IPVS ~900s) lower the lifetime below the kill window so
+        recycling happens by age check, not by a logged reset-by-peer."""
+        monkeypatch.setenv("MEMGRAPH_MAX_CONNECTION_LIFETIME", "600")
+        _, _, kwargs = pool._read_connection_config()
+        assert kwargs["max_connection_lifetime"] == 600.0
+
+    def test_max_connection_lifetime_garbage_falls_back(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_MAX_CONNECTION_LIFETIME", "-1")
+        _, _, kwargs = pool._read_connection_config()
+        assert kwargs["max_connection_lifetime"] == 1800.0
+        monkeypatch.setenv("MEMGRAPH_MAX_CONNECTION_LIFETIME", "soon")
+        _, _, kwargs = pool._read_connection_config()
+        assert kwargs["max_connection_lifetime"] == 1800.0
 
     def test_driver_kwargs_accepted_by_async_driver(self):
         """Smoke-check: the runtime neo4j driver accepts the new kwargs.

@@ -7,7 +7,11 @@ import {
   useDocuments,
   useUploadDocumentsBatch,
 } from '../api/queries';
-import { api, type UploadDocumentInput } from '../api/resources';
+import {
+  api,
+  type UploadDocumentInput,
+  type UploadDocumentResponse,
+} from '../api/resources';
 import type { AddSourceAction } from '../components/AddSourceModal';
 import type { RetagAction } from '../components/RetagModal';
 import {
@@ -37,19 +41,104 @@ interface UseDocumentActionsOptions {
   setToasts: Dispatch<SetStateAction<Toast[]>>;
 }
 
-type UploadResponse = { status: string; message: string; track_id: string };
+type UploadResponse = UploadDocumentResponse;
 type UploadResult = PromiseSettledResult<UploadResponse>;
 type TrackStatus = Awaited<ReturnType<typeof api.trackStatus>>;
 type PushToast = (toast: Omit<Toast, 'id'>) => void;
 
+/** Retry cadence for deletions the busy ingestion pipeline defers (423 /
+ *  `busy` ids in a 207). The tab-local queue re-issues the delete until the
+ *  pipeline drains or the deadline passes — the backend guarantees deferred
+ *  docs are untouched, so the retry is idempotent. */
+export const BULK_DELETE_BUSY_RETRY_MS = 15_000;
+export const BULK_DELETE_BUSY_DEADLINE_MS = 10 * 60_000;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const isPipelineBusyDeleteError = (err: unknown): boolean =>
+  err instanceof ApiError && err.status === 423;
+
+function recoveryRequiredDeleteProgress(
+  err: unknown,
+): {
+  deleted: number;
+  failed: readonly string[];
+  busy: readonly string[];
+  unattempted: readonly string[];
+} | null {
+  if (!(err instanceof ApiError) || err.status !== 503) return null;
+  if (!err.body || typeof err.body !== 'object') return null;
+  const body = err.body as Record<string, unknown>;
+  if (body.recovery_required !== true) return null;
+  const deleted =
+    typeof body.deleted === 'number' && Number.isSafeInteger(body.deleted)
+      ? Math.max(0, body.deleted)
+      : 0;
+  const failed = Array.isArray(body.failed)
+    ? body.failed.filter((value): value is string => typeof value === 'string')
+    : [];
+  const busy = Array.isArray(body.busy)
+    ? body.busy.filter((value): value is string => typeof value === 'string')
+    : [];
+  const unattempted = Array.isArray(body.unattempted)
+    ? body.unattempted.filter(
+        (value): value is string => typeof value === 'string',
+      )
+    : [];
+  return { deleted, failed, busy, unattempted };
+}
+
+async function parkedProcedureTrackIds(
+  pending: ReadonlySet<string>,
+): Promise<readonly string[]> {
+  try {
+    const bundles = await api.listProcedures();
+    return bundles.flatMap((bundle) =>
+      bundle.track_id && pending.has(bundle.track_id) ? [bundle.track_id] : [],
+    );
+  } catch {
+    // The pending section reports procedure-store errors. Document polling can
+    // still make progress when only this reconciliation endpoint is down.
+    return [];
+  }
+}
+
+function registerParkedTrackIds(
+  pending: Set<string>,
+  parked: Set<string>,
+  trackIds: readonly string[],
+): void {
+  for (const trackId of trackIds) {
+    pending.delete(trackId);
+    parked.add(trackId);
+  }
+}
+
+function removeResolvedDocumentTrackIds(
+  pending: Set<string>,
+  items: readonly Document[],
+): Set<string> {
+  const resolved = new Set<string>();
+  for (const item of items) {
+    if (item.track_id && pending.delete(item.track_id)) {
+      resolved.add(item.track_id);
+    }
+  }
+  return resolved;
+}
+
 function summarizeUploadResults(results: readonly UploadResult[]) {
   const ok = results.filter((result) => result.status === 'fulfilled').length;
   const ko = results.length - ok;
+  const shared = results.filter(
+    (result) => result.status === 'fulfilled' && result.value.status === 'shared',
+  ).length;
   const dup = results.filter(
     (result) =>
       result.status === 'fulfilled' && result.value.status === 'duplicated',
   ).length;
-  return { ok, ko, dup };
+  return { ok, ko, dup, shared };
 }
 
 function failedOptimisticUploadIds(
@@ -82,11 +171,16 @@ function patchOptimisticUploadDocs(
   acceptedByOptimisticId: ReadonlyMap<string, UploadResponse>,
   failedIds: ReadonlySet<string>,
 ): readonly Document[] {
-  return docs
-    .map((doc) => {
-      const result = acceptedByOptimisticId.get(doc.doc_id);
-      if (!result) return doc;
-      return {
+  return docs.flatMap((doc) => {
+    if (failedIds.has(doc.doc_id)) return [];
+    const result = acceptedByOptimisticId.get(doc.doc_id);
+    if (!result) return [doc];
+    // Sharing is synchronous: the authoritative document already exists and
+    // the documents query is invalidated by the batch mutation. Keeping an
+    // optimistic ingestion row would show a false pending duplicate.
+    if (result.doc_id) return [];
+    return [
+      {
         ...doc,
         track_id: result.track_id,
         content_summary:
@@ -98,33 +192,24 @@ function patchOptimisticUploadDocs(
           ...doc.metadata,
           upload_state: result.status,
         },
-      };
-    })
-    .filter((doc) => !failedIds.has(doc.doc_id));
-}
-
-function recordUploadAudit(
-  results: readonly UploadResult[],
-  uploadInputs: readonly UploadDocumentInput[],
-  actor: string,
-): Promise<unknown>[] {
-  return results.flatMap((result, index) =>
-    result.status === 'fulfilled'
-      ? [
-          api.recordSourceUploaded({
-            source: uploadInputs[index]?.file.name ?? result.value.track_id,
-            track_id: result.value.track_id,
-            status: result.value.status,
-            actor,
-          }),
-        ]
-      : [],
-  );
+      },
+    ];
+  });
 }
 
 function uploadResultTrackIds(results: readonly UploadResult[]): string[] {
   return results.flatMap((result) =>
-    result.status === 'fulfilled' ? [result.value.track_id] : [],
+    result.status === 'fulfilled' && !result.value.doc_id && result.value.track_id
+      ? [result.value.track_id]
+      : [],
+  );
+}
+
+function uploadResultExistingDocIds(results: readonly UploadResult[]): string[] {
+  return results.flatMap((result) =>
+    result.status === 'fulfilled' && result.value.doc_id
+      ? [result.value.doc_id]
+      : [],
   );
 }
 
@@ -144,13 +229,12 @@ function buildOptimisticUploadState(
 }
 
 function dispatchUploadAudit(
-  results: readonly UploadResult[],
-  uploadInputs: readonly UploadDocumentInput[],
-  actor: string,
   activity: { refetch: () => unknown },
 ) {
-  const uploadAuditWrites = recordUploadAudit(results, uploadInputs, actor);
-  Promise.allSettled(uploadAuditWrites)
+  // R-03a (security audit 2026-08-06): the authoritative source-uploaded
+  // event is now emitted server-side by the ingestion pipeline; the client
+  // no longer writes audit entries. Just refresh the feed.
+  Promise.resolve()
     .then(() => activity.refetch())
     .catch(() => undefined);
 }
@@ -158,12 +242,17 @@ function dispatchUploadAudit(
 function maybeApplyInitialTags(
   results: readonly UploadResult[],
   tags: readonly string[],
-  applyInitialTagsAfterIngestion: (trackIds: readonly string[], tags: readonly string[]) => Promise<void>,
+  applyInitialTagsAfterIngestion: (
+    trackIds: readonly string[],
+    tags: readonly string[],
+    existingDocIds: readonly string[],
+  ) => Promise<void>,
 ) {
   if (!tags.length) return;
   const trackIds = uploadResultTrackIds(results);
-  if (trackIds.length === 0) return;
-  void applyInitialTagsAfterIngestion(trackIds, tags);
+  const existingDocIds = uploadResultExistingDocIds(results);
+  if (trackIds.length === 0 && existingDocIds.length === 0) return;
+  void applyInitialTagsAfterIngestion(trackIds, tags, existingDocIds);
 }
 
 /** Human reason for the first rejected upload — e.g. "archive.zip: ZIP
@@ -191,11 +280,35 @@ function pushUploadSummaryToast(
   tags: readonly string[],
   pushToast: PushToast,
 ) {
-  const { ok, ko, dup } = summarizeUploadResults(results);
+  const { ok, ko, dup, shared } = summarizeUploadResults(results);
   const duplicateSuffix = dup > 0 ? ` (${dup} already present)` : '';
   const initialTagsSuffix = tags.length
     ? ' · initial tags will apply once docs land'
     : '';
+  if (shared > 0) {
+    const queued = ok - shared - dup;
+    const parts = [
+      queued > 0 ? `${queued} uploaded` : '',
+      `${shared} copied to this folder`,
+      dup > 0 ? `${dup} already present` : '',
+    ].filter(Boolean);
+    if (ko === 0) {
+      pushToast({
+        kind: 'done',
+        title: queued > 0 ? 'Sources accepted' : 'Sources added to folder',
+        sub: `${parts.join(' · ')}${initialTagsSuffix}`,
+      });
+    } else {
+      const reason = firstUploadFailureReason(results, fileNames);
+      const reasonSuffix = reason ? ` — ${reason}` : '';
+      pushToast({
+        kind: 'error',
+        title: `${ko} upload${ko === 1 ? '' : 's'} failed`,
+        sub: `${parts.join(' · ')} · ${ko} failed${reasonSuffix}`,
+      });
+    }
+    return;
+  }
   if (ko === 0) {
     pushToast({
       kind: 'done',
@@ -496,42 +609,50 @@ export function useDocumentActions({
     trackIds: readonly string[],
   ): Promise<void> => {
     if (trackIds.length === 0) return;
+    const e2eRefresh = globalThis.window?.__TWIN_E2E_UPLOAD_REFRESH;
+    const intervalMs = e2eRefresh?.intervalMs ?? 2000;
+    // 60 × 2s: generous enough for the MarkItDown conversion tier, which
+    // serializes conversions before the DocStatus row exists.
+    const maxPolls = e2eRefresh?.maxPolls ?? 60;
     const pending = new Set(trackIds);
     const parked = new Set<string>();
-    for (let i = 0; i < 30 && pending.size > 0; i += 1) {
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 2000));
+    // QA DOC-V5-001: a resolved track must REMOVE its optimistic row from
+    // state — the render-time mask alone (track_id / folder:file_path match)
+    // left ghost "pending" rows behind on any projection mismatch, until a
+    // manual page reload.
+    const dropOptimisticRows = (resolved: ReadonlySet<string>) => {
+      if (resolved.size === 0) return;
+      setOptimisticUploadDocs((current) =>
+        current.filter((doc) => !(doc.track_id && resolved.has(doc.track_id))),
+      );
+    };
+    for (let i = 0; i < maxPolls && pending.size > 0; i += 1) {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, intervalMs));
       // A PARKED procedure (detected or forced) never lands in /documents —
       // the backend deliberately creates no document until approval. Its
       // optimistic row must resolve against the approval queue instead of
       // dangling forever, and the review card must appear without a manual
       // refresh. Reconciliation is exact: BundleSummary projects track_id.
-      try {
-        const bundles = await api.listProcedures();
-        const newlyParked = bundles.filter(
-          (bundle) => bundle.track_id && pending.has(bundle.track_id),
+      const newlyParked = await parkedProcedureTrackIds(pending);
+      registerParkedTrackIds(pending, parked, newlyParked);
+      if (newlyParked.length > 0) {
+        setOptimisticUploadDocs((current) =>
+          current.filter((doc) => !(doc.track_id && parked.has(doc.track_id))),
         );
-        if (newlyParked.length > 0) {
-          for (const bundle of newlyParked) {
-            pending.delete(bundle.track_id as string);
-            parked.add(bundle.track_id as string);
-          }
-          setOptimisticUploadDocs((current) =>
-            current.filter(
-              (doc) => !(doc.track_id && parked.has(doc.track_id)),
-            ),
-          );
-          void queryClient.invalidateQueries({ queryKey: ['procedures'] });
-        }
-      } catch {
-        // Procedure list unreachable (e.g. degraded store): keep polling
-        // documents — the pending section surfaces the store error itself.
+        void queryClient.invalidateQueries({ queryKey: ['procedures'] });
       }
       if (pending.size === 0) break;
       const result = await docs.refetch();
-      for (const item of result.data?.items ?? []) {
-        if (item.track_id) pending.delete(item.track_id);
-      }
+      dropOptimisticRows(
+        removeResolvedDocumentTrackIds(pending, result.data?.items ?? []),
+      );
     }
+    // Window exhausted: DocStatus rows are created at enqueue, so whatever is
+    // still unresolved is a projection mismatch (e.g. an upload deduplicated
+    // into an existing document that never surfaces this track_id). The
+    // authoritative 2s document polling owns the list — drop the leftovers
+    // instead of leaving ghost pending rows.
+    dropOptimisticRows(pending);
     if (parked.size > 0) {
       pushToast({
         kind: 'done',
@@ -572,23 +693,123 @@ export function useDocumentActions({
       title: 'Deleting sources…',
       sub: `${docsToDelete.length} source${docsToDelete.length === 1 ? '' : 's'} being removed`,
     });
-    try {
-      const result = await bulkDeleteDocs.mutateAsync({
-        doc_ids: docsToDelete.map((doc) => doc.doc_id),
-        actor: currentActor,
-      });
-      pushToast({
-        kind: 'done',
-        title: `${result.deleted} source${result.deleted === 1 ? '' : 's'} deleted`,
-        sub: 'Cascade removal successful',
-      });
-    } catch (err) {
-      logTechnicalError('bulk-delete', err);
-      pushToast({
-        kind: 'error',
-        title: 'Bulk delete failed',
-        sub: userErrorMessage(err, { action: 'deleting the selected sources' }),
-      });
+    // Tab-local deletion queue: LightRAG refuses physical deletes while its
+    // pipeline runs an ingestion job. The backend answers 423 (nothing done)
+    // or 207 with the deferred ids in `busy` (untouched); both are transient,
+    // so keep retrying the leftover until the pipeline drains instead of
+    // surfacing a scary failure for an operation that just has to wait.
+    let remaining: readonly string[] = docsToDelete.map((doc) => doc.doc_id);
+    let deletedTotal = 0;
+    const failedIds = new Set<string>();
+    const progressSummary = () =>
+      `${deletedTotal} deleted${
+        failedIds.size > 0
+          ? ` · ${failedIds.size} failed and still visible`
+          : ''
+      }`;
+    let queuedToastShown = false;
+    const deadline = Date.now() + BULK_DELETE_BUSY_DEADLINE_MS;
+    for (;;) {
+      let busy: readonly string[];
+      try {
+        const result = await bulkDeleteDocs.mutateAsync({
+          doc_ids: remaining,
+          actor: currentActor,
+        });
+        deletedTotal += result.deleted;
+        for (const docId of result.failed ?? []) failedIds.add(docId);
+        busy = result.busy ?? [];
+      } catch (err) {
+        if (!isPipelineBusyDeleteError(err)) {
+          logTechnicalError('bulk-delete', err);
+          const recovery = recoveryRequiredDeleteProgress(err);
+          if (recovery) {
+            deletedTotal += recovery.deleted;
+            for (const docId of recovery.failed) failedIds.add(docId);
+            const sourceNames = new Map(
+              docsToDelete.map((doc) => [doc.doc_id, doc.file_path]),
+            );
+            const describeIds = (ids: readonly string[]) => {
+              const sample = ids
+                .slice(0, 3)
+                .map((docId) => sourceNames.get(docId) ?? docId)
+                .join(', ');
+              const remainingCount = ids.length - 3;
+              return remainingCount > 0
+                ? `${sample}, +${remainingCount} more`
+                : sample;
+            };
+            const outstanding = [
+              recovery.busy.length > 0
+                ? `${recovery.busy.length} deferred (${describeIds(recovery.busy)})`
+                : '',
+              recovery.unattempted.length > 0
+                ? `${recovery.unattempted.length} not attempted (${describeIds(recovery.unattempted)})`
+                : '',
+            ].filter(Boolean);
+            pushToast({
+              kind: 'error',
+              title: 'Workspace recovery required',
+              sub: [progressSummary(), ...outstanding, userErrorMessage(err)].join(
+                ' · ',
+              ),
+            });
+            return;
+          }
+          const detail = userErrorMessage(err, {
+            action: 'deleting the selected sources',
+          });
+          if (deletedTotal > 0 || failedIds.size > 0) {
+            pushToast({
+              kind: 'error',
+              title: 'Bulk delete partially completed',
+              sub: `${progressSummary()} · deletion stopped: ${detail}`,
+            });
+            return;
+          }
+          pushToast({
+            kind: 'error',
+            title: 'Bulk delete failed',
+            sub: detail,
+          });
+          return;
+        }
+        busy = remaining;
+      }
+      if (busy.length === 0) {
+        if (failedIds.size > 0) {
+          pushToast({
+            kind: 'error',
+            title: 'Bulk delete partially completed',
+            sub: `${progressSummary()} — retry the failed sources`,
+          });
+          return;
+        }
+        pushToast({
+          kind: 'done',
+          title: `${deletedTotal} source${deletedTotal === 1 ? '' : 's'} deleted`,
+          sub: 'Cascade removal successful',
+        });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        pushToast({
+          kind: 'error',
+          title: 'Deletion still waiting on the pipeline',
+          sub: `The ingestion pipeline stayed busy — ${busy.length} source${busy.length === 1 ? ' was' : 's were'} not deleted. ${progressSummary()}. Retry once document processing completes.`,
+        });
+        return;
+      }
+      remaining = [...busy];
+      if (!queuedToastShown) {
+        queuedToastShown = true;
+        pushToast({
+          kind: 'propagating',
+          title: 'Deletion queued — pipeline busy',
+          sub: `${busy.length} deletion${busy.length === 1 ? '' : 's'} will retry automatically once the current document processing finishes (keep this tab open).`,
+        });
+      }
+      await sleep(BULK_DELETE_BUSY_RETRY_MS);
     }
   };
 
@@ -634,8 +855,10 @@ export function useDocumentActions({
       failedOptimisticIds,
       acceptedByOptimisticId,
     } = buildOptimisticUploadState(optimisticDocs, results);
-    const acceptedTrackIds = Array.from(acceptedByOptimisticId.values()).map(
-      (result) => result.track_id,
+    const acceptedTrackIds = Array.from(
+      acceptedByOptimisticId.values(),
+    ).flatMap((result) =>
+      !result.doc_id && result.track_id ? [result.track_id] : [],
     );
     setOptimisticUploadDocs((current) =>
       patchOptimisticUploadDocs(
@@ -651,7 +874,7 @@ export function useDocumentActions({
       action.tags,
       pushToast,
     );
-    dispatchUploadAudit(results, uploadInputs, currentActor, activity);
+    dispatchUploadAudit(activity);
     maybeApplyInitialTags(results, action.tags, applyInitialTagsAfterIngestion);
     void refreshDocumentsUntilUploadsLand(acceptedTrackIds);
   };
@@ -659,16 +882,21 @@ export function useDocumentActions({
   const applyInitialTagsAfterIngestion = async (
     trackIds: readonly string[],
     tags: readonly string[],
+    existingDocIds: readonly string[] = [],
   ): Promise<void> => {
     const e2ePoll = globalThis.window?.__TWIN_E2E_INITIAL_TAG_POLL;
     const pollIntervalMs = e2ePoll?.intervalMs ?? 2000;
     const maxPolls = e2ePoll?.maxPolls ?? 30;
-    const resolvedDocIds = await pollProcessedDocIds({
-      trackIds,
-      pollIntervalMs,
-      maxPolls,
-      pushToast,
-    });
+    const resolvedDocIds = new Set(existingDocIds);
+    if (trackIds.length > 0) {
+      const ingestedDocIds = await pollProcessedDocIds({
+        trackIds,
+        pollIntervalMs,
+        maxPolls,
+        pushToast,
+      });
+      for (const docId of ingestedDocIds) resolvedDocIds.add(docId);
+    }
     if (resolvedDocIds.size === 0) {
       if (trackIds.length > 0) {
         pushToast({

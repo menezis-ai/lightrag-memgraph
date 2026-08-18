@@ -39,8 +39,8 @@ def _query_param_kwargs(body: Any, *, stream: bool = False) -> dict[str, Any]:
         param_kwargs["history_turns"] = body.history_turns
     if body.enable_rerank is not None:
         param_kwargs["enable_rerank"] = body.enable_rerank
-    if body.tag_filter is not None:
-        param_kwargs["tag_filter"] = body.tag_filter
+    if body.tag_filter_payload is not None:
+        param_kwargs["tag_filter"] = body.tag_filter_payload
     if body.doc_filter is not None:
         param_kwargs["doc_filter"] = body.doc_filter
     return param_kwargs

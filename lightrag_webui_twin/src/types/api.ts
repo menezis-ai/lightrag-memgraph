@@ -14,6 +14,26 @@
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+/** One request parameter (path, query or header) of an endpoint. */
+export interface OpenApiParam {
+  name: string;
+  /** Where the parameter travels. */
+  in: 'path' | 'query' | 'header' | 'cookie';
+  /** Human-readable type label (e.g. `string`, `integer`). */
+  type: string;
+  required: boolean;
+  /** Parameter description from the spec ('' when absent). */
+  desc: string;
+  /** Example value rendered next to the description, when provided. */
+  example?: string;
+}
+
+/** One documented response (status code + description). */
+export interface OpenApiResponseInfo {
+  code: string;
+  desc: string;
+}
+
 export interface OpenApiEndpoint {
   /** HTTP method. */
   m: HttpMethod;
@@ -21,6 +41,20 @@ export interface OpenApiEndpoint {
   p: string;
   /** Short human summary (e.g. `Upload Document`). */
   s: string;
+  /** Operation description from the spec (absent on sparse specs). */
+  desc?: string;
+  /** Declared parameters (absent when the spec lists none). */
+  params?: readonly OpenApiParam[];
+  /** Pretty-printed JSON example for the request body, when declared. */
+  bodyExample?: string;
+  /** Whether the endpoint declares a request body at all. */
+  hasBody?: boolean;
+  /** Documented responses (absent on sparse specs). */
+  responses?: readonly OpenApiResponseInfo[];
+  /** Whether the spec requires credentials for this operation.
+   *  `false` = anonymous allowed; absent = the spec says nothing (the UI
+   *  falls back to its group heuristic). */
+  secured?: boolean;
 }
 
 export interface OpenApiGroup {
@@ -28,11 +62,6 @@ export interface OpenApiGroup {
   name: string;
   desc: string;
   endpoints: readonly OpenApiEndpoint[];
-}
-
-export interface OpenApiServer {
-  id: string;
-  label: string;
 }
 
 export interface MockResponse {

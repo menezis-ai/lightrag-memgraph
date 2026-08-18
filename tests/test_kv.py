@@ -79,3 +79,40 @@ class TestMemgraphKVStorage:
         result = await kv_store.drop()
         assert result["status"] == "success"
         assert await kv_store.is_empty() is True
+
+    # ── LightRAG 1.5.5 strict point reads ──────────────────────────────
+    # The manual FAILED-retry protocol trusts None as "content really
+    # absent"; the strict path must distinguish that from an existing node
+    # whose payload is unusable (review blocker on kv_impl:get_by_id_strict).
+
+    async def test_get_by_id_strict_returns_value_and_confirmed_absence(self, kv_store):
+        await kv_store.upsert({"key1": {"hello": "world"}})
+        assert await kv_store.get_by_id_strict("key1") == {"hello": "world"}
+        assert await kv_store.get_by_id_strict("missing") is None
+
+    async def test_get_by_id_strict_raises_on_unusable_payload(self, kv_store):
+        from twindb_lightrag_memgraph import _pool
+        from twindb_lightrag_memgraph.kv_impl import StorageControlPlaneError
+
+        label = kv_store._label()
+        async with _pool.acquire_write_slot():
+            async with _pool.get_session() as session:
+                for node_id, data in (
+                    ("empty-node", ""),
+                    ("null-node", "null"),
+                    ("broken-node", "{not json"),
+                ):
+                    result = await session.run(
+                        f"MERGE (n:`{label}` {{id: $id}}) SET n.data = $data",
+                        id=node_id,
+                        data=data,
+                    )
+                    await result.consume()
+
+        for node_id in ("empty-node", "null-node", "broken-node"):
+            with pytest.raises(StorageControlPlaneError):
+                await kv_store.get_by_id_strict(node_id)
+        # The lenient reader keeps its best-effort miss semantics where it
+        # already had them (empty payload / JSON null → None).
+        assert await kv_store.get_by_id("empty-node") is None
+        assert await kv_store.get_by_id("null-node") is None

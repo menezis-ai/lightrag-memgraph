@@ -5,7 +5,7 @@
  * configured server.
  */
 
-import type { OpenApiGroup, OpenApiServer } from '../types/api';
+import type { OpenApiGroup } from '../types/api';
 
 export const API_VERSION = 'v1.4.12/0279';
 
@@ -77,13 +77,3 @@ export const OPENAPI_GROUPS: readonly OpenApiGroup[] = [
     ],
   },
 ];
-
-export const API_SERVERS: readonly OpenApiServer[] = [
-  { id: 'prod', label: 'https://cib-kb.twin.internal — production' },
-  { id: 'stg', label: 'https://cib-kb.stg.twin.internal — staging' },
-];
-
-export const API_BASE_URL: Record<string, string> = {
-  prod: 'https://cib-kb.twin.internal',
-  stg: 'https://cib-kb.stg.twin.internal',
-};

@@ -9,9 +9,8 @@
  *   - ``blocked``   → red, fail-stop ("Memgraph instance quota
  *                    reached — ingestion disabled until space freed")
  *
- * When the backend reports ``configured == false`` (no
- * MEMGRAPH_MEMORY_LIMIT env), the banner is unconditionally hidden —
- * dev posture has no quota.
+ * When the backend reports ``configured == false`` (no limit reported by
+ * Memgraph and no fallback env), the banner is unconditionally hidden.
  */
 
 import { useInstanceQuota } from '../api/queries';
@@ -42,7 +41,7 @@ function bannerCopy(snap: QuotaSnapshot): { headline: string; subline?: string }
   if (snap.status === 'blocked') {
     return {
       headline: 'Memgraph instance quota reached — ingestion disabled until space is freed',
-      subline: `${used} / ${limit} (${pct}). Delete documents or raise MEMGRAPH_MEMORY_LIMIT to recover.`,
+      subline: `${used} / ${limit} (${pct}). Delete documents or raise the binding Memgraph memory/license limit to recover.`,
     };
   }
   return {
@@ -74,4 +73,3 @@ export function QuotaBanner({ tone = 'block' }: QuotaBannerProps = {}) {
     </div>
   );
 }
-

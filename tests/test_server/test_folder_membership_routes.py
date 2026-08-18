@@ -8,11 +8,19 @@ fixture authenticates using the explicit infrastructure root key.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from lightrag.base import (
+    DocSchedulingRecord,
+    DocStatus,
+    SourceAbsent,
+    SourceConflict,
+    SourceUnique,
+)
 
 from twindb_lightrag_memgraph import _twindb_state
 from twindb_lightrag_memgraph.server import webui_router
@@ -59,6 +67,29 @@ class FakeDocStatus:
         self.members.setdefault(doc_id, set()).add(folder)
         return True
 
+    async def resolve_doc_source_strict(self, canonical_source_key: str):
+        if canonical_source_key == "conflict.pdf":
+            return SourceConflict(
+                candidate_count=2,
+                sample_doc_ids=("doc-conflict-a", "doc-conflict-b"),
+            )
+        for doc_id, doc in self.docs.items():
+            if Path(doc["file_path"]).name != canonical_source_key:
+                continue
+            return SourceUnique(
+                doc_id=doc_id,
+                doc=DocSchedulingRecord(
+                    id=doc_id,
+                    status=DocStatus.PROCESSED,
+                    created_at="2026-08-06T00:00:00Z",
+                    updated_at="2026-08-06T00:00:00Z",
+                    file_path=canonical_source_key,
+                    track_id=f"track-{doc_id}",
+                    has_custom_chunk_journal=False,
+                ),
+            )
+        return SourceAbsent()
+
     async def remove_from_folder(self, doc_id: str, folder: str):
         if doc_id not in self.docs:
             return None
@@ -78,6 +109,23 @@ class FakeDocStatus:
             self.claims.pop(doc_id)
 
 
+class _BusyDeletionResult:
+    """LightRAG DeletionResult shape for the pipeline-reserved refusal."""
+
+    status = "not_allowed"
+    status_code = 403
+    message = (
+        "Deletion not allowed: current job 'ingest [3 files]' "
+        "is not a document deletion job"
+    )
+
+
+class _RecoveryRequiredDeletionResult:
+    status = "not_allowed"
+    status_code = 503
+    message = "Pipeline recovery is required for this workspace."
+
+
 class FakeRag:
     def __init__(self) -> None:
         self.doc_status = FakeDocStatus()
@@ -85,10 +133,16 @@ class FakeRag:
         self.cache_cleared = 0
         self.aclear_cache_raises = False
         self.delete_raises = False
+        self.pipeline_busy = False
+        self.recovery_required = False
 
-    async def adelete_by_doc_id(self, doc_id: str) -> None:
+    async def adelete_by_doc_id(self, doc_id: str):
         if self.delete_raises:
             raise RuntimeError("delete cascade failed")
+        if self.recovery_required:
+            return _RecoveryRequiredDeletionResult()
+        if self.pipeline_busy:
+            return _BusyDeletionResult()
         self.deleted.append(doc_id)
         self.doc_status.docs.pop(doc_id, None)
         self.doc_status.members.pop(doc_id, None)
@@ -130,6 +184,68 @@ async def client(monkeypatch):
     _twindb_state.pop("rag", None)
     webui_router.reset_store()
     configure_auth()
+
+
+# ── Resolve upload intent ────────────────────────────────────────────────
+
+
+class TestResolveUpload:
+    async def test_existing_source_is_shared_into_active_folder(self, client):
+        r = await client.post(
+            "/documents/resolve-upload",
+            json={"file_name": "a.pdf"},
+            headers={"X-Twin-Folder": "sandbox"},
+        )
+
+        assert r.status_code == 200
+        assert r.json() == {
+            "action": "shared",
+            "doc_id": "doc-a",
+            "track_id": "track-doc-a",
+            "message": "'a.pdf' was added to folder 'sandbox'.",
+        }
+        assert client._test_rag.doc_status.members["doc-a"] == {
+            "default",
+            "sandbox",
+        }
+
+    async def test_existing_source_in_active_folder_is_idempotent(self, client):
+        r = await client.post(
+            "/documents/resolve-upload",
+            json={"file_name": "a.pdf"},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["action"] == "already_present"
+        assert client._test_rag.doc_status.members["doc-a"] == {"default"}
+
+    async def test_unknown_source_continues_to_native_upload(self, client):
+        r = await client.post(
+            "/documents/resolve-upload",
+            json={"file_name": "new.pdf"},
+            headers={"X-Twin-Folder": "sandbox"},
+        )
+
+        assert r.status_code == 200
+        assert r.json() == {"action": "upload"}
+
+    async def test_unsafe_filename_is_rejected_like_native_upload(self, client):
+        r = await client.post(
+            "/documents/resolve-upload",
+            json={"file_name": "../a.pdf"},
+        )
+
+        assert r.status_code == 400
+
+    async def test_conflicting_primary_sources_fail_closed(self, client):
+        r = await client.post(
+            "/documents/resolve-upload",
+            json={"file_name": "conflict.pdf"},
+            headers={"X-Twin-Folder": "sandbox"},
+        )
+
+        assert r.status_code == 409
+        assert "source conflict" in r.json()["detail"]
 
 
 # ── POST add membership ──────────────────────────────────────────────────
@@ -266,7 +382,7 @@ class TestBulkDeleteRefcount:
         await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
         r = await client.post("/documents/bulk-delete", json={"doc_ids": ["doc-a"]})
         assert r.status_code == 200
-        assert r.json() == {"deleted": 1, "failed": []}
+        assert r.json() == {"deleted": 1, "failed": [], "busy": []}
         assert client._test_rag.deleted == []  # NOT physically deleted
         assert client._test_rag.doc_status.members["doc-a"] == {"sandbox"}
 
@@ -275,8 +391,90 @@ class TestBulkDeleteRefcount:
             "/documents/bulk-delete", json={"doc_ids": ["doc-default"]}
         )
         assert r.status_code == 200
-        assert r.json() == {"deleted": 1, "failed": []}
+        assert r.json() == {"deleted": 1, "failed": [], "busy": []}
         assert client._test_rag.deleted == ["doc-default"]
+
+    async def test_bulk_delete_busy_pipeline_unshares_but_defers_last_membership(
+        self, client
+    ):
+        """The 2026-08-06 OVH incident shape: during an ingestion, un-sharing
+        keeps working (no LightRAG call) while last-membership physical
+        deletes are deferred as `busy` — with the delete claim released so
+        the retry is not stranded."""
+        await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
+        client._test_rag.pipeline_busy = True
+
+        r = await client.post(
+            "/documents/bulk-delete",
+            json={"doc_ids": ["doc-a", "doc-default"]},
+        )
+
+        assert r.status_code == 207
+        assert r.json() == {"deleted": 1, "failed": [], "busy": ["doc-default"]}
+        assert client._test_rag.deleted == []
+        assert client._test_rag.doc_status.members["doc-a"] == {"sandbox"}
+        # Deferred doc untouched and unclaimed → the retry can proceed.
+        assert "doc-default" in client._test_rag.doc_status.docs
+        assert "doc-default" not in client._test_rag.doc_status.claims
+
+        # Pipeline drained → the same retry payload now completes.
+        client._test_rag.pipeline_busy = False
+        retry = await client.post(
+            "/documents/bulk-delete", json={"doc_ids": ["doc-default"]}
+        )
+        assert retry.status_code == 200
+        assert retry.json() == {"deleted": 1, "failed": [], "busy": []}
+        assert client._test_rag.deleted == ["doc-default"]
+
+    async def test_bulk_partial_unshare_then_recovery_fence_returns_structured_503(
+        self, client
+    ):
+        await client.post("/documents/doc-a/folders", json={"folder_id": "sandbox"})
+        client._test_rag.recovery_required = True
+
+        r = await client.post(
+            "/documents/bulk-delete",
+            json={"doc_ids": ["doc-a", "doc-default"]},
+        )
+
+        assert r.status_code == 503
+        body = r.json()
+        assert body["recovery_required"] is True
+        assert body["deleted"] == 1
+        assert body["committed_doc_ids"] == ["doc-a"]
+        assert body["failed"] == ["doc-default"]
+        assert body["busy"] == []
+        assert body["unattempted"] == []
+        assert "operator recovery is required" in body["detail"].lower()
+        assert (
+            "1 earlier document change was already committed (doc-a)" in body["detail"]
+        )
+        # The first mutation really committed; the fenced physical delete did
+        # not, and its last-membership claim was released.
+        assert client._test_rag.doc_status.members["doc-a"] == {"sandbox"}
+        assert "doc-default" in client._test_rag.doc_status.docs
+        assert "doc-default" not in client._test_rag.doc_status.claims
+
+        activity = await client.get("/activity")
+        event = next(
+            item
+            for item in activity.json()["items"]
+            if item["kind"] == "doc-folder-removed"
+        )
+        assert event["meta"]["doc_ids"] == ["doc-a"]
+        assert event["meta"]["failed"] == ["doc-default"]
+
+    async def test_single_folder_remove_busy_pipeline_returns_423(self, client):
+        client._test_rag.pipeline_busy = True
+
+        r = await client.delete("/documents/doc-default/folders/default")
+
+        assert r.status_code == 423
+        detail = r.json()["detail"]
+        assert "ingestion pipeline" in detail
+        assert "busy" in detail
+        assert "doc-default" in client._test_rag.doc_status.docs
+        assert "doc-default" not in client._test_rag.doc_status.claims
 
 
 # ── Query-cache purge on physical delete ─────────────────────────────────

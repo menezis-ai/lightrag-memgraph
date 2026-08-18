@@ -799,7 +799,11 @@ class TestSearchLabelsFolderOverrides:
     async def test_empty_chunk_folder_can_search_direct_member(
         self, folder_a, monkeypatch
     ):
+        direct_read_count = 0
+
         async def direct_rows(_ws, _folder):
+            nonlocal direct_read_count
+            direct_read_count += 1
             return [_ent_row("manual:operator", description="manual")]
 
         async def no_overrides(_ws, _folder):
@@ -812,6 +816,7 @@ class TestSearchLabelsFolderOverrides:
 
         labels = await graph_reader._search_labels_scoped("ws", "e1", set(), 10)
         assert labels == ["e1"]
+        assert direct_read_count == 1
 
     async def test_direct_member_tombstone_is_not_searchable(
         self, folder_a, monkeypatch

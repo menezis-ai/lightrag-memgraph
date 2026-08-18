@@ -46,32 +46,55 @@ class ListEnvelope(_Base, Generic[T]):
 
 class Document(_Base):
     # Legacy WebUI seed shape.
-    id: str | None = None
-    type: Literal["file", "confluence", "sharepoint", "url"]
-    source: str | None = None
-    """File name, URL, or path identifier of the source."""
-    summary: str | None = None
-    """Short human-readable summary of the content."""
-    tags: list[str]
-    status: str
-    chunks: int | None = None
-    """Number of chunks the document was split into."""
-    updated: str | None = None
-    """Human-readable relative timestamp (e.g. "2h ago")."""
-    visibility: Literal["private", "internal", "public"]
-    folder: str
-    """Twin folder id this document belongs to."""
+    id: str | None = Field(default=None, description="Document id.")
+    type: Literal["file", "confluence", "sharepoint", "url"] = Field(
+        description="Where the document came from."
+    )
+    source: str | None = Field(
+        default=None,
+        description="File name, URL, or path identifier of the source.",
+    )
+    summary: str | None = Field(
+        default=None, description="Short human-readable summary of the content."
+    )
+    tags: list[str] = Field(description="Tags attached to the document.")
+    status: str = Field(
+        description=(
+            "Ingestion status (e.g. `processed`, `pending`, `processing`, " "`failed`)."
+        )
+    )
+    chunks: int | None = Field(
+        default=None, description="Number of chunks the document was split into."
+    )
+    updated: str | None = Field(
+        default=None,
+        description='Human-readable relative timestamp (e.g. "2h ago").',
+    )
+    visibility: Literal["private", "internal", "public"] = Field(
+        description="Visibility level of the document."
+    )
+    folder: str = Field(description="Folder id this document belongs to.")
     # LightRAG-native shape consumed by the React port.
     doc_id: str | None = None
-    track_id: str | None = None
+    track_id: str | None = Field(
+        default=None, description="Ingestion tracking id from the upload."
+    )
     file_path: str | None = None
     content_summary: str | None = None
     content_length: int | None = None
     chunks_count: int | None = None
     created_at: str | None = None
     updated_at: str | None = None
-    error_msg: str | None = None
-    metadata: dict[str, Any] | None = None
+    error_msg: str | None = Field(
+        default=None,
+        description="Failure or rejection reason when `status` is `failed`.",
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Free-form metadata: review state, sensitivity classification, ..."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +103,19 @@ class Document(_Base):
 
 
 class Folder(_Base):
-    id: str
-    kb: str
-    visibility: Literal["private", "internal", "public"]
-    sources: int
-    role: str
-    current: bool
+    id: str = Field(
+        description="Folder id — the value to send in the `X-Twin-Folder` header.",
+        examples=["general"],
+    )
+    kb: str = Field(description="Display label of the folder.")
+    visibility: Literal["private", "internal", "public"] = Field(
+        description="Visibility level of the folder."
+    )
+    sources: int = Field(description="Number of documents currently in the folder.")
+    role: str = Field(description="The caller's role on this folder.")
+    current: bool = Field(
+        description="Whether this is the folder the request resolved to."
+    )
 
 
 class Notification(_Base):
@@ -297,20 +327,46 @@ class GraphRelationPatch(_Base):
 
 
 class GraphEntityCreate(_Base):
-    """Create payload for a manual graph entity addition.
+    """Request body of ``POST /graph/entities``."""
 
-    ``name`` is also used as the LightRAG ``entity_id`` (the PK). A
-    409 is returned if a node with this id already exists in the
-    workspace — manual creation deliberately doesn't silently overwrite
-    an LLM-extracted entity. An empty/whitespace ``name`` is rejected at
-    422 by the validator below, before the handler runs (TR-KG-01).
-    """
+    # ``name`` doubles as the entity's primary key: a 409 is returned when a
+    # node with this id already exists in the workspace — manual creation
+    # deliberately doesn't silently overwrite an LLM-extracted entity. An
+    # empty/whitespace name is rejected at 422 by the validator below,
+    # before the handler runs (TR-KG-01).
 
-    name: str = Field(..., max_length=255)
-    type: Literal["PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"]
-    summary: str | None = None
-    tags: list[str] | None = None
-    properties: dict[str, str] | None = None
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Change Advisory Board",
+                    "type": "ORG",
+                    "summary": "Committee approving production changes.",
+                    "tags": ["governance"],
+                }
+            ]
+        },
+    )
+
+    name: str = Field(
+        ...,
+        max_length=255,
+        description="Entity name — must be unique in the knowledge graph.",
+    )
+    type: Literal["PRODUCT", "TECHNOLOGY", "CONCEPT", "ORG", "PERSON", "LOCATION"] = (
+        Field(description="Entity type.")
+    )
+    summary: str | None = Field(
+        default=None, description="Short description of the entity."
+    )
+    tags: list[str] | None = Field(
+        default=None, description="Active catalog tags to attach."
+    )
+    properties: dict[str, str] | None = Field(
+        default=None, description="Free-form key/value properties."
+    )
 
     @field_validator("name", mode="before")
     @classmethod
@@ -324,40 +380,58 @@ class GraphEntityCreate(_Base):
 
 
 class GraphRelationCreate(_Base):
-    """Create payload for a manual graph relation addition.
+    """Request body of ``POST /graph/relations``."""
 
-    ``source`` and ``target`` are WebUI ids (the ``kg_`` prefixed form
-    returned by `/graph/entities`). Both endpoints must already exist
-    in Memgraph — 422 otherwise.
-    """
-
-    source: str
-    target: str
-    label: str
-    strength: float | None = None
-    properties: dict[str, str] | None = None
+    source: str = Field(
+        description="Id of the source entity (from `GET /graph/entities`)."
+    )
+    target: str = Field(
+        description="Id of the target entity (from `GET /graph/entities`)."
+    )
+    label: str = Field(description="Relation label.", examples=["approves"])
+    strength: float | None = Field(default=None, description="Relation strength (0-1).")
+    properties: dict[str, str] | None = Field(
+        default=None, description="Free-form key/value properties."
+    )
 
 
 class FolderCreate(_Base):
-    """Create payload for a new Twin folder.
+    """Request body of ``POST /folders``."""
 
-    ``id`` must validate against the safe-identifier rule (the same
-    backtick-safe rule used for Memgraph labels). ``label`` is the
-    human-facing name shown in the picker.
-    """
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "hr_policies",
+                    "label": "HR Policies",
+                    "kind": "custom",
+                    "description": "Human-resources policy documents.",
+                }
+            ]
+        },
+    )
 
-    id: str
-    label: str
-    kind: str = "custom"
-    description: str = ""
+    id: str = Field(
+        description=(
+            "Folder id. Letters, digits and underscores only — it becomes "
+            "part of the storage namespace."
+        ),
+        examples=["hr_policies"],
+    )
+    label: str = Field(description="Human-facing name shown in the folder picker.")
+    kind: str = Field(default="custom", description="Folder kind label.")
+    description: str = Field(default="", description="Optional description.")
 
 
 class FolderPatch(_Base):
-    """Partial update payload for a Twin folder. Every field optional."""
+    """Request body of ``PATCH /folders/{folder_id}``. Only provided
+    fields change."""
 
-    label: str | None = None
-    kind: str | None = None
-    description: str | None = None
+    label: str | None = Field(default=None, description="New display label.")
+    kind: str | None = Field(default=None, description="New folder kind.")
+    description: str | None = Field(default=None, description="New description.")
 
 
 # ---------------------------------------------------------------------------
@@ -374,78 +448,169 @@ class AckResponse(_Base):
 # ---------------------------------------------------------------------------
 
 
-class TagRequestBody(_Base):
-    """POST /tags — propose a new tag for palier-3 review."""
+_ACTOR_FIELD = Field(
+    default=None,
+    description=(
+        "Accepted for backward compatibility and ignored: the audit trail "
+        "always records the authenticated identity, never this value."
+    ),
+)
 
-    tag: str
-    def_: str = Field(alias="def")
-    long_description: str | None = None
-    category: str
-    aliases: list[str] = Field(default_factory=list)
-    justification: str | None = None
-    actor: str | None = None
-    """Optional explicit actor for the audit event. Otherwise 'system'."""
+
+def _reject_blank_definition(value: str | None) -> str | None:
+    """QA TAG-V8-001: the required ``def`` invariant enforced at creation must
+    hold on every write path — an edit could previously blank the definition
+    of a validated tag. ``None`` still means "no change" on the edit bodies;
+    an explicit empty/whitespace-only string is rejected (422).
+    """
+    if value is not None and not value.strip():
+        raise ValueError("Tag definition cannot be empty or whitespace-only.")
+    return value
+
+
+class TagRequestBody(_Base):
+    """Request body of ``POST /tags``."""
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "tag": "data-retention",
+                    "def": "Rules governing how long records are kept.",
+                    "category": "compliance",
+                    "aliases": ["retention-policy"],
+                    "justification": "Recurring theme across audit documents.",
+                }
+            ]
+        },
+    )
+
+    tag: str = Field(description="Tag name (the catalog key).")
+    def_: str = Field(alias="def", description="Short definition of the tag.")
+    long_description: str | None = Field(
+        default=None, description="Longer explanation shown in the tag detail."
+    )
+    category: str = Field(
+        description="Category id from `GET /tags/categories`.",
+        examples=["compliance"],
+    )
+    aliases: list[str] = Field(
+        default_factory=list, description="Synonyms that resolve to this tag."
+    )
+    justification: str | None = Field(
+        default=None, description="Why this tag should exist (shown to reviewers)."
+    )
+    actor: str | None = _ACTOR_FIELD
+
+    @field_validator("def_")
+    @classmethod
+    def _def_not_blank(cls, value: str | None) -> str | None:
+        return _reject_blank_definition(value)
 
 
 class TagEditBody(_Base):
-    """PATCH /tags/{name} — edit a tag in place (palier-3 only)."""
+    """Request body of ``PATCH /tags/{name}``. Only provided fields change."""
 
-    tag: str | None = None
-    def_: str | None = Field(default=None, alias="def")
+    tag: str | None = Field(default=None, description="New name for the tag (rename).")
+    def_: str | None = Field(
+        default=None, alias="def", description="New short definition."
+    )
     long_description: str | None = None
-    category: str | None = None
-    aliases: list[str] | None = None
-    deprecates: list[str] | None = None
-    actor: str | None = None
+    category: str | None = Field(default=None, description="New category id.")
+    aliases: list[str] | None = Field(
+        default=None, description="Replacement synonym list."
+    )
+    deprecates: list[str] | None = Field(
+        default=None, description="Tags this one supersedes."
+    )
+    actor: str | None = _ACTOR_FIELD
+
+    @field_validator("def_")
+    @classmethod
+    def _def_not_blank(cls, value: str | None) -> str | None:
+        return _reject_blank_definition(value)
 
 
 class TagSuggestEditBody(_Base):
-    """POST /tags/{name}/suggest-edit — palier-2 edit proposal."""
+    """Request body of ``POST /tags/{name}/suggest-edit``. Only provided
+    fields become part of the proposal."""
 
-    def_: str | None = Field(default=None, alias="def")
-    long_description: str | None = None
-    category: str | None = None
-    aliases: list[str] | None = None
-    justification: str | None = None
-    actor: str | None = None
+    def_: str | None = Field(
+        default=None, alias="def", description="Proposed short definition."
+    )
+    long_description: str | None = Field(
+        default=None, description="Proposed longer explanation."
+    )
+    category: str | None = Field(default=None, description="Proposed category id.")
+    aliases: list[str] | None = Field(
+        default=None, description="Proposed synonym list."
+    )
+    justification: str | None = Field(
+        default=None, description="Why the change is needed (shown to reviewers)."
+    )
+    actor: str | None = _ACTOR_FIELD
+
+    @field_validator("def_")
+    @classmethod
+    def _def_not_blank(cls, value: str | None) -> str | None:
+        return _reject_blank_definition(value)
 
 
 class TagApproveBody(_Base):
-    """POST /tags/{name}/approve."""
+    """Request body of ``POST /tags/{name}/approve``."""
 
-    actor: str | None = None
+    actor: str | None = _ACTOR_FIELD
 
 
 class TagRejectBody(_Base):
-    """POST /tags/{name}/reject."""
+    """Request body of ``POST /tags/{name}/reject``."""
 
-    reason: str
-    actor: str | None = None
+    reason: str = Field(
+        description="Why the request or proposal is rejected.",
+        examples=["Overlaps with the existing 'records-management' tag."],
+    )
+    actor: str | None = _ACTOR_FIELD
 
 
 class TagDeprecateBody(_Base):
-    """POST /tags/{name}/deprecate."""
+    """Request body of ``POST /tags/{name}/deprecate``."""
 
-    reason: str | None = None
-    actor: str | None = None
+    reason: str | None = Field(
+        default=None, description="Why the tag is being retired."
+    )
+    actor: str | None = _ACTOR_FIELD
 
 
 class TagReactivateBody(_Base):
-    """POST /tags/{name}/reactivate."""
+    """Request body of ``POST /tags/{name}/reactivate``."""
 
-    actor: str | None = None
+    actor: str | None = _ACTOR_FIELD
 
 
 class TagSynonymsBody(_Base):
-    """POST /tags/{name}/synonyms — replace alias list."""
+    """Request body of ``POST /tags/{name}/synonyms``."""
 
-    aliases: list[str]
-    actor: str | None = None
+    aliases: list[str] = Field(
+        description="The full replacement synonym list.",
+        examples=[["retention-policy", "records-retention"]],
+    )
+    actor: str | None = _ACTOR_FIELD
 
 
 class TagDeleteBody(_Base):
-    """DELETE /tags/{name} body — migration strategy."""
+    """Request body of ``DELETE /tags/{name}``."""
 
-    strategy: Literal["migrate", "untag"] = "untag"
-    to: str | None = None
-    actor: str | None = None
+    strategy: Literal["migrate", "untag"] = Field(
+        default="untag",
+        description=(
+            "`untag` removes the tag from its documents; `migrate` re-links "
+            "them to the tag named in `to`."
+        ),
+    )
+    to: str | None = Field(
+        default=None,
+        description="Migration target tag (required when `strategy` is `migrate`).",
+    )
+    actor: str | None = _ACTOR_FIELD

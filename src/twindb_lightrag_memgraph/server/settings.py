@@ -7,6 +7,10 @@ to OPENAI_API_KEY where applicable.
 
 import json
 
+from lightrag.constants import (
+    DEFAULT_MAX_REQUEST_BODY_BYTES,
+    MULTIPART_OVERHEAD_BYTES,
+)
 from pydantic import ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 
@@ -28,7 +32,9 @@ TWIN_ENTITY_TYPES_GUIDANCE = """Classify each entity using one of the following 
 - Location: Geographic places, sites, regions, countries, cities, and datacenters.
 - Product: Named commercial products, applications, databases, services, and vendor offerings.
 - Technology: Named technologies and technical building blocks, including operating systems, programming languages, shell commands, command-line utilities, protocols, APIs, libraries, frameworks, runtimes, algorithms, file formats, technical standards, robotics/AI frameworks, and developer tools. Examples: UNIX, grep, sed, ssh, KnowRob, Accelerate, vImage, Cypher, Kubernetes, RMAN.
-- Concept: Abstract ideas, business notions, procedures, methods, incidents, events, content titles, datasets, or other non-technology concepts."""
+- Concept: Abstract ideas, business notions, procedures, methods, incidents, events, content titles, datasets, natural languages, or other non-technology concepts.
+
+Disambiguation: natural languages such as Latin, French, and Spanish are `Concept`, not `Technology`. A programming language is `Technology`."""
 
 
 class LightRAGServerSettings(BaseSettings):
@@ -197,19 +203,20 @@ class LightRAGServerSettings(BaseSettings):
         description="Batch size for startup graph relation-id backfill.",
     )
     max_request_body_bytes: int = Field(
-        default=16 * 1024 * 1024,
+        default=DEFAULT_MAX_REQUEST_BODY_BYTES,
         ge=0,
         description=(
             "Maximum Content-Length accepted for ordinary HTTP request bodies. "
-            "0 disables the guard."
+            "Aligned with LightRAG's process-wide ASGI ceiling; 0 disables "
+            "the Twin guard."
         ),
     )
     max_upload_body_bytes: int = Field(
-        default=100 * 1024 * 1024,
+        default=100 * 1024 * 1024 + MULTIPART_OVERHEAD_BYTES,
         ge=0,
         description=(
-            "Maximum Content-Length accepted for native document upload bodies. "
-            "0 disables the guard."
+            "Maximum Content-Length accepted for native document upload bodies, "
+            "including LightRAG's multipart framing allowance. 0 disables the guard."
         ),
     )
 

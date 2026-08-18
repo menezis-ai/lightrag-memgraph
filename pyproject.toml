@@ -8,15 +8,16 @@ version = "1.1.0"
 description = "Memgraph KV, Vector, and DocStatus storage backends for LightRAG"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "lightrag-hku>=1.4.9,<2.0.0",
+    "lightrag-hku==1.5.6",
     "neo4j>=5.0.0,<7.0.0",
 ]
 
 [project.optional-dependencies]
 lint = [
     "black>=24.10.0",
+    "pre-commit>=4.2.0",
     "ruff>=0.8.0",
 ]
 test = [
@@ -27,7 +28,7 @@ test = [
 ]
 intelligence = [
     "openai>=1.50",
-    "pydantic>=2.0",
+    "pydantic>=2.12.0",
     "pydantic-settings>=2.14.2",
 ]
 test-intelligence = [
@@ -41,14 +42,15 @@ server = [
     # `api` extra: pypdf, python-docx, python-pptx, openpyxl,
     # aiofiles, python-multipart, etc. Keep the extra here so a
     # server install can actually process uploaded documents.
-    "lightrag-hku[api]>=1.4.9,<2.0.0",
+    "lightrag-hku[api]==1.5.6",
     "fastapi>=0.110.0",
     "starlette>=1.3.1",
     "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.12.0",
     "pydantic-settings>=2.14.2",
     "PyJWT>=2.8.0",
     "python-multipart>=0.0.31",
-    "pypdf>=6.13.3",
+    "pypdf>=6.14.2",
     "aiofiles>=23.0.0",
     "bcrypt>=4.0.0",
 ]
@@ -68,8 +70,12 @@ vision = [
     # RapidOCR = offline OCR pre-filter (onnxruntime cost already paid by
     # markitdown's magika dependency); openai = sync client for the
     # OpenAI-compatible vision endpoint (BNP: Gemma 4 31B-it LLMaaS/vLLM).
+    # PDFium/Pillow also power generic visual enrichment of standard PDFs;
+    # both are permissively licensed (PyMuPDF remains excluded: AGPL).
     "rapidocr-onnxruntime>=1.3.0",
     "openai>=1.50",
+    "pypdfium2>=4.30",
+    "pillow>=10.0",
 ]
 procedure = [
     # Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md).
@@ -79,13 +85,28 @@ procedure = [
     # rendered bitmaps to PNG. The vision LLM rides the [vision] tier's
     # endpoint configuration (same gemma-4-31b-it, decision 2026-07-20).
     "pypdfium2>=4.30",
-    "pypdf>=4.0",
+    "pypdf>=6.14.2",
     "pillow>=10.0",
     "twindb-lightrag-memgraph[vision]",
 ]
 test-server = [
     "twindb-lightrag-memgraph[server,test]",
     "httpx>=0.27.0",
+]
+mutation = [
+    # Mutation-testing harness ([tool.mutmut] below). Pinned to a minor range,
+    # not left free: the config encodes mutmut 3.6 behaviour (also_copy refuses
+    # nested file paths, mutate_only_covered_lines triggers a double
+    # pytest.main), so a 3.7 that changes either would break silently rather
+    # than loudly. pytest-timeout backs the per-mutant --timeout guard.
+    "mutmut>=3.6,<3.7",
+    "pytest-timeout>=2.4,<3",
+    # mutmut's stats phase runs the WHOLE suite under -x, so a campaign needs
+    # every tree collectable — tests/test_intelligence and tests/test_server
+    # included. Without these a fresh clone installing only the two tools above
+    # aborts at collection instead of reproducing the campaign.
+    "twindb-lightrag-memgraph[test,test-server,test-intelligence]",
+    "twindb-lightrag-memgraph[convert,vision,procedure]",
 ]
 all = [
     "twindb-lightrag-memgraph[intelligence,server,tracing,convert,vision,procedure]",
@@ -111,7 +132,7 @@ where = ["src"]
 
 [tool.black]
 line-length = 88
-target-version = ["py310", "py311", "py312"]
+target-version = ["py312", "py313"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -124,7 +145,7 @@ extend-exclude = '''
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 extend-exclude = [
     ".venv",
     ".scannerwork",
@@ -143,3 +164,105 @@ testpaths = ["tests"]
 filterwarnings = [
     "ignore:Using `httpx` with `starlette\\.testclient` is deprecated; install `httpx2` instead\\.:starlette.exceptions.StarletteDeprecationWarning:fastapi.testclient",
 ]
+
+# Mutation testing (mutmut 3.6, `pip install -e ".[mutation]"`). NOT a CI gate —
+# a local audit tool run on demand.
+#
+# Doctrine: the suite is ~2000 tests / ~140s, so a full-suite run per mutant is
+# impractical rather than impossible — 250 mutants x 140s is ~9h43 sequential.
+# mutmut narrows the run by mapping tests to the
+# *function* they execute (see run_stats' StatsCollector building
+# tests_by_mangled_function_name) — per-function, NOT per-line — and replays only
+# that subset. `only_mutate` keeps each campaign scoped to a whitelist of modules
+# whose tests are fast, pure and deterministic. Widen it deliberately, one module
+# at a time, never globally — see CLAUDE.md "Mutation testing".
+[tool.mutmut]
+source_paths = ["src/twindb_lightrag_memgraph"]
+
+# mutmut runs the suite from a copy of the tree in mutants/, and copies only
+# tests/ + pyproject.toml by default. Stats collection runs the suite under -x, so
+# a single import error or missing-file failure aborts the entire campaign. Every
+# repo artefact the tests reach outside the package must be listed here:
+#   scripts/                -> test_retrieval_tuning_evalops.py imports `scripts`
+#   requirements/, Dockerfile, .gitlab-ci.yml -> test_bnp_cve_remediation.py reads them
+#   the two .ts files       -> test_route_parity.py diffs the WebUI route contract
+also_copy = [
+    "scripts",
+    "requirements",
+    "Dockerfile",
+    ".gitlab-ci.yml",
+    "lightrag_webui_twin/src/api",
+    "lightrag_webui_twin/src/mocks",
+]
+# NB: list DIRECTORIES, not nested files. mutmut 3.6 copies a file entry with
+# shutil.copy2 and never creates the destination parent, so a nested file path
+# crashes the run; directory entries go through copytree(dirs_exist_ok=True),
+# which does create parents. (Read from mutmut/__main__.py::copy_also_copy_files.)
+
+# Campaign scope. Pure/HARD logic only: no Memgraph, no LLM, no paid endpoint.
+# Run one module at a time and switch the test-selection entry below in lockstep:
+#   _vision.py          -> tests/test_vision.py
+#   _procedure.py       -> tests/test_procedure.py
+#   _procedure_store.py -> tests/test_procedure.py
+#   _pdf_vision.py      -> tests/test_pdf_vision.py
+#   _conversion.py      -> tests/test_conversion.py
+only_mutate = [
+    "src/twindb_lightrag_memgraph/_vision.py",
+]
+
+# Never mutate the storage impls in this campaign: their real tests are the
+# @pytest.mark.integration ones, which conftest auto-skips without MEMGRAPH_URI.
+# Mutants there would "survive" against a skipped suite — a meaningless score.
+do_not_mutate = [
+    "src/twindb_lightrag_memgraph/kv_impl.py",
+    "src/twindb_lightrag_memgraph/vector_impl.py",
+    "src/twindb_lightrag_memgraph/docstatus_impl.py",
+    "src/twindb_lightrag_memgraph/_pool.py",
+    "src/twindb_lightrag_memgraph/webui_dist/*",
+]
+
+# NB: false means uncovered lines get mutated too, so a survivor may simply be
+# unexecuted code — triage against `coverage` before writing a test for one.
+# MUST stay false on this repo. Setting it true makes mutmut call pytest.main()
+# TWICE in one process (gather_coverage, then run_stats, __main__.py:269) and the
+# second import of numpy dies with "ImportError: cannot load module more than once
+# per process" -> pytest exit 4 -> BadTestExecutionCommandsException, campaign
+# aborted before a single mutant runs. Same numpy double-import family as the
+# pytest-cov --cov footgun already recorded in CLAUDE.md, observed here on the
+# Python 3.12.13 venv. Cost of leaving it false: uncovered lines get mutated too,
+# so triage survivors against `coverage` before writing a test for one.
+mutate_only_covered_lines = false
+
+# Guards on every mutant test run, in order of what they prevent:
+#   -m "not live_vision and not perf" -> HARD money guard. test_vision_live.py hits
+#      a real paid vision endpoint. conftest skips it unless RUN_VISION_LIVE=1, but
+#      env leaks into mutmut's children; this deselect is the independent second
+#      barrier. Never remove it.
+#   --ignore=tests/test_vision_offline.py -> keep RapidOCR/ONNX out of mutmut's
+#      multi-process workers. The real decoder gate is run separately; killing a
+#      mutant process while an ONNX worker thread is active can segfault the test
+#      process and produce a false mutation status.
+#   --timeout=10 -> a mutant that breaks a loop bound or a retry counter hangs
+#      forever otherwise (pytest-timeout).  Module-local clean tests peak at 1s,
+#      so 10s keeps a full order of magnitude of scheduling margin.
+#   -p no:cacheprovider -> keep the mutants/ copy free of pytest cache writes.
+pytest_add_cli_args = [
+    "-m", "not live_vision and not perf",
+    "--ignore=tests/test_vision_offline.py",
+    "--timeout=10",
+    "-p", "no:cacheprovider",
+    "-q",
+]
+
+# Keep each campaign module-local.  Without an explicit test path, pytest
+# recollects the entire 2k+ suite for every mutant even though mutmut then runs
+# only the tests mapped to the changed function.  The full offline suite is a
+# separate closing gate; switch this path together with ``only_mutate``.
+pytest_add_cli_args_test_selection = ["tests/test_vision.py"]
+
+# Kill a mutant run at 15x the baseline time of its selected tests, +5s floor.
+# The core 1.1.0 modules fan into 40+ individually-fast tests; mutmut measures
+# test bodies but its child still pays collection/import overhead. A 1s floor
+# falsely timed out every parser/validator mutant (manual replay: 5.5s green).
+timeout_multiplier = 15.0
+timeout_constant = 5.0

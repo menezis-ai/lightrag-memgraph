@@ -29,9 +29,13 @@ IS the procedure. This profile:
 Contract: :func:`aprocess_procedure` never raises into the ingestion flow.
 It returns ``None`` when the document is not a procedure (the seam continues
 on the untouched standard path) or a :class:`ProcedureOutcome` when a bundle
-was parked (the seam reports success and stops — no enqueue). ``TWIN_PROCEDURE=off``,
-pypdfium2 absent, or the vision tier unconfigured → profile disabled, every
-document follows the standard path (additivity contract).
+was parked (the seam reports success and stops — no enqueue). On server
+surfaces, Settings → Vision supplies the authoritative admin-controlled
+runtime activation flag (off by default unless ``TWIN_PROCEDURE=on`` seeds
+the unsaved default). Direct legacy surfaces still honour
+``TWIN_PROCEDURE=off``. Missing PDF dependencies or an unconfigured Vision
+tier disable new procedure selection everywhere; already-parked paths remain
+claimed so a rescan cannot bypass approval.
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ from ._constants import (
     TWIN_PROCEDURE_ENV,
     TWIN_PROCEDURE_MAX_BYTES_ENV,
     TWIN_PROCEDURE_MAX_SCHEMATICS_ENV,
+    TWIN_PROCEDURE_MAX_TOKENS_ENV,
     TWIN_PROCEDURE_RENDER_SCALE_ENV,
     get_active_doc_type,
     get_active_operator_classification,
@@ -61,6 +66,8 @@ from ._constants import (
 )
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
+
+_PROCEDURE_ERROR_FORMAT = "twindb procedure: %s — %s"
 
 _TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
 
@@ -117,6 +124,9 @@ document's language.
 - "tasks": one entry per task box, transcribing identifiers and labels \
 faithfully; "links" lists connector letters and trigram pills touching the \
 task. Use "" for fields not visible.
+Treat conditions and links as independent attributes unless a drawn connector \
+explicitly joins them. Never claim that a condition triggers a linked \
+procedure merely because both touch the same task.
 Describe ONLY what the image shows. Never invent tasks or actors.
 """
 
@@ -177,12 +187,22 @@ _forced_on_warned = False
 # Overlay event sink (family of the vision settings provider): PR 2 wires
 # activity/notification emission here; PR 1 logs when nothing is registered.
 _event_sink = None
+# The Settings → Vision provider returns the workspace-scoped runtime
+# activation flag. It is async because the shared setting lives in Memgraph
+# and must be observed by every worker without a restart.
+_settings_provider = None
 
 
 def set_event_sink(sink) -> None:
     """Register ``callable(kind: str, payload: dict)`` (None to unregister)."""
     global _event_sink
     _event_sink = sink
+
+
+def set_settings_provider(provider) -> None:
+    """Register an async callable returning the runtime settings dict."""
+    global _settings_provider
+    _settings_provider = provider
 
 
 def _emit(kind: str, payload: dict) -> None:
@@ -237,22 +257,29 @@ def _pypdf_importable() -> bool:
 
 
 def reset_caches() -> None:
-    """Test hook: forget import probes, warnings and the event sink."""
+    """Test hook: forget import probes, warnings, sinks and providers."""
     global _pdfium_available, _pypdf_available, _forced_on_warned, _event_sink
+    global _settings_provider
     with _availability_lock:
         _pdfium_available = None
         _pypdf_available = None
     _forced_on_warned = False
     _event_sink = None
+    _settings_provider = None
+
+
+def is_available() -> bool:
+    """Whether the deployment has every prerequisite for the profile."""
+    return _pdfium_importable() and _pypdf_importable() and _vision.is_enabled()
 
 
 def is_enabled() -> bool:
-    """Profile active: mode + pypdfium2/pypdf importable + vision tier up."""
+    """Legacy deployment default: env mode plus profile prerequisites."""
     global _forced_on_warned
     mode = _resolve_mode()
     if mode is False:
         return False
-    ready = _pdfium_importable() and _pypdf_importable() and _vision.is_enabled()
+    ready = is_available()
     if not ready and mode is True and not _forced_on_warned:
         _forced_on_warned = True
         logger.warning(
@@ -266,6 +293,66 @@ def is_enabled() -> bool:
             _vision.is_enabled(),
         )
     return ready
+
+
+def default_enabled() -> bool:
+    """Admin-surface default before a runtime choice has been persisted.
+
+    Mere infrastructure readiness must not activate procedure ingestion.
+    ``TWIN_PROCEDURE=on`` remains an explicit deployment opt-in for
+    migrations and non-WebUI launch surfaces.
+    """
+    return _resolve_mode() is True and is_available()
+
+
+async def is_effectively_enabled() -> bool:
+    """Resolve the admin-controlled runtime flag, then the env default.
+
+    A stored boolean is the activation intent. Infrastructure prerequisites
+    remain deployment-managed, so an enabled toggle cannot make an unusable
+    profile claim documents.
+    """
+    if _settings_provider is not None:
+        try:
+            data = await _settings_provider()
+            if isinstance(data, dict) and isinstance(
+                data.get("procedure_enabled"), bool
+            ):
+                return data["procedure_enabled"] and is_available()
+        except Exception as exc:
+            logger.warning(
+                "twindb procedure: settings provider failed (%s: %s) "
+                "— new procedure ingestion disabled",
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        return default_enabled()
+    return is_enabled()
+
+
+async def _forced_selection_block_reason() -> str | None:
+    """Explain why an explicit procedure request cannot run, if applicable.
+
+    The WebUI server always installs the workspace settings provider, so its
+    admin choice is authoritative (and provider failures fail closed). Direct
+    library callers predate that provider: preserve their detailed forced-file
+    validation unless the deployment explicitly set ``TWIN_PROCEDURE=off``.
+    """
+    disabled_reason = (
+        "procedure-disabled: an administrator must enable procedure "
+        "ingestion in Settings > Vision"
+    )
+    if _settings_provider is None:
+        return disabled_reason if _resolve_mode() is False else None
+    if not is_available():
+        return (
+            "procedure-unavailable: PDF extraction or Vision prerequisites "
+            "are not configured; check Settings > Vision"
+        )
+    if not await is_effectively_enabled():
+        return disabled_reason
+    return None
 
 
 def max_procedure_bytes() -> int:
@@ -284,6 +371,17 @@ def render_scale() -> float:
         return value if 0.5 <= value <= 8.0 else DEFAULT_RENDER_SCALE
     except ValueError:
         return DEFAULT_RENDER_SCALE
+
+
+def procedure_max_tokens() -> int:
+    """Completion cap for the vision passes; env override, sane floor."""
+    raw = os.environ.get(TWIN_PROCEDURE_MAX_TOKENS_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_PROCEDURE_MAX_TOKENS
+    # A cap below the floor can only truncate a legitimate reply.
+    return value if value >= 2048 else DEFAULT_PROCEDURE_MAX_TOKENS
 
 
 def max_schematics() -> int:
@@ -306,6 +404,11 @@ def should_consider(file_path: Path | str) -> bool:
     """
     if not is_enabled():
         return False
+    return _should_consider_while_enabled(file_path)
+
+
+def _should_consider_while_enabled(file_path: Path | str) -> bool:
+    """Cheap file gate after activation has already been resolved."""
     doc_type = get_active_doc_type()
     if doc_type == "standard":
         return False
@@ -378,13 +481,48 @@ def find_schematic_pages(pages: list[str]) -> list[int]:
     return [i for i, text in enumerate(pages) if _SCHEMATIC_MARKER in text.lower()]
 
 
+def _capped_render_scale(page_width: float, page_height: float) -> float:
+    """Render scale bounded so the bitmap stays under MAX_RENDER_PIXELS.
+
+    Audit 2026-08-06, R-08b: the MediaBox geometry is fully attacker-
+    controlled, and the procedure profile used to render at the raw
+    configured scale — a crafted 10000x10000pt page at scale 8 is a
+    ~25 GB bitmap. Shares the cap with the standard PDF profile
+    (``_pdf_vision.MAX_RENDER_PIXELS``); the degrading loop mirrors the
+    region-render guard there. Raises ValueError when the page cannot be
+    rendered within the cap.
+    """
+    import math
+
+    from ._pdf_vision import MAX_RENDER_PIXELS
+
+    page_area = page_width * page_height
+    if not math.isfinite(page_area) or page_area <= 0:
+        raise ValueError("invalid procedure page geometry")
+    scale = min(render_scale(), math.sqrt(MAX_RENDER_PIXELS / page_area))
+    for _attempt in range(4):
+        pixel_width = max(1, math.ceil(page_width * scale))
+        pixel_height = max(1, math.ceil(page_height * scale))
+        rounded_pixels = pixel_width * pixel_height
+        if rounded_pixels <= MAX_RENDER_PIXELS:
+            break
+        scale *= math.sqrt(MAX_RENDER_PIXELS / rounded_pixels)
+    else:
+        raise ValueError("procedure page cannot be rendered within pixel cap")
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("procedure page requires an invalid render scale")
+    return scale
+
+
 def _render_page_png_sync(path: Path, page_index: int) -> bytes:
     """Render one page to PNG bytes (pypdfium2 + Pillow)."""
     import pypdfium2 as pdfium
 
     pdf = pdfium.PdfDocument(str(path))
     try:
-        bitmap = pdf[page_index].render(scale=render_scale())
+        page = pdf[page_index]
+        width, height = page.get_size()
+        bitmap = page.render(scale=_capped_render_scale(width, height))
         image = bitmap.to_pil()
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
@@ -397,16 +535,71 @@ def _png_data_url(png_bytes: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
 
 
-async def _vision_json_call(messages: list[dict], stage: str) -> dict:
-    """One JSON vision call with the tier timeout; raises on failure."""
-    raw = await asyncio.wait_for(
-        asyncio.to_thread(_vision.vision_chat_sync, messages),
-        timeout=_vision.vision_timeout_seconds(),
+#: Default completion cap for the procedure passes, overridable with
+#: ``TWIN_PROCEDURE_MAX_TOKENS``.
+#:
+#: Sized for the WORST realistic schematic, not the average, because hitting
+#: the cap is not a graceful degradation: a JSON object cut mid-structure is
+#: unparseable, so the whole schematic is lost and the retry re-fails
+#: identically. Runaway protection is the transport timeout's job
+#: (``TWIN_VISION_TIMEOUT``), not this number's.
+#:
+#: History: shipped at 4096 on 2026-07-25 and that value CAUSED a failure the
+#: same day — the informed pass returned 15130 chars, exactly the cap, cut mid
+#: object with an unterminated fence. A three-box fixture schematic produced
+#: that; a real BNP procedure carries far more task boxes.
+DEFAULT_PROCEDURE_MAX_TOKENS = 16384
+
+#: How much of an unparseable reply to keep in the error message.
+_REPLY_EXCERPT_CHARS = 400
+
+
+async def _vision_json_call(messages: list[dict], stage: str, validate=None) -> dict:
+    """JSON vision call retried once when the model reply is unparseable.
+
+    ``validate`` is applied INSIDE the retry loop, so a reply that parses but
+    violates the contract is retried like an unparseable one. Both are the same
+    transient endpoint noise: measured 2026-07-25, the model returned a
+    corrupted key (``{@title`` instead of ``title``) on an otherwise perfect
+    object. Validating only after the loop made one mangled character lose the
+    whole schematic permanently — on BNP's vLLM as much as on the CI gateway.
+
+    When every attempt fails the raw reply is carried into the error instead of
+    being discarded: "unparseable JSON reply" with no sample is undiagnosable
+    from a CI log, and that is precisely how the first occurrence was lost.
+    """
+    last_raw = ""
+    last_error: Exception | None = None
+    for _ in range(2):
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(
+                _vision.vision_chat_sync, messages, max_tokens=procedure_max_tokens()
+            ),
+            timeout=_vision.vision_timeout_seconds(),
+        )
+        data = _vision._parse_vision_json(raw)
+        if data is not None:
+            if validate is None:
+                return data
+            try:
+                return validate(data)
+            except ValueError as exc:
+                last_error = exc
+        last_raw = raw or ""
+    if last_error is not None:
+        raise last_error
+    excerpt = last_raw[:_REPLY_EXCERPT_CHARS].replace("\n", " ")
+    suffix = "…" if len(last_raw) > _REPLY_EXCERPT_CHARS else ""
+    logger.warning(
+        "twindb procedure: %s got an unparseable reply (%d chars): %s%s",
+        stage,
+        len(last_raw),
+        excerpt,
+        suffix,
     )
-    data = _vision._parse_vision_json(raw)
-    if data is None:
-        raise ValueError(f"{stage}: unparseable JSON reply")
-    return data
+    raise ValueError(
+        f"{stage}: unparseable JSON reply ({len(last_raw)} chars): {excerpt}{suffix}"
+    )
 
 
 #: The eight string fields every task entry must carry (prompt contract).
@@ -439,7 +632,18 @@ def _validate_pass_payload(data: dict, stage: str) -> dict:
         or not description.strip()
         or not isinstance(tasks, list)
     ):
-        raise ValueError(f"{stage}: reply does not match the expected shape")
+        # Name what actually arrived. "does not match the expected shape" with
+        # no sample is the same dead end "unparseable JSON reply" was: it cost
+        # a paid CI run to learn nothing. Keys and types are enough to tell a
+        # truncated reply from a renamed field from an inner fragment, and
+        # they cannot leak much of the document.
+        got = ", ".join(
+            f"{key}:{type(value).__name__}" for key, value in list(data.items())[:12]
+        )
+        raise ValueError(
+            f"{stage}: reply does not match the expected shape "
+            f"(got {len(data)} key(s): {got or 'none'})"
+        )
     for index, task in enumerate(tasks):
         if not isinstance(task, dict) or any(
             not isinstance(task.get(field), str) for field in _TASK_FIELDS
@@ -499,6 +703,7 @@ async def _process_schematic(
                 },
             ],
             "blind-pass",
+            functools.partial(_validate_pass_payload, stage="blind-pass"),
         )
         informed_task = _vision_json_call(
             [
@@ -519,6 +724,7 @@ async def _process_schematic(
                 },
             ],
             "informed-pass",
+            functools.partial(_validate_pass_payload, stage="informed-pass"),
         )
         # The two passes are independent by design (the blind one must not
         # see anything the informed one received) — run them concurrently.
@@ -536,7 +742,7 @@ async def _process_schematic(
                 pass_errors.append(result)
                 continue
             try:
-                entry[field] = _validate_pass_payload(result, stage)
+                entry[field] = result
             except ValueError as invalid:
                 pass_errors.append(invalid)
 
@@ -545,21 +751,20 @@ async def _process_schematic(
         # report is exactly what the reviewer needs to judge the retry.
         if entry["blind"] is not None:
             try:
-                entry["divergence"] = _validate_comparator_payload(
-                    await _vision_json_call(
-                        [
-                            {"role": "system", "content": COMPARATOR_SYSTEM_PROMPT},
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Full document text:\n\n" + full_text + "\n\n"
-                                    "Blind schematic description (JSON):\n\n"
-                                    + json.dumps(entry["blind"], ensure_ascii=False)
-                                ),
-                            },
-                        ],
-                        "comparator",
-                    )
+                entry["divergence"] = await _vision_json_call(
+                    [
+                        {"role": "system", "content": COMPARATOR_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Full document text:\n\n" + full_text + "\n\n"
+                                "Blind schematic description (JSON):\n\n"
+                                + json.dumps(entry["blind"], ensure_ascii=False)
+                            ),
+                        },
+                    ],
+                    "comparator",
+                    _validate_comparator_payload,
                 )
             except Exception as comparator_exc:
                 pass_errors.append(comparator_exc)
@@ -605,20 +810,30 @@ def _advisory_classification(path: Path) -> dict | None:
 async def aroute_check(file_path: Path | str) -> bool:
     """Seam-side routing decision, including the parked-bundle rescan guard.
 
-    ``should_consider`` alone is not enough: a file whose bundle already
+    The runtime activation flag controls NEW procedure selection. A file
+    whose bundle already exists remains claimed even after an admin turns
+    ingestion off; otherwise a rescan could silently enqueue an unapproved
+    procedure through the standard pipeline.
+
+    The cheap file gate alone is not enough: a file whose bundle already
     exists may fail the cheap auto gates on a later scan (an oversized or
     non-PDF *forced* document rescanned without its header, an
     auto-undetectable forced document) and would silently fall through to
-    the standard — unapproved — enqueue. While the tier is enabled, any
-    path the store has already claimed keeps routing to the profile,
-    regardless of the folder or headers the new scan carries. An explicit
-    ``X-Twin-Doc-Type: standard`` stays an operator override.
+    the standard — unapproved — enqueue. An explicit
+    ``X-Twin-Doc-Type: standard`` remains the only operator override.
     """
     path = Path(file_path)
-    if should_consider(path):
+    effectively_enabled = await is_effectively_enabled()
+    if effectively_enabled and _should_consider_while_enabled(path):
         return True
-    if not is_enabled() or get_active_doc_type() == "standard":
+    doc_type = get_active_doc_type()
+    if doc_type == "standard":
         return False
+    # An explicit procedure request must never bypass approval merely because
+    # the profile is disabled or unavailable. Route it to the profile, which
+    # parks an actionable failed bundle without running extraction.
+    if doc_type == "procedure":
+        return True
     try:
         if str(path) in await asyncio.to_thread(_procedure_store.claimed_paths):
             return True
@@ -627,13 +842,11 @@ async def aroute_check(file_path: Path | str) -> bool:
         # to the profile, which refuses the enqueue until an operator
         # explicitly recovers the .corrupt-* files.
         return await asyncio.to_thread(_procedure_store.is_degraded)
-    except Exception as exc:
-        logger.error(
+    except Exception:
+        logger.exception(
             "twindb procedure: rescan guard cannot read the store for %s "
-            "(%s: %s) — failing CLOSED, the file routes to the profile",
+            "— failing CLOSED, the file routes to the profile",
             path.name,
-            type(exc).__name__,
-            exc,
         )
         return True
 
@@ -702,6 +915,88 @@ def _reuse_outcome(bundle: dict, path: Path) -> ProcedureOutcome:
     )
 
 
+async def _guard_store_and_find_existing(
+    path: Path,
+) -> dict | ProcedureOutcome | None:
+    degraded_reason = (
+        "store-degraded: the bundle claim index was quarantined — refusing "
+        "every enqueue until the .corrupt-* files next to the store are "
+        "explicitly recovered and removed"
+    )
+    try:
+        if await asyncio.to_thread(_procedure_store.is_degraded):
+            logger.error(_PROCEDURE_ERROR_FORMAT, path.name, degraded_reason)
+            return ProcedureOutcome(
+                bundle_id=None, state="error", reason=degraded_reason
+            )
+        return await asyncio.to_thread(_find_existing_for_path_sync, path)
+    except _procedure_store.StoreDegradedError:
+        logger.error(_PROCEDURE_ERROR_FORMAT, path.name, degraded_reason)
+        return ProcedureOutcome(bundle_id=None, state="error", reason=degraded_reason)
+    except Exception as exc:
+        reason = (
+            f"store-unreadable: {type(exc).__name__}: {exc} — refusing the "
+            "enqueue (the claim index cannot be consulted)"
+        )
+        logger.error(_PROCEDURE_ERROR_FORMAT, path.name, reason)
+        return ProcedureOutcome(bundle_id=None, state="error", reason=reason)
+
+
+async def _reuse_existing_request(
+    existing: dict,
+    path: Path,
+    track_id: str | None,
+    *,
+    from_scan: bool,
+) -> ProcedureOutcome:
+    if from_scan:
+        return _reuse_outcome(existing, path)
+    try:
+        await _record_duplicate_request(existing, path, track_id)
+    except Exception as exc:
+        reason = (
+            f"duplicate-request-persist-failed: {type(exc).__name__}: "
+            f"{exc} — refusing the enqueue"
+        )
+        logger.error(_PROCEDURE_ERROR_FORMAT, path.name, reason)
+        return ProcedureOutcome(
+            bundle_id=existing.get("id"), state="error", reason=reason
+        )
+    return _reuse_outcome(existing, path)
+
+
+async def _auto_detected_procedure(path: Path) -> bool:
+    try:
+        head_pages = await asyncio.to_thread(
+            _extract_pages_text_sync, path, DETECTION_PAGES
+        )
+    except Exception as exc:
+        logger.warning(
+            "twindb procedure: detection probe failed for %s (%s: %s) — "
+            "standard path",
+            path.name,
+            type(exc).__name__,
+            exc,
+        )
+        return False
+    return head_pages is not None and detect_procedure("\n".join(head_pages))
+
+
+def _forced_validation_problem(path: Path) -> str | None:
+    if path.suffix.lower() != ".pdf":
+        return (
+            "unsupported-extension: the procedure profile handles PDF "
+            "only — reroute as a standard document"
+        )
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return f"unreadable-file: {exc}"
+    if size > max_procedure_bytes():
+        return f"file-too-large: {size} bytes exceeds {TWIN_PROCEDURE_MAX_BYTES_ENV}"
+    return None
+
+
 async def aprocess_procedure(
     file_path: Path | str, track_id: str | None, *, from_scan: bool = False
 ) -> ProcedureOutcome | None:
@@ -731,90 +1026,32 @@ async def aprocess_procedure(
     path = Path(file_path)
     forced = get_active_doc_type() == "procedure"
 
-    # --- Store health + rescan guard (both fail CLOSED) -------------------
-    # A degraded store (quarantined claim index) or an unreadable one means
-    # we can no longer tell which files are parked: refuse every enqueue
-    # (explicit error-document) until an operator recovers the store —
-    # never fall back to auto-detection, that is exactly how a parked
-    # forced document would slip into the standard pipeline.
-    degraded_reason = (
-        "store-degraded: the bundle claim index was quarantined — refusing "
-        "every enqueue until the .corrupt-* files next to the store are "
-        "explicitly recovered and removed"
-    )
-    try:
-        if await asyncio.to_thread(_procedure_store.is_degraded):
-            logger.error("twindb procedure: %s — %s", path.name, degraded_reason)
-            return ProcedureOutcome(
-                bundle_id=None, state="error", reason=degraded_reason
-            )
-        existing = await asyncio.to_thread(_find_existing_for_path_sync, path)
-    except _procedure_store.StoreDegradedError:
-        logger.error("twindb procedure: %s — %s", path.name, degraded_reason)
-        return ProcedureOutcome(bundle_id=None, state="error", reason=degraded_reason)
-    except Exception as exc:
-        reason = (
-            f"store-unreadable: {type(exc).__name__}: {exc} — refusing the "
-            "enqueue (the claim index cannot be consulted)"
+    store_result = await _guard_store_and_find_existing(path)
+    if isinstance(store_result, ProcedureOutcome):
+        return store_result
+    if store_result is not None:
+        return await _reuse_existing_request(
+            store_result, path, track_id, from_scan=from_scan
         )
-        logger.error("twindb procedure: %s — %s", path.name, reason)
-        return ProcedureOutcome(bundle_id=None, state="error", reason=reason)
-    if existing is not None:
-        if not from_scan:
-            # An operator request (upload) must be recorded — fail closed:
-            # losing the folder or a stricter classification is policy loss.
-            try:
-                await _record_duplicate_request(existing, path, track_id)
-            except Exception as exc:
-                reason = (
-                    f"duplicate-request-persist-failed: {type(exc).__name__}: "
-                    f"{exc} — refusing the enqueue"
-                )
-                logger.error("twindb procedure: %s — %s", path.name, reason)
-                return ProcedureOutcome(
-                    bundle_id=existing.get("id"), state="error", reason=reason
-                )
-        return _reuse_outcome(existing, path)
+
+    forced_block_reason = await _forced_selection_block_reason() if forced else None
+    if forced_block_reason is not None:
+        return await _fail_closed_park(
+            path,
+            track_id,
+            "forced",
+            forced_block_reason,
+        )
 
     # --- Selection phase -------------------------------------------------
-    if not forced:
-        try:
-            head_pages = await asyncio.to_thread(
-                _extract_pages_text_sync, path, DETECTION_PAGES
-            )
-        except Exception as exc:
-            logger.warning(
-                "twindb procedure: detection probe failed for %s (%s: %s) — "
-                "standard path",
-                path.name,
-                type(exc).__name__,
-                exc,
-            )
-            return None
-        if head_pages is None or not detect_procedure("\n".join(head_pages)):
-            return None
+    if not forced and not await _auto_detected_procedure(path):
+        return None
 
     source = "forced" if forced else "detected"
 
     # --- Forced-document validation (fail closed, no silent downgrade) ---
     if forced:
-        problem: str | None = None
-        if path.suffix.lower() != ".pdf":
-            problem = (
-                "unsupported-extension: the procedure profile handles PDF "
-                "only — reroute as a standard document"
-            )
-        else:
-            try:
-                size = path.stat().st_size
-            except OSError as exc:
-                problem = f"unreadable-file: {exc}"
-            else:
-                if size > max_procedure_bytes():
-                    problem = (
-                        f"file-too-large: {size} bytes exceeds "
-                        f"{TWIN_PROCEDURE_MAX_BYTES_ENV}"
-                    )
+        problem = _forced_validation_problem(path)
         if problem is not None:
             return await _fail_closed_park(path, track_id, source, problem)
 
@@ -846,13 +1083,11 @@ async def _fail_closed_park(
             schematics_total=0,
             classification=None,
         )
-    except Exception as park_exc:
-        logger.error(
+    except Exception:
+        logger.exception(
             "twindb procedure: %s — could not even park a failed bundle "
-            "(%s: %s); refusing the enqueue",
+            "; refusing the enqueue",
             path.name,
-            type(park_exc).__name__,
-            park_exc,
         )
         return ProcedureOutcome(bundle_id=None, state="error", reason=reason)
 
@@ -1009,7 +1244,7 @@ async def _settle(
             f"settle-lost: bundle {bundle_id} disappeared before its "
             "results could be persisted — refusing the enqueue"
         )
-        logger.error("twindb procedure: %s — %s", path.name, vanished)
+        logger.error(_PROCEDURE_ERROR_FORMAT, path.name, vanished)
         return ProcedureOutcome(bundle_id=bundle_id, state="error", reason=vanished)
     schematics = fields.get("schematics") or []
     logger.info(
@@ -1137,6 +1372,28 @@ _TASK_DETAIL_FIELDS = (
 )
 
 
+def _task_markdown(task: dict) -> str:
+    line = f"- {task.get('id') or '?'} — {task.get('title') or ''}".rstrip(" —")
+    details = "; ".join(
+        f"{field}: {task[field]}" for field in _TASK_DETAIL_FIELDS if task.get(field)
+    )
+    return f"{line} ({details})" if details else line
+
+
+def _schematic_markdown(entry: dict) -> list[str]:
+    informed = entry["informed"]
+    title = str(informed.get("title") or "").strip()
+    heading = f"## Schematic (page {entry.get('page')})"
+    if title:
+        heading += f": {title}"
+    tasks = [task for task in informed.get("tasks") or [] if isinstance(task, dict)]
+    return [
+        heading,
+        str(informed.get("description") or "").strip(),
+        *(_task_markdown(task) for task in tasks),
+    ]
+
+
 def compose_approved_markdown(bundle: dict) -> str:
     """The markdown an approved procedure enqueues under its ORIGINAL name.
 
@@ -1154,25 +1411,7 @@ def compose_approved_markdown(bundle: dict) -> str:
         parts.append("---")
         parts.append("# Process schematics (vision descriptions)")
         for entry in described:
-            informed = entry["informed"]
-            title = str(informed.get("title") or "").strip()
-            heading = f"## Schematic (page {entry.get('page')})"
-            if title:
-                heading += f": {title}"
-            parts.append(heading)
-            parts.append(str(informed.get("description") or "").strip())
-            for task in informed.get("tasks") or []:
-                if not isinstance(task, dict):
-                    continue
-                line = f"- {task.get('id') or '?'} — {task.get('title') or ''}".rstrip(
-                    " —"
-                )
-                details = "; ".join(
-                    f"{field}: {task[field]}"
-                    for field in _TASK_DETAIL_FIELDS
-                    if task.get(field)
-                )
-                parts.append(f"{line} ({details})" if details else line)
+            parts.extend(_schematic_markdown(entry))
     return "\n\n".join(part for part in parts if part)
 
 

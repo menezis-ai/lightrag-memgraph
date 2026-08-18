@@ -31,6 +31,7 @@ interface GraphDetailPanelProps {
    *  tag editor's autocomplete + lets any free text through (used
    *  by the legacy seed tests that don't render a catalog). */
   tagCatalog: readonly string[];
+  deprecatedTags?: readonly string[];
   propertyKeySuggestions: readonly string[];
   onSelect: (id: string) => void;
   onSelectRelation: (id: string) => void;
@@ -54,6 +55,7 @@ export function GraphDetailPanel({
   typeLabels,
   docLabels,
   tagCatalog,
+  deprecatedTags = [],
   propertyKeySuggestions,
   onSelect,
   onSelectRelation,
@@ -106,6 +108,7 @@ export function GraphDetailPanel({
         typeLabels={typeLabels}
         docLabels={docLabels}
         tagCatalog={tagCatalog}
+        deprecatedTags={deprecatedTags}
         propertyKeySuggestions={propertyKeySuggestions}
         onSelectRelation={onSelectRelation}
         isPinned={pinnedIds.includes(entity.id)}
@@ -134,6 +137,7 @@ interface EntityEditorProps {
    *  TagAttrEditor so unknown tags can't reach the backend.
    *  Empty list disables the binding (mirrors GraphTab's default). */
   tagCatalog: readonly string[];
+  deprecatedTags: readonly string[];
   propertyKeySuggestions: readonly string[];
   onSelectRelation: (id: string) => void;
   isPinned: boolean;
@@ -452,14 +456,22 @@ function EntityTagsSection({
   editing,
   tags,
   tagCatalog,
+  deprecatedTags,
   onChange,
 }: Readonly<{
   editing: boolean;
   tags: readonly string[];
   tagCatalog: readonly string[];
+  deprecatedTags: readonly string[];
   onChange: (tags: string[]) => void;
 }>) {
-  const tagBody = renderEntityTagsBody(editing, tags, tagCatalog, onChange);
+  const tagBody = renderEntityTagsBody(
+    editing,
+    tags,
+    tagCatalog,
+    deprecatedTags,
+    onChange,
+  );
   return (
     <div className="kg-detail-section">
       <div className="section-label">
@@ -476,21 +488,38 @@ function renderEntityTagsBody(
   editing: boolean,
   tags: readonly string[],
   tagCatalog: readonly string[],
+  deprecatedTags: readonly string[],
   onChange: (tags: string[]) => void,
 ) {
   if (editing) {
     return (
-      <TagAttrEditor tags={tags} tagCatalog={tagCatalog} onChange={onChange} />
+      <TagAttrEditor
+        tags={tags}
+        tagCatalog={tagCatalog}
+        deprecatedTags={deprecatedTags}
+        onChange={onChange}
+      />
     );
   }
   if (tags.length === 0) return <div className="muted-sm">No tags.</div>;
+  const deprecatedSet = new Set(deprecatedTags);
   return (
     <div className="tag-chips">
-      {tags.map((tag) => (
-        <span key={tag} className="tag-chip">
-          {tag}
-        </span>
-      ))}
+      {tags.map((tag) => {
+        const isDeprecated = deprecatedSet.has(tag);
+        return (
+          <span
+            key={tag}
+            className={`tag-chip${isDeprecated ? ' is-deprecated' : ''}`}
+            title={isDeprecated ? `${tag} — deprecated` : tag}
+          >
+            {tag}
+            {isDeprecated && (
+              <span className="kg-deprecated-badge">deprecated</span>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -629,6 +658,7 @@ function EntityEditor({
   typeLabels,
   docLabels,
   tagCatalog,
+  deprecatedTags,
   propertyKeySuggestions,
   onSelectRelation,
   isPinned,
@@ -725,6 +755,7 @@ function EntityEditor({
         editing={editing && Boolean(draft)}
         tags={draft?.tags ?? entity.tags ?? []}
         tagCatalog={tagCatalog}
+        deprecatedTags={deprecatedTags}
         onChange={(tags) => setDraft((d) => (d ? { ...d, tags } : d))}
       />
 
@@ -1157,6 +1188,7 @@ function RelationEditor({
 export function TagAttrEditor({
   tags,
   tagCatalog,
+  deprecatedTags = [],
   onChange,
 }: Readonly<{
   tags: readonly string[];
@@ -1164,6 +1196,8 @@ export function TagAttrEditor({
    *  ``tagCatalogForSuggestions`` upstream. An empty list disables
    *  the binding (isolated tests). */
   tagCatalog: readonly string[];
+  /** Historical deprecated values remain removable but are never suggested. */
+  deprecatedTags?: readonly string[];
   onChange: (next: string[]) => void;
 }>) {
   const [v, setV] = useState('');
@@ -1174,6 +1208,10 @@ export function TagAttrEditor({
     [tagCatalog],
   );
   const bindingActive = tagCatalog.length > 0;
+  const deprecatedSet = useMemo(
+    () => new Set(deprecatedTags),
+    [deprecatedTags],
+  );
   const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
   const suggestions = useMemo(() => {
     if (!bindingActive || (!focused && !normalized)) return [];
@@ -1209,18 +1247,28 @@ export function TagAttrEditor({
   return (
     <div className="kg-tag-editor">
       <div className="tag-chips">
-        {tags.map((t) => (
-          <span key={t} className="tag-chip">
-            {t}{' '}
-            <button
-              onClick={() => remove(t)}
-              aria-label={`Remove ${t}`}
-              type="button"
+        {tags.map((t) => {
+          const isDeprecated = deprecatedSet.has(t);
+          return (
+            <span
+              key={t}
+              className={`tag-chip${isDeprecated ? ' is-deprecated' : ''}`}
+              title={isDeprecated ? `${t} — deprecated` : t}
             >
-              <Icon name="x" size={9} />
-            </button>
-          </span>
-        ))}
+              {t}{' '}
+              {isDeprecated && (
+                <span className="kg-deprecated-badge">deprecated</span>
+              )}
+              <button
+                onClick={() => remove(t)}
+                aria-label={`Remove ${t}`}
+                type="button"
+              >
+                <Icon name="x" size={9} />
+              </button>
+            </span>
+          );
+        })}
       </div>
       <div className="kg-tag-add-row" style={{ marginTop: 6 }}>
         <input

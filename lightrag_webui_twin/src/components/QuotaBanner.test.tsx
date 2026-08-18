@@ -65,7 +65,7 @@ describe('QuotaBanner', () => {
     expect(screen.queryByTestId('quota-banner-blocked')).toBeNull();
   });
 
-  it('renders nothing when not configured (no MEMGRAPH_MEMORY_LIMIT)', async () => {
+  it('renders nothing when Memgraph and fallback expose no limit', async () => {
     setMockQuotaState({
       configured: false,
       status: 'ok',

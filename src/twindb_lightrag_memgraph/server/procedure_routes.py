@@ -36,9 +36,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path as FastapiPath,
+    Query,
+    Request,
+)
 from pydantic import BaseModel, Field
 
 from .. import _procedure, _procedure_store
@@ -53,6 +61,8 @@ from .folder import bind_request_folder
 from .idp_jwt import require_admin_user
 
 logger = logging.getLogger("twindb_lightrag_memgraph")
+
+_UNKNOWN_BUNDLE = "unknown bundle"
 
 
 class BundleSummary(BaseModel):
@@ -188,34 +198,70 @@ async def _emit(
         logger.exception("[ProcedureRoutes] activity emission failed (kind=%s)", kind)
 
 
-def _resolve_primary_folder(bundle: dict, override: str | None) -> str:
+def _resolve_primary_folder(bundle: dict, override: str | None) -> str | None:
     folders = _procedure.bundle_folders(bundle)
-    primary = override or (folders[0] if folders else None)
-    if not primary:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "bundle has no requesting folder (scan-created): pass "
-                "'folder' in the request body to choose the target folder"
-            ),
+    return override or (folders[0] if folders else None)
+
+
+async def _enqueue_approved_document(
+    rag: Any, bundle: dict, markdown: str, primary: str, strictest: str | None
+) -> None:
+    with (
+        storage_folder_context(primary),
+        operator_classification_context(strictest),
+    ):
+        await rag.apipeline_enqueue_documents(
+            markdown,
+            file_paths=bundle.get("file_name"),
+            track_id=bundle.get("track_id") or None,
         )
-    return primary
 
 
-def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
-    """Build the /procedures router bound to a rag-instance factory."""
-    router = APIRouter(
-        prefix="/procedures",
-        tags=["procedures"],
-        dependencies=[Depends(require_auth)],
+async def _apply_extra_memberships(
+    rag: Any, bundle: dict, doc_id: str | None, primary: str
+) -> list[str]:
+    extra_folders = [f for f in _procedure.bundle_folders(bundle) if f != primary]
+    if not extra_folders or doc_id is None:
+        return extra_folders
+    add_to_folder = getattr(getattr(rag, "doc_status", None), "add_to_folder", None)
+    if not callable(add_to_folder):
+        return extra_folders
+    failures: list[str] = []
+    for extra in extra_folders:
+        try:
+            added = await add_to_folder(doc_id, extra)
+        except Exception:
+            added = False
+        if not added:
+            failures.append(extra)
+    return failures
+
+
+async def _record_mip_refusal(bundle_id: str, bundle: dict, request: Request) -> dict:
+    refused = await _store_call(
+        _procedure_store.transition_bundle,
+        bundle_id,
+        ("pending",),
+        state="failed",
+        reason="mip-rejected-at-enqueue: the classification gate refused "
+        "the document (see the FAILED document row)",
     )
-    admin = Depends(require_admin_user)
+    await _emit(
+        kind="procedure-failed",
+        actor=_actor(request),
+        bundle=bundle,
+        sev="warning",
+        summary=f"Procedure '{bundle.get('file_name')}' refused by the "
+        "classification gate at approve time",
+    )
+    return refused or bundle
 
-    # -- Store health / recovery (admin) ---------------------------------
-    # Declared BEFORE /{bundle_id} so "store" never matches as a bundle id.
 
-    @router.get("/store/health", dependencies=[admin])
-    async def store_health() -> dict[str, Any]:
+class _ProcedureRouteHandlers:
+    def __init__(self, get_rag: Callable[[], Any]) -> None:
+        self.get_rag = get_rag
+
+    async def store_health(self) -> dict[str, Any]:
         return {
             "degraded": await asyncio.to_thread(_procedure_store.is_degraded),
             "quarantine_files": await asyncio.to_thread(
@@ -223,132 +269,102 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
             ),
         }
 
-    @router.post("/store/recover", dependencies=[admin])
-    async def store_recover(request: Request) -> dict[str, Any]:
+    async def store_recover(self, request: Request) -> dict[str, Any]:
         removed = await asyncio.to_thread(_procedure_store.recover_store)
         await _emit(
             kind="procedure-store-recovered",
             actor=_actor(request),
             bundle=None,
             sev="warning",
-            summary=(
-                f"Procedure store recovered — {len(removed)} quarantine "
-                "file(s) removed"
-            ),
+            summary=f"Procedure store recovered — {len(removed)} quarantine file(s) removed",
             meta={"removed": removed},
         )
         return {"removed": removed, "degraded": _procedure_store.is_degraded()}
 
-    # -- Read surface -----------------------------------------------------
-
-    @router.get("", response_model=list[BundleSummary])
     async def list_procedures(
+        self,
         folder: Annotated[str, Depends(bind_request_folder)],
-        state: str | None = None,
+        state: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Return only bundles in this workflow state. Omit to "
+                    "return every state visible in the active folder."
+                ),
+                examples=["pending"],
+            ),
+        ] = None,
     ) -> list[BundleSummary]:
         bundles = await _store_call(_procedure_store.list_bundles, state=state)
         return [_summary(b) for b in bundles if _visible_in_folder(b, folder)]
 
-    @router.get("/{bundle_id}", dependencies=[admin])
-    async def get_procedure(bundle_id: str) -> dict[str, Any]:
-        bundle = await _store_call(_procedure_store.get_bundle, bundle_id)
-        if bundle is None:
-            raise HTTPException(status_code=404, detail="unknown bundle")
-        return bundle
-
-    # -- Decisions (admin) -------------------------------------------------
-
-    @router.post("/{bundle_id}/approve", dependencies=[admin])
-    async def approve_procedure(
-        bundle_id: str, request: Request, body: ApproveRequest | None = None
+    async def get_procedure(
+        self,
+        bundle_id: Annotated[
+            str,
+            FastapiPath(
+                description="Opaque procedure bundle identifier from the list route.",
+                examples=["procedure-7c91e2"],
+            ),
+        ],
     ) -> dict[str, Any]:
         bundle = await _store_call(_procedure_store.get_bundle, bundle_id)
         if bundle is None:
-            raise HTTPException(status_code=404, detail="unknown bundle")
+            raise HTTPException(status_code=404, detail=_UNKNOWN_BUNDLE)
+        return bundle
+
+    async def approve_procedure(
+        self,
+        bundle_id: Annotated[
+            str,
+            FastapiPath(
+                description="Identifier of the pending procedure bundle to approve.",
+                examples=["procedure-7c91e2"],
+            ),
+        ],
+        request: Request,
+        body: ApproveRequest | None = None,
+    ) -> dict[str, Any]:
+        bundle = await _store_call(_procedure_store.get_bundle, bundle_id)
+        if bundle is None:
+            raise HTTPException(status_code=404, detail=_UNKNOWN_BUNDLE)
         if bundle.get("state") != "pending":
             raise HTTPException(
                 status_code=409,
-                detail=f"bundle is {bundle.get('state')}; only pending "
-                "bundles can be approved",
+                detail=f"bundle is {bundle.get('state')}; only pending bundles can be approved",
             )
-
         markdown = _procedure.compose_approved_markdown(bundle)
         if not markdown.strip():
             raise HTTPException(
                 status_code=409, detail="bundle has no content to enqueue"
             )
         primary = _resolve_primary_folder(bundle, body.folder if body else None)
+        if primary is None:
+            raise HTTPException(
+                status_code=422,
+                detail="bundle has no requesting folder (scan-created): pass "
+                "'folder' in the request body to choose the target folder",
+            )
+        rag = self.get_rag()
         strictest = _procedure.strictest_operator_classification(bundle)
-        rag = get_rag()
-
-        # Rebind the upload-time contexts: the MIP enqueue gate (primary
-        # enforcement point, ING-1) resolves the ORIGINAL binary by file
-        # name and applies the operator floor exactly as at upload time.
         try:
-            with (
-                storage_folder_context(primary),
-                operator_classification_context(strictest),
-            ):
-                await rag.apipeline_enqueue_documents(
-                    markdown,
-                    file_paths=bundle.get("file_name"),
-                    track_id=bundle.get("track_id") or None,
-                )
+            await _enqueue_approved_document(rag, bundle, markdown, primary, strictest)
         except Exception as exc:
             raise HTTPException(
                 status_code=502, detail=f"enqueue failed: {exc}"
             ) from exc
 
         doc_id = _approved_doc_id(markdown, bundle)
-
-        # The MIP gate may have REFUSED the document (label above ceiling
-        # detected on the original at approve time): a rejection writes a
-        # FAILED DocStatus row instead of a PENDING one. Surface that as a
-        # failed bundle, never a lying "approved".
         if doc_id is not None and await _doc_was_rejected(rag, doc_id):
-            refused = await _store_call(
-                _procedure_store.transition_bundle,
-                bundle_id,
-                ("pending",),
-                state="failed",
-                reason="mip-rejected-at-enqueue: the classification gate "
-                "refused the document (see the FAILED document row)",
-            )
-            await _emit(
-                kind="procedure-failed",
-                actor=_actor(request),
-                bundle=bundle,
-                sev="warning",
-                summary=f"Procedure '{bundle.get('file_name')}' refused by "
-                "the classification gate at approve time",
-            )
-            return refused or bundle
-
-        membership_failures: list[str] = []
-        extra_folders = [f for f in _procedure.bundle_folders(bundle) if f != primary]
-        if extra_folders and doc_id is not None:
-            add_to_folder = getattr(
-                getattr(rag, "doc_status", None), "add_to_folder", None
-            )
-            for extra in extra_folders:
-                try:
-                    if not callable(add_to_folder) or not await add_to_folder(
-                        doc_id, extra
-                    ):
-                        membership_failures.append(extra)
-                except Exception:  # noqa: BLE001 — enqueue already happened
-                    membership_failures.append(extra)
-        elif extra_folders:
-            membership_failures = extra_folders
-        if membership_failures:
+            return await _record_mip_refusal(bundle_id, bundle, request)
+        failures = await _apply_extra_memberships(rag, bundle, doc_id, primary)
+        if failures:
             logger.error(
-                "twindb procedure: approve of %s — could not apply "
-                "membership for folder(s) %s (use the document 'Add to "
-                "folder' action)",
+                "twindb procedure: approve of %s — could not apply membership "
+                "for folder(s) %s (use the document 'Add to folder' action)",
                 bundle_id,
-                ", ".join(membership_failures),
+                ", ".join(failures),
             )
-
         updated = await _store_call(
             _procedure_store.transition_bundle,
             bundle_id,
@@ -357,37 +373,37 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
             reason="approved",
             approved_doc_id=doc_id,
             approved_folder=primary,
-            membership_failures=membership_failures,
+            membership_failures=failures,
         )
         if updated is None:
-            # Enqueue happened; the state raced. Report honestly.
             logger.error(
-                "twindb procedure: approve of %s enqueued but the bundle "
-                "state changed concurrently",
+                "twindb procedure: approve of %s enqueued but the bundle state changed concurrently",
                 bundle_id,
             )
             raise HTTPException(
                 status_code=409,
-                detail="document enqueued but the bundle state changed "
-                "concurrently — inspect the bundle",
+                detail="document enqueued but the bundle state changed concurrently — inspect the bundle",
             )
         await _emit(
             kind="procedure-approved",
             actor=_actor(request),
             bundle=bundle,
-            summary=f"Procedure '{bundle.get('file_name')}' approved and "
-            f"enqueued in folder '{primary}'",
-            meta={
-                "folder": primary,
-                "doc_id": doc_id,
-                "membership_failures": membership_failures,
-            },
+            summary=f"Procedure '{bundle.get('file_name')}' approved and enqueued in folder '{primary}'",
+            meta={"folder": primary, "doc_id": doc_id, "membership_failures": failures},
         )
         return updated
 
-    @router.post("/{bundle_id}/reject", dependencies=[admin])
     async def reject_procedure(
-        bundle_id: str, request: Request, body: RejectRequest | None = None
+        self,
+        bundle_id: Annotated[
+            str,
+            FastapiPath(
+                description="Identifier of the procedure bundle to reject.",
+                examples=["procedure-7c91e2"],
+            ),
+        ],
+        request: Request,
+        body: RejectRequest | None = None,
     ) -> dict[str, Any]:
         comment = (body.comment if body else None) or ""
         updated = await _store_call(
@@ -412,8 +428,33 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
         )
         return updated
 
-    @router.post("/{bundle_id}/retry", dependencies=[admin])
-    async def retry_procedure(bundle_id: str, request: Request) -> dict[str, Any]:
+    async def retry_procedure(
+        self,
+        bundle_id: Annotated[
+            str,
+            FastapiPath(
+                description="Identifier of the failed or rejected bundle to re-process.",
+                examples=["procedure-7c91e2"],
+            ),
+        ],
+        request: Request,
+    ) -> dict[str, Any]:
+        if not _procedure.is_available():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "procedure ingestion prerequisites are unavailable; "
+                    "check Settings > Vision before retrying"
+                ),
+            )
+        if not await _procedure.is_effectively_enabled():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "procedure ingestion is disabled; enable it in "
+                    "Settings > Vision before retrying"
+                ),
+            )
         outcome = await _procedure.aretry_bundle(bundle_id)
         if outcome is None:
             raise HTTPException(
@@ -427,28 +468,34 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
             kind="procedure-retried",
             actor=_actor(request),
             bundle=bundle,
-            summary=f"Procedure '{(bundle or {}).get('file_name')}' "
-            f"re-processed (now {outcome.state})",
+            summary=f"Procedure '{(bundle or {}).get('file_name')}' re-processed (now {outcome.state})",
             meta={"state": outcome.state, "reason": outcome.reason},
         )
         return bundle or {"id": bundle_id, "state": outcome.state}
 
-    @router.post("/{bundle_id}/reroute-standard", dependencies=[admin])
     async def reroute_standard(
-        bundle_id: str, request: Request, body: ApproveRequest | None = None
+        self,
+        bundle_id: Annotated[
+            str,
+            FastapiPath(
+                description=(
+                    "Identifier of the bundle to send through the standard "
+                    "ingestion pipeline."
+                ),
+                examples=["procedure-7c91e2"],
+            ),
+        ],
+        request: Request,
+        body: ApproveRequest | None = None,
     ) -> dict[str, Any]:
-        """Detection false positive: push the ORIGINAL through the standard
-        pipeline (explicit operator override, honored by the seam)."""
         bundle = await _store_call(_procedure_store.get_bundle, bundle_id)
         if bundle is None:
-            raise HTTPException(status_code=404, detail="unknown bundle")
+            raise HTTPException(status_code=404, detail=_UNKNOWN_BUNDLE)
         if bundle.get("state") not in ("pending", "failed", "rejected"):
             raise HTTPException(
                 status_code=409,
                 detail=f"bundle is {bundle.get('state')}; cannot reroute",
             )
-        from pathlib import Path
-
         original = Path(str(bundle.get("original_path") or ""))
         if not original.is_file():
             raise HTTPException(
@@ -456,9 +503,12 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
                 detail="original file left the input directory — re-upload",
             )
         primary = _resolve_primary_folder(bundle, body.folder if body else None)
+        if primary is None:
+            raise HTTPException(
+                status_code=422,
+                detail="bundle has no requesting folder: choose a target folder",
+            )
         strictest = _procedure.strictest_operator_classification(bundle)
-        rag = get_rag()
-
         import lightrag.api.routers.document_routes as dr
 
         try:
@@ -467,7 +517,7 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
                 storage_folder_context(primary),
                 operator_classification_context(strictest),
             ):
-                ok, track_id = await dr.pipeline_enqueue_file(rag, original)
+                ok, track_id = await dr.pipeline_enqueue_file(self.get_rag(), original)
         except Exception as exc:
             raise HTTPException(
                 status_code=502, detail=f"standard enqueue failed: {exc}"
@@ -477,7 +527,6 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
                 status_code=502,
                 detail=f"standard enqueue refused (track {track_id})",
             )
-
         updated = await _store_call(
             _procedure_store.transition_bundle,
             bundle_id,
@@ -490,12 +539,133 @@ def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
             kind="procedure-rerouted",
             actor=_actor(request),
             bundle=updated or bundle,
-            summary=f"Procedure '{bundle.get('file_name')}' rerouted to the "
-            f"standard pipeline (folder '{primary}')",
+            summary=f"Procedure '{bundle.get('file_name')}' rerouted to the standard pipeline (folder '{primary}')",
             meta={"folder": primary, "track_id": track_id},
         )
         return updated or bundle
 
+
+def _responses(*codes: int) -> dict[int, dict[str, str]]:
+    return {
+        code: {"description": f"Procedure operation returned HTTP {code}"}
+        for code in codes
+    }
+
+
+def build_procedure_router(get_rag: Callable[[], Any]) -> APIRouter:
+    """Build the /procedures router bound to a rag-instance factory."""
+    router = APIRouter(
+        prefix="/procedures",
+        tags=["procedures"],
+        dependencies=[Depends(require_auth)],
+    )
+    admin = [Depends(require_admin_user)]
+    handlers = _ProcedureRouteHandlers(get_rag)
+    # Health routes stay before /{bundle_id}, so "store" is never captured.
+    router.add_api_route(
+        "/store/health",
+        handlers.store_health,
+        methods=["GET"],
+        dependencies=admin,
+        summary="Procedure store health (admin)",
+        description=(
+            "Report whether the procedure approval store is degraded and "
+            "list any quarantined store files. A degraded store refuses "
+            "procedure operations until recovered."
+        ),
+    )
+    router.add_api_route(
+        "/store/recover",
+        handlers.store_recover,
+        methods=["POST"],
+        dependencies=admin,
+        summary="Recover a degraded procedure store (admin)",
+        description=(
+            "Remove the quarantined store files and return the store to "
+            "service. The response lists what was removed."
+        ),
+    )
+    router.add_api_route(
+        "",
+        handlers.list_procedures,
+        methods=["GET"],
+        summary="List procedure bundles awaiting review",
+        description=(
+            "List the procedure-document bundles visible in the active "
+            "folder, with their review state (`processing`, `pending`, "
+            "`failed`, `approved`, `rejected`). Filter with the `state` "
+            "query parameter. Procedure documents are parked here at "
+            "upload time and reach the knowledge base only after an "
+            "explicit approval."
+        ),
+    )
+    router.add_api_route(
+        "/{bundle_id}",
+        handlers.get_procedure,
+        methods=["GET"],
+        dependencies=admin,
+        responses=_responses(404),
+        summary="Read a procedure bundle (admin)",
+        description=(
+            "Return the full bundle: extracted text, per-schematic vision "
+            "descriptions, classification, and review history."
+        ),
+    )
+    router.add_api_route(
+        "/{bundle_id}/approve",
+        handlers.approve_procedure,
+        methods=["POST"],
+        dependencies=admin,
+        responses=_responses(404, 409, 422, 502),
+        summary="Approve a bundle and ingest it (admin)",
+        description=(
+            "Release a `pending` bundle into the knowledge base: its "
+            "reviewed markdown is ingested into the target folder "
+            "(optionally overridden in the body). 409 when the bundle is "
+            "not in a pending state; 502 when the ingestion enqueue fails "
+            "(the bundle stays approved-but-unqueued for retry)."
+        ),
+    )
+    router.add_api_route(
+        "/{bundle_id}/reject",
+        handlers.reject_procedure,
+        methods=["POST"],
+        dependencies=admin,
+        responses=_responses(409),
+        summary="Reject a bundle (admin)",
+        description=(
+            "Refuse a bundle with a reason. A rejected bundle never "
+            "reaches the knowledge base and is not re-processed unless "
+            "explicitly retried."
+        ),
+    )
+    router.add_api_route(
+        "/{bundle_id}/retry",
+        handlers.retry_procedure,
+        methods=["POST"],
+        dependencies=admin,
+        responses=_responses(409, 502),
+        summary="Re-run the analysis of a failed bundle (admin)",
+        description=(
+            "Re-process the bundle's source file through the procedure "
+            "analysis (text extraction + vision passes) and park the new "
+            "result for review. Procedure ingestion must be enabled in "
+            "Settings > Vision."
+        ),
+    )
+    router.add_api_route(
+        "/{bundle_id}/reroute-standard",
+        handlers.reroute_standard,
+        methods=["POST"],
+        dependencies=admin,
+        responses=_responses(404, 409, 422, 502),
+        summary="Ingest a bundle through the standard pipeline (admin)",
+        description=(
+            "Bypass the procedure profile for this document: ingest the "
+            "original file through the standard pipeline instead "
+            "(useful when a file was wrongly detected as a procedure)."
+        ),
+    )
     return router
 
 

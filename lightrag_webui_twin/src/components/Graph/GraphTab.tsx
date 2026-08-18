@@ -35,6 +35,7 @@ import { AddEntityForm, GraphDetailPanel } from './GraphInspector';
 import { TYPE_KEYS } from './graphLayout';
 import { PINNED_STORAGE_KEY, readPinnedEntityIds, tagsOf } from './graphSelection';
 import type { GraphTabProps } from './graphTypes';
+import { isActiveCatalogTag } from '../../utils/tags';
 
 function collectEntityTags(
   entities: readonly GraphEntity[],
@@ -91,12 +92,43 @@ export function GraphTab({
     () => collectEntityTags(entities, docTags),
     [entities, docTags],
   );
+  const catalogLifecycle = useMemo(() => {
+    const active = new Set<string>();
+    const inactive = new Set<string>();
+    const deprecated = new Set<string>();
+    tagCatalog.forEach((entry) => {
+      if (typeof entry === 'string') {
+        active.add(entry);
+        return;
+      }
+      if (isActiveCatalogTag(entry)) {
+        active.add(entry.tag);
+      } else {
+        inactive.add(entry.tag);
+        if (entry.status === 'deprecated') deprecated.add(entry.tag);
+      }
+    });
+    return { active, inactive, deprecated };
+  }, [tagCatalog]);
   const allTags = useMemo(() => {
-    const s = new Set<string>();
-    tagCatalog.forEach((t) => s.add(t));
-    entityTags.forEach((tags) => tags.forEach((t) => s.add(t)));
+    const s = new Set<string>(catalogLifecycle.active);
+    entityTags.forEach((tags) =>
+      tags.forEach((tag) => {
+        // An old graph/document association must not resurrect a governed
+        // inactive tag as a selectable suggestion.
+        if (!catalogLifecycle.inactive.has(tag)) s.add(tag);
+      }),
+    );
     return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [entityTags, tagCatalog]);
+  }, [catalogLifecycle, entityTags]);
+  const activeTagCatalog = useMemo(
+    () => Array.from(catalogLifecycle.active).sort((a, b) => a.localeCompare(b)),
+    [catalogLifecycle],
+  );
+  const deprecatedTags = useMemo(
+    () => Array.from(catalogLifecycle.deprecated),
+    [catalogLifecycle],
+  );
   const allSourceDocs = useMemo(() => {
     const s = new Set<string>();
     entities.forEach((e) => {
@@ -117,6 +149,7 @@ export function GraphTab({
   );
   const [selectedRelId, setSelectedRelId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [pinnedIds, setPinnedIds] = useState<readonly string[]>(() =>
@@ -177,15 +210,6 @@ export function GraphTab({
     });
   }, [nonTypeFiltered, activeTypes]);
 
-  const visibleIds = useMemo(() => new Set(matches.map((e) => e.id)), [matches]);
-  const visibleRels = useMemo(
-    () =>
-      relations.filter(
-        (r) => visibleIds.has(r.source) && visibleIds.has(r.target),
-      ),
-    [relations, visibleIds],
-  );
-
   // Neutral state doctrine: only auto-pick the first entity when the
   // user has not yet made an explicit selection (selectedId === '').
   // Once a node has been chosen, a missing match (entity deleted,
@@ -195,6 +219,34 @@ export function GraphTab({
   const selected = selectedId
     ? (entities.find((e) => e.id === selectedId) ?? null)
     : (entities[0] ?? null);
+  const focusedEntityIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!selected) return ids;
+    ids.add(selected.id);
+    relations.forEach((relation) => {
+      if (relation.source === selected.id) ids.add(relation.target);
+      if (relation.target === selected.id) ids.add(relation.source);
+    });
+    return ids;
+  }, [relations, selected]);
+  const canvasMatches = useMemo(
+    () =>
+      focusMode && selected
+        ? matches.filter((entity) => focusedEntityIds.has(entity.id))
+        : matches,
+    [focusMode, focusedEntityIds, matches, selected],
+  );
+  const visibleIds = useMemo(
+    () => new Set(canvasMatches.map((e) => e.id)),
+    [canvasMatches],
+  );
+  const visibleRels = useMemo(
+    () =>
+      relations.filter(
+        (r) => visibleIds.has(r.source) && visibleIds.has(r.target),
+      ),
+    [relations, visibleIds],
+  );
   const neighbors = useMemo(() => {
     if (!selected) return { rels: [] as GraphRelation[], nodes: [] as GraphEntity[] };
     const rels = relations.filter(
@@ -282,6 +334,7 @@ export function GraphTab({
     setSelectedId('');
     setSelectedRelId(null);
     setHoverId(null);
+    setFocusMode(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
   };
@@ -336,6 +389,18 @@ export function GraphTab({
               </button>
             )}
           </div>
+          <button
+            className="ghost-btn kg-focus-btn"
+            type="button"
+            aria-pressed={focusMode}
+            disabled={!selected}
+            onClick={() => setFocusMode((focused) => !focused)}
+            title="Show only the selected entity and its direct neighbors"
+            data-testid="kg-focus-mode"
+          >
+            <Icon name="eye" size={12} />
+            {focusMode ? 'Show all' : 'Focus neighborhood'}
+          </button>
           <button
             className="ghost-btn primary"
             onClick={() => {
@@ -417,6 +482,7 @@ export function GraphTab({
           typeCounts={typeCounts}
           colors={colors}
           allTags={allTags}
+          deprecatedTags={deprecatedTags}
           tagFilter={tagFilter}
           onTagFilterChange={setTagFilter}
           tagMatchMode={tagMatchMode}
@@ -433,7 +499,7 @@ export function GraphTab({
         <GraphCanvas
           canvasRef={canvasRef}
           entities={entities}
-          matches={matches}
+          matches={canvasMatches}
           visibleRels={visibleRels}
           selected={selected}
           highlightIds={highlightIds}
@@ -464,7 +530,8 @@ export function GraphTab({
           relations={relations}
           typeLabels={GRAPH_TYPE_LABEL}
           docLabels={docLabels}
-          tagCatalog={tagCatalog}
+          tagCatalog={activeTagCatalog}
+          deprecatedTags={deprecatedTags}
           propertyKeySuggestions={propertyKeySuggestions}
           onSelect={(id) => {
             setSelectedRelId(null);

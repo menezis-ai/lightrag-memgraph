@@ -2,9 +2,10 @@
 Upstream LightRAG compatibility guard tests (offline, no Memgraph required).
 
 This package bridges LightRAG's internal storage registry without modifying
-LightRAG's source. That contract is fragile across LightRAG releases: the
-version pin (``lightrag-hku>=1.4.9,<2.0.0``) permits minor releases that add
-abstract methods to the storage base classes or rename ``QueryParam`` fields.
+LightRAG's source. That contract is fragile across LightRAG releases: the package pins
+``lightrag-hku==1.5.6`` (single supported version, 2026-08-06), and every
+deliberate pin bump can bring minor releases that add abstract methods to
+the storage base classes or rename ``QueryParam`` fields.
 When that happens the failure is severe and silent until runtime:
 
   * A new abstract method on ``DocStatusStorage`` makes
@@ -139,7 +140,7 @@ async def test_docstatus_get_doc_by_file_basename_queries_canonical_file_path():
             "chunks_list": ["chunk-1"],
         },
     )
-    assert session.run.call_args.kwargs["basename"] == "report.pdf"
+    assert session.run.call_args.kwargs["value"] == "report.pdf"
 
 
 @pytest.mark.asyncio
@@ -172,7 +173,7 @@ async def test_docstatus_get_doc_by_content_hash_queries_top_level_hash():
             "content_hash": "abc123",
         },
     )
-    assert session.run.call_args.kwargs["content_hash"] == "abc123"
+    assert session.run.call_args.kwargs["value"] == "abc123"
 
 
 def _query_param_cls():

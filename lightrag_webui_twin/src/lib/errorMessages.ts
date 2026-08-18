@@ -21,7 +21,8 @@ export interface ErrorContext {
   /**
    * Present-participle action for the generic fallback, e.g.
    * "uploading the file" → "Something went wrong while uploading the
-   * file. Please retry or contact Twincore Team."
+   * file. Please retry. If the problem continues, contact your platform
+   * administrator."
    */
   action?: string;
 }
@@ -34,12 +35,22 @@ export interface UserFacingError {
   technical?: string;
 }
 
-const CONTACT = 'Please retry or contact Twincore Team.';
+const CONTACT =
+  'Please retry. If the problem continues, contact your platform administrator.';
 
 function genericMessage(action?: string): string {
   return action
     ? `Something went wrong while ${action}. ${CONTACT}`
     : `Something went wrong. ${CONTACT}`;
+}
+
+function recoveryRequiredMessage(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const payload = body as Record<string, unknown>;
+  if (payload.recovery_required !== true) return undefined;
+  const detail = payload.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail.trim();
+  return 'This workspace requires operator recovery before deletion can resume. Complete the documented recovery procedure, then retry.';
 }
 
 /** Extract the FastAPI-style `detail` (or `message`) string from an
@@ -66,12 +77,12 @@ function isNetworkFailure(err: Error): boolean {
 
 function forbiddenMessage(detail: string | undefined): string {
   // Scope details from server/folder.py ("Folder not in user scope",
-  // "No folder available for this KB…") — but NOT the admin-gate detail
+  // "No folder is provisioned…") — but NOT the admin-gate detail
   // "Admin scope 'admin:folders' required", which is a permission issue.
   if (detail && !/admin scope/i.test(detail) && /folder/i.test(detail)) {
-    return 'You do not have access to this folder. Contact Twincore Team if you need access.';
+    return 'You do not have access to this folder. Ask your platform administrator to grant access.';
   }
-  return 'You do not have permission to perform this action. Contact Twincore Team if you believe you should.';
+  return 'You do not have permission to perform this action. Ask your platform administrator if you believe you should have access.';
 }
 
 export function isPipelineBusyDetail(detail: string | undefined): boolean {
@@ -93,7 +104,7 @@ function statusMessage(
   ctx?: ErrorContext,
 ): string {
   if (status >= 500) {
-    return `The Twin backend is temporarily unavailable. Please retry in a moment or contact Twincore Team.`;
+    return 'The backend is temporarily unavailable. Retry in a moment. If the problem continues, contact your platform administrator.';
   }
   switch (status) {
     case 401:
@@ -124,8 +135,10 @@ function statusMessage(
 /** Map any thrown value to operator-facing copy + optional technical string. */
 export function describeError(err: unknown, ctx?: ErrorContext): UserFacingError {
   if (err instanceof ApiError) {
+    const recoveryMessage = recoveryRequiredMessage(err.body);
     return {
-      message: statusMessage(err.status, backendDetail(err.body), ctx),
+      message:
+        recoveryMessage ?? statusMessage(err.status, backendDetail(err.body), ctx),
       technical: err.message,
     };
   }
@@ -155,7 +168,7 @@ export function loginErrorMessage(err: unknown): string {
       return 'Too many sign-in attempts. Please wait a moment and retry.';
     }
     if (err.status >= 500) {
-      return 'The Twin backend is temporarily unavailable. Please retry in a moment or contact Twincore Team.';
+      return 'The backend is temporarily unavailable. Retry in a moment. If the problem continues, contact your platform administrator.';
     }
     return `Sign-in failed. ${CONTACT}`;
   }
@@ -203,6 +216,117 @@ export function uploadFailureMessage(err: unknown, fileName?: string): string {
     return statusMessage(err.status, detail, { action: 'uploading the file' });
   }
   return describeError(err, { action: 'uploading the file' }).message;
+}
+
+/** Translate stable image-pipeline reason codes into operator-facing copy.
+ *
+ * Existing FAILED rows keep their original `error_msg`, so this mapper accepts
+ * both the legacy terse strings and the newer explanatory backend wording.
+ * Unknown errors remain untouched: this layer must not hide useful failure
+ * detail from operators.
+ */
+function pdfVisualRejection(
+  value: string,
+): { pages: string; classification: string } | undefined {
+  const lower = value.toLowerCase();
+  if (!lower.startsWith('pdf-vision-dropped:')) return undefined;
+  const pageMarker = 'first rejected page(s)';
+  const pageStart = lower.indexOf(pageMarker);
+  if (pageStart < 0) return undefined;
+  const pageTail = value.slice(pageStart + pageMarker.length).trimStart();
+  const separator = pageTail.indexOf(':');
+  if (separator < 0) return undefined;
+  const pages = pageTail.slice(0, separator).trim();
+  if (!/^[\d,\s]+$/.test(pages)) return undefined;
+
+  const detail = pageTail.slice(separator + 1);
+  const classificationMarker = 'classified as';
+  const classificationStart = detail
+    .toLowerCase()
+    .indexOf(classificationMarker);
+  if (classificationStart < 0) return undefined;
+  const quoted = detail
+    .slice(classificationStart + classificationMarker.length)
+    .trimStart();
+  const quote = quoted[0];
+  if (quote !== "'" && quote !== '"') return undefined;
+  const quoteEnd = quoted.indexOf(quote, 1);
+  if (quoteEnd < 1) return undefined;
+  return { pages, classification: quoted.slice(1, quoteEnd) };
+}
+
+function decimalAfter(value: string, marker: string): string | undefined {
+  const start = value.toLowerCase().indexOf(marker);
+  if (start < 0) return undefined;
+  return /^\d+/.exec(value.slice(start + marker.length).trimStart())?.[0];
+}
+
+function visionSizeValues(
+  value: string,
+): { actual: string; maximum: string } | undefined {
+  const prefix = 'vision-size-limit:';
+  if (!value.toLowerCase().startsWith(prefix)) return undefined;
+
+  const currentActual = decimalAfter(value, 'file size is');
+  const currentMaximum = decimalAfter(value, 'configured maximum is');
+  if (currentActual && currentMaximum) {
+    return { actual: currentActual, maximum: currentMaximum };
+  }
+
+  const legacyTail = value.slice(prefix.length).trimStart();
+  const legacyActual = /^\d+/.exec(legacyTail)?.[0];
+  const equals = legacyTail.lastIndexOf('=');
+  const legacyMaximum =
+    equals < 0 ? undefined : /^\d+/.exec(legacyTail.slice(equals + 1))?.[0];
+  return legacyActual && legacyMaximum
+    ? { actual: legacyActual, maximum: legacyMaximum }
+    : undefined;
+}
+
+export function ingestionFailureMessage(error: string): string {
+  const value = error.trim();
+
+  const legacyOcr = /^vision-prefilter:\s*OCR text below\s+(\d+)\s+chars\s+\((\d+)\)/i.exec(
+    value,
+  );
+  const currentOcr = /^vision-prefilter:.*OCR detected\s+(\d+)\s+text characters,\s+below configured minimum\s+(\d+)/i.exec(
+    value,
+  );
+  if (legacyOcr || currentOcr) {
+    const detected = legacyOcr?.[2] ?? currentOcr?.[1];
+    const minimum = legacyOcr?.[1] ?? currentOcr?.[2];
+    return `Image rejected by the OCR pre-filter: ${detected} text characters detected; the configured minimum is ${minimum}. Images with too little readable text are excluded before Vision analysis.`;
+  }
+
+  const rejectedPdfVisual = pdfVisualRejection(value);
+  if (rejectedPdfVisual) {
+    const pages = rejectedPdfVisual.pages
+      .split(',')
+      .map((page) => page.trim())
+      .join(', ');
+    const classification = rejectedPdfVisual.classification.toLowerCase();
+    return `PDF rejected: it contains no usable text and all detected visual content was excluded. The first rejected visual is on page(s) ${pages}, classified as “${classification}”.`;
+  }
+
+  const legacyClassification = /^image-dropped:\s*classification\s+['"]([^'"]+)['"]/i.exec(
+    value,
+  );
+  const currentClassification = /^image-dropped:.*classified as\s+['"]([^'"]+)['"]/i.exec(value);
+  const classification = legacyClassification?.[1] ?? currentClassification?.[1];
+  if (classification) {
+    return `Image rejected by the Vision filter: classified as “${classification.toLowerCase()}”, which is excluded by the active Vision settings.`;
+  }
+
+  if (/^image-dropped:.*no informational content/i.test(value)) {
+    return 'Image rejected by the Vision filter: no informational content was detected.';
+  }
+
+  const size = visionSizeValues(value);
+  if (size) {
+    return `Image rejected: file size is ${size.actual} bytes; the configured maximum is ${size.maximum} bytes.`;
+  }
+
+  return value;
 }
 
 /**

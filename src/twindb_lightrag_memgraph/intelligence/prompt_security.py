@@ -1,13 +1,14 @@
-"""Prompt boundary helpers for untrusted text."""
+"""Prompt boundary helpers for untrusted text.
+
+Compatibility shim: the implementation lives in
+``twindb_lightrag_memgraph._prompt_security`` (package root, stdlib-only)
+since 1.1.0 so the storage backends can neutralize chunk content at
+ingestion (audit 2026-08-06, R-06) without importing the intelligence
+package. This re-export keeps the historical import path working.
+"""
 
 from __future__ import annotations
 
-import re
+from .._prompt_security import neutralize_reserved_tags
 
-_RESERVED_TAG_RE = re.compile(r"</?(UNTRUSTED_[A-Z_]+|USER_QUESTION)\b", re.IGNORECASE)
-
-
-def neutralize_reserved_tags(text: object) -> str:
-    """Prevent user/document text from closing or forging prompt boundary tags."""
-    value = "" if text is None else str(text)
-    return _RESERVED_TAG_RE.sub(lambda match: match.group(0).replace("<", "< "), value)
+__all__ = ["neutralize_reserved_tags"]

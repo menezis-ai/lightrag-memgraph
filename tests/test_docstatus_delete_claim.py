@@ -45,7 +45,7 @@ async def test_add_membership_fails_closed_while_delete_is_claimed(store, monkey
     query = session.run.await_args.args[0]
     assert "WHERE n.__delete_claim IS NULL" in query
     assert "SET n.__membership_epoch" in query
-    assert "MERGE (n)-[:MEMBER_OF]->(f)" in query
+    assert "MERGE (n)-[membership:MEMBER_OF]->(f)" in query
 
 
 async def test_remove_membership_separates_update_from_optional_match(
@@ -67,7 +67,14 @@ async def test_upsert_keeps_retry_state_writable_but_membership_claim_guarded(
     store, monkeypatch
 ):
     session, _ = _install_session(monkeypatch, None)
-    entries = [{"id": "doc-1", "props": {"status": "failed"}, "folder": "B"}]
+    entries = [
+        {
+            "id": "doc-1",
+            "props": {"status": "failed"},
+            "folder": "B",
+            "membership_updated_at": "2026-07-27T00:00:00+00:00",
+        }
+    ]
 
     await store._run_upsert_writes(
         session,
@@ -82,7 +89,9 @@ async def test_upsert_keeps_retry_state_writable_but_membership_claim_guarded(
     assert "SET n += e.props" in property_query
     assert "__delete_claim" not in property_query
     assert "WHERE n.__delete_claim IS NULL" in membership_query
-    assert "MERGE (n)-[:MEMBER_OF]->(f)" in membership_query
+    assert "e.membership_updated_at AS membership_updated_at" in membership_query
+    assert "SET membership.updated_at = membership_updated_at" in membership_query
+    assert "MERGE (n)-[membership:MEMBER_OF]->(f)" in membership_query
 
 
 async def test_legacy_membership_backfill_skips_claimed_documents(store):
@@ -95,7 +104,7 @@ async def test_legacy_membership_backfill_skips_claimed_documents(store):
     query = session.run.await_args.args[0]
     assert "n.__delete_claim IS NULL" in query
     assert "SET n.__membership_epoch" in query
-    assert "MERGE (n)-[:MEMBER_OF]->(f)" in query
+    assert "MERGE (n)-[membership:MEMBER_OF]->(f)" in query
     result.consume.assert_awaited_once()
 
 
