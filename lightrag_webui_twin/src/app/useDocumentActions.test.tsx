@@ -53,7 +53,7 @@ vi.mock('../api/resources', () => ({
   },
 }));
 
-const ACTOR = 'claire.benoit';
+const ACTOR = 'demo.steward';
 
 function makeDoc(overrides: Partial<Document> = {}): Document {
   return {

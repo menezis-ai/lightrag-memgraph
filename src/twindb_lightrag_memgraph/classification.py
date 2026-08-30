@@ -515,7 +515,7 @@ def unlabeled_ingest_allowed() -> bool:
     """Whether a document WITHOUT a readable MIP label may be ingested.
 
     Permissive by default (product decision 2026-07-10, PR 3 of
-    ``MARKITDOWN-INGESTION-PLAN.md``): ``class_id=None`` — unsupported
+    ``docs/adr/005-markitdown-ingestion-supply-chain.md``): ``class_id=None`` — unsupported
     extension (images, csv, html, …), OOXML/PDF without a label, missing
     optional dep (olefile/pikepdf) — is accepted, with the classification
     payload tracing why in ``reason``. Only a READABLE label above the

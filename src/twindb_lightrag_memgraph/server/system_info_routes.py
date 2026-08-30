@@ -93,6 +93,10 @@ class AboutResponse(BaseModel):
     runtime: RuntimeInfo | None = None
     storage: dict[str, str] | None = None
     overlay: dict[str, bool] | None = None
+    #: Configured storage limits (admin-only). ``vector_index_capacity`` is
+    #: the ``CREATE VECTOR INDEX`` capacity this runtime would use — an
+    #: existing index keeps the capacity it was created with.
+    limits: dict[str, int] | None = None
 
 
 def _default_get_rag() -> Any:
@@ -219,6 +223,18 @@ def _overlay_flags() -> dict[str, bool]:
     }
 
 
+def _limits() -> dict[str, int] | None:
+    """Configured storage limits. A malformed env value is a boot-time error
+    elsewhere (``register()``); here it only hides the block."""
+    from .._constants import resolve_vector_index_capacity
+
+    try:
+        return {"vector_index_capacity": resolve_vector_index_capacity()}
+    except ValueError:
+        logger.debug("about: vector index capacity unreadable", exc_info=True)
+        return None
+
+
 def _is_admin(request: Request) -> bool:
     """Non-gating admin probe: reuse the dependency, swallow its refusal."""
     try:
@@ -281,6 +297,7 @@ def build_system_info_router(get_rag: Any = None) -> APIRouter:
         ).model_dump()
         payload["storage"] = _storage_classes(rag)
         payload["overlay"] = _overlay_flags()
+        payload["limits"] = _limits()
         return payload
 
     return router

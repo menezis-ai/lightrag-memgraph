@@ -225,6 +225,7 @@ class TestForFolderMemgraphModeIntegration:
         )
         from twindb_lightrag_memgraph.server import (
             folder as folder_module,
+            source_links_store,
             webui_activitystore,
             webui_notificationstore,
             webui_tagstore,
@@ -274,6 +275,13 @@ class TestForFolderMemgraphModeIntegration:
             async def initialize(self) -> None:
                 calls.append("notification:init")
 
+        class FakeSourceLinkStore:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def initialize(self) -> None:
+                calls.append("source-links:init")
+
         class FakeWebuiStore:
             @classmethod
             def for_folder(cls, folder: str, *, mode: str):
@@ -300,6 +308,11 @@ class TestForFolderMemgraphModeIntegration:
             "MemgraphNotificationStore",
             FakeNotificationStore,
         )
+        monkeypatch.setattr(
+            source_links_store,
+            "MemgraphSourceLinkStore",
+            FakeSourceLinkStore,
+        )
 
         with caplog.at_level(logging.ERROR):
             await _init_overlay_memgraph_stores(
@@ -309,6 +322,7 @@ class TestForFolderMemgraphModeIntegration:
             )
 
         assert calls == [
+            "source-links:init",
             "tag:init",
             "tag:bootstrap",
             "activity:init",

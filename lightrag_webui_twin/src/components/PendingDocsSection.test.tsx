@@ -9,7 +9,16 @@
  *   - Simulate opens a preview modal
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -59,6 +68,21 @@ const server = setupServer(
     rejectCalls.push({ id: String(params.id), body });
     return HttpResponse.json({ doc_id: String(params.id) });
   }),
+  // PendingDocsSection always mounts the procedure query when the capability
+  // is enabled. Keep document-only tests fully hermetic instead of letting an
+  // unhandled relative fetch escape to happy-dom's localhost:3000 origin.
+  http.get('*/twin/api/procedures', () => HttpResponse.json([])),
+  http.get('*/twin/api/settings/vision', () =>
+    HttpResponse.json({
+      min_ocr_chars: 20,
+      drop_classes: ['invalid', 'logo', 'signature'],
+      procedure_enabled: false,
+      procedure_available: false,
+      source: 'env-default',
+      updated_at: null,
+      updated_by: null,
+    }),
+  ),
 );
 
 function wrap(qc: QueryClient) {
@@ -75,15 +99,16 @@ async function openPendingDocsSection() {
   );
 }
 
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
+
 beforeEach(() => {
   approveCalls.length = 0;
   rejectCalls.length = 0;
-  server.listen({ onUnhandledRequest: 'bypass' });
 });
 
 afterEach(() => {
   server.resetHandlers();
-  server.close();
 });
 
 describe('PendingDocsSection — rendering', () => {
@@ -128,7 +153,7 @@ describe('PendingDocsSection — Approve', () => {
         <PendingDocsSection
           docs={[makePendingDoc()]}
           onToast={toast}
-          actor="claire.benoit"
+          actor="demo.steward"
         />
       </Wrap>,
     );
@@ -165,7 +190,7 @@ describe('PendingDocsSection — Edit & Approve (#150 fix)', () => {
         <PendingDocsSection
           docs={[makePendingDoc()]}
           onToast={() => {}}
-          actor="claire.benoit"
+          actor="demo.steward"
         />
       </Wrap>,
     );
@@ -506,13 +531,13 @@ describe('PendingDocsSection — Modified variant (Confluence revalidation)', ()
     return {
       ...makePendingDoc({
         doc_id: 'mod-1',
-        file_path: '/cib/runbooks/oracle-pga-tuning',
+        file_path: '/demo/runbooks/oracle-pga-tuning',
         type: 'confluence',
       }),
       review: {
         state: 'modified',
         update: {
-          requested_by: 'yann.dubois',
+          requested_by: 'demo.reviewer',
           edited_rel: '2h ago',
           detected_at: '2026-05-26',
           chunks_indexed: 54,
@@ -543,7 +568,7 @@ describe('PendingDocsSection — Modified variant (Confluence revalidation)', ()
         <PendingDocsSection
           docs={[makeModifiedDoc()]}
           onToast={() => {}}
-          actor="claire.benoit"
+          actor="demo.steward"
         />
       </Wrap>,
     );

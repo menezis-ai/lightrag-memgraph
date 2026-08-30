@@ -37,6 +37,11 @@ export const SettingsTab = lazy(() =>
     default: SettingsTab,
   })),
 );
+export const SourcesRagTab = lazy(() =>
+  import('../components/SourcesRagTab').then(({ SourcesRagTab }) => ({
+    default: SourcesRagTab,
+  })),
+);
 export const TagsTab = lazy(() =>
   import('../components/TagsTab').then(({ TagsTab }) => ({ default: TagsTab })),
 );

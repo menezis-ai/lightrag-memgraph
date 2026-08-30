@@ -5,6 +5,18 @@ import { defineConfig, devices } from '@playwright/test';
 // ports and coexist on the same runner without colliding on 4173. Defaults to
 // 4173 for local dev and the container-isolated MSW e2e job.
 const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 4173);
+const E2E_SUITE = process.env.TWIN_E2E_SUITE;
+
+// The default MSW gate must have zero structural skips. Real-backend/API
+// batteries and the documentation screenshot harness have dedicated commands;
+// loading them only to skip them made missing CI configuration indistinguishable
+// from intentional suite selection.
+const MSW_TEST_IGNORE = [
+  '**/capture-qa-screenshots.spec.ts',
+  '**/real-backend.spec.ts',
+  '**/api-coverage-real.spec.ts',
+  '**/api-coverage-generated-key.spec.ts',
+];
 
 export default defineConfig({
   testDir: './e2e',
@@ -31,6 +43,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: E2E_SUITE === 'msw' ? MSW_TEST_IGNORE : [],
       use: { ...devices['Desktop Chrome'] },
     },
   ],

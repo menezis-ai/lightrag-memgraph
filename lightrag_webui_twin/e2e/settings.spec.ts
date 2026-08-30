@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test } from './fixtures';
 import { boot, openTab } from './helpers';
 
 test.describe('Settings guardrails', () => {
@@ -12,7 +12,18 @@ test.describe('Settings guardrails', () => {
     await openTab(page, 'Settings');
   });
 
-  test('TWIN-SET-03 bearer token revoke requires confirmation', async ({ page }) => {
+  test('TWIN-SET-03 bearer token revoke requires confirmation', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    const revokeReloadReason =
+      'Revoking the bearer token reloads the shell and cancels its active queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, revokeReloadReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, revokeReloadReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, revokeReloadReason),
+      allowRequestAbort(/\/openapi\.json$/, revokeReloadReason),
+    );
     await page.getByTestId('settings-rail-api').click();
     await page.getByRole('button', { name: 'Authorize' }).click();
     await page.getByLabel('Value').fill('e2e-token');
@@ -33,8 +44,15 @@ test.describe('Settings guardrails', () => {
   });
 
   test('TWIN-SET-07 @doctrine API key create reveals the full secret exactly once', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/settings\/api-keys$/,
+        'Creating a key invalidates and replaces the active API-key list query.',
+      ),
+    );
     await page.getByTestId('settings-rail-api-keys').click();
     const section = page.getByTestId('settings-api-keys');
     await expect(section).toBeVisible();
@@ -89,8 +107,16 @@ test.describe('Settings guardrails', () => {
   });
 
   test('TWIN-SET-08 @doctrine API key revoke is double-confirm and survives reload', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/settings\/api-keys$/,
+        'Create and revoke each invalidate the preceding API-key list query.',
+        2,
+      ),
+    );
     await page.getByTestId('settings-rail-api-keys').click();
     await expect(page.getByTestId('settings-api-keys')).toBeVisible();
 
@@ -175,10 +201,87 @@ test.describe('Settings guardrails', () => {
     await expect(page.getByTestId('settings-vision-provenance-runtime')).toBeVisible();
   });
 
+  test('TWIN-SET-10 portability import follows the approved stateful workflow', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    const portabilityReloadReason =
+      'The deliberate mid-workflow reload replaces active Settings shell queries.';
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/admin\/portability\/imports\/imp_[A-Za-z0-9_-]+$/,
+        'The deliberate mid-workflow reload cancels the current portability poll before resuming it.',
+      ),
+      allowRequestAbort(/\/twin\/api\/quota$/, portabilityReloadReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, portabilityReloadReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, portabilityReloadReason),
+    );
+    await page.getByTestId('settings-rail-portability').click();
+    const section = page.getByTestId('settings-portability');
+    await expect(section).toBeVisible();
+
+    await page.getByTestId('portability-import-file').setInputFiles({
+      name: 'staging.tar.gz',
+      mimeType: 'application/gzip',
+      buffer: Buffer.from('canonical twin-kb-bundle'),
+    });
+    await page
+      .getByTestId('portability-folder-map')
+      .fill('{"staging":"production"}');
+    await page.getByTestId('portability-import-start').click();
+
+    const report = page.getByTestId('portability-report');
+    await expect(report).toContainText('ready for approval');
+    await expect(report).toContainText('all three probe cosines');
+    await expect(report).toContainText('C2');
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          sessionStorage.getItem('twin.portability.import-job.v1'),
+        ),
+      )
+      .toMatch(/^imp_[A-Za-z0-9_-]+$/);
+
+    // The opaque job id is session-persisted so an operator can resume the
+    // server-side workflow after an accidental reload.
+    await page.reload();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          sessionStorage.getItem('twin.portability.import-job.v1'),
+        ),
+      )
+      .toMatch(/^imp_[A-Za-z0-9_-]+$/);
+    await openTab(page, 'Settings');
+    const resumedRequest = page.waitForResponse((response) =>
+      /\/twin\/api\/admin\/portability\/imports\/imp_/.test(response.url()),
+    );
+    await page.getByTestId('settings-rail-portability').click();
+    expect((await resumedRequest).status()).toBe(200);
+    await expect(page.getByTestId('portability-report')).toContainText(
+      'ready for approval',
+    );
+
+    await page.getByTestId('portability-approve').click();
+    await page.getByTestId('portability-apply').click();
+    await page.getByTestId('portability-validate').click();
+    await expect(page.getByTestId('portability-validation')).toContainText(
+      'Validation passed',
+    );
+
+    // The mock records the same immutable Activity event as the real backend,
+    // proving that the controls are wired to server-side state transitions.
+    await openTab(page, 'Activity');
+    await expect(
+      page.getByText('KB bundle imported into workspace base').first(),
+    ).toBeVisible();
+  });
+
   test('TWIN-SET-04/05/06 editable settings remain out of scope', async ({ page }) => {
     await expect(page.getByTestId('settings-rail-profile')).toBeVisible();
     await expect(page.getByTestId('settings-rail-api')).toBeVisible();
     await expect(page.getByTestId('settings-rail-folder')).toBeVisible();
+    await expect(page.getByTestId('settings-rail-portability')).toBeVisible();
 
     await expect(page.getByTestId('settings-tab')).not.toContainText(
       /Default ingestion tags|Invite member|Delete member|Revoke token/,

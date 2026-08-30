@@ -138,6 +138,7 @@ async def emit_activity_event(
     target_label: str,
     summary: str,
     meta: dict[str, Any],
+    target_id: str | None = None,
 ) -> None:
     """Append one Activity event, swallowing every failure."""
     try:
@@ -150,36 +151,13 @@ async def emit_activity_event(
             actor=actor,
             target_type=target_type,
             target_label=target_label,
+            target_id=target_id,
             summary=summary,
             meta=_clean_meta(meta),
         )
         await get_store().record_activity(event)
     except Exception:  # noqa: BLE001 - Activity must never break auth/admin flow.
         logger.exception("[activity] best-effort event emission failed")
-
-
-def emit_activity_event_async(
-    *,
-    kind: str,
-    sev: str,
-    actor: str,
-    target_type: str,
-    target_label: str,
-    summary: str,
-    meta: dict[str, Any],
-) -> None:
-    """Fire-and-forget auth event emission."""
-    _schedule_activity_task(
-        coro=emit_activity_event(
-            kind=kind,
-            sev=sev,
-            actor=actor,
-            target_type=target_type,
-            target_label=target_label,
-            summary=summary,
-            meta=meta,
-        ),
-    )
 
 
 async def emit_auth_event(

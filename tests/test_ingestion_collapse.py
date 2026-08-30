@@ -253,13 +253,28 @@ async def _count_vec_chunks_for_doc(workspace: str, doc_id: str) -> int:
         return record["cnt"] if record else 0
 
 
-async def _doc_statuses(rag) -> dict[str, tuple[DocStatus, object]]:
+async def _doc_statuses(
+    rag, *, track_id: str | None = None
+) -> dict[str, tuple[DocStatus, object]]:
     """doc_id → (DocStatus, status_doc) via the public doc_status API.
 
     Iterates the DocStatus enum so version-specific intermediate members
     (e.g. PARSING/ANALYZING in 1.5.x) are covered without naming them.
     """
-    out: dict[str, tuple[DocStatus, object]] = {}
+    if track_id is not None:
+        tracked = await rag.doc_status.get_docs_by_track_id(track_id)
+        out: dict[str, tuple[DocStatus, object]] = {}
+        for doc_id, status_doc in tracked.items():
+            raw_status = status_doc.status
+            status = (
+                raw_status
+                if isinstance(raw_status, DocStatus)
+                else DocStatus(getattr(raw_status, "value", raw_status))
+            )
+            out[doc_id] = (status, status_doc)
+        return out
+
+    out = {}
     for status in DocStatus:
         docs = await rag.doc_status.get_docs_by_status(status)
         for doc_id, status_doc in docs.items():
@@ -268,7 +283,7 @@ async def _doc_statuses(rag) -> dict[str, tuple[DocStatus, object]]:
 
 
 async def _settled_statuses(
-    rag, *, timeout_seconds: float = 5.0
+    rag, *, timeout_seconds: float = 15.0, track_id: str | None = None
 ) -> dict[str, tuple[DocStatus, object]]:
     """Poll until every visible document reaches a terminal status.
 
@@ -276,14 +291,17 @@ async def _settled_statuses(
     the failure finalizer have completed their Bolt writes. A fixed sleep made
     this assertion depend on runner and Memgraph load. The bounded poll still
     fails a genuinely stuck pipeline while allowing its eventual terminal
-    write to become visible.
+    write to become visible.  The default deliberately exceeds the backend's
+    5-second write-slot acquisition bound: using the same deadline for this
+    observer and the failure writer makes the assertion race the writer at its
+    legal boundary on a loaded CI runner.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_seconds
     statuses: dict[str, tuple[DocStatus, object]] = {}
 
     while True:
-        statuses = await _doc_statuses(rag)
+        statuses = await _doc_statuses(rag, track_id=track_id)
         if statuses and all(
             status in TERMINAL_STATUSES for status, _ in statuses.values()
         ):
@@ -298,7 +316,10 @@ async def _settled_statuses(
                 f"{timeout_seconds:.1f}s: {observed}"
             )
 
-        await asyncio.sleep(0.05)
+        # A track-scoped read is one query. The compatibility fallback above
+        # scans every DocStatus enum member, so retain its historical cadence
+        # only for tests that genuinely need cross-track visibility.
+        await asyncio.sleep(0.2 if track_id is not None else 0.05)
 
 
 def _assert_all_terminal(statuses: dict) -> None:
@@ -540,7 +561,12 @@ class TestIngestionCollapse:
         )
         assert track_id is not None
 
-        statuses = await _settled_statuses(rag)
+        # Observe only this insertion track: the former enum-wide 20 Hz poll
+        # issued up to 140 Memgraph reads/s and could starve the very FAILED
+        # writer under test on a loaded runner. The 90 s bound stays above
+        # LightRAG's 75 s worker-health ceiling while still failing a wedged
+        # pipeline deterministically.
+        statuses = await _settled_statuses(rag, timeout_seconds=90.0, track_id=track_id)
         _assert_all_terminal(statuses)
         assert len(statuses) == 2
 

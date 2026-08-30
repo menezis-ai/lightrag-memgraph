@@ -1,10 +1,10 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { getMswStats } from './helpers';
 
 const runtimeUser = {
-  sso_subject: 'claire.benoit@demo.local',
-  email: 'claire.benoit@demo.local',
-  name: 'Claire Benoit',
+  sso_subject: 'demo.steward@example.com',
+  email: 'demo.steward@example.com',
+  name: 'Demo Steward',
   palier: {
     level: 3,
     label: 'Steward',
@@ -12,7 +12,7 @@ const runtimeUser = {
   },
   folders: ['default', 'sandbox', 'ops'],
   idp: 'keycloak',
-  idp_realm: 'twin-cib',
+  idp_realm: 'demo-realm',
   sub: 'clb-7f4e',
   session_expires: '2026-05-19T23:59:00Z',
   gateway_scopes: ['read:documents', 'write:documents', 'read:activity', 'admin:tags'],

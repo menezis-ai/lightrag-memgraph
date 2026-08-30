@@ -79,7 +79,7 @@ async def test_physical_delete_cleanup_is_status_agnostic_and_accepts_confined_a
     monkeypatch, tmp_path
 ):
     input_dir = tmp_path / "inputs"
-    workspace_dir = input_dir / "cib"
+    workspace_dir = input_dir / "demo"
     workspace_dir.mkdir(parents=True)
     source = workspace_dir / "historical.pdf"
     source.write_text("stale upload", encoding="utf-8")

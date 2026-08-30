@@ -1,13 +1,3 @@
-import type { TagCurrentUser } from '../types/tag';
-
-// Fallback identity when no auth backend resolves a user (open-access /
-// LightRAG-parity deployments). Matches the backend's anonymous actor label.
-export const CURRENT_USER: TagCurrentUser = {
-  name: 'operator@twin.local',
-  palier: 3,
-  role: 'admin / steward',
-};
-
 export type DocumentsStatusFilterKey =
   | 'all'
   | 'completed'

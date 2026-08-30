@@ -5,13 +5,13 @@
  * writing a numbered PNG per surface into `qa-screenshots/`. The Python docx
  * builder (`scripts/qa/build_qa_docx.py`) consumes that folder.
  *
- * Run with:  npx playwright test capture-qa-screenshots --project=chromium
+ * Run with:  npm run test:e2e:qa
  *
  * Each surface is its own test so a selector drift on one modal cannot abort the
  * whole capture run. Optional interactions are wrapped in try/catch: we always
  * emit a screenshot of whatever rendered, and log what failed for triage.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { boot, openTab, setMswScenario } from './helpers';
 
 const DIR = 'qa-screenshots';
@@ -20,7 +20,7 @@ test.use({ viewport: { width: 1440, height: 1100 } });
 
 // This file regenerates the QA documentation screenshots; it is NOT a
 // regression spec. Skip it in normal/CI runs so it does not burden the e2e
-// job. Regenerate with:  CAPTURE_QA=1 npx playwright test capture-qa-screenshots
+// job. Regenerate with:  npm run test:e2e:qa
 test.beforeEach(() => {
   test.skip(!process.env.CAPTURE_QA, 'QA screenshot harness — run with CAPTURE_QA=1');
 });
@@ -63,7 +63,7 @@ test('01 login screen', async ({ page }) => {
   await setMswScenario(page, { authGate: true });
   await page.reload();
   await expect(page.getByTestId('login-screen')).toBeVisible();
-  await page.getByTestId('login-username').fill('claire.benoit');
+  await page.getByTestId('login-username').fill('demo.steward');
   await page.getByTestId('login-password').fill('s3cret');
   await shot(page, '01-login');
 });

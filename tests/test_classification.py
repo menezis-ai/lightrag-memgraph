@@ -6,15 +6,16 @@ in-memory using stdlib (zipfile + xml) so the tests run anywhere with no
 fixture files. The format we produce is the minimal valid OOXML container
 Office writes when it applies a sensitivity label.
 
-The OLE and PDF detectors are tested via their "missing dependency" code
-paths (the package's hard runtime deps don't include olefile/pikepdf, so
-those branches return a `*-missing` reason on a vanilla install).
+The OLE missing-dependency path is simulated deterministically so it remains
+covered even when ``olefile`` is installed.  The PDF detector exercises the
+same graceful-degradation path when the optional ``pikepdf`` dependency is
+absent from the environment.
 """
 
 from __future__ import annotations
 
-import io
 import json
+import sys
 import zipfile
 from pathlib import Path
 from textwrap import dedent
@@ -225,11 +226,11 @@ def _has_module(name: str) -> bool:
 
 
 class TestOptionalDeps:
-    @pytest.mark.skipif(
-        _has_module("olefile"),
-        reason="olefile present — this test asserts the missing-dep path",
-    )
-    def test_ole_without_olefile(self, tmp_path):
+    def test_ole_without_olefile(self, tmp_path, monkeypatch):
+        # ``_detect_ole`` imports the optional dependency inside the function.
+        # A ``None`` module entry makes that import raise ModuleNotFoundError,
+        # independently of what extras happen to be installed in this venv.
+        monkeypatch.setitem(sys.modules, "olefile", None)
         path = tmp_path / "legacy.doc"
         path.write_bytes(b"")  # content doesn't matter; we short-circuit
         result = detect_classification(path, label_map={})

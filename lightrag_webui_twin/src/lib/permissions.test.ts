@@ -11,9 +11,9 @@ const baseUser: AuthenticatedUser = {
     label: 'Reader',
     scopes: ['twin:read'],
   },
-  folders: ['cib'],
+  folders: ['demo'],
   idp: 'keycloak',
-  idp_realm: 'twin-cib',
+  idp_realm: 'demo-realm',
   sub: 'reader-1',
   session_expires: '2026-06-04T23:59:00Z',
   gateway_scopes: ['read:documents'],
@@ -35,5 +35,14 @@ describe('canManageFolders', () => {
 
   it('rejects users missing admin:folders', () => {
     expect(canManageFolders(baseUser)).toBe(false);
+  });
+
+  it('fails closed when a legacy runtime user omits gateway scopes', () => {
+    const missingScopes = {
+      ...baseUser,
+      gateway_scopes: undefined,
+    } as unknown as AuthenticatedUser;
+
+    expect(canManageFolders(missingScopes)).toBe(false);
   });
 });

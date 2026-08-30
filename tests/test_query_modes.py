@@ -7,7 +7,6 @@ No Memgraph, no LLM required.
 
 from unittest.mock import AsyncMock
 
-import pytest
 from lightrag.base import QueryParam
 
 import twindb_lightrag_memgraph

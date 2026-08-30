@@ -307,13 +307,13 @@ class TestQueryEndpoint:
             chunks=[
                 {
                     "id": "chunk-aa",
-                    "file_path": "/cib/runbooks/oracle.pdf",
+                    "file_path": "/demo/runbooks/oracle.pdf",
                     "chunk_order_index": 3,
                     "score": 0.92,
                 },
                 {
                     "id": "chunk-bb",
-                    "file_path": "/cib/runbooks/rhel.pdf",
+                    "file_path": "/demo/runbooks/rhel.pdf",
                     "chunk_order_index": 7,
                     "score": 0.88,
                 },
@@ -338,7 +338,7 @@ class TestQueryEndpoint:
         # stays aligned with the sources list.
         first, second = body["sources"]
         assert first["n"] == 1
-        assert first["name"] == "/cib/runbooks/oracle.pdf"
+        assert first["name"] == "/demo/runbooks/oracle.pdf"
         assert first["meta"] == "1 chunk"
         assert first["score"] == 0.92
         assert first["doc_id"] == "doc-oracle"
@@ -374,7 +374,7 @@ class TestQueryEndpoint:
             chunks=[
                 {
                     "id": "chunk-aa",
-                    "file_path": "/cib/runbooks/oracle.pdf",
+                    "file_path": "/demo/runbooks/oracle.pdf",
                     "score": 0.92,
                 },
             ],
@@ -391,7 +391,7 @@ class TestQueryEndpoint:
                     "/query",
                     json={
                         "query": "How do I restart Oracle?",
-                        "actor": "claire.benoit",
+                        "actor": "demo.steward",
                         "top_k": 1,
                     },
                 )
@@ -400,7 +400,7 @@ class TestQueryEndpoint:
         store.record_activity.assert_awaited_once()
         event = store.record_activity.await_args.args[0]
         assert event["kind"] == "retrieval"
-        assert event["actor"]["user"] == "claire.benoit"
+        assert event["actor"]["user"] == "demo.steward"
         assert event["target"]["type"] == "query"
         assert event["meta"]["sources_count"] == 1
         assert event["meta"]["query"] == "How do I restart Oracle?"
@@ -438,7 +438,7 @@ class TestQueryEndpoint:
                     json={
                         "query": "How do I restart Oracle?",
                         "doc_filter": {"any": ["/doc-oracle"]},
-                        "actor": "claire.benoit",
+                        "actor": "demo.steward",
                     },
                 )
 
@@ -502,7 +502,7 @@ class TestQueryEndpoint:
         webui_router.reset_store()
         rag = FakeRag(
             answer="How to retrieve from folder tests?",
-            chunks=[{"id": "chunk-aa", "file_path": "/cib/runbooks/oracle.pdf"}],
+            chunks=[{"id": "chunk-aa", "file_path": "/demo/runbooks/oracle.pdf"}],
         )
         actor = "folder-scope-checker"
         app = FastAPI()
@@ -845,6 +845,7 @@ class TestQueryEndpoint:
                 "retrieval_origin": "vector",
                 "doc_id": "doc-oracle",
                 "chunk_id": "chunk-a",
+                "source_links": [],
                 # No paragraph anchor computable here (the envelope chunk
                 # carries no content) — the wire field defaults to null.
                 "anchor": None,
@@ -1572,9 +1573,11 @@ class TestQueryEndpoint:
                     "entities": [],
                     "relationships": [
                         {
-                            "src_id": "BP2I",
+                            "src_id": "DEMO_SECONDARY",
                             "tgt_id": "ICPE Regulation",
-                            "description": ("BP2I complies with the ICPE regulation"),
+                            "description": (
+                                "DEMO_SECONDARY complies with the ICPE regulation"
+                            ),
                             "source_id": "chunk-cft",
                             "file_path": "CFT Classic v1.1.13 (1).pdf",
                         }
@@ -1649,7 +1652,7 @@ class TestQueryEndpoint:
                     "entities": [],
                     "relationships": [
                         {
-                            "src_id": "BP2I",
+                            "src_id": "DEMO_SECONDARY",
                             "tgt_id": "ICPE Regulation",
                             "source_id": "chunk-cft",
                             "similarity": 0.84,
@@ -1868,7 +1871,7 @@ class TestQueryEndpoint:
                         "entities": [],
                         "relationships": [
                             {
-                                "src_id": "BP2I",
+                                "src_id": "DEMO_SECONDARY",
                                 "tgt_id": "ICPE Regulation",
                                 "source_id": "chunk-it",
                             }

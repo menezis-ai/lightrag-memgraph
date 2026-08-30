@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test } from './fixtures';
 import { boot, openTab } from './helpers';
 
 test.describe('Toast lifecycle', () => {
@@ -25,10 +25,21 @@ test.describe('Toast lifecycle', () => {
     await page.getByTestId('sugg-memgraph').click();
     await page.getByRole('button', { name: 'Apply tag' }).click();
 
+    const row = page.getByTestId('docs-row-d1');
+    await expect(row).toContainText('memgraph');
     const toast = page.locator('.toast-viewport .toast', { hasText: 'memgraph' });
     await expect(toast).toBeVisible();
     await toast.getByRole('button', { name: 'Undo' }).click();
-    await expect(toast).toHaveCount(0);
+    await expect(
+      page.locator('.toast-viewport .toast', { hasText: 'Undo applied' }),
+    ).toBeVisible();
+    await expect(row).not.toContainText('memgraph');
+
+    // The oracle is the durable document state, not toast disappearance: an
+    // Undo acknowledgement may itself mention the tag that was reverted.
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
+    await expect(page.getByTestId('docs-row-d1')).not.toContainText('memgraph');
   });
 
   test('@toasts overflow collapses older toasts under a "+N more" dismiss button', async ({
@@ -54,7 +65,16 @@ test.describe('Topbar shell', () => {
     await boot(page);
   });
 
-  test('@topbar brand button always returns to Documents', async ({ page }) => {
+  test('@topbar brand button always returns to Documents', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Opening Graph immediately unmounts the Documents procedure query.',
+      ),
+    );
     await openTab(page, 'Graph');
     await expect(page.getByTestId('kg-canvas')).toBeVisible();
     await page.getByRole('button', { name: 'Open Documents' }).click();

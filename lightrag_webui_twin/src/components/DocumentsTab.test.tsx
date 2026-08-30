@@ -14,16 +14,43 @@
  */
 
 import type { ReactElement } from 'react';
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
 import { DocumentsTab } from './DocumentsTab';
 import {
   DOCUMENT_FIXTURES,
   FOLDER_FIXTURES,
   TAG_FIXTURES,
 } from '../fixtures';
+
+const server = setupServer(
+  http.get('*/twin/api/quota', () =>
+    HttpResponse.json({
+      used_bytes: null,
+      limit_bytes: null,
+      used_pct: null,
+      status: 'ok',
+      warn_threshold: 0.85,
+      configured: false,
+    }),
+  ),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
 
 function renderTab(ui: ReactElement) {
   const client = new QueryClient({
@@ -51,6 +78,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   window.history.replaceState(null, '', '/');
+  server.resetHandlers();
 });
 
 describe('DocumentsTab — rendering', () => {
@@ -575,7 +603,6 @@ describe('DocumentsTab — header actions', () => {
 });
 
 describe('DocumentsTab — folder membership admin actions', () => {
-  let originalFetch: typeof fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
   const folderList = [
     {
@@ -593,13 +620,12 @@ describe('DocumentsTab — folder membership admin actions', () => {
   ];
 
   beforeEach(() => {
-    originalFetch = globalThis.fetch;
     fetchMock = vi.fn();
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.unstubAllGlobals();
   });
 
   it('hides folder membership controls for non-admin users', () => {

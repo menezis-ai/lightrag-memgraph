@@ -33,7 +33,7 @@ class TestInMemoryActivityStore:
                     "day": "Today",
                     "kind": "tag-mutation",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "tag", "label": "rman"},
                     "summary": "test1",
                     "meta": {},
@@ -45,7 +45,7 @@ class TestInMemoryActivityStore:
                     "day": "Today",
                     "kind": "tag-mutation",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "tag", "label": "swift"},
                     "summary": "test2",
                     "meta": {},
@@ -55,14 +55,14 @@ class TestInMemoryActivityStore:
                     "ts": "2026-05-13T00:10:00Z",
                     "kind": "retrieval",
                     "sev": "info",
-                    "actor": {"user": "marc.berthier", "role": "DBA"},
+                    "actor": {"user": "demo.operator", "role": "DBA"},
                     "target": {"type": "query", "label": "Who"},
                     "summary": "other",
                     "meta": {},
                 },
             ],
         )
-        items, total, _ = await store.list(actor="claire.benoit", limit=1)
+        items, total, _ = await store.list(actor="demo.steward", limit=1)
         assert len(items) == 1
         assert total == 2
 
@@ -81,9 +81,9 @@ class TestInMemoryActivityStore:
 
     async def test_filter_by_actor(self):
         store = InMemoryActivityStore()
-        items, total, _ = await store.list(actor="marc.berthier")
+        items, total, _ = await store.list(actor="demo.operator")
         assert total == len(items)
-        assert all(e["actor"]["user"] == "marc.berthier" for e in items)
+        assert all(e["actor"]["user"] == "demo.operator" for e in items)
 
     async def test_filter_by_q_substring(self):
         store = InMemoryActivityStore()
@@ -120,7 +120,7 @@ class TestInMemoryActivityStore:
                     "day": "Today",
                     "kind": "retrieval",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "query", "label": "within 24h"},
                     "summary": "recent",
                     "meta": {},
@@ -132,14 +132,14 @@ class TestInMemoryActivityStore:
                     "day": "Today",
                     "kind": "retrieval",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "query", "label": "older"},
                     "summary": "old",
                     "meta": {},
                 },
             ],
         )
-        recent, total, _ = await store.list(actor="claire.benoit", range="24h")
+        recent, total, _ = await store.list(actor="demo.steward", range="24h")
         assert total == 1
         assert len(recent) == 1
         assert recent[0]["id"] == "evt_recent"
@@ -165,7 +165,7 @@ class TestInMemoryActivityStore:
                     "day": "Today",
                     "kind": "retrieval",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "query", "label": "within 24h"},
                     "summary": "deterministic",
                     "meta": {},
@@ -179,14 +179,14 @@ class TestInMemoryActivityStore:
                     "day": "Yesterday",
                     "kind": "retrieval",
                     "sev": "info",
-                    "actor": {"user": "claire.benoit", "role": "KB Admin"},
+                    "actor": {"user": "demo.steward", "role": "KB Admin"},
                     "target": {"type": "query", "label": "older"},
                     "summary": "historic",
                     "meta": {},
                 },
             ],
         )
-        recent, total, _ = await store.list(actor="claire.benoit", range="24h")
+        recent, total, _ = await store.list(actor="demo.steward", range="24h")
         assert total == 1
         assert len(recent) == 1
         assert recent[0]["id"] == "evt_recent"
@@ -265,7 +265,7 @@ class TestInMemoryActivityStore:
             "day": "Today",
             "kind": "tag-mutation",
             "sev": "info",
-            "actor": {"user": "claire.benoit", "role": "KB Admin"},
+            "actor": {"user": "demo.steward", "role": "KB Admin"},
             "target": {"type": "tag", "label": "rman"},
             "summary": "test",
             "meta": {},
@@ -666,7 +666,7 @@ class TestMemgraphActivityStore:
                 "day": "Today",
                 "kind": "tag-mutation",
                 "sev": "info",
-                "actor": {"user": "claire.benoit", "role": "operator"},
+                "actor": {"user": "demo.steward", "role": "operator"},
                 "target": {"type": "tag", "label": "argocd"},
                 "summary": "appended via test",
                 "meta": {"test": True},
@@ -687,7 +687,7 @@ class TestMemgraphActivityStore:
                 "day": "Today",
                 "kind": "tag-mutation",
                 "sev": "info",
-                "actor": {"user": "claire.benoit", "role": "operator"},
+                "actor": {"user": "demo.steward", "role": "operator"},
                 "target": {"type": "document", "label": "doc-target", "id": "doc-001"},
                 "summary": "scalar-check",
                 "meta": {"doc_id": "doc-meta", "doc_ids": ["doc-a", "doc-b"]},

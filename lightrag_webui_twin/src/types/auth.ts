@@ -78,6 +78,9 @@ export interface TwinRuntimeConfig {
    *  Missing means unsupported (important when a newer UI is served by an
    *  older backend). */
   procedureReviewEnabled?: boolean;
+  /** Central KB catalogue proxy is configured on this instance. Missing/false
+   *  preserves the pre-catalogue UI byte-for-byte. */
+  catalogEnabled?: boolean;
   /** Debug-only: bypass IdP and pretend to be this user. Stripped in prod. */
   debugUser?: AuthenticatedUser;
 }

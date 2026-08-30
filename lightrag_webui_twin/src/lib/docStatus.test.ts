@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DOC_STATUSES,
   LIGHTRAG_15X_STATUSES,
+  isProcessedTrackStatus,
+  isTerminalTrackStatus,
   normalizeDocumentStatus,
   statusCountFor,
 } from './docStatus';
@@ -54,5 +56,23 @@ describe('statusCountFor', () => {
 
   it('defaults to 0 when neither casing is present', () => {
     expect(statusCountFor({}, 'FAILED')).toBe(0);
+  });
+});
+
+describe('track-status lifecycle helpers', () => {
+  it('accepts exactly the two terminal outcomes in native and Twin casing', () => {
+    for (const status of ['processed', 'PROCESSED', 'failed', 'FAILED']) {
+      expect(isTerminalTrackStatus(status)).toBe(true);
+    }
+    for (const status of ['PENDING', 'PROCESSING', 'Processed', 'FAILED ']) {
+      expect(isTerminalTrackStatus(status)).toBe(false);
+    }
+  });
+
+  it('recognizes a successful completed row case-insensitively, but not failure', () => {
+    expect(isProcessedTrackStatus('processed')).toBe(true);
+    expect(isProcessedTrackStatus('PROCESSED')).toBe(true);
+    expect(isProcessedTrackStatus('failed')).toBe(false);
+    expect(isProcessedTrackStatus('processing')).toBe(false);
   });
 });

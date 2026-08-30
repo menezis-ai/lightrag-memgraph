@@ -223,6 +223,31 @@ class TestCloseDriver:
         assert pool._read_database is None
         assert pool._read_bound_loop_id is None
 
+    async def test_write_close_failure_still_closes_read_and_resets(self):
+        """A failing write-pool close must not leave the read pool open nor
+        the globals pointing at a half-closed driver (review of #451). Both
+        drivers get their close attempt; the error is re-raised afterwards."""
+        write_drv = AsyncMock()
+        write_drv.close = AsyncMock(side_effect=RuntimeError("write close boom"))
+        read_drv = AsyncMock()
+
+        pool._driver = write_drv
+        pool._bound_loop_id = id(asyncio.get_running_loop())
+        pool._read_driver = read_drv
+        pool._read_bound_loop_id = id(asyncio.get_running_loop())
+        pool._enterprise_supported = True
+
+        with pytest.raises(RuntimeError, match="write close boom"):
+            await pool.close_driver()
+
+        write_drv.close.assert_awaited_once()
+        read_drv.close.assert_awaited_once()
+        assert pool._driver is None
+        assert pool._bound_loop_id is None
+        assert pool._read_driver is None
+        assert pool._read_bound_loop_id is None
+        assert pool._enterprise_supported is None
+
     async def test_close_only_write_when_no_read(self):
         """close_driver() handles case where read pool was never created."""
         write_drv = AsyncMock()

@@ -178,6 +178,7 @@ class TestNativeShimAuthStatus:
             "auth_enabled": False,
             "authenticated": True,
             "user": None,
+            "identity": None,
             "expires_at": None,
             "login_required": False,
         }

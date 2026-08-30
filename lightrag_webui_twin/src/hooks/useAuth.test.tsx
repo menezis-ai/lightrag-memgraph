@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { __resetAuthConfigCacheForTests, useAuth } from './useAuth';
 import { ApiError, apiFetch } from '../api/client';
 import { resolveRuntimeConfig, DEV_CONFIG } from '../config/devConfig';
+import type { AuthenticatedUser, PalierLevel } from '../types/auth';
 
 /** A runtime config with NO debugUser, so the identity derives from
  *  /auth-status alone (the production shape, unlike the dev fallback). */
@@ -21,6 +22,25 @@ const AUTH_CONFIG = {
   defaultFolderId: 'default',
   folders: [{ id: 'default', label: 'Default folder', kind: 'primary' as const }],
 };
+
+function idpUser(
+  level: PalierLevel,
+  label: 'Reader' | 'Contributor' | 'Steward',
+  email: string,
+): AuthenticatedUser {
+  return {
+    sso_subject: email,
+    email,
+    name: label,
+    palier: { level, label, scopes: ['twin:read'] },
+    folders: ['default'],
+    idp: 'test-idp',
+    idp_realm: 'test',
+    sub: email,
+    session_expires: '2099-12-31T23:59:00Z',
+    gateway_scopes: ['read:documents'],
+  };
+}
 
 const authStatusMock = vi.hoisted(() => vi.fn());
 const loginMock = vi.hoisted(() => vi.fn());
@@ -133,10 +153,13 @@ describe('resolveRuntimeConfig', () => {
 });
 
 describe('useAuth — dev fallback', () => {
-  it('exposes the dev debugUser when no config is injected', () => {
+  it('elevates the dev debugUser only after open access is confirmed', async () => {
     const qc = new QueryClient();
     const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
     expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.user?.palier.level).toBe(1);
+
+    await waitFor(() => expect(result.current.authEnabled).toBe(false));
     expect(result.current.user?.palier.level).toBe(3);
     expect(result.current.user?.palier.label).toBe('Steward');
     expect(result.current.user?.name).toBe('Local Operator');
@@ -152,6 +175,93 @@ describe('useAuth — dev fallback', () => {
     rerender();
     const cfg2 = result.current.config;
     expect(cfg1).toBe(cfg2);
+  });
+});
+
+describe('useAuth — authentication posture', () => {
+  it('exposes open access only after auth-status confirms auth_enabled=false', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+    expect(result.current.authEnabled).toBeNull();
+    await waitFor(() => expect(result.current.isCheckingAuth).toBe(false));
+    expect(result.current.authEnabled).toBe(false);
+  });
+
+  it('does not infer open access when auth-status fails', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+    await waitFor(() => expect(result.current.isCheckingAuth).toBe(false));
+    expect(result.current.authEnabled).toBeNull();
+    expect(result.current.needsLogin).toBe(true);
+  });
+
+  it('keeps the injected debugUser read-only when auth-status fails', async () => {
+    authStatusMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+    await waitFor(() => expect(result.current.isCheckingAuth).toBe(false));
+    expect(result.current.authEnabled).toBeNull();
+    expect(result.current.user?.palier).toEqual({
+      level: 1,
+      label: 'Reader',
+      scopes: ['twin:read'],
+    });
+    expect(result.current.user?.gateway_scopes).not.toContain('admin:folders');
+  });
+
+  it.each([
+    [idpUser(1, 'Reader', 'admin-reader@example.com'), 1],
+    [idpUser(3, 'Steward', 'steward@example.com'), 3],
+  ] as const)(
+    'uses the authoritative IdP identity instead of username heuristics',
+    async (identity, expectedLevel) => {
+      (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+      __resetAuthConfigCacheForTests();
+      authStatusMock.mockResolvedValueOnce({
+        auth_enabled: true,
+        authenticated: true,
+        user: identity.sso_subject,
+        identity,
+        expires_at: identity.session_expires,
+        login_required: false,
+      });
+      const qc = new QueryClient();
+      const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+      await waitFor(() => expect(result.current.isCheckingAuth).toBe(false));
+      expect(result.current.user).toEqual(identity);
+      expect(result.current.user?.palier.level).toBe(expectedLevel);
+    },
+  );
+
+  it('projects credential-only usernames as Reader even when they contain admin', async () => {
+    (window as Window & typeof globalThis).__twinConfig = { ...AUTH_CONFIG };
+    __resetAuthConfigCacheForTests();
+    authStatusMock.mockResolvedValueOnce({
+      auth_enabled: true,
+      authenticated: true,
+      user: 'not-an-admin-claim',
+      identity: null,
+      expires_at: null,
+      login_required: false,
+    });
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useAuth(), { wrapper: wrap(qc) });
+
+    await waitFor(() => expect(result.current.isCheckingAuth).toBe(false));
+    expect(result.current.user?.palier).toEqual({
+      level: 1,
+      label: 'Reader',
+      scopes: ['twin:read'],
+    });
   });
 });
 
@@ -316,7 +426,9 @@ describe('useAuth — local login', () => {
     );
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.name).toBe('twinadmin');
-    expect(result.current.user?.palier.label).toBe('Steward');
+    // Local JWT carries a subject, not verified RBAC claims. The username
+    // must not manufacture a steward capability merely because it says admin.
+    expect(result.current.user?.palier.label).toBe('Reader');
   });
 
   it('maps a 401 login rejection to "Incorrect username or password."', async () => {

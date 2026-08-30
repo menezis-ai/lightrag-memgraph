@@ -26,7 +26,7 @@ export const PROCEDURE_BUNDLE_FIXTURES: readonly ProcedureBundle[] = [
     track_id: 'track_proc_1',
     folder: 'default',
     content_hash: 'hash-proc-1',
-    full_text: 'Failover procedure for the Oracle CIB estate.',
+    full_text: 'Failover procedure for the Oracle demo estate.',
     schematics_total: 2,
     classification: {
       class_id: 'C2',
@@ -61,7 +61,7 @@ export const PROCEDURE_BUNDLE_FIXTURES: readonly ProcedureBundle[] = [
         informed: {
           title: 'Failover decision tree',
           description:
-            'Decision tree for switching the CIB primary to the Marne DR site, gated on Data Guard lag.',
+            'Decision tree for switching the demo primary to the secondary site, gated on Data Guard lag.',
           tasks: [
             {
               id: 'T1',

@@ -5,7 +5,7 @@ returned dict (set to None when absent from node properties), preventing
 KeyError in LightRAG's operate._find_most_related_edges_from_entities.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

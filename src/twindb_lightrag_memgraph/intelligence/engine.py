@@ -17,7 +17,7 @@ import secrets
 from pathlib import Path
 from typing import Optional
 
-from lightrag import LightRAG, QueryParam
+from lightrag import LightRAG
 
 from .._constants import validate_identifier
 from .config import TwinRAGConfig
@@ -62,8 +62,8 @@ class TwinRAGEngine:
         result = await engine.aquery(
             "Pourquoi ORA-04030 ?",
             conversation_history=[...],
-            workspace="cib",
-            authorized_folders={"cib", "commons"},
+            workspace="demo",
+            authorized_folders={"demo", "commons"},
         )
     """
 
@@ -151,8 +151,7 @@ class TwinRAGEngine:
         return active_folder, public_folders, explicit_folder_override
 
     async def _classify_and_short_circuit(self, question, trace):
-        """STEP 0 (F05): intent classification. Return an early-exit QueryResult
-        for OOS/greeting/malicious intents, or None to continue the pipeline."""
+        """STEP 0 (F05): classify and stop non-retrieval intents early."""
         if not self.config.enable_oos_detection:
             return None
         intent_result = await self.intent_classifier.classify(question)
@@ -211,6 +210,19 @@ class TwinRAGEngine:
                 trace=trace,
                 intent=intent_result,
             )
+
+        if (
+            intent_result.intent == IntentType.ESCALATION
+            and intent_result.confidence >= self.config.escalation_confidence_threshold
+        ):
+            trace.stop(early_exit="ESCALATION")
+            return QueryResult(
+                answer=self._scripted_response(IntentType.ESCALATION),
+                citations=[],
+                answer_status=AnswerStatus.NO_RETRIEVAL,
+                trace=trace,
+                intent=intent_result,
+            )
         return None
 
     async def aquery(
@@ -230,7 +242,7 @@ class TwinRAGEngine:
         Args:
             question: User question in natural language.
             conversation_history: List of messages [{role, content}], max N recent.
-            folder: Agent's private folder (e.g., "cib", "bp2i").
+            folder: Agent's private folder (e.g., "demo", "demo_secondary").
             folders_publics: List of public folders to query (e.g., ["commons"]).
             workspace: Deprecated alias for folder.
             workspaces_publics: Deprecated alias for folders_publics.

@@ -32,6 +32,7 @@ own malfunction, only on a real over-quota condition.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -295,8 +296,14 @@ async def snapshot() -> dict[str, Any]:
     Every field is surfaced so the operator can see *which* wall binds
     and what the data actually weighs — never a hand-waved number.
     """
-    indexed = await _read_storage_info()
-    database_indexed = await _read_database_storage_info()
+    # Two independent probes (instance-level vs current-database metrics), each
+    # on its own read session and each fail-open on its own error. Serialized
+    # they cost two round-trips on a snapshot the WebUI polls continuously and
+    # that gates every ingestion POST; gather so they overlap.
+    indexed, database_indexed = await asyncio.gather(
+        _read_storage_info(),
+        _read_database_storage_info(),
+    )
 
     graph = _pick(database_indexed, _GRAPH_KEYS)
     vector = _pick(database_indexed, _VECTOR_KEYS)

@@ -13,7 +13,6 @@ from lightrag.base import DocProcessingStatus, DocStatus
 from lightrag.utils import EmbeddingFunc
 
 from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph._pool import get_driver
 from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
 from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage

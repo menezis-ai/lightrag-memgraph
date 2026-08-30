@@ -41,29 +41,28 @@ from ..folder import (
 from ..idp_jwt import require_admin_user
 from ..status_vocab import storage_status_filter, to_twin_uppercase
 from ..webui_models import (
-    AckResponse,
     OpenApiEnvelope,
     OpenApiGroup,
 )
 from .events import _make_event, _request_actor, _utcnow_iso
-from .store import WebuiStore, _stores, get_store, reset_store, set_store
+from .store import WebuiStore, get_store, reset_store, set_store
 from .routes_activity import router as activity_router
 from .routes_documents import router as documents_router
 from .routes_folders import router as folders_router
 from .routes_graph import (
-    _graph_memgraph_label,
-    _graph_seed_fallback_allowed,
-    _native_graph,
-    _validate_graph_entity_tags,
     router as graph_router,
 )
 from .routes_notifications import router as notifications_router
+from .routes_source_links import router as source_links_router
 from .routes_tags import router as tags_router
 from ..document_hash import enrich_metadata_with_document_hash
+from ..portability_routes import router as portability_router
 
 logger = logging.getLogger(__name__)
 
 _security = HTTPBearer(auto_error=False)
+_DOC_STATUS_PAGE_SIZE = 500
+_CATALOG_PROFILE_LEGACY_MAX_PAGES = 20
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +238,12 @@ def _project_doc_status_for_webui(
         _coerce_doc_metadata(doc.get("metadata")),
         doc_id,
     )
-    file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
+    stored_file_path = str(doc.get("file_path") or doc.get("source") or doc_id)
+    from ..upload_paths import display_upload_file_path
+
+    file_path = str(
+        metadata.get("relative_path") or display_upload_file_path(stored_file_path)
+    )
     summary = str(doc.get("content_summary") or doc.get("summary") or "")
     folder = str(
         visible_folder
@@ -387,6 +391,80 @@ async def _filter_docs_to_active_folder(
     return filtered
 
 
+def _doc_status_tuples_to_rows(
+    docs_tuples: list[tuple[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for doc_id, raw in docs_tuples:
+        payload = _status_to_dict(raw)
+        payload["id"] = doc_id
+        rows.append(payload)
+    return rows
+
+
+async def _catalog_profile_document_sample(
+    *, limit: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Return a bounded folder sample and its exact document count.
+
+    Modern DocStatus storage computes the folder-scoped count in the same
+    query as the first page. A legacy storage without a ``folder`` parameter
+    must be walked page by page so membership filtering cannot turn a
+    truncated global page into a false folder total. The legacy walk fails
+    closed at a fixed page cap instead of returning a partial count. Only
+    ``limit`` projected rows are retained and enriched with graph tags.
+    """
+
+    rag = _get_rag()
+    folder = current_folder_id()
+    if folder is None:
+        # Internal invariant: the only caller binds ``scoped_folder`` first.
+        raise HTTPException(500, "Catalog profile folder context is missing")
+
+    if _doc_status_get_docs_paginated_supports_folder(rag.doc_status):
+        docs_tuples, total = await rag.doc_status.get_docs_paginated(
+            page=1,
+            page_size=limit,
+            status_filter=None,
+            folder=folder,
+        )
+        rows = _doc_status_tuples_to_rows(docs_tuples)
+        sample = rows[:limit]
+    else:
+        sample = []
+        folder_total = 0
+        page = 1
+        while True:
+            docs_tuples, global_total = await rag.doc_status.get_docs_paginated(
+                page=page,
+                page_size=_DOC_STATUS_PAGE_SIZE,
+                status_filter=None,
+            )
+            rows = _doc_status_tuples_to_rows(docs_tuples)
+            scoped_rows = await _filter_docs_to_active_folder(
+                rows, folder=folder, rag=rag
+            )
+            folder_total += len(scoped_rows)
+            if len(sample) < limit:
+                sample.extend(scoped_rows[: limit - len(sample)])
+            has_more = page * _DOC_STATUS_PAGE_SIZE < global_total
+            if not docs_tuples or not has_more:
+                break
+            if page >= _CATALOG_PROFILE_LEGACY_MAX_PAGES:
+                raise HTTPException(
+                    503,
+                    "Legacy document storage exceeds catalog profile scan limit",
+                )
+            page += 1
+        total = folder_total
+
+    projected = [
+        _project_doc_status_for_webui(row, visible_folder=folder) for row in sample
+    ]
+    await _attach_graph_tags_for_documents(projected)
+    return projected, int(total)
+
+
 async def _list_documents_from_doc_status(
     *,
     status: str | None,
@@ -408,19 +486,14 @@ async def _list_documents_from_doc_status(
     scoped_by_storage = _doc_status_get_docs_paginated_supports_folder(rag.doc_status)
     kwargs = {
         "page": 1,
-        "page_size": 500,
+        "page_size": _DOC_STATUS_PAGE_SIZE,
         "status_filter": status_filter,
     }
     if scoped_by_storage and folder is not None:
         kwargs["folder"] = folder
 
     docs_tuples, _total = await rag.doc_status.get_docs_paginated(**kwargs)
-
-    doc_rows: list[dict[str, Any]] = []
-    for doc_id, raw in docs_tuples:
-        payload = _status_to_dict(raw)
-        payload["id"] = doc_id
-        doc_rows.append(payload)
+    doc_rows = _doc_status_tuples_to_rows(docs_tuples)
 
     if folder is not None:
         doc_rows = await _filter_docs_to_active_folder(doc_rows, folder=folder, rag=rag)
@@ -770,6 +843,7 @@ def twin_health() -> dict[str, Any]:
         "tags": store.tags.__class__.__name__,
         "activity": store.activity.__class__.__name__,
         "notifications": store.notifications.__class__.__name__,
+        "source_links": store.source_links.__class__.__name__,
     }
     return {
         "status": "ok" if rag_captured else "degraded",
@@ -782,8 +856,10 @@ def twin_health() -> dict[str, Any]:
 router.include_router(folders_router)
 router.include_router(notifications_router)
 router.include_router(activity_router)
+router.include_router(source_links_router)
 router.include_router(tags_router)
 router.include_router(graph_router)
+router.include_router(portability_router)
 
 
 def _get_rag():

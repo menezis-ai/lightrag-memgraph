@@ -19,15 +19,16 @@ remains the infra root key, invisible from the UI by design (see
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import Path as FastapiPath
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .._constants import resolve_workspace
 from . import api_key_store
 from .auth import require_auth
+from .folder import load_folder_catalog
 from .idp_jwt import require_admin_user
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,31 @@ class ApiKeyCreate(BaseModel):
         description="Display name identifying what the key is for.",
         examples=["reporting-script"],
     )
+    scopes: list[Literal["api:*", "profile:read"]] = Field(
+        default_factory=lambda: ["api:*"],
+        min_length=1,
+        max_length=1,
+        description=(
+            "Exactly one capability. profile:read mints a tcp_ credential that "
+            "cannot authenticate on generic Twin routes."
+        ),
+    )
+    folders: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "Folders visible to a profile:read credential. Empty means only the "
+            "provisioned default folder."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _scope_shape(self) -> ApiKeyCreate:
+        self.scopes = list(dict.fromkeys(self.scopes))
+        self.folders = list(dict.fromkeys(self.folders))
+        if self.scopes != ["profile:read"] and self.folders:
+            raise ValueError("folders are only valid with scope profile:read")
+        return self
 
 
 class ApiKeyPublic(BaseModel):
@@ -101,6 +127,14 @@ class ApiKeyPublic(BaseModel):
     prefix: str = Field(
         description="Non-secret preview used to identify the key in listings.",
         examples=["twk_Pu6s9K2a…"],
+    )
+    scopes: list[str] = Field(
+        default_factory=lambda: ["api:*"],
+        description="Credential capabilities; legacy entries default to api:*.",
+    )
+    folders: list[str] = Field(
+        default_factory=list,
+        description="Folder ids authorised for a profile:read credential.",
     )
     created_at: int = Field(
         description="Creation time as Unix epoch milliseconds.",
@@ -179,6 +213,7 @@ async def _emit_event(*, action: str, key_id: str, prefix: str, actor: str) -> N
             ),
             meta={"key_id": key_id, "prefix": prefix, "operation": action},
             target_type="api-key",
+            target_id=key_id,
         )
         store = webui_router.get_store()
         await store.record_activity(event)
@@ -251,6 +286,13 @@ async def create_api_key(
     for the deployment's static infrastructure key and does not accept
     generated keys."""
     workspace = resolve_workspace()
+    catalog = load_folder_catalog()
+    unknown_folders = sorted(set(body.folders) - set(catalog.ids))
+    if unknown_folders:
+        raise HTTPException(
+            422,
+            f"Unknown folder id(s): {', '.join(unknown_folders)}",
+        )
     try:
         await api_key_store.initialize(workspace)
     except Exception:  # noqa: BLE001
@@ -260,6 +302,8 @@ async def create_api_key(
         workspace,
         name=body.name,
         created_by=actor,
+        scopes=list(body.scopes),
+        folders=body.folders,
     )
     await _emit_event(
         action="created",

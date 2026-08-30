@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab, seedActivity } from './helpers';
 
 test.describe('Activity RC-1 refresh and immutable ledger', () => {
@@ -59,13 +59,13 @@ test.describe('Activity filters and event detail', () => {
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
   });
 
-  const statsCount = async (page: import('@playwright/test').Page, label: string) => {
+  const statsCount = async (page: Page, label: string) => {
     const stat = page.locator('.activity-stats .stat', { hasText: label }).locator('b');
     return Number(await stat.innerText());
   };
 
   const activityTotal = async (
-    page: import('@playwright/test').Page,
+    page: Page,
     params: Record<string, string>,
   ) =>
     page.evaluate(async (query) => {
@@ -150,8 +150,15 @@ test.describe('Activity filters and event detail', () => {
   });
 
   test('@activity @detail "Open source" drills down to the Documents tab', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Opening a source unmounts the procedure query from the Activity tab.',
+      ),
+    );
     await page.getByLabel('Severity filter').selectOption('error');
     await page.locator('.activity-row.sev-error').first().click();
     const detail = page.getByRole('complementary');

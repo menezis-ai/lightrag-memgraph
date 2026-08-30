@@ -1,4 +1,4 @@
-"""Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md, PR 1).
+"""Procedure-PDF ingestion profile (docs/adr/007-procedure-pdf-profile.md).
 
 Unit tests on ``_procedure`` (tier gates, deterministic template detection,
 schematic-page location, dual-pass orchestration, failure degradation), the

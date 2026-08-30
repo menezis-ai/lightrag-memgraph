@@ -15,8 +15,9 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ...config import TwinRAGConfig
+from ...config import LLMProfileKind, TwinRAGConfig
 from ...json_utils import clamp_float, coerce_str, load_json_object
+from ...llm import create_chat_completion, log_llm_fallback
 from ...prompt_security import neutralize_reserved_tags
 from ..config import WorkspaceOntologyConfig
 from ..dsep import build_dsep_block, get_mode_defaults, get_pass_defaults
@@ -211,13 +212,10 @@ async def extract(
     )
 
     try:
-        client = AsyncOpenAI(
-            api_key=config.llm_api_key,
-            base_url=config.llm_api_base,
-        )
-
-        response = await client.chat.completions.create(
-            model=config.llm_model,
+        response = await create_chat_completion(
+            config,
+            LLMProfileKind.INDEXING,
+            client_factory=AsyncOpenAI,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -238,8 +236,8 @@ async def extract(
             source_doc=doc_id,
         )
 
-    except Exception as e:
-        logger.exception("Extraction error for doc %s: %s", doc_id, e)
+    except Exception as exc:
+        log_llm_fallback(logger, "Ontology extraction", exc, document_id=doc_id)
         return ExtractionResult(source_doc=doc_id)
 
 

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab } from './helpers';
 
 async function expectTagsViewportIsContained(page: Page) {
@@ -142,8 +142,15 @@ test.describe('Twin WebUI tag governance persistence', () => {
   });
 
   test('@doctrine @tags @rc1 edit-approve commits steward edits after reload', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const approvalReloadReason =
+      'The explicit persistence reload replaces the just-invalidated tag and notification queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/tags$/, approvalReloadReason),
+      allowRequestAbort(/\/twin\/api\/notifications$/, approvalReloadReason),
+    );
     await page
       .getByTestId('pending-argocd')
       .getByRole('button', { name: 'Edit & approve' })

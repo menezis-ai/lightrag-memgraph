@@ -8,7 +8,6 @@ on LightRAG's in-memory registries, no Memgraph connection needed.
 import importlib
 
 import lightrag.kg as kg_registry
-from lightrag.utils import lazy_external_import
 
 import twindb_lightrag_memgraph
 

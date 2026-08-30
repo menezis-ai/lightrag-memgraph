@@ -26,9 +26,9 @@ const adminUser: AuthenticatedUser = {
     label: 'Steward',
     scopes: ['twin:read', 'twin:write', 'twin:approve'],
   },
-  folders: ['cib'],
+  folders: ['demo'],
   idp: 'keycloak',
-  idp_realm: 'twin-cib',
+  idp_realm: 'demo-realm',
   sub: 'steward-1',
   session_expires: '2026-06-04T23:59:00Z',
   gateway_scopes: ['read:documents', 'admin:folders'],
@@ -39,7 +39,7 @@ const readonlyUser: AuthenticatedUser = {
   gateway_scopes: ['read:documents'],
 };
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterAll(() => server.close());
 
 function renderSection(
@@ -78,14 +78,14 @@ describe('FoldersAdminSection — list rendering', () => {
   it('shows the env-seeded folder with a lock badge and no actions', async () => {
     renderSection();
     await waitFor(() =>
-      expect(screen.getByTestId('settings-folder-row-cib')).toBeInTheDocument(),
+      expect(screen.getByTestId('settings-folder-row-demo')).toBeInTheDocument(),
     );
-    const row = screen.getByTestId('settings-folder-row-cib');
+    const row = screen.getByTestId('settings-folder-row-demo');
     expect(row.textContent).toMatch(/env-seeded/);
     expect(row.textContent).toMatch(/active/);
     // No Edit / Delete buttons on env-seeded entries
-    expect(screen.queryByTestId('settings-folder-edit-cib')).toBeNull();
-    expect(screen.queryByTestId('settings-folder-delete-cib')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-edit-demo')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-delete-demo')).toBeNull();
   });
 });
 
@@ -118,7 +118,7 @@ describe('FoldersAdminSection — Add folder', () => {
     await userEvent.click(
       await screen.findByTestId('settings-add-folder-btn'),
     );
-    await userEvent.type(screen.getByTestId('settings-add-folder-id'), 'cib');
+    await userEvent.type(screen.getByTestId('settings-add-folder-id'), 'demo');
     await userEvent.type(
       screen.getByTestId('settings-add-folder-label'),
       'Conflicts',
@@ -283,11 +283,11 @@ describe('FoldersAdminSection — error path', () => {
     const updateSpy = vi.fn();
     renderSection();
     await waitFor(() =>
-      expect(screen.getByTestId('settings-folder-row-cib')).toBeInTheDocument(),
+      expect(screen.getByTestId('settings-folder-row-demo')).toBeInTheDocument(),
     );
-    // No edit button exposed for cib — the UI policy is the
+    // No edit button exposed for demo — the UI policy is the
     // first-line defence. Assert it is not in the DOM:
-    expect(screen.queryByTestId('settings-folder-edit-cib')).toBeNull();
+    expect(screen.queryByTestId('settings-folder-edit-demo')).toBeNull();
     expect(updateSpy).not.toHaveBeenCalled();
   });
 });

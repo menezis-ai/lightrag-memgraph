@@ -104,7 +104,7 @@ describe('ActivityTab — rendering', () => {
     await userEvent.selectOptions(screen.getByLabelText('Severity filter'), 'error');
     await userEvent.selectOptions(
       screen.getByLabelText('Actor filter'),
-      'marc.berthier',
+      'demo.operator',
     );
     await userEvent.type(screen.getByLabelText('Search events'), 'oracle');
 
@@ -113,7 +113,7 @@ describe('ActivityTab — rendering', () => {
         range: '30d',
         kind: 'retrieval',
         sev: 'error',
-        actor: 'marc.berthier',
+        actor: 'demo.operator',
         q: 'oracle',
         resourceId: undefined,
         limit: 200,
@@ -122,10 +122,10 @@ describe('ActivityTab — rendering', () => {
   });
 
   it('shows the folder on every activity row (active folder fallback)', () => {
-    render(<ActivityTab {...defaultProps()} folderLabel="cib" />);
+    render(<ActivityTab {...defaultProps()} folderLabel="demo" />);
     const chips = screen.getAllByTestId('activity-row-folder');
     expect(chips).toHaveLength(16);
-    chips.forEach((chip) => expect(chip).toHaveTextContent('cib'));
+    chips.forEach((chip) => expect(chip).toHaveTextContent('demo'));
   });
 });
 
@@ -154,10 +154,10 @@ describe('ActivityTab — filters', () => {
     render(<ActivityTab {...defaultProps()} />);
     await userEvent.selectOptions(
       screen.getByLabelText('Actor filter'),
-      'marc.berthier',
+      'demo.operator',
     );
     const stats = document.querySelector('.activity-stats') as HTMLElement;
-    // marc.berthier has 3 events: 2 retrievals + 1 auth.
+    // demo.operator has 3 events: 2 retrievals + 1 auth.
     expect(stats.textContent).toMatch(/3\s*matching events/);
   });
 

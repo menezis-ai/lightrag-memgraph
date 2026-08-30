@@ -1,4 +1,4 @@
-"""Vision image-ingestion tier (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+"""Vision image-ingestion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
 
 Unit tests on ``_vision`` (config gates, OCR pre-filter, drop classes,
 markdown composition, tolerant JSON parse, failure degradation) plus
@@ -49,7 +49,7 @@ def _clean_vision_env(monkeypatch):
 
 @pytest.fixture
 def vision_configured(monkeypatch):
-    monkeypatch.setenv("TWIN_VISION_BASE_URL", "http://vllm.internal/v1")
+    monkeypatch.setenv("TWIN_VISION_BASE_URL", "http://vision.example.com/v1")
     monkeypatch.setenv("TWIN_VISION_MODEL", "gemma-4-31b-it")
     monkeypatch.setattr(_vision, "_openai_importable", lambda: True)
 
@@ -242,7 +242,7 @@ def test_client_lazy_init_is_locked_and_transport_bounded(
 
     assert all(client is clients[0] for client in clients)
     assert len(constructed) == 1
-    assert constructed[0]["base_url"] == "http://vllm.internal/v1"
+    assert constructed[0]["base_url"] == "http://vision.example.com/v1"
     assert constructed[0]["api_key"] == "twin-vision"
     assert constructed[0]["timeout"] == 0.125
     assert constructed[0]["max_retries"] == 0

@@ -5,7 +5,6 @@ from fastapi import Response
 
 from twindb_lightrag_memgraph.server.auth import (
     LoginRequest,
-    LoginResponse,
     _parse_auth_accounts,
     configure_auth,
     _create_jwt,
@@ -13,7 +12,6 @@ from twindb_lightrag_memgraph.server.auth import (
     require_auth,
     login,
     logout,
-    _auth_enabled,
 )
 from twindb_lightrag_memgraph.server import webui_router
 
@@ -477,6 +475,7 @@ class TestLocalJwtRoutes:
             after = await client.get("/auth-status")
             assert after.json()["authenticated"] is True
             assert after.json()["user"] == "alice"
+            assert after.json()["identity"] is None
             protected_resp = await client.get("/protected")
             assert protected_resp.json() == {"identity": "alice"}
 
@@ -614,8 +613,6 @@ class TestJWTEdgeCases:
     def test_decode_jwt_wrong_secret(self):
         """Creating a token with one secret and decoding with a different
         secret must raise 401."""
-        import jwt as pyjwt
-        from datetime import datetime, timedelta, timezone
         from fastapi import HTTPException
 
         configure_auth(jwt_secret=HS256_TEST_SECRET, jwt_password="test-password")

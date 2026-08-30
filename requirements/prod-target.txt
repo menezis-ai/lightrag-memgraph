@@ -1,10 +1,9 @@
 # Production runtime target used for release builds.
 # BNP production target — LightRAG 1.5.6 (qualification 2026-08-06;
-# single-version pin, superseding the 1.5.5 target from 2026-08-04; the four risk-accepted
-# LightRAG CVEs are fixed upstream in 1.5.4+ and their exceptions are
-# retired). Only the transitive python-jose/ecdsa Minerva advisory
-# (PYSEC-2026-1325) remains risk-accepted — python-jose is still declared
-# by lightrag-hku[api] 1.5.6 but never imported; Twin and LightRAG both
-# use PyJWT. See docs/security/python-jose-ecdsa-risk-acceptance.md.
+# single-version pin, superseding the 1.5.5 target from 2026-08-04; the four
+# risk-accepted LightRAG CVEs are fixed upstream in 1.5.4+ and their
+# exceptions are retired). The api extra still declares python-jose/ecdsa;
+# the CI gate's one targeted transitive ignore is governed by
+# docs/security/python-jose-ecdsa-risk-acceptance.md.
 lightrag-hku==1.5.6
-pypdf==6.14.2
+pypdf==6.15.0

@@ -18,12 +18,18 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from ..config import TwinRAGConfig
+from ..config import LLMProfileKind, TwinRAGConfig
+from ..llm import create_chat_completion, log_llm_fallback
 from ..models.schemas import AnswerStatus, Citation
 from ..prompt_security import neutralize_reserved_tags
 from .act import ChunkResult
 
 logger = logging.getLogger("twin_rag_intelligence.observe")
+
+_SYNTHESIS_FAILURE_ANSWER = (
+    "Erreur lors de la synthese. Veuillez reessayer ou contacter "
+    "le support si le probleme persiste."
+)
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "synthesis_system.txt"
 # ReDoS-hardened (Sonar S5852): the first captured char class is disjoint
@@ -150,13 +156,10 @@ class SynthesisEngine:
         )
 
         try:
-            client = AsyncOpenAI(
-                api_key=self.config.llm_api_key,
-                base_url=self.config.llm_api_base,
-            )
-
-            response = await client.chat.completions.create(
-                model=self.config.llm_model,
+            response = await create_chat_completion(
+                self.config,
+                LLMProfileKind.CHAT,
+                client_factory=AsyncOpenAI,
                 messages=[
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -167,6 +170,26 @@ class SynthesisEngine:
 
             raw_answer = response.choices[0].message.content or ""
             tokens = response.usage.total_tokens if response.usage else 0
+            if not raw_answer.strip():
+                logger.warning("Synthesis returned an empty answer")
+                return SynthesisResult(
+                    answer=_SYNTHESIS_FAILURE_ANSWER,
+                    citations=[],
+                    tokens_used=tokens,
+                    answer_status=AnswerStatus.QUERY_FAILED,
+                )
+
+            clean_answer = _PASSAGE_MARKER_PATTERN.sub("", raw_answer).strip()
+            if not any(character.isalnum() for character in clean_answer):
+                logger.warning(
+                    "Synthesis returned no meaningful content outside citations"
+                )
+                return SynthesisResult(
+                    answer=_SYNTHESIS_FAILURE_ANSWER,
+                    citations=[],
+                    tokens_used=tokens,
+                    answer_status=AnswerStatus.QUERY_FAILED,
+                )
 
             passage_markers = _PASSAGE_MARKER_PATTERN.findall(raw_answer)
             referenced_indices = self._citation_indices(raw_answer)
@@ -185,7 +208,6 @@ class SynthesisEngine:
                     len(citations),
                     len(chunks),
                 )
-            clean_answer = _PASSAGE_MARKER_PATTERN.sub("", raw_answer).strip()
 
             return SynthesisResult(
                 answer=clean_answer,
@@ -199,17 +221,9 @@ class SynthesisEngine:
             )
 
         except Exception as exc:
-            logger.exception(
-                "OBSERVE error: exception_type=%s",
-                type(exc).__name__,
-                exc_info=False,
-                extra={"exception_type": type(exc).__name__},
-            )
+            log_llm_fallback(logger, "OBSERVE", exc)
             return SynthesisResult(
-                answer=(
-                    "Erreur lors de la synthese. Veuillez reessayer ou contacter "
-                    "le support si le probleme persiste."
-                ),
+                answer=_SYNTHESIS_FAILURE_ANSWER,
                 citations=[],
                 answer_status=AnswerStatus.QUERY_FAILED,
             )

@@ -17,8 +17,9 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from ..config import TwinRAGConfig
+from ..config import LLMProfileKind, TwinRAGConfig
 from ..json_utils import coerce_str, load_json_object
+from ..llm import create_chat_completion, log_llm_fallback
 from ..prompt_security import neutralize_reserved_tags
 
 logger = logging.getLogger("twin_rag_intelligence.reason")
@@ -118,13 +119,10 @@ class ReasoningEngine:
         )
 
         try:
-            client = AsyncOpenAI(
-                api_key=self.config.llm_api_key,
-                base_url=self.config.llm_api_base,
-            )
-
-            response = await client.chat.completions.create(
-                model=self.config.llm_model,
+            response = await create_chat_completion(
+                self.config,
+                LLMProfileKind.CHAT,
+                client_factory=AsyncOpenAI,
                 messages=[
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -149,10 +147,10 @@ class ReasoningEngine:
                 original_question=question,
             )
 
-        except Exception as e:
-            logger.exception("REASON error: %s", e)
+        except Exception as exc:
+            log_llm_fallback(logger, "REASON", exc)
             return ReasoningResult(
-                thought=f"Fallback (LLM error): {e}",
+                thought="Fallback (LLM unavailable)",
                 search_query=question,
                 original_question=question,
             )

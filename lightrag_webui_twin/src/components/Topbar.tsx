@@ -191,6 +191,10 @@ const NOTIF_ICON: Record<NotificationKind, { name: IconName; color: string }> = 
     name: 'file-text',
     color: 'var(--twin-amber-vivid, #9C7000)',
   },
+  'kb-imported': {
+    name: 'git-branch',
+    color: 'var(--twin-green-700, #2F7A40)',
+  },
   info: { name: 'info-circle', color: 'var(--color-text-secondary)' },
 };
 

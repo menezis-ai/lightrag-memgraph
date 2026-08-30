@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { boot, seedDocuments } from './helpers';
 
 /**
@@ -17,7 +17,7 @@ test.describe('Documents pagination', () => {
       const n = String(i + 1).padStart(3, '0');
       return {
         doc_id: `page_doc_${n}`,
-        file_path: `/cib/runbooks/page-doc-${n}.md`,
+        file_path: `/demo/runbooks/page-doc-${n}.md`,
         content_summary: `Pagination probe document ${n}`,
         status: 'PROCESSED',
         folder: 'default',

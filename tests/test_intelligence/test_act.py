@@ -21,7 +21,7 @@ def _chunk(chunk_id: str, score: float, workspace: str = "upstream") -> ChunkRes
 
 async def test_hybrid_search_uses_structured_chunks_with_provenance(config):
     engine = SearchEngine(config)
-    rag = MagicMock(workspace="cib")
+    rag = MagicMock(workspace="demo")
     rag.aquery_data = AsyncMock(
         return_value={
             "status": "success",
@@ -50,7 +50,7 @@ async def test_hybrid_search_uses_structured_chunks_with_provenance(config):
             chunk_id="chunk-17",
             text="The exact passage retrieved by LightRAG.",
             score=0.91,
-            source_workspace="cib",
+            source_workspace="demo",
             document_id="doc-4",
             document_path="/runbook/oracle.pdf",
             metadata={"retrieval_rank": 1, "reference_id": "7"},

@@ -30,7 +30,7 @@ JWT_SECRET = "x" * 48
 def _make_settings() -> LightRAGServerSettings:
     return LightRAGServerSettings(
         working_dir="/tmp/lightrag_doc_mutation_authz_test",
-        workspace="cib",
+        workspace="demo",
         enable_langsmith_tracing=False,
         api_key=ROOT_KEY,
         jwt_secret=JWT_SECRET,

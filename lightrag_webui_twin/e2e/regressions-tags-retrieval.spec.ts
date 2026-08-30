@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, getMswStats, openTab } from './helpers';
 
 async function approveArgocd(page: Page) {
@@ -83,8 +83,15 @@ test.describe('Regression guards: canonical tags and retrieval contracts', () =>
   });
 
   test('@regression @tags @filters approved tag is usable across retag, document filters, and graph filters', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Moving from the filtered Documents view to Graph replaces its procedure query.',
+      ),
+    );
     // TR-RET-02 step 3 / audit C1: the retrieval-tab tag-filter
     // input was removed from the UI. The catalog-discipline check
     // moved to the document filter affordance (which still

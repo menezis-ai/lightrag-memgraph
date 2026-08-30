@@ -15,6 +15,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -43,7 +44,7 @@ const sampleError: FileUpload = {
   error: 'Exceeds 50 MB · ZIP format is not supported',
 };
 const sampleConfluence: LinkedSource = {
-  url: 'confluence.corp/cib/runbooks',
+  url: 'knowledge.example.com/demo/runbooks',
   type: 'confluence',
 };
 
@@ -86,7 +87,7 @@ describe('AddSourceModal — basic rendering', () => {
     // initialUrls is preserved in state and submitted, but its UI chip
     // doesn't render while the linked-sources block is gated.
     expect(
-      screen.queryByText('confluence.corp/cib/runbooks'),
+      screen.queryByText('knowledge.example.com/demo/runbooks'),
     ).toBeNull();
   });
 });
@@ -102,6 +103,35 @@ describe('AddSourceModal — Linked sources (Coming soon)', () => {
       'URL input (disabled — coming soon)',
     ) as HTMLInputElement;
     expect(input.disabled).toBe(true);
+  });
+
+  it('keeps the legacy DOM identical when catalogEnabled is false or omitted', () => {
+    const omitted = render(<AddSourceModal {...defaultProps()} />);
+    const legacyHtml = omitted.container.innerHTML;
+    omitted.unmount();
+
+    const explicit = render(
+      <AddSourceModal {...defaultProps()} catalogEnabled={false} />,
+    );
+    expect(explicit.container.innerHTML).toBe(legacyHtml);
+  });
+
+  it('links to the Sources RAG grid when the catalogue is enabled', async () => {
+    const onOpenLinkedSources = vi.fn();
+    render(
+      <AddSourceModal
+        {...defaultProps()}
+        catalogEnabled
+        onOpenLinkedSources={onOpenLinkedSources}
+      />,
+    );
+
+    expect(screen.queryByText('Coming soon')).toBeNull();
+    expect(screen.queryByLabelText(/URL input \(disabled/i)).toBeNull();
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Manage Sources RAG' }),
+    );
+    expect(onOpenLinkedSources).toHaveBeenCalledOnce();
   });
 
   it('still forwards initialUrls to onSubmit (state preserved while UI is gated)', async () => {
@@ -296,6 +326,43 @@ describe('AddSourceModal — files', () => {
     );
   });
 
+  it('preserves folder-relative paths for colliding basenames', async () => {
+    const onSubmit = vi.fn<(a: AddSourceAction) => void>();
+    render(<AddSourceModal {...defaultProps()} onSubmit={onSubmit} />);
+    const input = screen.getByTestId('addsource-folder-input') as HTMLInputElement;
+    const first = new File(['a'], 'report.pdf', { type: 'application/pdf' });
+    const second = new File(['b'], 'report.pdf', { type: 'application/pdf' });
+    Object.defineProperty(first, 'webkitRelativePath', {
+      value: 'root/team-a/report.pdf',
+    });
+    Object.defineProperty(second, 'webkitRelativePath', {
+      value: 'root/team-b/report.pdf',
+    });
+
+    await userEvent.upload(input, [first, second]);
+
+    expect(screen.getByText('root/team-a/report.pdf')).toBeInTheDocument();
+    expect(screen.getByText('root/team-b/report.pdf')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Add 2 sources' }));
+    expect(onSubmit.mock.calls[0][0].rawFiles).toHaveLength(2);
+    expect(onSubmit.mock.calls[0][0].fileOptions.map((item) => item.relativePath))
+      .toEqual(['root/team-a/report.pdf', 'root/team-b/report.pdf']);
+  });
+
+  it('offers explicit cancellation while a batch is uploading', async () => {
+    const onCancel = vi.fn();
+    render(
+      <AddSourceModal
+        {...defaultProps()}
+        submitting
+        onCancel={onCancel}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel upload' }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it('keeps same-name files as separate upload payloads', async () => {
     const onSubmit = vi.fn<(a: AddSourceAction) => void>();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -473,12 +540,61 @@ describe('AddSourceModal — submit & close', () => {
     expect(action.files).toHaveLength(1);
     expect(action.urls).toHaveLength(1);
     expect(action.tags).toEqual([]);
-    // fileOptions is emitted (classification-only), aligned with uploaded files.
-    // No classification selected → name only, no classification key.
-    expect(action.fileOptions).toEqual([{ name: 'oracle-config-guide.pdf' }]);
+    // Fixture-only rows carry no browser File and therefore cannot create a
+    // shifted fileOptions/rawFiles pair.
+    expect(action.rawFiles).toEqual([]);
+    expect(action.fileOptions).toEqual([]);
     // submit no longer self-closes — the host keeps the modal open during the
     // upload and closes it when the mutation settles.
     expect(p.onClose).not.toHaveBeenCalled();
+  });
+
+  it('renders host-reported state and error for each submitted file', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} />);
+    const input = screen.getByTestId('addsource-file-input') as HTMLInputElement;
+    await userEvent.upload(
+      input,
+      new File(['payload'], 'retry.md', { type: 'text/markdown' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Add 1 source/ }));
+    const action = p.onSubmit.mock.calls[0][0];
+
+    act(() => action.onFileStateChange?.(0, 'uploading'));
+    expect(screen.getByText(/0%/)).toBeInTheDocument();
+
+    act(() => action.onFileStateChange?.(0, 'error', 'Network interrupted'));
+    expect(screen.getByText('Network interrupted')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add 1 source/ })).toBeEnabled();
+  });
+
+  it('derives raw files, options and callbacks from one aligned record list', async () => {
+    const p = defaultProps();
+    render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
+    const input = screen.getByTestId('addsource-folder-input') as HTMLInputElement;
+    const first = new File(['a'], 'first.pdf', { type: 'application/pdf' });
+    const second = new File(['b'], 'second.pdf', { type: 'application/pdf' });
+    Object.defineProperty(first, 'webkitRelativePath', {
+      value: 'root/a/first.pdf',
+    });
+    Object.defineProperty(second, 'webkitRelativePath', {
+      value: 'root/b/second.pdf',
+    });
+    await userEvent.upload(input, [first, second]);
+
+    await userEvent.click(screen.getByRole('button', { name: /Add 3 sources/ }));
+    const action = p.onSubmit.mock.calls[0][0];
+    expect(action.rawFiles).toEqual([first, second]);
+    expect(action.fileOptions.map((item) => item.relativePath)).toEqual([
+      'root/a/first.pdf',
+      'root/b/second.pdf',
+    ]);
+
+    act(() => action.onFileStateChange?.(0, 'error', 'first failed'));
+    const firstRow = screen.getByText('root/a/first.pdf').closest('.file-row');
+    const secondRow = screen.getByText('root/b/second.pdf').closest('.file-row');
+    expect(firstRow).toHaveClass('error');
+    expect(secondRow).not.toHaveClass('error');
   });
 
   it('blocks close (X / Cancel / backdrop) and disables submit while submitting', async () => {
@@ -505,7 +621,13 @@ describe('AddSourceModal — submit & close', () => {
 
   it('flows the selected per-file MIP classification into the emitted fileOptions', async () => {
     const p = defaultProps();
-    render(<AddSourceModal {...p} initialFiles={[sampleUploaded]} />);
+    render(<AddSourceModal {...p} />);
+    await userEvent.upload(
+      screen.getByTestId('addsource-file-input'),
+      new File(['payload'], 'oracle-config-guide.pdf', {
+        type: 'application/pdf',
+      }),
+    );
 
     await userEvent.selectOptions(
       screen.getByLabelText('Classification for oracle-config-guide.pdf'),
@@ -523,10 +645,6 @@ describe('AddSourceModal — submit & close', () => {
 
   it('applies a C1/C2 bulk sensitivity only to uploadable files', async () => {
     const p = defaultProps();
-    const secondFile = {
-      ...sampleUploaded,
-      name: 'unix-notes.txt',
-    };
     const errorFile = {
       ...sampleUploaded,
       name: 'huge-archive.zip',
@@ -536,9 +654,15 @@ describe('AddSourceModal — submit & close', () => {
     render(
       <AddSourceModal
         {...p}
-        initialFiles={[sampleUploaded, secondFile, errorFile]}
+        initialFiles={[errorFile]}
       />,
     );
+    await userEvent.upload(screen.getByTestId('addsource-file-input'), [
+      new File(['pdf'], 'oracle-config-guide.pdf', {
+        type: 'application/pdf',
+      }),
+      new File(['text'], 'unix-notes.txt', { type: 'text/plain' }),
+    ]);
 
     await userEvent.selectOptions(
       screen.getByLabelText('Sensitivity for all files'),

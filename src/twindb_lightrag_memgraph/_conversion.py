@@ -1,6 +1,6 @@
 """MarkItDown-based pre-conversion of uploaded files to structured markdown.
 
-Supply-chain doctrine (``MARKITDOWN-INGESTION-PLAN.md``): Twin owns the
+Supply-chain doctrine (``docs/adr/005-markitdown-ingestion-supply-chain.md``): Twin owns the
 extraction stage. Files whose format MarkItDown handles better than
 LightRAG's native extractors are converted to markdown *before* enqueue, so
 every LightRAG version of the CI matrix ingests the same clean markdown

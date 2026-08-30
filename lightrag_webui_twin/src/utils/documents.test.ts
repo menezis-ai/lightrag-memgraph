@@ -17,7 +17,7 @@ function doc(overrides: Partial<Document> = {}): Document {
     metadata: {},
     type: 'file',
     tags: [],
-    folder: 'cib',
+    folder: 'demo',
     visibility: 'internal',
     ...overrides,
   };
@@ -80,19 +80,21 @@ describe('dedupeDocumentsBySource', () => {
     ]);
   });
 
-  it('keeps an optimistic upload until the backend has the same source', () => {
+  it('keeps an optimistic upload over a backend row for the same source', () => {
     const optimistic = doc({
       doc_id: 'upload-tmp',
       file_path: 'new-source.pdf',
       status: 'PENDING',
       _optimisticUpload: true,
     });
-    const other = doc({ doc_id: 'doc-other', file_path: 'other.pdf' });
+    const backend = doc({
+      doc_id: 'backend-row',
+      file_path: 'new-source.pdf',
+      status: 'PROCESSED',
+      chunks_count: 12,
+    });
 
-    expect(dedupeDocumentsBySource([optimistic, other])).toEqual([
-      optimistic,
-      other,
-    ]);
+    expect(dedupeDocumentsBySource([optimistic, backend])).toEqual([optimistic]);
   });
 
   it('breaks a same-rank tie by chunk count', () => {
@@ -148,11 +150,12 @@ describe('dedupeDocumentsBySource', () => {
     expect(dedupeDocumentsBySource([bad, good])).toEqual([good]);
   });
 
-  it('ranks a PROCESSING attempt without chunks above PENDING via path key', () => {
-    // Distinct file paths → distinct source keys → nothing deduped, but this
-    // still exercises the no-hash path: branch and the PROCESSING(no-chunks)
-    // and PENDING status ranks.
-    const pending = doc({ doc_id: 'p', file_path: 'a.pdf', status: 'PENDING' });
+  it('distinguishes PROCESSING rows with indexed chunks from source-order ties', () => {
+    const pending = doc({
+      doc_id: 'p',
+      file_path: 'a.pdf',
+      status: 'PENDING',
+    });
     const processingNoChunks = doc({
       doc_id: 'pn',
       file_path: 'a.pdf',
@@ -160,10 +163,96 @@ describe('dedupeDocumentsBySource', () => {
       chunks_count: 0,
     });
 
-    // Same path → deduped; ranks are equal (both 2) so chunk count (0 vs null→0)
-    // then updated_at decide; identical → keeps the first inserted as best.
-    const out = dedupeDocumentsBySource([pending, processingNoChunks]);
-    expect(out).toHaveLength(1);
+    // Both rank 2 when PROCESSING has no chunks, so the original server order
+    // is stable. A positive chunk count elevates PROCESSING above PENDING.
+    expect(dedupeDocumentsBySource([pending, processingNoChunks])).toEqual([
+      pending,
+    ]);
+    const processingWithChunks = doc({
+      doc_id: 'pc',
+      file_path: 'a.pdf',
+      status: 'PROCESSING',
+      chunks_count: 1,
+    });
+    expect(dedupeDocumentsBySource([pending, processingWithChunks])).toEqual([
+      processingWithChunks,
+    ]);
+  });
+
+  it('ranks PENDING above FAILED and retains the first exact tie', () => {
+    const pending = doc({ doc_id: 'pending', file_path: 'same.pdf' });
+    const failed = doc({
+      doc_id: 'failed',
+      file_path: 'same.pdf',
+      status: 'FAILED',
+    });
+    const sameAttempt = doc({ doc_id: 'same', file_path: 'same.pdf' });
+
+    expect(dedupeDocumentsBySource([failed, pending])).toEqual([pending]);
+    expect(dedupeDocumentsBySource([pending, sameAttempt])).toEqual([pending]);
+  });
+
+  it('keeps the better attempt when candidates arrive in reverse rank order', () => {
+    const processed = doc({
+      doc_id: 'processed',
+      file_path: 'rank.pdf',
+      status: 'PROCESSED',
+      chunks_count: 1,
+    });
+    const pending = doc({ doc_id: 'pending', file_path: 'rank.pdf' });
+    const manyChunks = doc({
+      doc_id: 'many',
+      file_path: 'chunks.pdf',
+      status: 'PROCESSING',
+      chunks_count: 10,
+    });
+    const fewChunks = doc({
+      doc_id: 'few',
+      file_path: 'chunks.pdf',
+      status: 'PROCESSING',
+      chunks_count: 1,
+    });
+    const newer = doc({
+      doc_id: 'newer',
+      file_path: 'date.pdf',
+      status: 'PROCESSED',
+      chunks_count: 1,
+      updated_at: '2026-06-10T12:00:00Z',
+    });
+    const older = doc({
+      doc_id: 'older',
+      file_path: 'date.pdf',
+      status: 'PROCESSED',
+      chunks_count: 1,
+      updated_at: '2026-06-10T08:00:00Z',
+    });
+
+    expect(dedupeDocumentsBySource([processed, pending])).toEqual([processed]);
+    expect(dedupeDocumentsBySource([manyChunks, fewChunks])).toEqual([
+      manyChunks,
+    ]);
+    expect(dedupeDocumentsBySource([newer, older])).toEqual([newer]);
+  });
+
+  it('normalizes fallback paths without collapsing distinct Unicode sources', () => {
+    const padded = doc({
+      doc_id: 'padded',
+      file_path: '  REPORT.PDF  ',
+      status: 'FAILED',
+    });
+    const canonical = doc({
+      doc_id: 'canonical',
+      file_path: 'report.pdf',
+      status: 'PENDING',
+    });
+    const sharpS = doc({ doc_id: 'sharp-s', file_path: 'straße.pdf' });
+    const doubleS = doc({ doc_id: 'double-s', file_path: 'strasse.pdf' });
+
+    expect(dedupeDocumentsBySource([padded, canonical])).toEqual([canonical]);
+    expect(dedupeDocumentsBySource([sharpS, doubleS])).toEqual([
+      sharpS,
+      doubleS,
+    ]);
   });
 
   it('keeps an unknown status (rank 0) only when nothing better shares the source', () => {
@@ -186,6 +275,13 @@ describe('documentContentHash', () => {
       metadata: { content_hash: '   ', sha256: 'DEADBEEF' },
     });
     expect(documentContentHash(d)).toEqual({
+      label: 'SHA256',
+      value: 'deadbeef',
+    });
+  });
+
+  it('trims a chosen hash value before lowercasing it', () => {
+    expect(documentContentHash(doc({ metadata: { sha256: '  DEADBEEF  ' } }))).toEqual({
       label: 'SHA256',
       value: 'deadbeef',
     });
@@ -220,5 +316,20 @@ describe('documentContentHash', () => {
       label: 'content_hash',
       value: 'first',
     });
+  });
+
+  it('does not merge different content hashes', () => {
+    const first = doc({
+      doc_id: 'hash-first',
+      file_path: 'first.pdf',
+      metadata: { sha256: 'aaaa' },
+    });
+    const second = doc({
+      doc_id: 'hash-second',
+      file_path: 'second.pdf',
+      metadata: { sha256: 'bbbb' },
+    });
+
+    expect(dedupeDocumentsBySource([first, second])).toEqual([first, second]);
   });
 });

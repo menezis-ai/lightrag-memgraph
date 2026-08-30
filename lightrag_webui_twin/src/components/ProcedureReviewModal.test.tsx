@@ -10,7 +10,16 @@
  *   - Retry visibility only on failed/rejected bundles
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -82,6 +91,9 @@ function wrap() {
   };
 }
 
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
+
 beforeEach(() => {
   bundlesById.clear();
   bundlesById.set(PENDING_BUNDLE.id, PENDING_BUNDLE);
@@ -90,12 +102,10 @@ beforeEach(() => {
   rejectCalls.length = 0;
   rerouteCalls.length = 0;
   retryCalls.length = 0;
-  server.listen({ onUnhandledRequest: 'bypass' });
 });
 
 afterEach(() => {
   server.resetHandlers();
-  server.close();
 });
 
 describe('ProcedureReviewModal — rendering', () => {
@@ -339,13 +349,13 @@ describe('ProcedureReviewModal — folderless bundle (422 mirror)', () => {
     expect(screen.getByTestId('procedure-review-approve')).toBeDisabled();
     expect(screen.getByTestId('procedure-review-reroute')).toBeDisabled();
 
-    await userEvent.selectOptions(select, 'cib');
+    await userEvent.selectOptions(select, 'demo');
     const approve = screen.getByTestId('procedure-review-approve');
     expect(approve).toBeEnabled();
     await userEvent.click(approve);
 
     await waitFor(() => expect(approveCalls.length).toBe(1));
-    expect(approveCalls[0].body).toEqual({ folder: 'cib' });
+    expect(approveCalls[0].body).toEqual({ folder: 'demo' });
   });
 
   it('bundles WITH a requesting folder never show the folder select', async () => {

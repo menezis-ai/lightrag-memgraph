@@ -7,7 +7,7 @@
  * both no-overlap contracts.
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { boot } from './helpers';
 
 test.describe('Responsive topbar', () => {

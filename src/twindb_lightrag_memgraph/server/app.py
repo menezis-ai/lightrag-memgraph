@@ -38,9 +38,13 @@ from neo4j.exceptions import ClientError as Neo4jClientError
 from neo4j.exceptions import Neo4jError
 from pydantic import BaseModel, Field
 
+from .api_wiring import api_wiring_probes, log_api_wiring_sanity
 from .auth import auth_router, configure_auth, require_auth
-from .api_wiring import log_api_wiring_sanity
-from .chunk_routes import create_chunk_routes, router as chunk_router
+from .chunk_routes import (
+    build_chunk_router,
+    create_chunk_routes,
+    router as chunk_router,
+)
 from .query.models import TwinQueryBody
 from .settings import LightRAGServerSettings, get_settings
 from .tracing import (
@@ -217,7 +221,12 @@ def _route_group(path: str) -> str:
 
 
 def _is_upload_path(path: str) -> bool:
-    return path in {DOCUMENTS_UPLOAD_PATH, f"{TWIN_API_PREFIX}/documents/upload"}
+    return path in {
+        DOCUMENTS_UPLOAD_PATH,
+        f"{TWIN_API_PREFIX}/documents/upload",
+        "/admin/portability/imports",
+        f"{TWIN_API_PREFIX}/admin/portability/imports",
+    }
 
 
 def _body_limit_for_path(path: str, settings: LightRAGServerSettings) -> int:
@@ -530,7 +539,9 @@ async def _init_webui_backends(settings: LightRAGServerSettings) -> None:
     from .webui_activitystore import MemgraphActivityStore
     from .webui_notificationstore import MemgraphNotificationStore
     from .webui_tagstore import MemgraphTagStore
+    from .source_links_store import MemgraphSourceLinkStore
     from .folder import load_folder_catalog
+    from .._constants import resolve_workspace
 
     backends_applied: list[str] = []
     if settings.webui_tag_backend == "memgraph":
@@ -542,7 +553,15 @@ async def _init_webui_backends(settings: LightRAGServerSettings) -> None:
     if not backends_applied:
         return
 
-    for folder in load_folder_catalog().folders:
+    folders = load_folder_catalog().folders
+    # Source links are document-scoped, not folder-scoped: a document can be
+    # MEMBER_OF several folders and must keep one provenance record.  Reuse
+    # the global workspace store across every folder projection, and ensure
+    # its indexes once rather than replaying identical DDL per folder.
+    source_link_store = MemgraphSourceLinkStore(workspace=resolve_workspace())
+    await source_link_store.initialize()
+
+    for folder in folders:
         # `mode="memgraph"` so the default folder doesn't silently expose
         # the demo documents/graph from `webui_seed` through
         # /twin/api/documents and /twin/api/graph/* on a real deploy
@@ -561,11 +580,12 @@ async def _init_webui_backends(settings: LightRAGServerSettings) -> None:
             notification_store = MemgraphNotificationStore(workspace=folder.id)
             await notification_store.initialize()
             store._notification_backend = notification_store  # noqa: SLF001
+        store._source_link_backend = source_link_store  # noqa: SLF001
         set_store(store, folder=folder.id)
     logger.info(
         "L2 patch applied (WebUI Memgraph backends: %s, folders=%s)",
         ", ".join(backends_applied),
-        ",".join(folder.id for folder in load_folder_catalog().folders),
+        ",".join(folder.id for folder in folders),
     )
 
 
@@ -681,60 +701,84 @@ def _build_lifespan(settings: LightRAGServerSettings):
     async def lifespan(app: FastAPI):
         global _rag
 
-        # -- L1 Patch: storage backends --
-        from twindb_lightrag_memgraph import register
+        # Startup and teardown share one try/finally: whatever the startup
+        # acquired before failing (a LightRAG instance, Bolt pools opened by
+        # initialize_storages() — including the fail-closed USE DATABASE
+        # refusal) is released, and an exception raised inside the body of
+        # the lifespan still reaches the teardown. Review of #451.
+        try:
+            # -- L1 Patch: storage backends --
+            from twindb_lightrag_memgraph import register
 
-        register()
-        logger.info("L1 patch applied (Memgraph storage backends)")
+            register()
+            logger.info("L1 patch applied (Memgraph storage backends)")
 
-        # -- Resolve API keys --
-        llm_api_key = settings.llm_binding_api_key or os.environ.get(
-            "OPENAI_API_KEY", ""
-        )
-        embed_api_key = settings.embedding_binding_api_key or os.environ.get(
-            "OPENAI_API_KEY", ""
-        )
+            # -- Resolve API keys --
+            llm_api_key = settings.llm_binding_api_key or os.environ.get(
+                "OPENAI_API_KEY", ""
+            )
+            embed_api_key = settings.embedding_binding_api_key or os.environ.get(
+                "OPENAI_API_KEY", ""
+            )
 
-        # -- Build functions --
-        embedding_func = _build_embedding_func(settings, embed_api_key)
-        llm_func = _build_llm_func(settings, llm_api_key)
+            # -- Build functions --
+            embedding_func = _build_embedding_func(settings, embed_api_key)
+            llm_func = _build_llm_func(settings, llm_api_key)
 
-        # -- Instantiate LightRAG --
-        rag_kwargs = _build_rag_kwargs(settings, embedding_func, llm_func)
-        _rag = LightRAG(**rag_kwargs)
-        # Mirror the upstream server boot (lightrag.api.lightrag_server
-        # lifespan): initialize_storages() is the real API — LightRAG has no
-        # initialize() — and it auto-initializes pipeline_status for
-        # rag.workspace on every supported version (1.4.9.11 wheel
-        # lightrag.py:684-687, 1.5.4 lightrag.py:1287-1289), so no separate
-        # initialize_pipeline_status() call is needed.
-        await _rag.initialize_storages()
-        logger.info(
-            "LightRAG initialized (workspace=%s, kv=%s, vec=%s, graph=%s)",
-            settings.workspace or "(default)",
-            settings.kv_storage,
-            settings.vector_storage,
-            settings.graph_storage,
-        )
-        await _backfill_graph_relation_ids(settings, _rag)
+            # -- Instantiate LightRAG --
+            rag_kwargs = _build_rag_kwargs(settings, embedding_func, llm_func)
+            _rag = LightRAG(**rag_kwargs)
+            # Mirror the upstream server boot (lightrag.api.lightrag_server
+            # lifespan): initialize_storages() is the real API — LightRAG has no
+            # initialize() — and it auto-initializes pipeline_status for
+            # rag.workspace on every supported version (1.4.9.11 wheel
+            # lightrag.py:684-687, 1.5.4 lightrag.py:1287-1289), so no separate
+            # initialize_pipeline_status() call is needed.
+            await _rag.initialize_storages()
+            logger.info(
+                "LightRAG initialized (workspace=%s, kv=%s, vec=%s, graph=%s)",
+                settings.workspace or "(default)",
+                settings.kv_storage,
+                settings.vector_storage,
+                settings.graph_storage,
+            )
+            await _backfill_graph_relation_ids(settings, _rag)
 
-        # -- L2 Patch: tracing --
-        if settings.enable_langsmith_tracing:
-            apply_lang_with_tracing(_rag)
-            logger.info("L2 patch applied (LangSmith tracing)")
+            # -- L2 Patch: tracing --
+            if settings.enable_langsmith_tracing:
+                apply_lang_with_tracing(_rag)
+                logger.info("L2 patch applied (LangSmith tracing)")
 
-        # -- L2 Patch: WebUI store backends (S4c) --
-        await _init_webui_backends(settings)
+            # -- L2 Patch: WebUI store backends (S4c) --
+            await _init_webui_backends(settings)
 
-        yield
+            yield
+        finally:
+            # -- Shutdown --
+            # Release what startup acquired, best-effort and in order: LightRAG
+            # storages first (they own the graph driver), then Twin's shared Bolt
+            # pools. A failure here is logged, never raised — shutdown must
+            # complete. Before 2026-08-25 only the reference was dropped, leaving
+            # up to three Bolt pools open per worker until process exit (audit).
+            rag, _rag = _rag, None
+            if rag is not None:
+                try:
+                    await rag.finalize_storages()
+                except Exception:  # noqa: BLE001 - shutdown must not raise
+                    logger.warning(
+                        "finalize_storages() failed at shutdown", exc_info=True
+                    )
+            try:
+                from .. import _pool
 
-        # -- Shutdown --
-        _rag = None
-        if _webui_uses_memgraph(settings):
-            from .webui_router import reset_store
+                await _pool.close_driver()
+            except Exception:  # noqa: BLE001 - shutdown must not raise
+                logger.warning("Memgraph pool close failed at shutdown", exc_info=True)
+            if _webui_uses_memgraph(settings):
+                from .webui_router import reset_store
 
-            reset_store()
-        logger.info("LightRAG server shut down")
+                reset_store()
+            logger.info("LightRAG server shut down")
 
     return lifespan
 
@@ -1365,6 +1409,11 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # -- Chunk routes (auth-protected) --
     create_chunk_routes(_get_rag)
     app.include_router(chunk_router, dependencies=[Depends(require_auth)])
+    app.include_router(
+        build_chunk_router(_get_rag, operation_id_prefix="twin_"),
+        prefix=TWIN_API_PREFIX,
+        dependencies=[Depends(require_auth)],
+    )
 
     # -- WebUI phase-1 surface (auth-protected) --
     #
@@ -1390,6 +1439,36 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
             "L2 patch applied (WebUI phase-1 router; mounted at / and %s)",
             TWIN_API_PREFIX,
         )
+
+    # -- Central catalogue linked sources (configuration-gated). --
+    # Both variables absent means strict compatibility: no routes and the
+    # existing WebUI stays in its Coming-soon state.
+    from .linked_sources_routes import (
+        CatalogProxyConfig,
+        build_linked_sources_router,
+        linked_sources_wiring_probes,
+    )
+    from .catalog_profile_routes import (
+        build_catalog_profile_router,
+        catalog_profile_wiring_probes,
+    )
+
+    _catalog_proxy_config = CatalogProxyConfig.from_env()
+    _linked_sources_probes = ()
+    if _catalog_proxy_config is not None:
+        app.include_router(
+            build_linked_sources_router(_catalog_proxy_config),
+            prefix=TWIN_API_PREFIX,
+        )
+        app.include_router(
+            build_catalog_profile_router(),
+            prefix=TWIN_API_PREFIX,
+        )
+        _linked_sources_probes = (
+            *linked_sources_wiring_probes(TWIN_API_PREFIX),
+            *catalog_profile_wiring_probes(TWIN_API_PREFIX),
+        )
+        logger.info("Catalogue instance routes mounted at %s", TWIN_API_PREFIX)
 
     # -- Twin overlay query routes (`/twin/api/query` + `/twin/api/query/stream`)
     # The native `POST /query` declared above is the legacy single-shot
@@ -1450,7 +1529,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         TWIN_API_PREFIX,
     )
 
-    # -- Procedure approval workflow (PROCEDURE-PROFILE-PLAN.md, PR 2).
+    # -- Procedure approval workflow (docs/adr/007-procedure-pdf-profile.md).
     # List auth-only + folder-bound; detail/decisions admin-gated. Also
     # wires the seam event sink so parked/failed bundles surface in the
     # activity feed + notifications. MUST also be mounted by the overlay
@@ -1501,7 +1580,11 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     from .openapi_docs import install_openapi_documentation
 
     install_openapi_documentation(app)
-    log_api_wiring_sanity(app, surface="standalone")
+    log_api_wiring_sanity(
+        app,
+        probes=(*api_wiring_probes(TWIN_API_PREFIX), *_linked_sources_probes),
+        surface="standalone",
+    )
 
     return app
 

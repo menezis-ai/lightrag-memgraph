@@ -73,8 +73,8 @@ def _make_token(rsa_keypair, **overrides) -> str:
         "iss": "https://idp.example/realms/twin",
         "aud": "twin",
         "sub": "user-42",
-        "email": "claire@example.com",
-        "name": "Claire B.",
+        "email": "demo.steward@example.com",
+        "name": "Demo Steward",
         "groups": ["twin-steward"],
         "twin_folders": ["default", "sandbox"],
         "scope": "read:documents write:documents",
@@ -158,28 +158,28 @@ class TestIdpConfigFromEnv:
                 "TWIN_IDP_ALGORITHMS": "RS256, ES256",
                 "TWIN_IDP_COOKIE_NAME": "myaccess_session",
                 "TWIN_IDP_NAME": "myaccess",
-                "TWIN_IDP_REALM": "corp-cib",
+                "TWIN_IDP_REALM": "demo-realm",
             }
         )
         assert cfg is not None
         assert cfg.algorithms == ("RS256", "ES256")
         assert cfg.cookie_name == "myaccess_session"
         assert cfg.idp_name == "myaccess"
-        assert cfg.idp_realm == "corp-cib"
+        assert cfg.idp_realm == "demo-realm"
 
     def test_custom_group_palier_map(self):
         cfg = idp_jwt.IdpConfig.from_env(
             env={
                 "TWIN_IDP_JWKS_URL": "https://idp/jwks",
                 "TWIN_IDP_GROUP_TO_PALIER_JSON": json.dumps(
-                    {"corp.cib.steward": 3, "corp.cib.viewer": 1}
+                    {"demo.realm.steward": 3, "demo.realm.viewer": 1}
                 ),
             }
         )
         assert cfg is not None
         assert cfg.group_to_palier == {
-            "corp.cib.steward": 3,
-            "corp.cib.viewer": 1,
+            "demo.realm.steward": 3,
+            "demo.realm.viewer": 1,
         }
 
     def test_invalid_group_palier_json_falls_back_to_default(self):
@@ -205,12 +205,12 @@ class TestIdpConfigFromEnv:
         cfg = idp_jwt.IdpConfig.from_env(
             env={
                 "TWIN_IDP_JWKS_URL": "https://idp/jwks",
-                "TWIN_IDP_ADMIN_GROUPS": "corp.cib.kb-admin , corp.cib.platform-ops",
+                "TWIN_IDP_ADMIN_GROUPS": "demo.realm.kb-admin , demo.realm.platform-ops",
             }
         )
         assert cfg is not None
         assert cfg.admin_groups == frozenset(
-            {"corp.cib.kb-admin", "corp.cib.platform-ops"}
+            {"demo.realm.kb-admin", "demo.realm.platform-ops"}
         )
 
     def test_admin_groups_explicit_empty_string_means_nobody(self):
@@ -238,8 +238,8 @@ class TestClaimsMapping:
         user = idp_jwt.claims_to_user(
             {
                 "sub": "user-42",
-                "email": "claire@example.com",
-                "name": "Claire B.",
+                "email": "demo.steward@example.com",
+                "name": "Demo Steward",
                 "groups": ["twin-steward"],
                 "twin_folders": ["default", "sandbox"],
                 "scope": "read:documents write:documents",
@@ -248,8 +248,8 @@ class TestClaimsMapping:
             cfg,
         )
         assert user["sso_subject"] == "user-42"
-        assert user["email"] == "claire@example.com"
-        assert user["name"] == "Claire B."
+        assert user["email"] == "demo.steward@example.com"
+        assert user["name"] == "Demo Steward"
         assert user["palier"] == {
             "level": 3,
             "label": "Steward",
@@ -843,6 +843,9 @@ class TestAuthStatusIntegration:
         assert r.json()["authenticated"] is True
         assert r.json()["login_required"] is False
         assert r.json()["user"] == "user-42"
+        assert r.json()["identity"]["sso_subject"] == "user-42"
+        assert r.json()["identity"]["palier"]["level"] == 3
+        assert r.json()["identity"]["palier"]["label"] == "Steward"
 
 
 # ---------------------------------------------------------------------------
@@ -870,7 +873,7 @@ class TestRuntimeConfigDebugUserStripped:
 
         cfg = _build_runtime_config()
         assert "debugUser" in cfg
-        assert cfg["debugUser"]["name"] == "operator@twin.local"
+        assert cfg["debugUser"]["name"] == "operator@example.com"
 
     def test_debug_user_stripped_when_idp_active(self, monkeypatch):
         monkeypatch.setenv("TWIN_IDP_JWKS_URL", "https://idp/jwks")

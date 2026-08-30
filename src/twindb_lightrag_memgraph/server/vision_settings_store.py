@@ -4,7 +4,7 @@ Backs ``/twin/api/settings/vision`` (see ``vision_settings_routes.py``).
 Only curation and procedure activation are runtime-mutable — the
 infrastructure wiring (endpoint URL, API key, model, timeouts, size caps)
 stays env-only by design (secrets + SSRF surface, see
-MARKITDOWN-INGESTION-PLAN.md):
+docs/adr/005-markitdown-ingestion-supply-chain.md):
 
 - ``min_ocr_chars`` — RapidOCR pre-filter threshold,
 - ``drop_classes`` — vision classifications refused after the LLM call.
@@ -47,14 +47,13 @@ def _now_ms() -> int:
 async def initialize(workspace: str) -> None:
     """Best-effort index on ``id`` for the settings label."""
     label = _label(workspace)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
-            try:
-                await result.consume()
-            except Exception as exc:  # index may already exist
-                if "already exists" not in str(exc).lower():
-                    raise
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
+        try:
+            await result.consume()
+        except Exception as exc:  # index may already exist
+            if "already exists" not in str(exc).lower():
+                raise
 
 
 async def get_settings(workspace: str) -> dict[str, Any] | None:
@@ -94,21 +93,19 @@ async def update_settings(
         "updated_at": _now_ms(),
         "updated_by": updated_by,
     }
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            result = await session.run(
-                f"MERGE (s:`{label}` {{id: $id}}) SET s.data = $data",
-                id=SETTINGS_ID,
-                data=json.dumps(data, ensure_ascii=False),
-            )
-            await result.consume()
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        result = await session.run(
+            f"MERGE (s:`{label}` {{id: $id}}) SET s.data = $data",
+            id=SETTINGS_ID,
+            data=json.dumps(data, ensure_ascii=False),
+        )
+        await result.consume()
     return data
 
 
 async def reset_workspace(workspace: str) -> None:
     """Test helper: drop the settings node for ``workspace``."""
     label = _label(workspace)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            result = await session.run(f"MATCH (s:`{label}`) DETACH DELETE s")
-            await result.consume()
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        result = await session.run(f"MATCH (s:`{label}`) DETACH DELETE s")
+        await result.consume()

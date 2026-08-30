@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock
 
-import pytest
 
 from twindb_lightrag_memgraph.patches import registry
 

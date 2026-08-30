@@ -205,12 +205,12 @@ describe('useAppNavigation — onSwitchFolder', () => {
     const opts = makeOptions();
     const { result } = renderHook(() => useAppNavigation(opts));
 
-    result.current.onSwitchFolder('cib');
+    result.current.onSwitchFolder('demo');
 
     expect(replaceStateSpy).toHaveBeenCalledWith(null, '', '/');
-    expect(setActiveFolder).toHaveBeenCalledWith('cib');
-    expect(writeUiPreference).toHaveBeenCalledWith(FOLDER_STORAGE_KEY, 'cib');
-    expect(opts.setFolderState).toHaveBeenCalledWith('cib');
+    expect(setActiveFolder).toHaveBeenCalledWith('demo');
+    expect(writeUiPreference).toHaveBeenCalledWith(FOLDER_STORAGE_KEY, 'demo');
+    expect(opts.setFolderState).toHaveBeenCalledWith('demo');
 
     // Notification + detail state cleared.
     expect(opts.setReadNotificationIds).toHaveBeenCalledTimes(1);

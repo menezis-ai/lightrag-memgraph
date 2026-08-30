@@ -160,21 +160,20 @@ class MemgraphTagStore:
 
     async def initialize(self) -> None:
         """Create id-indexes on the two labels. Idempotent."""
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                for label in (self._tag_label, self._cat_label):
-                    try:
-                        result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
-                        await result.consume()
-                        logger.info("[WebuiTagStore] Index on :%s(id) ensured", label)
-                    except Exception as e:  # noqa: BLE001 — narrow check below
-                        if "already exists" in str(e).lower():
-                            logger.debug(
-                                "[WebuiTagStore] Index already exists on :%s(id)",
-                                label,
-                            )
-                        else:
-                            raise
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            for label in (self._tag_label, self._cat_label):
+                try:
+                    result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
+                    await result.consume()
+                    logger.info("[WebuiTagStore] Index on :%s(id) ensured", label)
+                except Exception as e:  # noqa: BLE001 — narrow check below
+                    if "already exists" in str(e).lower():
+                        logger.debug(
+                            "[WebuiTagStore] Index already exists on :%s(id)",
+                            label,
+                        )
+                    else:
+                        raise
 
     async def bootstrap_if_empty(
         self,
@@ -361,12 +360,9 @@ class MemgraphTagStore:
             )
 
         # Mirror: drop existing then write fresh.
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{self._cat_label}`) DETACH DELETE n"
-                )
-                await result.consume()
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(f"MATCH (n:`{self._cat_label}`) DETACH DELETE n")
+            await result.consume()
         await self._write_many(self._cat_label, "id", normalized)
 
         logger.info(
@@ -503,17 +499,16 @@ class MemgraphTagStore:
         return copy.deepcopy(entry)
 
     async def delete_tag(self, tag: str) -> bool:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{self._tag_label}` {{id: $id}}) "
-                    "WITH n, count(n) AS c "
-                    "DETACH DELETE n "
-                    "RETURN c",
-                    id=tag,
-                )
-                record = await result.single()
-                await result.consume()
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"MATCH (n:`{self._tag_label}` {{id: $id}}) "
+                "WITH n, count(n) AS c "
+                "DETACH DELETE n "
+                "RETURN c",
+                id=tag,
+            )
+            record = await result.single()
+            await result.consume()
         return bool(record and record.get("c", 0) > 0)
 
     # -- Internals ---------------------------------------------------
@@ -552,28 +547,22 @@ class MemgraphTagStore:
             {"id": str(item[id_key]), "data": json.dumps(item, sort_keys=True)}
             for item in items
         ]
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"""
                     UNWIND $rows AS row
                     MERGE (n:`{label}` {{id: row.id}})
                     ON CREATE SET n.`__created_at` = timestamp()
                     SET n.data = row.data, n.`__updated_at` = timestamp()
                     """,
-                    rows=rows,
-                )
-                await result.consume()
+                rows=rows,
+            )
+            await result.consume()
 
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
-
-
-def make_in_memory_store() -> InMemoryTagStore:
-    """Build the default in-memory store seeded from ``webui_seed``."""
-    return InMemoryTagStore()
 
 
 async def make_memgraph_store(workspace: str = "default") -> MemgraphTagStore:

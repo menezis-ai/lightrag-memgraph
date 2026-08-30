@@ -74,7 +74,7 @@ describe('useRequestTag', () => {
         tag: 'newtag',
         def: 'A new tag',
         category: 'infra',
-        actor: 'claire.benoit',
+        actor: 'demo.steward',
       });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -94,7 +94,7 @@ describe('useApproveTag', () => {
     );
     const { result } = renderHook(() => useApproveTag(), { wrapper: wrapper() });
     await act(async () => {
-      await result.current.mutateAsync({ name: 'argocd', actor: 'claire.benoit' });
+      await result.current.mutateAsync({ name: 'argocd', actor: 'demo.steward' });
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/tags/argocd/approve');
@@ -145,7 +145,7 @@ describe('useSuggestTagEdit', () => {
         def: 'new',
         aliases: ['rmgr'],
         justification: 'clarify',
-        actor: 'claire',
+        actor: 'demo.steward',
       });
     });
     const [url, init] = fetchMock.mock.calls[0];
@@ -156,7 +156,7 @@ describe('useSuggestTagEdit', () => {
       def: 'new',
       aliases: ['rmgr'],
       justification: 'clarify',
-      actor: 'claire',
+      actor: 'demo.steward',
     });
   });
 });
@@ -183,13 +183,13 @@ describe('useReactivateTag', () => {
       wrapper: wrapper(),
     });
     await act(async () => {
-      await result.current.mutateAsync({ name: 'rman', actor: 'claire' });
+      await result.current.mutateAsync({ name: 'rman', actor: 'demo.steward' });
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/tags/rman/reactivate');
     expect((init as RequestInit).method).toBe('POST');
     const body = JSON.parse((init as RequestInit).body as string);
-    expect(body.actor).toBe('claire');
+    expect(body.actor).toBe('demo.steward');
   });
 });
 
@@ -238,7 +238,7 @@ describe('useBulkDeleteDocuments', () => {
     await act(async () => {
       await result.current.mutateAsync({
         doc_ids: ['doc-a', 'doc-b'],
-        actor: 'claire.benoit',
+        actor: 'demo.steward',
       });
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -247,7 +247,7 @@ describe('useBulkDeleteDocuments', () => {
     expect((init as RequestInit).method).toBe('POST');
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.doc_ids).toEqual(['doc-a', 'doc-b']);
-    expect(body.actor).toBe('claire.benoit');
+    expect(body.actor).toBe('demo.steward');
   });
 
   it('flags targeted docs with _deleting in cache during the in-flight call', async () => {
@@ -281,7 +281,7 @@ describe('useBulkDeleteDocuments', () => {
     act(() => {
       mutPromise = result.current.mutateAsync({
         doc_ids: ['doc-a', 'doc-c'],
-        actor: 'claire.benoit',
+        actor: 'demo.steward',
       });
     });
 

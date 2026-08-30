@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { openTab } from './helpers';
 
 const backendUrl = process.env.REAL_BACKEND_URL?.replace(/\/$/, '') ?? '';
@@ -8,7 +8,36 @@ const expectAuth = process.env.REAL_E2E_EXPECT_AUTH === 'true';
 const mutationDocId = process.env.REAL_E2E_MUTATION_DOC_ID;
 const configuredRetagTag = process.env.REAL_E2E_RETAG_TAG;
 const bulkDeleteDocId = process.env.REAL_E2E_BULK_DELETE_DOC_ID;
-const uploadForDelete = process.env.REAL_E2E_UPLOAD_FOR_DELETE === 'true';
+const uploadForDeleteSetting = process.env.REAL_E2E_UPLOAD_FOR_DELETE;
+const uploadForDelete = uploadForDeleteSetting === 'true';
+
+function assertRealCiFixtures(): void {
+  // The generic MSW gate deliberately loads this file without a backend URL;
+  // keep that whole-file skip clean. Once CI names a real target, however,
+  // missing non-LLM fixtures are configuration errors, not test skips.
+  if (process.env.CI !== 'true' || !backendUrl) {
+    return;
+  }
+
+  const missing: string[] = [];
+  if (!process.env.REAL_BACKEND_FOLDER) missing.push('REAL_BACKEND_FOLDER');
+  if (!authToken) missing.push('REAL_BACKEND_AUTH_TOKEN or VITE_AUTH_TOKEN');
+  if (!expectAuth) missing.push('REAL_E2E_EXPECT_AUTH=true');
+  if (!mutationDocId) missing.push('REAL_E2E_MUTATION_DOC_ID');
+  if (!configuredRetagTag) missing.push('REAL_E2E_RETAG_TAG');
+  if (!['true', 'false'].includes(uploadForDeleteSetting ?? '')) {
+    missing.push('REAL_E2E_UPLOAD_FOR_DELETE=true|false');
+  }
+  if (!uploadForDelete && !bulkDeleteDocId) {
+    missing.push('REAL_E2E_BULK_DELETE_DOC_ID');
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Real-backend CI fixtures missing: ${missing.join(', ')}`);
+  }
+}
+
+assertRealCiFixtures();
 
 interface DocumentListEnvelope {
   items: {
@@ -33,6 +62,10 @@ interface ActivityEnvelope {
     kind: string;
     summary?: string;
     meta?: Record<string, unknown>;
+    target?: {
+      id?: string;
+      label?: string;
+    };
   }[];
   total: number;
 }
@@ -255,10 +288,9 @@ test.describe('real backend smoke', () => {
             idp_realm: 'real-backend',
             sub: 'real-e2e',
             session_expires: '2099-12-31T23:59:00Z',
-            // admin:folders mirrors the dev persona AND the palier-1 server
-            // reality (IdP dormant: the static-key identity passes the admin
-            // gates) — without it the admin affordances (procedure Review,
-            // folder admin) are invisible and untestable here.
+            // Deliberately privileged-looking fixture: /auth-status is the
+            // authority, so the static key (no RBAC claims) must still project
+            // a Reader and keep admin affordances hidden.
             gateway_scopes: [
               'read:documents',
               'read:query',
@@ -378,6 +410,48 @@ test.describe('real backend smoke', () => {
         label: 'FOCUS_NEIGHBOR',
       });
       createdRelationId = relation.body.id;
+
+      // This is the #87 end-to-end Activity contract: a real graph mutation
+      // produces a record found through the durable target id, then the
+      // browser renders that exact record in its Activity journey.
+      const activityPath = `/twin/api/activity?${new URLSearchParams({
+        'resource.id': selected.id,
+        kind: 'graph-entity-edited',
+      }).toString()}`;
+      const activity = await fetchFromBrowser<ActivityEnvelope>(page, activityPath);
+      expect(activity.ok, JSON.stringify(activity.body)).toBe(true);
+      expect(
+        activity.body.items.some(
+          (event) =>
+            event.target?.id === selected.id && event.meta?.operation === 'create',
+        ),
+      ).toBe(true);
+
+      await openTab(page, 'Activity');
+      await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
+      const activitySearch = page.getByLabel('Search events');
+      const filteredActivity = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === 'GET' &&
+          url.pathname.endsWith('/twin/api/activity') &&
+          url.searchParams.get('q') === selected.name
+        );
+      });
+      await activitySearch.fill(selected.name);
+      await filteredActivity;
+      const refreshedActivity = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === 'GET' &&
+          url.pathname.endsWith('/twin/api/activity') &&
+          url.searchParams.get('q') === selected.name
+        );
+      });
+      await page.getByRole('button', { name: 'Refresh' }).click();
+      await refreshedActivity;
+      await expect(page.getByRole('heading', { name: selected.name })).toBeVisible();
+      await expect(page.getByRole('complementary')).toContainText('created');
 
       await page
         .getByRole('navigation')
@@ -725,10 +799,10 @@ test.describe('real backend smoke', () => {
     await expect(page.locator('.msg-assistant')).toBeVisible();
   });
 
-  test('procedure-typed upload parks a real failed bundle; reject persists in the store', async ({
+  test('procedure-typed upload parks a real failed bundle; credential-only UI stays read-only and server reject persists', async ({
     page,
   }) => {
-    // Upload + park + review + reload does not fit the default 30s budget.
+    // Upload + park + server rejection + reload does not fit the default 30s budget.
     test.setTimeout(120_000);
     // Composition test for the approval workflow against the REAL seam +
     // fcntl-locked procedure store. The CI backend installs neither
@@ -783,26 +857,33 @@ test.describe('real backend smoke', () => {
       'Procedure failed',
     );
 
-    // Real review modal: the admin detail route serves the bundle, and the
-    // retry affordance is disarmed through the same /settings/vision contract
-    // the WebUI reads (procedure ingestion off/unavailable on this backend).
-    await page.getByTestId(`pending-proc-review-${bundleId}`).click();
-    const modal = page.getByTestId('procedure-review-modal');
-    await expect(modal).toBeVisible();
-    await expect(modal).toContainText(filename);
-    await expect(page.getByTestId('procedure-review-retry')).toBeDisabled();
-    await expect(page.getByTestId('procedure-review-retry-disabled')).toBeVisible();
+    // The backend is protected by a static root key. It can authorize admin
+    // routes, but /auth-status has no RBAC claims to project: the frontend must
+    // therefore stay Reader instead of trusting the injected debug Steward.
+    await expect(
+      page.getByTestId(`pending-proc-review-${bundleId}`),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId(`pending-proc-reject-${bundleId}`),
+    ).toHaveCount(0);
 
-    // Reject through the UI — the decision must land in the real store.
-    await page
-      .getByTestId('procedure-review-reject-comment')
-      .fill('real e2e reject');
-    await page.getByTestId('procedure-review-reject').click();
-    await expect(page.getByRole('status')).toContainText('Procedure rejected');
-    await expect(modal).toBeHidden();
-    await expect(page.getByTestId(`pending-proc-state-${bundleId}`)).toContainText(
-      'Procedure rejected',
+    // Preserve the real store composition coverage through the authoritative
+    // server seam. The bearer remains server-authorized even though the UI
+    // correctly refuses to manufacture a Steward identity from it.
+    const detail = await fetchFromBrowser<{ file_name: string }>(
+      page,
+      `/twin/api/procedures/${bundleId}`,
     );
+    expect(detail.ok, JSON.stringify(detail.body)).toBe(true);
+    expect(detail.body.file_name).toBe(filename);
+
+    const rejected = await fetchFromBrowser<{ state: string }>(
+      page,
+      `/twin/api/procedures/${bundleId}/reject`,
+      { method: 'POST', body: { comment: 'real e2e reject' } },
+    );
+    expect(rejected.ok, JSON.stringify(rejected.body)).toBe(true);
+    expect(rejected.body.state).toBe('rejected');
 
     // Full reload: the rejected state survives — file-backed store, not
     // client cache or optimistic UI.

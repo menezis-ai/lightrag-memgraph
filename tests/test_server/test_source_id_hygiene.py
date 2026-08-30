@@ -91,7 +91,7 @@ async def test_physical_delete_cleans_captured_source_path(monkeypatch):
     class _DocStatus:
         async def get_by_id(self, doc_id):
             assert doc_id == "doc-1"
-            return {"id": doc_id, "file_path": "/inputs/cib/alberto.pdf"}
+            return {"id": doc_id, "file_path": "/inputs/demo/demo.qa.pdf"}
 
     rag = _FakeRag()
     rag.doc_status = _DocStatus()
@@ -112,7 +112,7 @@ async def test_physical_delete_cleans_captured_source_path(monkeypatch):
 
     await router._delete_doc_from_rag(rag, "doc-1")
 
-    assert cleaned == ["/inputs/cib/alberto.pdf"]
+    assert cleaned == ["/inputs/demo/demo.qa.pdf"]
 
 
 async def test_concurrent_sweep_requests_coalesce(monkeypatch):

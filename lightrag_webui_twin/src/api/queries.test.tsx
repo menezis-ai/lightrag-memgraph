@@ -193,7 +193,7 @@ describe('useActivity', () => {
       range: '30d',
       kind: 'doc-retagged',
       sev: 'warning',
-      actor: 'claire.benoit',
+      actor: 'demo.steward',
       q: 'oracle',
       resourceId: 'doc-123',
       limit: 5,
@@ -213,7 +213,7 @@ describe('useActivity', () => {
     expect(url.searchParams.get('range')).toBe('30d');
     expect(url.searchParams.get('kind')).toBe('doc-retagged');
     expect(url.searchParams.get('sev')).toBe('warning');
-    expect(url.searchParams.get('actor')).toBe('claire.benoit');
+    expect(url.searchParams.get('actor')).toBe('demo.steward');
     expect(url.searchParams.get('q')).toBe('oracle');
     expect(url.searchParams.get('resource.id')).toBe('doc-123');
     expect(url.searchParams.get('limit')).toBe('5');
@@ -944,6 +944,8 @@ describe('useUploadDocumentsBatch', () => {
   });
 
   it('captures per-file failures as rejected settled results', async () => {
+    const firstStates = vi.fn();
+    const secondStates = vi.fn();
     fetchMock.mockImplementation(async (url, init) => {
       if (String(url).includes('/documents/resolve-upload')) {
         return jsonResponse({ action: 'upload' });
@@ -959,12 +961,18 @@ describe('useUploadDocumentsBatch', () => {
     });
     await act(async () => {
       const res = await result.current.mutateAsync([
-        new File(['a'], 'a.txt'),
-        new File(['b'], 'b.txt'),
+        { file: new File(['a'], 'a.txt'), onStateChange: firstStates },
+        { file: new File(['b'], 'b.txt'), onStateChange: secondStates },
       ]);
       const statuses = res.map((r) => r.status).sort();
       expect(statuses).toEqual(['fulfilled', 'rejected']);
     });
+    expect(firstStates.mock.calls.map(([state]) => state)).toEqual([
+      'uploading',
+      'complete',
+    ]);
+    expect(secondStates.mock.calls[0]).toEqual(['uploading']);
+    expect(secondStates.mock.calls[1][0]).toBe('error');
   });
 
   it('handles an empty upload list (workerCount floor branch)', async () => {

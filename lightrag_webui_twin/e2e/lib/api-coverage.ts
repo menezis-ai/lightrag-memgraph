@@ -9,9 +9,9 @@
  *     probes the whole surface with THAT non-admin operator key.
  *
  * Surface = every /twin/api route the live OpenAPI declares (discovered at
- * runtime — 100% by construction, no committed catalog) PLUS the native
- * shim routes (an explicit, fixed contract: they share root paths with
- * LightRAG natives, so OpenAPI discovery would collide).
+ * runtime, with no committed catalog) PLUS the native shim routes (an
+ * explicit, fixed contract: they share root paths with LightRAG natives, so
+ * OpenAPI discovery would collide).
  *
  * Per route: never 5xx on hostile input + no driver-error leak, wrong
  * method 4xx, missing-bearer 401/403 on non-public routes (when auth is
@@ -45,6 +45,8 @@ const PUBLIC_TWIN_PATHS = new Set([
 export interface CoverageRoute {
   method: Method;
   path: string;
+  /** All methods declared for this exact path, used to select a truly wrong verb. */
+  supportedMethods?: readonly Method[];
   hasBody: boolean;
   isPublic: boolean;
   isAdminOnly: boolean;
@@ -57,6 +59,14 @@ export interface CoverageRoute {
 // will make the generated-key job fail until its expected security boundary is
 // reviewed and recorded here.
 const ADMIN_ONLY_TWIN_OPERATIONS = new Set([
+  'POST /twin/api/admin/portability/exports',
+  'GET /twin/api/admin/portability/exports/{job_id}',
+  'POST /twin/api/admin/portability/imports',
+  'GET /twin/api/admin/portability/imports/{job_id}',
+  'POST /twin/api/admin/portability/imports/{job_id}/approve',
+  'POST /twin/api/admin/portability/imports/{job_id}/apply',
+  'POST /twin/api/admin/portability/imports/{job_id}/validate',
+  'POST /twin/api/admin/portability/imports/{job_id}/cancel',
   'GET /twin/api/settings/api-keys',
   'POST /twin/api/settings/api-keys',
   'DELETE /twin/api/settings/api-keys/{key_id}',
@@ -82,6 +92,11 @@ const ADMIN_ONLY_TWIN_OPERATIONS = new Set([
   'POST /twin/api/documents/bulk-delete',
   'POST /twin/api/documents/{doc_id}/approve',
   'POST /twin/api/documents/{doc_id}/reject',
+  // Document provenance is readable by operators, but every mutation is an
+  // audited administrative action (server/webui/routes_source_links.py).
+  'POST /twin/api/documents/{doc_id}/source-links',
+  'PATCH /twin/api/documents/{doc_id}/source-links/{link_id}',
+  'DELETE /twin/api/documents/{doc_id}/source-links/{link_id}',
   'POST /twin/api/documents/uploads/activity',
   'POST /twin/api/tags',
   'POST /twin/api/tags/{name}/suggest-edit',
@@ -149,6 +164,38 @@ function injectionBody(): Record<string, unknown> {
   };
 }
 
+/** Refuse to run a mutating adversarial battery against an unmarked target. */
+export function requireEphemeralBackendTarget(
+  backendUrl: string,
+  ephemeralMarker: string | undefined,
+): void {
+  if (backendUrl && ephemeralMarker !== 'true') {
+    throw new Error(
+      'REAL_BACKEND_URL is set, but REAL_E2E_EPHEMERAL=true is required ' +
+      'for the mutating adversarial route-reachability battery.',
+    );
+  }
+}
+
+/** The battery promises a client rejection, not merely an absence of 5xx. */
+export function isClientErrorStatus(status: number): boolean {
+  return status >= 400 && status < 500;
+}
+
+/** Pick a verb that is not declared for the exact path. */
+export function selectWrongMethod(route: CoverageRoute): Method {
+  const supported = new Set(route.supportedMethods ?? [route.method]);
+  const wrong = HTTP_METHODS.find((method) => !supported.has(method));
+  if (!wrong) {
+    throw new Error(`No unsupported HTTP method available for ${route.path}`);
+  }
+  return wrong;
+}
+
+function expectClientError(status: number, message: string): void {
+  expect(isClientErrorStatus(status), `${message}: received ${status}`).toBe(true);
+}
+
 /** Fetch the live OpenAPI schema, trying the conventional locations. */
 export async function fetchOpenApi(
   ctx: APIRequestContext,
@@ -170,12 +217,16 @@ export function discoverTwinRoutes(schema: Record<string, unknown>): CoverageRou
   const out: CoverageRoute[] = [];
   for (const [path, methods] of Object.entries(paths)) {
     if (!path.startsWith('/twin/api')) continue;
+    const supportedMethods = Object.keys(methods)
+      .map((method) => method.toUpperCase() as Method)
+      .filter((method): method is Method => HTTP_METHODS.includes(method));
     for (const [m, op] of Object.entries(methods)) {
       const M = m.toUpperCase() as Method;
       if (!HTTP_METHODS.includes(M)) continue;
       out.push({
         method: M,
         path,
+        supportedMethods,
         hasBody: !!(op && typeof op === 'object' && 'requestBody' in op),
         isPublic: PUBLIC_TWIN_PATHS.has(path),
         isAdminOnly: ADMIN_ONLY_TWIN_OPERATIONS.has(`${M} ${path}`),
@@ -186,7 +237,7 @@ export function discoverTwinRoutes(schema: Record<string, unknown>): CoverageRou
   return out;
 }
 
-/** Run the adversarial battery for one route. Call inside a test.step. */
+/** Run the adversarial reachability battery for one route. Call inside a test.step. */
 export async function coverRoute(
   ctx: APIRequestContext,
   route: CoverageRoute,
@@ -210,28 +261,41 @@ export async function coverRoute(
     expect(res.status(), `${method} ${path} accepted a non-admin key`).toBe(403);
   }
 
-  // 1) Hostile input must never 5xx, never leak the driver. LLM routes get an
-  //    empty body (→ 422) so a valid query never reaches an absent model.
+  // 1) Hostile input must never 5xx or leak the driver. For body operations a
+  //    JSON array is deliberately used against the object/multipart contracts:
+  //    it cannot accidentally satisfy a create/update model and mutate state.
+  //    Parametrised routes use a hostile identifier. Those guaranteed-invalid
+  //    requests must be rejected with 4xx; static bodyless routes are only
+  //    reachability probes and may legitimately succeed.
   {
-    const data = hasBody ? (preLlmOnly ? {} : injectionBody()) : undefined;
+    const data = hasBody ? [preLlmOnly ? {} : injectionBody()] : undefined;
     const res = await ctx.fetch(concretePath(path, INJECTION), {
       method,
-      headers: baseHeaders(cfg, !isPublic),
+      headers: {
+        ...baseHeaders(cfg, !isPublic),
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      },
       ...(data === undefined ? {} : { data }),
     });
     const text = await res.text();
     expect(res.status(), `${method} ${path} 5xx on hostile input: ${text}`).toBeLessThan(500);
     expect(text, `${method} ${path} leaks driver error`).not.toMatch(DRIVER_LEAK);
+    if (hasBody || hasParam) {
+      expectClientError(
+        res.status(),
+        `${method} ${path} accepted guaranteed-invalid hostile input`,
+      );
+    }
   }
 
-  // 2) Wrong method → 4xx, never 5xx.
+  // 2) A method absent from this path's OpenAPI operations must return 4xx.
   {
-    const wrong = HTTP_METHODS.find((m) => m !== method)!;
+    const wrong = selectWrongMethod(route);
     const res = await ctx.fetch(concretePath(path), {
       method: wrong,
       headers: baseHeaders(cfg, !isPublic),
     });
-    expect(res.status(), `${wrong} ${path} not 4xx`).toBeLessThan(500);
+    expectClientError(res.status(), `${wrong} ${path} wrong method was not rejected`);
   }
 
   // 3) Non-public route must reject a missing bearer (when auth is enforced).
@@ -257,20 +321,22 @@ export async function coverRoute(
     expect(expectedStatuses, `${method} ${path} bad JSON not rejected`).toContain(res.status());
   }
 
-  // 5) Unknown id on a parametrised route → 4xx, never 5xx.
+  // 5) Unknown id on a parametrised route must return 4xx. There are currently
+  //    no idempotent-success exceptions in the backend contract; add one only
+  //    against an explicitly documented operation if that contract changes.
   if (hasParam) {
     const res = await ctx.fetch(concretePath(path, NONEXISTENT), {
       method,
       headers: baseHeaders(cfg, !isPublic),
       ...(hasBody ? { data: {} } : {}),
     });
-    expect(res.status(), `${method} ${path} 5xx on unknown id`).toBeLessThan(500);
+    expectClientError(res.status(), `${method} ${path} unknown id was not rejected`);
   }
 }
 
 /**
- * Discover + adversarially cover the entire surface (/twin/api + shims).
- * Returns the list of covered "METHOD path" labels.
+ * Discover and adversarially probe the route surface (/twin/api + shims).
+ * Returns the list of probed "METHOD path" labels.
  */
 export async function coverApiSurface(
   test: TestType<object, object>,
@@ -289,16 +355,16 @@ export async function coverApiSurface(
   }
 
   // Sanity floor: a broken/empty surface must fail loudly, not report a
-  // vacuous "100%". (45 /twin/api + 10 shims on the BNP target.)
+  // vacuous reachability result. (45 /twin/api + 10 shims on the BNP target.)
   expect(routes.length, 'too few routes — surface looks broken').toBeGreaterThan(50);
 
-  const covered: string[] = [];
+  const probed: string[] = [];
   for (const route of routes) {
     await test.step(`${route.method} ${route.path}`, async () => {
       await coverRoute(ctx, route, cfg);
-      covered.push(`${route.method} ${route.path}`);
+      probed.push(`${route.method} ${route.path}`);
     });
   }
-  expect(covered.length, 'not every route was exercised').toBe(routes.length);
-  return covered;
+  expect(probed.length, 'not every discovered route operation was probed').toBe(routes.length);
+  return probed;
 }

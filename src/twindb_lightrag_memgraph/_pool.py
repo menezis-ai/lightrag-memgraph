@@ -62,8 +62,29 @@ _read_bound_loop_id = None
 _last_read_driver_activity = None
 
 # Enterprise multi-database detection.
-# None = not yet probed, True = USE DATABASE succeeded, False = Community edition.
+# None = not yet probed, True = USE DATABASE succeeded at least once. There is
+# deliberately NO ``False`` state: a refused ``USE DATABASE`` on a non-default
+# database is an error (see MemgraphDatabaseUnavailableError), never a cached
+# "skip from now on" — the refusal must be observed by every session so a
+# restored licence recovers without a restart, and a broken one never becomes
+# silent.
 _enterprise_supported: bool | None = None
+
+
+class MemgraphDatabaseUnavailableError(RuntimeError):
+    """``MEMGRAPH_DATABASE`` names a database this server cannot select.
+
+    Raised when ``USE DATABASE <name>`` is refused because the server has no
+    Enterprise licence (multi-database is an Enterprise feature). Before
+    2026-08-25 the package logged this at INFO and silently kept working on
+    the default ``memgraph`` database — in a one-database-per-KB topology that
+    merges several KBs into the default database without any error. The
+    failure is now fail-closed: the session is refused, ``initialize()``
+    fails at boot and ``/ready`` reports the database as unreachable.
+
+    Remedies, in the message: unset ``MEMGRAPH_DATABASE`` (single-database
+    deployment, Community edition) or install the Enterprise licence.
+    """
 
 
 def _is_closed_transport_error(exc: BaseException) -> bool:
@@ -483,7 +504,8 @@ async def get_session():
       Memgraph Community/Coordinator rejects ``database=`` in the Bolt
       handshake (``GQL 50N42``), so we issue ``USE DATABASE`` instead.
       On Memgraph Community (no Enterprise license), ``USE DATABASE``
-      fails — we detect this once and skip it for all subsequent sessions.
+      fails — the session is refused (``MemgraphDatabaseUnavailableError``),
+      on every attempt, never silently redirected to the default database.
     """
     # Include driver creation/replacement and stale-driver shutdown in the
     # operation deadline.  Those paths can await I/O before the Neo4j driver's
@@ -587,26 +609,22 @@ async def get_read_session():
 
 
 async def _try_use_database(session, database: str) -> None:
-    """Issue ``USE DATABASE`` if the server supports it (Enterprise).
+    """Issue ``USE DATABASE`` when *database* is not the Community default.
 
-    On the first call the result is probed: if the command succeeds the
-    ``_enterprise_supported`` flag is set to ``True`` and all subsequent
-    calls go through immediately.  If the server returns the Enterprise
-    license error, the flag is set to ``False`` and all subsequent calls
-    are silently skipped.
-
-    When *database* is ``"memgraph"`` (the Community default), the command
-    is skipped entirely — it is the default database and ``USE DATABASE``
-    is an Enterprise-only feature on Community edition.
+    ``"memgraph"`` is the default database on every edition, so no switch is
+    attempted for it. For any other name the command is issued on **every**
+    session (a Bolt session starts on the default database). If the server
+    refuses it because multi-database needs an Enterprise licence, raise
+    :class:`MemgraphDatabaseUnavailableError` instead of falling back to the
+    default database — fail-closed, and not cached, so the next session
+    re-probes (a licence installed at runtime recovers without a restart).
+    Other client errors propagate unchanged.
     """
     global _enterprise_supported
 
     # "memgraph" is the default database on Community — no need to switch.
     if database == "memgraph":
         return
-
-    if _enterprise_supported is False:
-        return  # Community edition — skip
 
     try:
         result = await session.run(f"USE DATABASE {database}")
@@ -619,13 +637,22 @@ async def _try_use_database(session, database: str) -> None:
             )
     except Neo4jClientError as exc:
         if "enterprise" in str(exc).lower() or "license" in str(exc).lower():
-            _enterprise_supported = False
-            logger.info(
-                "Memgraph Community detected — USE DATABASE not available, "
-                "using default database"
+            logger.error(
+                "MEMGRAPH_DATABASE=%s cannot be selected: the server refused "
+                "USE DATABASE (%s). Refusing the session rather than silently "
+                "working on the default database.",
+                database,
+                exc,
             )
-        else:
-            raise
+            raise MemgraphDatabaseUnavailableError(
+                f"MEMGRAPH_DATABASE={database!r} cannot be selected on this "
+                "Memgraph server: USE DATABASE was refused (multi-database "
+                "requires an Enterprise licence). Refusing to run on the "
+                "default database instead. Fix: unset MEMGRAPH_DATABASE for a "
+                "single-database (Community) deployment, or install the "
+                "Enterprise licence on the server."
+            ) from exc
+        raise
 
 
 def _uses_routing_protocol() -> bool:
@@ -727,27 +754,44 @@ async def acquire_write_slot():
 
 
 async def close_driver():
-    """Close write and read drivers. Call on application shutdown."""
+    """Close write and read drivers. Call on application shutdown.
+
+    The module state is detached and reset **first**, then each driver is
+    closed independently: a failing ``close()`` on the write pool must not
+    leave the read pool open nor the globals pointing at a half-closed
+    driver (review of #451). Every driver gets its close attempt; the first
+    failure is re-raised afterwards so callers that care still see it.
+    """
     global _driver, _bound_loop_id, _write_semaphore, _semaphore_loop_id
     global _last_driver_activity, _last_read_driver_activity
     global _read_driver, _read_database, _read_bound_loop_id
     global _enterprise_supported
-    if _driver is not None:
-        await _driver.close()
-        _driver = None
-        _bound_loop_id = None
-        _last_driver_activity = None
+    write_driver, read_driver = _driver, _read_driver
+    _driver = None
+    _bound_loop_id = None
+    _last_driver_activity = None
     _write_semaphore = None
     _semaphore_loop_id = None
     _enterprise_supported = None
+    _read_driver = None
+    _read_database = None
+    _read_bound_loop_id = None
+    _last_read_driver_activity = None
     # Deferred import: _capabilities imports get_read_session from this module,
     # so a top-level import here would be circular.
     from ._capabilities import reset_capability_cache
 
     reset_capability_cache()
-    if _read_driver is not None:
-        await _read_driver.close()
-        _read_driver = None
-        _read_database = None
-        _read_bound_loop_id = None
-        _last_read_driver_activity = None
+
+    first_error: BaseException | None = None
+    for name, drv in (("write", write_driver), ("read", read_driver)):
+        if drv is None:
+            continue
+        try:
+            await drv.close()
+        except Exception as exc:  # noqa: BLE001 - every driver gets its attempt
+            logger.warning("Memgraph %s driver close failed: %s", name, exc)
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise first_error

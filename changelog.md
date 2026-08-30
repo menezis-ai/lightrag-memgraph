@@ -2,10 +2,170 @@
 
 > **v1.0.0 is the version officially deployed in BNP production since
 > 2026-07-03** (GitHub delivery `export-1.0.0` @ `7132f6f`, built from `main`
-> @ `89a446b`, frozen on the protected branch `stable/1.0.x`). The `main`
-> development line is now **1.1.0**.
+> @ `89a446b`, frozen on the protected branch `stable/1.0.x`). 1.1.0 was
+> delivered to the BNP platform team on 2026-07-21 (`export-1.1.0`); the `main`
+> development line is now **1.2.0**.
 
-## Unreleased — 1.1.0
+## Unreleased — 1.2.0
+
+### Export, Activity and WebUI mutation hardening (2026-08-31)
+- Neutralize exported demo identities, paths, domains and topology markers,
+  while preserving public technical vocabulary and the richness of the seed,
+  MSW and e2e scenarios. The BNP export procedure now runs a fail-closed scan
+  against the reconstructed delivery tree before any public push.
+- Reconcile the Activity ledger at the business seams: graph and folder
+  mutations use request-resolved actors, durable resources expose stable
+  `target.id` values, direct backend assertions cover each corrected family,
+  and the real-backend browser journey verifies a graph event through
+  `resource.id` and the Activity detail panel.
+- Add the first bounded WebUI StrykerJS baseline over five pure contract
+  helpers. Both Bun and npm use the same pinned toolchain and focused tests;
+  the measured non-gating baseline kills 181 of 194 executable mutants
+  (93.30%), with zero timeout or uncovered mutant and a versioned survivor
+  triage.
+
+### Dormant L3 intelligence hardening (2026-08-30)
+- A sufficiently confident `ESCALATION` intent now exits directly from
+  `TwinRAGEngine.aquery()` with `NO_RETRIEVAL`, an empty citation set and an
+  `ESCALATION` trace marker; lower-confidence classifications keep the normal
+  retrieval fallback.
+- Chat-facing intent/reason/rerank/synthesis calls and indexing-side ontology
+  extract/cluster/enrich calls now use two centrally resolved profiles. Each
+  absent indexing key, base URL or model falls back independently to chat.
+- L3 now reuses secret-safe OpenAI-compatible clients and disables SDK retries
+  in favor of one bounded, jittered policy for rate limits, timeouts,
+  connection failures and server errors. Request/config/auth failures remain
+  fail-fast into the existing business fallbacks; asyncio cancellation is not
+  swallowed. L3 remains dormant in production entrypoints.
+- Add the offline adversarial qualification gate across all seven L3 call
+  sites: transient/permanent errors, cancellation, malformed and extreme
+  outputs, prompt-boundary injection, secret-safe public failures, concurrency,
+  citations, oversized responses, and zero downstream work after early exit.
+  Synthesis with no meaningful content outside citation markers is now an
+  explicit non-empty `QUERY_FAILED` response, while CLUSTER/ENRICH treat every
+  document-derived value as untrusted bounded data.
+
+### Canonical KB portability admin surface (2026-08-26)
+- Add persistent, administrator-only export/import jobs under
+  `TWIN_PORTABILITY_DIR`, one active job per workspace, with streamed 100 MiB
+  browser uploads, archive download and fail-closed restart recovery.
+- Add the complete `/twin/api/admin/portability/*` workflow: dry-run report,
+  exact-hash approval, checkpointed apply, post-import validation and cancel
+  before apply starts.
+- Add Settings → Portability using the existing WebUI charter, with readable
+  compatibility/classification/blocker evidence, stateful MSW coverage and a
+  Playwright approval-flow test.
+- Record `kb-exported` and `kb-imported` Activity events and notify the target
+  after a successful import.
+
+### Canonical KB portability import (2026-08-26)
+- Complete the operator workflow with target compatibility probes, a
+  deterministic dry-run/approval report, fail-closed classification and vector
+  capacity gates, and explicit folder mapping against the target catalogue.
+- Add checkpointed, idempotent `apply` through the per-store write adapters and
+  post-import `validate`: counts, memberships, vector indexes, graph edges and
+  a full target re-export must match the normalized source `state_hash` before
+  cutover.
+- Remap manual-relation `twin_folder_json` visibility stamps, validate the full
+  existing vector-index contract using its creation-time capacity, bind resume
+  to `manifest_hash`, compare procedure schematic digests, and keep dry-run
+  replay stable across harmless embedding endpoint float variation.
+- Add the `dry-run`, `apply` and `validate` CLI commands, hostile/tampered
+  report and checkpoint guards, unit coverage, a real Memgraph round-trip, and
+  the maintenance-window operator runbook.
+
+### Canonical KB portability export (2026-08-25)
+- Add the versioned `twin-kb-bundle` v1 manifest, canonical JSONL writer,
+  hostile-archive inspection and a closed store registry that refuses unknown
+  properties and never enumerates API keys, notifications or the LLM response
+  cache.
+- Add workspace-wide export for LightRAG KV/vector/DocStatus, folder
+  memberships and tags, typed graph nodes and stored-direction relations,
+  graph overrides, runtime folders, settings and source links. Activity and
+  procedure records remain explicit opt-ins; procedure PNGs travel as separate
+  hashed files.
+- Add `python -m twindb_lightrag_memgraph.portability export|inspect`, embedding
+  probes, classification aggregation and pre/post store fingerprints. Export
+  is a maintenance-window operation; a forced busy export or observed mutation
+  is sealed `unverified`.
+
+### Memgraph hardening (2026-08-25)
+- **Database selection is fail-closed.** With `MEMGRAPH_DATABASE` set to a
+  non-default name, a refused `USE DATABASE` (Memgraph Community, no
+  Enterprise licence) now aborts boot and makes `/ready` report the database
+  check as failed, instead of silently working on the default `memgraph`
+  database — which could merge several knowledge bases in a
+  one-database-per-KB topology. The refusal is not cached: a licence
+  installed at runtime recovers without a restart. Deployments that leave
+  `MEMGRAPH_DATABASE` unset (or on `memgraph`) are unaffected.
+- **Vector index capacity is configurable and validated at boot.**
+  `TWIN_VECTOR_INDEX_CAPACITY` (default `100000`) replaces the hard-coded
+  value; a malformed value refuses to boot; the configured value is reported
+  in `GET /twin/api/system/about` (admin) and in Settings → About. The
+  capacity is applied when an index is created — an existing index keeps its
+  own.
+- The standalone Twin server now finalizes LightRAG storages and closes the
+  shared Memgraph pools at shutdown (previously only the reference was
+  dropped, leaving Bolt pools open until process exit).
+- Ontology nodes now persist their `properties` map (it was built and never
+  written); nested values are stored as JSON text like the vector store does.
+
+### Agent document surface and provenance (2026-08-19)
+- The production `register(mount_server=True)` overlay now mounts the three
+  authenticated, folder-scoped chunk/document expansion routes under
+  `/twin/api`; startup probes and the real OpenAPI surface cover them.
+- Documents now expose auditable, optimistic-locking `source_links[]` without
+  changing LightRAG `file_path`. Links are inherited by chunks and retrieval
+  citations, use HTTP(S)-only normalization and retain deletion tombstones.
+- Add source accepts recursive folder selection/drop with lossless safe
+  relative-path identities, explicit file/depth/total/concurrency caps,
+  per-file validation and cancellation. Vision formats remain capability-gated.
+- `tag_filter.groups` remains a single, storage-side union query on the 1.1+
+  runtime line; 1.0.0 is not given a client-side multi-query workaround.
+
+### Central KB catalogue — metadata-only LLM scan (2026-08-19)
+- **The central catalogue can now propose a KB description from a bounded,
+  metadata-only instance profile.** The configuration-gated
+  `/twin/api/catalog-profile` surface aggregates folder counters, document
+  formats, tags and frequent graph entities; it excludes document names,
+  summaries, chunks and raw metadata.
+- **Profile access has a dedicated least-privilege credential.** Instance API
+  keys minted with `profile:read` use a distinct `tcp_` prefix, carry an
+  explicit folder allow-list and cannot authenticate against generic Twin
+  routes. The catalogue stores the outgoing secret encrypted and never returns
+  it after registration.
+- **Scans are durable and never auto-apply.** PostgreSQL workers claim jobs with
+  `FOR UPDATE SKIP LOCKED`, heartbeat, recover abandoned work, bound network
+  time and response sizes, refuse redirects/private instance DNS, and redact
+  upstream errors. The LLM prompt treats the profile as untrusted data and
+  requires strict JSON. An admin must review and explicitly apply a proposal
+  with optimistic locking; expired scan data is purged after its retention.
+
+### Central KB catalogue — instance linked sources (2026-08-19)
+- **Twin instances can now declare their RAG 1.5 sources without exposing the
+  central catalogue credential to the browser.** The configuration-gated,
+  folder-aware `/twin/api/linked-sources` proxy forwards a server-side
+  `links:write` credential and `X-Twin-Folder`; create, update and disable are
+  admin-only, optimistically versioned and recorded as `linked-source-*`
+  activity events. With both catalogue variables absent, the routes and UI
+  remain absent.
+- **The catalogue now exposes a credential-bound `/v1/instance/*` API.** The
+  caller cannot submit its KB, AUID or folder: KB/AUID come from the credential
+  and the validated folder header supplies provenance. Cross-KB/folder ids are
+  hidden as 404, credentials without `links:write` are refused, and every
+  mutation has a transactional preview that always rolls back.
+- **The WebUI gains a gated “Sources RAG” CrossPoint grid.** It preserves the
+  `AUID | Business Application | Classification | DI | DE | SATS |
+  Confluence Space` shape, supports multiple declarative Confluence/SharePoint
+  cards per cell, derives source kind and immutable scope from the URL, leaves
+  visibility unselected on creation, and requires preview + confirmation before
+  writes. The upload modal links to this single declaration surface; with
+  `catalogEnabled=false`, its legacy Coming-soon DOM is unchanged.
+
+### Dependency security (2026-08-18)
+- **pypdf 6.14.2 → 6.15.0** (`PYSEC-2026-3655`, `PYSEC-2026-3656`) in the
+  production pins (`requirements/prod-target.txt`, `constraints-prod.txt`) and
+  the package floor. Caught by the `python-audit` gate; no behaviour change.
 
 ### Security remediation — audit red/blue/purple 2026-08-06 (`docs/audits/security/audit-2026-08-06.md`)
 - **R-03a — the Activity audit feed can no longer be forged by any

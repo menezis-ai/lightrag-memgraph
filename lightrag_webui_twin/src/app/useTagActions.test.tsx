@@ -43,7 +43,7 @@ vi.mock('../api/resources', () => ({
   },
 }));
 
-const ACTOR = 'claire.benoit';
+const ACTOR = 'demo.steward';
 
 function makeTag(overrides: Partial<TagEntry> = {}): TagEntry {
   return {

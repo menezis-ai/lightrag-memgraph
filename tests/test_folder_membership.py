@@ -1,7 +1,7 @@
 """Folder membership contract — one document, many folders, stored once.
 
 Integration tests (need a running Memgraph; auto-skipped when MEMGRAPH_URI is
-unset). Pins the core contract of FOLDER-MEMBERSHIP-REFACTOR.md batch 1:
+unset). Pins the core contract of docs/adr/006-folder-membership-relation.md:
 
 - a document `MEMBER_OF` folder A AND folder B is **one physical node** (no
   content duplication);

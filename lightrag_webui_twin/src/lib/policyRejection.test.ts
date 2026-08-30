@@ -98,13 +98,61 @@ describe('policyRejectionKind', () => {
     ).toBeNull();
     expect(policyRejectionKind(doc({ content_summary: '', error_msg: null }))).toBeNull();
   });
+
+  it('trims Twin-owned anchors but never treats a non-FAILED row as rejected', () => {
+    expect(
+      policyRejectionKind(
+        doc({
+          content_summary: '  Image ingestion refused  ',
+          error_msg: '  vision-prefilter: no usable OCR text  ',
+        }),
+      ),
+    ).toBe('vision');
+    expect(
+      policyRejectionKind(
+        doc({
+          content_summary: '  [content withheld: classification C3]  ',
+        }),
+      ),
+    ).toBe('classification');
+    expect(
+      policyRejectionKind(
+        doc({
+          status: 'PROCESSED',
+          content_summary: '[content withheld: classification C3]',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('requires the image-refusal summary before a vision reason is decisive', () => {
+    expect(
+      policyRejectionKind(
+        doc({
+          content_summary: 'ordinary extraction failure',
+          error_msg: 'vision-prefilter: no usable OCR text',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      policyRejectionKind(
+        doc({ content_summary: 'Image ingestion refused', error_msg: null }),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('guidance copy', () => {
-  it('tells the operator a retry is pointless, for both kinds', () => {
-    expect(policyRejectionGuidance('vision')).toMatch(/will not change the verdict/);
-    expect(policyRejectionGuidance('classification')).toMatch(
-      /will not change the verdict/,
+  it('gives the exact deterministic-policy action for both kinds', () => {
+    expect(policyRejectionGuidance('classification')).toBe(
+      'Rejected by the classification policy: its sensitivity label exceeds ' +
+        'the allowed ceiling. Retrying will not change the verdict — delete ' +
+        'this document, or upload a compliant version.',
+    );
+    expect(policyRejectionGuidance('vision')).toBe(
+      'Rejected by the ingestion policy: this image carries no usable content ' +
+        'for the knowledge base. Retrying will not change the verdict — delete ' +
+        'this document, or upload a more informative file.',
     );
   });
 

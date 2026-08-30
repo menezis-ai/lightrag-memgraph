@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab } from './helpers';
 
 /**
@@ -63,7 +63,7 @@ test.describe('Modal dialogs a11y contract', () => {
   test('@a11y @modals @bug04 Add Source tag input keeps focus while typing char-by-char', async ({
     page,
   }) => {
-    // Regression for BUG-04 (Alberto recette): the modal a11y autofocus
+    // Regression for BUG-04 (QA review): the modal a11y autofocus
     // re-fired on every keystroke (unstable onClose in deps), yanking focus
     // out of the non-first "Apply tags to all" input mid-typing. Use
     // pressSequentially (real per-key events) — fill() set the value
@@ -154,7 +154,18 @@ test.describe('Modal dialogs a11y contract', () => {
     await expect(page.locator('.toast-viewport .toast')).toHaveCount(0);
   });
 
-  test('@a11y @modals API authorize dialog closes on Escape', async ({ page }) => {
+  test('@a11y @modals API authorize dialog closes on Escape', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    const settingsNavigationReason =
+      'Opening the API settings panel replaces still-active Settings bootstrap queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, settingsNavigationReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, settingsNavigationReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, settingsNavigationReason),
+      allowRequestAbort(/\/openapi\.json$/, settingsNavigationReason),
+    );
     await openTab(page, 'Settings');
     await page.getByTestId('settings-rail-api').click();
     await page.getByRole('button', { name: 'Authorize' }).click();

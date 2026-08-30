@@ -1,4 +1,4 @@
-"""MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md, PR 1).
+"""MarkItDown pre-conversion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
 
 Three layers:
 
@@ -15,7 +15,6 @@ Three layers:
 import asyncio
 import sys
 import zipfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -583,40 +582,11 @@ async def test_enqueue_patch_is_idempotent(dr_module, monkeypatch):
     assert dr_module.pipeline_enqueue_file is wrapped
 
 
-def _whitelist_is_settable(dr) -> bool:
-    """1.4.x: plain attribute (patchable). 1.5.x: read-only property derived
-    from the parser registry — the patch degrades gracefully there."""
-    return not isinstance(
-        getattr(dr.DocumentManager, "supported_extensions", None), property
-    )
-
-
-def test_whitelist_patch_extends_document_manager(dr_module, monkeypatch, tmp_path):
-    if not _whitelist_is_settable(dr_module):
-        pytest.skip("1.5.x derives supported_extensions from the parser registry")
-    monkeypatch.setenv("TWIN_CONVERT_FORMATS", "xls,msg")
-    monkeypatch.setattr(_conversion, "is_available", lambda: True)
-    dr_module._twindb_doc_manager_ext_patched = False
-    registry._patch_document_manager_extensions()
-
-    manager = dr_module.DocumentManager(str(tmp_path))
-    assert ".xls" in manager.supported_extensions
-    assert ".msg" in manager.supported_extensions
-    # Native entries untouched, no duplicates.
-    assert ".pdf" in manager.supported_extensions
-    assert len(set(manager.supported_extensions)) == len(
-        tuple(manager.supported_extensions)
-    )
-    assert manager.is_supported_file("legacy.xls")
-    assert manager.is_supported_file("mail.msg")
-
-
 def test_whitelist_patch_degrades_on_readonly_property(
     dr_module, monkeypatch, tmp_path, caplog
 ):
-    if _whitelist_is_settable(dr_module):
-        pytest.skip("1.4.x whitelist is a plain settable attribute")
-    # LightRAG 1.5 may already register xls/msg natively. Force one genuinely
+    assert isinstance(dr_module.DocumentManager.supported_extensions, property)
+    # LightRAG 1.5.6 may already register xls/msg natively. Force one genuinely
     # missing tier extension so this test exercises the read-only assignment,
     # rather than depending on the upstream parser set of a specific release.
     monkeypatch.setattr(
@@ -632,12 +602,10 @@ def test_whitelist_patch_degrades_on_readonly_property(
     assert ".pdf" in manager.supported_extensions
 
 
-def test_is_supported_file_accepts_tier_extensions_on_both_lines(
-    dr_module, monkeypatch, tmp_path
-):
+def test_is_supported_file_accepts_tier_extensions(dr_module, monkeypatch, tmp_path):
     """The ENFORCEMENT check (what the upload route asks) must accept the
-    tier extensions on 1.4.x AND 1.5.x. On 1.5.x the whitelist property is
-    read-only, so before the ``is_supported_file`` wrapper the runtime
+    tier extensions. On LightRAG 1.5.6 the whitelist property is read-only,
+    so before the ``is_supported_file`` wrapper the runtime
     config advertised e.g. ``png`` while the API still 400-ed the upload
     (review finding on fix/webui-image-upload-whitelist)."""
     from twindb_lightrag_memgraph import _vision
@@ -671,9 +639,6 @@ def test_whitelist_patch_is_idempotent(dr_module, monkeypatch, tmp_path):
     first_init = dr_module.DocumentManager.__init__
     registry._patch_document_manager_extensions()
     assert dr_module.DocumentManager.__init__ is first_init
-    if _whitelist_is_settable(dr_module):
-        manager = dr_module.DocumentManager(str(tmp_path))
-        assert tuple(manager.supported_extensions).count(".msg") == 1
 
 
 # ---------------------------------------------------------------------------

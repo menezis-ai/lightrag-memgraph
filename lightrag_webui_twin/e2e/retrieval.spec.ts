@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab } from './helpers';
 
 async function expectNarrowRetrievalLayout(page: Page) {
@@ -53,8 +53,15 @@ test.describe('Retrieval citations', () => {
   // for. The drilldown therefore lands on a document that actually exists in the
   // Documents seed, so this asserts a true citation -> document linkage.
   test('@retrieval @rc4 clicking a source opens the referenced document in Documents', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Citation drill-down replaces the Documents procedure query during navigation.',
+      ),
+    );
     await page.getByRole('button', { name: /New/ }).click();
     await page.getByLabel('Query input').fill('What is the Oracle restart procedure?');
     await page.getByRole('button', { name: 'Send' }).click();
@@ -80,8 +87,16 @@ test.describe('Retrieval threads and parameters', () => {
   });
 
   test('@retrieval @threads new conversation sends a query and lands in the sidebar', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const conversationRefreshReason =
+      'Creating the first conversation replaces the empty Retrieval view shell queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, conversationRefreshReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, conversationRefreshReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, conversationRefreshReason),
+    );
     // boot helper clears the threads localStorage key + reloads, and
     // App.tsx now passes `initialThreads={[]}`. The sidebar starts
     // empty — sending a query is what creates the first thread.

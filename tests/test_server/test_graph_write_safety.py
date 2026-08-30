@@ -136,7 +136,7 @@ class TestCreateMergeRaceContract:
         )
 
         with pytest.raises(gr.EntityExistsError):
-            await gr.create_graph_entity("cib", {"name": "Dup", "type": "PRODUCT"})
+            await gr.create_graph_entity("demo", {"name": "Dup", "type": "PRODUCT"})
 
 
 # ----------------------------------------------------------------------
@@ -181,17 +181,17 @@ class TestConflictRetryContract:
         session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
         _patch_write_path(monkeypatch, session)
         count = await gr._persist_relation_ids(
-            "cib", [{"source_id": "A", "target_id": "B"}]
+            "demo", [{"source_id": "A", "target_id": "B"}]
         )
         assert count == 1
         assert len(session.queries) == 2
 
     async def test_entity_override_retries_conflict(self, monkeypatch):
         session = _ScriptedSession(
-            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "cib"}]]
+            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "demo"}]]
         )
         _patch_write_path(monkeypatch, session)
-        ok = await gr._upsert_entity_override("cib", "cib", "E1", {}, deleted=False)
+        ok = await gr._upsert_entity_override("demo", "demo", "E1", {}, deleted=False)
         assert ok is True
         assert len(session.queries) == 2
 
@@ -201,17 +201,17 @@ class TestConflictRetryContract:
         )
         _patch_write_path(monkeypatch, session)
         ok = await gr._write_entity_props(
-            workspace="cib", entity_id="E1", props={"description": "d"}
+            workspace="demo", entity_id="E1", props={"description": "d"}
         )
         assert ok is True
         assert len(session.queries) == 2
 
     async def test_rel_override_retries_conflict(self, monkeypatch):
         session = _ScriptedSession(
-            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "cib"}]]
+            [RuntimeError(CONFLICT_MESSAGE), [{"folder": "demo"}]]
         )
         _patch_write_path(monkeypatch, session)
-        ok = await gr._upsert_rel_override("cib", "cib", "A", "B", {}, deleted=False)
+        ok = await gr._upsert_rel_override("demo", "demo", "A", "B", {}, deleted=False)
         assert ok is True
         assert len(session.queries) == 2
 
@@ -221,7 +221,7 @@ class TestConflictRetryContract:
         )
         _patch_write_path(monkeypatch, session)
         ok = await gr._write_relation_props(
-            workspace="cib", src="A", tgt="B", props={"weight": 0.7}
+            workspace="demo", src="A", tgt="B", props={"weight": 0.7}
         )
         assert ok is True
         assert len(session.queries) == 2
@@ -229,7 +229,7 @@ class TestConflictRetryContract:
     async def test_relation_vdb_cascade_retries_conflict(self, monkeypatch):
         session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
         _patch_write_path(monkeypatch, session)
-        ok = await gr._cascade_relation_vdb_row("cib", "A", "B")
+        ok = await gr._cascade_relation_vdb_row("demo", "A", "B")
         assert ok is True
         assert len(session.queries) == 2
 
@@ -248,13 +248,13 @@ class TestConflictRetryContract:
         monkeypatch.setattr(gr, "_cascade_entity_vdb_rows", fake_cascade)
         session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), []])
         _patch_write_path(monkeypatch, session)
-        ok = await gr.delete_graph_entity("cib", "E1")
+        ok = await gr.delete_graph_entity("demo", "E1")
         assert ok is True
         assert len(session.queries) == 2
 
     async def test_relation_physical_delete_retries_conflict(self, monkeypatch):
         async def fake_endpoints(workspace, rel_id):
-            return ("cib", "A", "B")
+            return ("demo", "A", "B")
 
         async def fake_member_context(workspace):
             return None, {}
@@ -269,7 +269,7 @@ class TestConflictRetryContract:
             [RuntimeError(CONFLICT_MESSAGE), [{"source_id": "A"}]]
         )
         _patch_write_path(monkeypatch, session)
-        ok = await gr.delete_graph_relation("cib", "r1")
+        ok = await gr.delete_graph_relation("demo", "r1")
         assert ok is True
         assert len(session.queries) == 2
 
@@ -278,7 +278,7 @@ class TestConflictRetryContract:
             [RuntimeError(CONFLICT_MESSAGE), [{"source_id": "A"}]]
         )
         _patch_write_path(monkeypatch, session)
-        ok = await gr._merge_relation(workspace="cib", src="A", tgt="B", props={})
+        ok = await gr._merge_relation(workspace="demo", src="A", tgt="B", props={})
         assert ok is True
         assert len(session.queries) == 2
 
@@ -287,7 +287,7 @@ class TestConflictRetryContract:
         # (idempotent deletes), so the script sees 3 runs total.
         session = _ScriptedSession([RuntimeError(CONFLICT_MESSAGE), [], []])
         _patch_write_path(monkeypatch, session)
-        ok = await gr._cascade_entity_vdb_rows("cib", "E1")
+        ok = await gr._cascade_entity_vdb_rows("demo", "E1")
         assert ok is True
         assert len(session.queries) == 3
 
@@ -295,7 +295,7 @@ class TestConflictRetryContract:
         session = _ScriptedSession([RuntimeError("syntax error"), [{"x": 1}]])
         _patch_write_path(monkeypatch, session)
         ok = await gr._write_entity_props(
-            workspace="cib", entity_id="E1", props={"description": "d"}
+            workspace="demo", entity_id="E1", props={"description": "d"}
         )
         assert ok is False
         assert len(session.queries) == 1
@@ -308,7 +308,7 @@ class TestConflictRetryContract:
         )
         _patch_write_path(monkeypatch, session)
         ok = await gr._write_entity_props(
-            workspace="cib", entity_id="E1", props={"description": "d"}
+            workspace="demo", entity_id="E1", props={"description": "d"}
         )
         assert ok is False
         assert len(session.queries) == MAX_WRITE_ATTEMPTS
@@ -329,7 +329,7 @@ class TestConflictRetryContract:
 
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
         monkeypatch.setattr(gr, "_read_one_entity", fake_read_one)
-        monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "cib")
+        monkeypatch.setattr(folder_mod, "active_folder_id", lambda: "demo")
         session = _ScriptedSession(
             [
                 [{"entity_id": "E1", "created": True}],  # MERGE — once only
@@ -340,7 +340,7 @@ class TestConflictRetryContract:
         _patch_write_path(monkeypatch, session)
 
         projected = await gr.create_graph_entity(
-            "cib", {"name": "E1", "type": "PRODUCT"}
+            "demo", {"name": "E1", "type": "PRODUCT"}
         )
         assert projected == {"id": "node-E1"}
         assert len(session.queries) == 3

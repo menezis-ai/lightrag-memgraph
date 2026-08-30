@@ -48,6 +48,15 @@ def test_api_key_router_rejects_anonymous_when_mounted_directly():
     assert r.status_code == 401
 
 
+def test_profile_key_prefix_is_disjoint_from_general_operator_keys():
+    full_value, preview = api_key_store._mint_token(  # noqa: SLF001 - contract pin
+        api_key_store.PROFILE_KEY_PREFIX
+    )
+    assert full_value.startswith("tcp_")
+    assert preview.startswith("tcp_")
+    assert not full_value.startswith(api_key_store.KEY_PREFIX)
+
+
 @pytest.fixture()
 async def client(monkeypatch):
     monkeypatch.setenv("WORKSPACE", f"apikey_routes_{secrets.token_hex(4)}")
@@ -100,6 +109,25 @@ class TestApiKeyRoutes:
         assert rows[0]["prefix"] == body["prefix"]
         assert rows[0]["id"] == body["id"]
 
+    async def test_profile_key_has_distinct_prefix_scope_and_folders(self, client):
+        folders_response = await client.get("/twin/api/folders")
+        assert folders_response.status_code == 200, folders_response.text
+        folder_id = folders_response.json()[0]["id"]
+
+        r = await client.post(
+            "/twin/api/settings/api-keys",
+            json={
+                "name": "central-catalog-profile",
+                "scopes": ["profile:read"],
+                "folders": [folder_id],
+            },
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["full_value"].startswith(api_key_store.PROFILE_KEY_PREFIX)
+        assert body["scopes"] == ["profile:read"]
+        assert body["folders"] == [folder_id]
+
     async def test_revoke_marks_revoked_at_and_persists(self, client):
         created = (
             await client.post(
@@ -126,17 +154,23 @@ class TestApiKeyRoutes:
         assert r.status_code == 404
 
     async def test_create_emits_activity_event(self, client):
-        before = (await client.get("/twin/api/activity")).json()
-        before_count = len(
-            before.get("items", before if isinstance(before, list) else [])
+        created = (
+            await client.post(
+                "/twin/api/settings/api-keys", json={"name": "trace-test"}
+            )
+        ).json()
+        activity = await client.get(
+            "/twin/api/activity",
+            params={"resource.id": created["id"], "kind": "api-key-created"},
         )
-        await client.post("/twin/api/settings/api-keys", json={"name": "trace-test"})
-        after_raw = (await client.get("/twin/api/activity")).json()
-        after = after_raw.get("items", after_raw if isinstance(after_raw, list) else [])
-        assert len(after) == before_count + 1
-        evt = after[0]  # newest first
+        assert activity.status_code == 200
+        events = activity.json()["items"]
+        assert len(events) == 1
+        evt = events[0]
         assert evt["kind"] == "api-key-created"
         assert evt["target"]["type"] == "api-key"
+        assert evt["target"]["id"] == created["id"]
+        assert evt["actor"]["user"] == "api_key"
         assert evt["meta"]["operation"] == "created"
         # Audit meta MUST NOT contain the full secret — only the prefix
         meta_blob = repr(evt["meta"])
@@ -151,11 +185,17 @@ class TestApiKeyRoutes:
             )
         ).json()
         await client.delete(f"/twin/api/settings/api-keys/{created['id']}")
-        after_raw = (await client.get("/twin/api/activity")).json()
-        after = after_raw.get("items", after_raw if isinstance(after_raw, list) else [])
-        # The newest event is the revoke (created is right behind).
-        revoke_evt = after[0]
+        activity = await client.get(
+            "/twin/api/activity",
+            params={"resource.id": created["id"], "kind": "api-key-revoked"},
+        )
+        assert activity.status_code == 200
+        events = activity.json()["items"]
+        assert len(events) == 1
+        revoke_evt = events[0]
         assert revoke_evt["kind"] == "api-key-revoked"
+        assert revoke_evt["target"]["id"] == created["id"]
+        assert revoke_evt["actor"]["user"] == "api_key"
         assert revoke_evt["meta"]["operation"] == "revoked"
         assert revoke_evt["sev"] == "warning"
 

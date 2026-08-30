@@ -15,7 +15,7 @@ Each vector entry is a Cypher node:
 Vector index:
   CREATE VECTOR INDEX vec_{workspace}_{namespace}
   ON :Vec_{workspace}_{namespace}(embedding)
-  WITH CONFIG {"dimension": N, "capacity": VECTOR_INDEX_CAPACITY, "metric": "cos"}
+  WITH CONFIG {"dimension": N, "capacity": TWIN_VECTOR_INDEX_CAPACITY (default 100000), "metric": "cos"}
 
 Query:
   CALL vector_search.search("vec_...", $embedding, $top_k)
@@ -35,11 +35,11 @@ from lightrag.utils import logger
 
 from . import _pool
 from ._constants import (
-    VECTOR_INDEX_CAPACITY,
     RetrievalFilters,
     get_active_chunk_retrieval_scores,
     get_active_retrieval_filters,
     get_active_storage_folder,
+    resolve_vector_index_capacity,
     resolve_workspace,
     validate_identifier,
 )
@@ -312,11 +312,12 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         label = self._label()
         index_name = self._index_name()
         dim = self.embedding_func.embedding_dim
+        capacity = resolve_vector_index_capacity()
         query = (
             f"CREATE VECTOR INDEX `{index_name}` "
             f"ON :`{label}`(embedding) "
             f'WITH CONFIG {{"dimension": {dim}, '
-            f'"capacity": {VECTOR_INDEX_CAPACITY}, "metric": "cos"}}'
+            f'"capacity": {capacity}, "metric": "cos"}}'
         )
 
         async def _run(s):

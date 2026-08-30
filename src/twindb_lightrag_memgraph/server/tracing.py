@@ -69,17 +69,6 @@ def reset_metrics() -> None:
         _METRIC_COUNTERS[name] = 0
 
 
-def current_request_context(request: Any) -> dict[str, Any]:
-    """Return non-sensitive request context for route logs."""
-    state = getattr(request, "state", None)
-    return {
-        "request_id": getattr(state, "request_id", None),
-        "traceparent": getattr(state, "traceparent", None),
-        "route_group": getattr(state, "route_group", None),
-        "folder": getattr(state, "folder", None),
-    }
-
-
 def _check_langsmith_config() -> bool:
     """Verify that LangSmith env vars are properly configured."""
     api_key = os.environ.get("LANGSMITH_API_KEY")

@@ -15,6 +15,11 @@ dist-ssr
 # Vitest coverage (lcov for SonarQube, html for local inspection)
 coverage/
 
+# Local StrykerJS reports and transient sandbox (the dated baseline is kept
+# under docs/audits/webui-css-ui/ instead).
+reports/mutation/
+.stryker-tmp/
+
 # Playwright e2e
 playwright-report/
 test-results/

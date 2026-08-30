@@ -14,8 +14,9 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ..config import TwinRAGConfig
+from ..config import LLMProfileKind, TwinRAGConfig
 from ..json_utils import clamp_float, coerce_str, load_json_object
+from ..llm import create_chat_completion, log_llm_fallback
 from ..models.schemas import IntentResult, IntentType
 from ..prompt_security import neutralize_reserved_tags
 
@@ -94,13 +95,10 @@ class IntentClassifier:
             )
 
         try:
-            client = AsyncOpenAI(
-                api_key=self.config.llm_api_key,
-                base_url=self.config.llm_api_base,
-            )
-
-            response = await client.chat.completions.create(
-                model=self.config.llm_model,
+            response = await create_chat_completion(
+                self.config,
+                LLMProfileKind.CHAT,
+                client_factory=AsyncOpenAI,
                 messages=[
                     {
                         "role": "system",
@@ -138,12 +136,12 @@ class IntentClassifier:
                 reason=coerce_str(data.get("r", data.get("reason")), ""),
             )
 
-        except Exception as e:
-            logger.exception("Intent classification error: %s", e)
+        except Exception as exc:
+            log_llm_fallback(logger, "Intent classification", exc)
             return IntentResult(
                 intent=IntentType.IN_SCOPE,
                 confidence=0.0,
-                reason=f"Fallback (error): {e}",
+                reason="Fallback (LLM unavailable)",
             )
 
     def _looks_malicious(self, question: str) -> bool:

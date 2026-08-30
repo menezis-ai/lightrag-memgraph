@@ -146,6 +146,7 @@ def add_runtime_folder(
     label: str,
     kind: str = "custom",
     description: str = "",
+    sources: int = 0,
 ) -> TwinFolder:
     """Add a new runtime folder.
 
@@ -161,7 +162,7 @@ def add_runtime_folder(
             label=label.strip() or sid,
             kind=kind.strip() or "custom",
             description=description.strip(),
-            sources=0,
+            sources=max(0, int(sources)),
         )
         _runtime_folders[sid] = folder
         _persist_to_disk_if_configured()

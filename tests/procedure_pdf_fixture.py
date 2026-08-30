@@ -1,4 +1,4 @@
-"""Synthetic procedure-PDF fixture (PROCEDURE-PROFILE-PLAN.md).
+"""Synthetic procedure-PDF fixture (docs/adr/007-procedure-pdf-profile.md).
 
 The real BNP procedure PDFs never leave the bank, so CI runs against a
 synthetic reproduction of the "IT Group" template markers calibrated on the

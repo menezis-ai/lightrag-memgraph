@@ -16,6 +16,11 @@ from ..webui_notificationstore import (
     MemgraphNotificationStore,
 )
 from ..webui_tagstore import InMemoryTagStore, MemgraphTagStore
+from ..source_links_store import (
+    InMemorySourceLinkStore,
+    MemgraphSourceLinkStore,
+    SourceLinkStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,7 @@ class WebuiStore:
         notification_backend: (
             InMemoryNotificationStore | MemgraphNotificationStore | None
         ) = None,
+        source_link_backend: SourceLinkStore | None = None,
         mode: str = "seed",
     ) -> None:
         self._documents = documents
@@ -76,6 +82,11 @@ class WebuiStore:
             notification_backend
             if notification_backend is not None
             else InMemoryNotificationStore()
+        )
+        self._source_link_backend: SourceLinkStore = (
+            source_link_backend
+            if source_link_backend is not None
+            else InMemorySourceLinkStore()
         )
         self._lock = threading.Lock()
 
@@ -167,6 +178,10 @@ class WebuiStore:
         self,
     ) -> InMemoryNotificationStore | MemgraphNotificationStore:
         return self._notification_backend
+
+    @property
+    def source_links(self) -> SourceLinkStore:
+        return self._source_link_backend
 
     # -- Documents ------------------------------------------------------
 
@@ -331,8 +346,9 @@ def _build_store_for_deployment(folder_id: str) -> WebuiStore:
     seed mode). Memgraph deployments mirror the template store: same
     ``mode="memgraph"`` shell, and a Memgraph backend for every resource the
     template has one for (``server/app.py`` may wire only a per-setting
-    subset), each scoped to the new folder id — exactly what the boot wiring
-    would have produced had the folder existed at boot.
+    subset). Folder-owned resources use the new folder id exactly as boot
+    wiring would; document-owned source links reuse the global backend so
+    provenance follows documents shared into several folders.
     """
     template = _memgraph_template_store()
     if template is None:
@@ -344,13 +360,20 @@ def _build_store_for_deployment(folder_id: str) -> WebuiStore:
         store._activity_backend = MemgraphActivityStore(workspace=folder_id)
     if isinstance(template._notification_backend, MemgraphNotificationStore):
         store._notification_backend = MemgraphNotificationStore(workspace=folder_id)
+    if isinstance(template._source_link_backend, MemgraphSourceLinkStore):
+        # Source links belong to documents, which can be projected into more
+        # than one folder.  Share the single global backend: constructing a
+        # folder-scoped copy would invite accidental provenance partitioning
+        # and would replay the same index DDL for every runtime folder.
+        store._source_link_backend = template._source_link_backend
     return store
 
 
 async def initialize_store_backends(store: WebuiStore) -> None:
     """Ensure indexes (and the tag-category taxonomy) for Memgraph backends.
 
-    Idempotent — mirrors what the boot wiring runs per catalog folder. For a
+    Idempotent — mirrors what the boot wiring runs per catalog folder while
+    skipping the already-initialized global source-link backend. For a
     brand-new folder the activity legacy-scalar backfill is a no-op and
     ``bootstrap_categories_if_empty`` only seeds an empty label. Deployments
     that mirror categories from a config file (``webui_categories_config``)
@@ -367,6 +390,16 @@ async def initialize_store_backends(store: WebuiStore) -> None:
     notification_backend = store._notification_backend
     if isinstance(notification_backend, MemgraphNotificationStore):
         await notification_backend.initialize()
+    source_link_backend = store._source_link_backend
+    template = _memgraph_template_store()
+    template_source_links = (
+        template._source_link_backend if template is not None else None
+    )
+    if (
+        isinstance(source_link_backend, MemgraphSourceLinkStore)
+        and source_link_backend is not template_source_links
+    ):
+        await source_link_backend.initialize()
 
 
 def _schedule_backend_initialize(store: WebuiStore, folder_id: str) -> None:

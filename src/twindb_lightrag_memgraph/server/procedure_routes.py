@@ -2,7 +2,7 @@
 
 The PR 1 seam parks procedure documents as bundles (``_procedure_store``)
 instead of enqueueing them; this router is the human gate that releases (or
-refuses) them — the embryo of the Vihn/Fabrice document-validation workflow:
+refuses) them — the embryo of the document-validation workflow:
 
 - ``GET  /procedures``                 — folder-bound summaries (auth).
 - ``GET  /procedures/{id}``            — full bundle, PNGs included (admin).
@@ -52,7 +52,6 @@ from pydantic import BaseModel, Field
 from .. import _procedure, _procedure_store
 from .._constants import (
     doc_type_context,
-    get_active_storage_folder,
     operator_classification_context,
     storage_folder_context,
 )

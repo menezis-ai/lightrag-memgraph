@@ -15,6 +15,10 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
+from twindb_lightrag_memgraph.server.chunk_routes import (
+    create_chunk_routes,
+    router as chunk_router,
+)
 from twindb_lightrag_memgraph.server.auth import auth_router
 from twindb_lightrag_memgraph.server.procedure_routes import build_procedure_router
 from twindb_lightrag_memgraph.server.quota_routes import router as quota_router
@@ -23,6 +27,10 @@ from twindb_lightrag_memgraph.server.system_info_routes import (
 )
 from twindb_lightrag_memgraph.server.vision_settings_routes import (
     router as vision_settings_router,
+)
+from twindb_lightrag_memgraph.server.linked_sources_routes import (
+    CatalogProxyConfig,
+    build_linked_sources_router,
 )
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.native_shims import (
@@ -75,8 +83,11 @@ def _backend_routes() -> set[Route]:
     def _fake_rag():
         raise RuntimeError("route parity only introspects paths")
 
+    create_chunk_routes(_fake_rag)
+
     return (
         _fastapi_routes_from_router(webui_router.router, prefix="/twin/api")
+        | _fastapi_routes_from_router(chunk_router, prefix="/twin/api")
         | _fastapi_routes_from_router(auth_router)
         | _fastapi_routes_from_router(build_native_shims_router(_fake_rag))
         | _fastapi_routes_from_router(build_health_shim(_fake_rag))
@@ -89,6 +100,15 @@ def _backend_routes() -> set[Route]:
         | _fastapi_routes_from_router(vision_settings_router, prefix="/twin/api")
         | _fastapi_routes_from_router(
             build_procedure_router(_fake_rag), prefix="/twin/api"
+        )
+        | _fastapi_routes_from_router(
+            build_linked_sources_router(
+                CatalogProxyConfig(
+                    base_url="https://catalogue.route-parity.invalid",
+                    credential="route-parity-only",
+                )
+            ),
+            prefix="/twin/api",
         )
     )
 
@@ -160,10 +180,23 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("GET", "/twin/api/settings/api-keys"),
     Route("POST", "/twin/api/settings/api-keys"),
     Route("DELETE", "/twin/api/settings/api-keys/{param}"),
+    Route("GET", "/twin/api/linked-sources"),
+    Route("POST", "/twin/api/linked-sources"),
+    Route("POST", "/twin/api/linked-sources/preview"),
+    Route("PATCH", "/twin/api/linked-sources/{param}"),
+    Route("POST", "/twin/api/linked-sources/{param}/disable"),
     Route("GET", "/twin/api/settings/vision"),
     Route("PUT", "/twin/api/settings/vision"),
     Route("GET", "/twin/api/quota"),
     Route("GET", "/twin/api/system/about"),
+    Route("POST", "/twin/api/admin/portability/exports"),
+    Route("GET", "/twin/api/admin/portability/exports/{param}"),
+    Route("POST", "/twin/api/admin/portability/imports"),
+    Route("GET", "/twin/api/admin/portability/imports/{param}"),
+    Route("POST", "/twin/api/admin/portability/imports/{param}/approve"),
+    Route("POST", "/twin/api/admin/portability/imports/{param}/apply"),
+    Route("POST", "/twin/api/admin/portability/imports/{param}/validate"),
+    Route("POST", "/twin/api/admin/portability/imports/{param}/cancel"),
     Route("GET", "/twin/api/folders"),
     Route("POST", "/twin/api/folders"),
     Route("PATCH", "/twin/api/folders/{param}"),
@@ -188,6 +221,10 @@ FRONTEND_PRODUCTION_ROUTES: set[Route] = {
     Route("DELETE", "/twin/api/tags/{param}"),
     Route("GET", "/twin/api/activity"),
     Route("GET", "/twin/api/documents/{param}/metadata"),
+    Route("GET", "/twin/api/documents/{param}/source-links"),
+    Route("POST", "/twin/api/documents/{param}/source-links"),
+    Route("PATCH", "/twin/api/documents/{param}/source-links/{param}"),
+    Route("DELETE", "/twin/api/documents/{param}/source-links/{param}"),
     Route("GET", "/twin/api/documents/{param}/folders"),
     Route("POST", "/twin/api/documents/{param}/folders"),
     Route("DELETE", "/twin/api/documents/{param}/folders/{param}"),
@@ -219,6 +256,7 @@ LIGHTRAG_NATIVE_PASSTHROUGH: set[Route] = {
     Route("GET", "/documents/track_status/{param}"),
     Route("POST", "/documents/reprocess_failed"),
     Route("POST", "/documents/upload"),
+    Route("GET", "/graph/label/list"),
     Route("POST", "/query"),
     Route("POST", "/query/data"),
     # FastAPI auto-exposes the live OpenAPI 3.1 spec on /openapi.json.
@@ -228,7 +266,7 @@ LIGHTRAG_NATIVE_PASSTHROUGH: set[Route] = {
 }
 
 # Known Couche 3 gaps. If one of these starts passing, remove it from this set
-# and update WEBUI-WIRING-PLAN.md.
+# (route parity is a test, not a document — docs/adr/009-webui-backend-contract.md).
 KNOWN_BACKEND_GAPS: set[Route] = set()
 
 
@@ -250,6 +288,8 @@ def test_frontend_contract_paths_are_declared_in_resources_ts():
         "/graph/relations",
         "/tags/categories/_import",
         "/auth/logout",
+        "/admin/portability/exports",
+        "/admin/portability/imports",
     }
     missing = {marker for marker in markers if marker not in text}
     assert not missing, "resources.ts no longer declares:\n" + "\n".join(
@@ -287,7 +327,7 @@ def test_frontend_routes_are_real_backend_or_known_gap():
     stale_known_gaps = KNOWN_BACKEND_GAPS - missing
     assert not stale_known_gaps, (
         "Known route gap(s) are now covered; remove them from "
-        "KNOWN_BACKEND_GAPS and update WEBUI-WIRING-PLAN.md:\n" + _fmt(stale_known_gaps)
+        "KNOWN_BACKEND_GAPS:\n" + _fmt(stale_known_gaps)
     )
 
 

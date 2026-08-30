@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setSessionAuthToken } from './client';
+import { ApiError, onUnauthorized, setSessionAuthToken } from './client';
 import { api } from './resources';
 
 const originalFetch = globalThis.fetch;
@@ -31,6 +31,38 @@ afterEach(() => {
 });
 
 describe('queryStream parser — answer_status propagation', () => {
+  it('reports a stream 401 and preserves the parsed ApiError', async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorized);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Token expired' }), {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    let error: unknown;
+
+    try {
+      await api.queryStream({ query: 'expired session' }, () => undefined);
+    } catch (caught) {
+      error = caught;
+    } finally {
+      unsubscribe();
+    }
+
+    expect(unauthorized).toHaveBeenCalledOnce();
+    expect(unauthorized).toHaveBeenCalledWith({
+      path: '/twin/api/query/stream',
+      status: 401,
+    });
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      body: { detail: 'Token expired' },
+    });
+  });
+
   it('forwards retrieval progress stage events without polluting answer text', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       ndjsonResponse([
@@ -271,6 +303,105 @@ describe('listDocumentChunks', () => {
   });
 });
 
+describe('portability resources', () => {
+  const job = {
+    id: 'imp_test',
+    kind: 'import',
+    workspace: 'base',
+    status: 'dry-running',
+    created_at: '2026-08-26T12:00:00Z',
+    updated_at: '2026-08-26T12:00:00Z',
+    actor: 'operator',
+    options: {},
+    result: null,
+    report: null,
+    validation: null,
+    error: null,
+    download_available: false,
+  };
+
+  it('sends the import as multipart without overriding its content type', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(job), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await api.createPortabilityImport({
+      bundle: new File(['bundle'], 'staging.tar.gz', {
+        type: 'application/gzip',
+      }),
+      folderMap: { staging: 'production' },
+      allowUnverified: false,
+    });
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(String(url)).toContain('/twin/api/admin/portability/imports');
+    expect(init?.method).toBe('POST');
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
+    expect(init?.body).toBeInstanceOf(FormData);
+    const form = init?.body as FormData;
+    expect((form.get('bundle') as File).name).toBe('staging.tar.gz');
+    expect(form.get('folder_map')).toBe('{"staging":"production"}');
+    expect(form.get('allow_unverified')).toBe('false');
+  });
+
+  it('downloads the completed archive as a blob', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      new Response('canonical bundle', {
+        status: 200,
+        headers: { 'Content-Type': 'application/gzip' },
+      }),
+    );
+
+    const blob = await api.downloadPortabilityExport('exp_test');
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(String(url)).toContain(
+      '/twin/api/admin/portability/exports/exp_test?download=true',
+    );
+    expect(new Headers(init?.headers).get('Accept')).toBe('application/gzip');
+    expect(await blob.text()).toBe('canonical bundle');
+  });
+
+  it.each([
+    {
+      label: 'binary export download',
+      request: () => api.downloadPortabilityExport('exp_test'),
+      path: '/twin/api/admin/portability/exports/exp_test',
+    },
+    {
+      label: 'multipart import upload',
+      request: () =>
+        api.createPortabilityImport({
+          bundle: new File(['bundle'], 'staging.tar.gz', {
+            type: 'application/gzip',
+          }),
+        }),
+      path: '/twin/api/admin/portability/imports',
+    },
+  ])('reports a 401 from the $label path', async ({ request, path }) => {
+    const unauthorized = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorized);
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Token expired' }), {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    try {
+      await expect(request()).rejects.toMatchObject({ status: 401 });
+    } finally {
+      unsubscribe();
+    }
+    expect(unauthorized).toHaveBeenCalledOnce();
+    expect(unauthorized).toHaveBeenCalledWith({ path, status: 401 });
+  });
+});
+
 describe('uploadDocument', () => {
   /** Capture both the multipart body and the request headers of the upload. */
   function mockUploadOnce(): {
@@ -315,6 +446,22 @@ describe('uploadDocument', () => {
     expect(bodies[0].has('classification')).toBe(false);
     expect(bodies[0].has('rag_engine')).toBe(false);
     expect(headers[0].has('X-Twin-Classification')).toBe(false);
+  });
+
+  it('preserves long NFD basenames byte-for-byte for ordinary uploads', async () => {
+    const { bodies, headers } = mockUploadOnce();
+    const originalName = `${'e\u0301'.repeat(75)}-rapport.pdf`;
+
+    await api.uploadDocument(new File(['payload'], originalName));
+
+    const resolveCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const resolveBody = JSON.parse(String(resolveCall[1]?.body)) as {
+      file_name: string;
+      relative_path?: string;
+    };
+    expect(resolveBody).toEqual({ file_name: originalName });
+    expect((bodies[0].get('file') as File | null)?.name).toBe(originalName);
+    expect(headers[0].has('X-Twin-Relative-Path')).toBe(false);
   });
 
   it('sends the operator classification as the X-Twin-Classification header', async () => {
@@ -371,6 +518,38 @@ describe('uploadDocument', () => {
       'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig',
     );
     expect(headers[0].has('X-API-Key')).toBe(false);
+  });
+
+  it('reports a native upload 401 so the shell returns to login', async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorized);
+    (globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ action: 'upload' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: 'Token expired' }), {
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    try {
+      await expect(
+        api.uploadDocument(new File(['payload'], 'expired-session.pdf')),
+      ).rejects.toMatchObject({ status: 401 });
+      expect(unauthorized).toHaveBeenCalledOnce();
+      expect(unauthorized).toHaveBeenCalledWith({
+        path: '/documents/upload',
+        status: 401,
+      });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('shares an existing document without sending multipart content again', async () => {

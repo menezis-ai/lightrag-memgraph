@@ -395,10 +395,20 @@ class TestVisionSettingsRoutes:
                 "procedure_enabled": False,
             },
         )
-        raw = (await client.get("/twin/api/activity")).json()
+        raw = (
+            await client.get(
+                "/twin/api/activity",
+                params={
+                    "resource.id": "vision",
+                    "kind": "vision-settings-updated",
+                },
+            )
+        ).json()
         items = raw.get("items", raw if isinstance(raw, list) else [])
+        assert len(items) == 1
         evt = items[0]
         assert evt["kind"] == "vision-settings-updated"
+        assert evt["target"]["id"] == "vision"
         assert evt["meta"]["min_ocr_chars"] == 10
         assert evt["meta"]["drop_classes"] == ["logo"]
         assert evt["meta"]["procedure_enabled"] is False

@@ -13,6 +13,7 @@
  */
 
 import type { SourceType } from '../components/Icon';
+import type { SourceLink } from './document';
 
 export type InlineAnswerPart =
   | { type: 'text'; value: string }
@@ -42,7 +43,7 @@ export type AnswerPart =
   | { type: 'paragraphBreak' };
 
 /**
- * Intra-chunk paragraph anchor (PARAGRAPH-CITATION-PLAN phase A).
+ * Intra-chunk paragraph anchor (docs/adr/008-paragraph-citation-anchor.md, phase A).
  * Offsets only, never paragraph text — the chunk content is loaded on
  * demand through the existing chunk routes, and threads persisted to
  * localStorage must not grow with the feature. Heuristic and
@@ -82,6 +83,8 @@ export interface RetrievalSource {
   doc_id?: string | null;
   /** Optional chunk id cited by the backend. */
   chunk_id?: string | null;
+  /** Document-level provenance; never a server-side fetch target. */
+  source_links?: readonly SourceLink[];
   /** Optional paragraph anchor inside the cited chunk. */
   anchor?: SourceAnchor | null;
 }

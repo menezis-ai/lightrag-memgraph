@@ -1,4 +1,4 @@
-"""Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md, PR 1).
+"""Procedure-PDF ingestion profile (docs/adr/007-procedure-pdf-profile.md).
 
 BNP "IT Group" level-2 procedures (calibrated 2026-07-20 on ITG0162 /
 ITG0160) are text pages + 3-4 SIPOC swimlane schematics. The standard

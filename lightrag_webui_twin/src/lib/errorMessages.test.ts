@@ -150,6 +150,19 @@ describe('describeError / userErrorMessage', () => {
     );
   });
 
+  it('promotes a structured conflict message without discarding recovery metadata', () => {
+    const body = {
+      detail: {
+        message: 'row_version mismatch — reload and retry',
+        current_version: 3,
+      },
+    };
+    expect(userErrorMessage(apiError(409, body))).toBe(
+      'row_version mismatch — reload and retry',
+    );
+    expect(body.detail.current_version).toBe(3);
+  });
+
   it('maps pipeline-busy conflicts to explicit action-not-taken copy', () => {
     const msg = userErrorMessage(
       apiError(409, { detail: 'Pipeline is busy. Please try again later' }),

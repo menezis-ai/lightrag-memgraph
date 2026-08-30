@@ -289,25 +289,25 @@ class TestBuildSourcesFromRawData:
     def test_one_source_per_reference_id_in_order(self):
         result = _envelope(
             references=[
-                {"reference_id": "1", "file_path": "/cib/runbooks/oracle.pdf"},
-                {"reference_id": "2", "file_path": "/cib/runbooks/rhel.pdf"},
+                {"reference_id": "1", "file_path": "/demo/runbooks/oracle.pdf"},
+                {"reference_id": "2", "file_path": "/demo/runbooks/rhel.pdf"},
             ],
             chunks=[
                 {
                     "reference_id": "1",
                     "chunk_id": "c-aa",
-                    "file_path": "/cib/runbooks/oracle.pdf",
+                    "file_path": "/demo/runbooks/oracle.pdf",
                 },
                 {
                     "reference_id": "2",
                     "chunk_id": "c-bb",
-                    "file_path": "/cib/runbooks/rhel.pdf",
+                    "file_path": "/demo/runbooks/rhel.pdf",
                 },
             ],
         )
         sources = build_sources_from_raw_data(result)
         assert [s["n"] for s in sources] == [1, 2]
-        assert sources[0]["name"] == "/cib/runbooks/oracle.pdf"
+        assert sources[0]["name"] == "/demo/runbooks/oracle.pdf"
         assert sources[0]["chunk_id"] == "c-aa"
         assert sources[1]["chunk_id"] == "c-bb"
 

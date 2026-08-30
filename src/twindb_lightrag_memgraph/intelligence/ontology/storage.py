@@ -10,6 +10,7 @@ Follows the same patterns as kv_impl.py:
 - Always await result.consume()
 """
 
+import json
 import logging
 import os
 import re
@@ -142,7 +143,7 @@ def _ranked_query_phrases(
     ranked: list[tuple[tuple[int, int, int, int, str], str]] = []
     max_size = min(_MAX_QUERY_NGRAM, len(tokens))
     for size in range(1, max_size + 1):
-        for start in range(0, len(tokens) - size + 1):
+        for start in range(len(tokens) - size + 1):
             end = start + size
             phrase_tokens = tokens[start:end]
             technical = any(
@@ -196,6 +197,38 @@ def _query_term_candidates(query: str) -> list[str]:
         if len(candidates) == _MAX_QUERY_CANDIDATES:
             break
     return candidates
+
+
+#: Node columns owned by ``upsert_nodes`` itself. ``name``/``node_type`` are
+#: the MERGE identity — letting a payload overwrite them renames the node and
+#: the next upsert creates a duplicate; the others are typed/timestamp columns.
+_RESERVED_NODE_PROPS = frozenset(
+    {"name", "node_type", "confidence", "source_doc", "created_at", "updated_at"}
+)
+
+
+def _flatten_props(properties: dict | None) -> dict:
+    """Memgraph-safe property map: scalars kept, nested dict/list JSON-encoded.
+
+    Same convention as ``vector_impl`` (``_to_entry``): Bolt properties are
+    scalars or lists of scalars; a nested map is stored as its JSON text.
+    ``None`` values are dropped (``SET n += {k: null}`` would remove the key)
+    and :data:`_RESERVED_NODE_PROPS` are dropped with a debug log — they are
+    written by the typed columns of the upsert, never by the free map.
+    """
+    out: dict = {}
+    for key, val in (properties or {}).items():
+        key = str(key)
+        if val is None:
+            continue
+        if key in _RESERVED_NODE_PROPS:
+            logger.debug("ontology: dropping reserved node property %r", key)
+            continue
+        if isinstance(val, (dict, list, tuple)):
+            out[str(key)] = json.dumps(val, ensure_ascii=False, default=str)
+        else:
+            out[str(key)] = val
+    return out
 
 
 @dataclass
@@ -328,19 +361,23 @@ class OntologyStorage:
                 "node_type": n.node_type,
                 "confidence": n.confidence,
                 "source_doc": n.source_doc,
-                "props": n.properties,
+                "props": _flatten_props(n.properties),
                 "ts": now,
             }
             for n in nodes
         ]
 
+        # ``props`` never contains a reserved column (``_flatten_props``) and
+        # is applied BEFORE the typed columns — belt and braces. Before
+        # 2026-08-25 the map was built and never written (audit).
         async with self._driver.session(database=self._database) as session:
             result = await session.run(
                 f"""
                 UNWIND $entries AS e
                 MERGE (n:`{label}` {{name: e.name, node_type: e.node_type}})
                 ON CREATE SET n.created_at = e.ts
-                SET n.confidence = e.confidence,
+                SET n += e.props,
+                    n.confidence = e.confidence,
                     n.source_doc = e.source_doc,
                     n.updated_at = e.ts
                 """,

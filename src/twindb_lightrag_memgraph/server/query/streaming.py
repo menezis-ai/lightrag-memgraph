@@ -76,7 +76,7 @@ async def _emit_answer_tokens(envelope, stripper, collector=None) -> AsyncIterat
     ``collector`` (a ``paragraph_anchor.CitationEvidenceCollector``) is fed
     the SAME safe text that is emitted to the client, so anchor scoring works
     on exactly what the operator read — never the raw pre-strip stream
-    (PARAGRAPH-CITATION-PLAN.md §5.1).
+    (docs/adr/008-paragraph-citation-anchor.md).
     """
     async for text in _iter_answer_text(_select_token_source(envelope)):
         for safe in stripper.feed(text):

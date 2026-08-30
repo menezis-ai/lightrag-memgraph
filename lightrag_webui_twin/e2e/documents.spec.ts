@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab, setMswScenario } from './helpers';
 
 async function addDocumentTagFilter(page: Page, tag: string) {
@@ -104,8 +104,15 @@ test.describe('Documents RC-1 persistence', () => {
   });
 
   test('@documents @rc1 deleting the selected graph node leaves the inspector empty (no auto-fallback)', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Documents to Graph cross-navigation replaces the procedure query after deletion.',
+      ),
+    );
     // First, in the Graph tab, select e_memgraph explicitly.
     await openTab(page, 'Graph');
     await page.getByTestId('kg-node-e_memgraph').click();

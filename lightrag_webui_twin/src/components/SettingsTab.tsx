@@ -1,5 +1,5 @@
 /**
- * SettingsTab — 6 sections (base trimmed by the 2026-05-30 review; the
+ * SettingsTab — 7 sections (base trimmed by the 2026-05-30 review; the
  * three later additions each came with their own backend surface):
  *
  *   - Profile   : read-only, lit useAuth()
@@ -7,6 +7,7 @@
  *   - API keys  : per-operator key CRUD (api_key_store)
  *   - Vision    : runtime curation + admin procedure-ingestion toggle
  *   - Folder    : env vars read-only + admin folder CRUD
+ *   - Portability: canonical KB export/import workflow (admin only)
  *   - About     : runtime identity card (versions, Memgraph, topology)
  *
  * REMOVED pre-30/05:
@@ -30,10 +31,12 @@ import { FoldersAdminSection } from './Settings/FoldersAdminSection';
 import { FolderSection } from './Settings/FolderSection';
 import { VisionSection } from './Settings/VisionSection';
 import { AboutSection } from './Settings/AboutSection';
+import { PortabilitySection } from './Settings/PortabilitySection';
 import { Icon } from './Icon';
 import { useAuth } from '../hooks/useAuth';
 import { userErrorMessage } from '../lib/errorMessages';
 import { useOpenApi } from '../api/queries';
+import { canManageFolders } from '../lib/permissions';
 import type { Toast } from '../types/toast';
 
 export type SettingsSectionKey =
@@ -42,18 +45,27 @@ export type SettingsSectionKey =
   | 'api-keys'
   | 'vision'
   | 'folder'
+  | 'portability'
   | 'about';
 
 const SECTIONS: {
   key: SettingsSectionKey;
   label: string;
-  icon: 'circle-dot' | 'world' | 'folder' | 'lock' | 'eye' | 'info-circle';
+  icon:
+    | 'circle-dot'
+    | 'world'
+    | 'folder'
+    | 'lock'
+    | 'eye'
+    | 'git-branch'
+    | 'info-circle';
 }[] = [
   { key: 'profile', label: 'Profile', icon: 'circle-dot' },
   { key: 'api', label: 'API', icon: 'world' },
   { key: 'api-keys', label: 'API keys', icon: 'lock' },
   { key: 'vision', label: 'Vision', icon: 'eye' },
   { key: 'folder', label: 'Folder', icon: 'folder' },
+  { key: 'portability', label: 'Portability', icon: 'git-branch' },
   { key: 'about', label: 'About', icon: 'info-circle' },
 ];
 
@@ -87,13 +99,16 @@ export function SettingsTab({
     setSectionState({ initial: initialSection, value });
   };
   const { user } = useAuth();
+  const sections = canManageFolders(user)
+    ? SECTIONS
+    : SECTIONS.filter((candidate) => candidate.key !== 'portability');
 
   return (
     <div className="settings" data-testid="settings-tab">
       <aside className="settings-rail">
         <h2>Settings</h2>
         <ul>
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <li key={s.key}>
               <button
                 type="button"
@@ -126,6 +141,9 @@ export function SettingsTab({
             <FoldersAdminSection user={user} onToast={onToast} />
           </>
         )}
+        {section === 'portability' && (
+          <PortabilitySection user={user} onToast={onToast} />
+        )}
         {section === 'about' && <AboutSection />}
       </main>
     </div>
@@ -136,7 +154,7 @@ export function SettingsTab({
  * API section — fetches the live OpenAPI surface from
  * `/openapi.json` instead of bundling a hardcoded fixture (mock-kill
  * F2). Pure prod URL list (`API_SERVERS`) was also removed because the
- * `cib-kb.twin.internal` hostnames didn't exist; the curl preview now
+ * `kb.example.com` hostnames didn't exist; the curl preview now
  * uses the current browser origin which always reflects the live deploy.
  */
 function ApiSection() {

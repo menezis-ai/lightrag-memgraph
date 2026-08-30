@@ -240,6 +240,11 @@ class ActivityEvent(_Base):
         "procedure-retried",
         "procedure-rerouted",
         "procedure-store-recovered",
+        "linked-source-declared",
+        "linked-source-updated",
+        "linked-source-disabled",
+        "kb-exported",
+        "kb-imported",
     ]
     sev: Literal["info", "warning", "error", "critical"]
     actor: ActivityActor
@@ -432,6 +437,116 @@ class FolderPatch(_Base):
     label: str | None = Field(default=None, description="New display label.")
     kind: str | None = Field(default=None, description="New folder kind.")
     description: str | None = Field(default=None, description="New description.")
+
+
+# ---------------------------------------------------------------------------
+# KB portability admin jobs (KB-PORTABILITY-PLAN T3.1)
+# ---------------------------------------------------------------------------
+
+
+class PortabilityExportCreate(_Base):
+    """Start a workspace-wide canonical KB export."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    workspace: str | None = Field(
+        default=None,
+        description=(
+            "Runtime workspace assertion. Omit normally; a value different "
+            "from the server WORKSPACE is refused."
+        ),
+        examples=["base"],
+    )
+    include_activity: bool = Field(
+        default=False,
+        description="Include the optional folder-scoped Activity ledger.",
+    )
+    include_procedures: bool = Field(
+        default=False,
+        description="Include optional procedure bundles and schematic files.",
+    )
+    force: bool = Field(
+        default=False,
+        description=(
+            "Allow export while the ingestion pipeline is busy. The resulting "
+            "bundle is explicitly marked unverified."
+        ),
+    )
+
+
+class PortabilityApproval(_Base):
+    """Bind an explicit admin approval to the displayed dry-run report."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    report_hash: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Exact SHA-256 report hash returned by the dry-run job.",
+    )
+
+
+class PortabilityJobResponse(_Base):
+    """Public, path-free view of a persisted portability job."""
+
+    id: str = Field(description="Opaque portability job identifier.")
+    kind: Literal["export", "import"] = Field(description="Job operation kind.")
+    workspace: str = Field(description="Target/source Memgraph workspace.")
+    status: Literal[
+        "queued",
+        "uploading",
+        "running",
+        "dry-running",
+        "awaiting-approval",
+        "approved",
+        "applying",
+        "applied",
+        "validating",
+        "completed",
+        "failed",
+        "cancelled",
+        "validated",
+        "validation-failed",
+    ] = Field(description="Current persisted state-machine status.")
+    created_at: str = Field(description="UTC creation timestamp.")
+    updated_at: str = Field(description="UTC last-transition timestamp.")
+    actor: str = Field(description="Authenticated administrator identity.")
+    approved_report_hash: str | None = Field(
+        default=None, description="Dry-run report hash explicitly approved by an admin."
+    )
+    approved_by: str | None = Field(
+        default=None, description="Administrator who approved the dry-run."
+    )
+    applied_by: str | None = Field(
+        default=None, description="Administrator who started the apply transition."
+    )
+    validated_by: str | None = Field(
+        default=None, description="Administrator who started validation."
+    )
+    cancelled_by: str | None = Field(
+        default=None, description="Administrator who cancelled the job."
+    )
+    options: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Non-secret options approved for the operation.",
+    )
+    result: dict[str, Any] | None = Field(
+        default=None, description="Export/apply receipt when available."
+    )
+    report: dict[str, Any] | None = Field(
+        default=None, description="Sealed import dry-run report when available."
+    )
+    validation: dict[str, Any] | None = Field(
+        default=None, description="Post-import validation report when available."
+    )
+    error: str | None = Field(
+        default=None, description="Operator-safe failure reason, if the job failed."
+    )
+    download_available: bool = Field(
+        default=False,
+        description="Whether GET with download=true can return the export archive.",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -104,7 +104,7 @@ class FolderRouter:
     Usage with L4 override:
         result = await router.route(
             query="...",
-            provided_folders=["cib"],
+            provided_folders=["demo"],
             provided_public_folders=["commons"],
         )
     """

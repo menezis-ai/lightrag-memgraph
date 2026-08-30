@@ -1310,6 +1310,91 @@ class TestLifespan:
             async with app.router.lifespan_context(app):
                 mock_register.assert_called_once()
 
+    async def test_shutdown_finalizes_storages_and_closes_pools(self, _mock_rag):
+        """Shutdown releases what startup acquired: LightRAG storages, then
+        Twin's shared Bolt pools (audit 2026-08-25 — only the reference was
+        dropped before, leaving pools open until process exit)."""
+        settings = _make_settings()
+        _mock_rag.finalize_storages = AsyncMock()
+        close_driver = AsyncMock()
+
+        with ExitStack() as stack:
+            _apply_lifespan_patches(stack, _mock_rag)
+            stack.enter_context(
+                patch("twindb_lightrag_memgraph._pool.close_driver", close_driver)
+            )
+            app = create_app(settings)
+
+            async with app.router.lifespan_context(app):
+                _mock_rag.finalize_storages.assert_not_awaited()
+                close_driver.assert_not_awaited()
+
+        _mock_rag.finalize_storages.assert_awaited_once()
+        close_driver.assert_awaited_once()
+        assert app_module._rag is None
+
+    async def test_startup_failure_still_runs_the_teardown(self, _mock_rag):
+        """initialize_storages() raising (the fail-closed USE DATABASE case)
+        must not leave ``_rag`` referenced nor the pools open: the teardown
+        runs from the ``finally`` and the error still propagates."""
+        settings = _make_settings()
+        _mock_rag.initialize_storages = AsyncMock(side_effect=RuntimeError("no db"))
+        _mock_rag.finalize_storages = AsyncMock()
+        close_driver = AsyncMock()
+
+        with ExitStack() as stack:
+            _apply_lifespan_patches(stack, _mock_rag)
+            stack.enter_context(
+                patch("twindb_lightrag_memgraph._pool.close_driver", close_driver)
+            )
+            app = create_app(settings)
+
+            with pytest.raises(RuntimeError, match="no db"):
+                async with app.router.lifespan_context(app):
+                    pass  # pragma: no cover - startup never completes
+
+        _mock_rag.finalize_storages.assert_awaited_once()
+        close_driver.assert_awaited_once()
+        assert app_module._rag is None
+
+    async def test_error_inside_the_lifespan_body_still_tears_down(self, _mock_rag):
+        settings = _make_settings()
+        _mock_rag.finalize_storages = AsyncMock()
+        close_driver = AsyncMock()
+
+        with ExitStack() as stack:
+            _apply_lifespan_patches(stack, _mock_rag)
+            stack.enter_context(
+                patch("twindb_lightrag_memgraph._pool.close_driver", close_driver)
+            )
+            app = create_app(settings)
+
+            with pytest.raises(ValueError, match="mid-flight"):
+                async with app.router.lifespan_context(app):
+                    raise ValueError("mid-flight")
+
+        _mock_rag.finalize_storages.assert_awaited_once()
+        close_driver.assert_awaited_once()
+        assert app_module._rag is None
+
+    async def test_shutdown_survives_a_failing_finalize(self, _mock_rag):
+        """A failing finalize must not abort shutdown nor skip the pool close."""
+        settings = _make_settings()
+        _mock_rag.finalize_storages = AsyncMock(side_effect=RuntimeError("boom"))
+        close_driver = AsyncMock()
+
+        with ExitStack() as stack:
+            _apply_lifespan_patches(stack, _mock_rag)
+            stack.enter_context(
+                patch("twindb_lightrag_memgraph._pool.close_driver", close_driver)
+            )
+            app = create_app(settings)
+            async with app.router.lifespan_context(app):
+                pass
+
+        close_driver.assert_awaited_once()
+        assert app_module._rag is None
+
     async def test_rag_initialize_storages_called(self, _mock_rag):
         """LightRAG.initialize_storages() is awaited during lifespan startup.
 
@@ -1358,6 +1443,7 @@ class TestLifespan:
         from twindb_lightrag_memgraph.server import webui_notificationstore
         from twindb_lightrag_memgraph.server import webui_router
         from twindb_lightrag_memgraph.server import webui_tagstore
+        from twindb_lightrag_memgraph.server import source_links_store
 
         calls: list[str] = []
 
@@ -1434,6 +1520,13 @@ class TestLifespan:
                 self._items.insert(0, dict(notification))
                 return dict(notification)
 
+        class FakeSourceLinkStore:
+            def __init__(self, workspace: str = "default") -> None:
+                self.workspace = workspace
+
+            async def initialize(self) -> None:
+                calls.append(f"source-links:init:{self.workspace}")
+
         monkeypatch.setenv("TWIN_DEFAULT_FOLDER", "default")
         monkeypatch.setenv(
             "TWIN_FOLDERS_JSON",
@@ -1453,6 +1546,11 @@ class TestLifespan:
             "MemgraphNotificationStore",
             FakeNotificationStore,
         )
+        monkeypatch.setattr(
+            source_links_store,
+            "MemgraphSourceLinkStore",
+            FakeSourceLinkStore,
+        )
 
         webui_router.reset_store()
         settings = _make_settings(
@@ -1469,6 +1567,10 @@ class TestLifespan:
                 async with app.router.lifespan_context(app):
                     default_store = webui_router.get_store("default")
                     sandbox_store = webui_router.get_store("sandbox")
+                    assert (
+                        default_store._source_link_backend  # noqa: SLF001
+                        is sandbox_store._source_link_backend  # noqa: SLF001
+                    )
 
                     assert await default_store.list_tags() == []
                     assert await sandbox_store.list_tags() == []
@@ -1500,6 +1602,7 @@ class TestLifespan:
         assert "activity:seed:sandbox" not in calls
         assert "notification:seed:default" not in calls
         assert "notification:seed:sandbox" not in calls
+        assert sum(call.startswith("source-links:init:") for call in calls) == 1
 
     async def test_rag_set_during_startup(self, _mock_rag):
         """_rag is set to the LightRAG instance during lifespan startup."""

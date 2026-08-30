@@ -16,7 +16,7 @@ import json
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from twindb_lightrag_memgraph import _twindb_state
@@ -47,7 +47,7 @@ def _make_settings(*, api_key: str | None = None) -> LightRAGServerSettings:
     """Build settings with auth disabled unless a test opts into it."""
     return LightRAGServerSettings(
         working_dir="/tmp/lightrag_webui_test",
-        workspace="cib",
+        workspace="demo",
         enable_langsmith_tracing=False,
         api_key=api_key,
         jwt_secret=None,
@@ -126,6 +126,39 @@ class TestDocuments:
             "folder",
         ):
             assert key in first
+
+    async def test_503_fallback_survives_source_link_backend_failure(
+        self, client, monkeypatch
+    ):
+        """Auxiliary provenance must not cancel the Memgraph-down fallback."""
+
+        class BrokenSourceLinks:
+            async def list_for_documents(self, _doc_ids):
+                raise RuntimeError("source-link graph unavailable")
+
+        store = webui_router.get_store()
+        fallback_row = store.list_documents()[0]
+        store._documents.clear()  # noqa: SLF001 - force live-backend path
+        monkeypatch.setattr(
+            store,
+            "list_documents",
+            lambda **_filters: [dict(fallback_row)],
+        )
+        store._source_link_backend = BrokenSourceLinks()  # noqa: SLF001
+
+        async def unavailable(**_filters):
+            raise HTTPException(status_code=503, detail="Memgraph unavailable")
+
+        monkeypatch.setattr(
+            webui_router, "_list_documents_from_doc_status", unavailable
+        )
+
+        response = await client.get("/documents")
+
+        assert response.status_code == 200
+        assert response.json()["total"] == 1
+        assert response.json()["items"][0]["id"] == fallback_row["id"]
+        assert response.json()["items"][0]["source_links"] == []
 
     async def test_status_filter_narrows(self, client):
         r = await client.get("/documents", params={"status": "failed"})
@@ -396,11 +429,11 @@ class TestActivity:
             assert e["kind"] in {"retrieval", "auth"}
 
     async def test_actor_filter(self, client):
-        r = await client.get("/activity", params={"actor": "marc.berthier"})
+        r = await client.get("/activity", params={"actor": "demo.operator"})
         body = r.json()
         assert body["total"] >= 1
         for e in body["items"]:
-            assert e["actor"]["user"] == "marc.berthier"
+            assert e["actor"]["user"] == "demo.operator"
 
     async def test_q_substring_match(self, client):
         r = await client.get("/activity", params={"q": "Oracle"})
@@ -423,19 +456,21 @@ class TestActivity:
                 "source": "runbook.pdf",
                 "track_id": "upload-track-1",
                 "status": "success",
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
         assert r.status_code == 200
 
         feed = await client.get(
-            "/activity", params={"kind": "source-uploaded", "q": "runbook.pdf"}
+            "/activity",
+            params={"kind": "source-uploaded", "resource.id": "upload-track-1"},
         )
         body = feed.json()
         assert body["total"] == 1
         event = body["items"][0]
         assert event["actor"]["user"] == "api_key"
         assert event["target"]["type"] == "source"
+        assert event["target"]["id"] == "upload-track-1"
         assert event["target"]["label"] == "runbook.pdf"
         assert event["meta"]["track_id"] == "upload-track-1"
 
@@ -687,7 +722,7 @@ class TestSettingsFlag:
     async def test_disabling_drops_the_router(self):
         settings = LightRAGServerSettings(
             working_dir="/tmp/lightrag_webui_test",
-            workspace="cib",
+            workspace="demo",
             enable_langsmith_tracing=False,
             api_key=None,
             jwt_secret=None,

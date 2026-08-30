@@ -1,21 +1,56 @@
 /**
- * Unit tests for SettingsTab (3-section redesign per 2026-05-30).
+ * Unit tests for the governed Settings rail.
  *
  * Behaviors under test:
- *   - rail exposes exactly Profile / API / Folder (Providers / Members /
- *     Danger zone / Tokens / API generation all absent)
- *   - Profile renders the MyAccess identity from useAuth (Steward in dev)
+ *   - rail exposes the supported runtime sections (Providers / Members /
+ *     Danger zone / Tokens all remain absent)
+ *   - Profile renders the MyAccess identity after open access is confirmed
  *   - Profile Sign out button fires onSignOut
  *   - Folder section shows the folder id + retention table
  *   - API section shows the ApiTab (proxy)
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
 import { SettingsTab } from './SettingsTab';
 import { __resetAuthConfigCacheForTests } from '../hooks/useAuth';
+
+const server = setupServer(
+  http.get('*/auth-status', () =>
+    HttpResponse.json({
+      auth_enabled: false,
+      // Open access mirrors the backend contract: anonymous requests are
+      // authenticated by policy once that posture is explicitly confirmed.
+      authenticated: true,
+      login_required: false,
+      user: null,
+      expires_at: null,
+    }),
+  ),
+  http.get('*/twin/api/folders', () => HttpResponse.json([])),
+  http.get('*/openapi.json', () =>
+    HttpResponse.json({
+      info: { version: 'test' },
+      paths: {},
+    }),
+  ),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
 
 function renderWith(
   qc: QueryClient,
@@ -35,19 +70,48 @@ beforeEach(() => {
 
 afterEach(() => {
   (window as Window & typeof globalThis).__twinConfig = undefined;
+  server.resetHandlers();
 });
 
 describe('SettingsTab — rail', () => {
-  it('exposes exactly 3 sections: profile, api, folder', () => {
+  it('exposes the supported sections, including admin portability', async () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-rail-profile')).toBeInTheDocument();
     expect(screen.getByTestId('settings-rail-api')).toBeInTheDocument();
     expect(screen.getByTestId('settings-rail-folder')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-rail-portability')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-rail-about')).toBeInTheDocument();
     // Removed sections must NOT appear (30/05 cleanup)
     expect(screen.queryByTestId('settings-rail-providers')).toBeNull();
     expect(screen.queryByTestId('settings-rail-members')).toBeNull();
     expect(screen.queryByTestId('settings-rail-danger')).toBeNull();
     expect(screen.queryByTestId('settings-rail-tokens')).toBeNull();
+  });
+
+  it('hides the portability rail entry without admin scope', () => {
+    (window as Window & typeof globalThis).__twinConfig = {
+      apiBaseUrl: '/twin/api',
+      lightragBaseUrl: '',
+      idpLogoutUrl: '',
+      defaultFolderId: 'default',
+      maxFolders: 5,
+      folders: [],
+      debugUser: {
+        sso_subject: 'reader',
+        email: 'reader@example.test',
+        name: 'Reader',
+        palier: { level: 1, label: 'Reader', scopes: ['twin:read'] },
+        folders: ['default'],
+        idp: 'local-debug',
+        idp_realm: 'test',
+        sub: 'reader',
+        session_expires: '2099-12-31T23:59:00Z',
+        gateway_scopes: ['read:documents'],
+      },
+    };
+    __resetAuthConfigCacheForTests();
+    renderWith(new QueryClient());
+    expect(screen.queryByTestId('settings-rail-portability')).toBeNull();
   });
 
   it('keeps editable token/member/provider Settings surfaces out of scope', () => {
@@ -60,18 +124,19 @@ describe('SettingsTab — rail', () => {
 });
 
 describe('SettingsTab — Profile', () => {
-  it('shows MyAccess identity from useAuth (dev fallback = Steward)', () => {
+  it('shows the open-access Steward identity after auth posture resolves', async () => {
     renderWith(new QueryClient());
     expect(screen.getByTestId('settings-profile')).toBeInTheDocument();
     expect(
       screen.getByTestId('settings-profile-name').textContent,
     ).toBe('Local Operator');
-    expect(screen.getByText('Steward')).toBeInTheDocument();
+    expect(await screen.findByText('Steward')).toBeInTheDocument();
   });
 
   it('Sign out button fires onSignOut', async () => {
     const onSignOut = vi.fn();
     renderWith(new QueryClient(), { onSignOut });
+    await screen.findByText('Steward');
     await userEvent.click(screen.getByTestId('settings-signout'));
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
@@ -87,9 +152,9 @@ describe('SettingsTab — Profile', () => {
         { id: 'default', label: 'Default folder', kind: 'primary', sources: 0 },
       ],
       debugUser: {
-        sso_subject: 'operator@twin.local',
-        email: 'operator@twin.local',
-        name: 'operator@twin.local',
+        sso_subject: 'operator@example.com',
+        email: 'operator@example.com',
+        name: 'operator@example.com',
         palier: {
           level: 3,
           label: 'Steward',
@@ -110,11 +175,11 @@ describe('SettingsTab — Profile', () => {
     expect(screen.getByTestId('settings-open-access-note')).toBeInTheDocument();
   });
 
-  it('renders gateway scopes as chip list', () => {
+  it('renders gateway scopes as chip list after auth posture resolves', async () => {
     renderWith(new QueryClient());
-    // Steward dev fallback has 6 scopes
+    // Explicitly confirmed open access exposes the configured Steward scopes.
     expect(screen.getByText('read:documents')).toBeInTheDocument();
-    expect(screen.getByText('admin:folders')).toBeInTheDocument();
+    expect(await screen.findByText('admin:folders')).toBeInTheDocument();
   });
 });
 
@@ -130,16 +195,16 @@ describe('SettingsTab — Folder', () => {
 
   it('renders the active folder identity from props (not a fixture)', async () => {
     renderWith(new QueryClient(), {
-      activeFolder: 'cib-prod',
-      kbName: 'CIB Production',
+      activeFolder: 'demo-prod',
+      kbName: 'Demo Production',
     });
     await userEvent.click(screen.getByTestId('settings-rail-folder'));
     expect(screen.getByTestId('settings-active-folder').textContent).toBe(
-      'cib-prod',
+      'demo-prod',
     );
     expect(
       screen.getByTestId('settings-folder-display-name').textContent,
-    ).toBe('CIB Production');
+    ).toBe('Demo Production');
   });
 
   it('no longer renders the removed visibility / region / retention cards', async () => {

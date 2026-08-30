@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { boot, openTab } from './helpers';
 
 /**
@@ -55,8 +55,15 @@ async function expectRenderedPane(page: Page) {
 
 test.describe('UI sweep', () => {
   test('@sweep every tab renders content with a clean console, in light and dark theme', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'The all-tabs sweep intentionally unmounts the Documents procedure query.',
+      ),
+    );
     const log = track(page);
     await boot(page);
 
@@ -77,8 +84,15 @@ test.describe('UI sweep', () => {
   });
 
   test('@sweep every modal opens and closes without errors or stray mutations', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/openapi\.json$/,
+        'Closing the API modal cancels its in-flight OpenAPI query.',
+      ),
+    );
     const log = track(page);
     await boot(page);
 
@@ -225,8 +239,23 @@ test.describe('UI sweep', () => {
   });
 
   test('@sweep folder switch keeps every tab consistent and the console clean', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const folderSwitchReason =
+      'The sweep switches folders and cancels queries scoped to the previous folder.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/documents\?folder=default$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/notifications$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags\/categories$/, folderSwitchReason),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(/\/pipeline_status$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, folderSwitchReason),
+    );
     const log = track(page);
     await boot(page);
 

@@ -33,6 +33,41 @@ def api_wiring_probes(api_prefix: str = "/twin/api") -> tuple[ApiWiringProbe, ..
             f"{prefix}/documents/{{doc_id}}/metadata",
             "documents:metadata",
         ),
+        ApiWiringProbe(
+            "GET",
+            f"{prefix}/chunks/{{chunk_id}}/context",
+            "chunks:context",
+        ),
+        ApiWiringProbe(
+            "GET",
+            f"{prefix}/chunks/{{chunk_id}}/document",
+            "chunks:document",
+        ),
+        ApiWiringProbe(
+            "GET",
+            f"{prefix}/documents/{{doc_id}}/chunks",
+            "documents:chunks",
+        ),
+        ApiWiringProbe(
+            "GET",
+            f"{prefix}/documents/{{doc_id}}/source-links",
+            "source-links:list",
+        ),
+        ApiWiringProbe(
+            "POST",
+            f"{prefix}/documents/{{doc_id}}/source-links",
+            "source-links:create",
+        ),
+        ApiWiringProbe(
+            "PATCH",
+            f"{prefix}/documents/{{doc_id}}/source-links/{{link_id}}",
+            "source-links:update",
+        ),
+        ApiWiringProbe(
+            "DELETE",
+            f"{prefix}/documents/{{doc_id}}/source-links/{{link_id}}",
+            "source-links:delete",
+        ),
         ApiWiringProbe("GET", f"{prefix}/tags", "tags:list"),
         ApiWiringProbe("GET", f"{prefix}/activity", "activity:list"),
         ApiWiringProbe("GET", f"{prefix}/notifications", "notifications:list"),

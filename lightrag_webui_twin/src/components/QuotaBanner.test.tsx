@@ -15,7 +15,7 @@ import { useIngestionDisabled } from '../hooks/useIngestionDisabled';
 
 const server = setupServer(...handlers);
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterAll(() => server.close());
 beforeEach(() => resetDocumentsState());
 afterEach(() => {

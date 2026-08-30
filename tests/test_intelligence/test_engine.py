@@ -12,6 +12,7 @@ from twindb_lightrag_memgraph.intelligence.features.query_expander import (
 )
 from twindb_lightrag_memgraph.intelligence.models.schemas import (
     AnswerStatus,
+    IntentResult,
     IntentType,
 )
 from twindb_lightrag_memgraph.intelligence.react.reason import ReasoningResult
@@ -100,8 +101,8 @@ class TestTwinRAGEngine:
         ):
             result = await engine.aquery(
                 "Pourquoi ORA-04030 ?",
-                workspace="cib",
-                authorized_folders={"cib", "commons"},
+                workspace="demo",
+                authorized_folders={"demo", "commons"},
             )
 
         assert result.answer != ""
@@ -161,6 +162,81 @@ class TestTwinRAGEngine:
         assert result.trace.early_exit == "MALICIOUS"
         assert "ne peux pas" in result.answer
         assert result.answer_status == AnswerStatus.NO_RETRIEVAL
+
+    async def test_confident_escalation_short_circuits_the_complete_pipeline(
+        self, engine
+    ):
+        """A confident P1/P2 escalation must never enter retrieval or synthesis."""
+        engine.intent_classifier.classify = AsyncMock(
+            return_value=IntentResult(
+                intent=IntentType.ESCALATION,
+                confidence=engine.config.escalation_confidence_threshold,
+                reason="P1 incident requiring a human",
+            )
+        )
+        engine.reasoning.analyze = AsyncMock()
+        engine._expand_query = AsyncMock()
+        engine._resolve_search_folders = AsyncMock()
+        engine._get_rag = MagicMock()
+        engine.search.hybrid_search = AsyncMock()
+        engine.reranker.rerank = AsyncMock()
+        engine.synthesis.synthesize = AsyncMock()
+
+        result = await engine.aquery(
+            "Incident P1, je veux parler a un humain",
+            authorized_folders={"commons"},
+        )
+
+        assert result.trace.early_exit == "ESCALATION"
+        assert result.answer_status == AnswerStatus.NO_RETRIEVAL
+        assert result.citations == []
+        assert result.intent.intent == IntentType.ESCALATION
+        assert "urgence" in result.answer.lower()
+        engine.reasoning.analyze.assert_not_awaited()
+        engine._expand_query.assert_not_awaited()
+        engine._resolve_search_folders.assert_not_awaited()
+        engine._get_rag.assert_not_called()
+        engine.search.hybrid_search.assert_not_awaited()
+        engine.reranker.rerank.assert_not_awaited()
+        engine.synthesis.synthesize.assert_not_awaited()
+
+    async def test_low_confidence_escalation_continues_to_reason(self):
+        """An uncertain escalation classification keeps the normal RAG fallback."""
+        config = TwinRAGConfig(
+            llm_api_key="test",
+            llm_api_base="http://mock:8080",
+            escalation_confidence_threshold=0.9,
+            enable_query_expansion=False,
+            enable_cognitive_reranking=False,
+            enable_folder_routing=False,
+        )
+        engine = TwinRAGEngine(config)
+        engine.intent_classifier.classify = AsyncMock(
+            return_value=IntentResult(
+                intent=IntentType.ESCALATION,
+                confidence=0.89,
+                reason="Ambiguous request",
+            )
+        )
+        engine.reasoning.analyze = AsyncMock(
+            return_value=ReasoningResult(
+                thought="continue",
+                search_query="incident diagnostic",
+            )
+        )
+        engine._get_rag = MagicMock(return_value=MagicMock())
+        engine.search.hybrid_search = AsyncMock(return_value=[])
+
+        result = await engine.aquery(
+            "Peut-etre faut-il escalader",
+            authorized_folders={"commons"},
+        )
+
+        assert result.trace.early_exit is None
+        assert result.answer_status == AnswerStatus.INSUFFICIENT_INFORMATION
+        engine.reasoning.analyze.assert_awaited_once()
+        engine._get_rag.assert_called_once_with("commons")
+        engine.search.hybrid_search.assert_awaited_once()
 
     async def test_malicious_intent_log_omits_raw_question(
         self, engine, mock_openai_client, caplog
@@ -226,15 +302,15 @@ class TestTwinRAGEngine:
                 added_terms=["SECRET_TOKEN=expanded-query-secret-789"],
             )
         )
-        engine._resolve_search_folders = AsyncMock(return_value=["cib"])
+        engine._resolve_search_folders = AsyncMock(return_value=["demo"])
         engine._get_rag = MagicMock(return_value=MagicMock())
         engine.search.hybrid_search = AsyncMock(return_value=[])
 
         with caplog.at_level("INFO", logger="twin_rag_intelligence"):
             result = await engine.aquery(
                 raw_question,
-                workspace="cib",
-                authorized_folders={"cib", "commons"},
+                workspace="demo",
+                authorized_folders={"demo", "commons"},
             )
 
         assert result.citations == []
@@ -341,12 +417,12 @@ class TestTwinRAGEngine:
         ):
             result = await engine.aquery(
                 "Weather today?",
-                workspace="bp2i",
-                authorized_folders={"bp2i", "commons"},
+                workspace="demo_secondary",
+                authorized_folders={"demo_secondary", "commons"},
             )
 
         assert result.trace.question == "Weather today?"
-        assert result.trace.workspace == "bp2i"
+        assert result.trace.workspace == "demo_secondary"
         assert result.trace.latency_ms >= 0
 
     def test_feedback_store_can_be_disabled(self):
@@ -408,11 +484,11 @@ class TestTwinRAGEngine:
         with patch(
             "twindb_lightrag_memgraph.intelligence.engine.LightRAG"
         ) as light_rag:
-            instance = engine._get_rag("cib")
+            instance = engine._get_rag("demo")
 
         assert instance is light_rag.return_value
-        assert light_rag.call_args.kwargs["workspace"] == "cib"
-        assert light_rag.call_args.kwargs["working_dir"] == "/tmp/lightrag_cib"
+        assert light_rag.call_args.kwargs["workspace"] == "demo"
+        assert light_rag.call_args.kwargs["working_dir"] == "/tmp/lightrag_demo"
 
     def test_get_rag_fails_closed_without_graph_workspace_patch(
         self, engine, monkeypatch
@@ -427,7 +503,7 @@ class TestTwinRAGEngine:
         monkeypatch.setattr(MemgraphStorage, "__init__", incompatible_init)
 
         with pytest.raises(RuntimeError, match="explicit workspace isolation"):
-            engine._get_rag("cib")
+            engine._get_rag("demo")
 
     async def test_folder_routing_can_be_disabled(self):
         """When routing is disabled, direct folder+publics resolution should be used."""
@@ -440,12 +516,12 @@ class TestTwinRAGEngine:
 
         resolved = await engine._resolve_search_folders(
             query="Question Oracle",
-            active_folder="cib",
+            active_folder="demo",
             public_folders=["commons"],
             explicit_folder_override=True,
         )
 
-        assert resolved == ["cib", "commons"]
+        assert resolved == ["demo", "commons"]
 
     async def test_enable_ontology_false_blocks_v2_expansion(self, engine):
         """enable_ontology=False should prevent expand_v2, even if ontology_config is enabled."""
@@ -465,7 +541,9 @@ class TestTwinRAGEngine:
                 original_query="q1", expanded_query="q1", added_terms=[]
             )
 
-            result = await engine._expand_query("q1", workspace="cib", domain_hint=None)
+            result = await engine._expand_query(
+                "q1", workspace="demo", domain_hint=None
+            )
 
             assert result.expanded_query == "q1"
             assert not expand_v2.called

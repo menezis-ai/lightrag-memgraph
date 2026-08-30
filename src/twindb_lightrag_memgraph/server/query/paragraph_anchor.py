@@ -1,6 +1,6 @@
 """Intra-chunk paragraph anchoring for Twin citations (phases A and B1).
 
-Design record: ``PARAGRAPH-CITATION-PLAN.md`` §5/§5.1. Twin cites at the
+Design record: ``docs/adr/008-paragraph-citation-anchor.md``. Twin cites at the
 chunk; this module locates the paragraph *inside* the already-stored chunk
 content that most plausibly supports a ``[n]`` citation, without any extra
 LLM call and without retaining anything new (offsets only, never paragraph

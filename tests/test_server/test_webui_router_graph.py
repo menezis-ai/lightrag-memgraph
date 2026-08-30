@@ -30,6 +30,34 @@ async def client(monkeypatch):
     webui_router.reset_store()
 
 
+async def _resource_activity(
+    client,
+    *,
+    resource_id: str,
+    kind: str,
+    operation: str | None = None,
+) -> dict:
+    """Fetch one emitted graph event through the public resource filter."""
+    response = await client.get(
+        "/activity",
+        params={"resource.id": resource_id, "kind": kind},
+    )
+    assert response.status_code == 200
+    matches = [
+        event
+        for event in response.json().get("items", [])
+        if operation is None or event.get("meta", {}).get("operation") == operation
+    ]
+    assert len(matches) == 1, response.json()
+    event = matches[0]
+    assert event["target"]["id"] == resource_id
+    # The test fixture authenticates with the infrastructure root. The route
+    # must use that server-resolved identity rather than an ``operator``
+    # literal or a caller-controlled body field.
+    assert event["actor"]["user"] == "api_key"
+    return event
+
+
 class TestGraphRoutesMemgraphFirst:
     async def test_entities_serves_memgraph_rows_when_present(
         self, monkeypatch, client
@@ -292,14 +320,14 @@ class TestGraphPatchPersistence:
         assert body["properties"] == {"owner": "dba"}
 
         # Activity event should be appended
-        activity = await client.get("/activity")
-        assert activity.status_code == 200
-        events = activity.json().get("items", [])
-        graph_events = [e for e in events if e["kind"] == "graph-entity-edited"]
-        assert len(graph_events) == 1
-        assert graph_events[0]["target"]["label"] == "Renamed"
-        assert "name" in graph_events[0]["meta"]["patch_keys"]
-        assert "summary" in graph_events[0]["meta"]["patch_keys"]
+        event = await _resource_activity(
+            client,
+            resource_id="kg_oracle",
+            kind="graph-entity-edited",
+        )
+        assert event["target"]["label"] == "Renamed"
+        assert "name" in event["meta"]["patch_keys"]
+        assert "summary" in event["meta"]["patch_keys"]
 
     async def test_patch_entity_404_when_not_found(self, monkeypatch, client):
         async def fake_update_missing(workspace, entity_id, patch):
@@ -380,11 +408,12 @@ class TestGraphPatchPersistence:
         assert r.json()["label"] == "USES"
         assert r.json()["properties"] == {"since": "2024"}
 
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        rel_events = [e for e in events if e["kind"] == "graph-relation-edited"]
-        assert len(rel_events) == 1
-        assert rel_events[0]["target"]["label"] == "USES"
+        event = await _resource_activity(
+            client,
+            resource_id="kr_abc123",
+            kind="graph-relation-edited",
+        )
+        assert event["target"]["label"] == "USES"
 
     async def test_patch_relation_404_when_cache_cold(self, monkeypatch, client):
         async def fake_update_missing(workspace, rel_id, patch):
@@ -426,15 +455,13 @@ class TestGraphLifecycle:
         assert body["id"] == "kg_NewEntity"
         assert body["type"] == "PRODUCT"
 
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        creates = [
-            e
-            for e in events
-            if e["kind"] == "graph-entity-edited"
-            and e["meta"].get("operation") == "create"
-        ]
-        assert len(creates) == 1
+        event = await _resource_activity(
+            client,
+            resource_id="kg_NewEntity",
+            kind="graph-entity-edited",
+            operation="create",
+        )
+        assert event["target"]["label"] == "NewEntity"
 
     async def test_post_entity_409_on_duplicate(self, monkeypatch, client):
         """Honest 409: the function raises EntityExistsError, the
@@ -536,15 +563,12 @@ class TestGraphLifecycle:
         r = await client.delete("/graph/entities/kg_to-remove")
         assert r.status_code == 204
 
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        deletes = [
-            e
-            for e in events
-            if e["kind"] == "graph-entity-edited"
-            and e["meta"].get("operation") == "delete"
-        ]
-        assert len(deletes) == 1
+        await _resource_activity(
+            client,
+            resource_id="kg_to-remove",
+            kind="graph-entity-edited",
+            operation="delete",
+        )
 
     async def test_delete_entity_404_when_missing(self, monkeypatch, client):
         async def fake_delete_missing(workspace, webui_id):
@@ -582,15 +606,13 @@ class TestGraphLifecycle:
         assert body["target"] == "kg_B"
         assert body["label"] == "USES"
 
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        creates = [
-            e
-            for e in events
-            if e["kind"] == "graph-relation-edited"
-            and e["meta"].get("operation") == "create"
-        ]
-        assert len(creates) == 1
+        event = await _resource_activity(
+            client,
+            resource_id="kr_xyz",
+            kind="graph-relation-edited",
+            operation="create",
+        )
+        assert event["target"]["label"] == "USES"
 
     async def test_post_relation_422_when_endpoint_missing(self, monkeypatch, client):
         async def fake_create_rel_missing(workspace, payload):
@@ -617,7 +639,7 @@ class TestGraphLifecycle:
         assert r.status_code == 409
         assert "shared" in r.json()["detail"].lower()
 
-    async def test_delete_relation_204(self, monkeypatch, client):
+    async def test_delete_relation_204_and_audit(self, monkeypatch, client):
         async def fake_delete_rel(workspace, rel_id):
             return True
 
@@ -625,6 +647,12 @@ class TestGraphLifecycle:
 
         r = await client.delete("/graph/relations/kr_xyz")
         assert r.status_code == 204
+        await _resource_activity(
+            client,
+            resource_id="kr_xyz",
+            kind="graph-relation-edited",
+            operation="delete",
+        )
 
     async def test_delete_relation_404(self, monkeypatch, client):
         async def fake_delete_rel_missing(workspace, rel_id):

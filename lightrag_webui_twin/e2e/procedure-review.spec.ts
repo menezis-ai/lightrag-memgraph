@@ -6,7 +6,7 @@
  * falsely-green pass without mutation is not possible here.
  */
 
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test } from './fixtures';
 import { boot, getMswStats, openTab } from './helpers';
 
 test.describe('Procedure review journey', () => {
@@ -186,8 +186,15 @@ test.describe('Procedure review journey', () => {
   });
 
   test('@documents @procedure @settings retry is gated on the Settings > Vision toggle', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const settingsNavigationReason =
+      'Opening Settings unmounts the active procedure list and detail queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/procedures$/, settingsNavigationReason),
+      allowRequestAbort(/\/twin\/api\/procedures\/proc-2$/, settingsNavigationReason),
+    );
     // Procedure ingestion is OFF by default (MSW mirrors the server-surface
     // default): the failed bundle's retry affordance must be disarmed with
     // the Settings > Vision pointer, not silently absent.

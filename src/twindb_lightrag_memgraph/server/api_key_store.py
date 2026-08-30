@@ -17,7 +17,9 @@ Each node carries:
 
 The full key value is **never persisted** — only its SHA-256. The raw
 value is returned exactly once, at creation. Subsequent reads expose only
-the prefix.
+the prefix. General operator keys use ``twk_``; metadata-profile credentials
+use the distinct ``tcp_`` prefix so a ``profile:read`` key can never fall
+through the generic Twin authentication chain.
 
 The store is FastAPI-free so unit tests can drive it without spinning the
 full app. ``require_auth`` calls into ``validate_bearer`` directly.
@@ -38,6 +40,7 @@ from .._constants import validate_identifier
 logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "twk_"
+PROFILE_KEY_PREFIX = "tcp_"
 KEY_SECRET_BYTES = 24  # → ~32 url-safe base64 chars
 KEY_PREVIEW_LEN = 8
 
@@ -55,11 +58,11 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _mint_token() -> tuple[str, str]:
+def _mint_token(prefix: str = KEY_PREFIX) -> tuple[str, str]:
     """Return ``(full_value, preview)``. ``full_value`` is shown ONCE."""
     body = secrets.token_urlsafe(KEY_SECRET_BYTES)
-    full = f"{KEY_PREFIX}{body}"
-    preview = f"{KEY_PREFIX}{body[:KEY_PREVIEW_LEN]}…"
+    full = f"{prefix}{body}"
+    preview = f"{prefix}{body[:KEY_PREVIEW_LEN]}…"
     return full, preview
 
 
@@ -73,6 +76,9 @@ def _public_entry(
 ) -> dict[str, Any]:
     out = dict(entry)
     out.pop("hash", None)
+    # Entries minted before scoped keys existed remain broad operator keys.
+    out.setdefault("scopes", ["api:*"])
+    out.setdefault("folders", [])
     out["last_used_at"] = last_used_at_ms
     return out
 
@@ -86,17 +92,16 @@ async def initialize(workspace: str) -> None:
     """Create the ``id`` + ``hash`` indexes on the workspace label.
     Idempotent — re-running on an existing schema is a no-op."""
     label = _label(workspace)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            for field in ("id", "hash"):
-                try:
-                    result = await session.run(f"CREATE INDEX ON :`{label}`({field})")
-                    await result.consume()
-                    logger.info("[ApiKeyStore] Index on :%s(%s) ensured", label, field)
-                except Exception as exc:  # noqa: BLE001 — narrow check below
-                    if "already exists" in str(exc).lower():
-                        continue
-                    raise
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        for field in ("id", "hash"):
+            try:
+                result = await session.run(f"CREATE INDEX ON :`{label}`({field})")
+                await result.consume()
+                logger.info("[ApiKeyStore] Index on :%s(%s) ensured", label, field)
+            except Exception as exc:  # noqa: BLE001 — narrow check below
+                if "already exists" in str(exc).lower():
+                    continue
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +169,17 @@ async def create_key(
     *,
     name: str,
     created_by: str,
+    scopes: list[str] | None = None,
+    folders: list[str] | None = None,
 ) -> dict[str, Any]:
     """Mint a new key. Returns the entry **with ``full_value``** — the only
     moment that value is ever exposed by this module."""
     label = _label(workspace)
     key_id = _new_id()
-    full_value, preview = _mint_token()
+    effective_scopes = list(scopes or ["api:*"])
+    effective_folders = list(folders or [])
+    prefix = PROFILE_KEY_PREFIX if effective_scopes == ["profile:read"] else KEY_PREFIX
+    full_value, preview = _mint_token(prefix)
     hashed = _hash_token(full_value)
     entry = {
         "id": key_id,
@@ -178,27 +188,28 @@ async def create_key(
         "hash": hashed,
         "created_at": _now_ms(),
         "created_by": created_by or "system",
+        "scopes": effective_scopes,
+        "folders": effective_folders,
         "revoked_at": None,
     }
     data = json.dumps(entry, sort_keys=True)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            # ``hash`` is duplicated as a direct property so the indexed
-            # lookup in :func:`validate_bearer` is O(1). Source of truth
-            # stays the JSON blob (``data``) — the direct property is a
-            # query optimisation, never read for content.
-            result = await session.run(
-                f"""
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        # ``hash`` is duplicated as a direct property so the indexed
+        # lookup in :func:`validate_bearer` is O(1). Source of truth
+        # stays the JSON blob (``data``) — the direct property is a
+        # query optimisation, never read for content.
+        result = await session.run(
+            f"""
                 CREATE (n:`{label}` {{id: $id}})
                 SET n.data = $data,
                     n.hash = $hash,
                     n.`__created_at` = timestamp()
                 """,
-                id=key_id,
-                data=data,
-                hash=hashed,
-            )
-            await result.consume()
+            id=key_id,
+            data=data,
+            hash=hashed,
+        )
+        await result.consume()
     public = _public_entry(entry, last_used_at_ms=None)
     public["full_value"] = full_value
     return public
@@ -209,32 +220,31 @@ async def revoke_key(workspace: str, key_id: str) -> dict[str, Any] | None:
     if the key did not exist. Re-revoking an already-revoked key returns
     its entry without mutating the timestamp."""
     label = _label(workspace)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            res = await session.run(
-                f"MATCH (n:`{label}` {{id: $id}}) "
-                f"RETURN n.data AS data, n.last_used_at_ms AS last_used",
-                id=key_id,
-            )
-            row = await res.single()
-            await res.consume()
-            if not row or not row.get("data"):
-                return None
-            try:
-                entry = json.loads(row["data"])
-            except json.JSONDecodeError:
-                return None
-            if entry.get("revoked_at"):
-                return _public_entry(entry, last_used_at_ms=row.get("last_used"))
-            entry["revoked_at"] = _now_ms()
-            new_data = json.dumps(entry, sort_keys=True)
-            res = await session.run(
-                f"MATCH (n:`{label}` {{id: $id}}) "
-                f"SET n.data = $data, n.`__updated_at` = timestamp()",
-                id=key_id,
-                data=new_data,
-            )
-            await res.consume()
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        res = await session.run(
+            f"MATCH (n:`{label}` {{id: $id}}) "
+            f"RETURN n.data AS data, n.last_used_at_ms AS last_used",
+            id=key_id,
+        )
+        row = await res.single()
+        await res.consume()
+        if not row or not row.get("data"):
+            return None
+        try:
+            entry = json.loads(row["data"])
+        except json.JSONDecodeError:
+            return None
+        if entry.get("revoked_at"):
+            return _public_entry(entry, last_used_at_ms=row.get("last_used"))
+        entry["revoked_at"] = _now_ms()
+        new_data = json.dumps(entry, sort_keys=True)
+        res = await session.run(
+            f"MATCH (n:`{label}` {{id: $id}}) "
+            f"SET n.data = $data, n.`__updated_at` = timestamp()",
+            id=key_id,
+            data=new_data,
+        )
+        await res.consume()
     return _public_entry(entry, last_used_at_ms=row.get("last_used"))
 
 
@@ -258,7 +268,7 @@ async def validate_bearer(workspace: str, token: str) -> dict[str, Any] | None:
     positive match — it is intentionally not awaited here to keep the
     auth hot path side-effect-free.
     """
-    if not token or not token.startswith(KEY_PREFIX):
+    if not token or not token.startswith((KEY_PREFIX, PROFILE_KEY_PREFIX)):
         return None
     hashed = _hash_token(token)
     label = _label(workspace)
@@ -288,14 +298,13 @@ async def mark_used(workspace: str, key_id: str) -> None:
     label = _label(workspace)
     now = _now_ms()
     try:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                res = await session.run(
-                    f"MATCH (n:`{label}` {{id: $id}}) SET n.last_used_at_ms = $now",
-                    id=key_id,
-                    now=now,
-                )
-                await res.consume()
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            res = await session.run(
+                f"MATCH (n:`{label}` {{id: $id}}) SET n.last_used_at_ms = $now",
+                id=key_id,
+                now=now,
+            )
+            await res.consume()
     except Exception:
         logger.exception(
             "[ApiKeyStore] mark_used failed for key %s in workspace %s",
@@ -312,14 +321,14 @@ async def mark_used(workspace: str, key_id: str) -> None:
 async def reset_workspace(workspace: str) -> None:
     """Test-only: wipe every node under :ApiKey_{workspace}."""
     label = _label(workspace)
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            res = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-            await res.consume()
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        res = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
+        await res.consume()
 
 
 __all__ = [
     "KEY_PREFIX",
+    "PROFILE_KEY_PREFIX",
     "create_key",
     "get_key",
     "initialize",

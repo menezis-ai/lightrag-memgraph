@@ -6,11 +6,22 @@
  * Navigate to documents CTA.
  */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { useState } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
 import type { DocumentsStatusFilterKey } from '../app/appConstants';
 import { useAppNavigation, type DetailRequest } from '../app/useAppNavigation';
 import type { Document } from '../types/document';
@@ -23,6 +34,22 @@ import {
   GRAPH_RELATION_FIXTURES,
   TAG_FIXTURES,
 } from '../fixtures';
+
+const server = setupServer(
+  http.get('*/twin/api/quota', () =>
+    HttpResponse.json({
+      used_bytes: null,
+      limit_bytes: null,
+      used_pct: null,
+      status: 'ok',
+      warn_threshold: 0.85,
+      configured: false,
+    }),
+  ),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
 
 function defaultProps() {
   return {
@@ -161,6 +188,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
   window.localStorage.removeItem('twin.kg.pinned.v1');
   vi.unstubAllGlobals();
+  server.resetHandlers();
 });
 
 describe('GraphTab — rendering', () => {
@@ -477,7 +505,7 @@ describe('GraphTab — selection + detail', () => {
 
   it('detail panel lists outgoing + incoming relations for the selected entity', () => {
     renderWithClient(<GraphTab {...defaultProps()} />);
-    // e_oracle has outgoing: e_rhel, e_pga, e_vmware. Incoming: rman, archlog, marc, iso20022.
+    // e_oracle has outgoing: e_rhel, e_pga, e_vmware. Incoming: rman, archlog, demo.operator, iso20022.
     const detail = document.querySelector('.kg-detail') as HTMLElement;
     expect(detail.textContent).toMatch(/Outgoing \(3\)/);
     expect(detail.textContent).toMatch(/Incoming \(4\)/);
@@ -889,7 +917,7 @@ describe('GraphTab — lifecycle: Add entity', () => {
   it('treats a 500 projection failure as a half-success: close form + done toast', async () => {
     stubCreateEntityResponse(500, {
       detail:
-        "Graph entity 'New Entity' was created in workspace 'cib' but the projection failed.",
+        "Graph entity 'New Entity' was created in workspace 'demo' but the projection failed.",
     });
     const onToast = vi.fn();
     renderWithClient(
@@ -1053,10 +1081,10 @@ describe('GraphTab — lifecycle: Add relation', () => {
     await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
     const targetSearch = screen.getByTestId('kg-add-rel-target');
 
-    await userEvent.type(targetSearch, 'aub');
+    await userEvent.type(targetSearch, 'secondary');
 
     expect(
-      screen.getByTestId('kg-add-rel-target-option-e_aubervil'),
+      screen.getByTestId('kg-add-rel-target-option-e_secondary_region'),
     ).toBeInTheDocument();
     expect(
       screen.queryByTestId('kg-add-rel-target-option-e_rhel'),
@@ -1094,7 +1122,7 @@ describe('GraphTab — lifecycle: Add relation', () => {
     const newRelation = {
       id: 'r_custom',
       source: 'e_oracle',
-      target: 'e_aubervil',
+      target: 'e_secondary_region',
       label: 'DEPENDS_ON',
       strength: 0.77,
     };
@@ -1137,8 +1165,10 @@ describe('GraphTab — lifecycle: Add relation', () => {
     await userEvent.click(screen.getByTestId('kg-add-rel-btn'));
     expect(screen.getByTestId('kg-add-rel-form')).toBeInTheDocument();
     const addRelationForm = screen.getByTestId('kg-add-rel-form') as HTMLFormElement;
-    await userEvent.type(screen.getByTestId('kg-add-rel-target'), 'aub');
-    await userEvent.click(screen.getByTestId('kg-add-rel-target-option-e_aubervil'));
+    await userEvent.type(screen.getByTestId('kg-add-rel-target'), 'secondary');
+    await userEvent.click(
+      screen.getByTestId('kg-add-rel-target-option-e_secondary_region'),
+    );
     await userEvent.type(screen.getByTestId('kg-add-rel-label'), 'depends on');
     await waitFor(
       () =>
@@ -1187,7 +1217,7 @@ describe('GraphTab — lifecycle: Add relation', () => {
     expect(String(url)).toContain('/graph/relations');
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.source).toBe('e_oracle');
-    expect(body.target).toBe('e_aubervil');
+    expect(body.target).toBe('e_secondary_region');
     expect(body.label).toBe('DEPENDS_ON');
   });
 

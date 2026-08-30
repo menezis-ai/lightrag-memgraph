@@ -1,7 +1,7 @@
 """Tests for ontology pipeline orchestration."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -18,6 +18,17 @@ from twindb_lightrag_memgraph.intelligence.ontology.steps.extract import (
 from twindb_lightrag_memgraph.intelligence.ontology.steps.validate import (
     ValidationResult,
 )
+
+
+def _client_with_responses(mock_openai_client, *contents: str):
+    """Build one reusable client whose completion responses follow ``contents``."""
+    client = mock_openai_client(contents[0])
+    responses = [
+        mock_openai_client(content).chat.completions.create.return_value
+        for content in contents
+    ]
+    client.chat.completions.create = AsyncMock(side_effect=responses)
+    return client
 
 
 class TestExtractStep:
@@ -400,20 +411,15 @@ class TestDualPass:
     ):
         pipeline = OntologyPipeline(config, onto_config_dual_pass)
 
-        # Track which responses we return -- global first, then local
-        responses = [mock_extract_global_response, mock_extract_local_response]
-        call_count = 0
-
-        def make_client(*args, **kwargs):
-            nonlocal call_count
-            idx = min(call_count, len(responses) - 1)
-            call_count += 1
-            return mock_openai_client(responses[idx])
-
+        extract_client = _client_with_responses(
+            mock_openai_client,
+            mock_extract_global_response,
+            mock_extract_local_response,
+        )
         with patch(
             "twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI",
-            side_effect=make_client,
-        ):
+            return_value=extract_client,
+        ) as extract_factory:
             with patch(
                 "twindb_lightrag_memgraph.intelligence.ontology.steps.cluster.AsyncOpenAI",
                 return_value=mock_openai_client(mock_cluster_response),
@@ -424,8 +430,9 @@ class TestDualPass:
                 ):
                     result = await pipeline.run(["doc content"], "ws")
 
-        # At least 2 extract calls (1 global + 1 local)
-        assert call_count >= 2
+        # One shared indexing client, two completions (1 global + 1 local).
+        extract_factory.assert_called_once()
+        assert extract_client.chat.completions.create.await_count == 2
         assert len(result.nodes) > 0
 
     async def test_dual_pass_global_truncation(
@@ -611,20 +618,17 @@ class TestDualPass:
         pipeline = OntologyPipeline(config, onto_config_dual_pass)
         chunks = ["chunk 1 content", "chunk 2 content", "chunk 3 content"]
 
-        call_count = 0
-
-        def make_client(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            # First call is global (1 doc), next 3 are local (3 chunks)
-            if call_count == 1:
-                return mock_openai_client(mock_extract_global_response)
-            return mock_openai_client(mock_extract_local_response)
-
+        extract_client = _client_with_responses(
+            mock_openai_client,
+            mock_extract_global_response,
+            mock_extract_local_response,
+            mock_extract_local_response,
+            mock_extract_local_response,
+        )
         with patch(
             "twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI",
-            side_effect=make_client,
-        ):
+            return_value=extract_client,
+        ) as extract_factory:
             with patch(
                 "twindb_lightrag_memgraph.intelligence.ontology.steps.cluster.AsyncOpenAI",
                 return_value=mock_openai_client(mock_cluster_response),
@@ -635,8 +639,9 @@ class TestDualPass:
                 ):
                     result = await pipeline.run(["full document"], "ws", chunks=chunks)
 
-        # 1 global + 3 local = 4 extract calls
-        assert call_count == 4
+        # One shared indexing client, 1 global + 3 local completions.
+        extract_factory.assert_called_once()
+        assert extract_client.chat.completions.create.await_count == 4
         assert len(result.nodes) > 0
 
     async def test_dual_pass_no_chunks_falls_back_to_docs(
@@ -652,19 +657,17 @@ class TestDualPass:
         """When chunks=None, local pass uses documents."""
         pipeline = OntologyPipeline(config, onto_config_dual_pass)
 
-        call_count = 0
-
-        def make_client(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return mock_openai_client(mock_extract_global_response)
-            return mock_openai_client(mock_extract_local_response)
-
+        extract_client = _client_with_responses(
+            mock_openai_client,
+            mock_extract_global_response,
+            mock_extract_global_response,
+            mock_extract_local_response,
+            mock_extract_local_response,
+        )
         with patch(
             "twindb_lightrag_memgraph.intelligence.ontology.steps.extract.AsyncOpenAI",
-            side_effect=make_client,
-        ):
+            return_value=extract_client,
+        ) as extract_factory:
             with patch(
                 "twindb_lightrag_memgraph.intelligence.ontology.steps.cluster.AsyncOpenAI",
                 return_value=mock_openai_client(mock_cluster_response),
@@ -675,6 +678,7 @@ class TestDualPass:
                 ):
                     result = await pipeline.run(["doc1", "doc2"], "ws")
 
-        # 2 global (2 docs) + 2 local (2 docs, no chunks) = 4 calls
-        assert call_count == 4
+        # One shared indexing client, 2 global + 2 local completions.
+        extract_factory.assert_called_once()
+        assert extract_client.chat.completions.create.await_count == 4
         assert len(result.nodes) > 0

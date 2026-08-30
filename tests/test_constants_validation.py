@@ -276,3 +276,31 @@ class TestPurgeLlmCacheFlag:
     def test_everything_else_leaves_it_enabled(self, raw, monkeypatch):
         monkeypatch.setenv(_constants.TWIN_PURGE_LLM_CACHE_ON_FAILED_ENV, raw)
         assert purge_llm_cache_on_failed_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# TWIN_VECTOR_INDEX_CAPACITY — validated at boot, applied at index creation
+# ---------------------------------------------------------------------------
+
+
+class TestResolveVectorIndexCapacity:
+    def test_unset_or_blank_is_the_historical_default(self, monkeypatch):
+        monkeypatch.delenv(_constants.TWIN_VECTOR_INDEX_CAPACITY_ENV, raising=False)
+        assert _constants.resolve_vector_index_capacity() == 100_000
+        assert _constants.VECTOR_INDEX_CAPACITY == 100_000
+        monkeypatch.setenv(_constants.TWIN_VECTOR_INDEX_CAPACITY_ENV, "   ")
+        assert _constants.resolve_vector_index_capacity() == 100_000
+
+    @pytest.mark.parametrize("raw, expected", [("1", 1), (" 250000 ", 250_000)])
+    def test_positive_integer_is_honoured(self, monkeypatch, raw, expected):
+        monkeypatch.setenv(_constants.TWIN_VECTOR_INDEX_CAPACITY_ENV, raw)
+        assert _constants.resolve_vector_index_capacity() == expected
+
+    @pytest.mark.parametrize("raw", ["0", "-5", "abc", "1e5", "100000.0"])
+    def test_malformed_value_is_a_config_error_naming_the_variable(
+        self, monkeypatch, raw
+    ):
+        monkeypatch.setenv(_constants.TWIN_VECTOR_INDEX_CAPACITY_ENV, raw)
+        with pytest.raises(ValueError, match="TWIN_VECTOR_INDEX_CAPACITY") as ei:
+            _constants.resolve_vector_index_capacity()
+        assert repr(raw) in str(ei.value)

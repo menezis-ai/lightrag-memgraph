@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { openTab } from './helpers';
 
 /**
@@ -11,12 +11,10 @@ import { openTab } from './helpers';
  * gateway scope. We inject the identity through the same `__twinE2eRuntimeConfig`
  * debugUser hook the folders-runtime / login specs use.
  *
- * NOTE (scope of this spec): Tag governance controls are NOT covered here — in
- * the current wiring TagsTab is fed a static CURRENT_USER constant (palier 3),
- * not the authenticated user, so its Edit/Delete affordances do not react to the
- * injected role. Graph and API-key controls are likewise not UI-gated (backend
- * responsibility). Asserting those here would be vacuous, so this spec covers
- * only the surface that genuinely enforces the role in the UI.
+ * Tag governance now derives its palier from the same authenticated user and is
+ * covered by the frontendIdentity + TagsTab unit suites. This browser spec stays
+ * focused on folder administration; Graph and API-key controls remain backend
+ * responsibilities.
  */
 
 const BASE = {
@@ -33,8 +31,8 @@ const BASE = {
 
 function user(level: 1 | 2 | 3, label: string, gatewayScopes: string[]) {
   return {
-    sso_subject: `${label.toLowerCase()}@test.local`,
-    email: `${label.toLowerCase()}@test.local`,
+    sso_subject: `${label.toLowerCase()}@example.com`,
+    email: `${label.toLowerCase()}@example.com`,
     name: `Test ${label}`,
     palier: { level, label, scopes: ['twin:read'] },
     folders: ['default', 'sandbox'],

@@ -13,7 +13,7 @@ Scope is deliberately limited to the two CURATION knobs (``min_ocr_chars``,
 ``drop_classes``) plus the admin-controlled procedure-ingestion activation
 flag. The infrastructure wiring (endpoint URL, API key, model, timeouts,
 size caps) stays env-only — secrets and SSRF surface do not belong in a
-UI-mutable store (MARKITDOWN-INGESTION-PLAN.md).
+UI-mutable store (docs/adr/005-markitdown-ingestion-supply-chain.md).
 
 Each mutation emits a ``vision-settings-updated`` activity event.
 """
@@ -154,6 +154,7 @@ async def _emit_event(*, actor: str, settings: dict[str, Any]) -> None:
                 "procedure_enabled": settings["procedure_enabled"],
             },
             target_type="settings",
+            target_id="vision",
         )
         store = webui_router.get_store()
         await store.record_activity(event)

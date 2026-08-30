@@ -1,9 +1,7 @@
-"""Unit contract of the B1 preconverted-parse seam (no Memgraph, no 1.5.x).
+"""Unit contract of the B1 preconverted-parse seam (no Memgraph).
 
-The 1.5.4 end-to-end proof lives in tests/test_lightrag_15_sidecar_probe.py
-(canary line). Here: the pure boundary math, the capability gates, and the
-raw-vs-pending_parse switch of ``registry._enqueue_converted`` on every
-matrix version.
+Covers the pure boundary math, the LightRAG 1.5.6 capability gates, and the
+raw-vs-pending_parse switch of ``registry._enqueue_converted``.
 """
 
 from __future__ import annotations

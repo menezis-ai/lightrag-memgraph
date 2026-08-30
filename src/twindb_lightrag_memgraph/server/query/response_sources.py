@@ -18,7 +18,6 @@ from .doc_lookup import (
     _chunk_to_meta,
     _resolve_chunk_to_doc_id,
     _resolve_doc_for_chunk,
-    _resolve_doc_for_file_path,
     _resolve_file_paths_to_doc_ids,
     _safe_get_score,
 )
@@ -45,10 +44,17 @@ _PUBLIC_SOURCE_KEYS = frozenset(("_lightrag_reference_name_fallback",))
 
 def _public_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Strip internal source markers before returning public responses."""
-    return [
+    from ..upload_paths import display_upload_file_path
+
+    public = [
         {key: value for key, value in source.items() if key not in _PUBLIC_SOURCE_KEYS}
         for source in sources
     ]
+    for source in public:
+        name = source.get("name")
+        if isinstance(name, str):
+            source["name"] = display_upload_file_path(name)
+    return public
 
 
 def _filter_sources_by_min_score(
@@ -131,6 +137,29 @@ async def _enrich_sources_doc_ids_from_file_path(
         candidate = _source_file_path_candidate(source)
         if candidate and candidate in file_path_to_doc_id:
             source["doc_id"] = file_path_to_doc_id[candidate]
+
+
+async def _enrich_sources_with_source_links(
+    sources: list[dict[str, Any]], folder: str
+) -> None:
+    """Attach the parent document's canonical provenance links in one batch."""
+    doc_ids = [
+        str(source["doc_id"])
+        for source in sources
+        if isinstance(source.get("doc_id"), str) and source.get("doc_id")
+    ]
+    if not doc_ids:
+        return
+    try:
+        from ..webui.store import get_store
+
+        links_by_doc = await get_store(folder).source_links.list_for_documents(doc_ids)
+    except Exception:  # enrichment must not turn a grounded answer into a 500
+        logger.exception("twin_query: source_links enrichment failed")
+        return
+    for source in sources:
+        doc_id = source.get("doc_id")
+        source["source_links"] = links_by_doc.get(str(doc_id), []) if doc_id else []
 
 
 async def _source_matches_tag_filter(
@@ -323,7 +352,7 @@ def _enrich_sources_with_anchors(
 ) -> None:
     """Attach intra-chunk paragraph anchors, in place, fail-soft.
 
-    PARAGRAPH-CITATION-PLAN.md §5: pure enrichment AFTER the fail-closed
+    docs/adr/008-paragraph-citation-anchor.md: pure enrichment AFTER the fail-closed
     validations — an exception here must leave every source intact and must
     never flip the projection verdict, so the whole pass is wrapped and any
     failure is logged and swallowed. Sources without evidence, without a
@@ -456,6 +485,7 @@ async def _build_envelope_sources(
     _enrich_sources_with_anchors(
         sources, envelope, citation_evidence, boundaries_by_chunk
     )
+    await _enrich_sources_with_source_links(sources, folder)
     return _sort_sources_by_score(sources), True
 
 
@@ -531,6 +561,7 @@ __all__ = [
     "_build_envelope_sources",
     "_build_sources_legacy_fallback",
     "_enrich_sources_doc_ids_from_file_path",
+    "_enrich_sources_with_source_links",
     "_enrich_sources_with_anchors",
     "_filter_sources_by_advanced_filters",
     "_filter_sources_by_min_score",

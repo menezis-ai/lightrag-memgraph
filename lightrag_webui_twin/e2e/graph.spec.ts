@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test } from './fixtures';
 import { boot, openTab } from './helpers';
 
 test.describe('Knowledge Graph filters and drill-downs', () => {
@@ -22,8 +22,15 @@ test.describe('Knowledge Graph filters and drill-downs', () => {
   });
 
   test('@graph @rc2 entity drill-down opens Documents with exact source filters', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Drilling from Graph into Documents replaces the Graph shell procedure query.',
+      ),
+    );
     await page.getByLabel('Search entities').fill('Oracle');
     await page.getByLabel('Select entity Oracle Database').click();
     await page
@@ -39,13 +46,13 @@ test.describe('Knowledge Graph filters and drill-downs', () => {
     );
     expect(sourceParam?.split(',')).toEqual([
       'oracle-restart-procedure.pdf',
-      '/cib/runbooks/oracle-pga-tuning',
+      '/demo/runbooks/oracle-pga-tuning',
     ]);
     await expect(
       page.getByTestId('source-filter-oracle-restart-procedure.pdf'),
     ).toBeVisible();
     await expect(
-      page.getByTestId('source-filter-/cib/runbooks/oracle-pga-tuning'),
+      page.getByTestId('source-filter-/demo/runbooks/oracle-pga-tuning'),
     ).toBeVisible();
     await expect(page.getByTestId('docs-row-d1')).toBeVisible();
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
@@ -189,9 +196,9 @@ test.describe('Knowledge Graph entity and relation lifecycle', () => {
 
     await page.getByTestId('kg-add-rel-btn').click();
     // e_cft → e_swift already exists in the fixtures (duplicate guard keeps
-    // the submit disabled) — link towards DC Paris instead.
-    await page.getByTestId('kg-add-rel-target').fill('paris');
-    await page.getByTestId('kg-add-rel-target-option-e_paris').click();
+    // the submit disabled) — link towards the primary demo region instead.
+    await page.getByTestId('kg-add-rel-target').fill('primary');
+    await page.getByTestId('kg-add-rel-target-option-e_primary_region').click();
     await page.getByTestId('kg-add-rel-label').fill('DEPLOYED_AT');
     await page.getByTestId('kg-add-rel-submit').click();
 

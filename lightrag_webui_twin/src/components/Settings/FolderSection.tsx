@@ -11,7 +11,7 @@
  * `fixtures/settings.ts`. They were removed 2026-06-04 as part of the
  * mock-kill audit ("no mock data displayed as if it were real")
  * because the backend doesn't expose those fields and the displayed
- * values were inventions (`eu-west-3 · dc-paris`,
+ * values were inventions (`primary-demo-region`,
  * `twin-default-folder-retention-v1`, hardcoded 90d/30d/1y/7y TTLs).
  * They risked being read as a compliance commitment.
  */

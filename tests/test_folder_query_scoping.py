@@ -1,4 +1,4 @@
-"""Folder-scoped retrieval — batch 2 of FOLDER-MEMBERSHIP-REFACTOR.md.
+"""Folder-scoped retrieval — docs/adr/006-folder-membership-relation.md, decision 1.
 
 Real cloisonnement of the query path: a retrieval issued *in folder X* may only
 ground on chunks whose document is ``MEMBER_OF X``.

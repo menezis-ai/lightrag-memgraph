@@ -40,12 +40,12 @@ function render(
 }
 
 const PALIER3: TagCurrentUser = {
-  name: 'claire.benoit',
+  name: 'demo.steward',
   palier: 3,
   role: 'admin / steward',
 };
-const PALIER2: TagCurrentUser = { name: 'yann.dubois', palier: 2, role: 'steward' };
-const PALIER1: TagCurrentUser = { name: 'marc.berthier', palier: 1, role: 'reader' };
+const PALIER2: TagCurrentUser = { name: 'demo.reviewer', palier: 2, role: 'steward' };
+const PALIER1: TagCurrentUser = { name: 'demo.operator', palier: 1, role: 'reader' };
 
 function defaultProps(user: TagCurrentUser = PALIER3) {
   return {
@@ -131,21 +131,21 @@ describe('TagsTab — rendering', () => {
     const props = defaultProps();
     const proposal = {
       ...TAG_FIXTURES[0],
-      tag: 'rman__edit__alberto-20260629',
+      tag: 'rman__edit__demo.qa-20260629',
       tier: 'requested' as const,
       status: 'pending-review' as const,
       def: 'Updated RMAN definition',
-      requested_by: 'alberto',
+      requested_by: 'demo.qa',
       requested_at: '2026-06-29',
       justification: 'Clarify wording',
       proposal_kind: 'edit' as const,
       target_tag: 'rman',
       proposed_fields: ['def', 'aliases'],
-      last_edit: { by: 'alberto', at: '2026-06-29', action: 'edit-suggested' },
+      last_edit: { by: 'demo.qa', at: '2026-06-29', action: 'edit-suggested' },
     };
     render(<TagsTab {...props} tags={[...props.tags, proposal]} />);
     await openTagRequests();
-    const card = screen.getByTestId('pending-rman__edit__alberto-20260629');
+    const card = screen.getByTestId('pending-rman__edit__demo.qa-20260629');
     expect(within(card).getByText('Edit suggestion')).toBeInTheDocument();
     expect(within(card).getByText('rman')).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Approve edit' })).toBeInTheDocument();
@@ -324,7 +324,7 @@ describe('TagsTab — selection + detail', () => {
       target: { value: 'rmgr, recovery-manager' },
     });
     fireEvent.change(within(dialog).getByLabelText(/Justification/), {
-      target: { value: 'Clarify Alberto recette wording' },
+      target: { value: 'Clarify Demo QA recette wording' },
     });
     await userEvent.click(
       within(dialog).getByRole('button', { name: 'Submit suggestion' }),
@@ -336,7 +336,7 @@ describe('TagsTab — selection + detail', () => {
         tag: expect.objectContaining({ tag: 'rman' }),
         def: 'Updated recovery manager definition',
         aliases: ['rmgr', 'recovery-manager'],
-        justification: 'Clarify Alberto recette wording',
+        justification: 'Clarify Demo QA recette wording',
       }),
     );
     expect(within(detail).queryByRole('button', { name: 'Delete' })).toBeNull();

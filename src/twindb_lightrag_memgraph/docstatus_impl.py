@@ -69,6 +69,7 @@ from ._constants import (
     DEFAULT_PAGE_SIZE,
     default_twin_folder,
     get_active_duplicate_share_folder,
+    get_active_upload_relative_path,
     get_active_storage_folder,
     get_confirmed_content_doc_ids,
     purge_llm_cache_on_failed_enabled,
@@ -77,6 +78,7 @@ from ._constants import (
 )
 from ._import_cleanup import cleanup_processed_imports
 from ._retry import with_conflict_retry
+from ._upload_paths import canonical_upload_file_name
 
 
 @dataclass
@@ -102,7 +104,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         Folders are a *logical* cloisonnement: a document is `MEMBER_OF` one or
         more folders, stored once. The label is workspace-scoped like the doc
         labels so the membership graph lives in the same physical namespace.
-        See FOLDER-MEMBERSHIP-REFACTOR.md.
+        See docs/adr/006-folder-membership-relation.md.
         """
         return f"Folder_{self.workspace}"
 
@@ -552,12 +554,14 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         ``_serialize_status``."""
         if isinstance(doc_data, DocProcessingStatus):
             props = self._serialize_status(doc_id, doc_data)
+            self._attach_active_relative_path(props)
             folder = props.get("folder")
             props.pop("folder", None)
             return props, folder
         props = {"id": doc_id, **doc_data}
         props.setdefault("updated_at", now)
         props.setdefault("created_at", now)
+        self._attach_active_relative_path(props)
         folder = self._resolve_folder_for_props(props, props.get("metadata"))
         props.pop("folder", None)
         for k, v in props.items():
@@ -566,6 +570,22 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             elif hasattr(v, "value"):  # Enum
                 props[k] = v.value
         return props, folder
+
+    @staticmethod
+    def _attach_active_relative_path(props: dict[str, Any]) -> None:
+        """Persist folder-upload display provenance without changing file_path."""
+        relative_path = get_active_upload_relative_path()
+        if not relative_path:
+            return
+        file_path = str(props.get("file_path") or "")
+        expected_file_path = canonical_upload_file_name(relative_path)
+        if file_path and file_path != expected_file_path:
+            raise ValueError(
+                "relative upload path does not match the canonical stored file name"
+            )
+        metadata = MemgraphDocStatusStorage._metadata_dict(props.get("metadata"))
+        metadata["relative_path"] = relative_path
+        props["metadata"] = json.dumps(metadata, default=str)
 
     async def _run_upsert_writes(
         self,
@@ -940,7 +960,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
     # ── Folder membership (many-to-many; data stored once) ─────────────
     # A document is MEMBER_OF one or more folders. See
-    # FOLDER-MEMBERSHIP-REFACTOR.md. These back the explicit membership
+    # docs/adr/006-folder-membership-relation.md. These back the explicit membership
     # endpoints and the ref-counted delete.
 
     async def add_to_folder(self, doc_id: str, folder: str) -> bool:

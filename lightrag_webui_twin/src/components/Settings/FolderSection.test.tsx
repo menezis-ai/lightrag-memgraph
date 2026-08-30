@@ -3,7 +3,7 @@
  *
  * The previous fixture-driven cards (Visibility, Region, Retention TTL
  * table) were removed because they displayed invented values
- * (`eu-west-3 · dc-paris`, `twin-default-folder-retention-v1`, hardcoded
+ * (`primary-demo-region`, `twin-default-folder-retention-v1`, hardcoded
  * TTLs) that risked being read as compliance commitments.
  *
  * This test pins:
@@ -18,14 +18,14 @@ import { FolderSection } from './FolderSection';
 describe('FolderSection', () => {
   it('shows the active folder id and display name from props', () => {
     render(
-      <FolderSection activeFolderId="cib-prod" displayName="CIB Production" />,
+      <FolderSection activeFolderId="demo-prod" displayName="Demo Production" />,
     );
     expect(screen.getByTestId('settings-active-folder')).toHaveTextContent(
-      'cib-prod',
+      'demo-prod',
     );
     expect(
       screen.getByTestId('settings-folder-display-name'),
-    ).toHaveTextContent('CIB Production');
+    ).toHaveTextContent('Demo Production');
   });
 
   it('shows an "(unset)" placeholder when displayName is empty', () => {

@@ -15,7 +15,11 @@ import {
   responsesFor,
   resolveRequestTarget,
 } from './ApiTab';
-import { setActiveFolder, setSessionAuthToken } from '../api/client';
+import {
+  onUnauthorized,
+  setActiveFolder,
+  setSessionAuthToken,
+} from '../api/client';
 import { API_VERSION, OPENAPI_GROUPS } from '../fixtures';
 
 function defaultProps() {
@@ -321,6 +325,8 @@ describe('ApiTab — endpoint expand + Try it out', () => {
   });
 
   it('Try it out surfaces a 401 from the real backend with WWW-Authenticate', async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorized);
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
@@ -344,7 +350,13 @@ describe('ApiTab — endpoint expand + Try it out', () => {
       });
       const resp = row.querySelector('.swagger-resp') as HTMLElement;
       expect(resp.textContent).toMatch(/Unauthorized/);
+      expect(unauthorized).toHaveBeenCalledOnce();
+      expect(unauthorized).toHaveBeenCalledWith({
+        path: '/documents',
+        status: 401,
+      });
     } finally {
+      unsubscribe();
       fetchSpy.mockRestore();
     }
   });

@@ -32,9 +32,9 @@ const adminUser: AuthenticatedUser = {
     label: 'Steward',
     scopes: ['twin:read', 'twin:write', 'twin:approve'],
   },
-  folders: ['cib'],
+  folders: ['demo'],
   idp: 'keycloak',
-  idp_realm: 'twin-cib',
+  idp_realm: 'demo-realm',
   sub: 'steward-1',
   session_expires: '2026-06-04T23:59:00Z',
   gateway_scopes: ['read:documents', 'admin:folders'],
@@ -45,7 +45,7 @@ const readonlyUser: AuthenticatedUser = {
   gateway_scopes: ['read:documents'],
 };
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterAll(() => server.close());
 
 beforeEach(() => {

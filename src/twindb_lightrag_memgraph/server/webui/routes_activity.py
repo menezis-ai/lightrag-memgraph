@@ -96,6 +96,11 @@ async def record_source_uploaded(
             "emitted_by": "client",
         },
         target_type="source",
+        # A normal enqueue always supplies the generated tracking id. The
+        # admin backfill endpoint retains a source-name fallback for legacy
+        # records that predate tracking, so every emitted source event still
+        # carries a searchable target id.
+        target_id=track_id or source,
     )
     await get_store().record_activity(event)
     return {"ok": True}

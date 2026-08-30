@@ -7,8 +7,6 @@ OFFLINE — no Memgraph needed. All driver calls are mocked.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 
 def _make_mock_session():
     """Build a mock async session whose run() records call kwargs."""

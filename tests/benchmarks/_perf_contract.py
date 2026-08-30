@@ -63,6 +63,14 @@ PERF_BENCHMARKS = [
     "query_postprocessing_batching",
     "native_document_filter_single_pass",
     "citation_anchor_streaming_election",
+    "graph_native_membership_gather",
+    "chunk_route_source_links_gather",
+    "quota_snapshot_gather",
+    # Structural-only: it measures cross-route contention on the SHARED read
+    # pool, whose wall-clock is meaningless on a contended runner. It asserts
+    # the two load-independent properties (read count unchanged, graph fan-out
+    # bounded) and leaves the latency report to its CLI.
+    "shared_read_pool_interference",
 ]
 
 

@@ -19,8 +19,8 @@ import type { Notification, Folder } from '../types/topbar';
 
 const sampleFolders: Folder[] = [
   {
-    id: 'cib',
-    kb: 'CIB KB',
+    id: 'demo',
+    kb: 'Demo KB',
     visibility: 'private',
     sources: 247,
     role: 'admin / steward',
@@ -55,8 +55,8 @@ function baseProps() {
     onTab: vi.fn(),
     theme: 'light' as const,
     onTheme: vi.fn(),
-    folder: 'cib',
-    kbName: 'CIB KB',
+    folder: 'demo',
+    kbName: 'Demo KB',
     onSwitchFolder: vi.fn(),
     folders: sampleFolders,
     notifications: sampleNotifs,

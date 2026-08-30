@@ -20,6 +20,7 @@ import {
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   FOLDER_FIXTURES,
+  PORTABILITY_REPORT_HASH,
 } from '../fixtures';
 
 const server = setupServer(...handlers);
@@ -38,6 +39,25 @@ async function getJson<T>(path: string): Promise<T> {
   const r = await fetch(BASE + path);
   expect(r.ok).toBe(true);
   return (await r.json()) as T;
+}
+
+async function startPortabilityImport(): Promise<string> {
+  const form = new FormData();
+  form.append(
+    'bundle',
+    new File(['canonical bundle'], 'staging.tar.gz', {
+      type: 'application/gzip',
+    }),
+  );
+  form.append('workspace', 'base');
+  form.append('folder_map', '{}');
+  const response = await fetch(`${BASE}${TWIN}/admin/portability/imports`, {
+    method: 'POST',
+    body: form,
+  });
+  expect(response.status).toBe(202);
+  const job = (await response.json()) as { id: string };
+  return job.id;
 }
 
 describe('MSW handlers — LightRAG-native endpoints', () => {
@@ -155,6 +175,189 @@ describe('MSW handlers — LightRAG-native endpoints', () => {
 });
 
 describe('MSW handlers — Twin overlay endpoints', () => {
+  it(`mirrors the ${TWIN}/linked-sources preview and optimistic lifecycle`, async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Twin-Folder': 'sandbox',
+    };
+    const payload = {
+      url: 'https://tenant.sharepoint.com/sites/pf/Shared/guide.pdf',
+      doc_type: 'di',
+      public: false,
+      status: 'active',
+    };
+
+    const preview = await fetch(`${BASE}${TWIN}/linked-sources/preview`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ operation: 'create', body: payload }),
+    });
+    expect(preview.ok).toBe(true);
+    const before = await fetch(`${BASE}${TWIN}/linked-sources`, { headers });
+    await expect(before.json()).resolves.toMatchObject({ links: [] });
+
+    const created = await fetch(`${BASE}${TWIN}/linked-sources`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as {
+      link: { id: string; row_version: number; source_type: string };
+    };
+    expect(createdBody.link).toMatchObject({
+      row_version: 1,
+      source_type: 'sharepoint',
+    });
+
+    const patched = await fetch(
+      `${BASE}${TWIN}/linked-sources/${createdBody.link.id}`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ public: true, expected_version: 1 }),
+      },
+    );
+    expect(patched.ok).toBe(true);
+    await expect(patched.json()).resolves.toMatchObject({
+      link: { public: true, row_version: 2 },
+    });
+
+    const disabled = await fetch(
+      `${BASE}${TWIN}/linked-sources/${createdBody.link.id}/disable`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expected_version: 2 }),
+      },
+    );
+    expect(disabled.ok).toBe(true);
+    await expect(disabled.json()).resolves.toMatchObject({
+      link: { status: 'disabled', row_version: 3 },
+    });
+  });
+
+  it('keeps linked-source optimistic conflicts mutation-free and retryable', async () => {
+    await fetch(`${BASE}/__e2e/scenario`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ linkedSourceDisableConflictOnce: true }),
+    });
+    const linkId = '11111111-1111-4111-8111-111111111111';
+    const disable = () =>
+      fetch(`${BASE}${TWIN}/linked-sources/${linkId}/disable`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Twin-Folder': 'default',
+        },
+        body: JSON.stringify({ expected_version: 1 }),
+      });
+
+    const conflict = await disable();
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toEqual({
+      detail: 'row_version mismatch — reload and retry',
+    });
+    const unchanged = await getJson<{
+      links: Array<{ id: string; status: string; row_version: number }>;
+    }>(`${TWIN}/linked-sources`);
+    expect(unchanged.links.find((link) => link.id === linkId)).toMatchObject({
+      status: 'active',
+      row_version: 1,
+    });
+
+    const retry = await disable();
+    expect(retry.ok).toBe(true);
+    const stats = await getJson<{
+      linkedSourceDisableCalls: number;
+      linkedSourceDisableTransitions: number;
+    }>('/__e2e/stats');
+    expect(stats).toMatchObject({
+      linkedSourceDisableCalls: 2,
+      linkedSourceDisableTransitions: 1,
+    });
+  });
+
+  it('blocks portability approval when dry-run findings are present', async () => {
+    await fetch(`${BASE}/__e2e/scenario`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portabilityBlockingDryRun: true }),
+    });
+    const jobId = await startPortabilityImport();
+    const job = await getJson<{
+      status: string;
+      report: { blocking: Array<{ code: string }> };
+    }>(`${TWIN}/admin/portability/imports/${jobId}`);
+    expect(job.status).toBe('awaiting-approval');
+    expect(job.report.blocking).toEqual([
+      expect.objectContaining({ code: 'CLASSIFICATION_CEILING' }),
+    ]);
+
+    const approval = await fetch(
+      `${BASE}${TWIN}/admin/portability/imports/${jobId}/approve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report_hash: PORTABILITY_REPORT_HASH }),
+      },
+    );
+    expect(approval.status).toBe(409);
+    const stats = await getJson<{
+      portabilityApproveCalls: number;
+      portabilityApproveTransitions: number;
+    }>('/__e2e/stats');
+    expect(stats).toMatchObject({
+      portabilityApproveCalls: 1,
+      portabilityApproveTransitions: 0,
+    });
+  });
+
+  it('allows exactly one portability transition for concurrent approve and apply', async () => {
+    await fetch(`${BASE}/__e2e/scenario`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        portabilityApproveDelayMs: 10,
+        portabilityApplyDelayMs: 10,
+      }),
+    });
+    const jobId = await startPortabilityImport();
+    await getJson(`${TWIN}/admin/portability/imports/${jobId}`);
+    const approve = () =>
+      fetch(`${BASE}${TWIN}/admin/portability/imports/${jobId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report_hash: PORTABILITY_REPORT_HASH }),
+      });
+    const approvals = await Promise.all([approve(), approve()]);
+    expect(approvals.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+
+    const apply = () =>
+      fetch(`${BASE}${TWIN}/admin/portability/imports/${jobId}/apply`, {
+        method: 'POST',
+      });
+    const applications = await Promise.all([apply(), apply()]);
+    expect(applications.map((response) => response.status).sort()).toEqual([
+      202, 409,
+    ]);
+    const stats = await getJson<{
+      portabilityApproveCalls: number;
+      portabilityApproveTransitions: number;
+      portabilityApplyCalls: number;
+      portabilityApplyTransitions: number;
+    }>('/__e2e/stats');
+    expect(stats).toMatchObject({
+      portabilityApproveCalls: 2,
+      portabilityApproveTransitions: 1,
+      portabilityApplyCalls: 2,
+      portabilityApplyTransitions: 1,
+    });
+  });
+
   it(`PUT ${TWIN}/settings/vision preserves procedure activation when omitted`, async () => {
     const put = (body: object) =>
       fetch(BASE + `${TWIN}/settings/vision`, {
@@ -201,7 +404,7 @@ describe('MSW handlers — Twin overlay endpoints', () => {
         def: 'Updated RMAN wording',
         aliases: ['rmgr'],
         justification: 'clarify',
-        actor: 'alberto',
+        actor: 'demo.qa',
       }),
     });
     expect(r.status).toBe(201);
@@ -356,7 +559,7 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
     const del = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ doc_ids: ['d6', 'd7'], actor: 'claire.benoit' }),
+      body: JSON.stringify({ doc_ids: ['d6', 'd7'], actor: 'demo.steward' }),
     });
     expect(del.ok).toBe(true);
     expect(await del.json()).toEqual({ deleted: 2, failed: [] });
@@ -377,7 +580,7 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
     );
     expect(deletes).toHaveLength(1);
     const event = deletes[0];
-    expect(event.actor.user).toBe('claire.benoit');
+    expect(event.actor.user).toBe('demo.steward');
     expect(event.target).toMatchObject({ type: 'bulk', label: '2 documents' });
     expect(event.summary).toContain('2 documents physically deleted');
     expect(event.summary).toContain('cascade');
@@ -431,7 +634,7 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
     const reject = await fetch(`${BASE}${TWIN}/tags/argocd/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ actor: 'claire.benoit', reason: 'too broad' }),
+      body: JSON.stringify({ actor: 'demo.steward', reason: 'too broad' }),
     });
     expect(reject.ok).toBe(true);
 
@@ -468,7 +671,7 @@ describe('MSW handlers — delete cascade parity (unit + bulk)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        actor: 'claire.benoit',
+        actor: 'demo.steward',
         reason: 'policy mismatch',
       }),
     });
@@ -591,11 +794,11 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
   });
 
   it('single DELETE un-shares a multi-folder doc and only physically deletes on the last membership', async () => {
-    // Share d1 into a second folder first (memberships: default + cib).
+    // Share d1 into a second folder first (memberships: default + demo).
     const share = await fetch(`${BASE}${TWIN}/documents/d1/folders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_id: 'cib' }),
+      body: JSON.stringify({ folder_id: 'demo' }),
     });
     expect(share.ok).toBe(true);
 
@@ -608,7 +811,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
     const folders = await getJson<{ folders: string[] }>(
       `${TWIN}/documents/d1/folders`,
     );
-    expect(folders.folders).toEqual(['cib']);
+    expect(folders.folders).toEqual(['demo']);
     const docs = await getJson<{ items: Array<{ doc_id: string }> }>(
       '/documents',
     );
@@ -624,7 +827,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
     // Delete from its LAST folder → physical delete.
     const last = await fetch(`${BASE}/documents/d1`, {
       method: 'DELETE',
-      headers: { 'X-Twin-Folder': 'cib' },
+      headers: { 'X-Twin-Folder': 'demo' },
     });
     expect(last.status).toBe(200);
     const after = await getJson<{ items: Array<{ doc_id: string }> }>(
@@ -650,7 +853,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
     await fetch(`${BASE}${TWIN}/documents/d2/folders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_id: 'cib' }),
+      body: JSON.stringify({ folder_id: 'demo' }),
     });
     const res = await fetch(`${BASE}${TWIN}/documents/bulk-delete`, {
       method: 'POST',
@@ -670,7 +873,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
     const folders = await getJson<{ folders: string[] }>(
       `${TWIN}/documents/d2/folders`,
     );
-    expect(folders.folders).toEqual(['cib']);
+    expect(folders.folders).toEqual(['demo']);
   });
 
   it(`POST ${TWIN}/documents/:id/approve only writes review — no status flip, no edits merge`, async () => {
@@ -678,7 +881,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        actor: 'claire.benoit',
+        actor: 'demo.steward',
         edits: { content_summary: 'edited summary that must NOT be merged' },
       }),
     });
@@ -689,7 +892,7 @@ describe('MSW handlers — real-backend state machine parity (audit DUP-2)', () 
     };
     expect(receipt.doc_id).toBe('d6');
     expect(receipt.review.state).toBe('approved');
-    expect(receipt.review.actor).toBe('claire.benoit');
+    expect(receipt.review.actor).toBe('demo.steward');
     expect(receipt.review.edits).toEqual({
       content_summary: 'edited summary that must NOT be merged',
     });

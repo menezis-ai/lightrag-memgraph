@@ -63,7 +63,7 @@ def sample_chunks():
             text="ORA-04030 occurs when the PGA memory allocation exceeds the limit. "
             "Check the PGA_AGGREGATE_LIMIT parameter and consider increasing it.",
             score=0.95,
-            source_workspace="cib",
+            source_workspace="demo",
             document_id="doc_oracle_001",
             document_path="/docs/oracle/memory.pdf",
         ),
@@ -160,8 +160,8 @@ def routing_rules_json(tmp_path):
                 "confidence": 0.9,
             },
             {
-                "keywords": ["cib-app", "CIB"],
-                "target_workspace": "cib",
+                "keywords": ["demo-app", "Demo"],
+                "target_workspace": "demo",
                 "workspace_type": "private",
                 "confidence": 0.95,
             },
@@ -179,13 +179,13 @@ def router(routing_rules_json):
 
 
 @pytest.fixture
-def topology_context_cib():
-    """TopologyContext for CIB workspace."""
+def topology_context_demo():
+    """TopologyContext for Demo workspace."""
     return TopologyContext(
-        servers=["srv-cib-01"],
-        workspaces=["cib"],
+        servers=["srv-demo-01"],
+        workspaces=["demo"],
         workspaces_publics=["commons", "commons_oracle"],
-        topology_path="(App:RH)-[:RUNS_ON]->(srv-cib-01)",
+        topology_path="(App:RH)-[:RUNS_ON]->(srv-demo-01)",
     )
 
 

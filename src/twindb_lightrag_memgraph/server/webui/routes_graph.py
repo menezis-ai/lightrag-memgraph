@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from ..idp_jwt import require_admin_user
 from ..webui_models import (
@@ -15,7 +15,7 @@ from ..webui_models import (
     GraphRelationCreate,
     GraphRelationPatch,
 )
-from .events import _make_event
+from .events import _make_event, _request_actor
 from .store import get_store
 
 router = APIRouter(tags=["graph"])
@@ -270,6 +270,7 @@ async def update_graph_entity_endpoint(
         str, Path(description="Entity id from `GET /graph/entities`.")
     ],
     body: GraphEntityPatch,
+    request: Request,
 ) -> dict[str, Any]:
     """Edit an entity's name, type, summary or tags. Tags must be
     active catalog tags (422 lists unknown ones). An entity shared with
@@ -291,7 +292,7 @@ async def update_graph_entity_endpoint(
     event = _make_event(
         kind="graph-entity-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=updated.get("name") or entity_id,
         summary=f"Graph entity '{updated.get('name') or entity_id}' updated",
         meta={
@@ -299,6 +300,7 @@ async def update_graph_entity_endpoint(
             "patch_keys": list(patch_dict.keys()),
         },
         target_type="entity",
+        target_id=entity_id,
     )
     await store.record_activity(event)
     return updated
@@ -319,6 +321,7 @@ async def update_graph_entity_endpoint(
 )
 async def create_graph_entity_endpoint(
     body: GraphEntityCreate,
+    request: Request,
 ) -> dict[str, Any]:
     """Manually add a new entity to the knowledge graph, alongside the
     ones extracted automatically at ingestion. The name must be unique in
@@ -357,7 +360,7 @@ async def create_graph_entity_endpoint(
     event = _make_event(
         kind="graph-entity-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=entity.get("name") or body.name,
         summary=f"Graph entity '{entity.get('name') or body.name}' created",
         meta={
@@ -366,6 +369,7 @@ async def create_graph_entity_endpoint(
             "operation": "create",
         },
         target_type="entity",
+        target_id=entity["id"],
     )
     await store.record_activity(event)
     return entity
@@ -385,6 +389,7 @@ async def delete_graph_entity_endpoint(
     entity_id: Annotated[
         str, Path(description="Entity id from `GET /graph/entities`.")
     ],
+    request: Request,
 ) -> None:
     """Remove an entity from the knowledge graph. Its relations are
     deleted with it. An entity shared with another folder cannot be
@@ -404,14 +409,15 @@ async def delete_graph_entity_endpoint(
     event = _make_event(
         kind="graph-entity-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=entity_id,
         summary=f"Graph entity '{entity_id}' deleted",
         meta={"entity_id": entity_id, "operation": "delete"},
         target_type="entity",
+        target_id=entity_id,
     )
     await store.record_activity(event)
-    return None
+    return
 
 
 @router.post(
@@ -427,6 +433,7 @@ async def delete_graph_entity_endpoint(
 )
 async def create_graph_relation_endpoint(
     body: GraphRelationCreate,
+    request: Request,
 ) -> dict[str, Any]:
     """Manually link two existing entities with a labelled relation. Both
     endpoints must exist and the label must be non-empty (422)."""
@@ -448,7 +455,7 @@ async def create_graph_relation_endpoint(
     event = _make_event(
         kind="graph-relation-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=relation.get("label") or body.label,
         summary=f"Graph relation '{relation.get('label') or body.label}' created",
         meta={
@@ -458,6 +465,7 @@ async def create_graph_relation_endpoint(
             "operation": "create",
         },
         target_type="relation",
+        target_id=relation["id"],
     )
     await store.record_activity(event)
     return relation
@@ -477,6 +485,7 @@ async def delete_graph_relation_endpoint(
     rel_id: Annotated[
         str, Path(description="Relation id from `GET /graph/relations`.")
     ],
+    request: Request,
 ) -> None:
     """Remove a relation from the knowledge graph. The two entities it
     connected are not affected."""
@@ -498,14 +507,15 @@ async def delete_graph_relation_endpoint(
     event = _make_event(
         kind="graph-relation-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=rel_id,
         summary=f"Graph relation '{rel_id}' deleted",
         meta={"rel_id": rel_id, "operation": "delete"},
         target_type="relation",
+        target_id=rel_id,
     )
     await store.record_activity(event)
-    return None
+    return
 
 
 @router.patch(
@@ -523,6 +533,7 @@ async def update_graph_relation_endpoint(
         str, Path(description="Relation id from `GET /graph/relations`.")
     ],
     body: GraphRelationPatch,
+    request: Request,
 ) -> dict[str, Any]:
     """Edit a relation's label, strength or properties. A relation whose
     endpoints are shared with another folder cannot be edited from this
@@ -546,7 +557,7 @@ async def update_graph_relation_endpoint(
     event = _make_event(
         kind="graph-relation-edited",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=updated.get("label") or rel_id,
         summary=f"Graph relation '{updated.get('label') or rel_id}' updated",
         meta={
@@ -554,6 +565,7 @@ async def update_graph_relation_endpoint(
             "patch_keys": list(patch_dict.keys()),
         },
         target_type="relation",
+        target_id=rel_id,
     )
     await store.record_activity(event)
     return updated

@@ -59,6 +59,25 @@ async def client(monkeypatch, tmp_path):
     webui_router.reset_store()
 
 
+async def _folder_activity(client, *, folder_id: str, operation: str) -> dict:
+    """Read the folder audit record through its stable resource id."""
+    response = await client.get(
+        "/activity",
+        params={"resource.id": folder_id, "kind": "settings"},
+    )
+    assert response.status_code == 200
+    matches = [
+        event
+        for event in response.json().get("items", [])
+        if event.get("meta", {}).get("operation") == operation
+    ]
+    assert len(matches) == 1
+    event = matches[0]
+    assert event["target"]["id"] == folder_id
+    assert event["actor"]["user"] == "api_key"
+    return event
+
+
 class TestCreateFolder:
     async def test_create_success_returns_201(self, client):
         r = await client.post(
@@ -90,15 +109,12 @@ class TestCreateFolder:
             "/folders",
             json={"id": "sandbox", "label": "Sandbox", "kind": "sandbox"},
         )
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        folder_events = [
-            e
-            for e in events
-            if e["kind"] == "settings" and e["meta"].get("operation") == "create"
-        ]
-        assert len(folder_events) == 1
-        assert folder_events[0]["meta"]["folder_id"] == "sandbox"
+        event = await _folder_activity(
+            client,
+            folder_id="sandbox",
+            operation="create",
+        )
+        assert event["meta"]["folder_id"] == "sandbox"
 
     async def test_create_conflicts_with_env_seed(self, client):
         r = await client.post(
@@ -143,6 +159,21 @@ class TestUpdateFolder:
         assert r.status_code == 200
         assert r.json()["kb"] == "Sandbox v2"
 
+    async def test_update_emits_server_attributed_activity(self, client):
+        await client.post("/folders", json={"id": "sandbox", "label": "Sandbox"})
+        response = await client.patch(
+            "/folders/sandbox",
+            json={"label": "Sandbox v2"},
+        )
+        assert response.status_code == 200
+        event = await _folder_activity(
+            client,
+            folder_id="sandbox",
+            operation="update",
+        )
+        assert event["target"]["label"] == "Sandbox v2"
+        assert event["meta"]["patch_keys"] == ["label"]
+
     async def test_update_404_when_missing(self, client):
         r = await client.patch("/folders/ghost", json={"label": "x"})
         assert r.status_code == 404
@@ -167,14 +198,12 @@ class TestDeleteFolder:
     async def test_delete_emits_activity(self, client):
         await client.post("/folders", json={"id": "sandbox", "label": "S"})
         await client.delete("/folders/sandbox")
-        activity = await client.get("/activity")
-        events = activity.json().get("items", [])
-        deletes = [
-            e
-            for e in events
-            if e["kind"] == "settings" and e["meta"].get("operation") == "delete"
-        ]
-        assert len(deletes) == 1
+        event = await _folder_activity(
+            client,
+            folder_id="sandbox",
+            operation="delete",
+        )
+        assert event["meta"]["folder_id"] == "sandbox"
 
     async def test_delete_active_folder_does_not_resurrect_store(self, client):
         await client.post("/folders", json={"id": "sandbox", "label": "S"})

@@ -68,6 +68,7 @@ class TestAuthChainWithApiKeys:
         body = r.json()
         assert body["authenticated"] is True
         assert body["user"] == "api_key"
+        assert body["identity"] is None
 
     async def test_minted_per_operator_key_authenticates(self, client):
         created = (
@@ -85,6 +86,7 @@ class TestAuthChainWithApiKeys:
         body = r.json()
         assert body["authenticated"] is True
         assert body["user"] == f"api_key:{created['id']}"
+        assert body["identity"] is None
 
     async def test_revoked_per_operator_key_rejects(self, client):
         created = (

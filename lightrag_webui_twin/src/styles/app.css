@@ -1570,6 +1570,219 @@ dialog::backdrop {
 }
 .linked-box.disabled .url-input { cursor: not-allowed; }
 .linked-box.disabled .url-input:disabled { color: var(--color-text-tertiary); }
+
+/* Sources RAG — CrossPoint-compatible per-application declaration grid. */
+.rag-sources {
+  width: 100%;
+  height: calc(100vh - 62px);
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 28px 40px;
+  background: var(--color-background-secondary);
+}
+.rag-sources-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.rag-sources-header h1 { margin: 0; font-size: 22px; }
+.rag-sources-header p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+}
+.rag-rules {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 35%, var(--color-border-default));
+  border-radius: var(--border-radius-md);
+  background: color-mix(in oklab, var(--twin-amber-vivid, #9C7000) 8%, var(--color-background-primary));
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.rag-rules strong { color: var(--twin-red-vivid, #B03030); }
+.rag-state {
+  padding: 16px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.rag-state.error {
+  margin-top: 12px;
+  border-color: color-mix(in oklab, var(--twin-red-vivid, #B03030) 40%, var(--color-border-default));
+  color: var(--twin-red-vivid, #B03030);
+}
+.rag-grid-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary);
+}
+.rag-grid {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.rag-grid th,
+.rag-grid td {
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid var(--color-border-tertiary);
+  border-bottom: 1px solid var(--color-border-tertiary);
+}
+.rag-grid th:last-child,
+.rag-grid td:last-child { border-right: 0; }
+.rag-grid tbody tr:last-child td { border-bottom: 0; }
+.rag-grid th {
+  width: 15%;
+  background: var(--color-background-secondary);
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.rag-grid th:nth-child(1) { width: 9%; }
+.rag-grid th:nth-child(2) { width: 14%; }
+.rag-grid th:nth-child(3) { width: 10%; }
+.rag-app-id { font-family: var(--font-mono); font-weight: 650; }
+.rag-app-owner {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+.rag-classification,
+.rag-source-status,
+.rag-source-kind {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.rag-source-cell { min-width: 190px; }
+.rag-cell-empty { color: var(--color-text-tertiary); font-size: 11.5px; }
+.rag-source-card {
+  padding: 9px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+}
+.rag-source-card:last-child { margin-bottom: 0; }
+.rag-source-card.is-disabled { opacity: 0.62; }
+.rag-source-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.rag-source-kind.confluence { color: var(--twin-accent); }
+.rag-source-kind.sharepoint { color: var(--twin-green-700, #2F7A40); }
+.rag-source-card > a {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.rag-source-meta,
+.rag-source-batch {
+  margin-top: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+.rag-source-batch { font-style: italic; }
+.rag-source-actions { display: flex; gap: 4px; margin-top: 7px; }
+.rag-editor,
+.rag-preview {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary);
+}
+.rag-editor { grid-template-columns: minmax(280px, 2fr) minmax(160px, 1fr); }
+.rag-editor-title {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rag-editor label,
+.rag-editor legend {
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.rag-editor input[type='url'],
+.rag-editor select {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  margin-top: 5px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.rag-editor fieldset {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-sm);
+}
+.rag-editor fieldset label { display: inline-flex; align-items: center; gap: 5px; }
+.rag-derived-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-secondary);
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+}
+.rag-derived-scope strong { color: var(--color-text-primary); font-size: 12px; }
+.rag-editor > .primary-btn { justify-self: start; align-self: end; }
+.rag-preview {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: color-mix(in oklab, var(--twin-accent) 35%, var(--color-border-default));
+}
+.rag-preview > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.rag-preview span { color: var(--color-text-secondary); font-size: 11.5px; }
+.rag-preview .rag-preview-warning { color: var(--twin-amber-vivid, #9C7000); }
+.rag-preview-actions { display: flex; gap: 8px; }
+
+@media (max-width: 760px) {
+  .rag-sources { padding: 16px 12px 28px; }
+  .rag-sources-header { flex-direction: column; }
+  .rag-editor,
+  .rag-preview { grid-template-columns: minmax(0, 1fr); }
+}
 .section-label-uc {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--color-text-tertiary); font-weight: 500;
@@ -8390,7 +8603,7 @@ header.topbar .notif-popover {
   color: var(--color-text-secondary);
 }
 
-/* ── CIB stress hardening: dense layouts, long paths, overlays ─────────── */
+/* ── Demo stress hardening: dense layouts, long paths, overlays ─────────── */
 .breakable {
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -10435,6 +10648,177 @@ header.topbar dialog.notif-popover {
   margin-top: 2px;
 }
 
+/* Settings → Portability. Reuses the settings cards, badges, controls and
+   palette; only the workflow-specific layout lives here. */
+.portability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.settings-portability .set-card > p {
+  margin: -5px 0 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.settings-field textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-warm);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-field textarea:focus {
+  outline: 0;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.portability-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.portability-check input {
+  accent-color: var(--blue);
+}
+
+.portability-check-warning {
+  color: var(--red);
+}
+
+.portability-actions,
+.portability-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.portability-actions {
+  margin-top: 16px;
+}
+
+.portability-status {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.portability-status code {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+}
+
+.portability-status .spin {
+  animation: spin 900ms linear infinite;
+}
+
+.portability-report {
+  margin-top: 14px;
+}
+
+.portability-report .set-card-h {
+  justify-content: space-between;
+}
+
+.portability-report-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.portability-report h4 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.portability-check-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portability-check-list li,
+.portability-blockers > div,
+.portability-validation {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.portability-check-list svg {
+  flex: none;
+  color: var(--blue);
+}
+
+.portability-dl {
+  grid-template-columns: minmax(100px, 1fr) auto;
+  gap: 7px 12px;
+  font-size: 12px;
+}
+
+.portability-dl-row {
+  display: contents;
+}
+
+.portability-blockers {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--twin-red-border);
+  border-radius: 9px;
+  background: var(--twin-red-50);
+}
+
+.portability-blockers > div,
+.portability-blockers svg,
+.portability-validation.failed {
+  color: var(--red);
+}
+
+.portability-validation {
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.portability-validation.ok {
+  color: var(--blue);
+}
+
+@media (max-width: 900px) {
+  .portability-grid,
+  .portability-report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .settings-folder-row {
   display: flex;
   flex-direction: column;
@@ -11863,7 +12247,7 @@ select:where(*) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * Section 14 — Alberto responsive closure: Tags + Graph/Entities
+ * Section 14 — responsive closure: Tags + Graph/Entities
  * ════════════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 900px) {

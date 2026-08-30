@@ -423,7 +423,7 @@ async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[st
     # defensively so any future retrieval added here stays folder-scoped.
     # clean_answer is available before projection on this path, so the
     # paragraph-anchor evidence is collected from the exact text the
-    # operator receives (PARAGRAPH-CITATION-PLAN.md §5.1, /query leg).
+    # operator receives (docs/adr/008-paragraph-citation-anchor.md, /query leg).
     projection_started = time.perf_counter()
     with _retrieval_scope(folder, body):
         sources, projection_ok = await _build_envelope_sources(

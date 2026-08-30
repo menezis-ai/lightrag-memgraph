@@ -68,14 +68,13 @@ class MemgraphNotificationStore:
         return f"WebuiNotification_{self._workspace}"
 
     async def initialize(self) -> None:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                try:
-                    result = await session.run(f"CREATE INDEX ON :`{self._label}`(id)")
-                    await result.consume()
-                except Exception as e:  # noqa: BLE001
-                    if "already exists" not in str(e).lower():
-                        raise
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            try:
+                result = await session.run(f"CREATE INDEX ON :`{self._label}`(id)")
+                await result.consume()
+            except Exception as e:  # noqa: BLE001
+                if "already exists" not in str(e).lower():
+                    raise
 
     async def bootstrap_if_empty(
         self, items: list[dict[str, Any]] | None = None
@@ -127,39 +126,36 @@ class MemgraphNotificationStore:
         if not rows:
             return
 
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"""
                     UNWIND $rows AS row
                     MATCH (m:`{self._label}` {{id: row.id}})
                     SET m.data = row.data, m.`__updated_at` = timestamp()
                     """,
-                    rows=rows,
-                )
-                await result.consume()
+                rows=rows,
+            )
+            await result.consume()
 
     async def clear(self) -> None:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(f"MATCH (n:`{self._label}`) DETACH DELETE n")
-                await result.consume()
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(f"MATCH (n:`{self._label}`) DETACH DELETE n")
+            await result.consume()
 
     async def push(self, notification: dict[str, Any]) -> dict[str, Any]:
         if "id" not in notification:
             raise ValueError("push requires notification['id']")
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"""
                     MERGE (n:`{self._label}` {{id: $id}})
                     ON CREATE SET n.`__created_at` = timestamp()
                     SET n.data = $data, n.`__updated_at` = timestamp()
                     """,
-                    id=str(notification["id"]),
-                    data=json.dumps(notification, sort_keys=True),
-                )
-                await result.consume()
+                id=str(notification["id"]),
+                data=json.dumps(notification, sort_keys=True),
+            )
+            await result.consume()
         return copy.deepcopy(notification)
 
 

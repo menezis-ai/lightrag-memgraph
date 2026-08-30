@@ -330,6 +330,7 @@ async def _emit_bulk_retag_events(
                 "resulting_tags": new_tags,
             },
             target_type="document",
+            target_id=doc_id,
         )
         await get_store().record_activity(event)
 

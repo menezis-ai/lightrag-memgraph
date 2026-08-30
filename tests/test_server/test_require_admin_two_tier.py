@@ -8,7 +8,6 @@ With an IdP, the verified ``admin:folders`` scope remains mandatory.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException, Request

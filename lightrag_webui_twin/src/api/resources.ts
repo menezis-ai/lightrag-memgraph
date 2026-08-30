@@ -21,11 +21,13 @@ import {
   apiFetch,
   buildApiHeaders,
   buildApiUrl,
+  reportUnauthorizedResponse,
   type ApiRequestInit,
 } from './client';
 import type { ActivityEvent } from '../types/activity';
 import type { OpenApiGroup } from '../types/api';
-import type { Document } from '../types/document';
+import type { AuthenticatedUser } from '../types/auth';
+import type { Document, SourceLink } from '../types/document';
 import type {
   GraphEntity,
   GraphEntityPatch,
@@ -40,6 +42,11 @@ import type {
 import type { QuotaSnapshot } from '../types/quota';
 import type { AboutResponse } from '../types/systemInfo';
 import type {
+  PortabilityExportInput,
+  PortabilityImportInput,
+  PortabilityJob,
+} from '../types/portability';
+import type {
   ProcedureBundle,
   ProcedureBundleSummary,
 } from '../types/procedure';
@@ -47,7 +54,19 @@ import type { QueryMode } from '../types/retrieval';
 import type { Folder, Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
 import type { ThesaurusEntry } from '../types/thesaurus';
+import type {
+  CatalogPreview,
+  LinkedSourceCreateInput,
+  LinkedSourceMutation,
+  LinkedSourcePatchInput,
+  LinkedSourcePreviewInput,
+  LinkedSourcesSnapshot,
+} from '../types/linkedSource';
 import { normalizeDocumentStatus } from '../lib/docStatus';
+import {
+  canonicalUploadFileName,
+  normalizeRelativeUploadPath,
+} from '../lib/uploadPaths';
 
 const TWIN = '/twin/api';
 
@@ -125,14 +144,21 @@ export type UploadDocType = 'procedure' | 'standard';
 
 export interface UploadDocumentOptions {
   signal?: AbortSignal;
+  relativePath?: string;
   classification?: UploadClassification;
   docType?: UploadDocType;
 }
 
 export interface UploadDocumentInput {
   file: File;
+  signal?: AbortSignal;
+  relativePath?: string;
   classification?: UploadClassification;
   docType?: UploadDocType;
+  onStateChange?: (
+    state: 'uploading' | 'complete' | 'error',
+    error?: string,
+  ) => void;
 }
 
 export interface UploadDocumentResponse {
@@ -173,10 +199,19 @@ export interface TwinQueryRequest {
   }[];
   enable_rerank?: boolean;
   min_score?: number;
-  tag_filter?: {
-    all?: readonly string[];
-    any?: readonly string[];
-  };
+  /** Grouped form is the Twin runtime contract for external/future callers;
+   * the current WebUI controls still emit only the flat form. */
+  tag_filter?:
+    | {
+        all?: readonly string[];
+        any?: readonly string[];
+      }
+    | {
+        groups: readonly {
+          all?: readonly string[];
+          any?: readonly string[];
+        }[];
+      };
   doc_filter?: {
     all?: readonly string[];
     any?: readonly string[];
@@ -205,6 +240,7 @@ export interface TwinQuerySource {
   retrieval_origin?: 'vector' | 'graph' | null;
   doc_id?: string | null;
   chunk_id?: string | null;
+  source_links?: readonly SourceLink[];
   /** Optional intra-chunk paragraph anchor; null on legacy backends. */
   anchor?: TwinQuerySourceAnchor | null;
 }
@@ -253,6 +289,8 @@ export interface AuthStatusResponse {
   auth_enabled: boolean;
   authenticated: boolean;
   user?: string | null;
+  /** Verified IdP claims projected by the backend; absent for local/API keys. */
+  identity?: AuthenticatedUser | null;
   expires_at?: string | null;
   login_required: boolean;
 }
@@ -387,10 +425,22 @@ export const lightragApi = {
     file: File,
     init?: UploadDocumentOptions,
   ): Promise<UploadDocumentResponse> => {
+    const relativePath = init?.relativePath
+      ? normalizeRelativeUploadPath(init.relativePath)
+      : undefined;
+    const nestedPath = relativePath?.includes('/') ? relativePath : undefined;
+    // Ordinary uploads retain the native File.name byte-for-byte. Only an
+    // explicit nested folder path opts into Twin's encoded storage identity.
+    const storageFileName = nestedPath
+      ? canonicalUploadFileName(nestedPath)
+      : file.name;
     const resolveExisting = () =>
       apiFetch<ResolveUploadResponse>(`${TWIN}/documents/resolve-upload`, {
         method: 'POST',
-        body: { file_name: file.name },
+        body: {
+          file_name: storageFileName,
+          ...(nestedPath ? { relative_path: nestedPath } : {}),
+        },
         signal: init?.signal,
       });
     const asResolvedUpload = (
@@ -419,7 +469,7 @@ export const lightragApi = {
     if (resolvedBeforeUpload) return resolvedBeforeUpload;
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, storageFileName);
     const headers = buildApiHeaders();
     const authorization = headers.Authorization ?? '';
     const bearerPrefix = 'Bearer ';
@@ -449,6 +499,7 @@ export const lightragApi = {
         // Operator-forced ingestion profile (procedure|standard). Omitted for
         // auto-detect so the backend seam keeps its layout-based detection.
         ...(init?.docType ? { 'X-Twin-Doc-Type': init.docType } : {}),
+        ...(nestedPath ? { 'X-Twin-Relative-Path': nestedPath } : {}),
       },
       body: formData,
       signal: init?.signal,
@@ -462,6 +513,7 @@ export const lightragApi = {
       /* keep as text */
     }
     if (!res.ok) {
+      reportUnauthorizedResponse('/documents/upload', res.status);
       // Close the preflight/upload race: another request may have created the
       // canonical source after our first resolution but before LightRAG's
       // strict name check. Re-resolve only for a collision response; unrelated
@@ -555,6 +607,7 @@ export const twinApi = {
 
     if (!res.ok) {
       const text = await res.text();
+      reportUnauthorizedResponse(`${TWIN}/query/stream`, res.status);
       throw new ApiError(
         `POST ${TWIN}/query/stream → ${res.status} ${res.statusText}`,
         res.status,
@@ -691,6 +744,103 @@ export const twinApi = {
   // shape (Memgraph, Python, storage topology) only for admins.
   getAbout: (init?: ApiRequestInit) =>
     apiFetch<AboutResponse>(`${TWIN}/system/about`, init),
+
+  // ── Canonical KB portability (Settings → Portability, admin) ─────
+  createPortabilityExport: (
+    body: PortabilityExportInput = {},
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<PortabilityJob>(`${TWIN}/admin/portability/exports`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  getPortabilityExport: (jobId: string, init?: ApiRequestInit) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/exports/${encodeURIComponent(jobId)}`,
+      init,
+    ),
+  downloadPortabilityExport: async (
+    jobId: string,
+    init?: ApiRequestInit,
+  ): Promise<Blob> => {
+    const path = `${TWIN}/admin/portability/exports/${encodeURIComponent(jobId)}`;
+    const response = await fetch(
+      buildApiUrl(path, { download: true }),
+      {
+        headers: { ...buildApiHeaders(init), Accept: 'application/gzip' },
+        signal: init?.signal,
+        credentials: 'include',
+      },
+    );
+    if (!response.ok) {
+      reportUnauthorizedResponse(path, response.status);
+      const text = await response.text();
+      throw new ApiError(
+        `GET ${TWIN}/admin/portability/exports → ${response.status} ${response.statusText}`,
+        response.status,
+        parseMaybeJson(text),
+      );
+    }
+    return response.blob();
+  },
+  createPortabilityImport: async (
+    input: PortabilityImportInput,
+    init?: ApiRequestInit,
+  ): Promise<PortabilityJob> => {
+    const path = `${TWIN}/admin/portability/imports`;
+    const form = new FormData();
+    form.append('bundle', input.bundle, input.bundle.name);
+    if (input.workspace) form.append('workspace', input.workspace);
+    form.append('folder_map', JSON.stringify(input.folderMap ?? {}));
+    form.append('allow_unverified', String(input.allowUnverified === true));
+    const response = await fetch(buildApiUrl(`${TWIN}/admin/portability/imports`), {
+      method: 'POST',
+      headers: buildApiHeaders(init),
+      body: form,
+      signal: init?.signal,
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      reportUnauthorizedResponse(path, response.status);
+      const text = await response.text();
+      throw new ApiError(
+        `POST ${TWIN}/admin/portability/imports → ${response.status} ${response.statusText}`,
+        response.status,
+        parseMaybeJson(text),
+      );
+    }
+    return (await response.json()) as PortabilityJob;
+  },
+  getPortabilityImport: (jobId: string, init?: ApiRequestInit) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/imports/${encodeURIComponent(jobId)}`,
+      init,
+    ),
+  approvePortabilityImport: (
+    jobId: string,
+    reportHash: string,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/imports/${encodeURIComponent(jobId)}/approve`,
+      { ...init, method: 'POST', body: { report_hash: reportHash } },
+    ),
+  applyPortabilityImport: (jobId: string, init?: ApiRequestInit) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/imports/${encodeURIComponent(jobId)}/apply`,
+      { ...init, method: 'POST' },
+    ),
+  validatePortabilityImport: (jobId: string, init?: ApiRequestInit) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/imports/${encodeURIComponent(jobId)}/validate`,
+      { ...init, method: 'POST' },
+    ),
+  cancelPortabilityImport: (jobId: string, init?: ApiRequestInit) =>
+    apiFetch<PortabilityJob>(
+      `${TWIN}/admin/portability/imports/${encodeURIComponent(jobId)}/cancel`,
+      { ...init, method: 'POST' },
+    ),
 
   // ── API key management ───────────────────────────────────────────
   // Per-operator keys minted via Settings → API keys. Distinct from
@@ -916,7 +1066,42 @@ export const twinApi = {
       tags_status?: 'ok' | 'unavailable';
       folder: string;
       review?: Document['review'];
+      source_links?: readonly SourceLink[];
     }>(`${TWIN}/documents/${encodeURIComponent(docId)}/metadata`, init),
+  listDocumentSourceLinks: (docId: string, init?: ApiRequestInit) =>
+    apiFetch<readonly SourceLink[]>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/source-links`,
+      init,
+    ),
+  createDocumentSourceLink: (
+    docId: string,
+    body: { url: string; label?: string | null },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<SourceLink>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/source-links`,
+      { ...init, method: 'POST', body },
+    ),
+  updateDocumentSourceLink: (
+    docId: string,
+    linkId: string,
+    body: { version: number; url?: string; label?: string | null },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<SourceLink>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/source-links/${encodeURIComponent(linkId)}`,
+      { ...init, method: 'PATCH', body },
+    ),
+  deleteDocumentSourceLink: (
+    docId: string,
+    linkId: string,
+    version: number,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<SourceLink>(
+      `${TWIN}/documents/${encodeURIComponent(docId)}/source-links/${encodeURIComponent(linkId)}`,
+      { ...init, method: 'DELETE', query: { version } },
+    ),
   approveDocument: (
     docId: string,
     body: { actor?: string; edits?: Partial<Document> } = {},
@@ -1123,6 +1308,46 @@ export const twinApi = {
       ...init,
       method: 'DELETE',
     }),
+
+  // Central KB catalogue, reached through the credential-hiding Twin proxy.
+  listLinkedSources: (init?: ApiRequestInit) =>
+    apiFetch<LinkedSourcesSnapshot>(`${TWIN}/linked-sources`, init),
+  previewLinkedSource: (
+    body: LinkedSourcePreviewInput,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<CatalogPreview>(`${TWIN}/linked-sources/preview`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  createLinkedSource: (
+    body: LinkedSourceCreateInput,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<LinkedSourceMutation>(`${TWIN}/linked-sources`, {
+      ...init,
+      method: 'POST',
+      body,
+    }),
+  updateLinkedSource: (
+    id: string,
+    body: LinkedSourcePatchInput,
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<LinkedSourceMutation>(
+      `${TWIN}/linked-sources/${encodeURIComponent(id)}`,
+      { ...init, method: 'PATCH', body },
+    ),
+  disableLinkedSource: (
+    id: string,
+    body: { expected_version: number; reason?: string },
+    init?: ApiRequestInit,
+  ) =>
+    apiFetch<LinkedSourceMutation>(
+      `${TWIN}/linked-sources/${encodeURIComponent(id)}/disable`,
+      { ...init, method: 'POST', body },
+    ),
 };
 
 // ============================================================================
@@ -1214,6 +1439,20 @@ export const api = {
   updateVisionSettings: twinApi.updateVisionSettings,
   getQuotaSnapshot: twinApi.getQuotaSnapshot,
   getAbout: twinApi.getAbout,
+  createPortabilityExport: twinApi.createPortabilityExport,
+  getPortabilityExport: twinApi.getPortabilityExport,
+  downloadPortabilityExport: twinApi.downloadPortabilityExport,
+  createPortabilityImport: twinApi.createPortabilityImport,
+  getPortabilityImport: twinApi.getPortabilityImport,
+  approvePortabilityImport: twinApi.approvePortabilityImport,
+  applyPortabilityImport: twinApi.applyPortabilityImport,
+  validatePortabilityImport: twinApi.validatePortabilityImport,
+  cancelPortabilityImport: twinApi.cancelPortabilityImport,
+  listLinkedSources: twinApi.listLinkedSources,
+  previewLinkedSource: twinApi.previewLinkedSource,
+  createLinkedSource: twinApi.createLinkedSource,
+  updateLinkedSource: twinApi.updateLinkedSource,
+  disableLinkedSource: twinApi.disableLinkedSource,
 };
 
 export type ApiClient = typeof api;

@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import json
+
 import pytest
 
 from twindb_lightrag_memgraph.intelligence.ontology.storage import (
@@ -110,6 +112,74 @@ class TestOntologyStorage:
         assert "UNWIND" in query
         assert "MERGE" in query
         assert "Onto_test_ws" in query
+
+    async def test_upsert_nodes_writes_the_properties_map(self, storage, mock_session):
+        """``properties`` used to be built into the entries and never SET
+        (audit 2026-08-25). Nested values travel as JSON text, scalars as-is,
+        ``None`` is dropped, and the map is applied before the typed columns
+        so it can never shadow ``confidence`` / ``source_doc``."""
+        nodes = [
+            OntologyNode(
+                name="ORA-04030",
+                node_type="Term",
+                confidence=0.95,
+                source_doc="doc_0",
+                properties={
+                    "severity": "high",
+                    "aliases": ["PGA overflow", "out of process memory"],
+                    "meta": {"component": "PGA", "since": 11},
+                    "empty": None,
+                    "confidence": 0.1,
+                },
+            )
+        ]
+
+        await storage.upsert_nodes(nodes)
+
+        query = mock_session.run.call_args.args[0]
+        entries = mock_session.run.call_args.kwargs["entries"]
+        assert "SET n += e.props," in query
+        assert query.index("n += e.props") < query.index("n.confidence = e.confidence")
+        props = entries[0]["props"]
+        assert props["severity"] == "high"
+        assert json.loads(props["aliases"]) == ["PGA overflow", "out of process memory"]
+        assert json.loads(props["meta"]) == {"component": "PGA", "since": 11}
+        assert "empty" not in props
+        # the typed column still wins over a same-named property
+        assert entries[0]["confidence"] == 0.95
+        assert "confidence" not in props
+
+    async def test_upsert_nodes_never_lets_props_touch_the_merge_identity(
+        self, storage, mock_session
+    ):
+        """``name``/``node_type`` are the MERGE key: a payload carrying them
+        would rename the node and the next upsert would create a duplicate
+        (review of #451). Timestamps and typed columns are reserved too."""
+        nodes = [
+            OntologyNode(
+                name="ORA-04030",
+                node_type="Term",
+                confidence=0.5,
+                source_doc="doc_0",
+                properties={
+                    "name": "alias",
+                    "node_type": "Concept",
+                    "created_at": "1970-01-01T00:00:00+00:00",
+                    "updated_at": "1970-01-01T00:00:00+00:00",
+                    "source_doc": "doc_9",
+                    "confidence": 1.0,
+                    "keep": "me",
+                },
+            )
+        ]
+
+        await storage.upsert_nodes(nodes)
+
+        entry = mock_session.run.call_args.kwargs["entries"][0]
+        assert entry["props"] == {"keep": "me"}
+        assert entry["name"] == "ORA-04030"
+        assert entry["node_type"] == "Term"
+        assert entry["source_doc"] == "doc_0"
 
     async def test_upsert_edges_grouped_by_type(self, storage, mock_session):
         edges = [

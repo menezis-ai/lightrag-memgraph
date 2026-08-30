@@ -2,8 +2,11 @@
 Tests for USE DATABASE behavior across pool and graph wrapper.
 
 Enterprise: USE DATABASE is sent and succeeds.
-Community:  USE DATABASE fails with "enterprise feature" error → detected
-            once, skipped on all subsequent sessions.
+Community:  USE DATABASE fails with "enterprise feature" error → the session
+            is REFUSED (``MemgraphDatabaseUnavailableError``), on every
+            attempt — never cached, never a silent fallback to the default
+            database (fail-closed since 2026-08-25). ``database="memgraph"``
+            never issues the command at all.
 
 OFFLINE — no Memgraph needed. All driver calls are mocked.
 """
@@ -133,8 +136,13 @@ class TestPoolGetSessionCommunity:
         mock_session.run.assert_not_called()
         assert _pool_module._enterprise_supported is None
 
-    async def test_community_detected_on_custom_database(self):
-        """First session with a custom database detects Community."""
+    async def test_custom_database_on_community_refuses_the_session(self):
+        """A refused USE DATABASE on a non-default database is fail-closed.
+
+        Before 2026-08-25 the pool flagged "Community" and silently kept
+        working on the default ``memgraph`` database — in a one-database-per-
+        KB topology that merges several KBs without any error (audit P0).
+        """
         mock_session = _make_mock_session(enterprise=False)
         mock_driver = _make_mock_driver(mock_session)
 
@@ -142,35 +150,90 @@ class TestPoolGetSessionCommunity:
             "twindb_lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from twindb_lightrag_memgraph._pool import (
+                MemgraphDatabaseUnavailableError,
+                get_session,
+            )
 
-            async with get_session():
-                pass
+            with pytest.raises(MemgraphDatabaseUnavailableError) as excinfo:
+                async with get_session():
+                    pass  # pragma: no cover - the session must never open
 
-        assert _pool_module._enterprise_supported is False
+        # The message names the variable, the database and the remedy.
+        message = str(excinfo.value)
+        assert "MEMGRAPH_DATABASE='custom_db'" in message
+        assert "unset MEMGRAPH_DATABASE" in message
+        assert "Enterprise licence" in message
+        # It is a ClientError chained, and it is NOT cached as "Community".
+        assert isinstance(excinfo.value.__cause__, Neo4jClientError)
+        assert _pool_module._enterprise_supported is None
 
-    async def test_community_skips_use_database_after_detection(self):
-        """After detecting Community, USE DATABASE is not attempted again."""
-        mock_session = _make_mock_session(enterprise=False)
+    async def test_refusal_is_not_cached_so_a_restored_licence_recovers(self):
+        """Every session re-issues USE DATABASE; a licence installed at
+        runtime recovers without a restart, a broken one never goes silent."""
+        state = {"licensed": False}
+
+        async def _run_side_effect(query, *args, **kwargs):
+            if query.startswith("USE DATABASE") and not state["licensed"]:
+                raise Neo4jClientError(
+                    "Trying to use enterprise feature without a valid license."
+                )
+            return AsyncMock()
+
+        mock_session = AsyncMock()
+        mock_session.run = AsyncMock(side_effect=_run_side_effect)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
             "twindb_lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from twindb_lightrag_memgraph._pool import (
+                MemgraphDatabaseUnavailableError,
+                get_session,
+            )
 
-            # First session — probes and fails
+            # First session — refused.
+            with pytest.raises(MemgraphDatabaseUnavailableError):
+                async with get_session():
+                    pass  # pragma: no cover
+
+            # Second session, still unlicensed — refused AGAIN (not skipped).
+            with pytest.raises(MemgraphDatabaseUnavailableError):
+                async with get_session():
+                    pass  # pragma: no cover
+            use_calls = [
+                c
+                for c in mock_session.run.call_args_list
+                if str(c.args[0]).startswith("USE DATABASE")
+            ]
+            assert len(use_calls) == 2
+
+            # Licence installed at runtime — the next session just works.
+            state["licensed"] = True
             async with get_session():
                 pass
+            assert _pool_module._enterprise_supported is True
 
-            mock_session.run.reset_mock()
+    async def test_read_session_is_fail_closed_too(self):
+        """The read pool applies the same contract as the write pool."""
+        mock_session = _make_mock_session(enterprise=False)
+        mock_driver = _make_mock_driver(mock_session)
 
-            # Second session — should skip USE DATABASE entirely
-            async with get_session():
-                pass
+        with patch(
+            "twindb_lightrag_memgraph._pool._get_read_driver",
+            return_value=(mock_driver, "custom_db"),
+        ):
+            from twindb_lightrag_memgraph._pool import (
+                MemgraphDatabaseUnavailableError,
+                get_read_session,
+            )
 
-        mock_session.run.assert_not_called()
+            with pytest.raises(MemgraphDatabaseUnavailableError):
+                async with get_read_session():
+                    pass  # pragma: no cover
 
     async def test_non_enterprise_client_error_still_raises(self):
         """Non-enterprise ClientErrors must propagate, not be swallowed."""
@@ -297,35 +360,40 @@ class TestSafeDriverWrapperCommunity:
         mock_session.run.assert_not_called()
         assert wrapper._enterprise_supported is None
 
-    async def test_community_detected_on_custom_database(self):
-        """Wrapper detects Community on first session with custom database."""
+    async def test_custom_database_on_community_refuses_the_session(self):
+        """The graph-pool wrapper is fail-closed like the shared pool."""
+        from twindb_lightrag_memgraph._pool import MemgraphDatabaseUnavailableError
+
         wrapper_cls = _get_wrapper_class()
         mock_session = _make_mock_session(enterprise=False)
         mock_real_driver = _make_mock_driver(mock_session)
 
         wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
 
-        async with wrapper.session(database="custom_db") as session:
-            pass
+        with pytest.raises(MemgraphDatabaseUnavailableError, match="graph pool"):
+            async with wrapper.session(database="custom_db"):
+                pass  # pragma: no cover
 
-        assert wrapper._enterprise_supported is False
+        assert wrapper._enterprise_supported is None
 
-    async def test_community_skips_after_detection(self):
-        """After detecting Community, USE DATABASE is not attempted again."""
+    async def test_refusal_is_not_cached_on_the_wrapper(self):
+        """Second session re-issues USE DATABASE and is refused again."""
+        from twindb_lightrag_memgraph._pool import MemgraphDatabaseUnavailableError
+
         wrapper_cls = _get_wrapper_class()
         mock_session = _make_mock_session(enterprise=False)
         mock_real_driver = _make_mock_driver(mock_session)
 
         wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
 
-        # First session — probes and fails
-        async with wrapper.session(database="custom_db"):
-            pass
+        for _ in range(2):
+            with pytest.raises(MemgraphDatabaseUnavailableError):
+                async with wrapper.session(database="custom_db"):
+                    pass  # pragma: no cover
 
-        mock_session.run.reset_mock()
-
-        # Second session — should skip
-        async with wrapper.session(database="custom_db"):
-            pass
-
-        mock_session.run.assert_not_called()
+        use_calls = [
+            c
+            for c in mock_session.run.call_args_list
+            if str(c.args[0]).startswith("USE DATABASE")
+        ]
+        assert len(use_calls) == 2

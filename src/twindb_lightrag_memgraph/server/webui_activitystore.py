@@ -424,33 +424,32 @@ class MemgraphActivityStore:
         )
 
     async def initialize(self) -> None:
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                for prop in (
-                    "id",
-                    "__created_at",
-                    "kind",
-                    "sev",
-                    "actor_user",
-                    "target_id",
-                    "meta_doc_id",
-                    "meta_doc_ids",
-                    "ts_ms",
-                    "__scalars_version",
-                ):
-                    try:
-                        result = await session.run(
-                            f"CREATE INDEX ON :`{self._label}`(`{prop}`)"
-                        )
-                        await result.consume()
-                        logger.info(
-                            "[WebuiActivityStore] Index on :%s(%s) ensured",
-                            self._label,
-                            prop,
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        if "already exists" not in str(e).lower():
-                            raise
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            for prop in (
+                "id",
+                "__created_at",
+                "kind",
+                "sev",
+                "actor_user",
+                "target_id",
+                "meta_doc_id",
+                "meta_doc_ids",
+                "ts_ms",
+                "__scalars_version",
+            ):
+                try:
+                    result = await session.run(
+                        f"CREATE INDEX ON :`{self._label}`(`{prop}`)"
+                    )
+                    await result.consume()
+                    logger.info(
+                        "[WebuiActivityStore] Index on :%s(%s) ensured",
+                        self._label,
+                        prop,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    if "already exists" not in str(e).lower():
+                        raise
         await self._backfill_legacy_scalars()
 
     async def bootstrap_if_empty(
@@ -569,10 +568,9 @@ class MemgraphActivityStore:
             raise ValueError("append requires event['id']")
         payload = json.dumps(event, sort_keys=True)
         scalars = _event_scalars(event)
-        async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
-                result = await session.run(
-                    f"""
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"""
                     MERGE (n:`{self._label}` {{id: $id}})
                     ON CREATE SET n.`__created_at` = timestamp()
                     SET n.data = $data,
@@ -588,12 +586,12 @@ class MemgraphActivityStore:
                         n.`__scalars_version` = $scalars_version,
                         n.`__updated_at` = timestamp()
                     """,
-                    id=str(event["id"]),
-                    data=payload,
-                    scalars_version=SCALARS_VERSION,
-                    **scalars,
-                )
-                await result.consume()
+                id=str(event["id"]),
+                data=payload,
+                scalars_version=SCALARS_VERSION,
+                **scalars,
+            )
+            await result.consume()
         return copy.deepcopy(event)
 
 

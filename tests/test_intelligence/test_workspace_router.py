@@ -34,16 +34,16 @@ class TestWorkspaceRouter:
     async def test_l4_override_bypasses_all(self, router):
         result = await router.route(
             "Probleme RMAN Oracle",
-            provided_workspaces=["cib"],
+            provided_workspaces=["demo"],
         )
         assert result.strategy == "l4_override"
-        assert result.workspaces == ["cib"]
+        assert result.workspaces == ["demo"]
         assert result.confidence == 1.0
 
     async def test_l4_override_with_publics(self, router):
         result = await router.route(
             "test",
-            provided_workspaces=["cib"],
+            provided_workspaces=["demo"],
             provided_workspaces_publics=["commons", "commons_oracle"],
         )
         assert result.strategy == "l4_override"
@@ -52,21 +52,21 @@ class TestWorkspaceRouter:
     async def test_l4_override_without_publics_uses_default(self, router):
         result = await router.route(
             "test",
-            provided_workspaces=["cib"],
+            provided_workspaces=["demo"],
         )
         assert result.workspaces_publics == ["commons"]
 
     # -- Cascade: Topology Context (Priority 2) --
 
     async def test_topology_context_overrides_keywords(
-        self, router, topology_context_cib
+        self, router, topology_context_demo
     ):
         result = await router.route(
             "Probleme Oracle",  # Would match keyword, but topology takes priority
-            topology_context=topology_context_cib,
+            topology_context=topology_context_demo,
         )
         assert result.strategy == "topology"
-        assert result.workspaces == ["cib"]
+        assert result.workspaces == ["demo"]
         assert result.workspaces_publics == ["commons", "commons_oracle"]
 
     async def test_topology_context_empty_workspaces_falls_through(self, router):
@@ -116,8 +116,8 @@ class TestWorkspaceRouter:
         assert result.workspaces_publics.count("commons_oracle") == 1
 
     async def test_keyword_match_private_workspace(self, router):
-        result = await router.route("CIB application issue")
-        assert "cib" in result.workspaces
+        result = await router.route("Demo application issue")
+        assert "demo" in result.workspaces
         assert result.strategy == "keyword"
 
     # -- Cascade: Default Fallback --

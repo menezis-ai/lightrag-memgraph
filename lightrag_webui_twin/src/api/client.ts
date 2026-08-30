@@ -105,6 +105,18 @@ function notifyUnauthorized(event: UnauthorizedEvent): void {
   }
 }
 
+/**
+ * Forward a 401 observed by a request that cannot use `apiFetch` (multipart,
+ * streaming, or binary download) to the same session-expiry subscribers.
+ * Keeping the login exemption here prevents those callers from having to
+ * duplicate the auth-state contract.
+ */
+export function reportUnauthorizedResponse(path: string, status: number): void {
+  if (status === 401 && !path.endsWith('/login')) {
+    notifyUnauthorized({ path, status });
+  }
+}
+
 export interface ApiRequestInit {
   method?: string;
   /** Query string params, serialized via URLSearchParams. Null/undefined skipped. */
@@ -228,9 +240,7 @@ export async function apiFetch<T>(path: string, init: ApiRequestInit = {}): Prom
 
   if (!res.ok) {
     const body = await parseBody(res);
-    if (res.status === 401 && !path.endsWith('/login')) {
-      notifyUnauthorized({ path, status: res.status });
-    }
+    reportUnauthorizedResponse(path, res.status);
     throw new ApiError(
       `${method} ${path} → ${res.status} ${res.statusText}`,
       res.status,

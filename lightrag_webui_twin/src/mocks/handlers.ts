@@ -23,13 +23,16 @@ import {
   GRAPH_RELATION_FIXTURES,
   NOTIFICATION_FIXTURES,
   OPENAPI_GROUPS,
+  makePortabilityJob,
+  PORTABILITY_DRY_RUN_FIXTURE,
+  PORTABILITY_REPORT_HASH,
   PROCEDURE_BUNDLE_FIXTURES,
   TAG_CATEGORY_FIXTURES,
   TAG_FIXTURES,
   FOLDER_FIXTURES,
 } from '../fixtures';
 import { ACTIVITY_RANGE_MS, type ActivityEvent } from '../types/activity';
-import type { Document, DocumentStatus } from '../types/document';
+import type { Document, DocumentStatus, SourceLink } from '../types/document';
 import {
   bundleFolders,
   type ProcedureBundle,
@@ -38,6 +41,13 @@ import {
 import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { Notification } from '../types/topbar';
 import type { TagCategory, TagEntry } from '../types/tag';
+import type {
+  CatalogApplication,
+  LinkedSourceCreateInput,
+  LinkedSourcePatchInput,
+  RagLinkedSource,
+} from '../types/linkedSource';
+import type { PortabilityJob } from '../types/portability';
 
 const ANY = '*';
 const TWIN = '/twin/api';
@@ -77,6 +87,208 @@ const E2E_GRAPH_RELATIONS_STORAGE_KEY = 'twin.e2e.graphRelationsState.v1';
 const E2E_API_KEYS_STORAGE_KEY = 'twin.e2e.apiKeysState.v1';
 const E2E_PROCEDURES_STORAGE_KEY = 'twin.e2e.proceduresState.v1';
 const E2E_VISION_SETTINGS_STORAGE_KEY = 'twin.e2e.visionSettingsState.v1';
+const E2E_LINKED_SOURCES_STORAGE_KEY = 'twin.e2e.linkedSourcesState.v1';
+
+const SOURCE_LINK_FIXTURES: SourceLink[] = [];
+
+const LINKED_SOURCE_APPLICATION: CatalogApplication = {
+  auid: 'AP11121',
+  business_app: 'CTCK',
+  classification: 'C1',
+  product_owner: 'Demo Steward',
+  product_owner_uid: 'demo.steward',
+  entity_code: 'PF',
+  status: 'active',
+  description: 'MSW catalogue application',
+  tags: [],
+  row_version: 1,
+  updated_at: '2026-08-19T08:00:00Z',
+};
+
+const LINKED_SOURCE_FIXTURES: readonly RagLinkedSource[] = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    auid: LINKED_SOURCE_APPLICATION.auid,
+    url: 'https://knowledge.example.com/pages/viewpage.action?pageId=11121',
+    url_raw: 'https://knowledge.example.com/pages/viewpage.action?pageId=11121',
+    source_type: 'confluence',
+    resource_kind: 'page',
+    resource_id: '11121',
+    doc_type: 'de',
+    public: false,
+    title: 'PF Move2Cloud',
+    language: 'en',
+    tags: [],
+    status: 'active',
+    kb_instance_id: '22222222-2222-4222-8222-222222222222',
+    folder_id: 'default',
+    declared_by: 'instance:mock',
+    declared_at: '2026-08-19T08:00:00Z',
+    last_validated_at: null,
+    row_version: 1,
+    updated_at: '2026-08-19T08:00:00Z',
+  },
+];
+
+function loadPersistedLinkedSources(): RagLinkedSource[] {
+  if (globalThis.window === undefined) {
+    return LINKED_SOURCE_FIXTURES.map((link) => ({ ...link }));
+  }
+  try {
+    const raw = globalThis.sessionStorage.getItem(
+      E2E_LINKED_SOURCES_STORAGE_KEY,
+    );
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed)
+      ? (parsed as RagLinkedSource[])
+      : LINKED_SOURCE_FIXTURES.map((link) => ({ ...link }));
+  } catch {
+    return LINKED_SOURCE_FIXTURES.map((link) => ({ ...link }));
+  }
+}
+
+function persistLinkedSources(): void {
+  if (globalThis.window === undefined) return;
+  try {
+    globalThis.sessionStorage.setItem(
+      E2E_LINKED_SOURCES_STORAGE_KEY,
+      JSON.stringify(linkedSourceState),
+    );
+  } catch {
+    // The mock remains usable where browser storage is unavailable.
+  }
+}
+
+let linkedSourceState = loadPersistedLinkedSources();
+let linkedSourceCounter = linkedSourceState.length;
+const PORTABILITY_MOCK_STORAGE_KEY = 'twin.e2e.portability-jobs.v1';
+
+function loadPersistedPortabilityJobs(): Record<string, PortabilityJob> {
+  if (globalThis.window === undefined) return {};
+  try {
+    const raw = globalThis.sessionStorage.getItem(PORTABILITY_MOCK_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    return parsed !== null && !Array.isArray(parsed) && typeof parsed === 'object'
+      ? (parsed as Record<string, PortabilityJob>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistPortabilityJobs(): void {
+  if (globalThis.window === undefined) return;
+  try {
+    globalThis.sessionStorage.setItem(
+      PORTABILITY_MOCK_STORAGE_KEY,
+      JSON.stringify(portabilityJobs),
+    );
+  } catch {
+    // The mock remains usable where browser storage is unavailable.
+  }
+}
+
+let portabilityJobs: Record<string, PortabilityJob> =
+  loadPersistedPortabilityJobs();
+let portabilityJobCounter = Object.keys(portabilityJobs).length;
+
+const PORTABILITY_TERMINAL = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'validated',
+  'validation-failed',
+]);
+
+function portabilityConflict(workspace: string): PortabilityJob | undefined {
+  return Object.values(portabilityJobs).find(
+    (job) =>
+      job.workspace === workspace && !PORTABILITY_TERMINAL.has(job.status),
+  );
+}
+
+function portabilityJob(kind: 'export' | 'import'): PortabilityJob {
+  portabilityJobCounter += 1;
+  const id = `${kind === 'export' ? 'exp' : 'imp'}_${portabilityJobCounter
+    .toString(16)
+    .padStart(24, '0')}`;
+  const job = makePortabilityJob(kind, id);
+  portabilityJobs[id] = job;
+  persistPortabilityJobs();
+  return job;
+}
+
+function advancePortabilityJob(job: PortabilityJob): PortabilityJob {
+  if (job.status === 'running') {
+    job.status = 'completed';
+    job.download_available = true;
+    job.result = {
+      bundle_id: 'mock-bundle-export',
+      state_hash: 'b'.repeat(64),
+      consistency: 'verified',
+      counts: PORTABILITY_DRY_RUN_FIXTURE.stats?.counts ?? {},
+    };
+  } else if (job.status === 'dry-running') {
+    job.status = 'awaiting-approval';
+    job.report = structuredClone(PORTABILITY_DRY_RUN_FIXTURE);
+    if (e2eScenario.portabilityBlockingDryRun) {
+      job.report.blocking = [
+        {
+          code: 'CLASSIFICATION_CEILING',
+          message: 'Bundle classification exceeds the target ceiling.',
+        },
+      ];
+    }
+  } else if (job.status === 'applying') {
+    job.status = 'applied';
+    job.result = {
+      ok: true,
+      bundle_id: 'mock-bundle-import',
+      state_hash: 'c'.repeat(64),
+      resumed: false,
+      warnings: [],
+    };
+    activityState = [
+      {
+        id: `evt_portability_${job.id}`,
+        ts: new Date().toISOString(),
+        rel: 'now',
+        day: 'Today',
+        kind: 'kb-imported',
+        sev: 'info',
+        actor: { user: 'operator.demo', role: 'KB Steward' },
+        target: { type: 'workspace', label: job.workspace },
+        summary: `KB bundle imported into workspace ${job.workspace}`,
+        meta: { operation: 'import', job_id: job.id },
+      },
+      ...activityState,
+    ];
+    notificationState = [
+      {
+        id: `n_portability_${job.id}`,
+        kind: 'kb-imported',
+        title: 'KB import completed',
+        sub: `Workspace ${job.workspace} is ready for validation.`,
+        rel: 'now',
+        read: false,
+      },
+      ...notificationState,
+    ];
+    persistActivityState();
+    persistNotificationState();
+  } else if (job.status === 'validating') {
+    job.status = 'validated';
+    job.validation = {
+      ok: true,
+      expected_state_hash: 'c'.repeat(64),
+      actual_state_hash: 'c'.repeat(64),
+      problems: [],
+    };
+  }
+  job.updated_at = new Date().toISOString();
+  persistPortabilityJobs();
+  return job;
+}
 
 function cloneDocuments(docs: readonly Document[]): Document[] {
   return docs.map((doc) => ({
@@ -785,6 +997,11 @@ interface E2eScenario {
   bulkRetagStatus?: number;
   approveDelayMs?: number;
   tagApproveDelayMs?: number;
+  portabilityBlockingDryRun?: boolean;
+  portabilityApproveDelayMs?: number;
+  portabilityApplyDelayMs?: number;
+  linkedSourceCreateDelayMs?: number;
+  linkedSourceDisableConflictOnce?: boolean;
   trackStatusMode?: 'empty' | 'processed' | 'timeout';
   authGate?: boolean;
   uploadFailureNames?: string[];
@@ -834,6 +1051,18 @@ let localAuthUser: string | null = (() => {
 const e2eStats = {
   approveCalls: {} as Record<string, number>,
   tagApproveCalls: {} as Record<string, number>,
+  portabilityImportStarts: 0,
+  portabilityApproveCalls: 0,
+  portabilityApproveTransitions: 0,
+  portabilityApplyCalls: 0,
+  portabilityApplyTransitions: 0,
+  portabilityCancelCalls: 0,
+  portabilityCancelTransitions: 0,
+  linkedSourcePreviewCalls: 0,
+  linkedSourceCreateCalls: 0,
+  linkedSourceCreateTransitions: 0,
+  linkedSourceDisableCalls: 0,
+  linkedSourceDisableTransitions: 0,
   folderRequests: [] as Array<{
     path: string;
     folder: string | null;
@@ -891,6 +1120,7 @@ export function resetDocumentsState(): void {
   storage?.removeItem(E2E_API_KEYS_STORAGE_KEY);
   storage?.removeItem(E2E_PROCEDURES_STORAGE_KEY);
   storage?.removeItem(E2E_VISION_SETTINGS_STORAGE_KEY);
+  storage?.removeItem(E2E_LINKED_SOURCES_STORAGE_KEY);
   documentsState = cloneDocuments(DOCUMENT_FIXTURES);
   proceduresState = cloneProcedures(PROCEDURE_BUNDLE_FIXTURES);
   procedureDocSeq = 0;
@@ -905,6 +1135,15 @@ export function resetDocumentsState(): void {
   visionSettingsState = defaultVisionSettingsState();
   graphEntityState = cloneGraphEntities(GRAPH_ENTITY_FIXTURES);
   graphRelationState = cloneGraphRelations(GRAPH_RELATION_FIXTURES);
+  linkedSourceState = LINKED_SOURCE_FIXTURES.map((link) => ({ ...link }));
+  linkedSourceCounter = linkedSourceState.length;
+  portabilityJobs = {};
+  portabilityJobCounter = 0;
+  try {
+    globalThis.sessionStorage.removeItem(PORTABILITY_MOCK_STORAGE_KEY);
+  } catch {
+    // Node-side mocks may not expose browser storage.
+  }
   uploadedTrackDocs.clear();
   uploadedDocText.clear();
   uploadSeq = 0;
@@ -912,6 +1151,11 @@ export function resetDocumentsState(): void {
   e2eScenario.bulkRetagStatus = undefined;
   e2eScenario.approveDelayMs = undefined;
   e2eScenario.tagApproveDelayMs = undefined;
+  e2eScenario.portabilityBlockingDryRun = undefined;
+  e2eScenario.portabilityApproveDelayMs = undefined;
+  e2eScenario.portabilityApplyDelayMs = undefined;
+  e2eScenario.linkedSourceCreateDelayMs = undefined;
+  e2eScenario.linkedSourceDisableConflictOnce = undefined;
   e2eScenario.trackStatusMode = undefined;
   e2eScenario.authGate = undefined;
   e2eScenario.uploadFailureNames = undefined;
@@ -919,6 +1163,18 @@ export function resetDocumentsState(): void {
   e2eScenario.bulkDeleteFailIds = undefined;
   e2eStats.approveCalls = {};
   e2eStats.tagApproveCalls = {};
+  e2eStats.portabilityImportStarts = 0;
+  e2eStats.portabilityApproveCalls = 0;
+  e2eStats.portabilityApproveTransitions = 0;
+  e2eStats.portabilityApplyCalls = 0;
+  e2eStats.portabilityApplyTransitions = 0;
+  e2eStats.portabilityCancelCalls = 0;
+  e2eStats.portabilityCancelTransitions = 0;
+  e2eStats.linkedSourcePreviewCalls = 0;
+  e2eStats.linkedSourceCreateCalls = 0;
+  e2eStats.linkedSourceCreateTransitions = 0;
+  e2eStats.linkedSourceDisableCalls = 0;
+  e2eStats.linkedSourceDisableTransitions = 0;
   e2eStats.folderRequests = [];
   e2eStats.queryRequests = [];
   e2eStats.uploadRequests = [];
@@ -1253,7 +1509,7 @@ function recordTagMutation(
     meta?: Record<string, unknown>;
   } = {},
 ): void {
-  const actor = options.actor ?? 'claire.benoit';
+  const actor = options.actor ?? 'demo.steward';
   notificationState = [
     {
       id: `n_tag_${name}_${Date.now()}`,
@@ -1325,7 +1581,7 @@ function makeE2eDocument(patch: Partial<Document>, index: number): Document {
   return {
     doc_id: id,
     track_id: patch.track_id ?? null,
-    file_path: patch.file_path ?? `/cib/e2e/${id}.md`,
+    file_path: patch.file_path ?? `/demo/e2e/${id}.md`,
     content_summary: patch.content_summary ?? `${id} generated by e2e`,
     content_length: patch.content_length ?? 128,
     status: patch.status ?? 'PROCESSED',
@@ -1367,6 +1623,18 @@ export const handlers = [
     HttpResponse.json({
       approveCalls: e2eStats.approveCalls,
       tagApproveCalls: e2eStats.tagApproveCalls,
+      portabilityImportStarts: e2eStats.portabilityImportStarts,
+      portabilityApproveCalls: e2eStats.portabilityApproveCalls,
+      portabilityApproveTransitions: e2eStats.portabilityApproveTransitions,
+      portabilityApplyCalls: e2eStats.portabilityApplyCalls,
+      portabilityApplyTransitions: e2eStats.portabilityApplyTransitions,
+      portabilityCancelCalls: e2eStats.portabilityCancelCalls,
+      portabilityCancelTransitions: e2eStats.portabilityCancelTransitions,
+      linkedSourcePreviewCalls: e2eStats.linkedSourcePreviewCalls,
+      linkedSourceCreateCalls: e2eStats.linkedSourceCreateCalls,
+      linkedSourceCreateTransitions: e2eStats.linkedSourceCreateTransitions,
+      linkedSourceDisableCalls: e2eStats.linkedSourceDisableCalls,
+      linkedSourceDisableTransitions: e2eStats.linkedSourceDisableTransitions,
       folderRequests: e2eStats.folderRequests,
       queryRequests: e2eStats.queryRequests,
       uploadRequests: e2eStats.uploadRequests,
@@ -1690,6 +1958,12 @@ export const handlers = [
       history_messages: [],
     }),
   ),
+  // Native LightRAG graph contract. The Settings API explorer executes this
+  // endpoint directly; strict MSW mode must therefore exercise a real-shaped
+  // response instead of silently falling through to the Vite server.
+  http.get(`${ANY}/graph/label/list`, () =>
+    HttpResponse.json(graphEntityState.map((entity) => entity.name)),
+  ),
   http.get(`${ANY}/openapi`, ({ request }) => {
     const url = new URL(request.url);
     if (url.pathname.startsWith(TWIN)) return undefined;
@@ -1752,7 +2026,7 @@ export const handlers = [
         chunks: [
           {
             chunk_id: 'mock-chunk-1',
-            file_path: '/cib/runbooks/mock-source-1.pdf',
+            file_path: '/demo/runbooks/mock-source-1.pdf',
             content: body.query
               ? `Mock structured retrieval for: ${body.query}`
               : 'Mock structured retrieval',
@@ -1760,7 +2034,7 @@ export const handlers = [
           },
         ],
         references: [
-          { reference_id: '1', file_path: '/cib/runbooks/mock-source-1.pdf' },
+          { reference_id: '1', file_path: '/demo/runbooks/mock-source-1.pdf' },
         ],
       },
       metadata: { query_mode: 'hybrid' },
@@ -1780,7 +2054,7 @@ export const handlers = [
     const sources = Array.from({ length: Math.min(topK, 3) }).map((_, i) => ({
       n: i + 1,
       type: 'file',
-      name: `/cib/runbooks/mock-source-${i + 1}.pdf`,
+      name: `/demo/runbooks/mock-source-${i + 1}.pdf`,
       meta: `chunk ${i + 1}`,
       score: Number((0.95 - i * 0.1).toFixed(2)),
       doc_id: `mock-doc-${i + 1}`,
@@ -1826,7 +2100,7 @@ export const handlers = [
           {
             chunk_id: 'mock-chunk-1',
             full_doc_id: 'mock-doc-1',
-            file_path: '/cib/runbooks/mock-source-1.pdf',
+            file_path: '/demo/runbooks/mock-source-1.pdf',
             content: q
               ? `Mock structured Twin retrieval for: ${q}`
               : 'Mock structured Twin retrieval',
@@ -1834,7 +2108,7 @@ export const handlers = [
           },
         ],
         references: [
-          { reference_id: '1', file_path: '/cib/runbooks/mock-source-1.pdf' },
+          { reference_id: '1', file_path: '/demo/runbooks/mock-source-1.pdf' },
         ],
       },
       metadata: {
@@ -1872,7 +2146,7 @@ export const handlers = [
       return {
         n: i + 1,
         type: 'file' as const,
-        name: real ? real.file_path : `/cib/runbooks/mock-source-${i + 1}.pdf`,
+        name: real ? real.file_path : `/demo/runbooks/mock-source-${i + 1}.pdf`,
         meta: `chunk ${i + 1}`,
         score: Number((0.95 - i * 0.1).toFixed(2)),
         doc_id: real ? real.doc_id : `mock-doc-${i + 1}`,
@@ -1960,8 +2234,190 @@ export const handlers = [
         mount_server: true,
         shim_native_routes: true,
       },
+      limits: { vector_index_capacity: 100000 },
     }),
   ),
+  // Canonical KB portability — stateful by design. Polling advances mocked
+  // background work, while approve/apply/validate enforce the same state
+  // transitions as the persisted backend jobs.
+  http.post(`${ANY}${TWIN}/admin/portability/exports`, async ({ request }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const body = (await request.json().catch(() => ({}))) as {
+      workspace?: string;
+      include_activity?: boolean;
+      include_procedures?: boolean;
+      force?: boolean;
+    };
+    const workspace = body.workspace || 'base';
+    const busy = portabilityConflict(workspace);
+    if (busy) {
+      return HttpResponse.json(
+        { detail: `workspace '${workspace}' already has active job ${busy.id}` },
+        { status: 409 },
+      );
+    }
+    const job = portabilityJob('export');
+    job.workspace = workspace;
+    job.options = {
+      include_activity: body.include_activity === true,
+      include_procedures: body.include_procedures === true,
+      force: body.force === true,
+    };
+    return HttpResponse.json(job, { status: 202 });
+  }),
+  http.get(`${ANY}${TWIN}/admin/portability/exports/:id`, ({ params, request }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const job = portabilityJobs[String(params.id)];
+    if (!job || job.kind !== 'export') {
+      return HttpResponse.json({ detail: 'Export job not found' }, { status: 404 });
+    }
+    advancePortabilityJob(job);
+    if (new URL(request.url).searchParams.get('download') === 'true') {
+      if (!job.download_available) {
+        return HttpResponse.json({ detail: 'Export is not complete' }, { status: 409 });
+      }
+      return new HttpResponse(new Blob(['mock twin-kb-bundle']), {
+        headers: {
+          'Content-Type': 'application/gzip',
+          'Content-Disposition': `attachment; filename="twin-kb-${job.workspace}.tar.gz"`,
+        },
+      });
+    }
+    return HttpResponse.json(job);
+  }),
+  http.post(`${ANY}${TWIN}/admin/portability/imports`, async ({ request }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const form = await request.formData();
+    const bundle = form.get('bundle');
+    if (!(bundle instanceof File)) {
+      return HttpResponse.json({ detail: 'bundle is required' }, { status: 422 });
+    }
+    const workspace = String(form.get('workspace') || 'base');
+    const busy = portabilityConflict(workspace);
+    if (busy) {
+      return HttpResponse.json(
+        { detail: `workspace '${workspace}' already has active job ${busy.id}` },
+        { status: 409 },
+      );
+    }
+    e2eStats.portabilityImportStarts += 1;
+    const job = portabilityJob('import');
+    job.workspace = workspace;
+    job.options = {
+      folder_map: JSON.parse(String(form.get('folder_map') || '{}')),
+      allow_unverified: String(form.get('allow_unverified')) === 'true',
+      upload_name: bundle.name,
+    };
+    return HttpResponse.json(job, { status: 202 });
+  }),
+  http.get(`${ANY}${TWIN}/admin/portability/imports/:id`, ({ params }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const job = portabilityJobs[String(params.id)];
+    if (!job || job.kind !== 'import') {
+      return HttpResponse.json({ detail: 'Import job not found' }, { status: 404 });
+    }
+    return HttpResponse.json(advancePortabilityJob(job));
+  }),
+  http.post(
+    `${ANY}${TWIN}/admin/portability/imports/:id/approve`,
+    async ({ params, request }) => {
+      const denied = rejectFolderAdminMutationIfNeeded();
+      if (denied) return denied;
+      const job = portabilityJobs[String(params.id)];
+      if (!job || job.kind !== 'import') {
+        return HttpResponse.json({ detail: 'Import job not found' }, { status: 404 });
+      }
+      e2eStats.portabilityApproveCalls += 1;
+      if (e2eScenario.portabilityApproveDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, e2eScenario.portabilityApproveDelayMs),
+        );
+      }
+      const body = (await request.json()) as { report_hash?: string };
+      if (
+        job.status !== 'awaiting-approval' ||
+        body.report_hash !== PORTABILITY_REPORT_HASH ||
+        (job.report?.blocking.length ?? 0) > 0
+      ) {
+        return HttpResponse.json(
+          { detail: 'Import report cannot be approved' },
+          { status: 409 },
+        );
+      }
+      job.status = 'approved';
+      e2eStats.portabilityApproveTransitions += 1;
+      job.updated_at = new Date().toISOString();
+      persistPortabilityJobs();
+      return HttpResponse.json(job);
+    },
+  ),
+  http.post(
+    `${ANY}${TWIN}/admin/portability/imports/:id/apply`,
+    async ({ params }) => {
+      const denied = rejectFolderAdminMutationIfNeeded();
+      if (denied) return denied;
+      const job = portabilityJobs[String(params.id)];
+      if (!job || job.kind !== 'import') {
+        return HttpResponse.json(
+          { detail: 'Import job not found' },
+          { status: 404 },
+        );
+      }
+      e2eStats.portabilityApplyCalls += 1;
+      if (e2eScenario.portabilityApplyDelayMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, e2eScenario.portabilityApplyDelayMs),
+        );
+      }
+      if (job.status !== 'approved') {
+        return HttpResponse.json(
+          { detail: 'Import must be approved' },
+          { status: 409 },
+        );
+      }
+      job.status = 'applying';
+      e2eStats.portabilityApplyTransitions += 1;
+      job.updated_at = new Date().toISOString();
+      persistPortabilityJobs();
+      return HttpResponse.json(job, { status: 202 });
+    },
+  ),
+  http.post(`${ANY}${TWIN}/admin/portability/imports/:id/validate`, ({ params }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const job = portabilityJobs[String(params.id)];
+    if (!job || job.kind !== 'import') {
+      return HttpResponse.json({ detail: 'Import job not found' }, { status: 404 });
+    }
+    if (job.status !== 'applied') {
+      return HttpResponse.json({ detail: 'Import must be applied' }, { status: 409 });
+    }
+    job.status = 'validating';
+    job.updated_at = new Date().toISOString();
+    persistPortabilityJobs();
+    return HttpResponse.json(job, { status: 202 });
+  }),
+  http.post(`${ANY}${TWIN}/admin/portability/imports/:id/cancel`, ({ params }) => {
+    const denied = rejectFolderAdminMutationIfNeeded();
+    if (denied) return denied;
+    const job = portabilityJobs[String(params.id)];
+    if (!job || job.kind !== 'import') {
+      return HttpResponse.json({ detail: 'Import job not found' }, { status: 404 });
+    }
+    e2eStats.portabilityCancelCalls += 1;
+    if (PORTABILITY_TERMINAL.has(job.status)) {
+      return HttpResponse.json({ detail: 'Import is already terminal' }, { status: 409 });
+    }
+    job.status = 'cancelled';
+    e2eStats.portabilityCancelTransitions += 1;
+    job.updated_at = new Date().toISOString();
+    persistPortabilityJobs();
+    return HttpResponse.json(job);
+  }),
   http.get(`${ANY}${TWIN}/settings/api-keys`, () =>
     HttpResponse.json(apiKeyState.map(publicApiKey)),
   ),
@@ -2005,6 +2461,239 @@ export const handlers = [
     }
     return HttpResponse.json(publicApiKey(apiKeyState[idx]));
   }),
+
+  // Credential-backed central catalogue proxy. The browser only sees the
+  // Twin surface; the mock mirrors folder scoping and optimistic versions.
+  http.get(`${ANY}${TWIN}/linked-sources`, ({ request }) => {
+    recordTwinFolderRequest(request);
+    const folderId = request.headers.get('X-Twin-Folder') ?? 'default';
+    return HttpResponse.json({
+      application: LINKED_SOURCE_APPLICATION,
+      links: linkedSourceState.filter((link) => link.folder_id === folderId),
+    });
+  }),
+  http.post(`${ANY}${TWIN}/linked-sources/preview`, async ({ request }) => {
+    recordTwinFolderRequest(request);
+    e2eStats.linkedSourcePreviewCalls += 1;
+    const body = (await request.json().catch(() => ({}))) as {
+      operation?: string;
+      target_id?: string;
+      action?: string;
+    };
+    if (!['create', 'patch', 'transition'].includes(body.operation ?? '')) {
+      return HttpResponse.json(
+        { detail: 'invalid preview operation' },
+        { status: 422 },
+      );
+    }
+    return HttpResponse.json({
+      snapshot_id: `mock-preview-${Date.now()}`,
+      unchanged: false,
+      application_count: 1,
+      link_count:
+        linkedSourceState.length + (body.operation === 'create' ? 1 : 0),
+      diff: {
+        operation: body.operation,
+        target_id: body.target_id ?? null,
+        action: body.action ?? null,
+      },
+      verdict: { safe: true, reasons: [] },
+      published_snapshot_id: 'mock-published',
+    });
+  }),
+  http.post(`${ANY}${TWIN}/linked-sources`, async ({ request }) => {
+    recordTwinFolderRequest(request);
+    e2eStats.linkedSourceCreateCalls += 1;
+    const body = (await request.json().catch(() =>
+      ({}))) as Partial<LinkedSourceCreateInput>;
+    if (
+      typeof body.url !== 'string' ||
+      typeof body.public !== 'boolean' ||
+      !['di', 'de', 'sats', 'general'].includes(body.doc_type ?? '')
+    ) {
+      return HttpResponse.json(
+        { detail: 'invalid linked source' },
+        { status: 422 },
+      );
+    }
+    if (e2eScenario.linkedSourceCreateDelayMs) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, e2eScenario.linkedSourceCreateDelayMs),
+      );
+    }
+    const folderId = request.headers.get('X-Twin-Folder') ?? 'default';
+    const sourceType = body.url.toLowerCase().includes('sharepoint')
+      ? 'sharepoint'
+      : 'confluence';
+    linkedSourceCounter += 1;
+    const now = new Date().toISOString();
+    const link: RagLinkedSource = {
+      id: `00000000-0000-4000-8000-${String(linkedSourceCounter).padStart(12, '0')}`,
+      auid: LINKED_SOURCE_APPLICATION.auid,
+      url: body.url,
+      url_raw: body.url,
+      source_type: sourceType,
+      resource_kind: sourceType === 'sharepoint' ? 'document' : 'page',
+      resource_id: null,
+      doc_type: body.doc_type as RagLinkedSource['doc_type'],
+      public: body.public,
+      title: body.title ?? null,
+      language: body.language ?? null,
+      tags: [...(body.tags ?? [])],
+      status: body.status ?? 'active',
+      kb_instance_id: '22222222-2222-4222-8222-222222222222',
+      folder_id: folderId,
+      declared_by: 'instance:mock',
+      declared_at: now,
+      last_validated_at: null,
+      row_version: 1,
+      updated_at: now,
+    };
+    linkedSourceState = [...linkedSourceState, link];
+    e2eStats.linkedSourceCreateTransitions += 1;
+    persistLinkedSources();
+    recordActivity({
+      id: `evt_linked_source_declared_${Date.now()}`,
+      ts: now,
+      rel: 'now',
+      day: 'Today',
+      kind: 'linked-source-declared',
+      sev: 'info',
+      actor: { user: 'operator.demo', role: 'KB Admin' },
+      target: { type: 'linked-source', label: link.url, id: link.id },
+      summary: 'RAG linked source declared',
+      meta: { folder_id: folderId, link_id: link.id, auid: link.auid },
+    });
+    return HttpResponse.json(
+      {
+        link,
+        revision: {
+          id: linkedSourceCounter,
+          state: 'published',
+          snapshot_id: now,
+        },
+      },
+      { status: 201 },
+    );
+  }),
+  http.patch(`${ANY}${TWIN}/linked-sources/:id`, async ({ params, request }) => {
+    recordTwinFolderRequest(request);
+    const body = (await request.json().catch(() =>
+      ({}))) as Partial<LinkedSourcePatchInput>;
+    const folderId = request.headers.get('X-Twin-Folder') ?? 'default';
+    const index = linkedSourceState.findIndex(
+      (link) => link.id === String(params.id) && link.folder_id === folderId,
+    );
+    if (index < 0) {
+      return HttpResponse.json({ detail: 'link not found' }, { status: 404 });
+    }
+    const current = linkedSourceState[index];
+    if (body.expected_version !== current.row_version) {
+      return HttpResponse.json(
+        { detail: 'row version conflict' },
+        { status: 409 },
+      );
+    }
+    const now = new Date().toISOString();
+    const link: RagLinkedSource = {
+      ...current,
+      ...(body.doc_type === undefined ? {} : { doc_type: body.doc_type }),
+      ...(body.public === undefined ? {} : { public: body.public }),
+      ...(body.title === undefined ? {} : { title: body.title }),
+      ...(body.language === undefined ? {} : { language: body.language }),
+      ...(body.tags === undefined ? {} : { tags: [...body.tags] }),
+      row_version: current.row_version + 1,
+      updated_at: now,
+    };
+    linkedSourceState = linkedSourceState.map((item, itemIndex) =>
+      itemIndex === index ? link : item,
+    );
+    persistLinkedSources();
+    recordActivity({
+      id: `evt_linked_source_updated_${Date.now()}`,
+      ts: now,
+      rel: 'now',
+      day: 'Today',
+      kind: 'linked-source-updated',
+      sev: 'info',
+      actor: { user: 'operator.demo', role: 'KB Admin' },
+      target: { type: 'linked-source', label: link.url, id: link.id },
+      summary: 'RAG linked source updated',
+      meta: { folder_id: folderId, link_id: link.id, auid: link.auid },
+    });
+    return HttpResponse.json({
+      link,
+      revision: {
+        id: linkedSourceCounter + 1,
+        state: 'published',
+        snapshot_id: now,
+      },
+    });
+  }),
+  http.post(
+    `${ANY}${TWIN}/linked-sources/:id/disable`,
+    async ({ params, request }) => {
+      recordTwinFolderRequest(request);
+      const body = (await request.json().catch(() => ({}))) as {
+        expected_version?: number;
+      };
+      const folderId = request.headers.get('X-Twin-Folder') ?? 'default';
+      const index = linkedSourceState.findIndex(
+        (link) => link.id === String(params.id) && link.folder_id === folderId,
+      );
+      if (index < 0) {
+        return HttpResponse.json({ detail: 'link not found' }, { status: 404 });
+      }
+      e2eStats.linkedSourceDisableCalls += 1;
+      if (e2eScenario.linkedSourceDisableConflictOnce) {
+        e2eScenario.linkedSourceDisableConflictOnce = false;
+        persistScenario();
+        return HttpResponse.json(
+          { detail: 'row_version mismatch — reload and retry' },
+          { status: 409 },
+        );
+      }
+      const current = linkedSourceState[index];
+      if (body.expected_version !== current.row_version) {
+        return HttpResponse.json(
+          { detail: 'row version conflict' },
+          { status: 409 },
+        );
+      }
+      const now = new Date().toISOString();
+      const link: RagLinkedSource = {
+        ...current,
+        status: 'disabled',
+        row_version: current.row_version + 1,
+        updated_at: now,
+      };
+      linkedSourceState = linkedSourceState.map((item, itemIndex) =>
+        itemIndex === index ? link : item,
+      );
+      e2eStats.linkedSourceDisableTransitions += 1;
+      persistLinkedSources();
+      recordActivity({
+        id: `evt_linked_source_disabled_${Date.now()}`,
+        ts: now,
+        rel: 'now',
+        day: 'Today',
+        kind: 'linked-source-disabled',
+        sev: 'info',
+        actor: { user: 'operator.demo', role: 'KB Admin' },
+        target: { type: 'linked-source', label: link.url, id: link.id },
+        summary: 'RAG linked source disabled',
+        meta: { folder_id: folderId, link_id: link.id, auid: link.auid },
+      });
+      return HttpResponse.json({
+        link,
+        revision: {
+          id: linkedSourceCounter + 2,
+          state: 'published',
+          snapshot_id: now,
+        },
+      });
+    },
+  ),
   // Vision ingestion settings — GET is open to any authenticated user;
   // PUT mirrors the backend's admin gate (same `admin:folders` scope the
   // folder mutations check) and mutates the state so a refetch reflects it.
@@ -2650,9 +3339,93 @@ export const handlers = [
         tags: doc?.tags ?? [],
         tags_source: 'tagged_with',
         tags_status: 'ok',
-        folder: doc?.folder ?? 'cib',
+        folder: doc?.folder ?? 'demo',
         review: doc?.review,
+        source_links: SOURCE_LINK_FIXTURES.filter(
+          (link) => link.doc_id === id && !link.deleted,
+        ),
       });
+    },
+  ),
+  http.get(`${ANY}${TWIN}/documents/:id/source-links`, ({ params }) =>
+    HttpResponse.json(
+      SOURCE_LINK_FIXTURES.filter(
+        (link) => link.doc_id === String(params.id) && !link.deleted,
+      ),
+    ),
+  ),
+  http.post(
+    `${ANY}${TWIN}/documents/:id/source-links`,
+    async ({ params, request }) => {
+      const docId = String(params.id);
+      const body = (await request.json()) as { url: string; label?: string | null };
+      const now = new Date().toISOString();
+      const link: SourceLink = {
+        id: `slink_mock_${SOURCE_LINK_FIXTURES.length + 1}`,
+        doc_id: docId,
+        url: body.url,
+        label: body.label?.trim() || null,
+        created_by: 'operator.demo',
+        created_at: now,
+        updated_by: 'operator.demo',
+        updated_at: now,
+        version: 1,
+        deleted: false,
+        deleted_by: null,
+        deleted_at: null,
+      };
+      SOURCE_LINK_FIXTURES.push(link);
+      return HttpResponse.json(link, { status: 201 });
+    },
+  ),
+  http.patch(
+    `${ANY}${TWIN}/documents/:id/source-links/:linkId`,
+    async ({ params, request }) => {
+      const body = (await request.json()) as {
+        version: number;
+        url?: string;
+        label?: string | null;
+      };
+      const link = SOURCE_LINK_FIXTURES.find(
+        (item) =>
+          item.doc_id === String(params.id) &&
+          item.id === String(params.linkId) &&
+          !item.deleted,
+      );
+      if (!link) return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+      if (link.version !== body.version) {
+        return HttpResponse.json({ detail: 'version conflict' }, { status: 409 });
+      }
+      if (body.url !== undefined) link.url = body.url;
+      if ('label' in body) link.label = body.label?.trim() || null;
+      link.updated_by = 'operator.demo';
+      link.updated_at = new Date().toISOString();
+      link.version += 1;
+      return HttpResponse.json(link);
+    },
+  ),
+  http.delete(
+    `${ANY}${TWIN}/documents/:id/source-links/:linkId`,
+    ({ params, request }) => {
+      const expectedVersion = Number(new URL(request.url).searchParams.get('version'));
+      const link = SOURCE_LINK_FIXTURES.find(
+        (item) =>
+          item.doc_id === String(params.id) &&
+          item.id === String(params.linkId) &&
+          !item.deleted,
+      );
+      if (!link) return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+      if (link.version !== expectedVersion) {
+        return HttpResponse.json({ detail: 'version conflict' }, { status: 409 });
+      }
+      const now = new Date().toISOString();
+      link.deleted = true;
+      link.deleted_by = 'operator.demo';
+      link.deleted_at = now;
+      link.updated_by = 'operator.demo';
+      link.updated_at = now;
+      link.version += 1;
+      return HttpResponse.json(link);
     },
   ),
   http.post(

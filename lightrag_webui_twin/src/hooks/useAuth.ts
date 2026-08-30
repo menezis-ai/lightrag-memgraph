@@ -30,6 +30,8 @@ const MAX_EXPIRY_TIMER_MS = 2_147_483_647;
 
 export interface UseAuthResult {
   user: AuthenticatedUser | null;
+  /** Backend auth posture. `null` means not resolved or unavailable. */
+  authEnabled: boolean | null;
   isAuthenticated: boolean;
   isCheckingAuth: boolean;
   needsLogin: boolean;
@@ -59,35 +61,40 @@ export function clearTwinBrowserState(): void {
   }
 }
 
-function localUser(username: string | null | undefined, config: TwinRuntimeConfig): AuthenticatedUser {
-  const name = username || 'operator@twin.local';
-  const isAdmin = /admin/i.test(name);
+function readOnlyCredentialUser(
+  username: string,
+  config: TwinRuntimeConfig,
+): AuthenticatedUser {
+  const name = username || 'authenticated-user';
   return {
     sso_subject: name,
     email: name,
     name,
     palier: {
-      level: isAdmin ? 3 : 2,
-      label: isAdmin ? 'Steward' : 'Contributor',
-      scopes: isAdmin
-        ? ['twin:read', 'twin:write', 'twin:approve']
-        : ['twin:read', 'twin:write'],
+      level: 1,
+      label: 'Reader',
+      scopes: ['twin:read'],
     },
     folders: (config.folders ?? []).map((folder) => folder.id),
-    idp: 'local-jwt',
-    idp_realm: 'local',
+    idp: 'credential-only',
+    idp_realm: 'unclaimed',
     sub: name,
     session_expires: 'session',
-    gateway_scopes: isAdmin
-      ? [
-          'read:documents',
-          'write:documents',
-          'read:query',
-          'read:activity',
-          'admin:tags',
-          'admin:folders',
-        ]
-      : ['read:documents', 'write:documents', 'read:query', 'read:activity'],
+    gateway_scopes: ['read:documents', 'read:query', 'read:activity'],
+  };
+}
+
+function readOnlyUser(user: AuthenticatedUser): AuthenticatedUser {
+  return {
+    ...user,
+    palier: {
+      level: 1,
+      label: 'Reader',
+      scopes: ['twin:read'],
+    },
+    gateway_scopes: user.gateway_scopes.filter((scope) =>
+      scope.startsWith('read:'),
+    ),
   };
 }
 
@@ -114,13 +121,15 @@ export function useAuth(): UseAuthResult {
     authenticated: boolean;
     loginRequired: boolean;
     user: string | null;
-    authEnabled: boolean;
+    identity: AuthenticatedUser | null;
+    authEnabled: boolean | null;
   }>({
     checked: false,
     authenticated: config.debugUser !== undefined,
     loginRequired: false,
     user: null,
-    authEnabled: false,
+    identity: null,
+    authEnabled: null,
   });
   const [loginError, setLoginError] = useState<string | null>(null);
   const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -142,8 +151,9 @@ export function useAuth(): UseAuthResult {
       ...prev,
       checked: true,
       authenticated: false,
-      loginRequired: prev.authEnabled,
+      loginRequired: prev.authEnabled === true,
       user: null,
+      identity: null,
     }));
   }, [queryClient]);
 
@@ -177,6 +187,7 @@ export function useAuth(): UseAuthResult {
           authenticated: status.authenticated,
           loginRequired: status.login_required,
           user: status.user ?? null,
+          identity: status.identity ?? null,
           authEnabled: status.auth_enabled,
         });
         scheduleExpiry(status.expires_at);
@@ -188,7 +199,9 @@ export function useAuth(): UseAuthResult {
           authenticated: config.debugUser !== undefined,
           loginRequired: config.debugUser === undefined,
           user: null,
-          authEnabled: false,
+          identity: null,
+          // A transport failure is not evidence of an open-access runtime.
+          authEnabled: null,
         });
       });
     return () => {
@@ -204,9 +217,21 @@ export function useAuth(): UseAuthResult {
     [],
   );
 
-  const user = config.debugUser ?? (
-    authState.authenticated ? localUser(authState.user, config) : null
-  );
+  let user: AuthenticatedUser | null = null;
+  if (authState.authenticated) {
+    user =
+      authState.identity ??
+      (authState.user
+        ? readOnlyCredentialUser(authState.user, config)
+        : config.debugUser ?? null);
+  } else if (!authState.checked) {
+    // Preserve the dev bootstrap while /auth-status is pending. Consumers
+    // still fail closed because authEnabled remains null until it resolves.
+    user = config.debugUser ?? null;
+  }
+  if (authState.authEnabled === null && user) {
+    user = readOnlyUser(user);
+  }
 
   const doLogin = useCallback(
     async (username: string, password: string) => {
@@ -220,6 +245,7 @@ export function useAuth(): UseAuthResult {
           authenticated: status.authenticated,
           loginRequired: status.login_required,
           user: status.user ?? username,
+          identity: status.identity ?? null,
           authEnabled: status.auth_enabled,
         });
         scheduleExpiry(status.expires_at);
@@ -235,6 +261,8 @@ export function useAuth(): UseAuthResult {
           checked: true,
           authenticated: false,
           loginRequired: true,
+          user: null,
+          identity: null,
         }));
         throw err;
       }
@@ -274,6 +302,7 @@ export function useAuth(): UseAuthResult {
 
   return {
     user,
+    authEnabled: authState.authEnabled,
     isAuthenticated: user !== null,
     isCheckingAuth: !authState.checked,
     needsLogin: authState.checked && authState.loginRequired && user === null,

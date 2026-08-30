@@ -118,6 +118,7 @@ class _AuthStatusResponse(BaseModel):
     auth_enabled: bool
     authenticated: bool
     user: str | None = None
+    identity: dict[str, Any] | None = None
     expires_at: str | None = None
     login_required: bool
 

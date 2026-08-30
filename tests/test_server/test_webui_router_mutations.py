@@ -24,7 +24,7 @@ from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 def _make_settings() -> LightRAGServerSettings:
     return LightRAGServerSettings(
         working_dir="/tmp/lightrag_webui_mutation_test",
-        workspace="cib",
+        workspace="demo",
         enable_langsmith_tracing=False,
         api_key="test-infra-root",
         jwt_secret=None,
@@ -203,7 +203,7 @@ class TestBulkRetag:
                 "targets": ["doc-hyphen"],
                 "adds": ["rmf-validated"],
                 "removes": [],
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
 
@@ -212,6 +212,14 @@ class TestBulkRetag:
         assert tx.committed is True
         assert tx.rolled_back is False
         assert all("MERGE (t:" not in query for query in tx.queries)
+        activity = await client.get(
+            "/activity",
+            params={"resource.id": "doc-hyphen", "kind": "doc-retagged"},
+        )
+        assert activity.status_code == 200
+        events = activity.json()["items"]
+        assert len(events) == 1
+        assert events[0]["target"]["id"] == "doc-hyphen"
 
     @pytest.mark.parametrize(
         "status",
@@ -368,7 +376,7 @@ class TestBulkRetag:
                 "targets": ["doc-in-other-folder"],
                 "adds": ["rmf-validated"],
                 "removes": [],
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
 
@@ -421,7 +429,7 @@ class TestRequestTag:
                 "def": "A brand new tag",
                 "category": "infra",
                 "justification": "Needed for upcoming sprint",
-                "actor": "marc.berthier",
+                "actor": "demo.operator",
             },
         )
         assert r.status_code == 201
@@ -458,7 +466,7 @@ class TestRequestTag:
                 "tag": "newtag",
                 "def": "test",
                 "category": "infra",
-                "actor": "marc.berthier",
+                "actor": "demo.operator",
             },
         )
         events = await _get_activity(client)
@@ -528,7 +536,7 @@ class TestApproveTag:
         # argocd is seeded as a requested tag
         r = await client.post(
             "/tags/argocd/approve",
-            json={"actor": "claire.benoit"},
+            json={"actor": "demo.steward"},
         )
         assert r.status_code == 200
         body = r.json()
@@ -540,12 +548,12 @@ class TestApproveTag:
 
     async def test_404_when_unknown(self, client):
         r = await client.post(
-            "/tags/zzz-no-tag/approve", json={"actor": "claire.benoit"}
+            "/tags/zzz-no-tag/approve", json={"actor": "demo.steward"}
         )
         assert r.status_code == 404
 
     async def test_emits_event_and_notification(self, client):
-        await client.post("/tags/argocd/approve", json={"actor": "claire.benoit"})
+        await client.post("/tags/argocd/approve", json={"actor": "demo.steward"})
         events = await _get_activity(client)
         notifs = await _get_notifications(client)
         assert events[0]["summary"].startswith("Tag argocd approved")
@@ -561,7 +569,7 @@ class TestRejectTag:
     async def test_purges_rejected_tag_and_allows_recreate(self, client):
         r = await client.post(
             "/tags/argocd/reject",
-            json={"reason": "duplicate of k8s", "actor": "claire.benoit"},
+            json={"reason": "duplicate of k8s", "actor": "demo.steward"},
         )
         assert r.status_code == 200
         body = r.json()
@@ -575,7 +583,7 @@ class TestRejectTag:
                 "tag": "argocd",
                 "def": "GitOps controller",
                 "category": "infra",
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
         assert recreated.status_code == 201
@@ -584,7 +592,7 @@ class TestRejectTag:
     async def test_emits_warning_event(self, client):
         await client.post(
             "/tags/argocd/reject",
-            json={"reason": "scope creep", "actor": "claire.benoit"},
+            json={"reason": "scope creep", "actor": "demo.steward"},
         )
         events = await _get_activity(client)
         assert events[0]["sev"] == "warning"
@@ -593,7 +601,7 @@ class TestRejectTag:
         assert "scope creep" in events[0]["summary"]
 
     async def test_missing_reason_is_422(self, client):
-        r = await client.post("/tags/argocd/reject", json={"actor": "claire.benoit"})
+        r = await client.post("/tags/argocd/reject", json={"actor": "demo.steward"})
         assert r.status_code == 422
 
 
@@ -609,7 +617,7 @@ class TestEditTag:
             json={
                 "def": "Updated definition",
                 "aliases": ["recovery-manager", "rmgr"],
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
         assert r.status_code == 200
@@ -623,7 +631,7 @@ class TestEditTag:
             json={
                 "tag": "rman-v2",
                 "long_description": "Long governance note for RMAN.",
-                "actor": "claire.benoit",
+                "actor": "demo.steward",
             },
         )
         assert r.status_code == 200
@@ -642,13 +650,13 @@ class TestEditTag:
         assert stale_docs["total"] == 0
 
     async def test_no_op_is_still_successful(self, client):
-        r = await client.patch("/tags/rman", json={"actor": "claire.benoit"})
+        r = await client.patch("/tags/rman", json={"actor": "demo.steward"})
         assert r.status_code == 200
 
     async def test_rename_conflict_returns_409(self, client):
         r = await client.patch(
             "/tags/rman",
-            json={"tag": "oracle", "actor": "claire.benoit"},
+            json={"tag": "oracle", "actor": "demo.steward"},
         )
         assert r.status_code == 409
 
@@ -660,7 +668,7 @@ class TestEditTag:
         for blank in ("", "   ", "\n\t"):
             r = await client.patch(
                 "/tags/rman",
-                json={"def": blank, "actor": "claire.benoit"},
+                json={"def": blank, "actor": "demo.steward"},
             )
             assert r.status_code == 422, blank
         after = await _get_tag(client, "rman")
@@ -669,7 +677,7 @@ class TestEditTag:
     async def test_blank_name_rename_is_400(self, client):
         r = await client.patch(
             "/tags/rman",
-            json={"tag": "   ", "actor": "claire.benoit"},
+            json={"tag": "   ", "actor": "demo.steward"},
         )
         assert r.status_code == 400
 
@@ -685,7 +693,7 @@ class TestSuggestTagEdit:
     async def test_blank_definition_is_422(self, client):
         r = await client.post(
             "/tags/rman/suggest-edit",
-            json={"def": "  ", "actor": "alberto"},
+            json={"def": "  ", "actor": "demo.qa"},
         )
         assert r.status_code == 422
 
@@ -696,7 +704,7 @@ class TestSuggestTagEdit:
                 "def": "Updated RMAN definition",
                 "aliases": ["rmgr", "recovery-manager"],
                 "justification": "clarify recovery manager wording",
-                "actor": "alberto",
+                "actor": "demo.qa",
             },
         )
 
@@ -726,14 +734,14 @@ class TestSuggestTagEdit:
                 json={
                     "def": "Updated RMAN definition",
                     "long_description": "Longer approved note",
-                    "actor": "alberto",
+                    "actor": "demo.qa",
                 },
             )
         ).json()
 
         r = await client.post(
             f"/tags/{proposal['tag']}/approve",
-            json={"actor": "claire.benoit"},
+            json={"actor": "demo.steward"},
         )
 
         assert r.status_code == 200
@@ -749,13 +757,13 @@ class TestSuggestTagEdit:
         proposal = (
             await client.post(
                 "/tags/rman/suggest-edit",
-                json={"def": "Rejected wording", "actor": "alberto"},
+                json={"def": "Rejected wording", "actor": "demo.qa"},
             )
         ).json()
 
         r = await client.post(
             f"/tags/{proposal['tag']}/reject",
-            json={"reason": "too broad", "actor": "claire.benoit"},
+            json={"reason": "too broad", "actor": "demo.steward"},
         )
 
         assert r.status_code == 200
@@ -768,7 +776,7 @@ class TestSuggestTagEdit:
     async def test_unknown_target_returns_404(self, client):
         r = await client.post(
             "/tags/does-not-exist/suggest-edit",
-            json={"def": "new", "actor": "alberto"},
+            json={"def": "new", "actor": "demo.qa"},
         )
         assert r.status_code == 404
 
@@ -776,7 +784,7 @@ class TestSuggestTagEdit:
         current = await _get_tag(client, "rman")
         r = await client.post(
             "/tags/rman/suggest-edit",
-            json={"def": current["def"], "actor": "alberto"},
+            json={"def": current["def"], "actor": "demo.qa"},
         )
         assert r.status_code == 400
 

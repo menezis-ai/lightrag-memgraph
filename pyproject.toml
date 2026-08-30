@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "twindb-lightrag-memgraph"
-version = "1.1.0"
+version = "1.2.0"
 description = "Memgraph KV, Vector, and DocStatus storage backends for LightRAG"
 readme = "README.md"
 license = {text = "MIT"}
@@ -25,6 +25,8 @@ test = [
     "pytest-asyncio>=1.2.0",
     "httpx>=0.24.0",
     "fastapi>=0.104.0",
+    # tests/test_portability/test_manifest.py validates the kb-bundle JSON Schema
+    "jsonschema>=4.23",
 ]
 intelligence = [
     "openai>=1.50",
@@ -50,7 +52,8 @@ server = [
     "pydantic-settings>=2.14.2",
     "PyJWT>=2.8.0",
     "python-multipart>=0.0.31",
-    "pypdf>=6.14.2",
+    "httpx>=0.28.1",
+    "pypdf>=6.15.0",
     "aiofiles>=23.0.0",
     "bcrypt>=4.0.0",
 ]
@@ -58,7 +61,7 @@ tracing = [
     "langsmith>=0.1.0",
 ]
 convert = [
-    # MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md).
+    # MarkItDown pre-conversion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
     # Exact pin: the 0.x API already broke once (0.0.x -> 0.1.0 binary
     # streams). Document extras only — no audio (Google web API), no
     # youtube, no az-* cloud converters (offline BNP posture, audit
@@ -66,7 +69,7 @@ convert = [
     "markitdown[pdf,docx,pptx,xlsx,xls,outlook]==0.1.6",
 ]
 vision = [
-    # Vision image-ingestion tier (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+    # Vision image-ingestion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
     # RapidOCR = offline OCR pre-filter (onnxruntime cost already paid by
     # markitdown's magika dependency); openai = sync client for the
     # OpenAI-compatible vision endpoint (BNP: Gemma 4 31B-it LLMaaS/vLLM).
@@ -78,14 +81,14 @@ vision = [
     "pillow>=10.0",
 ]
 procedure = [
-    # Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md).
+    # Procedure-PDF ingestion profile (docs/adr/007-procedure-pdf-profile.md).
     # pypdfium2 renders schematic pages (Apache/BSD — PyMuPDF is AGPL,
     # licence red line for a bank deliverable); pypdf extracts the text
     # used by the deterministic template detection; Pillow encodes the
     # rendered bitmaps to PNG. The vision LLM rides the [vision] tier's
     # endpoint configuration (same gemma-4-31b-it, decision 2026-07-20).
     "pypdfium2>=4.30",
-    "pypdf>=6.14.2",
+    "pypdf>=6.15.0",
     "pillow>=10.0",
     "twindb-lightrag-memgraph[vision]",
 ]
@@ -154,8 +157,29 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+# F401 (unused imports) is enforced so dead imports cannot regrow: the gate was
+# E9/F63/F7/F82 only, and 33 had accumulated across src/ and tests/ unnoticed.
+# services/twin_catalog already runs the full "E,F,I,B,UP,S" set — this closes
+# part of the gap for the root package without a wholesale tightening.
+select = ["E9", "F63", "F7", "F82", "F401"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# `server/webui_router.py` is a pure compatibility facade: it re-exports
+# symbols so the historical import path keeps working, and that path is the
+# surface tests monkeypatch (test_graph_native_contract_e2e.py patches
+# `webui_router._graph_memgraph_label`, test_webui_router_graph.py calls
+# `webui_router._graph_seed_fallback_allowed`, test_folders_crud.py reads
+# `webui_router._stores`). Those imports look unused to a static analyser but
+# are load-bearing — do not "clean" them.
+#
+# Only the facade is exempt. `server/webui/router.py` is the 1131-line
+# implementation router and stays under F401: exempting it would let new dead
+# imports accumulate there silently, which is exactly what this gate exists to
+# prevent. The facade imports the shared helpers straight from their origin
+# modules (`.webui.routes_graph`, `.webui.store`), never through the
+# implementation router, so the two concerns do not overlap.
+"src/twindb_lightrag_memgraph/server/webui_router.py" = ["F401"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -175,7 +199,7 @@ filterwarnings = [
 # tests_by_mangled_function_name) — per-function, NOT per-line — and replays only
 # that subset. `only_mutate` keeps each campaign scoped to a whitelist of modules
 # whose tests are fast, pure and deterministic. Widen it deliberately, one module
-# at a time, never globally — see CLAUDE.md "Mutation testing".
+# at a time, never globally — see AGENTS.md "Mutation testing".
 [tool.mutmut]
 source_paths = ["src/twindb_lightrag_memgraph"]
 
@@ -228,7 +252,7 @@ do_not_mutate = [
 # second import of numpy dies with "ImportError: cannot load module more than once
 # per process" -> pytest exit 4 -> BadTestExecutionCommandsException, campaign
 # aborted before a single mutant runs. Same numpy double-import family as the
-# pytest-cov --cov footgun already recorded in CLAUDE.md, observed here on the
+# pytest-cov --cov footgun already recorded in AGENTS.md, observed here on the
 # Python 3.12.13 venv. Cost of leaving it false: uncovered lines get mutated too,
 # so triage survivors against `coverage` before writing a test for one.
 mutate_only_covered_lines = false

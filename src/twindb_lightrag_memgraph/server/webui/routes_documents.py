@@ -76,6 +76,27 @@ _membership_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
 _membership_lock_accesses = 0
 
 
+async def _attach_source_links(items: list[dict[str, Any]]) -> None:
+    """Best-effort project canonical link lists onto document cards."""
+    doc_ids = [str(item.get("doc_id") or item.get("id") or "") for item in items]
+    try:
+        links_by_doc = await get_store().source_links.list_for_documents(doc_ids)
+    except Exception:
+        logger.exception("documents: source_links batch enrichment failed")
+        links_by_doc = {}
+    for item, doc_id in zip(items, doc_ids, strict=True):
+        item["source_links"] = links_by_doc.get(doc_id, [])
+
+
+async def _source_links_for_document(doc_id: str) -> list[dict[str, Any]]:
+    """Return provenance links without making the document route depend on them."""
+    try:
+        return await get_store().source_links.list_for_document(doc_id)
+    except Exception:
+        logger.exception("documents: source_links enrichment failed for %s", doc_id)
+        return []
+
+
 def _evict_membership_locks() -> None:
     """Drop stale, unlocked locks when map capacity is exceeded."""
     if len(_membership_locks) <= _MAX_MEMBERSHIP_LOCKS:
@@ -188,6 +209,7 @@ async def list_documents(
         has_seed_documents = bool(store._documents)  # noqa: SLF001
     if has_seed_documents:
         items = store.list_documents(status=status, q=q, tag=tag)
+        await _attach_source_links(items)
         return {"items": items, "total": len(items)}
     try:
         items = await legacy._list_documents_from_doc_status(
@@ -197,6 +219,7 @@ async def list_documents(
         if exc.status_code != 503:
             raise
         items = store.list_documents(status=status, q=q, tag=tag)
+    await _attach_source_links(items)
     return {"items": items, "total": len(items)}
 
 
@@ -221,6 +244,7 @@ async def get_document_metadata(
     tags_available = graph_tags is not None
     tags = graph_tags if tags_available else []
     folder = doc.get("folder") or metadata.get("folder") or legacy.current_folder_id()
+    source_links = await _source_links_for_document(doc_id)
     return {
         "tags": tags,
         "tags_source": "tagged_with",
@@ -229,12 +253,13 @@ async def get_document_metadata(
         "review": metadata.get("review"),
         "classification": metadata.get("classification"),
         "metadata": metadata,
+        "source_links": source_links,
     }
 
 
 # ── Folder membership (one document, many folders, stored once) ──────────
 # Explicit membership endpoints are the PRIMARY contract for sharing a document
-# across folders without duplicating its data. See FOLDER-MEMBERSHIP-REFACTOR.md.
+# across folders without duplicating its data. See docs/adr/006-folder-membership-relation.md.
 # folder_id is validated against the provisioned catalog so a typo cannot create
 # an orphan Folder node or punch a cloisonnement hole.
 #
@@ -317,6 +342,23 @@ async def resolve_document_upload(
     from .. import webui_router as legacy
 
     file_name = str(body.get("file_name") or "")
+    relative_path_raw = body.get("relative_path")
+    relative_path: str | None = None
+    if relative_path_raw is not None:
+        from ..upload_paths import (
+            canonical_upload_file_name,
+            normalize_relative_upload_path,
+        )
+
+        try:
+            relative_path = normalize_relative_upload_path(str(relative_path_raw))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if canonical_upload_file_name(relative_path) != file_name:
+            raise HTTPException(
+                status_code=400,
+                detail="file_name does not match the canonical relative-path identity",
+            )
     # Mirror native-upload basename validation rather than letting this JSON
     # preflight accept an identity that the multipart route would reject. A
     # direct import is intentionally avoided: importing LightRAG's API router
@@ -365,6 +407,7 @@ async def resolve_document_upload(
                 "folder_id": folder_id,
                 "operation": "resolve-upload-membership",
                 "file_name": safe_file_name,
+                "relative_path": relative_path,
             },
             target_type="document",
             target_id=doc_id,
@@ -376,9 +419,12 @@ async def resolve_document_upload(
         "doc_id": doc_id,
         "track_id": track_id,
         "message": (
-            f"'{safe_file_name}' was added to folder '{folder_id}'."
+            f"'{relative_path or safe_file_name}' was added to folder '{folder_id}'."
             if action == "shared"
-            else f"'{safe_file_name}' is already present in folder '{folder_id}'."
+            else (
+                f"'{relative_path or safe_file_name}' is already present in "
+                f"folder '{folder_id}'."
+            )
         ),
     }
 

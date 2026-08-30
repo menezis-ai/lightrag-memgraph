@@ -23,6 +23,10 @@ export function LoginScreen({
     setPending(true);
     try {
       await onLogin(username.trim(), password);
+    } catch {
+      // The auth hook owns and renders the operator-facing login error. The
+      // form boundary only consumes its propagated rejection so React does not
+      // expose it as an unhandled promise rejection in the browser.
     } finally {
       setPending(false);
     }

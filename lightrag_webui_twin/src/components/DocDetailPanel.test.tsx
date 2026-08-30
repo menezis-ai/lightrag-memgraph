@@ -12,7 +12,16 @@
  *   - Escape closes
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -36,7 +45,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
     created_at: '2026-05-29T14:00:00Z',
     updated_at: '2026-05-29T14:00:00Z',
     error_msg: null,
-    metadata: { uploader: 'claire.benoit', classification: 'internal' },
+    metadata: { uploader: 'demo.steward', classification: 'internal' },
     visibility: 'private',
     folder: 'default',
     ...overrides,
@@ -63,7 +72,7 @@ const server = setupServer(
           day: '2026-05-29',
           kind: 'tag-mutation',
           sev: 'info',
-          actor: { user: 'claire.benoit', role: 'steward' },
+          actor: { user: 'demo.steward', role: 'steward' },
           target: { type: 'source', label: 'sample.pdf', id: 'd-test-1' },
           summary: 'Tag applied: rman',
           meta: {},
@@ -81,16 +90,17 @@ function wrap(qc: QueryClient) {
   };
 }
 
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterAll(() => server.close());
+
 beforeEach(() => {
   __resetAuthConfigCacheForTests();
   auditRequests.length = 0;
   (window as Window & typeof globalThis).__twinConfig = undefined;
-  server.listen({ onUnhandledRequest: 'bypass' });
 });
 
 afterEach(() => {
   server.resetHandlers();
-  server.close();
 });
 
 describe('DocDetailPanel — visibility', () => {
@@ -235,7 +245,7 @@ describe('DocDetailPanel — tabs', () => {
     );
     await userEvent.click(screen.getByTestId('doc-detail-tab-lineage'));
     const panel = screen.getByTestId('doc-detail-lineage');
-    expect(panel.textContent).toContain('claire.benoit');
+    expect(panel.textContent).toContain('demo.steward');
     expect(panel.textContent).toContain('rman');
   });
 
@@ -246,7 +256,7 @@ describe('DocDetailPanel — tabs', () => {
         <DocDetailPanel
           doc={makeDoc({
             metadata: {
-              uploader: 'claire.benoit',
+              uploader: 'demo.steward',
               classification: 'internal',
               sha1: 'ABCDEF012345',
             },
@@ -275,7 +285,7 @@ describe('DocDetailPanel — tabs', () => {
     const url = new URL(auditRequests[0]);
     expect(url.searchParams.get('resource.id')).toBe('d-test-1');
     expect(url.searchParams.get('limit')).toBe('200');
-    expect(screen.getByText(/claire\.benoit/)).toHaveTextContent('3h ago');
+    expect(screen.getByText(/demo\.steward/)).toHaveTextContent('3h ago');
     expect(screen.queryByText(/99d ago/)).toBeNull();
   });
 });

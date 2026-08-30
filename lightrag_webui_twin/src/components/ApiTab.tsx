@@ -19,7 +19,11 @@
 import { useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { useModalA11y } from '../hooks/useModalA11y';
-import { buildApiHeaders, buildApiUrl } from '../api/client';
+import {
+  buildApiHeaders,
+  buildApiUrl,
+  reportUnauthorizedResponse,
+} from '../api/client';
 import {
   METHOD_COLOR,
   type HttpMethod,
@@ -34,7 +38,7 @@ export interface ApiTabProps {
   groups: readonly OpenApiGroup[];
   /** Origin used in the curl preview. Defaults to the current browser
    *  origin — the previous prod/stg dropdown was removed as part of
-   *  mock-kill F2 because the displayed hostnames (`cib-kb.twin.internal`)
+   *  mock-kill F2 because the displayed hostnames (`kb.example.com`)
    *  didn't exist. */
   baseUrl: string;
 }
@@ -236,6 +240,7 @@ function EndpointRow({ ep, secured, token, baseUrl }: Readonly<EndpointRowProps>
         credentials: 'include',
       });
       const text = await r.text();
+      reportUnauthorizedResponse(target.path, r.status);
       const tookMs = Math.round(nowForTiming() - start);
       setResp({
         status: r.status,

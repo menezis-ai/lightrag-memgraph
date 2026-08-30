@@ -18,6 +18,11 @@ import { parseOpenApiSpec } from './openapi-parser';
 import type { Document } from '../types/document';
 import type { GraphEntity, GraphRelation } from '../types/graph';
 import type { ActivityQuery, ListEnvelope, UploadDocumentInput } from './resources';
+import type {
+  PortabilityImportInput,
+  PortabilityJob,
+} from '../types/portability';
+import { DISABLE_REASON } from '../lib/linkedSources';
 
 const DEFAULTS = { staleTime: 60_000 } as const;
 const DOCUMENTS_REFETCH_INTERVAL_MS = 2_000;
@@ -249,6 +254,180 @@ export function useAbout(options: QueryGate = {}) {
     queryFn: ({ signal }) => api.getAbout({ signal }),
     ...DEFAULTS,
     ...gateOptions(options),
+  });
+}
+
+const PORTABILITY_POLL_MS = 1_000;
+const PORTABILITY_SETTLED = new Set([
+  'awaiting-approval',
+  'approved',
+  'applied',
+  'completed',
+  'failed',
+  'cancelled',
+  'validated',
+  'validation-failed',
+]);
+
+function portabilityRefetchInterval(
+  query: { state: { data?: PortabilityJob } },
+): number | false {
+  const status = query.state.data?.status;
+  return status && PORTABILITY_SETTLED.has(status)
+    ? false
+    : PORTABILITY_POLL_MS;
+}
+
+export function usePortabilityExportJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['portability-export', jobId] as const,
+    queryFn: ({ signal }) => api.getPortabilityExport(jobId ?? '', { signal }),
+    enabled: Boolean(jobId),
+    staleTime: 0,
+    refetchInterval: portabilityRefetchInterval,
+  });
+}
+
+export function useStartPortabilityExport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createPortabilityExport>[0]) =>
+      api.createPortabilityExport(body),
+    onSuccess: (job) => {
+      qc.setQueryData(['portability-export', job.id], job);
+    },
+  });
+}
+
+export function useDownloadPortabilityExport() {
+  return useMutation({
+    mutationFn: (jobId: string) => api.downloadPortabilityExport(jobId),
+  });
+}
+
+export function usePortabilityImportJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['portability-import', jobId] as const,
+    queryFn: ({ signal }) => api.getPortabilityImport(jobId ?? '', { signal }),
+    enabled: Boolean(jobId),
+    staleTime: 0,
+    refetchInterval: portabilityRefetchInterval,
+  });
+}
+
+function usePortabilityImportMutation<T>(
+  mutationFn: (input: T) => Promise<PortabilityJob>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (job) => {
+      qc.setQueryData(['portability-import', job.id], job);
+      void qc.invalidateQueries({ queryKey: ['activity'] });
+      void qc.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+export function useStartPortabilityImport() {
+  return usePortabilityImportMutation((input: PortabilityImportInput) =>
+    api.createPortabilityImport(input),
+  );
+}
+
+export function useApprovePortabilityImport() {
+  return usePortabilityImportMutation(
+    ({ jobId, reportHash }: { jobId: string; reportHash: string }) =>
+      api.approvePortabilityImport(jobId, reportHash),
+  );
+}
+
+export function useApplyPortabilityImport() {
+  return usePortabilityImportMutation((jobId: string) =>
+    api.applyPortabilityImport(jobId),
+  );
+}
+
+export function useValidatePortabilityImport() {
+  return usePortabilityImportMutation((jobId: string) =>
+    api.validatePortabilityImport(jobId),
+  );
+}
+
+export function useCancelPortabilityImport() {
+  return usePortabilityImportMutation((jobId: string) =>
+    api.cancelPortabilityImport(jobId),
+  );
+}
+
+function linkedSourcesKey(folder = getActiveFolder() ?? 'default') {
+  return ['linked-sources', folder] as const;
+}
+
+/** Folder-bound declarations served by the central KB catalogue proxy. */
+export function useLinkedSources(options: QueryGate = {}) {
+  const scope = folderScope(options);
+  return useQuery({
+    queryKey: linkedSourcesKey(scope),
+    queryFn: ({ signal }) => api.listLinkedSources({ signal }),
+    ...DEFAULTS,
+    staleTime: 0,
+    ...gateOptions(options),
+  });
+}
+
+function invalidateLinkedSourceSideEffects(
+  qc: ReturnType<typeof useQueryClient>,
+) {
+  void qc.invalidateQueries({ queryKey: ['linked-sources'] });
+  void qc.invalidateQueries({ queryKey: ['activity'] });
+}
+
+export function usePreviewLinkedSource() {
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.previewLinkedSource>[0]) =>
+      api.previewLinkedSource(body),
+  });
+}
+
+export function useCreateLinkedSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.createLinkedSource>[0]) =>
+      api.createLinkedSource(body),
+    onSuccess: () => invalidateLinkedSourceSideEffects(qc),
+  });
+}
+
+export function useUpdateLinkedSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: Parameters<typeof api.updateLinkedSource>[1];
+    }) => api.updateLinkedSource(id, body),
+    onSuccess: () => invalidateLinkedSourceSideEffects(qc),
+  });
+}
+
+export function useDisableLinkedSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      expectedVersion,
+    }: {
+      id: string;
+      expectedVersion: number;
+    }) =>
+      api.disableLinkedSource(id, {
+        expected_version: expectedVersion,
+        reason: DISABLE_REASON,
+      }),
+    onSuccess: () => invalidateLinkedSourceSideEffects(qc),
   });
 }
 
@@ -907,10 +1086,25 @@ export function useUploadDocumentsBatch() {
         DEFAULT_UPLOAD_CONCURRENCY,
         (item) => {
           const upload = normalizeUploadInput(item);
-          return api.uploadDocument(upload.file, {
-            classification: upload.classification,
-            docType: upload.docType,
-          });
+          upload.onStateChange?.('uploading');
+          return api
+            .uploadDocument(upload.file, {
+              signal: upload.signal,
+              relativePath: upload.relativePath,
+              classification: upload.classification,
+              docType: upload.docType,
+            })
+            .then((response) => {
+              upload.onStateChange?.('complete');
+              return response;
+            })
+            .catch((error: unknown) => {
+              upload.onStateChange?.(
+                'error',
+                error instanceof Error ? error.message : 'Upload failed',
+              );
+              throw error;
+            });
         },
       ),
     onSuccess: () => {

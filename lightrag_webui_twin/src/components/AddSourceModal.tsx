@@ -15,6 +15,11 @@ import { Icon } from './Icon';
 import { TagChip } from './TagChip';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { unsupportedFileMessage } from '../lib/errorMessages';
+import {
+  MAX_FOLDER_FILES,
+  MAX_FOLDER_TOTAL_BYTES,
+  normalizeRelativeUploadPath,
+} from '../lib/uploadPaths';
 import type { FormatCategory } from '../types/format';
 import type { TagEntry } from '../types/tag';
 import { tagMatchesQuery, tagSuggestionComparator } from '../utils/tags';
@@ -66,7 +71,12 @@ const SUPPORTED_MIME_TYPES = new Set([
   'message/rfc822',
 ]);
 
-export type FileUploadState = 'uploading' | 'uploaded' | 'error';
+export type FileUploadState =
+  | 'uploading'
+  | 'uploaded'
+  | 'retryable'
+  | 'complete'
+  | 'error';
 
 /**
  * Operator-set MIP sensitivity classification (BNP C1/C2 only). Empty selection
@@ -99,6 +109,7 @@ const DOC_TYPE_OPTIONS: readonly {
  *  toggle is NOT exposed (RAG 1.5 connector isn't live). */
 export interface FileUploadOptions {
   name: string;
+  relativePath?: string;
   classification?: UploadClassification;
 }
 
@@ -109,6 +120,8 @@ export interface FileUpload {
    */
   id?: string;
   name: string;
+  /** Safe POSIX path relative to the selected/dropped folder root. */
+  relativePath?: string;
   /** Megabytes (1 decimal place). Retained for backwards compat with
    *  fixtures; display uses `sizeBytes` when present so files smaller
    *  than 0.1 MB show in KB instead of "0 MB". */
@@ -172,15 +185,21 @@ export interface LinkedSource {
 export interface AddSourceAction {
   files: readonly FileUpload[];
   /**
-   * Raw File objects keyed by display name, captured when the user picks
+   * Raw File objects aligned with `fileOptions`, captured when the user picks
    * or drops files. The host uses these to POST multipart/form-data to
    * LightRAG's ``/documents/upload``. May be empty in tests that only
    * exercise UI flows (initialFiles paths).
   */
   rawFiles: readonly File[];
-  /** Per-file options (classification-only), aligned with `rawFiles` order —
+  /** Per-file path and classification options, aligned with `rawFiles` order —
    *  both are derived from the `uploaded`-state files in the same sequence. */
   fileOptions: readonly FileUploadOptions[];
+  /** Host callback for per-file request state, aligned with `rawFiles`. */
+  onFileStateChange?: (
+    index: number,
+    state: 'uploading' | 'complete' | 'error',
+    error?: string,
+  ) => void;
   urls: readonly LinkedSource[];
   tags: readonly string[];
   /**
@@ -200,6 +219,8 @@ export interface AddSourceModalProps {
   initialFiles?: readonly FileUpload[];
   initialUrls?: readonly LinkedSource[];
   onClose: () => void;
+  /** Abort the active bounded-concurrency batch; visible only while pending. */
+  onCancel?: () => void;
   onSubmit: (action: AddSourceAction) => void;
   /** Server upload in progress (host's upload mutation pending). While true
    *  the modal stays open and close (X / backdrop / Escape) + submit are
@@ -213,6 +234,10 @@ export interface AddSourceModalProps {
   /** Per-extension tier caps advertised alongside `extraUploadExtensions`.
    *  The stricter of this value and the global 50 MB cap is enforced. */
   extraUploadMaxBytes?: Readonly<Record<string, number>>;
+  /** When the central catalogue proxy is configured, linked sources are
+   *  managed in the dedicated CrossPoint-compatible grid. */
+  catalogEnabled?: boolean;
+  onOpenLinkedSources?: () => void;
 }
 
 function fileExtension(name: string): string {
@@ -277,8 +302,8 @@ function normalizeExtraMaxBytes(
   return normalized;
 }
 
-function fileUploadKey(file: File, index: number): string {
-  const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+function fileUploadKey(file: File, index: number, relativePath?: string): string {
+  const path = relativePath || (file as File & { webkitRelativePath?: string }).webkitRelativePath;
   return `${path || file.name}:${file.size}:${file.lastModified}:${index}`;
 }
 
@@ -288,11 +313,14 @@ function fileUploadFromFile(
   rawFiles: Map<string, File>,
   extraExtensions: ReadonlySet<string>,
   extraMaxBytes: ReadonlyMap<string, number>,
+  relativePath?: string,
+  pathError?: string,
 ): FileUpload {
-  const error = validateFile(file, extraExtensions, extraMaxBytes);
+  const error = pathError ?? validateFile(file, extraExtensions, extraMaxBytes);
   const base = {
     id,
-    name: file.name,
+    name: relativePath ?? file.name,
+    ...(relativePath ? { relativePath } : {}),
     size: Number((file.size / (1024 * 1024)).toFixed(1)),
     sizeBytes: file.size,
   };
@@ -309,10 +337,100 @@ function fileUploadFromFile(
   };
 }
 
+interface BrowserFileEntry {
+  isFile: true;
+  isDirectory: false;
+  name: string;
+  file: (success: (file: File) => void, failure?: (error: DOMException) => void) => void;
+}
+
+interface BrowserDirectoryReader {
+  readEntries: (
+    success: (entries: BrowserEntry[]) => void,
+    failure?: (error: DOMException) => void,
+  ) => void;
+}
+
+interface BrowserDirectoryEntry {
+  isFile: false;
+  isDirectory: true;
+  name: string;
+  createReader: () => BrowserDirectoryReader;
+}
+
+type BrowserEntry = BrowserFileEntry | BrowserDirectoryEntry;
+
+interface FileWithRelativePath {
+  file: File;
+  relativePath: string;
+}
+
+function entryFile(entry: BrowserFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+async function directoryEntries(
+  directory: BrowserDirectoryEntry,
+): Promise<BrowserEntry[]> {
+  const reader = directory.createReader();
+  const entries: BrowserEntry[] = [];
+  while (true) {
+    const batch = await new Promise<BrowserEntry[]>((resolve, reject) =>
+      reader.readEntries(resolve, reject),
+    );
+    if (batch.length === 0) return entries;
+    entries.push(...batch);
+  }
+}
+
+async function walkDroppedEntry(
+  entry: BrowserEntry,
+  parent: string,
+  output: FileWithRelativePath[],
+): Promise<void> {
+  if (output.length >= MAX_FOLDER_FILES + 1) return;
+  const relativePath = parent ? `${parent}/${entry.name}` : entry.name;
+  if (entry.isFile) {
+    output.push({ file: await entryFile(entry), relativePath });
+    return;
+  }
+  for (const child of await directoryEntries(entry)) {
+    await walkDroppedEntry(child, relativePath, output);
+    if (output.length >= MAX_FOLDER_FILES + 1) return;
+  }
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- pure browser adapter, tested directly.
+export async function collectDroppedFiles(
+  transfer: DataTransfer,
+): Promise<FileWithRelativePath[]> {
+  const roots = Array.from(transfer.items ?? []).flatMap((item) => {
+    const entry = (
+      item as unknown as { webkitGetAsEntry?: () => BrowserEntry | null }
+    ).webkitGetAsEntry?.();
+    return entry ? [entry] : [];
+  });
+  if (roots.length === 0) {
+    return Array.from(transfer.files).map((file) => ({
+      file,
+      relativePath:
+        (file as File & { webkitRelativePath?: string }).webkitRelativePath ||
+        file.name,
+    }));
+  }
+  const output: FileWithRelativePath[] = [];
+  for (const root of roots) await walkDroppedEntry(root, '', output);
+  return output;
+}
+
 function uploadCounts(files: readonly FileUpload[], urlsCount: number) {
-  const readyFiles = files.filter((f) => f.state === 'uploaded').length;
+  const readyFiles = files.filter(
+    (f) => f.state === 'uploaded' || f.state === 'retryable',
+  ).length;
   const uploading = files.filter((f) => f.state === 'uploading').length;
-  const errors = files.filter((f) => f.state === 'error').length;
+  const errors = files.filter(
+    (f) => f.state === 'error' || f.state === 'retryable',
+  ).length;
   return {
     uploading,
     errors,
@@ -381,10 +499,13 @@ export function AddSourceModal({
   initialFiles = [],
   initialUrls = [],
   onClose,
+  onCancel,
   onSubmit,
   submitting = false,
   extraUploadExtensions,
   extraUploadMaxBytes,
+  catalogEnabled = false,
+  onOpenLinkedSources,
 }: Readonly<AddSourceModalProps>) {
   const acceptedExtraExtensions = normalizeExtraExtensions(
     extraUploadExtensions,
@@ -398,7 +519,9 @@ export function AddSourceModal({
   useModalA11y({ open, onClose: guardedClose, ref: modalRef });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<readonly FileUpload[]>(initialFiles);
+  const [folderReadError, setFolderReadError] = useState<string | null>(null);
   // Raw File objects parallel to `files` — kept out of state shape
   // proper because they're not serializable + the test fixtures only
   // care about the metadata. Keyed by stable per-pick id so same-name files in
@@ -406,12 +529,49 @@ export function AddSourceModal({
   // drop both metadata + binary in one operation.
   const rawFilesRef = useRef<Map<string, File>>(new Map());
   const rawFileSequenceRef = useRef(0);
+  // These refs reserve capacity synchronously, before React renders the next
+  // state. Two drops in the same event turn therefore cannot both observe a
+  // stale `files.length` and slip past the batch caps.
+  const selectedFileCountRef = useRef(initialFiles.length);
+  const selectedFileBytesRef = useRef(
+    initialFiles.reduce(
+      (total, file) => total + (file.sizeBytes ?? file.size * BYTES_PER_MB),
+      0,
+    ),
+  );
 
-  const appendDroppedFiles = (incoming: FileList | null): void => {
-    const incomingArr = Array.from(incoming || []);
+  useEffect(() => {
+    // Chromium/WebKit expose this as a non-standard boolean attribute. Setting
+    // it imperatively keeps React's cross-browser typings out of the contract.
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+    folderInputRef.current?.setAttribute('directory', '');
+  }, []);
+
+  const appendIncomingFiles = (
+    incoming: readonly FileWithRelativePath[],
+  ): void => {
+    const incomingArr = Array.from(incoming);
     if (incomingArr.length === 0) return;
-    const dropped = incomingArr.map((file) => {
-      const id = fileUploadKey(file, rawFileSequenceRef.current);
+    const startingCount = selectedFileCountRef.current;
+    selectedFileCountRef.current += incomingArr.length;
+    let totalBytes = selectedFileBytesRef.current;
+    const dropped = incomingArr.map(({ file, relativePath: rawPath }, index) => {
+      let relativePath: string | undefined;
+      let pathError: string | undefined;
+      try {
+        const normalizedPath = normalizeRelativeUploadPath(rawPath || file.name);
+        relativePath = normalizedPath.includes('/') ? normalizedPath : undefined;
+      } catch (error) {
+        pathError = error instanceof Error ? error.message : 'Invalid relative path';
+      }
+      if (startingCount + index >= MAX_FOLDER_FILES) {
+        pathError = `Batch exceeds ${MAX_FOLDER_FILES} files`;
+      }
+      totalBytes += file.size;
+      if (totalBytes > MAX_FOLDER_TOTAL_BYTES) {
+        pathError = 'Batch exceeds 1 GB total';
+      }
+      const id = fileUploadKey(file, rawFileSequenceRef.current, relativePath);
       rawFileSequenceRef.current += 1;
       return fileUploadFromFile(
         file,
@@ -419,13 +579,26 @@ export function AddSourceModal({
         rawFilesRef.current,
         acceptedExtraExtensions,
         acceptedExtraMaxBytes,
+        relativePath,
+        pathError,
       );
     });
+    selectedFileBytesRef.current = totalBytes;
     setFiles((current) => [...current, ...dropped]);
   };
-  // Linked sources are gated until the RAG 1.5 connector lands — see the
-  // "Coming soon" badge in the JSX. We keep `urls` in state (initialised
-  // from props for tests) so the submit pipeline still emits it.
+  const appendPickedFiles = (incoming: FileList | null): void => {
+    appendIncomingFiles(
+      Array.from(incoming || []).map((file) => ({
+        file,
+        relativePath:
+          (file as File & { webkitRelativePath?: string }).webkitRelativePath ||
+          file.name,
+      })),
+    );
+  };
+  // URL declaration lives in the dedicated Sources RAG grid when the central
+  // catalogue is configured. We keep `urls` for legacy fixture/submission
+  // compatibility; this upload modal never becomes a second write surface.
   const [urls] = useState<readonly LinkedSource[]>(initialUrls);
   const [tags, setTags] = useState<readonly string[]>([]);
   const [tagInput, setTagInput] = useState('');
@@ -455,7 +628,13 @@ export function AddSourceModal({
   const removeFile = (file: FileUpload) => {
     if (file.id) rawFilesRef.current.delete(file.id);
     else rawFilesRef.current.delete(file.name);
-    setFiles(files.filter((f) => f !== file));
+    selectedFileCountRef.current = Math.max(0, selectedFileCountRef.current - 1);
+    selectedFileBytesRef.current = Math.max(
+      0,
+      selectedFileBytesRef.current -
+        (file.sizeBytes ?? file.size * BYTES_PER_MB),
+    );
+    setFiles((current) => current.filter((candidate) => candidate !== file));
   };
   const updateFileOptions = (
     file: FileUpload,
@@ -498,15 +677,21 @@ export function AddSourceModal({
     if (ready === 0) return;
     // Collect raw File objects in the same order as `files` so callers
     // (host App) can correlate progress feedback per file.
-    const uploadedFiles = files.filter((f) => f.state === 'uploaded');
-    const rawFiles = uploadedFiles
-      .map((f) => rawFilesRef.current.get(f.id ?? f.name))
-      .filter((f): f is File => f !== undefined);
-    // Per-file options aligned with `uploadedFiles` order — classification-only.
-    const fileOptions = uploadedFiles.map((f) => {
-      const classification = fileClassification(f);
+    const submittedFiles = files.flatMap((file) => {
+      if (file.state !== 'uploaded' && file.state !== 'retryable') return [];
+      const id = file.id ?? file.name;
+      const rawFile = rawFilesRef.current.get(id);
+      return rawFile ? [{ id, metadata: file, rawFile }] : [];
+    });
+    const submittedFileIds = submittedFiles.map((entry) => entry.id);
+    const rawFiles = submittedFiles.map((entry) => entry.rawFile);
+    // All three arrays derive from the same filtered records, so an absent
+    // fixture/raw file can never shift relative-path headers onto a neighbor.
+    const fileOptions = submittedFiles.map(({ metadata: file }) => {
+      const classification = fileClassification(file);
       return {
-        name: f.name,
+        name: file.name,
+        ...(file.relativePath ? { relativePath: file.relativePath } : {}),
         ...(classification ? { classification } : {}),
       };
     });
@@ -514,6 +699,33 @@ export function AddSourceModal({
       files,
       rawFiles,
       fileOptions,
+      onFileStateChange: (index, state, error) => {
+        const targetId = submittedFileIds[index];
+        setFiles((current) =>
+          current.map((file) => {
+            if ((file.id ?? file.name) !== targetId) return file;
+            if (state === 'uploading') {
+              return { ...file, state, progress: 0, uploaded: 0, error: undefined };
+            }
+            if (state === 'complete') {
+              return {
+                ...file,
+                state,
+                progress: 100,
+                uploaded: file.size,
+                error: undefined,
+              };
+            }
+            return {
+              ...file,
+              state: 'retryable',
+              progress: 0,
+              uploaded: 0,
+              error: error ?? 'Upload failed',
+            };
+          }),
+        );
+      },
       urls,
       tags,
       ...(docType ? { docType } : {}),
@@ -567,8 +779,19 @@ export function AddSourceModal({
             style={{ display: 'none' }}
             data-testid="addsource-file-input"
             onChange={(e) => {
-              appendDroppedFiles(e.target.files);
+              appendPickedFiles(e.target.files);
               // Reset so re-picking the same file re-fires change.
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            data-testid="addsource-folder-input"
+            onChange={(e) => {
+              appendPickedFiles(e.target.files);
               e.target.value = '';
             }}
           />
@@ -585,7 +808,14 @@ export function AddSourceModal({
             onDrop={(e) => {
               e.preventDefault();
               setDrag(false);
-              appendDroppedFiles(e.dataTransfer.files);
+              setFolderReadError(null);
+              void collectDroppedFiles(e.dataTransfer)
+                .then(appendIncomingFiles)
+                .catch(() =>
+                  setFolderReadError(
+                    'This browser could not read the dropped folder. Use Choose folder or select files.',
+                  ),
+                );
             }}
           >
             <Icon name="cloud-upload" size={28} color="var(--color-text-secondary)" />
@@ -597,6 +827,20 @@ export function AddSourceModal({
               </span>
             </div>
           </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={submitting}
+          >
+            Choose folder
+          </button>
+          {submitting && onCancel && (
+            <button type="button" className="btn btn-secondary" onClick={onCancel}>
+              Cancel upload
+            </button>
+          )}
+          {folderReadError && <div role="alert">{folderReadError}</div>}
           <div className="dropzone-info-row">
             <button
               type="button"
@@ -630,6 +874,7 @@ export function AddSourceModal({
                   >
                     ({files.length} added)
                   </span>
+                  <span style={{ marginLeft: 4 }}>(max {MAX_FOLDER_FILES})</span>
                 </span>
               </div>
               <label className="bulk-classification-row">
@@ -682,7 +927,11 @@ export function AddSourceModal({
                 {files.map((f) => (
                   <div
                     key={f.id ?? f.name}
-                    className={f.state === 'error' ? 'file-row error' : 'file-row'}
+                    className={
+                      f.state === 'error' || f.state === 'retryable'
+                        ? 'file-row error'
+                        : 'file-row'
+                    }
                   >
                     <Icon name="file-text" size={15} className="file-icon" />
                     <div className="info">
@@ -703,13 +952,13 @@ export function AddSourceModal({
                           </span>
                         </div>
                       )}
-                      {f.state === 'error' && (
+                      {(f.state === 'error' || f.state === 'retryable') && (
                         <div className="row2">
                           <Icon name="alert-triangle" size={12} /> {f.error}
                         </div>
                       )}
                     </div>
-                    {f.state !== 'error' && (
+                    {f.state !== 'error' && f.state !== 'complete' && (
                       <label
                         className="file-classification-label"
                         title="MIP classification (operator value raises the embedded label, never lowers it)"
@@ -738,7 +987,7 @@ export function AddSourceModal({
                         </select>
                       </label>
                     )}
-                    {f.state === 'uploaded' && (
+                    {(f.state === 'uploaded' || f.state === 'complete') && (
                       <Icon name="circle-check" size={16} className="ok" />
                     )}
                     <button
@@ -759,37 +1008,60 @@ export function AddSourceModal({
             <span>OR</span>
           </div>
 
-          <div>
-            <div className="section-label">
-              <span>Linked sources</span>
-              <span
-                className="coming-soon"
-                title="Waiting on the RAG 1.5 API to be exposed"
+          {catalogEnabled ? (
+            <div>
+              <div className="section-label">
+                <span>Linked sources</span>
+              </div>
+              <div className="linked-box" style={{ marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onOpenLinkedSources?.()}
+                  disabled={!onOpenLinkedSources}
+                >
+                  Manage Sources RAG
+                </button>
+              </div>
+              <div className="helper-note" style={{ marginTop: 4 }}>
+                Declare Confluence pages and SharePoint documents in the
+                application grid. Changes are picked up by the next nightly
+                batch (~J+1).
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="section-label">
+                <span>Linked sources</span>
+                <span
+                  className="coming-soon"
+                  title="Waiting on the RAG 1.5 API to be exposed"
+                >
+                  Coming soon
+                </span>
+              </div>
+              <div
+                className="linked-box disabled"
+                aria-disabled="true"
+                style={{ marginTop: 6 }}
               >
-                Coming soon
-              </span>
+                <input
+                  className="url-input"
+                  value=""
+                  onChange={() => {}}
+                  disabled
+                  placeholder="Available once the RAG 1.5 API is wired"
+                  aria-label="URL input (disabled — coming soon)"
+                  tabIndex={-1}
+                />
+              </div>
+              <div className="helper-note" style={{ marginTop: 4 }}>
+                Confluence / SharePoint linking will use the RAG 1.5 connector
+                (upstream RAG team). Endpoint is not yet available — drop
+                files in the box above in the meantime.
+              </div>
             </div>
-            <div
-              className="linked-box disabled"
-              aria-disabled="true"
-              style={{ marginTop: 6 }}
-            >
-              <input
-                className="url-input"
-                value=""
-                onChange={() => {}}
-                disabled
-                placeholder="Available once the RAG 1.5 API is wired"
-                aria-label="URL input (disabled — coming soon)"
-                tabIndex={-1}
-              />
-            </div>
-            <div className="helper-note" style={{ marginTop: 4 }}>
-              Confluence / SharePoint linking will use the RAG 1.5 connector
-              (upstream RAG team). Endpoint is not yet available — drop
-              files in the box above in the meantime.
-            </div>
-          </div>
+          )}
 
           <div>
             <div className="section-label">

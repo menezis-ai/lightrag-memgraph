@@ -7,16 +7,16 @@ import type { Folder } from '../types/topbar';
 
 export const FOLDER_FIXTURES: readonly Folder[] = [
   {
-    id: 'cib',
-    kb: 'CIB KB',
+    id: 'demo',
+    kb: 'Demo KB',
     visibility: 'private',
     sources: 247,
     role: 'admin / steward',
     current: true,
   },
   {
-    id: 'cib-edge',
-    kb: 'CIB Edge KB',
+    id: 'demo-edge',
+    kb: 'Demo Edge KB',
     visibility: 'private',
     sources: 82,
     role: 'admin',

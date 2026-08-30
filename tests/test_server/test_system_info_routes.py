@@ -114,6 +114,7 @@ async def test_non_admin_gets_versions_only(non_admin):
     assert body["runtime"] is None
     assert body["storage"] is None
     assert body["overlay"] is None
+    assert body["limits"] is None
 
 
 async def test_admin_gets_full_payload(admin, monkeypatch):
@@ -137,6 +138,34 @@ async def test_admin_gets_full_payload(admin, monkeypatch):
         "mount_server",
         "shim_native_routes",
     }
+    assert body["limits"] == {"vector_index_capacity": 100_000}
+
+
+async def test_admin_limits_follow_the_configured_capacity(admin, monkeypatch):
+    monkeypatch.setenv("TWIN_VECTOR_INDEX_CAPACITY", "250000")
+    monkeypatch.setattr(
+        system_info_routes,
+        "_memgraph_info",
+        _fake_memgraph(reachable=False),
+    )
+    body = (await _get(_app())).json()
+    assert body["limits"] == {"vector_index_capacity": 250_000}
+
+
+async def test_admin_limits_block_is_hidden_not_500_on_malformed_env(
+    admin, monkeypatch
+):
+    """register() refuses to boot on this value; the About route, reached in
+    a process that was configured after boot, must not turn it into a 500."""
+    monkeypatch.setenv("TWIN_VECTOR_INDEX_CAPACITY", "abc")
+    monkeypatch.setattr(
+        system_info_routes,
+        "_memgraph_info",
+        _fake_memgraph(reachable=False),
+    )
+    resp = await _get(_app())
+    assert resp.status_code == 200
+    assert resp.json()["limits"] is None
 
 
 def _fake_memgraph(**kwargs):

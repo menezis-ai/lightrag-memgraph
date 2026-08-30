@@ -22,7 +22,8 @@ reduction.
 
 ## Status
 
-Active development version on `main`: `1.1.0`.
+Active development version on `main`: `1.2.0` (1.1.0 was delivered to the
+BNP platform team on 2026-07-21 through the `export-1.1.0` snapshot).
 
 Deployed BNP production release: `1.0.0`, frozen on `stable/1.0.x` and
 delivered through the `export-1.0.0` snapshot.
@@ -180,7 +181,7 @@ variables:
 | `MEMGRAPH_URI` | `bolt://localhost:7687` | Bolt endpoint. Use `bolt+s://` or `neo4j+s://` for TLS. |
 | `MEMGRAPH_USERNAME` | empty | Memgraph username. |
 | `MEMGRAPH_PASSWORD` | empty | Memgraph password. |
-| `MEMGRAPH_DATABASE` | `memgraph` | Database name. Enterprise can route by database; Community falls back gracefully. |
+| `MEMGRAPH_DATABASE` | `memgraph` | Database name. Enterprise selects it (`USE DATABASE` on `bolt://`, native on `neo4j://`); a non-default name a Community server refuses **aborts boot** — leave it unset on single-database deployments. |
 | `MEMGRAPH_WORKSPACE` | `base` fallback | Physical LightRAG/Memgraph workspace label prefix. |
 | `MEMGRAPH_POOL_SIZE` | `50` | Write pool size. |
 | `MEMGRAPH_READ_POOL_SIZE` | `20` | Dedicated read pool size. |
@@ -200,6 +201,8 @@ Common Twin runtime variables:
 | `TWIN_FOLDERS_RUNTIME_FILE` | Optional JSON file for runtime-created folders. |
 | `TWIN_API_BASE_URL` | WebUI base for Twin overlay routes, usually `/twin/api`. |
 | `TWIN_LIGHTRAG_BASE_URL` | WebUI base for native/shimmed LightRAG routes. |
+| `TWIN_CATALOG_URL` | Central KB catalogue origin. Set with `TWIN_CATALOG_INSTANCE_CREDENTIAL` to expose the folder-aware `/twin/api/linked-sources` proxy and the Sources RAG grid. |
+| `TWIN_CATALOG_INSTANCE_CREDENTIAL` | Secret `links:write` instance credential issued by the central catalogue. Server-side only; never injected into the WebUI. |
 | `TWIN_MIP_LABEL_MAP` | Tenant MIP GUID-to-class map. |
 | `TWIN_MIP_MAX_CLASSIFICATION` | Maximum accepted class, default `C2`. |
 
@@ -407,6 +410,61 @@ python tests/smoke/run_smoke.py tests/smoke/runtime-smoke.json
 The smoke runner is stdlib-only and writes `/tmp/twin-smoke-report.json` plus
 `/tmp/twin-smoke-http.log` without logging bearer tokens.
 
+## KB portability
+
+The canonical `twin-kb-bundle` v1 workflow promotes one complete workspace to
+an empty, non-exposed target: `export -> inspect -> dry-run -> approve -> apply
+-> validate`. Run exports in a maintenance window with the source API stopped;
+the exporter compares every included store before and after its paginated read
+and marks any observed mutation (or a forced busy-pipeline export) as
+`unverified`. Apply replays the target dry-run hash before writing and resumes
+store by store through a bundle/report/manifest-bound checkpoint. Validation
+also verifies the full vector-index contract and optional procedure-file
+digests, which are outside the semantic JSONL `state_hash`.
+
+```bash
+# MEMGRAPH_URI is deliberately mandatory for this operator command.
+MEMGRAPH_URI=bolt://localhost:7687 \
+python -m twindb_lightrag_memgraph.portability export \
+  --workspace base --out ./portability --archive
+
+python -m twindb_lightrag_memgraph.portability inspect \
+  ./portability/kb-base-YYYYMMDDTHHMMSSZ-STATEHASH.tar.gz
+
+MEMGRAPH_URI=bolt://target:7687 \
+python -m twindb_lightrag_memgraph.portability dry-run \
+  ./portability/kb-base-YYYYMMDDTHHMMSSZ-STATEHASH.tar.gz \
+  --workspace target --map-folder default=default \
+  --report ./portability/import-report.json
+
+MEMGRAPH_URI=bolt://target:7687 \
+python -m twindb_lightrag_memgraph.portability apply \
+  ./portability/kb-base-YYYYMMDDTHHMMSSZ-STATEHASH.tar.gz \
+  --report ./portability/import-report.json
+
+MEMGRAPH_URI=bolt://target:7687 \
+python -m twindb_lightrag_memgraph.portability validate \
+  --bundle ./portability/kb-base-YYYYMMDDTHHMMSSZ-STATEHASH.tar.gz \
+  --workspace target --map-folder default=default \
+  --out ./portability/validation.json
+```
+
+Activity and procedure-review records are excluded unless
+`--include-activity` / `--include-procedures` is passed (or the corresponding
+default-off environment flag is enabled). API keys, notifications and the LLM
+response cache are never enumerated. Exit codes are `0` (valid/success), `2`
+(configuration, compatibility, stale-report or validation refusal), and `3`
+(bundle integrity failure). The operator sequence, mapping rules, recovery and
+cutover checklist are in `docs/operations/kb-portability-runbook.md`.
+
+Administrators can run the same guarded workflow from **Settings →
+Portability**. The server persists one active job per workspace under
+`TWIN_PORTABILITY_DIR/jobs`, requires the exact displayed dry-run hash before
+apply, and records successful exports/imports in Activity. Browser uploads are
+capped at 100 MiB compressed; use the CLI above for larger bundles and for
+checkpoint recovery. The admin routes live under
+`/twin/api/admin/portability/*` and require administrator scope.
+
 ## Classification
 
 The optional MIP classification hook reads Microsoft sensitivity labels before
@@ -484,9 +542,11 @@ src/twindb_lightrag_memgraph/
   _constants.py               Env names, validators, folder/workspace context.
   _buffered_graph.py          Buffered graph write proxy.
   _retry.py                   Write/write transaction-conflict retry.
+  _upload_paths.py            Public safe relative-upload path identity helpers.
   kv_impl.py                  MemgraphKVStorage.
   vector_impl.py              MemgraphVectorDBStorage.
   docstatus_impl.py           MemgraphDocStatusStorage + folder membership.
+  portability/                Canonical KB export/dry-run/apply/validate workflow.
   classification.py           MIP sensitivity-label extractor.
   _classification_hook.py     Pre-ingestion classification gate.
   server/                     FastAPI overlay, auth, folders, graph, query, shims.
@@ -497,10 +557,18 @@ tests/                        Python unit/integration suites.
 tests/smoke/                  Stdlib deployed-runtime smoke runner.
 docs/operations/              Install/runbook material.
 docs/test-doctrine-*.md       Compatibility and graph test doctrine.
+services/twin_catalog/        Separate distribution: central KB catalogue + RAG 1.5
+                              ingestion snapshot API (own pyproject, Dockerfile, tests).
 ```
 
 ## Known Limitations
 
+- **KB portability v1 is maintenance-window, workspace-wide and empty-target
+  only.** The exporter detects count/timestamp changes with pre/post
+  fingerprints but cannot fence another process. Partial-folder export, merge
+  into a non-empty target, re-embedding and hot cutover are outside v1.
+- **Vector index capacity is fixed at creation.** `TWIN_VECTOR_INDEX_CAPACITY` (default 100 000) is read when an index is created; changing it later does not resize an existing index — drop and recreate the index (`DROP VECTOR INDEX`, then let `initialize()`/`query()` recreate it) to apply a new capacity.
+- **`MEMGRAPH_DATABASE` is fail-closed.** A non-default database the server refuses (Memgraph Community, no Enterprise licence) aborts boot rather than silently running on the default database; unset the variable on single-database deployments.
 - The LightRAG graph backend owns a separate Bolt driver, so production uses three
   pools by design: write, read, graph.
 - DocStatus upserts remain per-entry because they accept both LightRAG

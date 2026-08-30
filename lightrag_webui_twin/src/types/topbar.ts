@@ -29,6 +29,7 @@ export type NotificationKind =
   | 'source-uploaded'
   | 'retrieval'
   | 'procedure-review'
+  | 'kb-imported'
   | 'info';
 
 export interface Notification {

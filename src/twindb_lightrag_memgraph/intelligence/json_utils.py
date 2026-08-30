@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any
 
@@ -44,6 +45,8 @@ def clamp_float(
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
         return default
     return max(low, min(high, number))
 

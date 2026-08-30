@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { allowRequestAbort, expect, test } from './fixtures';
 import { boot, openTab, seedDocuments, setMswQuota } from './helpers';
 
 test.describe('Operator user flows', () => {
@@ -12,7 +12,7 @@ test.describe('Operator user flows', () => {
     await seedDocuments(page, [
       {
         doc_id: 'quota_failed_doc',
-        file_path: '/cib/e2e/quota-failed.md',
+        file_path: '/demo/e2e/quota-failed.md',
         content_summary: 'Failed source used to verify retry gating',
         status: 'FAILED',
         chunks_count: 0,
@@ -56,12 +56,36 @@ test.describe('Operator user flows', () => {
   });
 
   test('@documents @folders document copy is visible after switching folders', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const folderSwitchReason =
+      'Switching folders cancels the superseded default-folder query.';
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/documents\/folder_flow_doc\/folders$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(
+        /\/documents\?folder=default&q=folder-flow$/,
+        folderSwitchReason,
+        2,
+      ),
+      allowRequestAbort(/\/documents\?folder=default$/, folderSwitchReason, 2),
+      allowRequestAbort(/\/twin\/api\/notifications$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags\/categories$/, folderSwitchReason),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(/\/pipeline_status$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, folderSwitchReason),
+    );
     await seedDocuments(page, [
       {
         doc_id: 'folder_flow_doc',
-        file_path: '/cib/e2e/folder-flow.md',
+        file_path: '/demo/e2e/folder-flow.md',
         content_summary: 'Document copied between Twin folders',
         status: 'PROCESSED',
         chunks_count: 1,
@@ -75,7 +99,7 @@ test.describe('Operator user flows', () => {
     await page.getByTestId('docs-row-folders-folder_flow_doc').click();
 
     const dialog = page.getByRole('dialog', {
-      name: 'Manage folders for /cib/e2e/folder-flow.md',
+      name: 'Manage folders for /demo/e2e/folder-flow.md',
     });
     await expect(dialog).toBeVisible();
     await dialog.getByLabel('Target folder').selectOption('sandbox');
@@ -92,15 +116,30 @@ test.describe('Operator user flows', () => {
 
     await page.getByTestId('docs-row-folders-folder_flow_doc').click();
     const sandboxDialog = page.getByRole('dialog', {
-      name: 'Manage folders for /cib/e2e/folder-flow.md',
+      name: 'Manage folders for /demo/e2e/folder-flow.md',
     });
     await expect(sandboxDialog).toContainText('Default folder (default)');
     await expect(sandboxDialog).toContainText('Sandbox (sandbox)');
   });
 
   test('@settings @folders runtime folder creation reaches switcher and activity', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const folderCreationNavigationReason =
+      'Creating and selecting a folder replaces the previous folder-scoped shell queries.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/notifications$/, folderCreationNavigationReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, folderCreationNavigationReason),
+      allowRequestAbort(
+        /\/twin\/api\/tags\/categories$/,
+        folderCreationNavigationReason,
+      ),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        folderCreationNavigationReason,
+      ),
+    );
     await openTab(page, 'Settings');
     await page.getByTestId('settings-rail-folder').click();
     await page.getByTestId('settings-add-folder-btn').click();

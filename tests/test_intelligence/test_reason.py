@@ -22,7 +22,7 @@ class TestReasoningEngine:
             "twindb_lightrag_memgraph.intelligence.react.reason.AsyncOpenAI",
             return_value=client,
         ):
-            result = await engine.analyze("Pourquoi ORA-04030 sur srv-cib-01 ?", [])
+            result = await engine.analyze("Pourquoi ORA-04030 sur srv-demo-01 ?", [])
         assert "ORA-04030" in result.search_query
         assert result.domain_hint == "oracle"
         assert result.coreference_resolved is False

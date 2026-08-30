@@ -734,7 +734,6 @@ class TestSignatureCompat:
 
     async def test_new_signature_kwargs(self):
         """New lightrag calls merge_nodes_and_edges(chunk_results=..., knowledge_graph_inst=...)."""
-        from unittest.mock import call
 
         from lightrag import operate
         from lightrag.kg.memgraph_impl import MemgraphStorage
@@ -784,7 +783,6 @@ class TestSignatureCompat:
 
     async def test_old_signature_positional(self):
         """Old lightrag calls merge_nodes_and_edges(entity_map, edge_map, graph, config)."""
-        from lightrag import operate
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         from twindb_lightrag_memgraph._buffered_graph import _BufferedGraphProxy

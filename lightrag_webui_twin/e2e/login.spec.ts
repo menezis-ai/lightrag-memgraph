@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import { setMswScenario } from './helpers';
 
 /**
@@ -48,7 +48,7 @@ test.describe('Login screen', () => {
     await expect(page.getByRole('heading', { name: 'Twin KMS' })).toBeVisible();
     await expect(page.getByTestId('login-submit')).toBeDisabled();
 
-    await page.getByTestId('login-username').fill('claire.benoit');
+    await page.getByTestId('login-username').fill('demo.steward');
     await expect(page.getByTestId('login-submit')).toBeDisabled();
     await page.getByTestId('login-password').fill('s3cret');
     await expect(page.getByTestId('login-submit')).toBeEnabled();
@@ -61,7 +61,7 @@ test.describe('Login screen', () => {
     page,
   }) => {
     await bootToLogin(page);
-    await page.getByTestId('login-username').fill('claire.benoit');
+    await page.getByTestId('login-username').fill('demo.steward');
     await page.getByTestId('login-password').fill('invalid-password');
     await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('login-error')).toBeVisible();
@@ -77,7 +77,7 @@ test.describe('Login screen', () => {
     page,
   }) => {
     await bootToLogin(page);
-    await page.getByTestId('login-username').fill('claire.benoit');
+    await page.getByTestId('login-username').fill('demo.steward');
     await page.getByTestId('login-password').fill('s3cret');
     await page.getByTestId('login-submit').click();
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
@@ -86,7 +86,7 @@ test.describe('Login screen', () => {
     await expect(page.getByRole('heading', { name: 'Document management' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await expect(page.getByTestId('settings-profile-name')).toContainText('claire.benoit');
+    await expect(page.getByTestId('settings-profile-name')).toContainText('demo.steward');
 
     await page.getByTestId('settings-signout').click();
     await expect(page.getByTestId('login-screen')).toBeVisible();

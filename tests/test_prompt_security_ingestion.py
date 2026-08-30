@@ -22,7 +22,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
 
-import pytest
 
 from twindb_lightrag_memgraph import _pool
 from twindb_lightrag_memgraph._prompt_security import (
@@ -222,7 +221,7 @@ class TestServerSideUploadActivity:
 
         monkeypatch.setattr(webui_router, "get_store", lambda *a, **k: _Store())
 
-        with upload_actor_context("claire.benoit"):
+        with upload_actor_context("demo.steward"):
             await registry._emit_server_upload_activity(
                 ["/inputs/rapport-C4.pdf"], track_id="upload-1"
             )
@@ -230,8 +229,9 @@ class TestServerSideUploadActivity:
         assert len(recorded) == 1
         event = recorded[0]
         assert event["kind"] == "source-uploaded"
-        assert event["actor"]["user"] == "claire.benoit"
+        assert event["actor"]["user"] == "demo.steward"
         assert event["target"]["label"] == "rapport-C4.pdf"
+        assert event["target"]["id"] == "upload-1"
         assert event["meta"]["emitted_by"] == "server"
         assert event["meta"]["track_id"] == "upload-1"
 
@@ -251,6 +251,7 @@ class TestServerSideUploadActivity:
         await registry._emit_server_upload_activity(["a.txt"], track_id=None)
 
         assert recorded[0]["actor"]["user"] == "unknown"
+        assert recorded[0]["target"]["id"] == "a.txt"
 
     async def test_store_failure_never_raises_into_ingestion(self, monkeypatch):
         from twindb_lightrag_memgraph.patches import registry

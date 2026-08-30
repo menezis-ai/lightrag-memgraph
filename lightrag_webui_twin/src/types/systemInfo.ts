@@ -50,4 +50,10 @@ export interface AboutResponse {
   /** Storage slot → bound backend class name. */
   storage: Record<string, string> | null;
   overlay: Record<string, boolean> | null;
+  /**
+   * Configured storage limits (admin-only, optional on older backends).
+   * `vector_index_capacity` is the capacity a new vector index would get;
+   * an existing index keeps the one it was created with.
+   */
+  limits?: Record<string, number> | null;
 }

@@ -9,7 +9,7 @@ describe('FolderSwitcher', () => {
     const onPick = vi.fn();
     render(
       <FolderSwitcher
-        active="cib"
+        active="demo"
         folders={FOLDER_FIXTURES}
         onPick={onPick}
       />,
@@ -23,13 +23,13 @@ describe('FolderSwitcher', () => {
     const onPick = vi.fn();
     render(
       <FolderSwitcher
-        active="cib"
+        active="demo"
         folders={FOLDER_FIXTURES}
         onPick={onPick}
       />,
     );
     await userEvent.click(screen.getByTestId('topbar-folder-switcher'));
-    const nonActive = FOLDER_FIXTURES.find((folder) => folder.id !== 'cib');
+    const nonActive = FOLDER_FIXTURES.find((folder) => folder.id !== 'demo');
     if (!nonActive) throw new Error('expected fixture diversity');
     await userEvent.click(
       screen.getByTestId(`topbar-folder-pick-${nonActive.id}`),

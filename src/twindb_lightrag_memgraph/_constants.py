@@ -51,7 +51,14 @@ TWIN_MAX_FOLDERS_ENV = "TWIN_MAX_FOLDERS"
 DEFAULT_WORKSPACE = "base"
 DEFAULT_MEMGRAPH_URI = "bolt://localhost:7687"
 CONNECTION_POOL_SIZE = 50
-VECTOR_INDEX_CAPACITY = 100_000
+# Vector index capacity (Memgraph ``CREATE VECTOR INDEX ... "capacity"``).
+# Fixed at index creation time: changing the env var does not resize an
+# existing index (drop + recreate, see README). ``VECTOR_INDEX_CAPACITY`` is
+# the historical default kept for import compatibility; the runtime value is
+# ``resolve_vector_index_capacity()``.
+TWIN_VECTOR_INDEX_CAPACITY_ENV = "TWIN_VECTOR_INDEX_CAPACITY"
+DEFAULT_VECTOR_INDEX_CAPACITY = 100_000
+VECTOR_INDEX_CAPACITY = DEFAULT_VECTOR_INDEX_CAPACITY
 DEFAULT_PAGE_SIZE = 50
 DEFAULT_TWIN_MAX_FOLDERS = 5
 
@@ -101,7 +108,7 @@ TWIN_PURGE_LLM_CACHE_ON_FAILED_ENV = "TWIN_PURGE_LLM_CACHE_ON_FAILED"
 # _capabilities.py.
 TWIN_MAGE_ENV = "TWIN_MAGE"
 
-# MarkItDown pre-conversion tier (MARKITDOWN-INGESTION-PLAN.md, PR 1).
+# MarkItDown pre-conversion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
 # "auto" (default) enables conversion iff the optional markitdown dependency
 # ([convert] extra) is importable; "on" forces it (warns and degrades to the
 # native path if the import fails); "off" disables it entirely — the native
@@ -114,7 +121,7 @@ TWIN_PRECONVERTED_PARSE_ENV = "TWIN_PRECONVERTED_PARSE"
 TWIN_CONVERT_MAX_BYTES_ENV = "TWIN_CONVERT_MAX_BYTES"
 TWIN_CONVERT_TIMEOUT_ENV = "TWIN_CONVERT_TIMEOUT"
 
-# Vision image-ingestion tier (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+# Vision image-ingestion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
 # Knowledge-Bot pattern: RapidOCR pre-filter -> vision LLM (OpenAI-compatible,
 # JSON {image_classification, content}) -> drop noise classes -> markdown.
 TWIN_VISION_ENV = "TWIN_VISION"
@@ -142,7 +149,7 @@ TWIN_PDF_VISION_RENDER_SCALE_ENV = "TWIN_PDF_VISION_RENDER_SCALE"
 TWIN_PDF_VISION_TIMEOUT_ENV = "TWIN_PDF_VISION_TIMEOUT"
 TWIN_PDF_VISION_CONCURRENCY_ENV = "TWIN_PDF_VISION_CONCURRENCY"
 
-# Procedure-PDF ingestion profile (PROCEDURE-PROFILE-PLAN.md, PR 1).
+# Procedure-PDF ingestion profile (docs/adr/007-procedure-pdf-profile.md).
 # BNP "IT Group" level-2 procedures get a dedicated path: deterministic
 # template detection (or X-Twin-Doc-Type forcing), per-schematic dual vision
 # pass, and a human-approval bundle parked BEFORE enqueue.
@@ -196,6 +203,10 @@ _active_doc_type: ContextVar[str | None] = ContextVar(
 )
 _active_upload_actor: ContextVar[str | None] = ContextVar(
     "twin_active_upload_actor",
+    default=None,
+)
+_active_upload_relative_path: ContextVar[str | None] = ContextVar(
+    "twin_active_upload_relative_path",
     default=None,
 )
 
@@ -278,6 +289,97 @@ def validate_identifier(value: str, name: str = "identifier") -> str:
         raise ValueError(
             f"Invalid {name}: must be non-empty and contain only "
             f"alphanumeric characters or underscores, got {value!r}"
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
+# KB portability (KB-PORTABILITY-PLAN.md §13). None of these is required; the
+# CLI is the only consumer in PR-P1. Malformed numeric values fail at boot
+# (register() calls validate_portability_env()) — same posture as the vector
+# capacity above.
+# ---------------------------------------------------------------------------
+TWIN_PORTABILITY_DIR_ENV = "TWIN_PORTABILITY_DIR"
+TWIN_PORTABILITY_MAX_BYTES_ENV = "TWIN_PORTABILITY_MAX_BYTES"
+TWIN_PORTABILITY_BATCH_SIZE_ENV = "TWIN_PORTABILITY_BATCH_SIZE"
+TWIN_PORTABILITY_INCLUDE_ACTIVITY_ENV = "TWIN_PORTABILITY_INCLUDE_ACTIVITY"
+TWIN_PORTABILITY_INCLUDE_PROCEDURES_ENV = "TWIN_PORTABILITY_INCLUDE_PROCEDURES"
+TWIN_PORTABILITY_ALLOW_UNVERIFIED_ENV = "TWIN_PORTABILITY_ALLOW_UNVERIFIED"
+DEFAULT_PORTABILITY_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB, decompressed
+DEFAULT_PORTABILITY_BATCH_SIZE = 1000
+_TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return value
+
+
+def resolve_portability_max_bytes() -> int:
+    """``TWIN_PORTABILITY_MAX_BYTES`` — decompressed bundle / upload ceiling."""
+    return _positive_int_env(
+        TWIN_PORTABILITY_MAX_BYTES_ENV, DEFAULT_PORTABILITY_MAX_BYTES
+    )
+
+
+def resolve_portability_batch_size() -> int:
+    """``TWIN_PORTABILITY_BATCH_SIZE`` — keyset page size of export/import."""
+    return _positive_int_env(
+        TWIN_PORTABILITY_BATCH_SIZE_ENV, DEFAULT_PORTABILITY_BATCH_SIZE
+    )
+
+
+def portability_flag_enabled(name: str) -> bool:
+    """A default-OFF portability flag (Q6: activity/procedures opt-in)."""
+    return os.environ.get(name, "").strip().lower() in _TRUE_FLAG_VALUES
+
+
+def resolve_portability_dir(working_dir: str | None = None) -> str:
+    """``TWIN_PORTABILITY_DIR`` — bundles, uploads, jobs (``<WORKING_DIR>/portability``)."""
+    raw = os.environ.get(TWIN_PORTABILITY_DIR_ENV, "").strip()
+    if raw:
+        return raw
+    base = working_dir or os.environ.get("WORKING_DIR", "").strip() or os.getcwd()
+    return os.path.join(base, "portability")
+
+
+def validate_portability_env() -> None:
+    """Fail at boot on a malformed numeric portability knob (never defaulted)."""
+    resolve_portability_max_bytes()
+    resolve_portability_batch_size()
+
+
+def resolve_vector_index_capacity() -> int:
+    """Resolve the vector-index capacity from ``TWIN_VECTOR_INDEX_CAPACITY``.
+
+    Unset or blank → :data:`DEFAULT_VECTOR_INDEX_CAPACITY` (100 000). Any
+    other value must be a positive integer — a malformed value is a
+    configuration error, raised (not defaulted) so it fails at boot rather
+    than silently creating an index of the wrong size.
+
+    Raises:
+        ValueError: If the variable is set to something other than a
+        positive integer.
+    """
+    raw = os.environ.get(TWIN_VECTOR_INDEX_CAPACITY_ENV, "").strip()
+    if not raw:
+        return DEFAULT_VECTOR_INDEX_CAPACITY
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"{TWIN_VECTOR_INDEX_CAPACITY_ENV} must be a positive integer, "
+            f"got {raw!r}"
         )
     return value
 
@@ -526,6 +628,20 @@ def upload_actor_context(actor: str | None) -> Iterator[None]:
 def get_active_upload_actor() -> str | None:
     """Request-resolved actor for the current ingestion context, if any."""
     return _active_upload_actor.get()
+
+
+@contextmanager
+def upload_relative_path_context(relative_path: str | None) -> Iterator[None]:
+    """Bind a server-validated browser-folder path during ingestion."""
+    token = _active_upload_relative_path.set(relative_path)
+    try:
+        yield
+    finally:
+        _active_upload_relative_path.reset(token)
+
+
+def get_active_upload_relative_path() -> str | None:
+    return _active_upload_relative_path.get()
 
 
 @contextmanager

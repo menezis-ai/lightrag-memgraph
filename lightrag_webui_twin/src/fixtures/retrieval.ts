@@ -12,7 +12,7 @@ import type {
 } from '../types/retrieval';
 
 export const ANSWER_TOKENS_FIXTURE: readonly string[] = [
-  'To restart Oracle on RHEL 9 in a CIB production setup, follow the documented runbook ',
+  'To restart Oracle on RHEL 9 in a demo production setup, follow the documented runbook ',
   '{cite:1} ',
   'which mandates first stopping listeners and pending RMAN jobs before issuing a graceful ',
   '`shutdown immediate` ',
@@ -33,8 +33,8 @@ export const ANSWER_TOKENS_FIXTURE: readonly string[] = [
 export const RETRIEVAL_SOURCES_FIXTURE: readonly RetrievalSource[] = [
   { n: 1, type: 'file', name: 'oracle-restart-procedure.pdf', meta: 'p.4', score: 0.94 },
   { n: 2, type: 'file', name: 'oracle-restart-procedure.pdf', meta: 'p.7', score: 0.89 },
-  { n: 3, type: 'confluence', name: '/cib/runbooks/oracle-pga-tuning', meta: null, score: 0.82 },
-  { n: 4, type: 'confluence', name: '/cib/runbooks/rman-restore-cookbook', meta: null, score: 0.78 },
+  { n: 3, type: 'confluence', name: '/demo/runbooks/oracle-pga-tuning', meta: null, score: 0.82 },
+  { n: 4, type: 'confluence', name: '/demo/runbooks/rman-restore-cookbook', meta: null, score: 0.78 },
   { n: 5, type: 'file', name: 'rhel9-kernel-tuning.pdf', meta: 'p.12', score: 0.71 },
 ];
 

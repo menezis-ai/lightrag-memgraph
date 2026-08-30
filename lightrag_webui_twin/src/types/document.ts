@@ -34,6 +34,22 @@ export type DocumentDisplayStatus = DocumentStatus | 'DELETING';
 
 export type ReviewState = 'pending-review' | 'approved' | 'rejected' | 'modified';
 
+/** Web provenance attached to a document; distinct from catalog RAG sources. */
+export interface SourceLink {
+  id: string;
+  doc_id: string;
+  url: string;
+  label?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  version: number;
+  deleted: boolean;
+  deleted_by?: string | null;
+  deleted_at?: string | null;
+}
+
 /**
  * Payload describing an upstream-change event for a live source (Confluence /
  * SharePoint) that requires re-validation. Present when `review.state === 'modified'`.
@@ -118,6 +134,8 @@ export interface Document {
   folder: string;
   visibility: FolderVisibility;
   review?: DocumentReview;
+  /** Citation/provenance URLs inherited by every chunk of this document. */
+  source_links?: readonly SourceLink[];
   /**
    * Post-extraction text used by LightRAG for retrieval (NOT the original
    * binary). Populated lazily and exposed via the Read source modal so a

@@ -2,7 +2,6 @@
 
 import functools
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from twindb_lightrag_memgraph.server.tracing import (

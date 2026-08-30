@@ -285,6 +285,40 @@ def list_bundles(state: str | None = None) -> list[dict]:
     return bundles
 
 
+def restore_bundle(bundle: dict) -> bool:
+    """Restore one portability record without regenerating its bundle id.
+
+    The normal :func:`create_bundle` API deliberately allocates a fresh UUID,
+    which would break bundle round-trips and replay idempotence.  This dedicated
+    import seam keeps the store's inter-process lock, corruption quarantine and
+    atomic replace guarantees.  A replay of the same record is a no-op; a
+    different record under an existing id is refused because v1 imports only
+    into an empty target.
+    """
+    if not isinstance(bundle, dict):
+        raise ValueError("procedure bundle must be an object")
+    bundle_id = str(bundle.get("id") or "")
+    if not bundle_id:
+        raise ValueError("procedure bundle requires a non-empty id")
+    state = bundle.get("state")
+    if state not in BUNDLE_STATES:
+        raise ValueError(f"invalid bundle state: {state!r}")
+
+    path = store_path()
+    with _store_lock(path):
+        bundles = _load(path)
+        current = bundles.get(bundle_id)
+        if current is not None:
+            if current != bundle:
+                raise ValueError(
+                    f"procedure bundle {bundle_id!r} already exists with different data"
+                )
+            return False
+        bundles[bundle_id] = dict(bundle)
+        _write(path, bundles)
+    return True
+
+
 def _bundle_paths(bundle: dict) -> set[str]:
     paths = {str(bundle.get("original_path") or "")}
     requests = bundle.get("duplicate_requests")

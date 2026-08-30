@@ -1,4 +1,9 @@
-import { expect, test } from '@playwright/test';
+import {
+  allowHttpConsoleError,
+  allowRequestAbort,
+  expect,
+  test,
+} from './fixtures';
 import {
   addSourceFile,
   boot,
@@ -59,7 +64,24 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d4')).toBeHidden();
   });
 
-  test('@smoke @navigation topbar, tags, retrieval, graph and activity cross-navigation work', async ({ page }) => {
+  test('@smoke @navigation topbar, tags, retrieval, graph and activity cross-navigation work', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    const crossNavigationReason =
+      'The journey deliberately switches folder and tabs before superseded view queries finish.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/documents\?folder=default$/, crossNavigationReason),
+      allowRequestAbort(/\/twin\/api\/notifications$/, crossNavigationReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, crossNavigationReason),
+      allowRequestAbort(/\/twin\/api\/tags\/categories$/, crossNavigationReason),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        crossNavigationReason,
+      ),
+      allowRequestAbort(/\/pipeline_status$/, crossNavigationReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, crossNavigationReason, 2),
+    );
     await page.getByRole('button', { name: /Notifications/ }).click();
     await expect(page.getByText('Mark all read')).toBeVisible();
     await page.getByText('Mark all read').click();
@@ -191,8 +213,27 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @folder folder switch refreshes documents and clears local filters', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const folderSwitchReason =
+      'Switching folders replaces the default-folder view while its bootstrap queries are still active.';
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/documents\?folder=default&q=oracle$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(/\/documents\?folder=default$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/notifications$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags\/categories$/, folderSwitchReason),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(/\/pipeline_status$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, folderSwitchReason),
+    );
     await seedDocuments(page, [
       {
         doc_id: 'sandbox_doc_1',
@@ -289,7 +330,16 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByRole('status')).toContainText('Failed-source reprocess requested');
   });
 
-  test('@settings @auth settings profile, folder and API explorer remain usable', async ({ page }) => {
+  test('@settings @auth settings profile, folder and API explorer remain usable', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/openapi\.json$/,
+        'Authorizing the API explorer replaces its anonymous schema query.',
+      ),
+    );
     await openTab(page, 'Settings');
     await expect(page.getByTestId('settings-profile')).toBeVisible();
     await expect(page.getByTestId('settings-profile-name')).toBeVisible();
@@ -299,7 +349,7 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('settings-active-folder')).toContainText('default');
     // Mock-kill F1 — Visibility / Region / Retention cards were
     // dropped because their values were fixture-only inventions
-    // (eu-west-3 dc-paris, hardcoded TTLs). Identity card is now the
+    // (primary-demo-region, hardcoded TTLs). Identity card is now the
     // single source of truth for the active-folder view.
     await expect(page.getByTestId('settings-folder-display-name')).toBeVisible();
 
@@ -443,8 +493,15 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@tags @navigation filters, related tags and document drill-down keep URL state wired', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures$/,
+        'Opening Tags immediately unmounts the Documents procedure query.',
+      ),
+    );
     await openTab(page, 'Tags');
     await page.getByTestId('rail-oracle').click();
     await expect(page.getByTestId('tag-card-oracle')).toBeVisible();
@@ -460,7 +517,17 @@ test.describe('Twin WebUI operator journeys', () => {
     await expect(page.getByTestId('docs-row-d1')).toBeVisible();
   });
 
-  test('@doctrine @tags bulk retag backend failure rolls back optimistic tags', async ({ page }) => {
+  test('@doctrine @tags bulk retag backend failure rolls back optimistic tags', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    allowBrowserIssues(
+      allowHttpConsoleError(
+        /\/twin\/api\/documents\/_bulk-retag$/,
+        500,
+        'This journey injects and asserts the bulk-retag 500 rollback.',
+      ),
+    );
     await setMswScenario(page, { bulkRetagStatus: 500 });
     await page.getByLabel('Select oracle-restart-procedure.pdf').check();
     await page.getByLabel('Bulk actions').getByRole('button', { name: /Retag 1 sources/ }).click();
@@ -483,8 +550,16 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @a11y focus is restored after approving a pending doc', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const approvalRefreshReason =
+      'Approving the pending document refreshes the shell while its prior queries are still active.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, approvalRefreshReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, approvalRefreshReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, approvalRefreshReason),
+    );
     await page.getByTestId('pending-doc-approve-d6').click();
     await expect(page.getByRole('status')).toContainText('Document approved');
     await expect(page.getByTestId('pending-doc-d6')).toBeHidden();
@@ -503,8 +578,16 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @upload @tags upload with initial tags auto-applies them after processed track status', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const persistenceReloadReason =
+      'The explicit persistence reload cancels shell queries that are still in flight.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, persistenceReloadReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, persistenceReloadReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, persistenceReloadReason),
+    );
     await setMswScenario(page, { trackStatusMode: 'processed' });
     await addSourceFile(
       page,
@@ -624,8 +707,21 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @upload partial multi-file failure reports accurate counts', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const partialUploadRefreshReason =
+      'The accepted half of the upload batch refreshes the shell after the injected peer failure.';
+    allowBrowserIssues(
+      allowHttpConsoleError(
+        /\/documents\/upload$/,
+        500,
+        'This journey injects one upload 500 and asserts the partial-failure count.',
+      ),
+      allowRequestAbort(/\/twin\/api\/quota$/, partialUploadRefreshReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, partialUploadRefreshReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, partialUploadRefreshReason),
+    );
     await setMswScenario(page, { uploadFailureNames: ['partial-fail.md'] });
     await page.getByRole('button', { name: 'Add source' }).click();
     const chooserPromise = page.waitForEvent('filechooser');
@@ -656,7 +752,17 @@ test.describe('Twin WebUI operator journeys', () => {
     ).toHaveCount(0);
   });
 
-  test('@doctrine @documents single delete requires confirm and removes the document', async ({ page }) => {
+  test('@doctrine @documents single delete requires confirm and removes the document', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    const deleteRefreshReason =
+      'Confirmed deletion closes the detail view and performs two bounded shell refresh cycles.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, deleteRefreshReason, 2),
+      allowRequestAbort(/\/twin\/api\/procedures$/, deleteRefreshReason, 2),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, deleteRefreshReason, 2),
+    );
     await page.getByTestId('docs-row-delete-d4').click();
     await expect(page.getByTestId('doc-detail-panel')).toBeVisible();
     await page.getByTestId('doc-detail-delete').click();
@@ -868,7 +974,7 @@ test.describe('Twin WebUI operator journeys', () => {
       const n = String(index + 1).padStart(3, '0');
       return {
         doc_id: `bulk_${n}`,
-        file_path: `/cib/e2e/bulk-massive-${n}.md`,
+        file_path: `/demo/e2e/bulk-massive-${n}.md`,
         content_summary: 'Bulk 413 fixture',
         tags: ['oracle'],
         folder: 'default',
@@ -921,7 +1027,7 @@ test.describe('Twin WebUI operator journeys', () => {
     page,
   }) => {
     const longPath =
-      '/cib/runbooks/' +
+      '/demo/runbooks/' +
       'oracle-rman-disaster-recovery-cross-region-data-guard-failover-validation-'.repeat(3) +
       'final-checklist.md';
     await seedDocuments(page, [
@@ -957,8 +1063,16 @@ test.describe('Twin WebUI operator journeys', () => {
   });
 
   test('@doctrine @reviewer pending docs section disappears after the queue is drained', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const queueDrainReason =
+      'Draining the review queue replaces the shell queries after the final mutation.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/twin\/api\/quota$/, queueDrainReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, queueDrainReason),
+      allowRequestAbort(/\/twin\/api\/settings\/vision$/, queueDrainReason),
+    );
     // The pending section now aggregates documents AND parked procedures.
     // This doc-only journey asserts the section vanishes once the DOCUMENT
     // queue is drained, so clear the procedure seed first (its own journey

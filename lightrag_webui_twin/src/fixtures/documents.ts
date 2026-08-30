@@ -22,8 +22,8 @@ const THIRTY_MIN_AGO = '2026-05-29T15:30:00Z';
 const TWENTY_FIVE_MIN_AGO = '2026-05-29T15:35:00Z';
 const THREE_DAYS_AGO = '2026-05-26T16:00:00Z';
 
-const D2_EXTRACTED = `=== Oracle PGA tuning — CIB runbook (Confluence) ===
-Folder : CIB-RUNBOOKS · page id : 84213 · last edit : yann.dubois
+const D2_EXTRACTED = `=== Oracle PGA tuning — demo runbook (knowledge base) ===
+Folder : DEMO-RUNBOOKS · page id : 84213 · last edit : demo.reviewer
 
 [ Re-validation requested — 2 new sections added upstream ]
 
@@ -41,11 +41,11 @@ target cache-hit > 95% before raising the aggregate target.
 
 const D6_EXTRACTED = `=== CFT Vendor API specification (draft v0.7) ===
 Vendor : Acme Payments Iberia SL · contract IBPAY-2026-014
-Submitted by : marc.berthier · 2026-05-20
+Submitted by : demo.operator · 2026-05-20
 
 1. Overview
 -----------
-This document specifies the integration contract between the CIB
+This document specifies the integration contract between the demo
 payment-orchestration layer and the Acme Payments Iberia gateway.
 Coverage : SEPA Credit Transfer (SCT), SEPA Instant (SCT Inst) and
 domestic Spain bizum-rail acknowledgments.
@@ -56,7 +56,7 @@ Internal verification : pending reviewer sign-off (this review).
 
 2. Authentication
 ------------------
-- mTLS, client cert issued by the corporate InfoSec PKI (trust-store: cib-root-2024).
+- mTLS, client cert issued by the shared demo PKI (trust-store: demo-root-2024).
 - Bearer token in Authorization header (rotated every 30 days).
 - Optional HMAC-SHA256 body signature in X-Acme-Signature for high-value
   transfers (> EUR 100K). Rejected without 401 if missing.
@@ -75,23 +75,23 @@ Required idempotency-key header on every POST. Acme retains the key for
 24h. Duplicate requests within window return the original response with
 HTTP 200; outside window return 409 Conflict.
 
-5. Concerns flagged by Marc (submitter)
+5. Concerns flagged by the demo operator (submitter)
 ---------------------------------------
-- Section 4 retention window (24h) is shorter than group guidance (72h).
+- Section 4 retention window (24h) is shorter than general guidance (72h).
   Recommend negotiation with Acme account manager.
-- HMAC threshold at EUR 100K vs CIB policy threshold at EUR 50K —
+- HMAC threshold at EUR 100K vs demo policy threshold at EUR 50K —
   policy mismatch, requires either contract amendment OR an internal
   override gateway rule.
 - No explicit dispute-resolution endpoint; relies on R-message which
-  doesn't cover all CIB business cases.`;
+  doesn't cover all demo business cases.`;
 
 const D7_EXTRACTED = `=== Incident postmortem (DRAFT) — 2026-Q2 ===
 Incident : INC-2026-0418 · severity S1 · duration 2h47m
-Owner : yann.dubois · status : draft, pending reviewer review
+Owner : demo.reviewer · status : draft, pending reviewer review
 
 1. Summary
 ----------
-Oracle PGA exhaustion on CIB-PROD-DB-03 cascaded into connection
+Oracle PGA exhaustion on DEMO-DB-03 cascaded into connection
 pool starvation across the payment-orchestration tier between
 09:12 and 11:59 CET.
 
@@ -110,14 +110,14 @@ pga_aggregate_target left at staging value (4G) after the
 -------------
 - Raise pga_aggregate_target to 12G on prod (change CR-7781).
 - Alert on PGA > 80% for 5 min.
-- Backport tuning note to /cib/runbooks/oracle-pga-tuning.`;
+- Backport tuning note to /demo/runbooks/oracle-pga-tuning.`;
 
 export const DOCUMENT_FIXTURES: readonly Document[] = [
   {
     doc_id: 'd1',
     track_id: 'tk_2026-05-29_001',
     file_path: 'oracle-restart-procedure.pdf',
-    content_summary: 'Step-by-step guide for restarting Oracle DB on RHEL 9 in CIB prod',
+    content_summary: 'Step-by-step guide for restarting Oracle DB on RHEL 9 in a demo environment',
     content_length: 41800,
     status: 'PROCESSED',
     chunks_count: 418,
@@ -126,9 +126,9 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     error_msg: null,
     metadata: {
       mime: 'application/pdf',
-      uploader: 'claire.benoit',
+      uploader: 'demo.steward',
       // Structured MIP classification (post-ingestion via PR #157 hook).
-      // C2 = Confidentiel — most CIB runbooks land here. Visible as a yellow
+      // C2 = Confidentiel — many demo runbooks land here. Visible as a yellow
       // pill in DocumentsTab + PendingDocs cards.
       classification: {
         class_id: 'C2',
@@ -150,7 +150,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
   {
     doc_id: 'd2',
     track_id: null,
-    file_path: '/cib/runbooks/oracle-pga-tuning',
+    file_path: '/demo/runbooks/oracle-pga-tuning',
     content_summary: 'Oracle PGA memory tuning recommendations and worked examples',
     content_length: 5400,
     status: 'PROCESSED',
@@ -158,7 +158,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: ONE_DAY_AGO,
     updated_at: ONE_DAY_AGO,
     error_msg: null,
-    metadata: { source: 'confluence', uploader: 'claire.benoit', classification: 'internal' },
+    metadata: { source: 'confluence', uploader: 'demo.steward', classification: 'internal' },
     type: 'confluence',
     tags: ['rman'],
     folder: 'default',
@@ -167,7 +167,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     review: {
       state: 'modified',
       update: {
-        requested_by: 'yann.dubois',
+        requested_by: 'demo.reviewer',
         edited_rel: '2h ago',
         detected_at: '2026-05-26',
         chunks_indexed: 54,
@@ -191,7 +191,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: THIRTY_MIN_AGO,
     updated_at: THIRTY_MIN_AGO,
     error_msg: 'Unsupported MIME type: application/zip',
-    metadata: { mime: 'application/zip', uploader: 'claire.benoit' },
+    metadata: { mime: 'application/zip', uploader: 'demo.steward' },
     type: 'sharepoint',
     tags: [],
     folder: 'default',
@@ -210,7 +210,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     error_msg: null,
     metadata: {
       mime: 'text/markdown',
-      uploader: 'claire.benoit',
+      uploader: 'demo.steward',
       // C1 = Public — vendor release notes, no confidentiality. Visible as
       // a neutral grey pill (the pill won't grab attention).
       classification: {
@@ -233,7 +233,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
   {
     doc_id: 'd5',
     track_id: null,
-    file_path: '/cib/incidents/2026-04-prod-outage',
+    file_path: '/demo/incidents/2026-04-prod-outage',
     content_summary: 'Postmortem: 2026-04 prod outage, Oracle PGA OOM cascade',
     content_length: 15600,
     status: 'PROCESSED',
@@ -242,7 +242,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     updated_at: THREE_DAYS_AGO,
     error_msg: null,
     // classification > internal → DocDetailPanel Chunks tab truncates (compliance doctrine)
-    metadata: { source: 'confluence', uploader: 'manu.dev', classification: 'restricted' },
+    metadata: { source: 'confluence', uploader: 'demo.contributor', classification: 'restricted' },
     type: 'confluence',
     tags: ['incident', 'oracle', 'production'],
     folder: 'default',
@@ -262,7 +262,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     error_msg: null,
     metadata: {
       mime: 'application/pdf',
-      uploader: 'marc.berthier',
+      uploader: 'demo.operator',
       // C3 = Strictement Confidentiel — vendor draft, restricted. Visible
       // as a red pill. DocDetailPanel chunks will be truncated.
       classification: {
@@ -284,7 +284,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     extracted_text: D6_EXTRACTED,
     review: {
       state: 'pending-review',
-      requested_by: 'marc.berthier',
+      requested_by: 'demo.operator',
       requested_at: '2026-05-20',
       justification:
         'Vendor-provided spec — needs sign-off by a reviewer before retrieval. ' +
@@ -294,7 +294,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
   {
     doc_id: 'd7',
     track_id: 'tk_2026-05-20_010',
-    file_path: '/cib/runbooks/incident-2026-Q2-postmortem-draft',
+    file_path: '/demo/runbooks/incident-2026-Q2-postmortem-draft',
     content_summary:
       'Contains client-impact figures — reviewer review required before exposure to broader retrieval.',
     content_length: 8900,
@@ -303,7 +303,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     created_at: '2026-05-20T10:00:00Z',
     updated_at: '2026-05-20T10:00:00Z',
     error_msg: null,
-    metadata: { source: 'confluence', uploader: 'yann.dubois' },
+    metadata: { source: 'confluence', uploader: 'demo.reviewer' },
     type: 'confluence',
     tags: ['incident', 'production'],
     folder: 'default',
@@ -311,7 +311,7 @@ export const DOCUMENT_FIXTURES: readonly Document[] = [
     extracted_text: D7_EXTRACTED,
     review: {
       state: 'pending-review',
-      requested_by: 'yann.dubois',
+      requested_by: 'demo.reviewer',
       requested_at: '2026-05-20',
       justification:
         'Contains client-impact figures — reviewer review required before exposure to broader retrieval.',

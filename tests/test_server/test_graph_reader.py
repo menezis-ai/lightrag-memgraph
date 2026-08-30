@@ -395,9 +395,9 @@ class TestRelationEndpointCache:
             lookup_relation_endpoints,
         )
 
-        _remember_relation("cib", "kr_test123", "A", "B")
+        _remember_relation("demo", "kr_test123", "A", "B")
         got = lookup_relation_endpoints("kr_test123")
-        assert got == ("cib", "A", "B")
+        assert got == ("demo", "A", "B")
 
     def test_project_relation_rows_remembers_stripped_endpoints(self):
         from twindb_lightrag_memgraph.server.graph_reader import (
@@ -414,7 +414,7 @@ class TestRelationEndpointCache:
             },
         ]
         relations = _project_relation_rows(
-            workspace="cib",
+            workspace="demo",
             rows=rows,
             valid_ids={"kg_A", "kg_B"},
             chunk_to_doc=None,
@@ -426,7 +426,7 @@ class TestRelationEndpointCache:
         rel_id = relations[0]["id"]
         assert relations[0]["source"] == "kg_A"
         assert relations[0]["target"] == "kg_B"
-        assert lookup_relation_endpoints(rel_id) == ("cib", "A", "B")
+        assert lookup_relation_endpoints(rel_id) == ("demo", "A", "B")
 
     def test_build_native_relations_remembers_stripped_endpoints(self):
         from twindb_lightrag_memgraph.server.graph_reader import (
@@ -446,7 +446,7 @@ class TestRelationEndpointCache:
 
         relations = _build_native_relations(
             _Graph(),
-            workspace="cib",
+            workspace="demo",
             valid_ids={"kg_A", "kg_B"},
             chunk_to_doc=None,
             member_docs=None,
@@ -457,7 +457,7 @@ class TestRelationEndpointCache:
         rel_id = relations[0]["id"]
         assert relations[0]["source"] == "kg_A"
         assert relations[0]["target"] == "kg_B"
-        assert lookup_relation_endpoints(rel_id) == ("cib", "A", "B")
+        assert lookup_relation_endpoints(rel_id) == ("demo", "A", "B")
 
 
 # ----------------------------------------------------------------------
@@ -537,7 +537,9 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(gr, "entity_exists", fake_exists)
 
         with pytest.raises(gr.EntityExistsError):
-            await gr.create_graph_entity("cib", {"name": "Existing", "type": "PRODUCT"})
+            await gr.create_graph_entity(
+                "demo", {"name": "Existing", "type": "PRODUCT"}
+            )
 
     async def test_raises_backend_error_on_empty_name(self):
         from twindb_lightrag_memgraph.server import graph_reader as gr
@@ -545,7 +547,7 @@ class TestCreateGraphEntityContract:
         # Direct callers that bypass Pydantic must still see a typed
         # failure rather than a silent ``None``.
         with pytest.raises(gr.EntityCreateBackendError):
-            await gr.create_graph_entity("cib", {"name": "   ", "type": "PRODUCT"})
+            await gr.create_graph_entity("demo", {"name": "   ", "type": "PRODUCT"})
 
     async def test_raises_backend_error_when_session_run_fails(self, monkeypatch):
         from twindb_lightrag_memgraph.server import graph_reader as gr
@@ -562,7 +564,9 @@ class TestCreateGraphEntityContract:
         )
 
         with pytest.raises(gr.EntityCreateBackendError):
-            await gr.create_graph_entity("cib", {"name": "FreshOne", "type": "PRODUCT"})
+            await gr.create_graph_entity(
+                "demo", {"name": "FreshOne", "type": "PRODUCT"}
+            )
 
     async def test_raises_projection_error_when_reread_fails(self, monkeypatch):
         from twindb_lightrag_memgraph.server import graph_reader as gr
@@ -585,7 +589,9 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(gr, "_read_one_entity", fake_reread_fails)
 
         with pytest.raises(gr.EntityProjectionError):
-            await gr.create_graph_entity("cib", {"name": "FreshOne", "type": "PRODUCT"})
+            await gr.create_graph_entity(
+                "demo", {"name": "FreshOne", "type": "PRODUCT"}
+            )
 
     async def test_returns_dict_on_success_never_none(self, monkeypatch):
         """The success path must return the projected dict — not ``None``.
@@ -621,7 +627,7 @@ class TestCreateGraphEntityContract:
         monkeypatch.setattr(gr, "_read_one_entity", fake_reread_ok)
 
         out = await gr.create_graph_entity(
-            "cib", {"name": "FreshOne", "type": "PRODUCT"}
+            "demo", {"name": "FreshOne", "type": "PRODUCT"}
         )
         assert out is not None
         assert isinstance(out, dict)

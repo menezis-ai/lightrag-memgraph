@@ -1,4 +1,4 @@
-"""Vision-based image ingestion (MARKITDOWN-INGESTION-PLAN.md, PR 2).
+"""Vision-based image ingestion (docs/adr/005-markitdown-ingestion-supply-chain.md).
 
 Knowledge-Bot pattern (audit 2026-07-10 §D): an uploaded image goes through
 

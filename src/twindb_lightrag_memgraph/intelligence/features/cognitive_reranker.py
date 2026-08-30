@@ -14,12 +14,14 @@ Strategy "Expand -> Filter -> Select":
 """
 
 import logging
+import math
 from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ..config import TwinRAGConfig
+from ..config import LLMProfileKind, TwinRAGConfig
 from ..json_utils import load_json_object
+from ..llm import create_chat_completion, log_llm_fallback
 from ..prompt_security import neutralize_reserved_tags
 from ..react.act import ChunkResult
 
@@ -99,13 +101,10 @@ class CognitiveReranker:
         )
 
         try:
-            client = AsyncOpenAI(
-                api_key=self.config.llm_api_key,
-                base_url=self.config.llm_api_base,
-            )
-
-            response = await client.chat.completions.create(
-                model=self.config.llm_model,
+            response = await create_chat_completion(
+                self.config,
+                LLMProfileKind.CHAT,
+                client_factory=AsyncOpenAI,
                 messages=[
                     {"role": "system", "content": self._rerank_prompt},
                     {"role": "user", "content": user_prompt},
@@ -129,9 +128,12 @@ class CognitiveReranker:
                 score = score_entry.get("v", score_entry.get("score", 0))
                 try:
                     idx = int(idx)
-                    score = max(0.0, min(10.0, float(score)))
+                    score = float(score)
                 except (TypeError, ValueError):
                     continue
+                if not math.isfinite(score):
+                    continue
+                score = max(0.0, min(10.0, score))
                 if 0 <= idx < len(chunks):
                     chunks[idx].rerank_score = score
 
@@ -164,8 +166,8 @@ class CognitiveReranker:
             )
             return result
 
-        except Exception as e:
-            logger.exception("Reranking error: %s", e)
+        except Exception as exc:
+            log_llm_fallback(logger, "Reranking", exc)
             return self._fallback(chunks)
 
     def _fallback(

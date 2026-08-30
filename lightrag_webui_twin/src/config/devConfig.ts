@@ -17,7 +17,7 @@ import type { TwinRuntimeConfig } from '../types/auth';
 export const DEV_CONFIG: TwinRuntimeConfig = {
   apiBaseUrl: '/twin/api',
   lightragBaseUrl: '',
-  idpLogoutUrl: 'https://idp.twin.internal/realms/twin/protocol/openid-connect/logout',
+  idpLogoutUrl: 'https://idp.example.com/realms/twin/protocol/openid-connect/logout',
   defaultFolderId: 'default',
   maxFolders: 5,
   // Demo parity with a vision-enabled deployment: MSW accepts any upload,
@@ -29,6 +29,7 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
     png: 20 * 1024 * 1024,
   },
   procedureReviewEnabled: true,
+  catalogEnabled: false,
   folders: [
     {
       id: 'default',
@@ -44,8 +45,8 @@ export const DEV_CONFIG: TwinRuntimeConfig = {
     },
   ],
   debugUser: {
-    sso_subject: 'operator@twin.local',
-    email: 'operator@twin.local',
+    sso_subject: 'operator@example.com',
+    email: 'operator@example.com',
     name: 'Local Operator',
     palier: {
       level: 3,

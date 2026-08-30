@@ -235,7 +235,7 @@ class TwinQueryBody(BaseModel):
     def _reject_raw_prompt_override(cls, value: str | None) -> None:
         if value and value.strip():
             raise ValueError("raw user_prompt overrides are disabled")
-        return None
+        return
 
     @staticmethod
     def _check_flat_filter(value: dict[str, Any]) -> None:
@@ -359,6 +359,13 @@ class TwinRetrievalSource(BaseModel):
         description=(
             "Id of the grounding chunk — usable with "
             "`GET /chunks/{chunk_id}/context`."
+        ),
+    )
+    source_links: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Document-level provenance links inherited by this chunk. "
+            "The server never fetches these URLs."
         ),
     )
     anchor: TwinSourceAnchor | None = Field(

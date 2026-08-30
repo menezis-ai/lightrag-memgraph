@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react';
+import { useRef, type Dispatch, type SetStateAction } from 'react';
 import { ApiError } from '../api/client';
 import {
   useBulkDeleteDocuments,
@@ -466,6 +466,7 @@ export function useDocumentActions({
 }: UseDocumentActionsOptions) {
   const bulkRetagDocs = useBulkRetagDocuments();
   const uploadDocs = useUploadDocumentsBatch();
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const deleteDoc = useDeleteDocument();
   const bulkDeleteDocs = useBulkDeleteDocuments();
 
@@ -824,11 +825,23 @@ export function useDocumentActions({
       return;
     }
 
+    const uploadAbort = new AbortController();
+    uploadAbortRef.current = uploadAbort;
     const uploadInputs: readonly UploadDocumentInput[] = action.rawFiles.map(
       (file, index) => {
         const opts = action.fileOptions[index];
         return {
           file,
+          signal: uploadAbort.signal,
+          ...(action.onFileStateChange
+            ? {
+                onStateChange: (
+                  state: 'uploading' | 'complete' | 'error',
+                  error?: string,
+                ) => action.onFileStateChange?.(index, state, error),
+              }
+            : {}),
+          ...(opts?.relativePath ? { relativePath: opts.relativePath } : {}),
           ...(opts?.classification
             ? { classification: opts.classification }
             : {}),
@@ -849,7 +862,10 @@ export function useDocumentActions({
     });
 
     const results: readonly UploadResult[] = await uploadDocs.mutateAsync(uploadInputs);
-    setAddOpen(false);
+    if (uploadAbortRef.current === uploadAbort) uploadAbortRef.current = null;
+    if (results.every((result) => result.status === 'fulfilled')) {
+      setAddOpen(false);
+    }
 
     const {
       failedOptimisticIds,
@@ -877,6 +893,15 @@ export function useDocumentActions({
     dispatchUploadAudit(activity);
     maybeApplyInitialTags(results, action.tags, applyInitialTagsAfterIngestion);
     void refreshDocumentsUntilUploadsLand(acceptedTrackIds);
+  };
+
+  const cancelAddSourceUpload = () => {
+    uploadAbortRef.current?.abort();
+    pushToast({
+      kind: 'done',
+      title: 'Upload cancelled',
+      sub: 'Requests not yet accepted by the server were stopped.',
+    });
   };
 
   const applyInitialTagsAfterIngestion = async (
@@ -936,6 +961,7 @@ export function useDocumentActions({
   return {
     uploadDocs,
     onAddSourceSubmit,
+    cancelAddSourceUpload,
     onDeleteBulk,
     onDeleteSingle,
     onRetagSubmit,

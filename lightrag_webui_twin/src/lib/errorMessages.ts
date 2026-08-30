@@ -54,13 +54,24 @@ function recoveryRequiredMessage(body: unknown): string | undefined {
 }
 
 /** Extract the FastAPI-style `detail` (or `message`) string from an
- *  error body. Arrays/objects (Pydantic 422 payloads) are skipped. */
+ *  error body. Structured details may expose an operator-readable `message`;
+ *  arrays (Pydantic 422 payloads) are skipped. */
 export function backendDetail(body: unknown): string | undefined {
   if (!body || typeof body !== 'object') return undefined;
   for (const key of ['detail', 'message'] as const) {
     const value = (body as Record<string, unknown>)[key];
     if (typeof value === 'string' && value.trim() && value.length <= 300) {
       return value.trim();
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const message = (value as Record<string, unknown>).message;
+      if (
+        typeof message === 'string' &&
+        message.trim() &&
+        message.length <= 300
+      ) {
+        return message.trim();
+      }
     }
   }
   return undefined;

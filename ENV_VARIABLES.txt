@@ -45,9 +45,22 @@ MEMGRAPH_PASSWORD_FILE       File containing the password. Mutually exclusive
                              with MEMGRAPH_PASSWORD. Missing/empty files fail
                              closed; prefer this in production.
 MEMGRAPH_DATABASE            Logical database. Default: memgraph default.
-                             With bolt:// the package issues USE DATABASE
-                             (silently skipped on Memgraph Community);
-                             with neo4j:// it is passed natively.
+                             With bolt:// the package issues USE DATABASE on
+                             every session; with neo4j:// it is passed
+                             natively. FAIL-CLOSED since 1.2.0: a non-default
+                             name the server refuses (no Enterprise licence,
+                             i.e. Memgraph Community) aborts boot and makes
+                             /ready report the database as failed — it is
+                             never silently replaced by the default database.
+                             Unset it on a single-database (Community)
+                             deployment.
+TWIN_VECTOR_INDEX_CAPACITY   Capacity of each Memgraph vector index
+                             (CREATE VECTOR INDEX ... "capacity"). Positive
+                             integer, default 100000; a malformed value
+                             refuses to boot. Applied at index CREATION only:
+                             an existing index keeps its capacity (drop and
+                             recreate to resize). Shown in
+                             GET /twin/api/system/about (admin).
 MEMGRAPH_ENCRYPTED           "true" to force TLS on plain bolt://. A WARNING
                              is logged when credentials would transit in
                              clear to a remote host.
@@ -58,7 +71,17 @@ MEMGRAPH_CA_FILE             CA certificate path required by TRUST_CUSTOM_CA.
 MEMGRAPH_POOL_SIZE           Connection pool size (write pool). Default: 50.
 MEMGRAPH_READ_POOL_SIZE      Connection pool size (read pool). Default: 20.
 MEMGRAPH_WRITE_CONCURRENCY   Max concurrent writes (semaphore). Default: 8.
-                             Reads are never throttled.
+                             Reads have no global throttle.
+TWIN_GRAPH_MEMBERSHIP_FANOUT Maximum concurrent membership/override reads in
+                             one folder-scoped native graph call. Positive
+                             integer, default 2; malformed, zero, or negative
+                             values also fall back to 2. Setting 1 serializes
+                             these reads. One Graph render issues the entities
+                             and relations calls together, against the same
+                             MEMGRAPH_READ_POOL_SIZE shared by other routes;
+                             raise this value only after sizing that combined
+                             pressure. An unbounded 5-way fan-out measured +51%
+                             p95 on concurrent chunk expansion.
 MEMGRAPH_WRITE_SLOT_ACQUIRE_TIMEOUT
                              Seconds to wait for a write semaphore slot.
                              Default: 5.
@@ -81,6 +104,39 @@ MEMGRAPH_MAX_CONNECTION_LIFETIME
                              silence reset-by-peer log noise — the liveness probe
                              already keeps defunct sockets from reaching callers.
                              Default: 1800.
+
+--------------------------------------------------------------------------------
+1B. KB PORTABILITY EXPORT / IMPORT (CLI + admin jobs; all optional)
+--------------------------------------------------------------------------------
+TWIN_PORTABILITY_DIR         Private parent directory for exported KB bundles,
+                             browser uploads, persisted admin jobs, reports and
+                             checkpoints.
+                             Default: {WORKING_DIR}/portability (or
+                             ./portability when WORKING_DIR is unset).
+                             The CLI and server create directories 0700 and
+                             files 0600. Browser uploads are capped at 100 MiB
+                             compressed; use the CLI for larger archives.
+TWIN_PORTABILITY_MAX_BYTES   Maximum decompressed bundle size accepted by
+                             `portability inspect`, in bytes. Positive integer;
+                             default 2147483648 (2 GiB). Checked member by
+                             member before archive extraction.
+TWIN_PORTABILITY_BATCH_SIZE  Keyset page size for store export/import. Positive
+                             integer; default 1000.
+TWIN_PORTABILITY_INCLUDE_ACTIVITY
+                             "on"/"true"/"yes"/"1" exports the folder-scoped
+                             activity feed. Default off; `--include-activity`
+                             enables it for one command.
+TWIN_PORTABILITY_INCLUDE_PROCEDURES
+                             "on"/"true"/"yes"/"1" exports procedure review
+                             records and their schematic PNG files. Default
+                             off; `--include-procedures` enables it once. A
+                             degraded procedure store refuses the export.
+TWIN_PORTABILITY_ALLOW_UNVERIFIED
+                             "on"/"true"/"yes"/"1" lets import dry-run accept
+                             a bundle whose pre/post export consistency is
+                             unverified. Default off. Never enable for a
+                             production promotion; every use remains explicit
+                             in the approved report.
 TWIN_PURGE_LLM_CACHE_ON_FAILED
                              "0"/"false" disables the purge of LLM
                              entity-extraction cache rows tied to a document
@@ -105,7 +161,7 @@ TWIN_EMBEDDING_ATTEMPTS      Number of embedding attempts before failing a
                              cold embedding endpoint; the last error is
                              re-raised on exhaustion (doc marked FAILED).
 TWIN_CONVERT                 MarkItDown pre-conversion tier
-                             (MARKITDOWN-INGESTION-PLAN.md). "auto" (default)
+                             (docs/adr/005-markitdown-ingestion-supply-chain.md). "auto" (default)
                              enables it iff the [convert] extra is installed;
                              "on" forces it (warns + native path if the import
                              fails); "off" disables — native extraction is
@@ -199,7 +255,7 @@ TWIN_PDF_VISION_CONCURRENCY  Concurrent generic-PDF Vision transport calls
                              Default: 2; hard maximum: 8.
 
 TWIN_PROCEDURE               Procedure-PDF ingestion profile
-                             (PROCEDURE-PROFILE-PLAN.md). On Twin server
+                             (docs/adr/007-procedure-pdf-profile.md). On Twin server
                              surfaces, activation is controlled per workspace
                              by the admin toggle in Settings > Vision and a
                              workspace with no saved choice starts OFF.
@@ -391,8 +447,8 @@ TWIN_IDP_ADMIN_GROUPS        Groups granted the admin:folders scope.
 TWIN_IDP_GROUP_TO_PALIER_JSON  JSON map group → palier level.
 
 Open-access identity (only when no auth backend is configured):
-TWIN_DEBUG_USER_EMAIL        Default: operator@twin.local
-TWIN_DEBUG_USER_NAME         Default: operator@twin.local
+TWIN_DEBUG_USER_EMAIL        Default: operator@example.com
+TWIN_DEBUG_USER_NAME         Default: operator@example.com
 
 --------------------------------------------------------------------------------
 4. TWIN FOLDERS
@@ -433,6 +489,22 @@ Raw-text /insert is disabled; ingest classified binaries via /documents/upload.
 --------------------------------------------------------------------------------
 TWIN_API_BASE_URL            Base path injected into the WebUI. Default: /twin/api
 TWIN_LIGHTRAG_BASE_URL       Optional separate origin for native LightRAG routes.
+TWIN_CATALOG_URL             Central KB catalogue http(s) origin. Must be set
+                             together with TWIN_CATALOG_INSTANCE_CREDENTIAL.
+                             When both are absent, linked-source routes are not
+                             mounted and the WebUI keeps its legacy Coming-soon
+                             state. In production, use the internal HTTPS origin.
+TWIN_CATALOG_INSTANCE_CREDENTIAL
+                             Secret credential issued to this KB with the
+                             links:write scope. It stays server-side: the Twin
+                             proxy forwards it as Bearer while the browser sends
+                             only its normal user auth and X-Twin-Folder. The
+                             credential's KB/AUID binding is authoritative.
+When catalogue integration is enabled, `/twin/api/catalog-profile` is also
+mounted. It accepts only the infrastructure root or a dedicated `tcp_` key
+created by `POST /twin/api/settings/api-keys` with scope `profile:read` and an
+explicit folder allow-list; that key cannot authenticate on generic Twin
+routes. The central catalogue stores it as the per-KB scan credential.
 LIGHTRAG_ENABLE_WEBUI_ROUTES true/false — mount the /twin/api overlay.
 LIGHTRAG_WEBUI_TAG_BACKEND            "memgraph" (persistent) or "memory".
 LIGHTRAG_WEBUI_ACTIVITY_BACKEND       idem.
@@ -449,15 +521,22 @@ LANGSMITH_PROJECT            LangSmith project name.
 8. INTELLIGENCE LAYER (optional [intelligence] extra) — prefix TWIN_RAG_
 --------------------------------------------------------------------------------
 Only read when TwinRAGEngine is used. Separate chat vs indexing credentials so
-interactive queries never compete with ingestion GPU.
+interactive queries never compete with ingestion GPU. Each missing indexing
+field falls back independently to its chat counterpart (KEY -> KEY,
+API_BASE -> API_BASE, MODEL -> MODEL); credentials are never logged.
 TWIN_RAG_LLM_API_KEY / TWIN_RAG_LLM_API_BASE / TWIN_RAG_LLM_MODEL
 TWIN_RAG_LLM_EFFORT_INTENT / _REASON / _RERANKER / _SYNTHESIS  (low|medium|high)
+TWIN_RAG_LLM_RETRY_MAX_ATTEMPTS       default 3; bounded 1..5
+TWIN_RAG_LLM_RETRY_BASE_SECONDS       default 0.25
+TWIN_RAG_LLM_RETRY_MAX_SECONDS        default 2.0
+TWIN_RAG_LLM_RETRY_JITTER_RATIO       default 0.2; bounded 0..1
 TWIN_RAG_INDEXING_API_KEY / _API_BASE / _MODEL
 TWIN_RAG_INDEXING_EMBEDDING_MODEL / _EMBEDDING_DIM
 TWIN_RAG_ENABLE_OOS_DETECTION / _QUERY_EXPANSION / _COGNITIVE_RERANKING
 TWIN_RAG_ENABLE_FEEDBACK / _WORKSPACE_ROUTING
 TWIN_RAG_ROUTING_RULES_PATH / TWIN_RAG_DEFAULT_WORKSPACE
-TWIN_RAG_OOS_CONFIDENCE_THRESHOLD / _DOMAIN_CONFIDENCE_THRESHOLD
+TWIN_RAG_OOS_CONFIDENCE_THRESHOLD / _ESCALATION_CONFIDENCE_THRESHOLD (default 0.85)
+TWIN_RAG_DOMAIN_CONFIDENCE_THRESHOLD
 TWIN_RAG_RERANKING_SCORE_THRESHOLD / TWIN_RAG_VECTOR_LIMIT
 
 --------------------------------------------------------------------------------

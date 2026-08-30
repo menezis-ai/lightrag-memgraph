@@ -86,6 +86,7 @@ export function AboutSection() {
   }
 
   const { lightrag, memgraph, runtime, storage, overlay } = data;
+  const vectorCapacity = data.limits?.vector_index_capacity;
 
   return (
     <div className="settings-section" data-testid="settings-about">
@@ -131,6 +132,12 @@ export function AboutSection() {
               />
             )}
             <Row label="MAGE tier" value={mageLabel(memgraph)} />
+            {typeof vectorCapacity === 'number' && (
+              <Row
+                label="Vector index capacity"
+                value={`${vectorCapacity.toLocaleString('en-US')} entries per index (set at index creation)`}
+              />
+            )}
           </dl>
         </div>
       )}

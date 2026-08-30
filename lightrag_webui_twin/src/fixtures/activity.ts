@@ -20,7 +20,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'retrieval',
     sev: 'info',
-    actor: { user: 'marc.berthier', role: 'DBA' },
+    actor: { user: 'demo.operator', role: 'DBA' },
     target: { type: 'query', label: 'How to restart Oracle on RHEL 9?' },
     summary: 'Retrieval · hybrid · top_k=60 · 5 sources cited · 1.4s',
     meta: {
@@ -39,7 +39,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'tag-mutation',
     sev: 'info',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
     target: { type: 'source', label: 'oracle-restart-procedure.pdf' },
     summary: 'Added tag rman · removed tag pending-review · 418 chunks re-tagged',
     meta: {
@@ -74,7 +74,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'source-failed',
     sev: 'error',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
     target: { type: 'source', label: 'huge-archive.zip' },
     summary: 'Ingestion rejected — unsupported MIME type & 312 MB > 50 MB limit',
     meta: {
@@ -90,7 +90,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'retrieval',
     sev: 'info',
-    actor: { user: 'yann.dubois', role: 'SRE' },
+    actor: { user: 'demo.reviewer', role: 'SRE' },
     target: { type: 'query', label: 'RMAN restore point-in-time procedure' },
     summary: 'Retrieval · local · top_k=40 · 8 sources cited · 0.9s',
     meta: {
@@ -110,7 +110,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     kind: 'pipeline-warning',
     sev: 'warning',
     actor: { user: 'system', role: 'pipeline' },
-    target: { type: 'source', label: 'cib-incidents-2026-Q1-postmortems' },
+    target: { type: 'source', label: 'demo-incidents-2026-Q1-postmortems' },
     summary: 'LLM extraction timeout on chunk 78/124 · retrying (attempt 2/3)',
     meta: {
       provider: 'openai',
@@ -127,7 +127,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'source-uploaded',
     sev: 'info',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
     target: { type: 'source', label: 'swift-iso20022-migration.pdf' },
     summary: 'Uploaded · 14.2 MB · queued for ingestion',
     meta: {
@@ -143,7 +143,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Today',
     kind: 'auth',
     sev: 'info',
-    actor: { user: 'marc.berthier', role: 'DBA' },
+    actor: { user: 'demo.operator', role: 'DBA' },
     target: { type: 'session', label: 'Bearer token issued' },
     summary: 'Login successful · scope: read:documents read:query · expires in 24h',
     meta: {
@@ -161,7 +161,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Yesterday',
     kind: 'tag-mutation',
     sev: 'info',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
     target: { type: 'bulk', label: 'Bulk retag · 9 sources' },
     summary: 'Replaced tag rman-archived → rman across 9 sources · 847 chunks',
     meta: {
@@ -178,7 +178,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Yesterday',
     kind: 'retrieval',
     sev: 'info',
-    actor: { user: 'philippe.marchand', role: 'Architect' },
+    actor: { user: 'demo.architect', role: 'Architect' },
     target: {
       type: 'query',
       label: 'VMware vSphere 8 best practices for banking workloads',
@@ -200,14 +200,14 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Yesterday',
     kind: 'settings',
     sev: 'info',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
-    target: { type: 'folder', label: 'cib · thesaurus' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
+    target: { type: 'folder', label: 'demo · thesaurus' },
     summary: 'Added new tag iso20022 (palier 2) · category messaging',
     meta: {
       tag: 'iso20022',
       category: 'messaging',
       tier: 2,
-      requested_by: 'marc.berthier',
+      requested_by: 'demo.operator',
     },
   },
   {
@@ -269,7 +269,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Earlier this week',
     kind: 'tag-mutation',
     sev: 'warning',
-    actor: { user: 'claire.benoit', role: 'KB Admin' },
+    actor: { user: 'demo.steward', role: 'KB Admin' },
     target: { type: 'source', label: 'rman-restore-cookbook' },
     summary: 'Added tag deprecated · 132 chunks marked excluded from default retrieval',
     meta: {
@@ -285,7 +285,7 @@ export const ACTIVITY_FIXTURES: readonly ActivityEvent[] = [
     day: 'Earlier this week',
     kind: 'retrieval',
     sev: 'info',
-    actor: { user: 'marc.berthier', role: 'DBA' },
+    actor: { user: 'demo.operator', role: 'DBA' },
     target: { type: 'query', label: 'Oracle PGA tuning for OLTP workload' },
     summary: 'Retrieval · hybrid · top_k=60 · 6 sources cited · 1.1s',
     meta: { mode: 'hybrid', top_k: 60, tag_filter: ['oracle'], latency_ms: 1132 },

@@ -1,9 +1,5 @@
 """Tests for server settings (Pydantic BaseSettings)."""
 
-import os
-
-import pytest
-
 from twindb_lightrag_memgraph.server.settings import (
     LightRAGServerSettings,
     get_settings,

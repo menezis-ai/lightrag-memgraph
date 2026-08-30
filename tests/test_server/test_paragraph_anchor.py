@@ -1,4 +1,4 @@
-"""Paragraph-anchor contract (PARAGRAPH-CITATION-PLAN.md phase A, §5/§5.1).
+"""Paragraph-anchor contract (docs/adr/008-paragraph-citation-anchor.md, phase A).
 
 Covers the required batteries:
 

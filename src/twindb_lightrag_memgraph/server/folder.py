@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Annotated, Mapping
 
@@ -214,11 +216,46 @@ def active_folder_id() -> str | None:
     return _active_folder_id.get()
 
 
+@contextmanager
+def scoped_folder(folder_id: str) -> Iterator[None]:
+    """Temporarily bind a validated folder for an internal aggregate read.
+
+    Request handlers normally use :func:`bind_request_folder`. The catalogue
+    profile is different: one authenticated infrastructure request must read
+    several authorised folders without forging nested HTTP requests. This
+    context manager keeps the same ContextVar boundary and always restores it.
+    """
+
+    if folder_id not in load_folder_catalog().ids:
+        raise ValueError(f"unknown folder {folder_id!r}")
+    token = _active_folder_id.set(folder_id)
+    try:
+        yield
+    finally:
+        _active_folder_id.reset(token)
+
+
+def catalog_profile_folder_ids(request: Request) -> tuple[str, ...]:
+    """Return the provisioned folder ids injected by profile authentication.
+
+    ``require_catalog_profile_read`` is the sole policy boundary. Missing
+    request state therefore fails closed instead of reinterpreting root or IdP
+    claims in a second location.
+    """
+    catalog = load_folder_catalog()
+    profile_folders = getattr(request.state, "catalog_profile_folder_ids", None)
+    if profile_folders is None:
+        return ()
+    allowed = set(profile_folders)
+    return tuple(folder.id for folder in catalog.folders if folder.id in allowed)
+
+
 __all__ = [
     "TwinFolder",
     "TwinFolderCatalog",
     "active_folder_id",
     "bind_request_folder",
+    "catalog_profile_folder_ids",
     "document_folder_header",
     "build_runtime_folder_config",
     "current_folder_id",
@@ -226,4 +263,5 @@ __all__ = [
     "load_folder_catalog",
     "resolve_folder_for_request",
     "resolve_folder_from_headers",
+    "scoped_folder",
 ]

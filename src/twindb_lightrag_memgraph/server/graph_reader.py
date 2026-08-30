@@ -29,6 +29,9 @@ import asyncio
 import hashlib
 import logging
 import math
+import os
+from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any, Iterable, Sequence
 
 import json
@@ -37,6 +40,59 @@ from .._pool import acquire_write_slot, get_read_session, get_session
 from .._retry import with_conflict_retry
 
 logger = logging.getLogger(__name__)
+
+# How many of ``read_graph_native``'s independent membership/override reads may
+# be in flight at once.
+#
+# They are mutually independent, so the tempting answer is "all five". The read
+# pool is SHARED with every other route, though, and a Graph render fires
+# ``/graph/entities`` and ``/graph/relations`` together — an unbounded 5-way
+# fan-out is therefore ~10 connections per render, and two concurrent renders
+# ask for the whole default 20-slot pool. Measured with
+# ``tests/benchmarks/shared_read_pool_interference.py``, unbounded fan-out kept
+# the graph's own gain but pushed concurrent chunk expansion to +51% p95 /
+# +65% p99 and raised pool acquire-wait from 0.01 ms to 12.09 ms p95: the
+# bottleneck moved onto the neighbouring routes.
+#
+# Bounding the burst keeps most of the serial-round-trip win (the five reads
+# still overlap, in waves) while capping what one graph request can hold.
+# Override with ``TWIN_GRAPH_MEMBERSHIP_FANOUT`` if a deployment sizes its read
+# pool very differently.
+_DEFAULT_MEMBERSHIP_FANOUT = 2
+
+
+def _membership_fanout() -> int:
+    raw = os.environ.get("TWIN_GRAPH_MEMBERSHIP_FANOUT", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MEMBERSHIP_FANOUT
+    return value if value >= 1 else _DEFAULT_MEMBERSHIP_FANOUT
+
+
+async def _gather_membership_reads(
+    *operations: Callable[[], Awaitable[Any]],
+) -> list[Any]:
+    """Run independent membership reads concurrently, at most N at a time.
+
+    A per-call semaphore, not a module-level one: it must never be shared
+    across event loops (the test suite builds one per test), and the bound that
+    matters is what a single graph request can hold on the shared pool.
+
+    Operations are factories rather than pre-created coroutines. A request may
+    be cancelled while some operations are still waiting for the semaphore;
+    creating their coroutines only after admission prevents abandoned
+    ``coroutine was never awaited`` objects on that path.
+    """
+    limit = _membership_fanout()
+    gate = asyncio.Semaphore(limit)
+
+    async def _run(operation: Callable[[], Awaitable[Any]]) -> Any:
+        async with gate:
+            return await operation()
+
+    return await asyncio.gather(*(_run(operation) for operation in operations))
+
 
 try:  # version-skew guard (see feedback_lightrag_version_skew)
     from lightrag.constants import GRAPH_FIELD_SEP as _GRAPH_FIELD_SEP
@@ -810,17 +866,16 @@ async def _upsert_entity_override(
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(
-                    query,
-                    eid=entity_id,
-                    folder=folder,
-                    fields=fields,
-                    deleted=deleted,
-                )
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(
+                query,
+                eid=entity_id,
+                folder=folder,
+                fields=fields,
+                deleted=deleted,
+            )
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:
@@ -860,18 +915,17 @@ async def _upsert_rel_override(
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(
-                    query,
-                    src=src,
-                    tgt=tgt,
-                    folder=folder,
-                    fields=fields,
-                    deleted=deleted,
-                )
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(
+                query,
+                src=src,
+                tgt=tgt,
+                folder=folder,
+                fields=fields,
+                deleted=deleted,
+            )
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:
@@ -1323,10 +1377,9 @@ async def _persist_relation_ids(
     )
 
     async def _write() -> None:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(query, relations=bindings)
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(query, relations=bindings)
+            await result.consume()
 
     try:
         await with_conflict_retry(f"graph_reader.relation_ids[{label}]", _write)
@@ -1867,21 +1920,46 @@ async def read_graph_native(
         )
         return None
 
-    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-    member_docs = await _load_member_docs(workspace, folder) if folder else None
-    entity_overrides = await _load_folder_overrides(workspace, folder) if folder else {}
-    rel_overrides = (
-        await _load_folder_rel_overrides(workspace, folder) if folder else {}
-    )
-
     # #1a: operator-created entities have no chunk provenance and the native
     # degree-ranked read won't return an isolated manual node — load them
     # explicitly and union them in so a manual create survives a folder refresh.
     direct_rows: list[dict[str, Any]] = []
     direct_members: set[str] | None = None
     if folder:
-        direct_rows = await _load_direct_member_entity_rows(workspace, folder)
+        # Five independent Memgraph reads: each opens its own read session,
+        # takes nothing but (workspace, folder), and absorbs its own errors into
+        # a default — none consumes another's result, so serializing them bought
+        # nothing but five round-trips on the request that renders the graph tab.
+        # Gather them and pay one. Fan-out is a fixed 5 read sessions (never
+        # per-node), bounded by the shared read pool.
+        #
+        # Their error defaults are NOT uniformly fail-closed, and gathering does
+        # not change that (each still fails independently, exactly as before):
+        # the membership loads hide records on failure (`{}` / `set()` / `[]` →
+        # nothing proves member provenance), but the two override loaders return
+        # `{}`, which drops the folder overlay and re-surfaces the BASE record —
+        # including past a local `deleted` tombstone. That is fail-open, and it
+        # predates this call site; see the loaders' own docstrings.
+        (
+            chunk_to_doc,
+            member_docs,
+            entity_overrides,
+            rel_overrides,
+            direct_rows,
+        ) = await _gather_membership_reads(
+            partial(_load_chunk_to_doc_index, workspace),
+            partial(_load_member_docs, workspace, folder),
+            partial(_load_folder_overrides, workspace, folder),
+            partial(_load_folder_rel_overrides, workspace, folder),
+            partial(_load_direct_member_entity_rows, workspace, folder),
+        )
         direct_members = {r["entity_id"] for r in direct_rows if r.get("entity_id")}
+    else:
+        # Unscoped (legacy global) read: only the chunk→doc index is queried.
+        chunk_to_doc = await _load_chunk_to_doc_index(workspace)
+        member_docs = None
+        entity_overrides = {}
+        rel_overrides = {}
 
     entities = _build_native_entities(
         kg, chunk_to_doc, member_docs, direct_members, entity_overrides, max_nodes
@@ -2328,13 +2406,10 @@ async def _write_entity_props(
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(
-                    update_query, entity_id=entity_id, props=props
-                )
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(update_query, entity_id=entity_id, props=props)
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:
@@ -2427,11 +2502,10 @@ async def _write_relation_props(
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(update_query, src=src, tgt=tgt, props=props)
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(update_query, src=src, tgt=tgt, props=props)
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:
@@ -2678,9 +2752,8 @@ async def _stamp_entity_folder_membership(
     )
 
     async def _write() -> None:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                await (await session.run(stamp, eid=entity_id, folder=folder)).consume()
+        async with acquire_write_slot(), get_session() as session:
+            await (await session.run(stamp, eid=entity_id, folder=folder)).consume()
 
     try:
         await with_conflict_retry(
@@ -2748,11 +2821,10 @@ async def create_graph_entity(
     )
 
     async def _merge_node() -> list[Any]:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(query, eid=entity_id, props=props)
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(query, eid=entity_id, props=props)
+            rows = [record async for record in result]
+            await result.consume()
         return rows
 
     try:
@@ -2848,23 +2920,22 @@ async def _cascade_entity_vdb_rows(workspace: str, entity_id: str) -> bool:
     async def _write() -> None:
         # Both statements are idempotent deletes, so replaying the whole
         # block after a conflict on either one is safe.
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{ent_label}`) WHERE n.entity_name = $name "
-                    f"REMOVE n:`{ent_label}` "
-                    "WITH n DETACH DELETE n",
-                    name=entity_id,
-                )
-                await result.consume()
-                result = await session.run(
-                    f"MATCH (n:`{rel_label}`) "
-                    "WHERE n.src_id = $name OR n.tgt_id = $name "
-                    f"REMOVE n:`{rel_label}` "
-                    "WITH n DETACH DELETE n",
-                    name=entity_id,
-                )
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(
+                f"MATCH (n:`{ent_label}`) WHERE n.entity_name = $name "
+                f"REMOVE n:`{ent_label}` "
+                "WITH n DETACH DELETE n",
+                name=entity_id,
+            )
+            await result.consume()
+            result = await session.run(
+                f"MATCH (n:`{rel_label}`) "
+                "WHERE n.src_id = $name OR n.tgt_id = $name "
+                f"REMOVE n:`{rel_label}` "
+                "WITH n DETACH DELETE n",
+                name=entity_id,
+            )
+            await result.consume()
 
     try:
         await with_conflict_retry(
@@ -2899,18 +2970,17 @@ async def _cascade_relation_vdb_row(workspace: str, src: str, tgt: str) -> bool:
         return True
 
     async def _write() -> None:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(
-                    f"MATCH (n:`{rel_label}`) "
-                    "WHERE (n.src_id = $src AND n.tgt_id = $tgt) "
-                    "OR (n.src_id = $tgt AND n.tgt_id = $src) "
-                    f"REMOVE n:`{rel_label}` "
-                    "WITH n DETACH DELETE n",
-                    src=src,
-                    tgt=tgt,
-                )
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(
+                f"MATCH (n:`{rel_label}`) "
+                "WHERE (n.src_id = $src AND n.tgt_id = $tgt) "
+                "OR (n.src_id = $tgt AND n.tgt_id = $src) "
+                f"REMOVE n:`{rel_label}` "
+                "WITH n DETACH DELETE n",
+                src=src,
+                tgt=tgt,
+            )
+            await result.consume()
 
     try:
         await with_conflict_retry(
@@ -3065,27 +3135,26 @@ async def sweep_stale_source_refs(workspace: str) -> dict[str, int]:
         # window must win. A guard miss is silently skipped (next sweep
         # re-decides). The guards also make the conflict-retry replay
         # idempotent.
-        async with acquire_write_slot():
-            async with get_session() as session:
-                if entity_updates:
-                    result = await session.run(
-                        "UNWIND $rows AS row "
-                        f"MATCH (n:`{label}` {{entity_id: row.id}}) "
-                        "WHERE n.source_id = row.expected "
-                        "SET n.source_id = row.source_id",
-                        rows=entity_updates,
-                    )
-                    await result.consume()
-                if relation_updates:
-                    result = await session.run(
-                        "UNWIND $rows AS row "
-                        f"MATCH (a:`{label}` {{entity_id: row.src}})"
-                        f"-[r]->(b:`{label}` {{entity_id: row.tgt}}) "
-                        "WHERE r.source_id = row.expected "
-                        "SET r.source_id = row.source_id",
-                        rows=relation_updates,
-                    )
-                    await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            if entity_updates:
+                result = await session.run(
+                    "UNWIND $rows AS row "
+                    f"MATCH (n:`{label}` {{entity_id: row.id}}) "
+                    "WHERE n.source_id = row.expected "
+                    "SET n.source_id = row.source_id",
+                    rows=entity_updates,
+                )
+                await result.consume()
+            if relation_updates:
+                result = await session.run(
+                    "UNWIND $rows AS row "
+                    f"MATCH (a:`{label}` {{entity_id: row.src}})"
+                    f"-[r]->(b:`{label}` {{entity_id: row.tgt}}) "
+                    "WHERE r.source_id = row.expected "
+                    "SET r.source_id = row.source_id",
+                    rows=relation_updates,
+                )
+                await result.consume()
 
     if entity_updates or relation_updates:
         await with_conflict_retry(
@@ -3099,17 +3168,16 @@ async def sweep_stale_source_refs(workspace: str) -> dict[str, int]:
         async def _drop_edge(
             src: str = src, tgt: str = tgt, expected: str = expected
         ) -> None:
-            async with acquire_write_slot():
-                async with get_session() as session:
-                    result = await session.run(
-                        f"MATCH (a:`{label}` {{entity_id: $src}})"
-                        f"-[r]->(b:`{label}` {{entity_id: $tgt}}) "
-                        "WHERE r.source_id = $expected DELETE r",
-                        src=src,
-                        tgt=tgt,
-                        expected=expected,
-                    )
-                    await result.consume()
+            async with acquire_write_slot(), get_session() as session:
+                result = await session.run(
+                    f"MATCH (a:`{label}` {{entity_id: $src}})"
+                    f"-[r]->(b:`{label}` {{entity_id: $tgt}}) "
+                    "WHERE r.source_id = $expected DELETE r",
+                    src=src,
+                    tgt=tgt,
+                    expected=expected,
+                )
+                await result.consume()
 
         await with_conflict_retry(
             f"graph_reader.source_ref_sweep_edge[{src}->{tgt}]", _drop_edge
@@ -3137,15 +3205,14 @@ async def sweep_stale_source_refs(workspace: str) -> dict[str, int]:
         async def _drop_node(
             entity_id: str = entity_id, expected: str = expected
         ) -> None:
-            async with acquire_write_slot():
-                async with get_session() as session:
-                    result = await session.run(
-                        f"MATCH (n:`{label}` {{entity_id: $id}}) "
-                        "WHERE n.source_id = $expected DETACH DELETE n",
-                        id=entity_id,
-                        expected=expected,
-                    )
-                    await result.consume()
+            async with acquire_write_slot(), get_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`{label}` {{entity_id: $id}}) "
+                    "WHERE n.source_id = $expected DETACH DELETE n",
+                    id=entity_id,
+                    expected=expected,
+                )
+                await result.consume()
 
         await with_conflict_retry(
             f"graph_reader.source_ref_sweep_entity[{entity_id}]", _drop_node
@@ -3243,10 +3310,9 @@ async def delete_graph_entity(workspace: str, webui_id: str) -> bool:
     delete_query = f"MATCH (n:`{label}` {{entity_id: $eid}}) DETACH DELETE n"
 
     async def _write() -> None:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(delete_query, eid=entity_id)
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(delete_query, eid=entity_id)
+            await result.consume()
 
     try:
         await with_conflict_retry(f"graph_reader.entity_delete[{entity_id}]", _write)
@@ -3326,11 +3392,10 @@ async def _merge_relation(
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(query, src=src, tgt=tgt, props=props)
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(query, src=src, tgt=tgt, props=props)
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:
@@ -3440,11 +3505,10 @@ async def delete_graph_relation(workspace: str, rel_id: str) -> bool:
     )
 
     async def _write() -> bool:
-        async with acquire_write_slot():
-            async with get_session() as session:
-                result = await session.run(query, src=src, tgt=tgt)
-                rows = [record async for record in result]
-                await result.consume()
+        async with acquire_write_slot(), get_session() as session:
+            result = await session.run(query, src=src, tgt=tgt)
+            rows = [record async for record in result]
+            await result.consume()
         return bool(rows)
 
     try:

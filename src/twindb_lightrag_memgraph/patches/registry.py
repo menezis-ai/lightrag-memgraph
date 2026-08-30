@@ -36,7 +36,7 @@ LIGHTRAG_SERVER_MODULE = "lightrag.api.lightrag_server"
 WEBUI_INDEX_FILENAME = "index.html"
 TWIN_API_PREFIX = "/twin/api"
 TWIN_UI_PREFIX = "/twin"
-DEFAULT_DEBUG_USER_EMAIL = "operator@twin.local"
+DEFAULT_DEBUG_USER_EMAIL = "operator@example.com"
 _UNKNOWN = "<unknown>"
 
 _NOT_INITIALIZED_MSG = (
@@ -334,6 +334,15 @@ def register(
     if _registered:
         return
 
+    # Fail at boot on a malformed TWIN_VECTOR_INDEX_CAPACITY rather than at
+    # the first CREATE VECTOR INDEX (which would surface as an ingestion or
+    # query error much later). The value itself is read again at index
+    # creation; this call only validates it.
+    from .._constants import resolve_vector_index_capacity, validate_portability_env
+
+    resolve_vector_index_capacity()
+    validate_portability_env()
+
     # Runtime-overlay flags are env-drivable so deployments whose boot
     # path already calls a bare ``register()`` (the patch historically in
     # production) can activate the UI/server/shims with environment
@@ -438,8 +447,9 @@ class _SafeDriverWrapper:
     When *use_routing* is False (``bolt://`` / ``bolt+s://``), the
     ``database=`` kwarg is stripped and ``USE DATABASE`` is issued
     inside the session instead.  On Memgraph Community (no Enterprise
-    license), ``USE DATABASE`` fails — we detect this once and skip
-    it for all subsequent sessions.
+    license), ``USE DATABASE`` fails — the session is refused (fail-closed,
+    see ``_pool.MemgraphDatabaseUnavailableError``), never silently
+    redirected to the default database.
     """
 
     def __init__(self, real_driver, database, use_routing):
@@ -467,16 +477,20 @@ class _SafeDriverWrapper:
                 yield session
 
     async def _apply_use_database(self, session):
-        """On bolt:// + custom db, issue ``USE DATABASE``; detect Community once.
+        """On bolt:// + custom db, issue ``USE DATABASE`` — fail-closed.
 
-        No-op for routing protocols, the default ``memgraph`` db, or once a
-        prior call has detected a Community (no-Enterprise) server.
+        No-op for routing protocols and the default ``memgraph`` db. For any
+        other database the switch is attempted on every session; a refusal
+        for lack of an Enterprise licence raises
+        :class:`~twindb_lightrag_memgraph._pool.MemgraphDatabaseUnavailableError`
+        (same contract as the shared pool — never a silent fallback to the
+        default database, never cached so a restored licence recovers).
         """
         if self._use_routing or not self._database or self._database == "memgraph":
             return
-        if self._enterprise_supported is False:
-            return  # Community — skip
         from neo4j.exceptions import ClientError as _ClientError
+
+        from .._pool import MemgraphDatabaseUnavailableError
 
         try:
             _use_result = await session.run(f"USE DATABASE {self._database}")
@@ -485,13 +499,20 @@ class _SafeDriverWrapper:
                 self._enterprise_supported = True
         except _ClientError as exc:
             if "enterprise" in str(exc).lower() or "license" in str(exc).lower():
-                self._enterprise_supported = False
-                logger.info(
-                    "Memgraph Community detected (graph pool)"
-                    " — USE DATABASE not available"
+                logger.error(
+                    "MEMGRAPH_DATABASE=%s cannot be selected (graph pool): "
+                    "USE DATABASE refused (%s)",
+                    self._database,
+                    exc,
                 )
-            else:
-                raise
+                raise MemgraphDatabaseUnavailableError(
+                    f"MEMGRAPH_DATABASE={self._database!r} cannot be selected "
+                    "on this Memgraph server (graph pool): USE DATABASE was "
+                    "refused (multi-database requires an Enterprise licence). "
+                    "Fix: unset MEMGRAPH_DATABASE for a single-database "
+                    "deployment, or install the Enterprise licence."
+                ) from exc
+            raise
 
     async def close(self):
         from .._pool import _operation_deadline, _read_operation_timeout
@@ -2576,6 +2597,11 @@ async def _emit_server_upload_activity(
                     "folder": folder or "",
                 },
                 target_type="source",
+                # ``apipeline_enqueue_documents`` always returns a tracking
+                # id. It is the durable handle shared by every source in one
+                # enqueue and makes the accepted-upload audit event directly
+                # queryable through ``resource.id``.
+                target_id=track_id or name,
             )
             await store.record_activity(event)
     except Exception as exc:  # noqa: BLE001 - audit must never break ingestion
@@ -2803,7 +2829,7 @@ def _wrapped_create_app_impl(
     # enabled later by an admin from Settings → Vision, without restarting
     # the host process; every disabled tier delegates straight to upstream.
     _patch_pipeline_enqueue_conversion()
-    # B1 (PARAGRAPH-CITATION-PLAN §6): on a 1.5.x LightRAG, register the
+    # B1 (docs/adr/008-paragraph-citation-anchor.md): on a 1.5.x LightRAG, register the
     # preconverted-markdown parser and the boundary backfill so converted
     # enqueues gain block provenance. No-op (raw path untouched) on 1.4.x.
     _preconverted_parse.activate()
@@ -2898,8 +2924,9 @@ def _patch_lightrag_server_create_app(
 
 
 def _capture_storage_contexts():
-    """Snapshot the active (folder, duplicate-share-folder, classification,
-    doc-type) — everything the enqueue path reads must survive the
+    """Snapshot active ingestion scope, including a browser relative path.
+
+    Everything the enqueue path reads must survive the
     BackgroundTasks boundary, or a header-bound choice silently dies with
     the request."""
     from .._constants import (
@@ -2907,6 +2934,7 @@ def _capture_storage_contexts():
         get_active_duplicate_share_folder,
         get_active_operator_classification,
         get_active_storage_folder,
+        get_active_upload_relative_path,
     )
 
     return (
@@ -2914,6 +2942,7 @@ def _capture_storage_contexts():
         get_active_duplicate_share_folder(),
         get_active_operator_classification(),
         get_active_doc_type(),
+        get_active_upload_relative_path(),
     )
 
 
@@ -2924,9 +2953,10 @@ def _enter_storage_contexts(stack, captured) -> None:
         duplicate_share_folder_context,
         operator_classification_context,
         storage_folder_context,
+        upload_relative_path_context,
     )
 
-    folder, duplicate_share_folder, classification, doc_type = captured
+    folder, duplicate_share_folder, classification, doc_type, relative_path = captured
     if folder:
         stack.enter_context(storage_folder_context(folder))
     if duplicate_share_folder:
@@ -2935,6 +2965,8 @@ def _enter_storage_contexts(stack, captured) -> None:
         stack.enter_context(operator_classification_context(classification))
     if doc_type:
         stack.enter_context(doc_type_context(doc_type))
+    if relative_path:
+        stack.enter_context(upload_relative_path_context(relative_path))
 
 
 async def _run_in_storage_contexts(func, captured, task_args, task_kwargs):
@@ -3006,6 +3038,7 @@ async def _run_storage_folder_capture(request, call_next):
         operator_classification_context,
         storage_folder_context,
         upload_actor_context,
+        upload_relative_path_context,
     )
     from ..server.folder import resolve_folder_for_request
 
@@ -3031,7 +3064,7 @@ async def _run_storage_folder_capture(request, call_next):
                 status_code=400,
             )
 
-    # Operator-selected document profile (PROCEDURE-PROFILE-PLAN.md):
+    # Operator-selected document profile (docs/adr/007-procedure-pdf-profile.md):
     # "procedure" forces the approval-gated procedure path, "standard"
     # bypasses auto-detection. Absent header = auto-detect.
     doc_type = request.headers.get("X-Twin-Doc-Type")
@@ -3048,12 +3081,22 @@ async def _run_storage_folder_capture(request, call_next):
 
     actor = resolve_auth_actor(request)
 
+    relative_path = request.headers.get("X-Twin-Relative-Path")
+    if relative_path is not None:
+        try:
+            from ..server.upload_paths import normalize_relative_upload_path
+
+            relative_path = normalize_relative_upload_path(relative_path)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
     with (
         storage_folder_context(folder),
         duplicate_share_folder_context(folder),
         operator_classification_context(operator_class),
         doc_type_context(doc_type),
         upload_actor_context(actor),
+        upload_relative_path_context(relative_path),
     ):
         return await call_next(request)
 
@@ -3211,7 +3254,7 @@ def _build_runtime_config() -> dict[str, object]:
     lightrag_base = os.environ.get("TWIN_LIGHTRAG_BASE_URL", "")
     idp_logout = os.environ.get(
         "TWIN_IDP_LOGOUT_URL",
-        "https://idp.twin.local/realms/twin/protocol/openid-connect/logout",
+        "https://idp.example.com/realms/twin/protocol/openid-connect/logout",
     )
     folder_catalog = load_folder_catalog()
     runtime_folder_config = build_runtime_folder_config()
@@ -3253,6 +3296,16 @@ def _build_runtime_config() -> dict[str, object]:
         extension.lstrip(".") for extension in _tier_extra_extensions()
     )
     extra_upload_max_bytes = _tier_extra_upload_limits()
+    catalog_url = (os.environ.get("TWIN_CATALOG_URL") or "").strip()
+    catalog_credential = (
+        os.environ.get("TWIN_CATALOG_INSTANCE_CREDENTIAL") or ""
+    ).strip()
+    catalog_enabled = bool(catalog_url and catalog_credential)
+    if bool(catalog_url) != bool(catalog_credential):
+        logger.error(
+            "TWIN_CATALOG_URL and TWIN_CATALOG_INSTANCE_CREDENTIAL must be set "
+            "together; linked sources stay disabled"
+        )
 
     config: dict[str, object] = {
         "apiBaseUrl": api_base,
@@ -3265,6 +3318,7 @@ def _build_runtime_config() -> dict[str, object]:
         # true when procedure ingestion is disabled: existing parked bundles
         # must remain visible and reviewable.
         "procedureReviewEnabled": True,
+        "catalogEnabled": catalog_enabled,
         **runtime_folder_config,
     }
     # debugUser bypasses the LoginScreen, so expose it only for fully
@@ -3621,8 +3675,15 @@ async def _init_overlay_memgraph_stores(
         from ..server.webui_activitystore import MemgraphActivityStore
         from ..server.webui_notificationstore import MemgraphNotificationStore
         from ..server.webui_tagstore import MemgraphTagStore
+        from ..server.source_links_store import MemgraphSourceLinkStore
+        from .._constants import resolve_workspace
 
         catalog = load_folder_catalog()
+        # Provenance follows the document across MEMBER_OF projections.  It
+        # therefore lives in the global graph workspace and must not be
+        # rebuilt (or re-indexed) once per visible folder.
+        source_link_store = MemgraphSourceLinkStore(workspace=resolve_workspace())
+        await source_link_store.initialize()
         for folder in catalog.folders:
             tag_store = MemgraphTagStore(workspace=folder.id)
             await tag_store.initialize()
@@ -3656,11 +3717,11 @@ async def _init_overlay_memgraph_stores(
             await activity_store.initialize()
             notif_store = MemgraphNotificationStore(workspace=folder.id)
             await notif_store.initialize()
-
             store = webui_store.for_folder(folder.id, mode="memgraph")
             store._tag_backend = tag_store
             store._activity_backend = activity_store
             store._notification_backend = notif_store
+            store._source_link_backend = source_link_store
             set_store(store, folder=folder.id)
         logger.info(
             "twindb: Twin overlay stores switched to Memgraph "
@@ -3738,6 +3799,50 @@ def _mount_twin_subapp(
         dependencies=[Depends(require_auth)],
     )
 
+    # Chunk/document expansion routes used by agent citations.  The standalone
+    # factory mounts the same router at both its legacy root and /twin/api;
+    # production reaches this hand-maintained overlay path instead, so it must
+    # build the router against the captured host RAG explicitly.
+    from ..server.chunk_routes import build_chunk_router
+
+    def _get_rag_for_chunks():
+        rag = _twindb_state.get("rag")
+        if rag is None:
+            raise RuntimeError(
+                "twindb chunks: host LightRAG instance not captured; "
+                "refusing an unscoped fallback."
+            )
+        return rag
+
+    app.include_router(
+        build_chunk_router(_get_rag_for_chunks),
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
+
+    from ..server.linked_sources_routes import (
+        CatalogProxyConfig,
+        build_linked_sources_router,
+        linked_sources_wiring_probes,
+    )
+    from ..server.catalog_profile_routes import (
+        build_catalog_profile_router,
+        catalog_profile_wiring_probes,
+    )
+
+    catalog_proxy_config = CatalogProxyConfig.from_env()
+    linked_sources_probes = ()
+    if catalog_proxy_config is not None:
+        app.include_router(
+            build_linked_sources_router(catalog_proxy_config),
+            prefix=prefix,
+        )
+        app.include_router(build_catalog_profile_router(), prefix=prefix)
+        linked_sources_probes = (
+            *linked_sources_wiring_probes(prefix),
+            *catalog_profile_wiring_probes(prefix),
+        )
+
     # API key management routes (Settings → API keys). The standalone
     # factory in server/app.py mounts these; the production overlay path
     # (register(mount_server=True), the BNP entrypoint) is a separate,
@@ -3771,7 +3876,7 @@ def _mount_twin_subapp(
     )
     install_settings_provider()
 
-    # Procedure approval workflow (PROCEDURE-PROFILE-PLAN.md, PR 2) —
+    # Procedure approval workflow (docs/adr/007-procedure-pdf-profile.md) —
     # same both-surfaces constraint (guard:
     # tests/test_server/test_overlay_procedures.py). The rag getter reuses
     # the captured host instance; the seam event sink bridges parked/failed
@@ -3842,7 +3947,7 @@ def _mount_twin_subapp(
     install_openapi_documentation(app)
     log_api_wiring_sanity(
         app,
-        probes=api_wiring_probes(prefix),
+        probes=(*api_wiring_probes(prefix), *linked_sources_probes),
         surface=f"overlay:{prefix}",
     )
 

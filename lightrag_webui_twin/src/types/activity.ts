@@ -22,6 +22,9 @@ export type ActivityKind =
   | 'source-uploaded'
   | 'source-ready'
   | 'source-failed'
+  | 'linked-source-declared'
+  | 'linked-source-updated'
+  | 'linked-source-disabled'
   | 'pipeline-warning'
   | 'graph-entity-edited'
   | 'graph-relation-edited'
@@ -35,6 +38,8 @@ export type ActivityKind =
   | 'procedure-retried'
   | 'procedure-rerouted'
   | 'procedure-store-recovered'
+  | 'kb-exported'
+  | 'kb-imported'
   | 'auth'
   | 'settings';
 
@@ -132,6 +137,21 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     icon: 'alert-triangle',
     color: 'var(--twin-red-vivid)',
   },
+  'linked-source-declared': {
+    label: 'RAG source declared',
+    icon: 'link',
+    color: 'var(--twin-accent)',
+  },
+  'linked-source-updated': {
+    label: 'RAG source updated',
+    icon: 'edit',
+    color: 'var(--twin-accent)',
+  },
+  'linked-source-disabled': {
+    label: 'RAG source disabled',
+    icon: 'link',
+    color: 'var(--color-text-secondary)',
+  },
   'pipeline-warning': {
     // QA ACT-V5-001: labelled "Pipeline warning" (not "Pipeline") so an
     // empty filter result reads as "no warnings" — the backend emits this
@@ -199,6 +219,16 @@ export const ACTIVITY_KIND_META: Record<ActivityKind, ActivityKindMeta> = {
     label: 'Procedure store recovered',
     icon: 'settings',
     color: 'var(--twin-amber-vivid)',
+  },
+  'kb-exported': {
+    label: 'KB exported',
+    icon: 'cloud-upload',
+    color: 'var(--twin-accent)',
+  },
+  'kb-imported': {
+    label: 'KB imported',
+    icon: 'git-branch',
+    color: 'var(--twin-green-700)',
   },
   auth: { label: 'Auth', icon: 'lock', color: 'var(--color-text-secondary)' },
   settings: {

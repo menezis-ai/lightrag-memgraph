@@ -1,4 +1,4 @@
-"""Preconverted-markdown native parsing seam (PARAGRAPH-CITATION-PLAN §6, B1).
+"""Preconverted-markdown native parsing seam (docs/adr/008-paragraph-citation-anchor.md, phase B1).
 
 Twin's ingestion tiers (`_conversion`, `_pdf_vision`, `_procedure`) hold the
 final markdown in memory while the ORIGINAL binary must remain the identity,

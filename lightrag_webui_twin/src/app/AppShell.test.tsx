@@ -26,7 +26,17 @@ import type { Folder } from '../types/topbar';
 // ── Auth mock ───────────────────────────────────────────────────────────────
 const authState = vi.hoisted(() => ({
   current: {
-    user: { email: 'claire.benoit@twin.local' } as { email: string } | null,
+    user: {
+      email: 'demo.steward@example.com',
+      palier: { level: 2, label: 'Contributor' },
+    } as {
+      email: string;
+      palier: {
+        level: 1 | 2 | 3;
+        label: 'Reader' | 'Contributor' | 'Steward';
+      };
+    } | null,
+    authEnabled: true as boolean | null,
     isAuthenticated: true,
     isCheckingAuth: false,
     needsLogin: false,
@@ -41,6 +51,18 @@ const authState = vi.hoisted(() => ({
             sources?: number;
           }>,
       defaultFolderId: 'default',
+      catalogEnabled: false,
+    } as {
+      folders:
+        | undefined
+        | ReadonlyArray<{
+            id: string;
+            label: string;
+            kind?: string;
+            sources?: number;
+          }>;
+      defaultFolderId: string;
+      catalogEnabled?: boolean;
     },
     login: vi.fn(),
     signout: vi.fn().mockResolvedValue(undefined),
@@ -247,6 +269,9 @@ vi.mock('../components/Topbar', () => ({
       <span data-testid="topbar-notif-count">
         {String((p.notifications as unknown[]).length)}
       </span>
+      <span data-testid="topbar-tabs">
+        {JSON.stringify(p.tabs ?? null)}
+      </span>
       <button onClick={() => (p.onTab as (t: string) => void)('settings')}>
         go-settings
       </button>
@@ -261,6 +286,9 @@ vi.mock('../components/Topbar', () => ({
       </button>
       <button onClick={() => (p.onTab as (t: string) => void)('tags')}>
         go-tags
+      </button>
+      <button onClick={() => (p.onTab as (t: string) => void)('sources-rag')}>
+        go-sources-rag
       </button>
       <button onClick={() => (p.onTheme as () => void)()}>toggle-theme</button>
       <button
@@ -595,6 +623,9 @@ vi.mock('./lazyComponents', () => ({
   ),
   TagsTab: (p: Record<string, unknown>) => (
     <div data-testid="tags-tab">
+      <span data-testid="tags-current-user">
+        {JSON.stringify(p.currentUser)}
+      </span>
       <span data-testid="tags-count">
         {String((p.tags as unknown[]).length)}
       </span>
@@ -612,12 +643,20 @@ vi.mock('./lazyComponents', () => ({
       </button>
     </div>
   ),
+  SourcesRagTab: (p: Record<string, unknown>) => (
+    <div data-testid="sources-rag-tab">
+      <span data-testid="sources-rag-folder">{String(p.activeFolder)}</span>
+    </div>
+  ),
   AddSourceModal: (p: Record<string, unknown>) => (
     <div data-testid="add-source-modal">
       <span data-testid="add-submitting">{String(p.submitting)}</span>
       <button onClick={() => (p.onClose as () => void)()}>add-close</button>
       <button onClick={() => (p.onSubmit as (x: unknown) => void)({})}>
         add-submit
+      </button>
+      <button onClick={() => (p.onOpenLinkedSources as () => void)()}>
+        open-sources-rag
       </button>
     </div>
   ),
@@ -706,11 +745,19 @@ function resetQueriesSpy() {
 
 beforeEach(() => {
   resetQueries();
-  authState.current.user = { email: 'claire.benoit@twin.local' };
+  authState.current.user = {
+    email: 'demo.steward@example.com',
+    palier: { level: 2, label: 'Contributor' },
+  };
+  authState.current.authEnabled = true;
   authState.current.isCheckingAuth = false;
   authState.current.needsLogin = false;
   authState.current.loginError = null;
-  authState.current.config = { folders: undefined, defaultFolderId: 'default' };
+  authState.current.config = {
+    folders: undefined,
+    defaultFolderId: 'default',
+    catalogEnabled: false,
+  };
   authState.current.signout = vi.fn().mockResolvedValue(undefined);
   docActions.uploadDocs = { isPending: false };
   globalThis.localStorage.clear();
@@ -962,6 +1009,41 @@ describe('AppShell — tab navigation', () => {
     await user.click(screen.getByText('open-activity'));
     expect(await screen.findByTestId('activity-tab')).toBeInTheDocument();
     expect(screen.getByTestId('act-events')).toHaveTextContent('2');
+  });
+
+  it('keeps Sources RAG absent when the catalogue is disabled', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    expect(screen.getByTestId('topbar-tabs')).toHaveTextContent('null');
+    await user.click(screen.getByText('go-sources-rag'));
+    expect(screen.queryByTestId('sources-rag-tab')).toBeNull();
+  });
+
+  it('adds Sources RAG and lets the upload modal redirect to its grid', async () => {
+    authState.current.config.catalogEnabled = true;
+    const user = userEvent.setup();
+    renderShell();
+    expect(screen.getByTestId('topbar-tabs')).toHaveTextContent('Sources RAG');
+    const tabs = JSON.parse(
+      screen.getByTestId('topbar-tabs').textContent ?? '[]',
+    ) as { id: string }[];
+    expect(tabs.map(({ id }) => id)).toEqual([
+      'documents',
+      'sources-rag',
+      'tags',
+      'retrieval',
+      'graph',
+      'activity',
+      'settings',
+    ]);
+
+    await user.click(screen.getByText('open-add'));
+    expect(await screen.findByTestId('add-source-modal')).toBeInTheDocument();
+    await user.click(screen.getByText('open-sources-rag'));
+
+    expect(await screen.findByTestId('sources-rag-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('sources-rag-folder')).toHaveTextContent('default');
+    expect(screen.queryByTestId('add-source-modal')).toBeNull();
   });
 
   it('renders the retrieval tab and forwards send/stream queries to the api', async () => {
@@ -1542,16 +1624,36 @@ describe('AppShell — detail request from URL', () => {
 });
 
 // ── Anonymous actor fallback ─────────────────────────────────────────────────
-describe('AppShell — actor fallback', () => {
-  it('falls back to CURRENT_USER name when auth has no user email', async () => {
+describe('AppShell — frontend identity', () => {
+  it('uses the read-only anonymous identity when auth is unresolved', async () => {
     const user = userEvent.setup();
     authState.current.user = null;
+    authState.current.authEnabled = null;
     renderShell();
+    await user.click(screen.getByText('go-tags'));
+    expect(await screen.findByTestId('tags-current-user')).toHaveTextContent(
+      JSON.stringify({ name: 'anonymous', palier: 1, role: 'unresolved reader' }),
+    );
     await user.click(screen.getByText('go-retrieval'));
     const tab = await screen.findByTestId('retrieval-tab');
     await user.click(within(tab).getByText('send-query'));
     await waitFor(() => expect(apiMock.query).toHaveBeenCalled());
     const arg = apiMock.query.mock.calls[0][0] as { actor: string };
-    expect(arg.actor).toBe('operator@twin.local');
+    expect(arg.actor).toBe('anonymous');
+  });
+
+  it('uses the steward fallback only for confirmed open access', async () => {
+    const user = userEvent.setup();
+    authState.current.user = null;
+    authState.current.authEnabled = false;
+    renderShell();
+    await user.click(screen.getByText('go-tags'));
+    expect(await screen.findByTestId('tags-current-user')).toHaveTextContent(
+      JSON.stringify({
+        name: 'operator@example.com',
+        palier: 3,
+        role: 'open-access steward',
+      }),
+    );
   });
 });

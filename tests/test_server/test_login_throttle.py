@@ -32,7 +32,7 @@ def _auth_config():
 def _make_settings() -> LightRAGServerSettings:
     return LightRAGServerSettings(
         working_dir="/tmp/lightrag_login_throttle_test",
-        workspace="cib",
+        workspace="demo",
         enable_langsmith_tracing=False,
         api_key=None,
         jwt_secret=JWT_SECRET,

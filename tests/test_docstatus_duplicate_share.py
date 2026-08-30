@@ -1,7 +1,7 @@
 """Duplicate upload compatibility: duplicate means add folder membership.
 
 These unit tests avoid Memgraph and pin the control flow introduced for
-FOLDER-MEMBERSHIP-REFACTOR step 5:
+docs/adr/006-folder-membership-relation.md, decision 4:
 
 - LightRAG 1.4.9.x filename duplicates go through ``get_doc_by_file_path``;
 - LightRAG 1.4.11/1.4.12 content duplicates emit ``metadata.is_duplicate``

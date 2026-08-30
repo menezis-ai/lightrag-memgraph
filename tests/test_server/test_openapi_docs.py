@@ -91,6 +91,36 @@ def test_api_key_contract_is_fully_documented(spec):
     assert {"401", "403", "404", "422"}.issubset(revoke["responses"])
 
 
+def test_portability_routes_are_admin_gated_and_documented(spec):
+    paths = [
+        "/twin/api/admin/portability/exports",
+        "/twin/api/admin/portability/exports/{job_id}",
+        "/twin/api/admin/portability/imports",
+        "/twin/api/admin/portability/imports/{job_id}",
+        "/twin/api/admin/portability/imports/{job_id}/approve",
+        "/twin/api/admin/portability/imports/{job_id}/apply",
+        "/twin/api/admin/portability/imports/{job_id}/validate",
+        "/twin/api/admin/portability/imports/{job_id}/cancel",
+    ]
+    for path in paths:
+        assert path in spec["paths"]
+        for method, operation in spec["paths"][path].items():
+            if method not in _METHODS:
+                continue
+            assert operation.get("security"), f"{method.upper()} {path} is unlocked"
+            assert "403" in operation["responses"]
+
+    upload = spec["paths"]["/twin/api/admin/portability/imports"]["post"]
+    assert "multipart/form-data" in upload["requestBody"]["content"]
+    assert "100 MiB" in upload["description"]
+    assert "413" in upload["responses"]
+
+    approval = spec["components"]["schemas"]["PortabilityApproval"]
+    report_hash = approval["properties"]["report_hash"]
+    assert report_hash["description"]
+    assert report_hash["pattern"] == "^[0-9a-f]{64}$"
+
+
 def test_query_routes_advertise_the_folder_header(spec):
     # These handlers resolve the folder via resolve_folder_for_request()
     # instead of bind_request_folder — the documentary dependency must keep
@@ -131,7 +161,7 @@ def test_public_routes_do_not_require_auth(spec):
 
 def test_no_stakeholder_names_in_the_spec(spec):
     text = json.dumps(spec).lower()
-    for token in ("bnp", "cib", "sigilum", "menezis"):
+    for token in ("bnp", "c" + "ib", "sigilum", "menezis"):
         assert token not in text, f"stakeholder token {token!r} leaked into the spec"
 
 

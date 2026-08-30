@@ -18,16 +18,19 @@ GET /documents/{doc_id}/chunks?start=0&end=10
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from lightrag import LightRAG
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import require_auth
 from .folder import bind_request_folder, current_folder_id, load_folder_catalog
+from .upload_paths import display_upload_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,7 @@ class ChunkContextResponse(BaseModel):
     doc_id: str
     file_path: str
     total_chunks_in_doc: int
+    source_links: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +175,57 @@ async def _fetch_chunks_by_ids(
                 chunk_id=cid,
                 content=raw.get("content", ""),
                 full_doc_id=raw.get("full_doc_id", ""),
-                file_path=raw.get("file_path", ""),
+                file_path=display_upload_file_path(raw.get("file_path", "")),
                 chunk_order_index=raw.get("chunk_order_index", idx),
                 tokens=raw.get("tokens", 0),
             )
         )
     return items
+
+
+async def _source_links_for_doc(doc_id: str) -> list[dict[str, Any]]:
+    """Best-effort document provenance inherited by returned chunks."""
+    from .webui.store import get_store
+
+    try:
+        return await get_store().source_links.list_for_document(doc_id)
+    except Exception:
+        logger.exception("chunks: source_links enrichment failed for %s", doc_id)
+        return []
+
+
+async def _chunks_and_source_links(
+    rag: LightRAG,
+    chunk_ids: list[str],
+    doc_id: str,
+) -> tuple[list[ChunkItem], list[dict[str, Any]]]:
+    """Load the chunk records and the document's source links concurrently.
+
+    Two independent reads against different stores — the ``text_chunks`` KV and
+    the source-link store — and neither consumes the other's result. Serialized
+    they cost the route an extra round-trip on every chunk expansion (the
+    reader hits these three routes each time a citation is opened), so overlap
+    them. Fan-out is a fixed 2 reads per request, never per chunk.
+
+    Explicit tasks rather than ``asyncio.gather``: gather leaves the sibling
+    running when the first coroutine raises, so a failing chunk KV would let the
+    *optional* source-link read keep occupying a connection on an already
+    degraded read pool — precisely when the pool is scarcest. The chunk read is
+    the request-critical one, so when it fails the provenance read is cancelled
+    and reaped before the error propagates. Same HTTP result, bounded pool cost.
+    """
+    chunks_task = asyncio.ensure_future(_fetch_chunks_by_ids(rag, chunk_ids))
+    links_task = asyncio.ensure_future(_source_links_for_doc(doc_id))
+    try:
+        items = await chunks_task
+    except BaseException:
+        links_task.cancel()
+        # Reap it so the loop never reports "Task exception was never retrieved"
+        # and the connection is released before we unwind.
+        with contextlib.suppress(BaseException):
+            await links_task
+        raise
+    return items, await links_task
 
 
 def _parent_doc_id(anchor: dict[str, Any], chunk_id: str) -> str:
@@ -213,16 +262,19 @@ def _chunk_context_window(
 # ---------------------------------------------------------------------------
 
 
-def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
-    """Register chunk & document routes against the module-level ``router``."""
-    router.routes.clear()
+def _register_chunk_routes(
+    target_router: APIRouter,
+    rag: LightRAG | Callable[[], LightRAG],
+    *,
+    operation_id_prefix: str = "",
+) -> None:
 
     def current_rag() -> LightRAG:
         return rag() if callable(rag) and not hasattr(rag, "text_chunks") else rag
 
-    @router.get(
+    @target_router.get(
         "/chunks/{chunk_id}/context",
-        operation_id="get_chunk_context",
+        operation_id=f"{operation_id_prefix}get_chunk_context",
         summary="Neighbouring chunks around a given chunk",
         responses={404: {"description": "Chunk or parent document not found"}},
     )
@@ -253,17 +305,20 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         doc_status_data = await _require_doc_in_active_folder(active_rag, doc_id)
         ordered_ids = _ordered_chunk_ids(doc_status_data, doc_id)
         window_ids = _chunk_context_window(ordered_ids, chunk_id, doc_id, window)
-        items = await _fetch_chunks_by_ids(active_rag, window_ids)
+        items, source_links = await _chunks_and_source_links(
+            active_rag, window_ids, doc_id
+        )
         return ChunkContextResponse(
             chunks=items,
             doc_id=doc_id,
-            file_path=anchor.get("file_path", ""),
+            file_path=display_upload_file_path(anchor.get("file_path", "")),
             total_chunks_in_doc=len(ordered_ids),
+            source_links=source_links,
         )
 
-    @router.get(
+    @target_router.get(
         "/chunks/{chunk_id}/document",
-        operation_id="get_chunk_document",
+        operation_id=f"{operation_id_prefix}get_chunk_document",
         summary="All chunks of the parent document for a given chunk",
         responses={404: {"description": "Chunk or parent document not found"}},
     )
@@ -283,17 +338,20 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
         doc_id = _parent_doc_id(anchor, chunk_id)
         doc_status_data = await _require_doc_in_active_folder(active_rag, doc_id)
         ordered_ids = _ordered_chunk_ids(doc_status_data, doc_id)
-        items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
+        items, source_links = await _chunks_and_source_links(
+            active_rag, ordered_ids, doc_id
+        )
         return ChunkContextResponse(
             chunks=items,
             doc_id=doc_id,
-            file_path=anchor.get("file_path", ""),
+            file_path=display_upload_file_path(anchor.get("file_path", "")),
             total_chunks_in_doc=len(ordered_ids),
+            source_links=source_links,
         )
 
-    @router.get(
+    @target_router.get(
         "/documents/{doc_id}/chunks",
-        operation_id="get_document_chunks",
+        operation_id=f"{operation_id_prefix}get_document_chunks",
         summary="Fetch a range (or all) chunks from a document by doc_id",
         responses={404: {"description": "Document chunk ordering not found"}},
     )
@@ -328,7 +386,9 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
             e = (end or total - 1) + 1  # inclusive end -> slice end
             ordered_ids = ordered_ids[s:e]
 
-        items = await _fetch_chunks_by_ids(active_rag, ordered_ids)
+        items, source_links = await _chunks_and_source_links(
+            active_rag, ordered_ids, doc_id
+        )
         file_path = items[0].file_path if items else ""
 
         return ChunkContextResponse(
@@ -336,4 +396,29 @@ def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
             doc_id=doc_id,
             file_path=file_path,
             total_chunks_in_doc=total,
+            source_links=source_links,
         )
+
+
+def build_chunk_router(
+    rag: LightRAG | Callable[[], LightRAG],
+    *,
+    operation_id_prefix: str = "",
+) -> APIRouter:
+    """Build an isolated router for one server surface."""
+    built = APIRouter(
+        tags=["chunks"],
+        dependencies=[Depends(require_auth), Depends(bind_request_folder)],
+    )
+    _register_chunk_routes(
+        built,
+        rag,
+        operation_id_prefix=operation_id_prefix,
+    )
+    return built
+
+
+def create_chunk_routes(rag: LightRAG | Callable[[], LightRAG]) -> None:
+    """Populate the historical module-level router for compatibility."""
+    router.routes.clear()
+    _register_chunk_routes(router, rag)

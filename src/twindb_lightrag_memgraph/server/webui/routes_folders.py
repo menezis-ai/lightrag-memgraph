@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
 from .. import folder_store
 from ..folder import current_folder_id, is_env_seeded_folder, load_folder_catalog
 from ..idp_jwt import require_admin_user
 from ..webui_models import Folder, FolderCreate, FolderPatch
-from .events import _make_event
+from .events import _make_event, _request_actor
 from .store import _stores, deployment_store_mode, ensure_folder_store, get_store
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ async def _folder_source_counts(folders: list[dict[str, Any]]) -> dict[str, int]
         422: {"description": "Invalid folder payload or catalog at capacity"},
     },
 )
-async def create_folder(body: FolderCreate) -> dict[str, Any]:
+async def create_folder(body: FolderCreate, request: Request) -> dict[str, Any]:
     """Provision a new folder at runtime.
 
     Returns 201 with the new folder. Errors:
@@ -144,11 +144,12 @@ async def create_folder(body: FolderCreate) -> dict[str, Any]:
     event = _make_event(
         kind="settings",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=folder.label,
         summary=f"Folder '{folder.id}' created ({folder.kind})",
         meta={"folder_id": folder.id, "operation": "create"},
         target_type="folder",
+        target_id=folder.id,
     )
     await store.record_activity(event)
     return folder.as_api(current=False)
@@ -173,6 +174,7 @@ async def update_folder(
         ),
     ],
     body: FolderPatch,
+    request: Request,
 ) -> dict[str, Any]:
     """Edit the label, kind and/or description of a runtime-created
     folder. Folders provisioned by the deployment configuration are
@@ -196,7 +198,7 @@ async def update_folder(
     event = _make_event(
         kind="settings",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=folder.label,
         summary=f"Folder '{folder.id}' updated",
         meta={
@@ -205,6 +207,7 @@ async def update_folder(
             "patch_keys": list(patch.keys()),
         },
         target_type="folder",
+        target_id=folder.id,
     )
     await store.record_activity(event)
     active = current_folder_id()
@@ -297,19 +300,18 @@ async def _cleanup_memgraph_folder_residue(folder_id: str) -> None:
         f"WebuiActivity_{folder}",
         f"WebuiNotification_{folder}",
     )
-    async with _pool.acquire_write_slot():
-        async with _pool.get_session() as session:
-            for label in store_labels:
-                result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
-                await result.consume()
-            result = await session.run(
-                f"MATCH (f:`{folder_label}` {{id: $folder}}) "
-                f"WHERE NOT EXISTS((:`{doc_label}`)-[:MEMBER_OF]->(f)) "
-                "AND NOT EXISTS(()-[:GRAPH_MEMBER_OF]->(f)) "
-                "DETACH DELETE f",
-                folder=folder,
-            )
+    async with _pool.acquire_write_slot(), _pool.get_session() as session:
+        for label in store_labels:
+            result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
             await result.consume()
+        result = await session.run(
+            f"MATCH (f:`{folder_label}` {{id: $folder}}) "
+            f"WHERE NOT EXISTS((:`{doc_label}`)-[:MEMBER_OF]->(f)) "
+            "AND NOT EXISTS(()-[:GRAPH_MEMBER_OF]->(f)) "
+            "DETACH DELETE f",
+            folder=folder,
+        )
+        await result.consume()
 
 
 async def _guard_seed_folder_residual(folder_id: str) -> None:
@@ -390,6 +392,7 @@ async def delete_folder(
             examples=["project-docs"],
         ),
     ],
+    request: Request,
 ) -> None:
     """Remove a runtime-created folder. The folder must be empty:
 
@@ -427,11 +430,12 @@ async def delete_folder(
     event = _make_event(
         kind="settings",
         sev="info",
-        actor="operator",
+        actor=_request_actor(request),
         target_label=folder_id,
         summary=f"Folder '{folder_id}' deleted",
         meta={"folder_id": folder_id, "operation": "delete"},
         target_type="folder",
+        target_id=folder_id,
     )
     await store.record_activity(event)
-    return None
+    return

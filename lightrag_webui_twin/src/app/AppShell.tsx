@@ -45,17 +45,17 @@ import { api, type ActivityQuery } from '../api/resources';
 import { mapTwinQueryResponseForRetrievalTab } from '../api/twinQueryResponse';
 import { buildFormatCategories } from '../constants/formatCategories';
 import type { Document } from '../types/document';
-import type { Theme, Folder } from '../types/topbar';
+import { DEFAULT_TABS, type Theme, type Folder } from '../types/topbar';
 import { dedupeDocumentsBySource } from '../utils/documents';
 import { tagCatalogForSuggestions } from '../utils/tags';
 import { logTechnicalError, userErrorMessage } from '../lib/errorMessages';
 import { formatBackendError, resourceError } from './appErrors';
 import {
-  CURRENT_USER,
   DOCUMENTS_STATUS_FILTERS,
   DOCUMENTS_STATUS_TO_API,
   type DocumentsStatusFilterKey,
 } from './appConstants';
+import { resolveFrontendIdentity } from './frontendIdentity';
 import {
   ActivityTab,
   AddSourceModal,
@@ -64,6 +64,7 @@ import {
   RetagModal,
   RetrievalTab,
   SettingsTab,
+  SourcesRagTab,
   TagsTab,
 } from './lazyComponents';
 import {
@@ -161,7 +162,23 @@ export function AppShell() {
   // Auth
   const auth = useAuth();
   const runtimeConfig = auth.config;
-  const currentActor = auth.user?.email ?? CURRENT_USER.name;
+  const catalogEnabled = runtimeConfig.catalogEnabled === true;
+  const topbarTabs = useMemo(
+    () =>
+      catalogEnabled
+        ? DEFAULT_TABS.flatMap((defaultTab) =>
+            defaultTab.id === 'documents'
+              ? [defaultTab, { id: 'sources-rag', label: 'Sources RAG' }]
+              : [defaultTab],
+          )
+        : undefined,
+    [catalogEnabled],
+  );
+  const frontendIdentity = useMemo(
+    () => resolveFrontendIdentity(auth.user, auth.authEnabled),
+    [auth.authEnabled, auth.user],
+  );
+  const currentActor = frontendIdentity.actor;
   const authReady = !auth.isCheckingAuth && !auth.needsLogin;
   const retagOpen = retagDoc !== null || retagBulk !== null;
   const configuredFolders = runtimeConfig.folders;
@@ -362,6 +379,7 @@ export function AppShell() {
 
   const {
     uploadDocs,
+    cancelAddSourceUpload,
     onAddSourceSubmit,
     onDeleteBulk,
     onDeleteSingle,
@@ -548,6 +566,7 @@ export function AppShell() {
     <div className="app">
       <Topbar
         tab={tab}
+        tabs={topbarTabs}
         onTab={(nextTab) => {
           if (nextTab === 'settings') setSettingsSection('profile');
           setTab(nextTab);
@@ -771,12 +790,18 @@ export function AppShell() {
             <TagsTab
               tags={tagList}
               categories={tagCategoryList}
-              currentUser={CURRENT_USER}
+              currentUser={frontendIdentity.tagUser}
               folderLabel={kbName || effectiveFolder}
               defaultPendingOpen
               onApprove={onTagApprove}
               onCommit={onTagCommit}
               onNavigate={onNavigate}
+            />
+          )}
+          {tab === 'sources-rag' && catalogEnabled && (
+            <SourcesRagTab
+              activeFolder={effectiveFolder}
+              onToast={pushToast}
             />
           )}
           </Suspense>
@@ -792,8 +817,14 @@ export function AppShell() {
               runtimeConfig.extraUploadExtensions,
             )}
             submitting={uploadDocs.isPending}
+            onCancel={cancelAddSourceUpload}
             extraUploadExtensions={runtimeConfig.extraUploadExtensions}
             extraUploadMaxBytes={runtimeConfig.extraUploadMaxBytes}
+            catalogEnabled={catalogEnabled}
+            onOpenLinkedSources={() => {
+              setAddOpen(false);
+              setTab('sources-rag');
+            }}
             onClose={() => setAddOpen(false)}
             onSubmit={onAddSourceSubmit}
           />
