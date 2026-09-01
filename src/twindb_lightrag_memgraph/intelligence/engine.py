@@ -15,12 +15,14 @@ import hmac
 import logging
 import secrets
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Optional
 
 from lightrag import LightRAG
 
 from .._constants import validate_identifier
 from .config import TwinRAGConfig
+from .fallbacks import query_fallback_scope
 from .features.cognitive_reranker import CognitiveReranker
 from .features.feedback import FeedbackStore
 from .features.workspace_router import FolderRouter
@@ -141,7 +143,8 @@ class TwinRAGEngine:
         public_folders = (
             folders_publics if folders_publics is not None else workspaces_publics
         )
-        public_folders = public_folders or [self.config.effective_default_folder]
+        if public_folders is None:
+            public_folders = [self.config.effective_default_folder]
         explicit_folder_override = (
             folder is not None
             or workspace is not None
@@ -235,6 +238,48 @@ class TwinRAGEngine:
         folder: Optional[str] = None,
         folders_publics: Optional[list[str]] = None,
         authorized_folders: Optional[set[str]] = None,
+        retrieval_provider: Callable[[str, str], Awaitable[list]] | None = None,
+        enable_rerank: bool | None = None,
+        on_synthesis_token: Callable[[str], Awaitable[None]] | None = None,
+        on_stage: Callable[[str], Awaitable[None]] | None = None,
+        response_type: str | None = None,
+    ) -> QueryResult:
+        """Run one request under an isolated, bounded degradation trace."""
+        with query_fallback_scope() as fallbacks:
+            result = await self._aquery_impl(
+                question=question,
+                conversation_history=conversation_history,
+                workspace=workspace,
+                workspaces_publics=workspaces_publics,
+                user_id=user_id,
+                folder=folder,
+                folders_publics=folders_publics,
+                authorized_folders=authorized_folders,
+                retrieval_provider=retrieval_provider,
+                enable_rerank=enable_rerank,
+                on_synthesis_token=on_synthesis_token,
+                on_stage=on_stage,
+                response_type=response_type,
+            )
+            if result.trace is not None:
+                result.trace.fallbacks = list(fallbacks)
+            return result
+
+    async def _aquery_impl(
+        self,
+        question: str,
+        conversation_history: Optional[list[dict[str, str]]] = None,
+        workspace: Optional[str] = None,
+        workspaces_publics: Optional[list[str]] = None,
+        user_id: Optional[str] = None,
+        folder: Optional[str] = None,
+        folders_publics: Optional[list[str]] = None,
+        authorized_folders: Optional[set[str]] = None,
+        retrieval_provider: Callable[[str, str], Awaitable[list]] | None = None,
+        enable_rerank: bool | None = None,
+        on_synthesis_token: Callable[[str], Awaitable[None]] | None = None,
+        on_stage: Callable[[str], Awaitable[None]] | None = None,
+        response_type: str | None = None,
     ) -> QueryResult:
         """
         Main entry point -- Full ReAct + AFFINE pipeline.
@@ -276,6 +321,8 @@ class TwinRAGEngine:
         # ---- STEP 0: INTENT CLASSIFICATION (F05) ----
         early_exit = await self._classify_and_short_circuit(question, trace)
         if early_exit is not None:
+            if on_stage is not None:
+                await on_stage("generation")
             return early_exit
 
         # ---- STEP 1: REASON (Coreference + Query Expansion F03) ----
@@ -319,10 +366,13 @@ class TwinRAGEngine:
             raise PermissionError(f"Unauthorized folders: {sorted(denied)}")
         search_tasks = []
         for ws in all_workspaces:
-            rag = self._get_rag(ws)
-            search_tasks.append(
-                self.search.hybrid_search(rag, search_query, self.config)
-            )
+            if retrieval_provider is not None:
+                search_tasks.append(retrieval_provider(ws, search_query))
+            else:
+                rag = self._get_rag(ws)
+                search_tasks.append(
+                    self.search.hybrid_search(rag, search_query, self.config)
+                )
         workspace_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Fusion and deduplication
@@ -330,17 +380,26 @@ class TwinRAGEngine:
         trace.raw_chunks_count = len(all_chunks)
 
         # F04: Cognitive Reranking v2
-        if self.config.enable_cognitive_reranking and all_chunks:
+        rerank_enabled = (
+            self.config.enable_cognitive_reranking
+            if enable_rerank is None
+            else enable_rerank
+        )
+        if rerank_enabled and all_chunks:
             all_chunks = await self.reranker.rerank(question, all_chunks)
             trace.reranked_chunks_count = len(all_chunks)
         else:
             all_chunks = all_chunks[: self.config.final_limit]
 
         # ---- STEP 3: OBSERVE (Synthesis + Citations) ----
+        if on_stage is not None:
+            await on_stage("generation")
         synthesis_result = await self.synthesis.synthesize(
             question=question,
             chunks=all_chunks,
             conversation_history=history,
+            on_token=on_synthesis_token,
+            response_type=response_type,
         )
 
         trace.stop()

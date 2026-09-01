@@ -11,19 +11,21 @@
  *   - `onPushToast` is the structured Toast emitter from the host (App.tsx).
  *   - `onNavigate(tab, params)` is invoked instead of pushing window history
  *     directly, so the host owns routing.
- *   - "Clear activity" modal a11y via useModalA11y.
+ *   - The immutable ledger deliberately exposes no destructive clear action.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+/* eslint-disable react-refresh/only-export-components -- compatibility re-export keeps the established ActivityTab helper contract. */
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
-import { useModalA11y } from '../hooks/useModalA11y';
+import { ActivityDetail } from './Activity/ActivityDetail';
+import { ActivityRow } from './Activity/ActivityRow';
+import { exportActivityCsv } from './Activity/activityExport';
 import { useUrlParam } from '../hooks/useUrlParam';
 import { relativeTime } from '../utils/relativeTime';
 import {
   ACTIVITY_KIND_META,
   ACTIVITY_RANGE_MS,
   ACTIVITY_RANGES,
-  resolveKindMeta,
   type ActivityEvent,
   type ActivityKind,
   type ActivityRange,
@@ -31,6 +33,8 @@ import {
 } from '../types/activity';
 import type { Toast } from '../types/toast';
 import type { ActivityQuery } from '../api/resources';
+
+export { exportActivityCsv } from './Activity/activityExport';
 
 export type ActivityDensity = 'comfortable' | 'compact';
 export const DEFAULT_ACTIVITY_LIMIT = 200;
@@ -119,11 +123,7 @@ export function ActivityTab({
   const [q, setQ] = useUrlParam<string>('q', '');
   const [actor, setActor] = useUrlParam<string>('actor', 'any');
   const [selectedId, setSelectedId] = useState<string>(events[0]?.id ?? '');
-  const [clearOpen, setClearOpen] = useState(false);
-  const [clearConfirm, setClearConfirm] = useState('');
   const [initialNowMs] = useState(() => Date.now());
-  const clearModalRef = useRef<HTMLDialogElement>(null);
-  useModalA11y({ open: clearOpen, onClose: () => setClearOpen(false), ref: clearModalRef });
 
   // Real polling: refetch from the backend on an interval. The previous
   // implementation incremented a fake "N new events" counter every 9s
@@ -368,8 +368,7 @@ export function ActivityTab({
                 Audit events are append-only by doctrine (EBA/DORA audit trail
                 requirements). The retention-policy table
                 in Settings → Folder governs natural expiry; no operator
-                affordance to wipe rows. Modal + clearOpen state still wired in
-                case it gets reintroduced behind a Steward-only ops escape.
+                affordance exists to wipe rows.
               */}
             </div>
           </div>
@@ -406,8 +405,8 @@ export function ActivityTab({
               {evts.map((e) => (
                 <ActivityRow
                   key={e.id}
-                  e={e}
-                  rel={activityRelativeLabel(e, displayNowMs)}
+                  event={e}
+                  relativeLabel={activityRelativeLabel(e, displayNowMs)}
                   folder={(e.meta?.folder as string) || folderLabel}
                   selected={!!selected && selected.id === e.id}
                   onClick={() => setSelectedId(e.id)}
@@ -428,355 +427,13 @@ export function ActivityTab({
       </div>
 
       <ActivityDetail
-        e={selected}
-        rel={selected ? activityRelativeLabel(selected, displayNowMs) : ''}
+        event={selected}
+        relativeLabel={selected ? activityRelativeLabel(selected, displayNowMs) : ''}
         folder={(selected?.meta?.folder as string) || folderLabel}
         onPushToast={onPushToast}
         onNavigate={onNavigate}
       />
 
-      {clearOpen && (
-        <div
-          className="modal-bg"
-        >
-          <button
-            type="button"
-            className="modal-backdrop-dismiss"
-            onClick={() => setClearOpen(false)}
-            aria-label="Close clear activity dialog"
-            data-testid="clear-modal-bg"
-          />
-          <dialog
-            open
-            ref={clearModalRef}
-            className="modal modal-md"
-            aria-modal="true"
-            aria-labelledby="clear-title"
-            tabIndex={-1}
-          >
-            <div className="modal-h">
-              <h3 id="clear-title">Clear activity events</h3>
-              <div className="modal-h-sub">Palier 3 · admin action</div>
-              <button
-                className="modal-x"
-                onClick={() => setClearOpen(false)}
-                aria-label="Close dialog"
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="impact-box danger">
-                <Icon name="alert-triangle" size={13} color="var(--twin-red-vivid)" />
-                <span>
-                  Purges events <b>past their retention window</b> only. Events still within retention (e.g.{' '}
-                  <code>system.policy_violation</code> kept for 7 years) are untouched. Action is recorded as{' '}
-                  <code>admin.clear</code> in this log itself.
-                </span>
-              </div>
-              <div className="retention-grid">
-                <div>
-                  <span>Source mgmt</span>
-                  <code>90d</code>
-                </div>
-                <div>
-                  <span>Tag mgmt</span>
-                  <code>90d</code>
-                </div>
-                <div>
-                  <span>Retrieval</span>
-                  <code>30d</code>
-                </div>
-                <div>
-                  <span>Admin</span>
-                  <code>1y</code>
-                </div>
-                <div>
-                  <span>Auth</span>
-                  <code>1y</code>
-                </div>
-                <div>
-                  <span>Policy / System</span>
-                  <code>7y</code>
-                </div>
-              </div>
-              <label className="field-label" htmlFor="clear-confirm-input">
-                Type <code>CLEAR</code> to confirm
-              </label>
-              <input
-                id="clear-confirm-input"
-                className="text-input"
-                value={clearConfirm}
-                onChange={(e) => setClearConfirm(e.target.value)}
-                placeholder="CLEAR"
-                autoFocus
-              />
-            </div>
-            <div className="modal-footer">
-              <button className="ghost-btn" onClick={() => setClearOpen(false)}>
-                Cancel
-              </button>
-              <button
-                className="primary-btn danger"
-                disabled={clearConfirm !== 'CLEAR'}
-                onClick={() => {
-                  setClearOpen(false);
-                  setClearConfirm('');
-                  onPushToast?.({
-                    kind: 'done',
-                    title: 'Activity',
-                    titleSuffix: 'events past retention purged',
-                    sub: 'admin.clear emitted · 1,247 events removed',
-                  });
-                }}
-              >
-                Purge expired events
-              </button>
-            </div>
-          </dialog>
-        </div>
-      )}
     </div>
   );
-}
-
-interface ActivityRowProps {
-  e: ActivityEvent;
-  rel: string;
-  folder: string;
-  selected: boolean;
-  onClick: () => void;
-}
-
-function ActivityRow({ e, rel, folder, selected, onClick }: Readonly<ActivityRowProps>) {
-  const m = resolveKindMeta(e.kind);
-  return (
-    <button
-      className={'activity-row ' + (selected ? 'is-selected' : '') + ' sev-' + e.sev}
-      onClick={onClick}
-      aria-current={selected ? 'true' : undefined}
-    >
-      <span className="row-time">{rel}</span>
-      <span className="row-rail" style={{ background: m.color }} />
-      <span className="row-icon" style={{ color: m.color }}>
-        <Icon name={m.icon} size={14} />
-      </span>
-      <span className="row-body">
-        <span className="row-line1">
-          <span className="row-actor">{e.actor.user}</span>
-          <span className="row-kind">{m.label}</span>
-          <span className="row-folder" title={`Folder: ${folder}`} data-testid="activity-row-folder">
-            <Icon name="folder" size={10} />
-            {folder}
-          </span>
-          <span className="row-target">{e.target.label}</span>
-        </span>
-        <span className="row-summary">{e.summary}</span>
-      </span>
-      {e.sev !== 'info' && <span className={'sev-badge sev-' + e.sev}>{e.sev}</span>}
-    </button>
-  );
-}
-
-interface ActivityDetailProps {
-  e: ActivityEvent | null;
-  rel: string;
-  folder: string;
-  onPushToast?: (toast: Omit<Toast, 'id'>) => void;
-  onNavigate?: (tab: string, params?: Record<string, string>) => void;
-}
-
-function ActivityDetail({ e, rel, folder, onPushToast, onNavigate }: Readonly<ActivityDetailProps>) {
-  const [copied, setCopied] = useState(false);
-  if (!e) {
-    return (
-      <aside className="activity-detail">
-        <div className="empty-state">
-          <div className="title">Select an event</div>
-        </div>
-      </aside>
-    );
-  }
-  const m = resolveKindMeta(e.kind);
-  const copyId = () => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      void navigator.clipboard.writeText(e.id);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <aside className="activity-detail">
-      <div className="detail-head">
-        <div className="detail-kind" style={{ color: m.color }}>
-          <Icon name={m.icon} size={14} color={m.color} />
-          {m.label}
-          {e.sev !== 'info' && <span className={'sev-badge sev-' + e.sev}>{e.sev}</span>}
-        </div>
-        <h3>{e.target.label}</h3>
-        <div className="detail-summary">{e.summary}</div>
-      </div>
-
-      <div className="detail-grid">
-        <div className="kv">
-          <span>Event ID</span>
-          <button
-            type="button"
-            className="copyable"
-            onClick={copyId}
-            title="Copy"
-          >
-            {e.id} {copied ? '✓' : ''}
-          </button>
-        </div>
-        <div className="kv">
-          <span>Timestamp</span>
-          <code>{e.ts}</code>
-        </div>
-        <div className="kv">
-          <span>Folder</span>
-          <code data-testid="activity-detail-folder">{folder}</code>
-        </div>
-        <div className="kv">
-          <span>Relative</span>
-          <span>{rel}</span>
-        </div>
-        <div className="kv">
-          <span>Actor</span>
-          <span>
-            {e.actor.user} <em>({e.actor.role})</em>
-          </span>
-        </div>
-        <div className="kv">
-          <span>Target</span>
-          <span>
-            {e.target.type} · {e.target.label}
-          </span>
-        </div>
-        <div className="kv">
-          <span>Severity</span>
-          <span className={'sev-text sev-' + e.sev}>{e.sev}</span>
-        </div>
-      </div>
-
-      <div className="detail-section">
-        <div className="detail-section-h">Metadata</div>
-        <pre className="detail-meta">{JSON.stringify(e.meta, null, 2)}</pre>
-      </div>
-
-      <div className="detail-actions">
-        {e.kind === 'source-failed' && (
-          <button
-            className="primary-btn"
-            onClick={() =>
-              onPushToast?.({
-                kind: 'propagating',
-                title: 'Re-processing failed sources',
-                // Audit C7: targeted ``/documents/{id}/scan`` is rejected
-                // because LightRAG has no safe per-document rescan. The
-                // honest action that includes this row is the failed-batch
-                // endpoint.
-                sub: `${e.target.label} · POST /documents/reprocess_failed`,
-              })
-            }
-          >
-            <Icon name="refresh" size={12} /> Replay ingestion
-          </button>
-        )}
-        {e.target.type === 'source' && (
-          <button
-            className="ghost-btn"
-            onClick={() =>
-              onNavigate?.('documents', e.target.label ? { q: e.target.label } : undefined)
-            }
-          >
-            <Icon name="arrow-right" size={12} /> Open source
-          </button>
-        )}
-        {e.target.type === 'query' && (
-          <button
-            className="ghost-btn"
-            onClick={() => {
-              const params: Record<string, string> = {};
-              if (e.target.label) params.q = e.target.label;
-              const meta = e.meta as { mode?: string };
-              if (meta?.mode) params.mode = meta.mode;
-              onNavigate?.('retrieval', params);
-            }}
-          >
-            <Icon name="arrow-right" size={12} /> Re-run query
-          </button>
-        )}
-        <button className="ghost-btn" onClick={copyId}>
-          <Icon name="external-link" size={12} /> Copy payload
-        </button>
-      </div>
-    </aside>
-  );
-}
-
-/**
- * Flatten an ActivityEvent list to a CSV blob and trigger a download. Exported
- * so it can be unit-tested without rendering the whole tab.
- */
-// eslint-disable-next-line react-refresh/only-export-components
-export function exportActivityCsv(
-  rows: readonly ActivityEvent[],
-  range: ActivityRange,
-): void {
-  const esc = (v: unknown): string => {
-    if (v === null || v === undefined) return '';
-    let s: string;
-    if (typeof v === 'string') {
-      s = v;
-    } else if (typeof v === 'number' || typeof v === 'boolean') {
-      s = v.toString();
-    } else {
-      s = JSON.stringify(v) ?? '';
-    }
-    return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-  };
-  const cols = [
-    'id',
-    'ts',
-    'kind',
-    'sev',
-    'actor',
-    'role',
-    'target_type',
-    'target_label',
-    'summary',
-    'meta',
-  ];
-  const lines = [cols.join(',')];
-  rows.forEach((e) => {
-    lines.push(
-      [
-        e.id,
-        e.ts,
-        e.kind,
-        e.sev,
-        e.actor.user,
-        e.actor.role,
-        e.target.type,
-        e.target.label,
-        e.summary,
-        e.meta,
-      ]
-        .map(esc)
-        .join(','),
-    );
-  });
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const stamp = new Date().toISOString().slice(0, 10);
-  a.href = url;
-  a.download = `twin-rag-activity-${range}-${stamp}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-    a.remove();
-  }, 0);
 }

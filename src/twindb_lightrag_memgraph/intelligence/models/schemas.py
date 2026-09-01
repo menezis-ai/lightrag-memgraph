@@ -10,6 +10,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from ..fallbacks import QueryFallback
+
 
 class IntentType(str, Enum):
     IN_SCOPE = "IN_SCOPE"
@@ -42,6 +44,8 @@ class Citation(BaseModel):
     document_path: Optional[str] = None
     source_workspace: str = "unknown"
     score: float = 0.0
+    chunk_id: Optional[str] = None
+    retrieval_score: Optional[float] = None
 
 
 class QueryTrace(BaseModel):
@@ -61,6 +65,7 @@ class QueryTrace(BaseModel):
     tokens_used: int = 0
     intent: Optional[IntentResult] = None
     early_exit: Optional[str] = None
+    fallbacks: list[QueryFallback] = Field(default_factory=list, max_length=4)
 
     def start(self) -> None:
         self.start_time = time.time()

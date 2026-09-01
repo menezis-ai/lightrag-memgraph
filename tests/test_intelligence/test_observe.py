@@ -1,6 +1,7 @@
 """Tests for OBSERVE phase (synthesis + citations)."""
 
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -173,6 +174,184 @@ class TestSynthesisEngine:
 
         assert result.answer_status == AnswerStatus.GROUNDED
         assert result.citations[0].score == 0.0
+
+    async def test_streams_provider_deltas_and_validates_split_citation_markers(
+        self, engine, sample_chunks
+    ):
+        raw_answer = "Avant [Passage 0], milieu [Passage 1], rappel [Passage 0]."
+
+        class Stream:
+            def __aiter__(self):
+                parts = [
+                    "Avant [Pass",
+                    "age 0], milieu [Passage ",
+                    "1], rappel [Passage 0].",
+                ]
+
+                async def events():
+                    for part in parts:
+                        assert tokens == []
+                        yield SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(delta=SimpleNamespace(content=part))
+                            ],
+                            usage=None,
+                        )
+
+                return events()
+
+        tokens = []
+
+        async def on_token(value):
+            tokens.append(value)
+
+        nonstream_response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=raw_answer))],
+            usage=None,
+        )
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.create_chat_completion",
+            new=AsyncMock(side_effect=[Stream(), nonstream_response]),
+        ):
+            streamed = await engine.synthesize(
+                "Question",
+                sample_chunks,
+                on_token=on_token,
+            )
+            nonstreamed = await engine.synthesize("Question", sample_chunks)
+
+        public_answer = "Avant [1], milieu [2], rappel [1]."
+        assert "".join(tokens) == public_answer
+        assert streamed.answer == nonstreamed.answer == public_answer
+        assert streamed.answer.index("[1]") == raw_answer.index("[Passage 0]")
+        assert streamed.answer_status == AnswerStatus.GROUNDED
+        assert streamed.citations[0].chunk_id == sample_chunks[0].chunk_id
+        assert streamed.citations[0].retrieval_score is None
+
+    async def test_stream_with_late_phantom_marker_publishes_no_early_citation(
+        self, engine, sample_chunks
+    ):
+        tokens = []
+
+        class Stream:
+            def __aiter__(self):
+                parts = [
+                    "Fait valide [Pass",
+                    "age 0]. Puis fantome [Passage 99]. ",
+                    "Et malformed [Passage -1].",
+                ]
+
+                async def events():
+                    for part in parts:
+                        assert tokens == []
+                        yield SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(delta=SimpleNamespace(content=part))
+                            ],
+                            usage=None,
+                        )
+
+                return events()
+
+        async def on_token(value):
+            tokens.append(value)
+
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.create_chat_completion",
+            new=AsyncMock(return_value=Stream()),
+        ):
+            result = await engine.synthesize(
+                "Question",
+                sample_chunks,
+                on_token=on_token,
+            )
+
+        assert result.answer_status == AnswerStatus.CITATION_VALIDATION_FAILED
+        assert result.citations == []
+        assert "".join(tokens) == result.answer
+        assert "[" not in result.answer
+
+    async def test_stream_limit_fails_without_publishing_partial_output(
+        self, engine, sample_chunks
+    ):
+        tokens = []
+
+        class Stream:
+            def __aiter__(self):
+                async def events():
+                    yield SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(delta=SimpleNamespace(content="x" * 64_000))
+                        ],
+                        usage=None,
+                    )
+                    assert tokens == []
+                    yield SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content="y"))],
+                        usage=None,
+                    )
+
+                return events()
+
+        async def on_token(value):
+            tokens.append(value)
+
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.create_chat_completion",
+            new=AsyncMock(return_value=Stream()),
+        ):
+            result = await engine.synthesize(
+                "Question",
+                sample_chunks,
+                on_token=on_token,
+            )
+
+        assert result.answer_status == AnswerStatus.QUERY_FAILED
+        assert tokens == []
+
+    async def test_validated_stream_emits_bounded_ordered_deltas(self, engine):
+        tokens = []
+
+        async def on_token(value):
+            tokens.append(value)
+
+        answer = "x" * 2050
+        await engine._emit_validated_stream(answer, on_token)
+
+        assert [len(token) for token in tokens] == [1024, 1024, 2]
+        assert "".join(tokens) == answer
+
+    def test_public_retrieval_score_requires_scoped_measurement(
+        self, engine, sample_chunks
+    ):
+        assert engine._retrieval_score(sample_chunks[0]) is None
+        sample_chunks[0].metadata["measured_retrieval_score"] = 0.73
+        assert engine._retrieval_score(sample_chunks[0]) == 0.73
+
+    async def test_response_type_is_forwarded_into_synthesis_prompt(
+        self, engine, sample_chunks
+    ):
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Fait supporte [Passage 0].")
+                )
+            ],
+            usage=None,
+        )
+        completion = AsyncMock(return_value=response)
+        with patch(
+            "twindb_lightrag_memgraph.intelligence.react.observe.create_chat_completion",
+            new=completion,
+        ):
+            await engine.synthesize(
+                "Question",
+                sample_chunks,
+                response_type="Bullet Points",
+            )
+
+        prompt = completion.await_args.kwargs["messages"][1]["content"]
+        assert "format de reponse demande : Bullet Points" in prompt
 
 
 class TestPassageMarkerPattern:

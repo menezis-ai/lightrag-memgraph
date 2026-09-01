@@ -1,4 +1,4 @@
-"""Cross-stage adversarial and graceful-degradation contract for dormant L3."""
+"""Cross-stage adversarial contract for the off-by-default L3 runtime."""
 
 from __future__ import annotations
 

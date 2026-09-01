@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './fixtures';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { openTab } from './helpers';
 
 /**
@@ -78,6 +78,15 @@ async function bootAs(page: Page, config: Record<string, unknown>) {
 }
 
 test.describe('Role gating — folder administration', () => {
+  test.beforeEach(async ({ allowBrowserIssues }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/quota$/,
+        'Opening Settings may replace the still-active quota bootstrap query.',
+      ),
+    );
+  });
+
   test('@rbac a Reader (no admin:folders) sees folders read-only', async ({ page }) => {
     await bootAs(page, READER_CONFIG);
     await expect(page.getByTestId('folders-admin-readonly-badge')).toBeVisible();

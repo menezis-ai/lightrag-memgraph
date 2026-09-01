@@ -1,0 +1,40 @@
+{
+  "@timestamp": "2026-09-01T08:00:00.000Z",
+  "message": "access denied on DELETE /twin/api/folders",
+  "ecs": {"version": "9.4.0"},
+  "event": {
+    "id": "evt_auth_denied",
+    "kind": "event",
+    "category": ["authentication"],
+    "type": ["denied"],
+    "action": "auth",
+    "outcome": "failure",
+    "severity": 2,
+    "provider": "twin-kms",
+    "module": "activity",
+    "dataset": "twin.audit"
+  },
+  "service": {"name": "twin-test", "version": "1.2.0", "environment": "test"},
+  "trace": {"id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "http": {
+    "request": {"id": "req-auth", "method": "DELETE"},
+    "response": {"status_code": 403}
+  },
+  "user": {"name": "alice", "roles": ["operator"]},
+  "twin": {
+    "audit": {
+      "schema_version": "1.0.0",
+      "source": "activity",
+      "source_event_kind": "auth",
+      "severity_name": "warning",
+      "operation": "access_denied",
+      "emitted_by": null,
+      "route_group": "admin"
+    },
+    "auth": {"method": "idp"},
+    "resource": {"type": "route", "id": null, "name": null},
+    "folder": {"id": null},
+    "workspace": {"id": "default"},
+    "data": {"classification": null, "retention_policy": null}
+  }
+}

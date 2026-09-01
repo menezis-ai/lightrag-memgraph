@@ -1,11 +1,13 @@
 """Contracts for L3 LLM profiles, shared clients, and typed retry."""
 
 import asyncio
+import functools
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -33,6 +35,16 @@ from twindb_lightrag_memgraph.intelligence.ontology.config import (
     WorkspaceOntologyConfig,
 )
 from twindb_lightrag_memgraph.intelligence.ontology.pipeline import OntologyPipeline
+from twindb_lightrag_memgraph.server.tracing import (
+    TraceContext,
+    bind_trace_context,
+)
+from twindb_lightrag_memgraph.server.observability import (
+    make_request_observability_middleware,
+)
+
+_LANGSMITH_PARENT = "20260901T004915204525Z01a05a71-13c4-7582-bcf9-e358e56dc683"
+_W3C_PARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 
 
 @pytest.fixture(autouse=True)
@@ -239,14 +251,136 @@ async def test_user_facing_pipeline_uses_only_the_chat_model():
     )
     engine._get_rag = MagicMock(return_value=rag)
 
-    await engine.aquery("Pourquoi ?", authorized_folders={"commons"})
+    captured_spans: list[tuple[str, str, dict]] = []
+
+    def capturing_traceable(*, name, run_type):
+        def decorator(fn):
+            @functools.wraps(fn)
+            async def wrapper(*args, **kwargs):
+                captured_spans.append((name, run_type, kwargs.pop("langsmith_extra")))
+                return await fn(*args, **kwargs)
+
+            return wrapper
+
+        return decorator
+
+    app = FastAPI()
+    app.middleware("http")(make_request_observability_middleware())
+
+    @app.get("/l3-query-probe")
+    async def l3_query_probe():
+        await engine.aquery("Pourquoi ?", authorized_folders={"commons"})
+        return {"ok": True}
+
+    with (
+        patch("twindb_lightrag_memgraph.server.tracing._TRACING_ENABLED", True),
+        patch("twindb_lightrag_memgraph.server.tracing._langsmith_available", True),
+        patch(
+            "twindb_lightrag_memgraph.server.tracing.traceable",
+            capturing_traceable,
+            create=True,
+        ),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as http_client:
+            response = await http_client.get(
+                "/l3-query-probe",
+                headers={
+                    "traceparent": _W3C_PARENT,
+                    "langsmith-trace": _LANGSMITH_PARENT,
+                    "baggage": "langsmith-project=twin-test",
+                },
+            )
+
+    assert response.status_code == 200
+    response_traceparent = response.headers["traceparent"]
+    _, response_trace_id, response_span_id, _ = response_traceparent.split("-")
 
     assert chat_client.chat.completions.create.await_count == 4
     assert {
         call.kwargs["model"]
         for call in chat_client.chat.completions.create.await_args_list
     } == {"chat-model"}
+    for call in chat_client.chat.completions.create.await_args_list:
+        assert call.kwargs["extra_headers"] == {
+            "traceparent": response_traceparent,
+            "x-trace-id": response_trace_id,
+            "langsmith-trace": _LANGSMITH_PARENT,
+            "baggage": "langsmith-project=twin-test",
+        }
+    assert [(name, run_type) for name, run_type, _ in captured_spans] == [
+        ("TwinRAG:llm", "llm"),
+    ] * 4
+    for _, _, extra in captured_spans:
+        assert extra == {
+            "metadata": {
+                "w3c.trace_id": response_trace_id,
+                "w3c.span_id": response_span_id,
+            },
+            "parent": {
+                "langsmith-trace": _LANGSMITH_PARENT,
+                "baggage": "langsmith-project=twin-test",
+            },
+        }
     indexing_client.chat.completions.create.assert_not_awaited()
+
+
+async def test_shared_l3_client_merges_headers_without_cross_request_leakage():
+    config = TwinRAGConfig(
+        llm_api_key="chat-key",
+        llm_api_base="https://chat.invalid/v1",
+        llm_model="chat-model",
+    )
+    calls: list[dict] = []
+    both_started = asyncio.Event()
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            both_started.set()
+        await both_started.wait()
+        return _completion_response("ok")
+
+    client = AsyncMock()
+    client.chat.completions.create = AsyncMock(side_effect=create)
+    inject_llm_client_for_testing(config, LLMProfileKind.CHAT, client)
+
+    async def one_call(label: str, trace_id: str, span_id: str):
+        context = TraceContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            trace_flags="01",
+            source="w3c",
+        )
+        with bind_trace_context(context):
+            return await llm_module.create_chat_completion(
+                config,
+                LLMProfileKind.CHAT,
+                messages=[{"role": "user", "content": label}],
+                extra_headers={
+                    "x-provider-option": label,
+                    "TraceParent": "stale-parent",
+                },
+            )
+
+    await asyncio.gather(
+        one_call("first", "a" * 32, "1" * 16),
+        one_call("second", "b" * 32, "2" * 16),
+    )
+
+    by_label = {call["messages"][0]["content"]: call for call in calls}
+    assert by_label["first"]["extra_headers"] == {
+        "x-provider-option": "first",
+        "traceparent": f"00-{'a' * 32}-{'1' * 16}-01",
+        "x-trace-id": "a" * 32,
+    }
+    assert by_label["second"]["extra_headers"] == {
+        "x-provider-option": "second",
+        "traceparent": f"00-{'b' * 32}-{'2' * 16}-01",
+        "x-trace-id": "b" * 32,
+    }
 
 
 async def test_ontology_pipeline_uses_only_the_indexing_model():

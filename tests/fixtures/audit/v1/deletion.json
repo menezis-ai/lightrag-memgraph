@@ -1,0 +1,40 @@
+{
+  "@timestamp": "2026-09-01T08:03:00.000Z",
+  "message": "removed from folder ops by key operator",
+  "ecs": {"version": "9.4.0"},
+  "event": {
+    "id": "evt_delete",
+    "kind": "event",
+    "category": ["file"],
+    "type": ["deletion"],
+    "action": "doc-deleted",
+    "outcome": "success",
+    "severity": 1,
+    "provider": "twin-kms",
+    "module": "activity",
+    "dataset": "twin.audit"
+  },
+  "service": {"name": "twin-test", "version": "1.2.0", "environment": "test"},
+  "trace": {"id": "cccccccccccccccccccccccccccccccc"},
+  "http": {
+    "request": {"id": "req-delete", "method": "DELETE"},
+    "response": {"status_code": null}
+  },
+  "user": {"name": "api_key:key-4", "roles": ["operator"]},
+  "twin": {
+    "audit": {
+      "schema_version": "1.0.0",
+      "source": "activity",
+      "source_event_kind": "doc-deleted",
+      "severity_name": "info",
+      "operation": "remove-membership",
+      "emitted_by": null,
+      "route_group": "documents"
+    },
+    "auth": {"method": "operator_api_key"},
+    "resource": {"type": "document", "id": "doc-42", "name": "doc-42"},
+    "folder": {"id": "ops"},
+    "workspace": {"id": "default"},
+    "data": {"classification": null, "retention_policy": null}
+  }
+}

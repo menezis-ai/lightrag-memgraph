@@ -441,9 +441,11 @@ describe('AddSourceModal — files', () => {
 describe('AddSourceModal — tag autocomplete', () => {
   it('does not show autocomplete with empty input', () => {
     render(<AddSourceModal {...defaultProps()} />);
-    expect(
-      document.querySelector('.autocomplete-row'),
-    ).toBeNull();
+    const input = screen.getByRole('combobox', { name: 'Tag input' });
+    expect(document.querySelector('.autocomplete-row')).toBeNull();
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(input).not.toHaveAttribute('aria-controls');
+    expect(input).not.toHaveAttribute('aria-activedescendant');
   });
 
   it('shows autocomplete rows filtered by input', async () => {

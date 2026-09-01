@@ -15,7 +15,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from neo4j import AsyncGraphDatabase, TrustAll, TrustCustomCAs, TrustSystemCAs
@@ -69,6 +69,30 @@ _last_read_driver_activity = None
 # restored licence recovers without a restart, and a broken one never becomes
 # silent.
 _enterprise_supported: bool | None = None
+_storage_metric_recorder: Callable[[str], None] | None = None
+
+
+def set_storage_metric_recorder(
+    recorder: Callable[[str], None] | None,
+) -> None:
+    """Install the optional server metrics hook without adding a storage dep.
+
+    Storage-only installs do not carry ``prometheus-client``.  The server extra
+    registers this callback when its metrics module is imported; otherwise the
+    write path remains behavior-identical.
+    """
+    global _storage_metric_recorder
+    _storage_metric_recorder = recorder
+
+
+def _record_storage_metric(outcome: str) -> None:
+    recorder = _storage_metric_recorder
+    if recorder is None:
+        return
+    try:
+        recorder(outcome)
+    except Exception:  # pragma: no cover - observability must not break storage
+        logger.debug("Storage metric recorder failed", exc_info=True)
 
 
 class MemgraphDatabaseUnavailableError(RuntimeError):
@@ -727,30 +751,35 @@ async def acquire_write_slot():
     """
     sem = _get_write_semaphore()
     acquire_task = asyncio.create_task(sem.acquire())
+    outcome = "error"
     try:
-        done, _ = await asyncio.wait(
-            {acquire_task}, timeout=_read_write_slot_acquire_timeout()
-        )
-    except asyncio.CancelledError:
-        # A cancellation can race with the semaphore granting the permit. If
-        # the acquire completed, return that permit before propagating.
-        acquired = await _cancel_and_reap_acquire(acquire_task)
-        if acquired:
-            sem.release()
-        raise
+        try:
+            done, _ = await asyncio.wait(
+                {acquire_task}, timeout=_read_write_slot_acquire_timeout()
+            )
+        except asyncio.CancelledError:
+            # A cancellation can race with the semaphore granting the permit. If
+            # the acquire completed, return that permit before propagating.
+            acquired = await _cancel_and_reap_acquire(acquire_task)
+            if acquired:
+                sem.release()
+            raise
 
-    if acquire_task not in done:
-        acquired = await _cancel_and_reap_acquire(acquire_task)
-        if acquired:
-            sem.release()
-        raise asyncio.TimeoutError("Memgraph write queue exhausted")
+        if acquire_task not in done:
+            acquired = await _cancel_and_reap_acquire(acquire_task)
+            if acquired:
+                sem.release()
+            raise asyncio.TimeoutError("Memgraph write queue exhausted")
 
-    acquired = acquire_task.result()
-    try:
-        yield
+        acquired = acquire_task.result()
+        try:
+            yield
+            outcome = "success"
+        finally:
+            if acquired:
+                sem.release()
     finally:
-        if acquired:
-            sem.release()
+        _record_storage_metric(outcome)
 
 
 async def close_driver():

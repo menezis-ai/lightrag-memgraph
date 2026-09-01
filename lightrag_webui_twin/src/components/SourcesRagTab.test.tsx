@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 const baseLink = vi.hoisted(() => ({
   id: '11111111-1111-4111-8111-111111111111',
-  auid: 'AP11121',
+  auid: 'AP011121',
   url: 'https://knowledge.example.com/pages/viewpage.action?pageId=42',
   url_raw: 'https://knowledge.example.com/pages/viewpage.action?pageId=42',
   source_type: 'confluence',
@@ -38,7 +38,7 @@ vi.mock('../api/queries', () => ({
   useLinkedSources: () => ({
     data: {
       application: {
-        auid: 'AP11121',
+        auid: 'AP011121',
         business_app: 'CTCK',
         classification: 'C1',
         product_owner: 'Demo Steward',
@@ -122,7 +122,7 @@ describe('SourcesRagTab', () => {
     ]) {
       expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument();
     }
-    expect(screen.getByText('AP11121')).toBeInTheDocument();
+    expect(screen.getByText('AP011121')).toBeInTheDocument();
     expect(screen.getByText('ABSOLUTELY NO CONFIDENTIAL DOCUMENTS.')).toBeInTheDocument();
     const deCell = (
       screen.getByRole('columnheader', { name: 'DE' }) as HTMLTableCellElement

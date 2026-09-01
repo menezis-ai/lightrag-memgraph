@@ -1507,6 +1507,36 @@ describe('RetrievalTab — TR-RET-02 answer_status surface', () => {
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
+  it('hides sources when L3 citation validation fails', async () => {
+    const onStreamQuery = vi.fn(
+      async (_params, onChunk: (chunk: string) => void) => {
+        onChunk('An answer with an invalid citation.');
+        return {
+          response: 'An answer with an invalid citation.',
+          sources: [],
+          answer_status: 'citation_validation_failed' as const,
+        };
+      },
+    );
+    render(
+      <RetrievalTab
+        {...defaultProps()}
+        initialThreads={[]}
+        onStreamQuery={onStreamQuery}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Query input'), 'validate');
+    await userEvent.click(screen.getByRole('button', { name: /Send/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('sources-empty-citation-validation-failed'),
+      ).toBeInTheDocument(),
+    );
+    expect(document.querySelector('.sources-header')).toBeNull();
+  });
+
   it('keeps the answer but shows the no-retrieval cue and blocks leaked-source navigation', async () => {
     // only_need_context: the raw context body is shown, but the empty Sources
     // area must read as intentional (cue), not as

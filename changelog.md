@@ -8,6 +8,114 @@
 
 ## Unreleased — 1.2.0
 
+### Procedure review queue survives a malformed bundle (2026-08-31)
+- **One type-drifted record no longer 500s the whole review queue.**
+  `GET /twin/api/procedures` projected `track_id`, `classification`,
+  `created_at`, `updated_at` and `operator_classification` straight into the
+  response model, and `schematics_total` through a bare `int()`. Any drift on
+  a single bundle raised out of the list comprehension and took every parked
+  procedure with it — and a parked procedure is invisible in `/documents`, so
+  an unlistable bundle was a document stuck forever. Every field is now
+  coerced at the wire boundary, with the offending bundle id logged.
+- **A projection that fails anyway yields a degraded row, not a hole.** The
+  bundle stays listed with an explicit reason so an admin can still reach its
+  detail view. Folder visibility is resolved *before* that guard and fails
+  closed: a bundle whose folders cannot be determined is excluded, never
+  degraded into another folder's list.
+- **Malformed folder metadata no longer surfaces a bundle in every folder.**
+  The list grants a deliberate "visible everywhere" exception to a bundle
+  claimed by no folder, so a scan-created record stays reviewable. That
+  exception keys off an empty folder list, and `folder=[]`, `folder=0`, an
+  empty/invalid folder identifier, object-shaped `duplicate_requests` or a
+  non-dict request entry all collapsed to an empty list *without raising* —
+  inheriting the exception and exposing another folder's parked document. The
+  folder structure and every non-`None` identifier are now validated before
+  the exception can apply; an unenumerable claim set excludes the bundle from
+  every folder list, its own included, and it stays reachable through the
+  admin detail route.
+- **Store-access failures are named in the log.** An `OSError` from the lock
+  sidecar or the store read stays a 500 (unchanged contract) but is logged as
+  a store-access failure, so it is no longer indistinguishable from a
+  projection crash — the two have opposite fixes. Business errors from the
+  same wrapper are deliberately not relabelled.
+
+### Versioned regulatory AuditEvent contract (2026-09-01)
+- Project every newly stored Activity event through a strict `AuditEvent` v1
+  boundary aligned with ECS 9.4.0, with Twin-owned fields for authentication,
+  business resource, folder/workspace, classification and retention.
+- Ship a Draft 2020-12 JSON Schema and golden auth/query/ingestion/deletion/
+  governance fixtures; the 32-action enum is pinned to the actually accepted
+  Activity inventory rather than a speculative event catalogue.
+- Redact through an allow-list before the optional #122 sink. Invalid events
+  and sink failures are counted and logged by fingerprint/type only; Activity
+  remains unchanged and no durable export or retention is claimed yet.
+
+### Complete W3C and LangSmith propagation (2026-09-01)
+- Validate W3C `traceparent` strictly, create non-zero trace/server-span ids for
+  absent or malformed context, bind request/trace/span ids task-locally and
+  return coherent `x-request-id` plus `traceparent` headers in standalone and
+  production-overlay topologies.
+- Make precedence explicit (W3C, native LangSmith, bounded custom fallback,
+  generation), attach the native distributed parent to LightRAG
+  LLM/embedding/rerank spans and L3 provider-call spans, and apply tracing after
+  host LightRAG startup in the production lifecycle as well as the standalone
+  factory.
+- Propagate the active parent through Twin-owned catalogue calls and the
+  OpenAI-compatible LLM/embedding/L3 seams while preserving unrelated provider
+  headers. Invalid input, concurrent requests, exceptions, flag-off native
+  compatibility and end-to-end HTTP-to-span lineage are deterministic
+  regression tests.
+
+### Reversible L3 query runtime bridge (2026-09-01)
+- Add `TWIN_RAG_QUERY_ENGINE=l2|l3`, defaulting and rolling back to the existing
+  L2 path. L3 construction stays lazy, reuses the initialized host LightRAG
+  instance and cannot enlarge the folder scope authorized by the HTTP layer.
+- Preserve the Twin response contract across the bridge: measured retrieval
+  scores are never replaced with synthetic values, document ids, provenance
+  links and paragraph anchors reuse the applicable L2 enrichments, and
+  `response_type`, bounded fallbacks and frontend stages cross the L3 path.
+- Validate the whole synthesized answer before releasing position-preserving
+  one-based citations. The bounded stream therefore never leaks an earlier
+  valid marker when a later malformed or phantom marker makes citation
+  validation fail.
+- Exercise the production overlay activation against LightRAG 1.5.6 and a real
+  Memgraph 3.12 database with two isolated folders plus a denied third scope.
+  Real-provider p50/p95 and LLM-call comparison remains an operator
+  qualification gate before enabling L3 on a deployed instance.
+
+### WebUI accessibility gate and component decomposition (2026-09-01)
+- Add a blocking Forgejo axe-core job over login, every primary operator tab
+  and the document, tag-governance and API authorization modals. Serious and
+  critical findings fail the pipeline without rule exclusions.
+- Correct invalid ARIA, focusability and contrast defects, then keep the
+  catalogue admin charter's verified CSS copies byte-identical to the WebUI
+  source of truth.
+- Split API Explorer, tag governance and Activity timeline responsibilities
+  into directly tested units while preserving their routes, props, cache and
+  immutable-ledger behavior. Bun and npm lockfiles carry the same pinned axe
+  dependency.
+
+### Technical observability and release evidence (2026-08-31)
+- Add configuration-gated ECS-compatible JSON Lines logging with request/trace
+  `ContextVar` correlation, bounded route groups, secret-safe messages and
+  bounded exception metadata; readable text logging remains the default.
+- Expose authenticated Prometheus metrics in both standalone and patched
+  LightRAG topologies, including bounded request/latency, auth/quota,
+  query/ingestion, storage and reserved audit-export instruments. The existing
+  JSON snapshot and health/readiness contracts remain compatible.
+- Add a private release-cut SBOM workflow: two-pass Syft scans of the immutable
+  final image and WebUI build tree, deterministic CycloneDX 1.6 normalization,
+  secret/path verification, fresh-container version smoke and reproducible
+  evidence ZIP. The artifact stays outside the public export branch.
+- Harden the post-review confidentiality and provenance gates: JSON log
+  messages and JSON exception messages are redacted recursively, with a shared
+  segment-aware classifier for prefixed and camelCase secret/token/API-key
+  names; CycloneDX direct fields and `name`/`value` properties reject
+  secret/token material;
+  the WebUI scan comes from `git archive`, the image OCI revision must match
+  that full commit, and an allow-listed evidence set is published atomically
+  from a fresh sibling staging directory.
+
 ### Export, Activity and WebUI mutation hardening (2026-08-31)
 - Neutralize exported demo identities, paths, domains and topology markers,
   while preserving public technical vocabulary and the richness of the seed,

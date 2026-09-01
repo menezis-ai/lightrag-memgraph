@@ -626,7 +626,7 @@ input:focus, textarea:focus, select:focus { outline: none; }
   color: var(--twin-accent-soft-text);
 }
 .pill.completed { color: var(--twin-green-700); }
-.pill.processing { color: var(--twin-amber-vivid); font-weight: 500; }
+.pill.processing { color: var(--twin-amber-700); font-weight: 500; }
 .pill.failed { color: var(--twin-red-vivid); font-weight: 500; }
 .pill.pending { color: var(--color-text-secondary); }
 

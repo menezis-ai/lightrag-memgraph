@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:e2e": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 TWIN_E2E_SUITE=msw VITE_E2E_MSW_STRICT=true playwright test",
+    "test:e2e:a11y": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 TWIN_E2E_SUITE=a11y VITE_E2E_MSW_STRICT=true playwright test e2e/a11y.spec.ts",
     "test:e2e:real": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 TWIN_E2E_SUITE=real VITE_USE_MSW=false VITE_E2E_MSW_STRICT=false VITE_API_BASE_URL=${REAL_BACKEND_URL:-http://127.0.0.1:9621} playwright test e2e/real-backend.spec.ts e2e/api-coverage-real.spec.ts",
     "test:e2e:keygen": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 TWIN_E2E_SUITE=keygen VITE_USE_MSW=false VITE_E2E_MSW_STRICT=false VITE_API_BASE_URL=${REAL_BACKEND_URL:-http://127.0.0.1:9622} playwright test e2e/api-coverage-generated-key.spec.ts",
     "test:e2e:qa": "env -u FORCE_COLOR -u NO_COLOR NODE_OPTIONS=--disable-warning=DEP0205 TWIN_E2E_SUITE=qa VITE_E2E_MSW_STRICT=true CAPTURE_QA=1 playwright test e2e/capture-qa-screenshots.spec.ts",
@@ -27,6 +28,7 @@
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.60.0",
     "@stryker-mutator/core": "9.6.1",

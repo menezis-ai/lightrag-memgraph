@@ -24,6 +24,7 @@ from .activity_events import emit_activity_event
 from .auth import require_auth
 from .folder import bind_request_folder
 from .idp_jwt import require_admin_user
+from .tracing import make_trace_headers
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,10 @@ class CatalogProxyClient:
         folder_id: str | None = None,
         json: dict[str, Any] | None = None,
     ) -> Any:
-        headers = {"Authorization": f"Bearer {self.config.credential}"}
+        headers = {
+            "Authorization": f"Bearer {self.config.credential}",
+            **make_trace_headers(),
+        }
         if folder_id is not None:
             headers["X-Twin-Folder"] = folder_id
         try:

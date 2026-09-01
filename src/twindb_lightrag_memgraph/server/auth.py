@@ -561,6 +561,25 @@ def resolve_auth_actor(request: Request | None) -> str | None:
     return None
 
 
+def _mark_request_auth_method(
+    request: Request | None, method: str, actor: str | None = None
+) -> None:
+    """Expose the resolved credential path to the audit projection.
+
+    The surrounding request middleware owns the ContextVar lifetime.  Keeping
+    the write here, next to credential validation, avoids inferring a method
+    later from the actor label (which is not a capability).
+    """
+    if request is None:
+        return
+    request.state.auth_method = method
+    if actor:
+        request.state.auth_actor = actor
+    from .observability import set_request_auth_method
+
+    set_request_auth_method(method, actor)
+
+
 async def emit_logout_activity(request: Request | None = None) -> None:
     from .activity_events import emit_auth_event
 
@@ -695,25 +714,44 @@ async def require_auth(
     from . import idp_jwt
 
     idp_config = idp_jwt.get_active_config()
+    if idp_config is not None:
+        _mark_request_auth_method(request, "idp")
     identity = _resolve_idp_identity(request, idp_config)
     if identity is not None:
+        _mark_request_auth_method(request, "idp", identity)
         return identity
 
     # Static infrastructure root. Keep both transports aligned with the
     # credential predicate used by dormant-IdP admin and folder gates.
     if is_infrastructure_root_request(request):
+        _mark_request_auth_method(request, "static_api_key", "api_key")
         return "api_key"
 
     if not _auth_enabled:
-        return await _resolve_open_access(request, credentials, idp_config)
+        if credentials is not None:
+            from . import api_key_store
+
+            if credentials.credentials.startswith(api_key_store.KEY_PREFIX):
+                _mark_request_auth_method(request, "operator_api_key")
+        identity = await _resolve_open_access(request, credentials, idp_config)
+        if identity is not None and identity.startswith("api_key:"):
+            _mark_request_auth_method(request, "operator_api_key", identity)
+        elif idp_config is None:
+            _mark_request_auth_method(request, "open", "anonymous")
+        return identity
 
     if credentials is None and _jwt_secret and request is not None:
         cookie_token = request.cookies.get(_local_jwt_cookie_name)
         if cookie_token:
             payload = _decode_jwt(cookie_token)
-            return payload.get("sub", "unknown")
+            identity = str(payload.get("sub", "unknown"))
+            _mark_request_auth_method(request, "local_jwt", identity)
+            return identity
 
     if credentials is None:
+        # No credential was presented.  Deployment configuration is not an
+        # observed authentication method and must not be recorded as one.
+        _mark_request_auth_method(request, "unknown")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header",
@@ -725,18 +763,27 @@ async def require_auth(
     # Preserve the dependency's direct-call contract used by integrations and
     # tests that supply parsed HTTPBearer credentials without a Request object.
     if _static_api_key and _secret_equal(token, _static_api_key):
+        _mark_request_auth_method(request, "static_api_key", "api_key")
         return "api_key"
 
     # 3. Per-operator API keys minted via Settings → API keys.
+    from . import api_key_store
+
+    if token.startswith(api_key_store.KEY_PREFIX):
+        _mark_request_auth_method(request, "operator_api_key")
     identity = await _consume_operator_key(token)
     if identity is not None:
+        _mark_request_auth_method(request, "operator_api_key", identity)
         return identity
 
     # 4. Legacy local JWT
     if _jwt_secret:
         payload = _decode_jwt(token)
-        return payload.get("sub", "unknown")
+        identity = str(payload.get("sub", "unknown"))
+        _mark_request_auth_method(request, "local_jwt", identity)
+        return identity
 
+    _mark_request_auth_method(request, "unknown")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials",
@@ -924,6 +971,7 @@ async def login(  # NOSONAR - async contract.
     rate limit (429 + `Retry-After`), per-account exponential backoff on
     consecutive failures, and a `sev=critical` audit event past the alert
     threshold."""
+    _mark_request_auth_method(request, "local_jwt")
     if not _jwt_secret:
         await _emit_login_activity(
             username=body.username,
@@ -982,6 +1030,7 @@ async def login(  # NOSONAR - async contract.
         )
 
     _login_failures_by_account.pop(body.username or "anonymous", None)
+    _mark_request_auth_method(request, "local_jwt", body.username)
     token = _create_jwt({"sub": body.username})
     expires_in = _jwt_expiration_hours * 3600
     response.set_cookie(
@@ -1002,6 +1051,8 @@ async def logout(
     response: Response,
     request: Request | None = None,
 ) -> dict[str, bool]:
+    actor = resolve_auth_actor(request) or "unknown"
+    _mark_request_auth_method(request, "local_jwt", actor)
     response.delete_cookie(_local_jwt_cookie_name, path="/")
     await emit_logout_activity(request)
     return {"ok": True}

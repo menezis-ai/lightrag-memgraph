@@ -94,9 +94,10 @@ def _isolate_process_globals():
 
     Project imports are direct and unguarded. ``lightrag`` is a hard
     dependency; ``classification`` and ``server.tracing`` are part of this
-    package and import stdlib only -- ``server/__init__`` resolves its heavy
-    names lazily through ``__getattr__``, and ``tracing`` handles a missing
-    LangSmith internally. Only ``lightrag.utils_pipeline`` is capability-
+    package; ``server/__init__`` resolves its heavy names lazily through
+    ``__getattr__``, and the ``test`` extra carries the metric client imported
+    by ``tracing`` while missing LangSmith remains optional. Only
+    ``lightrag.utils_pipeline`` is capability-
     guarded because the supported 1.4.x line does not expose that 1.5.x
     module.
 

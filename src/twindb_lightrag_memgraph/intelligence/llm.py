@@ -228,7 +228,32 @@ async def create_chat_completion(
     client = get_llm_client(config, profile.kind, client_factory=client_factory)
 
     async def _request() -> Any:
-        return await client.chat.completions.create(model=profile.model, **request)
+        # Resolve correlation inside every provider attempt. The shared client
+        # remains context-free, so concurrent requests cannot inherit headers
+        # captured by whichever request created the cached transport first.
+        from ..server.tracing import make_trace_headers, trace_l3_llm_call
+
+        provider_request = dict(request)
+        trace_headers = make_trace_headers()
+        if trace_headers:
+            trace_header_names = {name.casefold() for name in trace_headers}
+            merged_headers = {
+                name: value
+                for name, value in dict(
+                    provider_request.get("extra_headers") or {}
+                ).items()
+                if str(name).casefold() not in trace_header_names
+            }
+            merged_headers.update(trace_headers)
+            provider_request["extra_headers"] = merged_headers
+
+        async def _provider_call() -> Any:
+            return await client.chat.completions.create(
+                model=profile.model,
+                **provider_request,
+            )
+
+        return await trace_l3_llm_call(_provider_call)
 
     response = await with_llm_retry(
         _request,
@@ -238,6 +263,11 @@ async def create_chat_completion(
         max_seconds=config.llm_retry_max_seconds,
         jitter_ratio=config.llm_retry_jitter_ratio,
     )
+    # Streaming responses expose ``delta`` chunks rather than a materialised
+    # ``message``.  Size/citation validation is owned incrementally by the
+    # OBSERVE phase, which also enforces the same bounded character ceiling.
+    if request.get("stream"):
+        return response
     content = response.choices[0].message.content
     if isinstance(content, str) and len(content) > _MAX_LLM_RESPONSE_CHARS:
         raise LLMResponseTooLargeError(

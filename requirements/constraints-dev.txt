@@ -4,6 +4,7 @@
 # qualified 2026-08-06) always wins.
 black>=24.10.0
 pre-commit>=4.2.0
+prometheus-client>=0.26.0,<0.27.0
 pydantic-settings>=2.14.2
 pypdf>=6.15.0
 python-multipart>=0.0.31

@@ -2,7 +2,7 @@
  * Unit tests for ActivityTab.
  *
  * Covers: range/kind/sev/actor/query filters, group-by-day, selection ->
- * detail panel, clear-modal CLEAR-gate, exportActivityCsv helper.
+ * detail panel, immutable-ledger policy and exportActivityCsv helper.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';

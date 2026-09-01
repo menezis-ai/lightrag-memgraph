@@ -68,6 +68,10 @@ describe('ReadSourceModal — visibility', () => {
     expect(screen.getByText('sample.pdf')).toBeInTheDocument();
     expect(screen.getByText('3 chunks indexed')).toBeInTheDocument();
     expect(screen.getByText('2.0 KB extracted')).toBeInTheDocument();
+    expect(screen.getByLabelText('Indexed chunks content')).toHaveAttribute(
+      'tabindex',
+      '0',
+    );
   });
 });
 

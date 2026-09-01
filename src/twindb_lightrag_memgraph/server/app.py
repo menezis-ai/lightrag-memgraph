@@ -25,7 +25,6 @@ import inspect
 import logging
 import os
 import time
-import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
@@ -47,11 +46,19 @@ from .chunk_routes import (
 )
 from .query.models import TwinQueryBody
 from .settings import LightRAGServerSettings, get_settings
+from .observability import (
+    _request_id,
+    bind_request_context,
+    configure_runtime_logging,
+    route_group as _route_group,
+)
+from .metrics import record_http_request
 from .tracing import (
     apply_lang_with_tracing,
-    extract_trace_parent,
+    bind_trace_context,
     increment_metric,
-    metrics_snapshot,
+    make_trace_headers,
+    resolve_trace_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,29 +204,6 @@ async def _ainsert_with_optional_file_path(
     await ainsert(text)
 
 
-def _route_group(path: str) -> str:
-    """Classify paths into low-cardinality observability groups."""
-    if path in {"/health", "/ready"} or path.endswith("/health"):
-        return "health"
-    if path in {"/query", "/query/data", "/query/stream"}:
-        return "query"
-    if path.startswith(f"{TWIN_API_PREFIX}/query"):
-        return "query"
-    if path in {"/insert", DOCUMENTS_UPLOAD_PATH, "/documents/reprocess_failed"}:
-        return "ingestion"
-    if path.endswith("/scan") and path.startswith("/documents/"):
-        return "ingestion"
-    if path.startswith(f"{TWIN_API_PREFIX}/documents"):
-        return "documents"
-    if path.startswith(f"{TWIN_API_PREFIX}/graph"):
-        return "graph"
-    if path.startswith(f"{TWIN_API_PREFIX}/settings/api-keys"):
-        return "admin"
-    if path.startswith(TWIN_API_PREFIX):
-        return "twin"
-    return "other"
-
-
 def _is_upload_path(path: str) -> bool:
     return path in {
         DOCUMENTS_UPLOAD_PATH,
@@ -302,18 +286,6 @@ def _limited_receive(receive: Any, limit: int, *, path: str = "?") -> Any:
         return message
 
     return _receive
-
-
-def _record_status_metrics(path: str, status_code: int) -> None:
-    route_group = _route_group(path)
-    if status_code in {401, 403}:
-        increment_metric("auth_rejects_total")
-    if status_code == 507:
-        increment_metric("quota_rejects_total")
-    if route_group == "query" and status_code >= 500:
-        increment_metric("query_failures_total")
-    if route_group == "ingestion" and status_code >= 500:
-        increment_metric("ingestion_failures_total")
 
 
 def _access_denied_reason(status_code: int) -> str | None:
@@ -845,6 +817,7 @@ def _oversized_response(
         status_code=413,
     )
     response.headers["x-request-id"] = request_id
+    response.headers["traceparent"] = request.state.traceparent
     latency_ms = (time.perf_counter() - started) * 1000
     logger.warning(
         "http_request method=%s path=%s status=%s request_id=%s "
@@ -861,6 +834,14 @@ def _oversized_response(
         _request_trace_id(request),
         body_bytes,
         limit,
+        extra={
+            "event_action": "http_request",
+            "http_method": request.method,
+            "http_path": request.url.path,
+            "http_status_code": 413,
+            "auth_mode": auth_mode_label,
+            "duration_seconds": latency_ms / 1000,
+        },
     )
     return response
 
@@ -879,6 +860,14 @@ def _log_request_failed(request, request_id, route_group, auth_mode_label, start
         route_group,
         latency_ms,
         _request_trace_id(request),
+        extra={
+            "event_action": "http_request_failed",
+            "http_method": request.method,
+            "http_path": request.url.path,
+            "http_status_code": 500,
+            "auth_mode": auth_mode_label,
+            "duration_seconds": latency_ms / 1000,
+        },
     )
 
 
@@ -900,6 +889,14 @@ def _log_request_completed(
         route_group,
         latency_ms,
         _request_trace_id(request),
+        extra={
+            "event_action": "http_request",
+            "http_method": request.method,
+            "http_path": request.url.path,
+            "http_status_code": status_code,
+            "auth_mode": auth_mode_label,
+            "duration_seconds": latency_ms / 1000,
+        },
     )
 
 
@@ -925,78 +922,116 @@ def _make_operational_middleware(
 
     async def _operational_middleware(request: Request, call_next):
         started = time.perf_counter()
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        request_id = _request_id(request.headers)
         path = request.url.path
         route_group = _route_group(path)
+        trace_context = resolve_trace_context(request.headers)
         request.state.request_id = request_id
         request.state.route_group = route_group
+        request.state.trace_id = trace_context.trace_id
+        request.state.span_id = trace_context.span_id
+        request.state.traceparent = trace_context.traceparent
 
-        trace_ctx = extract_trace_parent(dict(request.headers))
-        if trace_ctx and "traceparent" in trace_ctx:
-            request.state.traceparent = trace_ctx["traceparent"]
-            request.state.trace_id = trace_ctx.get("trace_id")
-
-        limit = _body_limit_for_path(path, settings)
-        body_bytes = _content_length(request.headers)
-        oversized = _oversized_response(
-            request,
-            request_id,
-            route_group,
-            auth_mode_label,
-            started,
-            limit,
-            body_bytes,
-        )
-        if oversized is not None:
-            return oversized
-
-        if limit:
-            # R-02: enforce the ceiling on the byte stream itself, so a
-            # chunked or Content-Length-less body cannot bypass the header
-            # fast path above. Mutating request._receive is safe here:
-            # BaseHTTPMiddleware's wrapped_receive reads it lazily.
-            request._receive = _limited_receive(request.receive, limit, path=path)
-
-        try:
-            response = await _call_next_with_actor(request, call_next, route_group)
-        except _BodyLimitExceeded:
-            # Reached only when the exception propagates unwrapped (a route
-            # reading the raw ASGI stream outside FastAPI's body parser).
-            # The metric + warning were already recorded at raise time.
-            return JSONResponse(
-                {
-                    "detail": "Request body too large",
-                    "limit_bytes": limit,
-                    "request_id": request_id,
-                },
-                status_code=413,
-            )
-        except Exception:
-            _record_status_metrics(path, 500)
-            _log_request_failed(
-                request, request_id, route_group, auth_mode_label, started
-            )
-            raise
-
-        response.headers["x-request-id"] = request_id
-        _record_status_metrics(path, response.status_code)
-        if response.status_code in {401, 403}:
-            from .activity_events import emit_access_denied_event_background
-
-            emit_access_denied_event_background(
+        with (
+            bind_trace_context(trace_context),
+            bind_request_context(
+                request_id=request_id,
+                trace_id=trace_context.trace_id,
+                span_id=trace_context.span_id,
+                route_group=route_group,
+                http_method=request.method,
+                auth_method=(
+                    auth_mode_label if auth_mode_label in {"idp", "open"} else "unknown"
+                ),
+            ),
+        ):
+            limit = _body_limit_for_path(path, settings)
+            body_bytes = _content_length(request.headers)
+            oversized = _oversized_response(
                 request,
-                status_code=response.status_code,
-                reason=_access_denied_reason(response.status_code),
+                request_id,
+                route_group,
+                auth_mode_label,
+                started,
+                limit,
+                body_bytes,
             )
-        _log_request_completed(
-            request,
-            request_id,
-            route_group,
-            auth_mode_label,
-            started,
-            response.status_code,
-        )
-        return response
+            if oversized is not None:
+                record_http_request(
+                    route_group=route_group,
+                    method=request.method,
+                    status_code=413,
+                    duration_seconds=time.perf_counter() - started,
+                )
+                return oversized
+
+            if limit:
+                # R-02: enforce the ceiling on the byte stream itself, so a
+                # chunked or Content-Length-less body cannot bypass the header
+                # fast path above. Mutating request._receive is safe here:
+                # BaseHTTPMiddleware's wrapped_receive reads it lazily.
+                request._receive = _limited_receive(request.receive, limit, path=path)
+
+            try:
+                response = await _call_next_with_actor(request, call_next, route_group)
+            except _BodyLimitExceeded:
+                # Reached only when the exception propagates unwrapped (a route
+                # reading the raw ASGI stream outside FastAPI's body parser).
+                # The metric + warning were already recorded at raise time.
+                record_http_request(
+                    route_group=route_group,
+                    method=request.method,
+                    status_code=413,
+                    duration_seconds=time.perf_counter() - started,
+                )
+                response = JSONResponse(
+                    {
+                        "detail": "Request body too large",
+                        "limit_bytes": limit,
+                        "request_id": request_id,
+                    },
+                    status_code=413,
+                )
+                response.headers["x-request-id"] = request_id
+                response.headers["traceparent"] = trace_context.traceparent
+                return response
+            except Exception:
+                record_http_request(
+                    route_group=route_group,
+                    method=request.method,
+                    status_code=500,
+                    duration_seconds=time.perf_counter() - started,
+                )
+                _log_request_failed(
+                    request, request_id, route_group, auth_mode_label, started
+                )
+                raise
+
+            response.headers["x-request-id"] = request_id
+            response.headers["traceparent"] = trace_context.traceparent
+            record_http_request(
+                route_group=route_group,
+                method=request.method,
+                status_code=response.status_code,
+                duration_seconds=time.perf_counter() - started,
+            )
+            if response.status_code in {401, 403}:
+                from .activity_events import emit_access_denied_event_background
+
+                emit_access_denied_event_background(
+                    request,
+                    status_code=response.status_code,
+                    reason=_access_denied_reason(response.status_code),
+                )
+            _log_request_completed(
+                request,
+                request_id,
+                route_group,
+                auth_mode_label,
+                started,
+                response.status_code,
+            )
+            return response
 
     return _operational_middleware
 
@@ -1165,11 +1200,6 @@ def _register_core_routes(
         # on this path.
         rag = _get_rag()
 
-        # P1: Extract distributed trace context from agent headers
-        trace_ctx = extract_trace_parent(dict(request.headers))
-        if trace_ctx:
-            logger.debug("Distributed trace context: %s", trace_ctx)
-
         from lightrag.base import QueryParam
 
         from .folder import resolve_folder_for_request
@@ -1233,6 +1263,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     """Build the FastAPI application."""
     if settings is None:
         settings = get_settings()
+    configure_runtime_logging()
 
     lifespan = _build_lifespan(settings)
 
@@ -1475,6 +1506,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     # contract (no sources, plain string answer). The Twin overlay
     # routes added here return `{response, sources}` + an NDJSON
     # streaming variant that the React Retrieval tab consumes.
+    from .query.l3_runtime import build_l3_query_runtime
     from .twin_query_routes import build_twin_query_router
 
     def _get_rag_for_twin_query():
@@ -1487,6 +1519,7 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
         build_twin_query_router(
             _get_rag_for_twin_query,
             llm_model=settings.llm_model,
+            l3_runtime=build_l3_query_runtime(_get_rag_for_twin_query),
         ),
         prefix=TWIN_API_PREFIX,
         dependencies=[Depends(require_auth)],
@@ -1560,16 +1593,13 @@ def create_app(settings: LightRAGServerSettings | None = None) -> FastAPI:
     app.include_router(build_system_info_router(lambda: _rag), prefix=TWIN_API_PREFIX)
     logger.info("System about route mounted at %s/system/about", TWIN_API_PREFIX)
 
-    @app.get(
-        "/twin/api/ops/metrics",
+    from .metrics_routes import build_metrics_router
+
+    app.include_router(
+        build_metrics_router(),
+        prefix=TWIN_API_PREFIX,
         dependencies=[Depends(require_auth)],
-        tags=["system"],
-        summary="Operational metrics snapshot",
     )
-    def operational_metrics():
-        """Return the in-process operational counters (request volumes,
-        latencies, error counts) accumulated since the server started."""
-        return metrics_snapshot()
 
     # -- Instance quota + operational middleware. Quota is registered first
     # so the operational logger wraps it as the outer layer (FastAPI applies
@@ -1630,12 +1660,15 @@ def _build_embedding_func(settings: LightRAGServerSettings, api_key: str):
     from lightrag.utils import EmbeddingFunc
 
     async def embedding_func(texts: list[str]) -> list[list[float]]:
-        return await openai_embed(
-            texts,
-            model=settings.embedding_model,
-            base_url=settings.embedding_binding_host,
-            api_key=api_key,
-        )
+        kwargs = {
+            "model": settings.embedding_model,
+            "base_url": settings.embedding_binding_host,
+            "api_key": api_key,
+        }
+        trace_headers = make_trace_headers()
+        if trace_headers:
+            kwargs["client_configs"] = {"default_headers": trace_headers}
+        return await openai_embed(texts, **kwargs)
 
     return EmbeddingFunc(
         embedding_dim=settings.embedding_dim,
@@ -1649,6 +1682,13 @@ def _build_llm_func(settings: LightRAGServerSettings, api_key: str):
     from lightrag.llm.openai import openai_complete
 
     async def llm_func(prompt: str, **kwargs) -> str:
+        trace_headers = make_trace_headers()
+        if trace_headers:
+            client_configs = dict(kwargs.pop("openai_client_configs", {}) or {})
+            default_headers = dict(client_configs.get("default_headers", {}) or {})
+            default_headers.update(trace_headers)
+            client_configs["default_headers"] = default_headers
+            kwargs["openai_client_configs"] = client_configs
         return await openai_complete(
             prompt,
             model=settings.llm_model,

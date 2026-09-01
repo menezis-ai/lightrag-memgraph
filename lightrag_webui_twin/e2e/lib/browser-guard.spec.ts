@@ -2,9 +2,18 @@ import { expect, test } from '@playwright/test';
 
 import {
   allowRequestAbort,
+  isNavigationRelatedAbort,
   unexpectedIssues,
   type BrowserIssue,
 } from '../fixtures';
+
+test('navigation abort detection is event-order independent and bounded', () => {
+  const failedAt = 10_000;
+
+  expect(isNavigationRelatedAbort(failedAt, [9_001])).toBe(true);
+  expect(isNavigationRelatedAbort(failedAt, [10_999])).toBe(true);
+  expect(isNavigationRelatedAbort(failedAt, [8_999, 11_001])).toBe(false);
+});
 
 test('browser issue allowance reports aborts beyond its occurrence budget', () => {
   const abort = (detail: string): BrowserIssue => ({

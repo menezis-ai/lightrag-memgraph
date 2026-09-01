@@ -18,6 +18,7 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from ..config import LLMProfileKind, TwinRAGConfig
+from ..fallbacks import record_query_fallback
 from ..json_utils import coerce_str, load_json_object
 from ..llm import create_chat_completion, log_llm_fallback
 from ..prompt_security import neutralize_reserved_tags
@@ -149,6 +150,7 @@ class ReasoningEngine:
 
         except Exception as exc:
             log_llm_fallback(logger, "REASON", exc)
+            record_query_fallback("reason_fallback")
             return ReasoningResult(
                 thought="Fallback (LLM unavailable)",
                 search_query=question,

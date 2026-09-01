@@ -1,0 +1,40 @@
+{
+  "@timestamp": "2026-09-01T08:01:00.000Z",
+  "message": "retrieval completed (hybrid)",
+  "ecs": {"version": "9.4.0"},
+  "event": {
+    "id": "evt_query",
+    "kind": "event",
+    "category": ["api"],
+    "type": ["access"],
+    "action": "retrieval",
+    "outcome": "success",
+    "severity": 1,
+    "provider": "twin-kms",
+    "module": "activity",
+    "dataset": "twin.audit"
+  },
+  "service": {"name": "twin-test", "version": "1.2.0", "environment": "test"},
+  "trace": {"id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "http": {
+    "request": {"id": "req-query", "method": "POST"},
+    "response": {"status_code": null}
+  },
+  "user": {"name": "bob", "roles": ["operator"]},
+  "twin": {
+    "audit": {
+      "schema_version": "1.0.0",
+      "source": "activity",
+      "source_event_kind": "retrieval",
+      "severity_name": "info",
+      "operation": null,
+      "emitted_by": null,
+      "route_group": "query"
+    },
+    "auth": {"method": "local_jwt"},
+    "resource": {"type": "query", "id": null, "name": null},
+    "folder": {"id": "ops"},
+    "workspace": {"id": "default"},
+    "data": {"classification": null, "retention_policy": null}
+  }
+}

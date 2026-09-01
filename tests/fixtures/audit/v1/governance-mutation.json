@@ -1,0 +1,40 @@
+{
+  "@timestamp": "2026-09-01T08:04:00.000Z",
+  "message": "tag definition updated",
+  "ecs": {"version": "9.4.0"},
+  "event": {
+    "id": "evt_governance",
+    "kind": "event",
+    "category": ["configuration"],
+    "type": ["change"],
+    "action": "tag-mutation",
+    "outcome": "success",
+    "severity": 1,
+    "provider": "twin-kms",
+    "module": "activity",
+    "dataset": "twin.audit"
+  },
+  "service": {"name": "twin-test", "version": "1.2.0", "environment": "test"},
+  "trace": {"id": "dddddddddddddddddddddddddddddddd"},
+  "http": {
+    "request": {"id": "req-governance", "method": "PATCH"},
+    "response": {"status_code": null}
+  },
+  "user": {"name": "steward", "roles": ["operator"]},
+  "twin": {
+    "audit": {
+      "schema_version": "1.0.0",
+      "source": "activity",
+      "source_event_kind": "tag-mutation",
+      "severity_name": "info",
+      "operation": "update",
+      "emitted_by": null,
+      "route_group": "twin"
+    },
+    "auth": {"method": "idp"},
+    "resource": {"type": "tag", "id": "oracle", "name": "oracle"},
+    "folder": {"id": "ops"},
+    "workspace": {"id": "default"},
+    "data": {"classification": null, "retention_policy": null}
+  }
+}

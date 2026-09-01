@@ -117,7 +117,11 @@ export function ReadSourceModal({ doc, onClose }: Readonly<ReadSourceModalProps>
             </span>
           )}
         </div>
-        <div className="modal-body rs-body">
+        <div
+          className="modal-body rs-body"
+          tabIndex={0}
+          aria-label="Indexed chunks content"
+        >
           {isLoading && (
             <div className="muted" data-testid="rs-chunks-loading">
               Loading indexed chunks…

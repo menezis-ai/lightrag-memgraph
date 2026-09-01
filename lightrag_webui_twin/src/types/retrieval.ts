@@ -114,6 +114,7 @@ export type AnswerStatus =
   | 'grounded'
   | 'insufficient_information'
   | 'source_projection_failed'
+  | 'citation_validation_failed'
   | 'no_retrieval'
   | 'query_failed';
 

@@ -15,6 +15,10 @@ from twindb_lightrag_memgraph.server import linked_sources_routes as routes
 from twindb_lightrag_memgraph.server import webui_router
 from twindb_lightrag_memgraph.server.auth import configure_auth
 from twindb_lightrag_memgraph.server.idp_jwt import configure_idp, require_admin_user
+from twindb_lightrag_memgraph.server.tracing import (
+    bind_trace_context,
+    resolve_trace_context,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +96,7 @@ async def test_list_combines_application_and_folder_links():
         seen.append(request)
         assert request.headers["authorization"] == "Bearer tck_prefix_secret"
         if request.url.path.endswith("/applications"):
-            return httpx.Response(200, json=[{"auid": "AP11121"}])
+            return httpx.Response(200, json=[{"auid": "AP011121"}])
         assert request.headers["x-twin-folder"] == "default"
         return httpx.Response(200, json=[{"id": "link-1", "doc_type": "de"}])
 
@@ -101,10 +105,32 @@ async def test_list_combines_application_and_folder_links():
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "application": {"auid": "AP11121"},
+        "application": {"auid": "AP011121"},
         "links": [{"id": "link-1", "doc_type": "de"}],
     }
     assert len(seen) == 2
+
+
+async def test_catalogue_requests_propagate_the_active_distributed_parent():
+    seen: list[httpx.Request] = []
+    context = resolve_trace_context(
+        {"traceparent": ("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")}
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[])
+
+    with bind_trace_context(context):
+        async with _client(httpx.MockTransport(handler)) as client:
+            response = await client.get("/twin/api/linked-sources")
+
+    assert response.status_code == 200
+    assert len(seen) == 2
+    for request in seen:
+        assert request.headers["traceparent"] == context.traceparent
+        assert request.headers["x-trace-id"] == context.trace_id
+        assert request.headers["authorization"] == "Bearer tck_prefix_secret"
 
 
 async def test_preview_and_mutations_forward_without_leaking_credential(monkeypatch):
@@ -122,7 +148,7 @@ async def test_preview_and_mutations_forward_without_leaking_credential(monkeypa
             json={
                 "link": {
                     "id": "9f69535d-7f87-46e8-af39-c4a0f0e2193f",
-                    "auid": "AP11121",
+                    "auid": "AP011121",
                     "url": "https://confluence.test/display/PF/X",
                 },
                 "revision": {"state": "published"},
@@ -271,7 +297,7 @@ async def test_declared_source_remains_readable_in_real_activity_feed():
             json={
                 "link": {
                     "id": "9f69535d-7f87-46e8-af39-c4a0f0e2193f",
-                    "auid": "AP11121",
+                    "auid": "AP011121",
                     "url": "https://confluence.test/display/PF/X",
                 },
                 "revision": {"state": "published"},

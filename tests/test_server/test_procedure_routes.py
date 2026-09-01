@@ -436,6 +436,348 @@ def test_degraded_store_returns_503_then_recovers(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Malformed-bundle resilience: ONE bad record must not 500 the review queue
+#
+# The store is a JSON file that predates several schema revisions and is also
+# an import target (restore_bundle), so type drift is reachable in production.
+# A parked procedure is invisible in /documents — an unlistable bundle is a
+# document stuck forever, which is why the list degrades instead of failing.
+# ---------------------------------------------------------------------------
+
+
+def _poison(bundle_id: str, **fields):
+    """Write raw (schema-violating) values straight into the store file."""
+    store_file = _procedure_store.store_path()
+    store_payload = json.loads(store_file.read_text(encoding="utf-8"))
+    store_payload["bundles"][bundle_id].update(fields)
+    store_file.write_text(json.dumps(store_payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        # int/float/bool in a str|None slot: pydantic v2 does NOT coerce.
+        ("track_id", 42, "42"),
+        ("created_at", 1735689600.0, "1735689600.0"),
+        ("updated_at", True, "True"),
+        # non-scalar in a scalar slot: dropped, never stringified into junk.
+        ("track_id", {"id": "t"}, None),
+        ("created_at", ["2026-01-01"], None),
+        ("operator_classification", {"level": "C1"}, None),
+    ],
+)
+def test_malformed_scalar_field_is_coerced_not_fatal(client, field, value, expected):
+    bundle_id = _park()
+    _poison(bundle_id, **{field: value})
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    (item,) = resp.json()
+    assert item["id"] == bundle_id
+    assert item[field] == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"a": 1}, ["x"], "not-a-number", None, float("inf"), float("-inf")],
+)
+def test_malformed_schematics_total_projects_as_zero(client, value):
+    bundle_id = _park(with_schematic=False)
+    _poison(bundle_id, schematics_total=value)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["schematics_total"] == 0
+    assert resp.json()[0]["reason"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("file_name", {"path": "/sensitive/input.pdf"}),
+        ("state", ["pending", "secret-state"]),
+        ("reason", {"full_text": "sensitive procedure body"}),
+        ("source", ["detected", "secret-source"]),
+    ],
+)
+def test_required_scalar_container_is_dropped_not_stringified(client, field, value):
+    bundle_id = _park()
+    _poison(bundle_id, **{field: value})
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    (item,) = resp.json()
+    assert item[field] == ""
+    assert "sensitive" not in resp.text
+
+
+def test_invalid_integer_log_omits_the_imported_value(client, caplog):
+    bundle_id = _park(with_schematic=False)
+    sensitive_value = "sensitive-imported-value-" + ("x" * 2048)
+    _poison(bundle_id, schematics_total=sensitive_value)
+
+    with caplog.at_level("WARNING", logger="twindb_lightrag_memgraph"):
+        resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["schematics_total"] == 0
+    assert sensitive_value not in caplog.text
+    assert "value of type str" in caplog.text
+
+
+@pytest.mark.parametrize("value", [["c1"], "C1", 7])
+def test_malformed_classification_is_dropped_not_fatal(client, value):
+    bundle_id = _park()
+    _poison(bundle_id, classification=value)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["classification"] is None
+
+
+def test_one_malformed_bundle_does_not_hide_the_healthy_ones(client):
+    """The actual production symptom: parked procedures exist, list 500s."""
+    healthy_a = _park(file_name="a.pdf", content_hash="ha")
+    poisoned = _park(file_name="b.pdf", content_hash="hb")
+    healthy_b = _park(file_name="c.pdf", content_hash="hc")
+    _poison(poisoned, track_id={"nested": "object"}, schematics_total=["bad"])
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    ids = {item["id"] for item in resp.json()}
+    assert ids == {healthy_a, poisoned, healthy_b}
+
+
+def test_duplicate_request_drift_does_not_break_the_fold(client):
+    """strictest_operator_classification folds caller-supplied requests."""
+    bundle_id = _park(operator_classification="C1")
+    _poison(bundle_id, duplicate_requests=[{"operator_classification": {"bad": 1}}])
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["id"] == bundle_id
+
+
+def test_projection_crash_serves_a_degraded_row_not_a_500(client, monkeypatch):
+    """Belt beyond coercion: the row stays reachable, flagged, never dropped."""
+    from twindb_lightrag_memgraph.server import procedure_routes
+
+    bundle_id = _park()
+
+    def _boom(bundle):
+        raise RuntimeError("projection exploded")
+
+    monkeypatch.setattr(procedure_routes, "_summary", _boom)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    (item,) = resp.json()
+    assert item["id"] == bundle_id
+    assert "could not be read" in item["reason"]
+
+
+def test_degraded_summary_drops_required_scalar_containers(client, monkeypatch):
+    """The last-resort row must honor the same no-content list contract."""
+    from twindb_lightrag_memgraph.server import procedure_routes
+
+    bundle_id = _park()
+    _poison(
+        bundle_id,
+        file_name={"path": "/sensitive/input.pdf"},
+        state=["pending", "sensitive-state"],
+        source={"full_text": "sensitive procedure body"},
+    )
+
+    def _boom(bundle):
+        raise RuntimeError("projection exploded")
+
+    monkeypatch.setattr(procedure_routes, "_summary", _boom)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    (item,) = resp.json()
+    assert item["file_name"] == ""
+    assert item["state"] == ""
+    assert item["source"] == ""
+    assert "sensitive" not in resp.text
+
+
+@pytest.mark.parametrize(
+    ("label", "fields"),
+    [
+        # bundle_folders() collapses each of these to [] WITHOUT raising, so
+        # they used to inherit the "unassigned -> visible everywhere"
+        # exception meant for scan-created records.
+        ("primary folder is a list", {"folder": []}),
+        ("primary folder is an int", {"folder": 0}),
+        ("primary folder is a bool", {"folder": True}),
+        ("primary folder is empty", {"folder": ""}),
+        ("primary folder identifier is invalid", {"folder": "bad-folder"}),
+        (
+            "duplicate_requests is an object",
+            {"folder": None, "duplicate_requests": {"f2": {"folder": "f2"}}},
+        ),
+        (
+            "duplicate request entry is not a dict",
+            {"folder": None, "duplicate_requests": ["f2"]},
+        ),
+        (
+            "duplicate request folder is a list",
+            {"folder": None, "duplicate_requests": [{"folder": ["f2"]}]},
+        ),
+        (
+            "duplicate request folder is empty",
+            {"folder": None, "duplicate_requests": [{"folder": ""}]},
+        ),
+        (
+            "duplicate request folder identifier is invalid",
+            {"folder": None, "duplicate_requests": [{"folder": "bad-folder"}]},
+        ),
+    ],
+)
+def test_malformed_folder_metadata_never_leaks_into_a_folder(client, label, fields):
+    """Persisted-data regression: malformed-but-FALSY folder metadata must not
+    be mistaken for a legitimately unassigned bundle and shown everywhere."""
+    legit = _park(folder="f1", file_name="mine.pdf", content_hash="h-mine")
+    leaky = _park(folder="f2", file_name="foreign.pdf", content_hash="h-foreign")
+    _poison(leaky, **fields)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    ids = {item["id"] for item in resp.json()}
+    assert ids == {legit}, f"{label}: {leaky} leaked into folder f1"
+
+
+def test_malformed_folder_metadata_excludes_even_from_its_own_folder(client):
+    """Fail-closed is deliberate: an unenumerable claim set excludes the bundle
+    from its OWN folder too. It stays reachable via the admin detail route,
+    which is not folder-bound — the boundary wins over the convenience."""
+    bundle_id = _park(folder="f1")
+    _poison(bundle_id, duplicate_requests=["not-a-dict"])
+
+    listed = client.get("/twin/api/procedures")
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+    detail = client.get(f"/twin/api/procedures/{bundle_id}")
+    assert detail.status_code == 200
+    assert detail.json()["id"] == bundle_id
+
+
+def test_restored_bundle_with_malformed_folder_does_not_leak(client):
+    """The reviewer's reproduction path: restore_bundle() persists a record
+    without validating its folder shape."""
+    _park(folder="f1", file_name="mine.pdf", content_hash="h-mine")
+    _procedure_store.restore_bundle(
+        {
+            "id": "restored-leak",
+            "state": "pending",
+            "folder": [],
+            "file_name": "foreign.pdf",
+            "reason": "",
+            "source": "detected",
+        }
+    )
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert "restored-leak" not in {item["id"] for item in resp.json()}
+
+
+def test_legitimate_folder_shapes_are_unchanged(client):
+    """The fix must not narrow valid data: a scan-created bundle stays visible
+    everywhere, a foreign bundle stays invisible, a claimed one stays claimed."""
+    mine = _park(folder="f1", file_name="mine.pdf", content_hash="h1")
+    foreign = _park(folder="f2", file_name="foreign.pdf", content_hash="h2")
+    unassigned = _park(folder=None, file_name="scan.pdf", content_hash="h3")
+    claimed = _park(folder=None, file_name="claimed.pdf", content_hash="h4")
+    _procedure_store.record_request(
+        claimed,
+        path="/inputs/claimed.pdf",
+        folder="f2",
+        track_id="t",
+        operator_classification=None,
+        file_name="claimed.pdf",
+    )
+
+    ids = {item["id"] for item in client.get("/twin/api/procedures").json()}
+    assert ids == {mine, unassigned}
+    assert foreign not in ids
+    assert claimed not in ids
+
+
+def test_undecidable_visibility_fails_closed(client, monkeypatch):
+    """Outer belt: an UNEXPECTED raise in folder resolution still excludes.
+
+    The structural cases above are the real ones (they never raise); this
+    guards the residual path where something else blows up entirely.
+    """
+    from twindb_lightrag_memgraph.server import procedure_routes
+
+    _park(folder="f1")
+
+    def _boom(bundle, bundle_id):
+        raise RuntimeError("folders unreadable")
+
+    monkeypatch.setattr(procedure_routes, "_validated_bundle_folders", _boom)
+
+    resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+def test_store_access_failure_stays_a_500_and_is_logged_as_such(client, caplog):
+    """A filesystem/permission failure is NOT a malformed bundle: the log must
+    say so, because the two have identical HTTP signatures and opposite fixes.
+    """
+    store_file = _procedure_store.store_path()
+    store_file.parent.mkdir(parents=True, exist_ok=True)
+    store_file.write_text("{}", encoding="utf-8")
+
+    def _explode(path):
+        raise PermissionError(13, "Permission denied")
+
+    with caplog.at_level("ERROR", logger="twindb_lightrag_memgraph"):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(_procedure_store, "_load", _explode)
+            resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 500
+    assert "STORE ACCESS failed" in caplog.text
+
+
+def test_business_error_is_not_mislabelled_as_store_access(client, caplog):
+    """``_store_call`` also runs mutations: an invalid-state ValueError is a
+    business error and must not send the reader hunting for a permissions bug.
+    """
+    store_file = _procedure_store.store_path()
+    store_file.parent.mkdir(parents=True, exist_ok=True)
+    store_file.write_text("{}", encoding="utf-8")
+
+    def _explode(*args, **kwargs):
+        raise ValueError("invalid bundle state: 'nope'")
+
+    with caplog.at_level("ERROR", logger="twindb_lightrag_memgraph"):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(_procedure_store, "list_bundles", _explode)
+            resp = client.get("/twin/api/procedures")
+
+    assert resp.status_code == 500
+    assert "STORE ACCESS failed" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # Auth gating + seam event sink
 # ---------------------------------------------------------------------------
 

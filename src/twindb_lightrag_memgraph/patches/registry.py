@@ -3772,8 +3772,10 @@ def _mount_twin_subapp(
         tags, activity, notifications, and graph.
       - ``"seed"``: the WebUI store is built sync from
         :func:`WebuiStore.from_seed`, so fixtures (tags, activity,
-        notifications) are visible immediately. No lifespan wrapping.
-        This mode is demo/dev only.
+        notifications) are visible immediately and needs no store-
+        initialisation inside the lifespan. The shared lifespan wrapper still
+        applies optional tracing after the host LightRAG startup in both
+        storage modes. Seed mode is demo/dev only.
     """
     from fastapi import Depends
 
@@ -3916,13 +3918,28 @@ def _mount_twin_subapp(
 
     app.include_router(system_info_router, prefix=prefix)
 
+    # Technical observability is a both-surfaces contract.  The standalone
+    # factory mounts the same JSON + Prometheus routes; production reaches this
+    # hand-maintained overlay list and must not silently lose them.
+    from ..server.metrics_routes import build_metrics_router
+
+    app.include_router(
+        build_metrics_router(),
+        prefix=prefix,
+        dependencies=[Depends(require_auth)],
+    )
+
     app.middleware("http")(_overlay_instance_quota_middleware)
+    from ..server.observability import install_request_observability
+
+    install_request_observability(app)
 
     # Twin overlay query route — wraps LightRAG `aquery` and returns
     # structured `{response, sources}` so the React port can render
     # clickable citations. Mounted under the same prefix so the
     # frontend just calls `${TWIN}/query` instead of LightRAG's
     # native `/query`.
+    from ..server.query.l3_runtime import build_l3_query_runtime
     from ..server.twin_query_routes import build_twin_query_router
 
     def _get_rag_for_twin_query():
@@ -3934,7 +3951,10 @@ def _mount_twin_subapp(
             )
         return rag
 
-    twin_query_router = build_twin_query_router(_get_rag_for_twin_query)
+    twin_query_router = build_twin_query_router(
+        _get_rag_for_twin_query,
+        l3_runtime=build_l3_query_runtime(_get_rag_for_twin_query),
+    )
     app.include_router(
         twin_query_router,
         prefix=prefix,
@@ -3951,24 +3971,20 @@ def _mount_twin_subapp(
         surface=f"overlay:{prefix}",
     )
 
-    if webui_stores == "seed":
-        # Sync setup; the seed includes pre-populated tags / activity /
-        # notifications visible from the very first request.
-        set_store(WebuiStore.from_seed())
-        logger.info(
-            "twindb: Twin overlay router included at %s (in-memory seed; %d routes)",
-            prefix,
-            len(webui_router.routes),
-        )
-        return
-
-    if webui_stores != "memgraph":
+    if webui_stores not in {"seed", "memgraph"}:
         raise ValueError(
             f"webui_stores={webui_stores!r} is not supported. "
             "Use 'seed' or 'memgraph'."
         )
 
-    # Memgraph branch — async store factories require a lifespan hook.
+    if webui_stores == "seed":
+        # Sync setup; the seed includes pre-populated tags / activity /
+        # notifications visible from the very first request.
+        set_store(WebuiStore.from_seed())
+
+    # The host LightRAG instance is initialized by its parent lifespan. Apply
+    # Twin's optional spans only afterwards, exactly like the standalone
+    # factory. The same wrapper continues to own async Memgraph-store startup.
     from contextlib import asynccontextmanager
 
     parent_lifespan = app.router.lifespan_context
@@ -3976,21 +3992,43 @@ def _mount_twin_subapp(
     @asynccontextmanager
     async def chained_lifespan(parent_app):
         async with parent_lifespan(parent_app):
-            # LightRAG has finished initialize_storages() — Memgraph
-            # connection pool is up, indexes are created. Safe to talk
-            # to the WebUI store Memgraph backends.
-            await _init_overlay_memgraph_stores(
-                webui_categories_config, WebuiStore, set_store
-            )
+            if _env_flag("LIGHTRAG_ENABLE_LANGSMITH_TRACING"):
+                from ..server.tracing import apply_lang_with_tracing
+
+                rag = _twindb_state.get("rag")
+                if rag is None:
+                    logger.warning(
+                        "twindb: LangSmith tracing requested but the host "
+                        "LightRAG instance was not captured; native runtime "
+                        "continues without Twin spans"
+                    )
+                else:
+                    apply_lang_with_tracing(rag)
+                    logger.info("twindb: LangSmith tracing applied to host LightRAG")
+
+            if webui_stores == "memgraph":
+                # LightRAG has finished initialize_storages() — Memgraph
+                # connection pool is up, indexes are created. Safe to talk
+                # to the WebUI store Memgraph backends.
+                await _init_overlay_memgraph_stores(
+                    webui_categories_config, WebuiStore, set_store
+                )
             yield
 
     app.router.lifespan_context = chained_lifespan
-    logger.info(
-        "twindb: Twin overlay router included at %s "
-        "(memgraph stores pending lifespan startup; %d routes)",
-        prefix,
-        len(webui_router.routes),
-    )
+    if webui_stores == "seed":
+        logger.info(
+            "twindb: Twin overlay router included at %s (in-memory seed; %d routes)",
+            prefix,
+            len(webui_router.routes),
+        )
+    else:
+        logger.info(
+            "twindb: Twin overlay router included at %s "
+            "(memgraph stores pending lifespan startup; %d routes)",
+            prefix,
+            len(webui_router.routes),
+        )
 
 
 def _patch_version_string():

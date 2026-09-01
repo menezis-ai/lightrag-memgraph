@@ -58,6 +58,7 @@ AnswerStatus = Literal[
     "grounded",
     "insufficient_information",
     "source_projection_failed",
+    "citation_validation_failed",
     "no_retrieval",
     "query_failed",
 ]
@@ -78,6 +79,7 @@ ANSWER_STATUS_NO_RETRIEVAL: AnswerStatus = "no_retrieval"
 # ``insufficient_information`` (no usable context) and from a hard 500 (which
 # would hide a usable answer behind a display-layer failure).
 ANSWER_STATUS_SOURCE_PROJECTION_FAILED: AnswerStatus = "source_projection_failed"
+ANSWER_STATUS_CITATION_VALIDATION_FAILED: AnswerStatus = "citation_validation_failed"
 # A generic backend failure occurred (aquery_llm raised, or returned a
 # ``status=failure`` envelope for any reason other than ``no_results``). On the
 # non-stream ``/query`` this surfaces as a real HTTP 500; on ``/query/stream``

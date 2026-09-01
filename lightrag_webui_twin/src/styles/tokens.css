@@ -16,13 +16,15 @@
   --border-strong: #D8D2C5;
   --ink: #222A33;
   --ink-soft: #46505A;
-  --muted: #7C8590;
+  /* Small operational metadata must retain WCAG AA contrast on white/warm
+   * surfaces; #7C8590 only reached ~3.7:1 at the sizes used throughout the UI. */
+  --muted: #5F6974;
   --faint: #A0A6AE;
   --blue: #2D5A8E;
   --blue-bright: #3F8EBF;
   --blue-soft: #EAF1F7;
   --blue-soft-bd: #CCE0EF;
-  --green: #3D7A4E;
+  --green: #376F46;
   --green-bright: #569C6A;
   --green-soft: #E9F2EB;
   --green-soft-bd: #CBE3D1;

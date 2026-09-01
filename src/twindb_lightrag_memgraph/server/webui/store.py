@@ -287,7 +287,17 @@ class WebuiStore:
         )
 
     async def record_activity(self, event: dict[str, Any]) -> dict[str, Any]:
-        return await self._activity_backend.append(event)
+        stored = await self._activity_backend.append(event)
+
+        # Activity is the product ledger and remains authoritative for the
+        # operator UI.  The regulatory projection is additive and best-effort:
+        # it validates/redacts the stored business event before the optional
+        # #122 sink sees it, after the ledger write can no longer be rolled
+        # back.  Issue #122 owns the future queue and its latency semantics.
+        from ..audit import submit_activity_audit_event
+
+        await submit_activity_audit_event(stored)
+        return stored
 
     # -- OpenAPI -------------------------------------------------------
 

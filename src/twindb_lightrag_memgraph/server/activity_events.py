@@ -35,6 +35,7 @@ _FOLDER_APPLICABLE_SEGMENTS = {
     "tags",
 }
 _FOLDER_NOT_APPLICABLE = "not-applicable"
+_FOLDER_INVALID = "invalid-folder"
 _AUTH_ACTIVITY_EVENT_TASKS: set[asyncio.Task[Any]] = set()
 
 
@@ -95,7 +96,7 @@ def _auth_event_folder(request: Request, path: str) -> str:
             return folder
         return resolve_folder_from_headers(request.headers)
     except Exception:
-        return "invalid-folder"
+        return _FOLDER_INVALID
 
 
 def _auth_event_signature(*, action: str, request: Request, status_code: int) -> str:
@@ -236,21 +237,36 @@ async def emit_access_denied_event(
                 "[activity] access-denied actor resolution failed", exc_info=True
             )
 
-    await emit_auth_event(
-        action="access_denied",
-        sev="warning",
-        actor=actor,
-        target_type="route",
-        target_label=path,
-        request=request,
-        summary=f"access denied on {request.method} {path}",
-        meta={
-            "method": request.method,
-            "path": path,
-            "status_code": status_code,
-            "reason": safe_reason,
-        },
-    )
+    # BaseHTTPMiddleware dispatches the route in a child task: ContextVar
+    # writes performed by require_auth do not flow back to the outer task that
+    # schedules this background event. Request.state is shared, so rebind the
+    # verified values here without adding audit-only fields to Activity meta.
+    from .observability import bind_request_context, route_group
+
+    with bind_request_context(
+        request_id=getattr(request.state, "request_id", "-"),
+        trace_id=getattr(request.state, "trace_id", "-"),
+        span_id=getattr(request.state, "span_id", "-"),
+        route_group=getattr(request.state, "route_group", route_group(path)),
+        http_method=request.method,
+        auth_method=getattr(request.state, "auth_method", "unknown"),
+        auth_actor=actor,
+    ):
+        await emit_auth_event(
+            action="access_denied",
+            sev="warning",
+            actor=actor,
+            target_type="route",
+            target_label=path,
+            request=request,
+            summary=f"access denied on {request.method} {path}",
+            meta={
+                "method": request.method,
+                "path": path,
+                "status_code": status_code,
+                "reason": safe_reason,
+            },
+        )
 
 
 def emit_access_denied_event_background(

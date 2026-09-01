@@ -92,7 +92,7 @@ const E2E_LINKED_SOURCES_STORAGE_KEY = 'twin.e2e.linkedSourcesState.v1';
 const SOURCE_LINK_FIXTURES: SourceLink[] = [];
 
 const LINKED_SOURCE_APPLICATION: CatalogApplication = {
-  auid: 'AP11121',
+  auid: 'AP011121',
   business_app: 'CTCK',
   classification: 'C1',
   product_owner: 'Demo Steward',

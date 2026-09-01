@@ -517,13 +517,62 @@ LIGHTRAG_ENABLE_LANGSMITH_TRACING  true/false
 LANGSMITH_API_KEY            LangSmith key.
 LANGSMITH_PROJECT            LangSmith project name.
 
+Distributed HTTP context needs no additional feature flag. Both the standalone
+factory and the production LightRAG host accept W3C `traceparent`,
+`langsmith-trace` / `x-langsmith-trace`, and the legacy `x-trace-id` fallback.
+Priority for the canonical HTTP trace is: valid W3C > valid LangSmith trace UUID
+> bounded custom id > newly generated context. A malformed/absent W3C parent is
+never reflected: the runtime creates a non-zero trace id and server span id.
+Every normal response returns `x-request-id` and the canonical `traceparent`.
+Twin-owned downstream HTTP calls forward that context. When LangSmith tracing
+is enabled, LightRAG LLM/embedding/rerank spans and L3 provider-call spans also
+inherit the native LangSmith parent and carry the W3C trace/span ids as
+metadata.
+
 --------------------------------------------------------------------------------
-8. INTELLIGENCE LAYER (optional [intelligence] extra) — prefix TWIN_RAG_
+8. TECHNICAL OBSERVABILITY (server extra)
+--------------------------------------------------------------------------------
+TWIN_LOG_FORMAT              "text" (default) keeps the development/operator
+                             formatter. "json" emits one ECS-compatible JSON
+                             object per line on Twin, LightRAG and Uvicorn
+                             handlers. Any other value refuses app creation.
+TWIN_SERVICE_NAME            JSON `service.name`. Default: twin-kms.
+TWIN_SERVICE_VERSION         JSON `service.version`. Default: installed package
+                             version; override only for an explicit platform
+                             service-version convention.
+TWIN_ENV                     JSON `service.environment`; also controls the
+                             fail-closed production auth switch in section 3.
+PROMETHEUS_MULTIPROC_DIR     Optional directory for official prometheus-client
+                             multi-worker aggregation. It MUST be configured
+                             before Python imports the server, writable by all
+                             workers, and emptied by the process manager before
+                             each start. Leave unset for the default mono-process
+                             runtime.
+
+Authenticated operator endpoints under LIGHTRAG_WEBUI_API_PREFIX:
+  GET /ops/metrics             stable JSON compatibility counters
+  GET /ops/metrics/prometheus  Prometheus text exposition
+
+Prometheus labels use fixed route/method/status vocabularies; raw paths, folder
+ids, users and document ids are never labels. Request/auth/quota/storage counts
+and route-group latency are live. Activity events are validated against the
+shipped AuditEvent v1 contract, so audit_invalid_total is live now. Audit drops
+and queue depth become live only when the durable exporter (#122) installs its
+sink/queue. Technical logs never replace that business/regulatory contract.
+
+--------------------------------------------------------------------------------
+9. INTELLIGENCE LAYER (optional [intelligence] extra) — prefix TWIN_RAG_
 --------------------------------------------------------------------------------
 Only read when TwinRAGEngine is used. Separate chat vs indexing credentials so
 interactive queries never compete with ingestion GPU. Each missing indexing
 field falls back independently to its chat counterpart (KEY -> KEY,
 API_BASE -> API_BASE, MODEL -> MODEL); credentials are never logged.
+TWIN_RAG_QUERY_ENGINE                l2 (default) | l3. Selects the engine for
+                                     /twin/api/query and
+                                     /twin/api/query/stream. The native root
+                                     /query route remains L2. l2 imports no L3
+                                     module. Set back to l2 and restart workers
+                                     for rollback; no image/code redeploy.
 TWIN_RAG_LLM_API_KEY / TWIN_RAG_LLM_API_BASE / TWIN_RAG_LLM_MODEL
 TWIN_RAG_LLM_EFFORT_INTENT / _REASON / _RERANKER / _SYNTHESIS  (low|medium|high)
 TWIN_RAG_LLM_RETRY_MAX_ATTEMPTS       default 3; bounded 1..5

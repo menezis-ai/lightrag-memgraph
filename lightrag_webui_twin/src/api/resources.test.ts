@@ -217,6 +217,20 @@ describe('queryStream parser — answer_status propagation', () => {
     expect(chunks.join('')).toBe('Direct answer.');
   });
 
+  it('propagates citation_validation_failed without sources', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      ndjsonResponse([
+        JSON.stringify({ type: 'token', value: 'An unverified answer.' }),
+        JSON.stringify({ type: 'status', value: 'citation_validation_failed' }),
+        JSON.stringify({ type: 'sources', value: [] }),
+      ]),
+    );
+
+    const res = await api.queryStream({ query: 'real' }, () => undefined);
+    expect(res.answer_status).toBe('citation_validation_failed');
+    expect(res.sources).toEqual([]);
+  });
+
   it('returns answer_status=query_failed when the stream signals a backend error', async () => {
     // A mid-stream backend error (aquery_llm raised, or a status=failure
     // envelope) is reported via a [query failed: …] token + query_failed

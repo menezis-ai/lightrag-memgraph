@@ -28,6 +28,7 @@ export interface BrowserIssueAllowance {
 
 const HTTP_RESPONSE_CONSOLE_ERROR =
   /^Failed to load resource: the server responded with a status of 4\d{2}\b/;
+const NAVIGATION_ABORT_WINDOW_MS = 1_000;
 
 export function allowRequestAbort(
   url: RegExp,
@@ -90,6 +91,16 @@ export function unexpectedIssues(
   });
 }
 
+export function isNavigationRelatedAbort(
+  failedAt: number,
+  navigationTimes: readonly number[],
+): boolean {
+  return navigationTimes.some(
+    (navigationAt) =>
+      Math.abs(navigationAt - failedAt) <= NAVIGATION_ABORT_WINDOW_MS,
+  );
+}
+
 /**
  * Browser-journey fixture. Import `test`, `expect`, and Playwright types from
  * `./fixtures` so console errors, uncaught page errors (including unhandled
@@ -127,18 +138,25 @@ export const test = base.extend<BrowserGuardFixtures>({
     async ({ context, page, browserIssueRegistry }, provide) => {
       const issues: BrowserIssue[] = [];
       const guardedPages = new Set<Page>();
+      const navigationTimes = new WeakMap<Page, number[]>();
+      const deferredAbortIssues: Array<{
+        failedAt: number;
+        issue: BrowserIssue;
+        page: Page;
+      }> = [];
 
       const guardPage = (page: Page) => {
         if (guardedPages.has(page)) return;
         guardedPages.add(page);
-        let lastMainFrameNavigationAt = Number.NEGATIVE_INFINITY;
+        const pageNavigationTimes: number[] = [];
+        navigationTimes.set(page, pageNavigationTimes);
 
         page.on('request', (request) => {
           if (
             request.isNavigationRequest() &&
             request.frame() === page.mainFrame()
           ) {
-            lastMainFrameNavigationAt = Date.now();
+            pageNavigationTimes.push(Date.now());
           }
         });
 
@@ -169,23 +187,29 @@ export const test = base.extend<BrowserGuardFixtures>({
         page.on('requestfailed', (request) => {
           const url = request.url();
           const message = request.failure()?.errorText ?? 'unknown network failure';
-          // A full-page navigation can cancel subresources. API fetch aborts
-          // are deliberately NOT swallowed here: each expected cancellation
-          // must use allowRequestAbort(url, reason, maxOccurrences), so an
-          // unexpected URL or an exhausted budget fails the owning journey.
-          if (
-            Date.now() - lastMainFrameNavigationAt <= 1_000 &&
-            !request.isNavigationRequest() &&
-            message === 'net::ERR_ABORTED'
-          ) {
-            return;
-          }
-          issues.push({
+          const issue: BrowserIssue = {
             kind: 'requestfailed',
             url,
             message,
             detail: `${request.method()} ${url} (${request.resourceType()}): ${message}`,
-          });
+          };
+          // Chromium may emit the cancelled fetch BEFORE the navigation
+          // request that cancelled it. Defer abort classification until test
+          // teardown so the bounded navigation window works in either event
+          // order. A cancellation with no nearby navigation remains an issue
+          // and still needs an explicit allowRequestAbort() budget.
+          if (
+            !request.isNavigationRequest() &&
+            message === 'net::ERR_ABORTED'
+          ) {
+            deferredAbortIssues.push({
+              failedAt: Date.now(),
+              issue,
+              page,
+            });
+            return;
+          }
+          issues.push(issue);
         });
       };
 
@@ -201,6 +225,16 @@ export const test = base.extend<BrowserGuardFixtures>({
       await provide();
 
       context.off('page', guardNewPage);
+      deferredAbortIssues.forEach(({ failedAt, issue, page }) => {
+        if (
+          !isNavigationRelatedAbort(
+            failedAt,
+            navigationTimes.get(page) ?? [],
+          )
+        ) {
+          issues.push(issue);
+        }
+      });
       const unexpected = unexpectedIssues(issues, browserIssueRegistry);
       if (unexpected.length > 0) {
         const diagnostics = unexpected

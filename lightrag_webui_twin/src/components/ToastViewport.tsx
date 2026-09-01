@@ -84,7 +84,7 @@ export function ToastViewport({ toasts, onUndo, onDismiss }: Readonly<ToastViewp
         {assertiveMsg.replace(/ · \d+$/, '')}
       </div>
 
-      <div className="toast-viewport" aria-label="Notifications">
+      <div className="toast-viewport" role="region" aria-label="Notifications">
         {hidden > 0 && (
           <button
             type="button"

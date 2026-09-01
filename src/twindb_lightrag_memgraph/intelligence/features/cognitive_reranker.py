@@ -20,6 +20,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from ..config import LLMProfileKind, TwinRAGConfig
+from ..fallbacks import record_query_fallback
 from ..json_utils import load_json_object
 from ..llm import create_chat_completion, log_llm_fallback
 from ..prompt_security import neutralize_reserved_tags
@@ -177,6 +178,7 @@ class CognitiveReranker:
         prefer_rerank: bool = False,
     ) -> list[ChunkResult]:
         """Return a deterministic top-K when LLM scoring is unusable."""
+        record_query_fallback("rerank_fallback")
         if prefer_rerank:
             chunks.sort(
                 key=lambda c: c.rerank_score if c.rerank_score is not None else c.score,

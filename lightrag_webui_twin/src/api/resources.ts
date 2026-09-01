@@ -257,6 +257,7 @@ export type TwinAnswerStatus =
   | 'grounded'
   | 'insufficient_information'
   | 'source_projection_failed'
+  | 'citation_validation_failed'
   | 'no_retrieval'
   | 'query_failed';
 
@@ -623,7 +624,7 @@ export const twinApi = {
     //   {"type":"token","value":"<chunk text>"}
     //   {"type":"status","value":"grounded"|"insufficient_information"
     //                            |"source_projection_failed"|"no_retrieval"
-    //                            |"query_failed"}
+    //                            |"citation_validation_failed"|"query_failed"}
     //   {"type":"meta","value":{"model":"<llm model>"}}
     //   {"type":"sources","value":[<RetrievalSource>, ...]}
     // Token events stream the LLM answer (call onChunk for live UI);
@@ -671,6 +672,7 @@ export const twinApi = {
         (event.value === 'grounded' ||
           event.value === 'insufficient_information' ||
           event.value === 'source_projection_failed' ||
+          event.value === 'citation_validation_failed' ||
           event.value === 'no_retrieval' ||
           event.value === 'query_failed')
       ) {

@@ -12,11 +12,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
-from twindb_lightrag_memgraph.server import webui_router
+from twindb_lightrag_memgraph.server import activity_events, webui_router
 from twindb_lightrag_memgraph.server.activity_events import (
     emit_access_denied_event_background,
 )
 from twindb_lightrag_memgraph.server.app import create_app
+from twindb_lightrag_memgraph.server.observability import current_request_context
 from twindb_lightrag_memgraph.server.settings import LightRAGServerSettings
 
 
@@ -134,3 +135,47 @@ async def test_access_denied_event_emission_is_deduplicated_on_same_request(
         await asyncio.sleep(0.01)
 
     assert len(calls) == 1
+
+
+async def test_access_denied_event_rebinds_complete_request_context(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def capture_context(**_kwargs):
+        captured.update(current_request_context())
+
+    monkeypatch.setattr(activity_events, "emit_auth_event", capture_context)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/documents",
+            "headers": [],
+        },
+        receive=receive,
+    )
+    request.state.request_id = "request-1"
+    request.state.trace_id = "1" * 32
+    request.state.span_id = "2" * 16
+    request.state.route_group = "documents"
+    request.state.auth_method = "none"
+
+    await activity_events.emit_access_denied_event(
+        request,
+        status_code=401,
+        reason="unauthorized",
+    )
+
+    assert captured == {
+        "request_id": "request-1",
+        "trace_id": "1" * 32,
+        "span_id": "2" * 16,
+        "route_group": "documents",
+        "http_method": "GET",
+        "auth_method": "none",
+        "auth_actor": "anonymous",
+    }
+    assert current_request_context()["span_id"] == "-"

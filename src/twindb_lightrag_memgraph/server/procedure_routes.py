@@ -54,6 +54,7 @@ from .._constants import (
     doc_type_context,
     operator_classification_context,
     storage_folder_context,
+    validate_identifier,
 )
 from .auth import require_auth
 from .folder import bind_request_folder
@@ -113,45 +114,343 @@ def _degraded_503() -> HTTPException:
 
 
 async def _store_call(func, *args, **kwargs):
-    """Run a sync store call in a worker thread; degraded -> 503."""
+    """Run a sync store call in a worker thread; degraded -> 503.
+
+    An ``OSError`` here is a store-ACCESS failure — ``_store_lock`` doing
+    ``mkdir``/``open`` on the ``.lock`` sidecar, or ``_load`` re-raising a
+    non-``FileNotFoundError`` read error. It stays a 500 (unchanged contract)
+    but is logged as such first: a store-access 500 and a projection 500 have
+    identical HTTP signatures and opposite fixes (filesystem/permissions vs
+    malformed record), and telling them apart is what turns
+    "GET /procedures -> 500" from a guess into a diagnosis.
+
+    Deliberately NOT ``except Exception``: this wrapper also runs mutations
+    whose ``ValueError`` (invalid state transition) is a business error, and
+    labelling that "store access" would send the next reader to the wrong
+    place.
+    """
     try:
         return await asyncio.to_thread(lambda: func(*args, **kwargs))
     except _procedure_store.StoreDegradedError as exc:
         raise _degraded_503() from exc
+    except OSError:
+        logger.exception(
+            "twindb procedure: STORE ACCESS failed on %s (store=%s) — this is "
+            "not a malformed-bundle problem: check the store file and its "
+            ".lock sidecar for permissions, a read-only mount or a bad "
+            "TWIN_PROCEDURE_STORE_FILE path",
+            getattr(func, "__name__", func),
+            _procedure_store.store_path(),
+        )
+        raise
+
+
+def _coerce_opt_str(value: Any, *, field: str, bundle_id: str) -> str | None:
+    """Wire-safe ``str | None``: keep strings, stringify scalars, drop the rest.
+
+    A dict/list in a scalar slot is meaningless to the WebUI and would raise a
+    pydantic ``ValidationError`` — dropping it costs one field on one row,
+    keeping it un-coerced costs the whole review queue.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    logger.warning(
+        "twindb procedure: bundle %s has a non-scalar %s (%s) — dropped from "
+        "the list projection",
+        bundle_id,
+        field,
+        type(value).__name__,
+    )
+    return None
+
+
+def _coerce_str(value: Any, *, field: str, bundle_id: str) -> str:
+    """Wire-safe required string: drop containers and default to empty."""
+    return _coerce_opt_str(value, field=field, bundle_id=bundle_id) or ""
+
+
+def _coerce_opt_dict(
+    value: Any, *, field: str, bundle_id: str
+) -> dict[str, Any] | None:
+    """Wire-safe ``dict | None`` for the classification slots."""
+    if value is None or isinstance(value, dict):
+        return value
+    logger.warning(
+        "twindb procedure: bundle %s has a non-object %s (%s) — dropped from "
+        "the list projection",
+        bundle_id,
+        field,
+        type(value).__name__,
+    )
+    return None
+
+
+def _coerce_int(value: Any, *, field: str, bundle_id: str) -> int:
+    """Wire-safe ``int``: ``int()`` raises TypeError on a dict/list and
+    ValueError on a non-numeric string; non-finite floats raise OverflowError."""
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "twindb procedure: bundle %s has an invalid %s value of type %s — "
+            "projected as 0",
+            bundle_id,
+            field,
+            type(value).__name__,
+        )
+        return 0
+
+
+def _safe_operator_classification(bundle: dict, bundle_id: str) -> str | None:
+    """``strictest_operator_classification`` folds caller-supplied duplicate
+    requests; a malformed one must not take the list down."""
+    try:
+        raw = _procedure.strictest_operator_classification(bundle)
+    except Exception:
+        logger.warning(
+            "twindb procedure: bundle %s — operator classification fold "
+            "failed, projected as None",
+            bundle_id,
+            exc_info=True,
+        )
+        return None
+    return _coerce_opt_str(raw, field="operator_classification", bundle_id=bundle_id)
 
 
 def _summary(bundle: dict) -> BundleSummary:
+    """Project one bundle onto the list contract.
+
+    Every field is coerced at the wire boundary: the store is a JSON file that
+    predates several schema revisions and is also an import target
+    (``restore_bundle``), so a type drift on ONE record must never 500 the
+    whole review queue (parked procedures are invisible in /documents — an
+    unlistable bundle is a document stuck forever).
+    """
+    bundle_id = str(bundle.get("id"))
     schematics = [s for s in bundle.get("schematics") or [] if isinstance(s, dict)]
     return BundleSummary(
-        id=str(bundle.get("id")),
-        file_name=str(bundle.get("file_name") or ""),
-        state=str(bundle.get("state") or ""),
-        reason=str(bundle.get("reason") or ""),
-        source=str(bundle.get("source") or ""),
-        track_id=bundle.get("track_id"),
-        schematics_total=int(bundle.get("schematics_total") or 0),
+        id=bundle_id,
+        file_name=_coerce_str(
+            bundle.get("file_name"), field="file_name", bundle_id=bundle_id
+        ),
+        state=_coerce_str(bundle.get("state"), field="state", bundle_id=bundle_id),
+        reason=_coerce_str(bundle.get("reason"), field="reason", bundle_id=bundle_id),
+        source=_coerce_str(bundle.get("source"), field="source", bundle_id=bundle_id),
+        track_id=_coerce_opt_str(
+            bundle.get("track_id"), field="track_id", bundle_id=bundle_id
+        ),
+        schematics_total=_coerce_int(
+            bundle.get("schematics_total"),
+            field="schematics_total",
+            bundle_id=bundle_id,
+        ),
         schematics_described=sum(
             1 for s in schematics if isinstance(s.get("informed"), dict)
         ),
-        classification=bundle.get("classification"),
-        operator_classification=_procedure.strictest_operator_classification(bundle),
-        created_at=bundle.get("created_at"),
-        updated_at=bundle.get("updated_at"),
+        classification=_coerce_opt_dict(
+            bundle.get("classification"),
+            field="classification",
+            bundle_id=bundle_id,
+        ),
+        operator_classification=_safe_operator_classification(bundle, bundle_id),
+        created_at=_coerce_opt_str(
+            bundle.get("created_at"), field="created_at", bundle_id=bundle_id
+        ),
+        updated_at=_coerce_opt_str(
+            bundle.get("updated_at"), field="updated_at", bundle_id=bundle_id
+        ),
     )
 
 
-def _visible_in_folder(bundle: dict, folder: str) -> bool:
-    """Folder-bound visibility, with one deliberate exception.
+def _degraded_summary(bundle: Any) -> BundleSummary | None:
+    """Last-resort row for a bundle whose projection crashed anyway.
+
+    Skipping would hide a parked document from the ONLY list that can reach
+    it; the row is kept with an explicit reason so an admin can still open the
+    detail route and decide. ``None`` only when even the id is unusable — such
+    a record is unreachable by any route and there is nothing to offer.
+    """
+    if not isinstance(bundle, dict):
+        return None
+    bundle_id = str(bundle.get("id") or "")
+    if not bundle_id:
+        return None
+    try:
+        return BundleSummary(
+            id=bundle_id,
+            file_name=_coerce_str(
+                bundle.get("file_name"), field="file_name", bundle_id=bundle_id
+            ),
+            state=_coerce_str(bundle.get("state"), field="state", bundle_id=bundle_id),
+            reason=(
+                "This bundle could not be read for the list. Open its detail "
+                "view or contact your platform administrator."
+            ),
+            source=_coerce_str(
+                bundle.get("source"), field="source", bundle_id=bundle_id
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "twindb procedure: bundle %s cannot be projected even in "
+            "degraded form — omitted from the list",
+            bundle_id,
+        )
+        return None
+
+
+def _validated_bundle_folders(bundle: Any, bundle_id: str) -> list[str] | None:
+    """The bundle's claimed folders, or ``None`` when the structure is invalid.
+
+    ``_visible_in_folder`` grants a deliberate exception to a bundle claimed by
+    NO folder: it surfaces everywhere so a scan-created record is reviewable at
+    all. That exception keys off an EMPTY folder list, and
+    ``_procedure.bundle_folders`` produces an empty list for malformed-but-falsy
+    metadata exactly as it does for a legitimate scan — ``folder=[]``,
+    ``folder=0``, an object-shaped ``duplicate_requests`` and a non-dict request
+    entry all collapse to ``[]`` and would inherit the "visible everywhere"
+    exception. Catching exceptions is not enough: none of those shapes raise.
+
+    So the structure is validated BEFORE the exception can apply. ``None`` means
+    "cannot be trusted" and the caller must exclude the bundle; an empty list
+    means "genuinely unassigned" and keeps the exception. A bundle excluded here
+    stays reachable through the admin detail route, which is not folder-bound.
+    """
+    if not isinstance(bundle, dict):
+        return None
+
+    primary = bundle.get("folder")
+    if primary is not None:
+        if not isinstance(primary, str):
+            logger.warning(
+                "twindb procedure: bundle %s has an invalid primary folder "
+                "type (%s) — EXCLUDED from every folder list (fail-closed)",
+                bundle_id,
+                type(primary).__name__,
+            )
+            return None
+        try:
+            validate_identifier(primary, "folder")
+        except ValueError:
+            logger.warning(
+                "twindb procedure: bundle %s has an invalid primary folder "
+                "identifier — EXCLUDED from every folder list (fail-closed)",
+                bundle_id,
+            )
+            return None
+
+    raw_requests = bundle.get("duplicate_requests")
+    if raw_requests is not None and not isinstance(raw_requests, list):
+        logger.warning(
+            "twindb procedure: bundle %s has a non-list duplicate_requests "
+            "(%s) — EXCLUDED from every folder list (fail-closed)",
+            bundle_id,
+            type(raw_requests).__name__,
+        )
+        return None
+
+    folders: list[str] = []
+    if primary is not None:
+        folders.append(primary)
+    for request in raw_requests or []:
+        if not isinstance(request, dict):
+            logger.warning(
+                "twindb procedure: bundle %s has a malformed duplicate request "
+                "entry (%s) — EXCLUDED from every folder list (fail-closed)",
+                bundle_id,
+                type(request).__name__,
+            )
+            return None
+        requested = request.get("folder")
+        if requested is not None:
+            if not isinstance(requested, str):
+                logger.warning(
+                    "twindb procedure: bundle %s has an invalid "
+                    "duplicate-request folder type (%s) — EXCLUDED from "
+                    "every folder list (fail-closed)",
+                    bundle_id,
+                    type(requested).__name__,
+                )
+                return None
+            try:
+                validate_identifier(requested, "folder")
+            except ValueError:
+                logger.warning(
+                    "twindb procedure: bundle %s has an invalid "
+                    "duplicate-request folder identifier — EXCLUDED from "
+                    "every folder list (fail-closed)",
+                    bundle_id,
+                )
+                return None
+        if requested is not None and requested not in folders:
+            folders.append(requested)
+    return folders
+
+
+def _visible_in_folder_guarded(bundle: Any, folder: str, bundle_id: str) -> bool:
+    """Folder-bound visibility, FAIL-CLOSED, with one deliberate exception.
 
     A bundle claimed by NO folder (scan-created, no operator request yet)
     would otherwise be reachable from no list at all — unreviewable in
-    production. Unassigned bundles carry no cross-folder context (that is
-    the whole point of ``folder=None`` for scans), so they surface in every
+    production. Unassigned bundles carry no cross-folder context (that is the
+    whole point of ``folder=None`` for scans), so they surface in every
     folder's list until an operator claims them via approve/reroute with an
     explicit target folder.
+
+    That exception is granted ONLY on a validated structure. Resilience must
+    never widen the folder boundary: a bundle whose folder metadata cannot be
+    trusted is excluded, not degraded-into the list. A degraded row for an
+    undetermined bundle would leak another folder's parked document — the
+    exact leak ``BundleSummary`` exists to prevent (PR #384).
     """
-    folders = _procedure.bundle_folders(bundle)
-    return not folders or folder in folders
+    try:
+        folders = _validated_bundle_folders(bundle, bundle_id)
+        if folders is None:
+            return False
+        return not folders or folder in folders
+    except Exception:
+        logger.exception(
+            "twindb procedure: folder visibility undecidable for bundle %s — "
+            "EXCLUDED from folder %s (fail-closed)",
+            bundle_id,
+            folder,
+        )
+        return False
+
+
+def _project_bundles(bundles: list, folder: str) -> list[BundleSummary]:
+    """Per-bundle projection guard: ONE malformed record must not 500 the
+    whole queue. Logged with the offending bundle id + traceback so the
+    server log names the record, not just the endpoint.
+
+    Visibility is resolved BEFORE the projection guard and fails closed, so a
+    degraded row is only ever served for a bundle already proven visible in
+    this folder.
+    """
+    items: list[BundleSummary] = []
+    for bundle in bundles:
+        bundle_id = (
+            str(bundle.get("id")) if isinstance(bundle, dict) else _UNKNOWN_BUNDLE
+        )
+        if not _visible_in_folder_guarded(bundle, folder, bundle_id):
+            continue
+        try:
+            items.append(_summary(bundle))
+        except Exception:
+            logger.exception(
+                "twindb procedure: PROJECTION failed for bundle %s — degraded "
+                "row served instead of failing the whole list (store=%s)",
+                bundle_id,
+                _procedure_store.store_path(),
+            )
+            degraded = _degraded_summary(bundle)
+            if degraded is not None:
+                items.append(degraded)
+    return items
 
 
 def _actor(request: Request) -> str:
@@ -295,7 +594,7 @@ class _ProcedureRouteHandlers:
         ] = None,
     ) -> list[BundleSummary]:
         bundles = await _store_call(_procedure_store.list_bundles, state=state)
-        return [_summary(b) for b in bundles if _visible_in_folder(b, folder)]
+        return _project_bundles(bundles, folder)
 
     async def get_procedure(
         self,

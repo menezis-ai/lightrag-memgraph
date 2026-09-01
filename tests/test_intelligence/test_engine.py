@@ -122,14 +122,18 @@ class TestTwinRAGEngine:
             "twindb_lightrag_memgraph.intelligence.features.intent_classifier.AsyncOpenAI",
             return_value=client,
         ):
+            on_stage = AsyncMock()
             result = await engine.aquery(
-                "Quel temps fait-il ?", authorized_folders={"commons"}
+                "Quel temps fait-il ?",
+                authorized_folders={"commons"},
+                on_stage=on_stage,
             )
 
         assert result.trace.early_exit == "OOS"
         assert "perimetre" in result.answer
         assert result.citations == []
         assert result.answer_status == AnswerStatus.NO_RETRIEVAL
+        on_stage.assert_awaited_once_with("generation")
 
     async def test_early_exit_greeting(self, engine, mock_openai_client):
         greeting_json = json.dumps(

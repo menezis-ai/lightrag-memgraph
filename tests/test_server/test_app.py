@@ -608,6 +608,12 @@ class TestOperationalMiddleware:
 
         assert resp.status_code == 200
         assert resp.headers["x-request-id"] == "rid-123"
+        response_traceparent = resp.headers["traceparent"].split("-")
+        assert response_traceparent[0] == "00"
+        assert response_traceparent[1] == "4bf92f3577b34da6a3ce929d0e0e4736"
+        assert len(response_traceparent[2]) == 16
+        assert response_traceparent[2] != "00f067aa0ba902b7"
+        assert response_traceparent[3] == "01"
         assert "request_id=rid-123" in caplog.text
         assert "route_group=health" in caplog.text
         assert "trace_id=4bf92f3577b34da6a3ce929d0e0e4736" in caplog.text
@@ -1239,6 +1245,32 @@ class TestBuildEmbeddingFunc:
         )
         assert result.tolist() == [[0.1, 0.2, 0.3]]
 
+    async def test_build_embedding_func_propagates_active_trace_headers(self):
+        import numpy as np
+
+        from twindb_lightrag_memgraph.server.tracing import (
+            bind_trace_context,
+            resolve_trace_context,
+        )
+
+        settings = _make_settings(embedding_dim=3)
+        mock_openai_embed = AsyncMock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        context = resolve_trace_context(
+            {"traceparent": ("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")}
+        )
+
+        with patch("lightrag.llm.openai.openai_embed", mock_openai_embed):
+            func = _build_embedding_func(settings, api_key="embed-key")
+            with bind_trace_context(context):
+                await func(["hello"])
+
+        assert mock_openai_embed.await_args.kwargs["client_configs"] == {
+            "default_headers": {
+                "traceparent": context.traceparent,
+                "x-trace-id": context.trace_id,
+            }
+        }
+
 
 class TestBuildLlmFunc:
     async def test_build_llm_func_delegates(self):
@@ -1280,6 +1312,36 @@ class TestBuildLlmFunc:
             base_url=settings.llm_binding_host,
             api_key="key",
         )
+
+    async def test_build_llm_func_merges_active_trace_headers(self):
+        from twindb_lightrag_memgraph.server.tracing import (
+            bind_trace_context,
+            resolve_trace_context,
+        )
+
+        settings = _make_settings()
+        mock_openai_complete = AsyncMock(return_value="ok")
+        context = resolve_trace_context(
+            {"traceparent": ("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")}
+        )
+
+        with patch("lightrag.llm.openai.openai_complete", mock_openai_complete):
+            func = _build_llm_func(settings, api_key="key")
+            with bind_trace_context(context):
+                await func(
+                    "prompt",
+                    openai_client_configs={
+                        "default_headers": {"x-provider-route": "trusted"}
+                    },
+                )
+
+        assert mock_openai_complete.await_args.kwargs["openai_client_configs"] == {
+            "default_headers": {
+                "x-provider-route": "trusted",
+                "traceparent": context.traceparent,
+                "x-trace-id": context.trace_id,
+            }
+        }
 
 
 # ---------------------------------------------------------------------------

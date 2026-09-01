@@ -378,6 +378,22 @@ class TwinRetrievalSource(BaseModel):
     )
 
 
+class TwinL3Trace(BaseModel):
+    """Public, non-sensitive subset of the internal L3 execution trace."""
+
+    engine: Literal["l3"] = "l3"
+    degraded: bool = False
+    fallbacks: list[
+        Literal[
+            "intent_fallback",
+            "reason_fallback",
+            "rerank_fallback",
+            "synthesis_failed",
+        ]
+    ] = Field(default_factory=list, max_length=4)
+    early_exit: Literal["OOS", "GREETING", "MALICIOUS", "ESCALATION"] | None = None
+
+
 class TwinQueryResponse(BaseModel):
     response: str = Field(description="The generated answer, as plain text.")
     model: str | None = Field(
@@ -396,6 +412,14 @@ class TwinQueryResponse(BaseModel):
     # Typed as ``AnswerStatus`` so the generated OpenAPI schema
     # advertises the enum to clients/tooling instead of an open str.
     answer_status: AnswerStatus = Field(default=ANSWER_STATUS_GROUNDED)
+    trace: TwinL3Trace | None = Field(
+        default=None,
+        description=(
+            "Bounded L3 degradation metadata. Questions, prompts and reasoning "
+            "text are never included."
+        ),
+        exclude_if=lambda value: value is None,
+    )
 
 
 class TwinQueryDataResponse(BaseModel):
@@ -409,6 +433,7 @@ __all__ = [
     "ConversationMessage",
     "TwinQueryBody",
     "TwinQueryDataResponse",
+    "TwinL3Trace",
     "TwinQueryResponse",
     "TwinRetrievalSource",
     "TwinSourceAnchor",

@@ -12,6 +12,7 @@ const E2E_SUITE = process.env.TWIN_E2E_SUITE;
 // loading them only to skip them made missing CI configuration indistinguishable
 // from intentional suite selection.
 const MSW_TEST_IGNORE = [
+  '**/a11y.spec.ts',
   '**/capture-qa-screenshots.spec.ts',
   '**/real-backend.spec.ts',
   '**/api-coverage-real.spec.ts',
@@ -25,7 +26,8 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   // MSW keeps mutable mock state in the browser worker. Until e2e runs against
   // the real Couche 3 backend, run specs serially so /__e2e/reset from one file
-  // cannot wipe another file mid-journey.
+  // cannot wipe another file mid-journey. CI reduces wall time with isolated
+  // Playwright shards; never replace that process boundary with workers > 1.
   workers: 1,
   reporter: process.env.CI ? [['html'], ['github']] : [['list'], ['html', { open: 'never' }]],
   use: {

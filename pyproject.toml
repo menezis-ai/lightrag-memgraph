@@ -25,6 +25,9 @@ test = [
     "pytest-asyncio>=1.2.0",
     "httpx>=0.24.0",
     "fastapi>=0.104.0",
+    # tests/conftest.py imports server.tracing for process-global isolation;
+    # tracing re-exports the runtime metric counters.
+    "prometheus-client>=0.26.0,<0.27.0",
     # tests/test_portability/test_manifest.py validates the kb-bundle JSON Schema
     "jsonschema>=4.23",
 ]
@@ -56,9 +59,11 @@ server = [
     "pypdf>=6.15.0",
     "aiofiles>=23.0.0",
     "bcrypt>=4.0.0",
+    "prometheus-client>=0.26.0,<0.27.0",
 ]
 tracing = [
     "langsmith>=0.1.0",
+    "prometheus-client>=0.26.0,<0.27.0",
 ]
 convert = [
     # MarkItDown pre-conversion tier (docs/adr/005-markitdown-ingestion-supply-chain.md).
@@ -122,6 +127,7 @@ where = ["src"]
 "twindb_lightrag_memgraph" = [
     "webui_dist/*",
     "webui_dist/assets/*",
+    "server/schemas/*.json",
 ]
 "twindb_lightrag_memgraph.intelligence" = [
     "prompts/*.txt",

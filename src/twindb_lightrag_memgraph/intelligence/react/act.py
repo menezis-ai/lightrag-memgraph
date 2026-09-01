@@ -92,6 +92,7 @@ class SearchEngine:
         self,
         result: Any,
         rag: LightRAG,
+        source_folder: str | None = None,
     ) -> list[ChunkResult]:
         """Parse structured LightRAG retrieval data into document chunks.
 
@@ -101,7 +102,11 @@ class SearchEngine:
         are intentionally rejected because they are generated answers, not
         retrieval evidence.
         """
-        workspace = self._workspace_of(rag)
+        # The server runtime uses one physical LightRAG workspace and scopes
+        # logical folders through MEMBER_OF.  In that path the source folder
+        # must come from the already-authorised request scope, never from
+        # ``rag.workspace`` (which names the physical namespace).
+        workspace = source_folder or self._workspace_of(rag)
         raw_chunks = self._extract_raw_chunks(result)
         if raw_chunks is None:
             return []

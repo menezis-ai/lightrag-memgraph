@@ -300,8 +300,42 @@ async def _build_sources_legacy_fallback(
     return await _build_sources_legacy_fallback_impl(rag, query, top_k)
 
 
-async def _twin_query(get_rag, body: TwinQueryBody, request: Request) -> dict[str, Any]:
+async def _twin_query(
+    get_rag,
+    body: TwinQueryBody,
+    request: Request,
+    *,
+    l3_runtime=None,
+) -> dict[str, Any]:
     """Body of ``POST /twin/api/query`` (non-streaming, answer + sources)."""
+    if l3_runtime is not None and not body.only_need_context:
+        from ..folder import resolve_folder_for_request
+
+        folder = resolve_folder_for_request(request)
+        started = time.perf_counter()
+        try:
+            result = await _await_query_or_disconnect(
+                l3_runtime.aquery(body=body, folder=folder),
+                request,
+            )
+        except ClientDisconnectedDuringQuery as exc:
+            raise HTTPException(499, "Client closed request") from exc
+        except PermissionError as exc:
+            raise HTTPException(403, "Folder access denied") from exc
+        except Exception as exc:
+            logger.exception("twin_query: L3 query failed")
+            raise HTTPException(500, "L3 query failed") from exc
+        projected = await l3_runtime.project(result, folder=folder)
+        await _record_retrieval_activity(
+            body,
+            request,
+            folder=folder,
+            sources_count=len(projected["sources"]),
+            stream=False,
+            timings={"total_ms": _elapsed_ms(started)},
+        )
+        return projected
+
     try:
         rag = get_rag()
     except RuntimeError as exc:
@@ -686,8 +720,18 @@ def _twin_query_stream(
     request: Request,
     *,
     llm_model: str | None = None,
+    l3_runtime=None,
 ):
     """Body of ``POST /twin/api/query/stream`` (NDJSON tokens + sources event)."""
+    if l3_runtime is not None and not body.only_need_context:
+        from ..folder import resolve_folder_for_request
+
+        folder = resolve_folder_for_request(request)
+        return StreamingResponse(
+            _generate_l3_query_stream(l3_runtime, body, request, folder, llm_model),
+            media_type="application/x-ndjson",
+        )
+
     try:
         rag = get_rag()
     except RuntimeError as exc:
@@ -711,11 +755,127 @@ def _twin_query_stream(
     return StreamingResponse(_events_with_metadata(), media_type="application/x-ndjson")
 
 
+async def _generate_l3_query_stream(
+    l3_runtime,
+    body: TwinQueryBody,
+    request: Request,
+    folder: str,
+    llm_model: str | None,
+) -> AsyncIterator[str]:
+    """Bridge true L3 synthesis deltas to the existing three-stage NDJSON UI."""
+    if llm_model:
+        yield json.dumps({"type": "meta", "value": {"model": llm_model}}) + "\n"
+    yield json.dumps({"type": "stage", "value": "retrieval"}) + "\n"
+
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+    started = time.perf_counter()
+
+    async def on_stage(value: str) -> None:
+        if value in {"retrieval", "generation", "sources"}:
+            await queue.put(("stage", value))
+
+    async def on_token(value: str) -> None:
+        if value:
+            await queue.put(("token", value))
+
+    async def produce() -> None:
+        try:
+            result = await l3_runtime.aquery(
+                body=body,
+                folder=folder,
+                on_token=on_token,
+                on_stage=on_stage,
+            )
+            await queue.put(("result", result))
+        except Exception as exc:
+            await queue.put(("error", exc))
+
+    producer = asyncio.create_task(produce())
+    emitted_token = False
+    generation_emitted = False
+    try:
+        while True:
+            kind, value = await queue.get()
+            if await request.is_disconnected():
+                producer.cancel()
+                return
+            if kind == "stage":
+                if value == "generation":
+                    generation_emitted = True
+                yield json.dumps({"type": "stage", "value": value}) + "\n"
+                continue
+            if kind == "token":
+                if not generation_emitted:
+                    generation_emitted = True
+                    yield json.dumps({"type": "stage", "value": "generation"}) + "\n"
+                emitted_token = True
+                yield json.dumps({"type": "token", "value": value}) + "\n"
+                continue
+            if kind == "error":
+                logger.error(
+                    "twin_query: L3 stream failed (error_type=%s)",
+                    type(value).__name__,
+                )
+                if not generation_emitted:
+                    generation_emitted = True
+                    yield json.dumps({"type": "stage", "value": "generation"}) + "\n"
+                yield json.dumps({"type": "token", "value": "[query failed]"}) + "\n"
+                yield json.dumps({"type": "status", "value": "query_failed"}) + "\n"
+                yield json.dumps({"type": "sources", "value": []}) + "\n"
+                return
+
+            if not generation_emitted:
+                generation_emitted = True
+                yield json.dumps({"type": "stage", "value": "generation"}) + "\n"
+            yield json.dumps({"type": "stage", "value": "sources"}) + "\n"
+            try:
+                projected = await l3_runtime.project(value, folder=folder)
+            except Exception as exc:
+                logger.error(
+                    "twin_query: L3 source projection failed (error_type=%s)",
+                    type(exc).__name__,
+                )
+                async for line in _query_stream_empty_sources_events(
+                    body,
+                    request,
+                    folder,
+                    ANSWER_STATUS_SOURCE_PROJECTION_FAILED,
+                    {"total_ms": _elapsed_ms(started)},
+                ):
+                    yield line
+                return
+            if not emitted_token and projected["response"]:
+                yield json.dumps(
+                    {"type": "token", "value": projected["response"]}
+                ) + "\n"
+            elif projected["answer_status"] == "query_failed":
+                yield json.dumps({"type": "token", "value": "\n[query failed]"}) + "\n"
+            yield json.dumps({"type": "trace", "value": projected["trace"]}) + "\n"
+            yield json.dumps(
+                {"type": "status", "value": projected["answer_status"]}
+            ) + "\n"
+            yield json.dumps({"type": "sources", "value": projected["sources"]}) + "\n"
+            await _record_retrieval_activity(
+                body,
+                request,
+                folder=folder,
+                sources_count=len(projected["sources"]),
+                stream=True,
+                timings={"total_ms": _elapsed_ms(started)},
+            )
+            return
+    finally:
+        if not producer.done():
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+
+
 def build_twin_query_router(
     get_rag,
     *,
     auth_dependency=None,
     llm_model: str | None = None,
+    l3_runtime=None,
 ) -> APIRouter:
     """Mount the Twin overlay query endpoints.
 
@@ -723,6 +883,9 @@ def build_twin_query_router(
         get_rag: zero-arg callable returning the captured ``LightRAG``
             instance. Raises a 500 if the host bootstrap didn't capture
             one (same pattern as the native shims).
+        l3_runtime: optional lazy L3 bridge.  ``None`` preserves the exact L2
+            route implementation; the following integration tranche consumes
+            the bridge without changing the flag-off path.
     """
     from ..folder import document_folder_header
 
@@ -754,7 +917,12 @@ def build_twin_query_router(
         header and the optional `tag_filter` / `doc_filter` / `min_score`
         body fields. For token-by-token delivery use
         `POST /query/stream`."""
-        result = await _twin_query(get_rag, body, request)
+        result = await _twin_query(
+            get_rag,
+            body,
+            request,
+            l3_runtime=l3_runtime,
+        )
         resolved_llm_model = llm_model or getattr(get_rag(), "llm_model_name", None)
         if resolved_llm_model:
             result["model"] = resolved_llm_model
@@ -793,7 +961,8 @@ def build_twin_query_router(
           ... repeated for every LLM chunk ...
           {"type":"stage","value":"sources"}
           {"type":"status","value":"grounded"|"insufficient_information"
-                                    |"source_projection_failed"|"no_retrieval"
+                                    |"source_projection_failed"
+                                    |"citation_validation_failed"|"no_retrieval"
                                     |"query_failed"}
           {"type":"sources","value":[<RetrievalSource>, ...]}
 
@@ -839,7 +1008,13 @@ def build_twin_query_router(
         (RAG bootstrap, body validation) still surface as real HTTP
         4xx/5xx like the non-stream `/query` route.
         """
-        return _twin_query_stream(get_rag, body, request, llm_model=llm_model)
+        return _twin_query_stream(
+            get_rag,
+            body,
+            request,
+            llm_model=llm_model,
+            l3_runtime=l3_runtime,
+        )
 
     return router
 

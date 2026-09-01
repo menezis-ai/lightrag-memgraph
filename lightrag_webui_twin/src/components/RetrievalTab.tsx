@@ -1636,6 +1636,15 @@ function Turn({
           Sources unavailable for this answer.
         </div>
       )}
+      {!streaming && msg.answerStatus === 'citation_validation_failed' && (
+        <div
+          className="sources-empty muted"
+          data-testid="sources-empty-citation-validation-failed"
+          style={{ marginTop: 8, fontSize: 12 }}
+        >
+          Citation validation failed — sources are hidden for this answer.
+        </div>
+      )}
       {/* No sourced final answer was requested (currently only_need_context),
           so the empty Sources area is expected. Show a discrete cue so the
           operator reads it as intentional rather than a missing-sources
@@ -1716,6 +1725,7 @@ function Turn({
       {!streaming &&
         msg.answerStatus !== 'insufficient_information' &&
         msg.answerStatus !== 'source_projection_failed' &&
+        msg.answerStatus !== 'citation_validation_failed' &&
         msg.answerStatus !== 'no_retrieval' &&
         msg.answerStatus !== 'query_failed' &&
         sources.length > 0 && (

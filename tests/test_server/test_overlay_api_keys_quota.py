@@ -70,6 +70,19 @@ class TestOverlayMountsQuota:
         assert resp.status_code == 200
 
 
+class TestOverlayMountsOperationalMetrics:
+    def test_json_and_prometheus_routes_are_authenticated_and_mounted(self):
+        client = _overlay_client()
+
+        snapshot = client.get("/twin/api/ops/metrics")
+        exposition = client.get("/twin/api/ops/metrics/prometheus")
+
+        assert snapshot.status_code == 200
+        assert "requests_total" in snapshot.json()
+        assert exposition.status_code == 200
+        assert "twin_http_requests_total" in exposition.text
+
+
 class TestOverlayNonRegression:
     def test_existing_overlay_routes_unaffected(self):
         c = _overlay_client()

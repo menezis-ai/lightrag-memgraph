@@ -15,6 +15,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from ..config import LLMProfileKind, TwinRAGConfig
+from ..fallbacks import record_query_fallback
 from ..json_utils import clamp_float, coerce_str, load_json_object
 from ..llm import create_chat_completion, log_llm_fallback
 from ..models.schemas import IntentResult, IntentType
@@ -128,6 +129,7 @@ class IntentClassifier:
                 intent = IntentType(intent_str)
             except ValueError:
                 logger.warning("Invalid intent: %s, defaulting to IN_SCOPE", intent_str)
+                record_query_fallback("intent_fallback")
                 intent = IntentType.IN_SCOPE
 
             return IntentResult(
@@ -138,6 +140,7 @@ class IntentClassifier:
 
         except Exception as exc:
             log_llm_fallback(logger, "Intent classification", exc)
+            record_query_fallback("intent_fallback")
             return IntentResult(
                 intent=IntentType.IN_SCOPE,
                 confidence=0.0,

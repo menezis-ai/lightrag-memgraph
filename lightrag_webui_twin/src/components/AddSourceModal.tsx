@@ -667,7 +667,8 @@ export function AddSourceModal({
     tagSugg.length === 0
       ? undefined
       : tagSugg[Math.min(tagSuggestionIndex, tagSugg.length - 1)];
-  const activeTagSuggestionId = activeTagSuggestion
+  const tagSuggestionsOpen = tagInput.length > 0 && tagSugg.length > 0;
+  const activeTagSuggestionId = tagSuggestionsOpen && activeTagSuggestion
     ? `addsource-tag-suggestion-${activeTagSuggestion.tag}`
     : undefined;
 
@@ -1112,13 +1113,13 @@ export function AddSourceModal({
                 role="combobox"
                 aria-label="Tag input"
                 aria-autocomplete="list"
-                aria-expanded={tagSugg.length > 0}
-                aria-controls={tagSuggListId}
+                aria-expanded={tagSuggestionsOpen}
+                aria-controls={tagSuggestionsOpen ? tagSuggListId : undefined}
                 aria-activedescendant={activeTagSuggestionId}
                 style={{ fontSize: 12 }}
               />
             </div>
-            {tagInput && tagSugg.length > 0 && (
+            {tagSuggestionsOpen && (
               <div
                 id={tagSuggListId}
                 role="listbox"
