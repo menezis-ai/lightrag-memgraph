@@ -1,4 +1,6 @@
-"""Store registry and the ``PortableStore`` contract — KB-PORTABILITY-PLAN §3.5/§3.6.
+"""Store registry and the ``PortableStore`` contract — ADR 010, decision 3.
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 Every Memgraph label prefix the runtime writes is declared here with its
 *scoping* (``workspace`` / ``folder`` / ``global``) and its *portability*
@@ -187,7 +189,19 @@ _VEC_SCHEMAS = {
         key=("id",),
         fields=frozenset(
             _VEC_COMMON
-            | {"full_doc_id", "chunk_order_index", "tokens", "llm_cache_list"}
+            | {
+                "full_doc_id",
+                "chunk_order_index",
+                "tokens",
+                "llm_cache_list",
+                # LightRAG 1.5.x block provenance plus Twin's structural
+                # citation offsets.  The source binaries / conversion
+                # sidecars do not travel in a v1 bundle, so these persisted
+                # chunk properties must travel with the vectors or an import
+                # would silently lose citation fidelity.
+                "sidecar",
+                "twin_block_boundaries",
+            }
         ),
     ),
     "entities": StoreSchema(
@@ -318,6 +332,11 @@ _ACTIVITY_SCHEMA = StoreSchema(
     # every scalar is re-derived from ``data`` by MemgraphActivityStore.append()
     transient=_OVERLAY_DATA_TRANSIENT
     | {
+        # position inside one batched write (``append_many``), the tie-breaker
+        # under ``__created_at`` — which is itself transient above, so the
+        # order token that refines it cannot outlive an export either; the
+        # import re-stamps both at write time.
+        "__seq",
         "kind",
         "sev",
         "actor_user",

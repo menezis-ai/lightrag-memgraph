@@ -1,4 +1,6 @@
-"""Operational/overlay portable stores (KB-PORTABILITY-PLAN T1.3).
+"""Operational/overlay portable stores (ADR 010, decisions 3 and 7).
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 Folder-scoped labels are enumerated from :class:`~.stores.Scope`, never from a
 global label scan: two folders may legitimately contain the same tag id and

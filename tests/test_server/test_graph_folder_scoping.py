@@ -360,6 +360,13 @@ def folder_a(monkeypatch):
 
     monkeypatch.setattr(graph_reader, "_load_chunk_to_doc_index", _ctd)
     monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
+
+    async def _membership(_ws, _folder):
+        # Folder-bound paths now take ONE member-scoped read; compose the
+        # same fixtures so every assertion below stays byte-identical.
+        return await _md(_ws, _folder), await _ctd(_ws)
+
+    monkeypatch.setattr(graph_reader, "_load_folder_membership", _membership)
     monkeypatch.setattr(graph_reader, "acquire_write_slot", _cm(None))
 
 
@@ -980,6 +987,13 @@ def patched_loaders(monkeypatch):
 
         monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
 
+        async def _membership(_ws, _folder):
+            # Folder-bound paths now take ONE member-scoped read; compose the
+            # same fixtures so every assertion below stays byte-identical.
+            return await _md(_ws, _folder), await _ctd(_ws)
+
+        monkeypatch.setattr(graph_reader, "_load_folder_membership", _membership)
+
     return _set_members
 
 
@@ -1128,6 +1142,13 @@ async def graph_client(monkeypatch):
     monkeypatch.setattr(graph_reader, "_load_chunk_to_doc_index", _ctd)
     monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
 
+    async def _membership(_ws, _folder):
+        # Folder-bound paths now take ONE member-scoped read; compose the
+        # same fixtures so every assertion below stays byte-identical.
+        return await _md(_ws, _folder), await _ctd(_ws)
+
+    monkeypatch.setattr(graph_reader, "_load_folder_membership", _membership)
+
     webui_router.reset_store()
     configure_auth(api_key="test-infra-root")
     _twindb_state["rag"] = _FakeRag(_kg_two_entities())
@@ -1182,6 +1203,13 @@ async def test_empty_scoped_folder_never_falls_back_to_seed(monkeypatch):
 
     monkeypatch.setattr(graph_reader, "_load_chunk_to_doc_index", _ctd)
     monkeypatch.setattr(graph_reader, "_load_member_docs", _md)
+
+    async def _membership(_ws, _folder):
+        # Folder-bound paths now take ONE member-scoped read; compose the
+        # same fixtures so every assertion below stays byte-identical.
+        return await _md(_ws, _folder), await _ctd(_ws)
+
+    monkeypatch.setattr(graph_reader, "_load_folder_membership", _membership)
 
     # seed-mode store + no IdP → seed fallback WOULD be allowed, if not gated.
     webui_router.set_store(webui_router.WebuiStore.from_seed())

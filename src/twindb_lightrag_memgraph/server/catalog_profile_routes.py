@@ -27,9 +27,13 @@ from .webui.routes_graph import list_graph_entities
 from .webui.store import get_store
 
 _MAX_PROFILE_ITEMS = 500
+_MAX_PROFILE_FOLDERS = 5
 _MAX_PROFILE_COUNTS = 64
 _MAX_TAGS = 50
 _MAX_ENTITIES = 50
+_MAX_FOLDER_ID_CHARS = 128
+_MAX_FOLDER_LABEL_CHARS = 160
+_MAX_FOLDER_KIND_CHARS = 64
 _SAFE_FORMAT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 _profile_security = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
@@ -54,9 +58,9 @@ class ProfileEntity(BaseModel):
 class FolderProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str
-    label: str
-    kind: str
+    id: str = Field(max_length=_MAX_FOLDER_ID_CHARS)
+    label: str = Field(max_length=_MAX_FOLDER_LABEL_CHARS)
+    kind: str = Field(max_length=_MAX_FOLDER_KIND_CHARS)
     document_count: int = Field(ge=0)
     sampled_document_count: int = Field(ge=0)
     documents_truncated: bool
@@ -74,14 +78,26 @@ class CatalogProfile(BaseModel):
     schema_version: str = "1"
     generated_at: datetime
     instance_version: str
-    folder_count: int = Field(ge=0)
+    folder_count: int = Field(ge=0, le=_MAX_PROFILE_FOLDERS)
     document_count: int = Field(ge=0)
     graph_entity_count: int = Field(ge=0)
-    folders: list[FolderProfile]
+    folders: list[FolderProfile] = Field(max_length=_MAX_PROFILE_FOLDERS)
 
 
 def _bounded_label(value: object, *, limit: int) -> str:
     return str(value or "").strip()[:limit]
+
+
+def _folder_contract_value(value: object, *, field: str, limit: int) -> str:
+    """Validate folder metadata without silently changing its identity."""
+
+    rendered = str(value or "")
+    if len(rendered) > limit:
+        raise HTTPException(
+            503,
+            f"Catalog profile folder {field} exceeds the v1 limit of {limit}",
+        )
+    return rendered
 
 
 def _document_format(document: dict[str, Any]) -> str:
@@ -179,7 +195,16 @@ async def _documents_for_active_folder(
 
 
 async def _folder_profile(folder: Any, *, max_items: int) -> FolderProfile:
-    with scoped_folder(folder.id):
+    folder_id = _folder_contract_value(
+        folder.id, field="id", limit=_MAX_FOLDER_ID_CHARS
+    )
+    folder_label = _folder_contract_value(
+        folder.label, field="label", limit=_MAX_FOLDER_LABEL_CHARS
+    )
+    folder_kind = _folder_contract_value(
+        folder.kind, field="kind", limit=_MAX_FOLDER_KIND_CHARS
+    )
+    with scoped_folder(folder_id):
         documents, document_count = await _documents_for_active_folder(
             max_items=max_items
         )
@@ -208,9 +233,9 @@ async def _folder_profile(folder: Any, *, max_items: int) -> FolderProfile:
         ),
     )[:_MAX_ENTITIES]
     return FolderProfile(
-        id=folder.id,
-        label=folder.label,
-        kind=folder.kind,
+        id=folder_id,
+        label=folder_label,
+        kind=folder_kind,
         document_count=document_count,
         sampled_document_count=len(sampled),
         documents_truncated=document_count > len(sampled),
@@ -242,6 +267,7 @@ def build_catalog_profile_router() -> APIRouter:
         "/catalog-profile",
         response_model=CatalogProfile,
         summary="Build a bounded metadata-only profile for the central catalogue",
+        include_in_schema=False,
     )
     async def catalog_profile(
         request: Request,
@@ -265,6 +291,12 @@ def build_catalog_profile_router() -> APIRouter:
         folders = [
             folder for folder in load_folder_catalog().folders if folder.id in allowed
         ]
+        if len(folders) > _MAX_PROFILE_FOLDERS:
+            raise HTTPException(
+                503,
+                "Catalog profile exceeds the v1 limit of "
+                f"{_MAX_PROFILE_FOLDERS} folders",
+            )
         profiles = [
             await _folder_profile(folder, max_items=max_items) for folder in folders
         ]

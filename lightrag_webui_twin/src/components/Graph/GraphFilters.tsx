@@ -240,7 +240,8 @@ export function FilterPicker({
       : avail
   ).slice(0, 8);
   const activeOption = results[Math.min(focus, Math.max(results.length - 1, 0))];
-  const activeOptionId = activeOption ? `${listId}-option-${focus}` : undefined;
+  const activeOptionId =
+    open && activeOption ? `${listId}-option-${focus}` : undefined;
 
   const add = (o: string) => {
     onChange(selected.concat([o]));

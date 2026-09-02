@@ -20,13 +20,18 @@ selection is the one part of the chain this file does not own, and it is not the
 part this change touches.
 
 Covers the doctrine's sensitive axes 3 (folder binding, including the negative
-case) and 4 (``sources`` = distinct parent documents, not chunk count).
+case) and 4 (``sources`` = distinct parent documents, not chunk count), plus the
+membership-load contract behind them: a folder-bound render resolves chunk
+provenance through ONE member-scoped DocStatus read (``_load_folder_membership``)
+and never scans the whole ``DocStatus_{ws}`` label — asserted on the real Cypher
+the route issues, so a revert to the full-workspace index is caught here.
 
 Integration only (real Memgraph; auto-skipped when ``MEMGRAPH_URI`` is unset).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 from functools import partial
 
@@ -175,7 +180,7 @@ async def live_graph(monkeypatch):
                 f"source_id:'chunk-a1'}}]->(b)"
             )
         ).consume()
-    yield
+    yield ds
     await _wipe()
 
 
@@ -336,3 +341,141 @@ async def test_membership_fanout_is_bounded(monkeypatch):
     )
     assert results == [0, 1, 2, 3, 4], "results must keep their argument order"
     assert peak == graph_reader._DEFAULT_MEMBERSHIP_FANOUT
+
+
+# ── membership load contract (perf/graph-folder-membership-scoped) ──────────
+
+
+class _RecordingSession:
+    """Delegate to a real Bolt session while recording the Cypher it runs."""
+
+    def __init__(self, session, seen: list[str]) -> None:
+        self._session = session
+        self._seen = seen
+
+    async def run(self, query: str, *args, **kwargs):
+        self._seen.append(query)
+        return await self._session.run(query, *args, **kwargs)
+
+
+async def _entity(client, folder: str, name: str) -> dict | None:
+    response = await client.get("/graph/entities", headers={"X-Twin-Folder": folder})
+    assert response.status_code == 200
+    return next((e for e in response.json() if e["name"] == name), None)
+
+
+async def test_folder_bound_render_loads_membership_in_one_scoped_read(
+    graph_api, monkeypatch
+):
+    """Revert guard on the real chain: no full DocStatus scan on a folder read.
+
+    The chunk→doc index used to be built from EVERY DocStatus row of the
+    workspace on each render, then consulted only for member documents. The
+    folder-bound path must now touch DocStatus exactly once, through the
+    ``MEMBER_OF`` traversal, and still return the same folder-scoped answer.
+    """
+    from twindb_lightrag_memgraph import _pool
+
+    seen: list[str] = []
+    real_session = _pool.get_read_session
+
+    @contextlib.asynccontextmanager
+    async def recording_session():
+        async with real_session() as session:
+            yield _RecordingSession(session, seen)
+
+    monkeypatch.setattr(graph_reader, "get_read_session", recording_session)
+
+    response = await graph_api.get("/graph/entities", headers={"X-Twin-Folder": "A"})
+    assert {e["name"] for e in response.json()} == {"Entity A"}
+
+    docstatus_reads = [
+        q for q in seen if f"DocStatus_{_WS}" in q and "chunks_list" in q
+    ]
+    assert len(docstatus_reads) == 1, docstatus_reads
+    assert "MEMBER_OF" in docstatus_reads[0], "membership read must be folder-scoped"
+    assert not [
+        q for q in seen if f"DocStatus_{_WS}" in q and "MEMBER_OF" not in q
+    ], "a folder-bound render scanned the whole DocStatus label"
+
+
+async def test_mixed_provenance_counts_only_the_folder_s_own_chunks(
+    live_graph, graph_api
+):
+    """An entity cited from doc-a (A) AND doc-b (B) is visible in both folders,
+    each seeing only its own chunk and parent doc, and masked as mixed. The
+    counts come from the member-scoped index; ``mixed`` still compares against
+    the entity's full ``source_id`` list."""
+    from twindb_lightrag_memgraph import _pool
+
+    async with _pool.get_session() as session:
+        await (
+            await session.run(
+                f"CREATE (:`{_WS}` {{entity_id:'ent-ab', entity_type:'CONCEPT', "
+                f"display_name:'Entity AB', description:'blended', "
+                f"source_id:'chunk-a2{graph_reader._GRAPH_FIELD_SEP}chunk-b1'}})"
+            )
+        ).consume()
+
+    in_a = await _entity(graph_api, "A", "Entity AB")
+    assert in_a is not None
+    assert (in_a["mentions"], in_a["sources"]) == (1, 1)
+    assert in_a["source_docs"] == ["doc-a"]
+    assert in_a["summary"] == graph_reader._MASKED_ENTITY_SUMMARY
+
+    in_b = await _entity(graph_api, "B", "Entity AB")
+    assert in_b is not None
+    assert (in_b["mentions"], in_b["sources"]) == (1, 1)
+    assert in_b["source_docs"] == ["doc-b"]
+    assert in_b["summary"] == graph_reader._MASKED_ENTITY_SUMMARY
+
+
+async def test_chunk_shared_across_documents_resolves_to_the_member_document(
+    live_graph, graph_api
+):
+    """LightRAG hashes chunk ids from content, so identical text in two documents
+    yields ONE chunk id listed by both. doc-c (folder B) lists chunk-a1, which
+    doc-a (folder A) also owns. Each folder resolves that chunk to ITS member
+    document — deterministically, where the former full-workspace index picked
+    whichever row the scan returned last."""
+    from twindb_lightrag_memgraph import _pool
+    from twindb_lightrag_memgraph._constants import storage_folder_context
+
+    with storage_folder_context("B"):
+        await live_graph.upsert({"doc-c": _doc("doc-c", ["chunk-a1", "chunk-c1"])})
+    async with _pool.get_session() as session:
+        await (
+            await session.run(
+                f"CREATE (:`{_WS}` {{entity_id:'ent-shared', entity_type:'CONCEPT', "
+                f"display_name:'Entity Shared', description:'shared text', "
+                f"source_id:'chunk-a1'}})"
+            )
+        ).consume()
+
+    in_a = await _entity(graph_api, "A", "Entity Shared")
+    assert in_a is not None
+    assert in_a["source_docs"] == ["doc-a"]
+    assert in_a["summary"] == "shared text"  # pure-member in A, not masked
+
+    in_b = await _entity(graph_api, "B", "Entity Shared")
+    assert in_b is not None
+    assert in_b["source_docs"] == ["doc-c"]
+    assert in_b["summary"] == "shared text"  # pure-member in B as well
+
+
+async def test_member_document_without_chunks_keeps_membership_intact(
+    live_graph, graph_api
+):
+    """A member doc with no ``chunks_list`` (queued, empty, or pre-chunking) is
+    still a member: it must neither break the membership read nor change what
+    the folder sees."""
+    from twindb_lightrag_memgraph._constants import storage_folder_context
+
+    with storage_folder_context("A"):
+        await live_graph.upsert({"doc-empty": _doc("doc-empty", [])})
+
+    response = await graph_api.get("/graph/entities", headers={"X-Twin-Folder": "A"})
+    entities = response.json()
+    assert {e["name"] for e in entities} == {"Entity A"}
+    assert entities[0]["sources"] == 1
+    assert entities[0]["source_docs"] == ["doc-a"]

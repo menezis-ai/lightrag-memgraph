@@ -142,6 +142,7 @@ httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
     # via
+    #   twindb-lightrag-memgraph (pyproject.toml)
     #   google-genai
     #   langsmith
     #   lightrag-hku
@@ -350,7 +351,7 @@ pyjwt==2.13.0
     # via
     #   twindb-lightrag-memgraph (pyproject.toml)
     #   lightrag-hku
-pypdf==6.15.0
+pypdf==6.16.1
     # via
     #   -c requirements/prod-target.txt
     #   twindb-lightrag-memgraph (pyproject.toml)

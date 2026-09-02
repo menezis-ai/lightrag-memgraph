@@ -13,6 +13,7 @@ from twindb_lightrag_memgraph._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     DEFAULT_IDLE_DISCONNECT_SECONDS,
+    DEFAULT_MEMGRAPH_URI,
     DEFAULT_OPERATION_TIMEOUT,
     DEFAULT_READ_POOL_SIZE,
     DEFAULT_WRITE_SLOT_ACQUIRE_TIMEOUT,
@@ -193,6 +194,33 @@ class TestReadReadPoolSize:
 
 
 class TestConnectionConfig:
+    def test_connection_identity_defaults(self, monkeypatch):
+        monkeypatch.delenv("MEMGRAPH_URI", raising=False)
+        monkeypatch.delenv("MEMGRAPH_DATABASE", raising=False)
+
+        assert pool.connection_identity() == (DEFAULT_MEMGRAPH_URI, "memgraph")
+
+    def test_connection_identity_overrides(self, monkeypatch):
+        monkeypatch.setenv("MEMGRAPH_URI", "neo4j+s://cluster.example")
+        monkeypatch.setenv("MEMGRAPH_DATABASE", "tenant_a")
+
+        assert pool.connection_identity() == (
+            "neo4j+s://cluster.example",
+            "tenant_a",
+        )
+
+    def test_config_and_routing_use_connection_identity(self, monkeypatch):
+        monkeypatch.setattr(
+            pool,
+            "connection_identity",
+            lambda: ("neo4j+s://cluster.example", "tenant_a"),
+        )
+
+        uri, database, _kwargs = pool._read_connection_config()
+
+        assert (uri, database) == ("neo4j+s://cluster.example", "tenant_a")
+        assert pool._uses_routing_protocol() is True
+
     def test_password_read_from_docker_secret(self, monkeypatch, tmp_path):
         password_file = tmp_path / "memgraph-password"
         password_file.write_text("strong-password\n", encoding="utf-8")

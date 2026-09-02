@@ -151,6 +151,25 @@ def test_project_record_drops_transient_and_refuses_unknown():
         project_record(spec, {"id": "d", "secret_marker": "x"})
 
 
+def test_chunk_schema_keeps_persisted_block_provenance():
+    spec = store_by_name("vec.chunks")
+    sidecar = '{"type":"block","id":"b1","refs":[{"type":"block","id":"b1"}]}'
+    boundaries = '[{"block_id":"b1","start":0,"end":11}]'
+
+    assert project_record(
+        spec,
+        {
+            "id": "chunk-1",
+            "sidecar": sidecar,
+            "twin_block_boundaries": boundaries,
+        },
+    ) == {
+        "id": "chunk-1",
+        "sidecar": sidecar,
+        "twin_block_boundaries": boundaries,
+    }
+
+
 def test_scope_validates_identifiers_and_maps_folders():
     scope = Scope(workspace="ws", folder_ids=("a", "b"), folder_map={"a": "z"})
     assert scope.mapped_folder("a") == "z" and scope.mapped_folder("b") == "b"

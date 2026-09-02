@@ -374,6 +374,19 @@ def _warn_for_unencrypted_remote_connection(uri: str, encrypted_env: str) -> Non
         )
 
 
+def connection_identity() -> tuple[str, str]:
+    """Return the configured Memgraph endpoint and database.
+
+    Keep every connection-scoped cache aligned with the exact target used by
+    the driver.  Validation remains in :func:`_read_connection_config`, where
+    the database name is interpolated into ``USE DATABASE``.
+    """
+    return (
+        os.environ.get("MEMGRAPH_URI", DEFAULT_MEMGRAPH_URI),
+        os.environ.get("MEMGRAPH_DATABASE", "memgraph"),
+    )
+
+
 def _read_connection_config(*, pool_size_override: int | None = None):
     """Read Memgraph connection parameters from environment variables.
 
@@ -388,10 +401,9 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         tuple: (uri, database, driver_kwargs) where driver_kwargs is ready
         to be passed to ``AsyncGraphDatabase.driver(uri, **driver_kwargs)``.
     """
-    uri = os.environ.get("MEMGRAPH_URI", DEFAULT_MEMGRAPH_URI)
+    uri, database = connection_identity()
     username = _read_secret("MEMGRAPH_USERNAME")
     password = _read_secret("MEMGRAPH_PASSWORD")
-    database = os.environ.get("MEMGRAPH_DATABASE", "memgraph")
     validate_identifier(database, "database")
 
     encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").strip().lower()
@@ -691,7 +703,7 @@ def _uses_routing_protocol() -> bool:
     Memgraph Community/Coordinator rejects ``database=`` in the Bolt
     handshake (``GQL 50N42``), so we use ``USE DATABASE`` instead.
     """
-    uri = os.environ.get("MEMGRAPH_URI", DEFAULT_MEMGRAPH_URI)
+    uri, _database = connection_identity()
     return urlparse(uri).scheme.startswith("neo4j")
 
 

@@ -104,16 +104,45 @@ def _route_matches(route: object, *, method: str, path: str) -> bool:
     return False
 
 
+def _iter_effective_routes(routes: Iterable[object]) -> Iterable[object]:
+    """Flatten FastAPI's nested included-router wrappers without private imports."""
+
+    pending = list(reversed(tuple(routes)))
+    seen: set[int] = set()
+    while pending:
+        route = pending.pop()
+        identity = id(route)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        effective_candidates = getattr(route, "effective_candidates", None)
+        if callable(effective_candidates):
+            try:
+                candidates = tuple(effective_candidates())
+            except Exception:  # FastAPI compatibility fallback
+                logger.exception(
+                    "twindb: FastAPI route introspection failed route_type=%s "
+                    "action=route_introspection_failed",
+                    type(route).__name__,
+                )
+                yield route
+            else:
+                pending.extend(reversed(candidates))
+            continue
+        yield route
+
+
 def _openapi_pairs(app: object) -> set[tuple[str, str]]:
     """``(METHOD, templated_path)`` pairs from the live OpenAPI schema.
 
-    OpenAPI is the version-robust source of truth. FastAPI 0.137 wraps
+    OpenAPI is the version-robust source of truth for documented routes. FastAPI 0.137 wraps
     ``include_router`` results in ``_IncludedRouter`` objects that expose
     neither ``.path`` nor ``.routes``, so a raw ``app.routes`` scan misses
     *every* included route — the exact blindness that let this check report
-    api-keys/quota as missing while they were mounted. The schema also
-    naturally excludes ``Mount``/``StaticFiles``, which is precisely the
-    surface this sanity check must not count as healthy.
+    api-keys/quota as missing while they were mounted. Intentionally hidden
+    routes require the effective-candidate fallback in ``_has_api_route``.
+    The schema also naturally excludes ``Mount``/``StaticFiles``, which is
+    precisely the surface this sanity check must not count as healthy.
     """
     openapi = getattr(app, "openapi", None)
     if not callable(openapi):
@@ -141,11 +170,15 @@ def _has_api_route(
         openapi_pairs = _openapi_pairs(app)
     if (method.upper(), path) in openapi_pairs:
         return True
-    # Fallback: raw route-table scan (flattened routes / older FastAPI /
-    # in-schema=False routes the OpenAPI schema omits).
+    # Fallback: raw route-table scan for flattened routes / older FastAPI.
+    # FastAPI 0.137 exposes hidden included routes only through the wrapper's
+    # effective candidates, so inspect those without importing its private type.
     router = getattr(app, "router", None)
     routes = getattr(router, "routes", getattr(app, "routes", ()))
-    return any(_route_matches(route, method=method, path=path) for route in routes)
+    return any(
+        _route_matches(route, method=method, path=path)
+        for route in _iter_effective_routes(routes)
+    )
 
 
 def log_api_wiring_sanity(

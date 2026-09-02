@@ -50,3 +50,7 @@ services/*/dist/
 services/twin_catalog/admin-ui/node_modules/
 services/twin_catalog/admin-ui/tsconfig.tsbuildinfo
 services/twin_catalog/twin_catalog/admin_dist/
+
+# Local agent memory snapshot (MEMORY.md + feedback_/project_/reference_ notes).
+# Operator-local state, not repository content — never versioned.
+docs/history/

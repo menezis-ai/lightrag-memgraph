@@ -314,10 +314,15 @@ async def _apply_bulk_tag_mutations(
 async def _emit_bulk_retag_events(
     doc_ids, resulting_by_doc, existing, adds, removes, actor
 ) -> None:
-    """Emit one ``doc-retagged`` activity event per affected document."""
-    for doc_id in doc_ids:
-        new_tags = resulting_by_doc.get(doc_id, [])
-        event = _make_event(
+    """Emit one ``doc-retagged`` activity event per affected document.
+
+    One ledger write for the whole batch (``record_activities``): a 500-doc
+    retag used to pay 500 write-slot acquisitions and 500 Memgraph round-trips
+    here, after its tag mutation had already committed in ONE transaction. Same
+    events, same order, one write.
+    """
+    events = [
+        _make_event(
             kind="doc-retagged",
             sev="info",
             actor=actor,
@@ -327,12 +332,15 @@ async def _emit_bulk_retag_events(
                 "doc_id": doc_id,
                 "adds": adds,
                 "removes": removes,
-                "resulting_tags": new_tags,
+                "resulting_tags": resulting_by_doc.get(doc_id, []),
             },
             target_type="document",
             target_id=doc_id,
         )
-        await get_store().record_activity(event)
+        for doc_id in doc_ids
+    ]
+    if events:
+        await get_store().record_activities(events)
 
 
 @router.post(

@@ -1,4 +1,4 @@
-"""Bolt micro-benchmark: parallelize the five independent membership/override
+"""Bolt micro-benchmark: parallelize the independent membership/override
 reads in ``graph_reader.read_graph_native``.
 
 ``read_graph_native`` is the body behind ``GET /graph/entities`` and
@@ -6,11 +6,13 @@ reads in ``graph_reader.read_graph_native``.
 runs twice per graph render. Before the optimization it serialized five
 independent Memgraph round-trips (``_load_chunk_to_doc_index``,
 ``_load_member_docs``, ``_load_folder_overrides``,
-``_load_folder_rel_overrides``, ``_load_direct_member_entity_rows``); each opens
-its own read session, consumes only ``(workspace, folder)``, and absorbs its own
-error into its established fallback. Those fallbacks are not uniformly
+``_load_folder_rel_overrides``, ``_load_direct_member_entity_rows``); the first
+two have since collapsed into the member-scoped ``_load_folder_membership``
+(see ``graph_folder_membership_scoped.py``), so the live body issues four. Each
+opens its own read session, consumes only ``(workspace, folder)``, and absorbs
+its own error into its established fallback. Those fallbacks are not uniformly
 fail-closed: override-load failures can re-surface the base record. None of the
-five reads can observe another's result.
+reads can observe another's result.
 
 The harness drives the REAL ``read_graph_native`` against a fake read session
 that sleeps a fixed RTT per query. "before" is reproduced by monkeypatching the
@@ -48,12 +50,12 @@ READ_CAPACITY = int(os.environ.get("READ_CAPACITY", "20"))
 WORKSPACE = "benchws"
 FOLDER = "f-bench"
 
-# The five membership reads overlap, but deliberately NOT all at once: the read
+# The membership reads overlap, but deliberately NOT all at once: the read
 # pool is shared with every other route, so `read_graph_native` caps its own
 # burst (`graph_reader._membership_fanout()`, default 2). The structural case
 # asserts BOTH halves of that contract — the overlap exists (so a revert to the
 # serial body is caught) and it never exceeds the cap (so a well-meaning
-# "just gather all five" is caught too). See
+# "just gather them all" is caught too). See
 # tests/benchmarks/shared_read_pool_interference.py for why the cap exists.
 EXPECTED_FANOUT = graph_reader._membership_fanout()
 

@@ -2349,6 +2349,8 @@ export const handlers = [
         );
       }
       job.status = 'approved';
+      job.approved_report_hash = body.report_hash;
+      job.approved_by = job.actor;
       e2eStats.portabilityApproveTransitions += 1;
       job.updated_at = new Date().toISOString();
       persistPortabilityJobs();
@@ -2380,6 +2382,7 @@ export const handlers = [
         );
       }
       job.status = 'applying';
+      job.applied_by = job.actor;
       e2eStats.portabilityApplyTransitions += 1;
       job.updated_at = new Date().toISOString();
       persistPortabilityJobs();
@@ -2397,6 +2400,7 @@ export const handlers = [
       return HttpResponse.json({ detail: 'Import must be applied' }, { status: 409 });
     }
     job.status = 'validating';
+    job.validated_by = job.actor;
     job.updated_at = new Date().toISOString();
     persistPortabilityJobs();
     return HttpResponse.json(job, { status: 202 });
@@ -2412,7 +2416,17 @@ export const handlers = [
     if (PORTABILITY_TERMINAL.has(job.status)) {
       return HttpResponse.json({ detail: 'Import is already terminal' }, { status: 409 });
     }
+    // portability_jobs.py:573 — cancel is refused once apply has started, so
+    // a cancelled job can never carry applied_by. The rail relies on that
+    // invariant to tell a cancelled run from a failed apply.
+    if (['applying', 'applied', 'validating'].includes(job.status)) {
+      return HttpResponse.json(
+        { detail: 'Import cannot be cancelled after apply has started' },
+        { status: 409 },
+      );
+    }
     job.status = 'cancelled';
+    job.cancelled_by = job.actor;
     e2eStats.portabilityCancelTransitions += 1;
     job.updated_at = new Date().toISOString();
     persistPortabilityJobs();

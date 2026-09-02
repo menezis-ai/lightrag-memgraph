@@ -1,4 +1,4 @@
-"""Bundle container and integrity — KB-PORTABILITY-PLAN §3.1 / §8.3 / T0.3.
+"""Bundle container and integrity — ``docs/adr/010-kb-portability-contract.md``.
 
 A bundle is a directory (``manifest.json`` + ``memgraph/`` + ``overlay/`` +
 ``files/``) or a ``.tar.gz`` of that directory whose **first member is

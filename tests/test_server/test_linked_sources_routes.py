@@ -348,17 +348,23 @@ async def test_catalog_proxy_client_reuses_its_http_pool_until_closed():
     assert client.is_closed
 
 
-def test_openapi_advertises_folder_header_and_conditional_surface():
-    app = _app(httpx.MockTransport(lambda _: httpx.Response(200, json=[])))
-    paths = app.openapi()["paths"]
-    assert {
+async def test_internal_catalog_proxy_surface_is_hidden_but_remains_callable():
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=[]))
+    app = _app(transport)
+    internal_paths = {
         "/twin/api/linked-sources",
         "/twin/api/linked-sources/preview",
         "/twin/api/linked-sources/{link_id}",
         "/twin/api/linked-sources/{link_id}/disable",
-    } <= paths.keys()
-    parameters = paths["/twin/api/linked-sources"]["get"]["parameters"]
-    assert any(parameter["name"] == "X-Twin-Folder" for parameter in parameters)
+    }
+    assert internal_paths.isdisjoint(app.openapi()["paths"])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/twin/api/linked-sources")
+
+    assert response.status_code == 200, response.text
 
 
 def test_runtime_config_gates_catalogue_capability(monkeypatch):

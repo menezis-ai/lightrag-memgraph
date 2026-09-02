@@ -27,10 +27,12 @@ full app. ``require_auth`` calls into ``validate_bearer`` directly.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import secrets
+import threading
 import time
 from typing import Any
 
@@ -38,6 +40,19 @@ from .. import _pool
 from .._constants import validate_identifier
 
 logger = logging.getLogger(__name__)
+
+# Index DDL is process/schema state, not request work.  Readiness is global
+# because indexes survive event-loop turnover; locks are loop-local because an
+# asyncio.Lock must not be carried into a replacement loop.  Cache only
+# successful initialization and serialize the first attempt per loop so a cold
+# burst cannot replay the same two CREATE INDEX round-trips.  The connection
+# identity is part of the key: tests and long-lived development processes may
+# retarget MEMGRAPH_URI / MEMGRAPH_DATABASE without restarting Python.
+_SchemaKey = tuple[str, str, str]
+_schema_ready: set[_SchemaKey] = set()
+_schema_locks: dict[_SchemaKey, asyncio.Lock] = {}
+_schema_locks_loop_id: int | None = None
+_schema_state_lock = threading.Lock()
 
 KEY_PREFIX = "twk_"
 PROFILE_KEY_PREFIX = "tcp_"
@@ -88,10 +103,24 @@ def _public_entry(
 # ---------------------------------------------------------------------------
 
 
-async def initialize(workspace: str) -> None:
-    """Create the ``id`` + ``hash`` indexes on the workspace label.
-    Idempotent — re-running on an existing schema is a no-op."""
-    label = _label(workspace)
+def _schema_key(workspace: str) -> _SchemaKey:
+    uri, database = _pool.connection_identity()
+    return workspace, uri, database
+
+
+def _get_schema_lock(key: _SchemaKey) -> asyncio.Lock:
+    """Return this event loop's single-flight lock without retaining the loop."""
+    global _schema_locks_loop_id
+
+    loop_id = id(asyncio.get_running_loop())
+    with _schema_state_lock:
+        if _schema_locks_loop_id != loop_id:
+            _schema_locks.clear()
+            _schema_locks_loop_id = loop_id
+        return _schema_locks.setdefault(key, asyncio.Lock())
+
+
+async def _initialize_schema(label: str) -> None:
     async with _pool.acquire_write_slot(), _pool.get_session() as session:
         for field in ("id", "hash"):
             try:
@@ -102,6 +131,33 @@ async def initialize(workspace: str) -> None:
                 if "already exists" in str(exc).lower():
                     continue
                 raise
+
+
+async def initialize(workspace: str) -> None:
+    """Ensure the workspace ``id`` + ``hash`` indexes once per process.
+
+    Successful schema setup is cached for the active Memgraph endpoint and
+    database.  Failures are deliberately not cached, so the next request can
+    recover after a transient database outage.  Concurrent cold requests on
+    one event loop share a lock and issue one pair of DDL statements.
+    """
+    label = _label(workspace)
+    key = _schema_key(workspace)
+    with _schema_state_lock:
+        if key in _schema_ready:
+            return
+
+    # _get_schema_lock takes the non-reentrant state lock itself.
+    lock = _get_schema_lock(key)
+
+    async with lock:
+        with _schema_state_lock:
+            if key in _schema_ready:
+                return
+        await _initialize_schema(label)
+        with _schema_state_lock:
+            _schema_ready.add(key)
+            _schema_locks.pop(key, None)
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import {
   type Page,
 } from './fixtures';
 import { expectNoBlockingAxeViolations } from './a11y';
-import { boot, openTab, setMswScenario } from './helpers';
+import { boot, openTab, setMswScenario, waitForQueryIdle } from './helpers';
 
 const OPERATOR_TABS = [
   'Documents',
@@ -34,8 +34,24 @@ function tabNavigationAllowances(tab: (typeof OPERATOR_TABS)[number]): BrowserIs
     allowRequestAbort(
       /\/twin\/api\/procedures$/,
       `The axe ${tab} scan intentionally unmounts the Documents procedure query.`,
+      2,
+    ),
+    allowRequestAbort(
+      /\/twin\/api\/quota$/,
+      `The axe ${tab} scan intentionally unmounts the Documents quota query.`,
+      2,
+    ),
+    allowRequestAbort(
+      /\/twin\/api\/settings\/vision$/,
+      `The axe ${tab} scan intentionally unmounts the Documents vision query.`,
+      2,
     ),
   ];
+}
+
+async function openSettledTab(page: Page, name: string): Promise<void> {
+  await openTab(page, name);
+  await waitForQueryIdle(page);
 }
 
 async function bootToLogin(page: Page): Promise<void> {
@@ -65,11 +81,36 @@ test.describe('axe serious/critical accessibility gate', () => {
     }) => {
       allowBrowserIssues(...tabNavigationAllowances(tab));
       await boot(page);
-      if (tab !== 'Documents') await openTab(page, tab);
+      if (tab !== 'Documents') await openSettledTab(page, tab);
       await expect(page.locator('main .tab-pane')).toBeVisible();
       await expectNoBlockingAxeViolations(page);
     });
   }
+
+  test('@axe the portability rail has no blocking axe violation', async ({
+    allowBrowserIssues,
+    page,
+  }) => {
+    // The Settings leg above only scans the tab's landing panel, so the
+    // admin-only portability surface — a dropzone button, three switches, a
+    // workflow rail and, after a dry-run, the report's action buttons — was
+    // never reaching axe. Scan it both empty and carrying a report.
+    allowBrowserIssues(...tabNavigationAllowances('Settings'));
+    await boot(page);
+    await openSettledTab(page, 'Settings');
+    await page.getByTestId('settings-rail-portability').click();
+    await expect(page.getByTestId('settings-portability')).toBeVisible();
+    await expectNoBlockingAxeViolations(page);
+
+    await page.getByTestId('portability-import-file').setInputFiles({
+      name: 'axe.tar.gz',
+      mimeType: 'application/gzip',
+      buffer: Buffer.from('canonical twin-kb-bundle'),
+    });
+    await page.getByTestId('portability-import-start').click();
+    await expect(page.getByTestId('portability-report')).toBeVisible();
+    await expectNoBlockingAxeViolations(page);
+  });
 
   test('@axe document modals have no blocking axe violation', async ({ page }) => {
     await boot(page);
@@ -99,7 +140,7 @@ test.describe('axe serious/critical accessibility gate', () => {
   }) => {
     allowBrowserIssues(...tabNavigationAllowances('Tags'));
     await boot(page);
-    await openTab(page, 'Tags');
+    await openSettledTab(page, 'Tags');
     await page.getByLabel('Search tags').fill('oracle');
     await page.getByTestId('tag-card-oracle').click();
 
@@ -133,7 +174,7 @@ test.describe('axe serious/critical accessibility gate', () => {
       ),
     );
     await boot(page);
-    await openTab(page, 'Settings');
+    await openSettledTab(page, 'Settings');
     await page.getByTestId('settings-rail-api').click();
     await page.getByRole('button', { name: 'Authorize' }).click();
     await expect(page.getByRole('dialog', { name: 'Authorize' })).toBeVisible();

@@ -1,4 +1,6 @@
-"""Import dry-run and approved report contract (KB-PORTABILITY-PLAN T2.2).
+"""Import dry-run and approved report contract (ADR 010, decision 5).
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 The report is the operator approval boundary. Its hash excludes the display
 timestamp, itself and the diagnostic cosine value; the fixed probe id,

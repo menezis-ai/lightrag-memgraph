@@ -1,5 +1,12 @@
 import { expect, type Page } from '@playwright/test';
 
+const QUERY_IDLE_STABILITY_MS = 100;
+const DOCUMENTS_BOOTSTRAP_QUERY_KEYS = [
+  'quota',
+  'procedures',
+  'vision-settings',
+] as const;
+
 type E2eControlPath =
   | '/__e2e/reset'
   | '/__e2e/scenario'
@@ -106,31 +113,79 @@ export async function boot(page: Page) {
   });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
-  await waitForQueryIdle(page);
+  await waitForQueryIdle(page, DOCUMENTS_BOOTSTRAP_QUERY_KEYS);
   await controlFetch<{ ok: true }>(page, '/__e2e/reset');
   await page.reload();
   await expect(page.getByRole('button', { name: 'Documents', exact: true })).toBeVisible();
-  await waitForQueryIdle(page);
+  await waitForQueryIdle(page, DOCUMENTS_BOOTSTRAP_QUERY_KEYS);
 }
 
-async function waitForQueryIdle(page: Page): Promise<void> {
+export async function waitForQueryIdle(
+  page: Page,
+  requiredQueryKeys: readonly string[] = [],
+): Promise<void> {
+  let idleSince: number | null = null;
   await expect
     .poll(
-      () =>
-        page.evaluate(() => {
+      async () => {
+        const state = await page.evaluate((requiredKeys) => {
           const client = (
             window as Window & {
-              __TWIN_E2E_QUERY_CLIENT?: { isFetching: () => number };
+              __TWIN_E2E_QUERY_CLIENT?: {
+                isFetching: () => number;
+                getQueryCache: () => {
+                  getAll: () => Array<{ queryKey: readonly unknown[] }>;
+                };
+              };
             }
           ).__TWIN_E2E_QUERY_CLIENT;
-          return client?.isFetching() ?? -1;
-        }),
-      { message: 'MSW query client did not settle during E2E boot' },
+          if (!client) return { fetching: -1, hasRequiredKeys: false };
+          const presentKeys = new Set(
+            client
+              .getQueryCache()
+              .getAll()
+              .map((query) => query.queryKey[0])
+              .filter((key): key is string => typeof key === 'string'),
+          );
+          return {
+            fetching: client.isFetching(),
+            hasRequiredKeys: requiredKeys.every((key) => presentKeys.has(key)),
+          };
+        }, requiredQueryKeys);
+        if (state.fetching !== 0 || !state.hasRequiredKeys) {
+          idleSince = null;
+          return false;
+        }
+
+        // A first zero can be observed between React mounting the shell and
+        // running the effects that register its queries. Require a short,
+        // continuous idle window so a slow CI runner cannot navigate away
+        // while the Documents bootstrap fetches are only about to start.
+        idleSince ??= Date.now();
+        return Date.now() - idleSince >= QUERY_IDLE_STABILITY_MS;
+      },
+      {
+        intervals: [25],
+        message: 'MSW query client did not settle before the E2E transition',
+      },
     )
-    .toBe(0);
+    .toBe(true);
 }
 
 export async function openTab(page: Page, name: string) {
+  // Changing tabs unmounts the current pane. Let its React Query work finish
+  // first so a loaded runner does not turn a normal component teardown into
+  // transport-level ERR_ABORTED noise in the browser guard. On Documents,
+  // wait until all three dependent bootstrap queries have actually registered
+  // as well: isFetching() can briefly be zero between chained React renders.
+  const documentsActive = await page
+    .getByRole('navigation')
+    .getByRole('button', { name: 'Documents', exact: true })
+    .evaluate((button) => button.classList.contains('active'));
+  await waitForQueryIdle(
+    page,
+    documentsActive ? DOCUMENTS_BOOTSTRAP_QUERY_KEYS : [],
+  );
   // Scope to the topbar nav — tab labels (e.g. "Settings", "Retrieval")
   // also exist as filter pills / buttons inside some tab panes.
   await page

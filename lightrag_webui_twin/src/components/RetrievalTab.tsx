@@ -1871,6 +1871,7 @@ function RetrievalFilterPicker({
         <button
           type="button"
           className="ghost-btn small"
+          aria-label={`Add ${label}`}
           onClick={() => addValue(draft)}
           disabled={!draft.trim() || selected.includes(draft.trim())}
         >

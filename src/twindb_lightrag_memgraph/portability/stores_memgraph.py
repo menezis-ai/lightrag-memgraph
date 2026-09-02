@@ -1,5 +1,6 @@
-"""Data-plane stores — KV, Vec, DocStatus, Folder, MEMBER_OF, TAGGED_WITH
-(KB-PORTABILITY-PLAN T1.1).
+"""Data-plane stores — KV, Vec, DocStatus, Folder, MEMBER_OF, TAGGED_WITH.
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 Reads are raw Cypher by label through ``get_read_session()`` — none of the
 backends exposes an enumeration API and the overlay readers hide archived

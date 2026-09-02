@@ -1,4 +1,6 @@
-"""``manifest.json`` of a ``twin-kb-bundle`` — KB-PORTABILITY-PLAN §3.2/§3.4.
+"""``manifest.json`` of a ``twin-kb-bundle`` — ADR 010, decisions 1 and 2.
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 Stdlib dataclasses only (no pydantic, no FastAPI: the CLI must run inside a
 bank container with nothing but the storage package installed). Every field
@@ -8,7 +10,7 @@ and it is strict — an unknown key anywhere, a path outside ``memgraph/``,
 other than three vectors: all refused, because a bundle that was accepted once
 freezes what future readers must understand.
 
-``state_hash`` identifies the *state* (§3.4): ``sha256(JCS({path: sha256}))``
+``state_hash`` identifies the *state*: ``sha256(JCS({path: sha256}))``
 over the ``memgraph/`` and ``overlay/`` files, so it ignores ``bundle_id``,
 ``created_at``, ``created_by`` and ``consistency``. ``manifest_hash`` covers
 the manifest itself (integrity) and is the only field excluded from its own

@@ -608,6 +608,13 @@ describe('RetrievalTab — params panel', () => {
       />,
     );
 
+    expect(
+      screen.getByRole('button', { name: 'Add Retrieval tag filter' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Add Retrieval document filter' }),
+    ).toBeDisabled();
+
     await userEvent.type(screen.getByLabelText('Retrieval tag filter'), 'oracle');
     await userEvent.click(
       screen

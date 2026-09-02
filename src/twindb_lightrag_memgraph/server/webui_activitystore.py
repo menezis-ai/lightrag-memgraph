@@ -335,6 +335,12 @@ class InMemoryActivityStore:
         self._events.insert(0, stored)
         return copy.deepcopy(stored)
 
+    async def append_many(  # NOSONAR - async contract.
+        self, events: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Append in order — the same ledger as ``append`` called per event."""
+        return [await self.append(event) for event in events]
+
 
 # ---------------------------------------------------------------------------
 # Memgraph backend
@@ -345,7 +351,9 @@ class MemgraphActivityStore:
     """Append-only :WebuiActivity_{workspace} backed activity feed.
 
     Newest-first ordering is encoded via ``__created_at`` set at MERGE-time
-    and used in ORDER BY. Hot filter fields are duplicated as scalar node
+    and used in ORDER BY, with ``__seq`` (position inside one batched write,
+    0 for a single append) as the deterministic tie-breaker — see
+    :meth:`append_many`. Hot filter fields are duplicated as scalar node
     properties so Memgraph can use indexes before the bounded JSON decode pass.
     """
 
@@ -502,7 +510,7 @@ class MemgraphActivityStore:
         data_query = (
             f"MATCH (n:`{self._label}`) {where_scalar} "
             "RETURN n.data AS data, n.`__created_at` AS created_at "
-            "ORDER BY n.`__created_at` DESC "
+            "ORDER BY n.`__created_at` DESC, coalesce(n.`__seq`, 0) DESC "
             "LIMIT $limit"
         )
 
@@ -532,7 +540,7 @@ class MemgraphActivityStore:
         legacy_query = (
             f"MATCH (n:`{self._label}`) {where_legacy} "
             "RETURN n.data AS data, n.`__created_at` AS created_at "
-            "ORDER BY n.`__created_at` DESC "
+            "ORDER BY n.`__created_at` DESC, coalesce(n.`__seq`, 0) DESC "
             "LIMIT $compat_limit"
         )
 
@@ -572,7 +580,7 @@ class MemgraphActivityStore:
             result = await session.run(
                 f"""
                     MERGE (n:`{self._label}` {{id: $id}})
-                    ON CREATE SET n.`__created_at` = timestamp()
+                    ON CREATE SET n.`__created_at` = timestamp(), n.`__seq` = 0
                     SET n.data = $data,
                         n.kind = $kind,
                         n.sev = $sev,
@@ -593,6 +601,64 @@ class MemgraphActivityStore:
             )
             await result.consume()
         return copy.deepcopy(event)
+
+    async def append_many(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Append ``events`` in ONE write: one write slot, one round-trip.
+
+        What a reader gets back must be indistinguishable from ``append``
+        called once per event, in order. The subtle part is ordering:
+        newest-first reads sort on ``__created_at``, and Memgraph evaluates
+        ``timestamp()`` once per query (verified on 3.12.0: every ``UNWIND``
+        row sees the identical value), so the whole batch legitimately shares
+        ONE creation time — it was created by one write. The order inside that
+        batch is carried by a separate token, ``__seq`` (the row's position),
+        and the feed sorts on ``(__created_at DESC, __seq DESC)``. The clock is
+        never adjusted: an event appended right after the batch, or a second
+        batch, carries a later ``timestamp()`` and sorts entirely before it,
+        by construction rather than by round-trip latency. Single appends
+        write ``__seq = 0``; rows written before this token existed read as 0
+        through ``coalesce`` and never tie on ``__created_at`` anyway. Every
+        row is validated before anything is written, and the batch lands
+        atomically — a failure records nothing rather than a prefix.
+        """
+        if not events:
+            return []
+        rows: list[dict[str, Any]] = []
+        for seq, event in enumerate(events):
+            if "id" not in event:
+                raise ValueError("append_many requires event['id'] on every event")
+            rows.append(
+                {
+                    "id": str(event["id"]),
+                    "seq": seq,
+                    "data": json.dumps(event, sort_keys=True),
+                    **_event_scalars(event),
+                }
+            )
+        async with _pool.acquire_write_slot(), _pool.get_session() as session:
+            result = await session.run(
+                f"""
+                    UNWIND $rows AS row
+                    MERGE (n:`{self._label}` {{id: row.id}})
+                    ON CREATE SET n.`__created_at` = timestamp(), n.`__seq` = row.seq
+                    SET n.data = row.data,
+                        n.kind = row.kind,
+                        n.sev = row.sev,
+                        n.actor_user = row.actor_user,
+                        n.target_id = row.target_id,
+                        n.meta_doc_id = row.meta_doc_id,
+                        n.meta_doc_ids = row.meta_doc_ids,
+                        n.ts_ms = row.ts_ms,
+                        n.target_label = row.target_label,
+                        n.summary = row.summary,
+                        n.`__scalars_version` = $scalars_version,
+                        n.`__updated_at` = timestamp()
+                    """,
+                rows=rows,
+                scalars_version=SCALARS_VERSION,
+            )
+            await result.consume()
+        return [copy.deepcopy(event) for event in events]
 
 
 async def make_memgraph_activity_store(

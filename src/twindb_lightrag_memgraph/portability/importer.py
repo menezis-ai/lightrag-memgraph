@@ -1,4 +1,6 @@
-"""Approved, checkpointed KB bundle apply (KB-PORTABILITY-PLAN T2.3).
+"""Approved, checkpointed KB bundle apply (ADR 010, decision 5).
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 The first attempt replays the dry-run and compares its deterministic hash
 before writing.  Once the first store is committed the target is necessarily

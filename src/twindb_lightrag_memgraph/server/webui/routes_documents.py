@@ -9,10 +9,12 @@ while the large router is split incrementally.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import secrets
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from functools import partial
 from pathlib import Path as FilePath
 from typing import Annotated, Any
 
@@ -95,6 +97,48 @@ async def _source_links_for_document(doc_id: str) -> list[dict[str, Any]]:
     except Exception:
         logger.exception("documents: source_links enrichment failed for %s", doc_id)
         return []
+
+
+async def _doc_tags_and_source_links(
+    doc_id: str, legacy: Any
+) -> tuple[dict[str, Any], list[str] | None, list[dict[str, Any]]]:
+    """Load the document, its graph tags and its source links concurrently.
+
+    Three independent reads that share only ``doc_id``: the DocStatus record
+    plus its folder membership (the request-critical read — it decides the
+    404), the ``TAGGED_WITH`` lookup, and the source-link store. Serialized they
+    cost the detail panel four sequential round-trips; overlapped, two. Fan-out
+    is a fixed 3 reads per request, never per item.
+
+    Explicit tasks rather than ``asyncio.gather`` (same rationale as
+    ``chunk_routes._chunks_and_source_links``): the two optional reads are
+    fail-open on their own, but whenever this coroutine unwinds early — the
+    document read raising (404 for a doc outside the active folder, a backend
+    fault) or the request being cancelled while ANY of the three awaits is
+    pending — no sibling may keep holding a read-pool connection. Every task
+    is cancelled and reaped before the exception propagates; ``cancel()`` on a
+    finished task is a no-op, so the guard covers all three awaits uniformly.
+    Same HTTP result as the serial body, bounded pool cost. ``legacy`` is the
+    ``webui_router`` shim so existing monkeypatches of its helpers keep working.
+    """
+    doc_task = asyncio.ensure_future(legacy._get_doc_for_active_folder(doc_id))
+    tags_task = asyncio.ensure_future(legacy._graph_tags_for_doc_or_none(doc_id))
+    links_task = asyncio.ensure_future(_source_links_for_document(doc_id))
+    tasks = (doc_task, tags_task, links_task)
+    try:
+        doc = await doc_task
+        tags = await tags_task
+        links = await links_task
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            # Reap so the loop never reports "Task exception was never
+            # retrieved" and the connections are released before we unwind.
+            with contextlib.suppress(BaseException):
+                await task
+        raise
+    return doc, tags, links
 
 
 def _evict_membership_locks() -> None:
@@ -238,13 +282,11 @@ async def get_document_metadata(
     review state, sensitivity classification and free-form metadata."""
     from .. import webui_router as legacy
 
-    doc = await legacy._get_doc_for_active_folder(doc_id)
+    doc, graph_tags, source_links = await _doc_tags_and_source_links(doc_id, legacy)
     metadata = doc.get("metadata") or {}
-    graph_tags = await legacy._graph_tags_for_doc_or_none(doc_id)
     tags_available = graph_tags is not None
     tags = graph_tags if tags_available else []
     folder = doc.get("folder") or metadata.get("folder") or legacy.current_folder_id()
-    source_links = await _source_links_for_document(doc_id)
     return {
         "tags": tags,
         "tags_source": "tagged_with",
@@ -668,7 +710,13 @@ def _parse_bulk_delete_body(body: dict[str, Any]) -> list[Any]:
 
 
 async def _apply_membership_delete(
-    legacy: Any, rag: Any, doc_id: str, active: str
+    legacy: Any,
+    rag: Any,
+    doc_id: str,
+    active: str,
+    *,
+    hygiene: bool = True,
+    source_path: str | None = None,
 ) -> bool | None:
     """Un-share ``doc_id`` from ``active``; physically delete on last membership.
 
@@ -677,26 +725,30 @@ async def _apply_membership_delete(
     skipped (doc not in the active folder). Backend errors deliberately bubble
     to the route so the API never reports a successful bulk operation while the
     storage layer failed. The physical delete runs while the membership edge
-    still exists (ordering guard)."""
+    still exists (ordering guard). ``hygiene`` / ``source_path`` are handed to
+    ``_delete_doc_from_rag``: the bulk batch defers the workspace hygiene to
+    one call after its last delete and reuses the DocStatus record it already
+    read."""
+    delete_doc = partial(
+        legacy._delete_doc_from_rag, hygiene=hygiene, source_path=source_path
+    )
     get_folders = getattr(rag.doc_status, "get_folders_for_doc", None)
     if get_folders is None:
-        await legacy._delete_doc_from_rag(rag, doc_id)
+        await delete_doc(rag, doc_id)
         return True
     async with _membership_lock(doc_id):
         folders = await get_folders(doc_id)
         if folders is None or active not in folders:
             return None
         if folders == [active]:
-            await _delete_with_last_membership_claim(
-                legacy._delete_doc_from_rag, rag, doc_id, active
-            )
+            await _delete_with_last_membership_claim(delete_doc, rag, doc_id, active)
             return True
         await rag.doc_status.remove_from_folder(doc_id, active)
         return False
 
 
 async def _delete_one_document(
-    legacy: Any, rag: Any, doc_id: Any
+    legacy: Any, rag: Any, doc_id: Any, *, hygiene: bool = True
 ) -> dict[str, Any] | None:
     """Delete a doc from the bulk-delete surface, ref-counted (architect P1).
 
@@ -715,7 +767,16 @@ async def _delete_one_document(
             raise
         return None
 
-    physically_deleted = await _apply_membership_delete(legacy, rag, doc_id, active)
+    physically_deleted = await _apply_membership_delete(
+        legacy,
+        rag,
+        doc_id,
+        active,
+        hygiene=hygiene,
+        # The visibility check above already fetched the record: hand its
+        # source path down instead of reading DocStatus a third time.
+        source_path=str(doc["file_path"]) if doc.get("file_path") else None,
+    )
     if physically_deleted is None:
         return None
 
@@ -820,6 +881,12 @@ async def _run_bulk_delete_batch(
     Serial execution is deliberately conservative and deterministic. Bulk
     delete remains non-atomic, so failures after a success are returned as 207.
 
+    The workspace hygiene a physical delete owes (query-cache purge + source_id
+    sweep, see ``router._post_delete_hygiene``) runs ONCE after the batch, not
+    once per document: it is workspace-global and idempotent, and with a serial
+    loop the sweep's coalescing never engaged inside one request — a 500-doc
+    batch used to pay 500 three-scan sweeps and 500 cache drops.
+
     Returns ``(results, failed, busy)``. ``busy`` lists the docs whose
     physical cascade LightRAG refused because its pipeline is held by an
     ingestion job — those docs are untouched and retryable, which is a
@@ -832,38 +899,49 @@ async def _run_bulk_delete_batch(
     failed: list[str] = []
     busy: list[str] = []
     first_error: tuple[Any, Exception] | None = None
-    for index, doc_id in enumerate(doc_ids):
-        try:
-            outcome = await _delete_one_document(legacy, rag, doc_id)
-        except PipelineBusyDeletionError:
-            busy.append(str(doc_id))
-            logger.warning(
-                "bulk delete deferred for document %s: ingestion pipeline busy",
-                doc_id,
-            )
-            continue
-        except Exception as exc:  # one failure must not hide committed siblings
-            failed.append(str(doc_id))
-            if isinstance(exc, HTTPException) and exc.status_code == 503:
-                # A recovery_required fence is not an ordinary per-document
-                # failure and cannot be cleared by retrying. Stop the batch,
-                # but carry every already-committed mutation to the route so
-                # its 503 response and audit event remain honest.
-                raise _BulkDeleteRecoveryRequired(
-                    str(exc.detail),
-                    results=results,
-                    failed=failed,
-                    busy=busy,
-                    unattempted=[str(item) for item in doc_ids[index + 1 :]],
-                ) from exc
-            if first_error is None:
-                first_error = (doc_id, exc)
-            logger.exception("bulk delete failed for document %s", doc_id)
-            continue
-        if outcome is None:
-            failed.append(str(doc_id))
-            continue
-        results.append(outcome)
+    try:
+        for index, doc_id in enumerate(doc_ids):
+            try:
+                outcome = await _delete_one_document(legacy, rag, doc_id, hygiene=False)
+            except PipelineBusyDeletionError:
+                busy.append(str(doc_id))
+                logger.warning(
+                    "bulk delete deferred for document %s: ingestion pipeline busy",
+                    doc_id,
+                )
+                continue
+            except Exception as exc:  # one failure must not hide committed siblings
+                failed.append(str(doc_id))
+                if isinstance(exc, HTTPException) and exc.status_code == 503:
+                    # A recovery_required fence is not an ordinary per-document
+                    # failure and cannot be cleared by retrying. Stop the batch,
+                    # but carry every already-committed mutation to the route so
+                    # its 503 response and audit event remain honest.
+                    raise _BulkDeleteRecoveryRequired(
+                        str(exc.detail),
+                        results=results,
+                        failed=failed,
+                        busy=busy,
+                        unattempted=[str(item) for item in doc_ids[index + 1 :]],
+                    ) from exc
+                if first_error is None:
+                    first_error = (doc_id, exc)
+                logger.exception("bulk delete failed for document %s", doc_id)
+                continue
+            if outcome is None:
+                failed.append(str(doc_id))
+                continue
+            results.append(outcome)
+
+    finally:
+        # One hygiene pass for the whole batch (query-cache purge + source_id
+        # sweep), owed only if something was physically deleted. In a
+        # ``finally`` so a batch stopped by the recovery fence (503 raised
+        # mid-loop with committed deletes behind it) or cancelled mid-way still
+        # settles what its committed deletes owe — exactly what the per-document
+        # hygiene used to guarantee for every delete that had completed.
+        if any(result["physically_deleted"] for result in results):
+            await legacy._post_delete_hygiene(rag)
 
     if busy and not results and not failed:
         raise HTTPException(status_code=423, detail=_PIPELINE_BUSY_DELETE_DETAIL)

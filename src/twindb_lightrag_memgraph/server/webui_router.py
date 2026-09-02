@@ -18,6 +18,7 @@ from .webui.router import (
     _cascade_seed_document_tags,
     _coerce_doc_metadata,
     _delete_doc_from_rag,
+    _post_delete_hygiene,
     _doc_matches_active_folder,
     _filter_doc_status_rows,
     _get_doc_for_active_folder,
@@ -46,6 +47,7 @@ _router_module = import_module(".webui.router", __package__)
 _PATCHABLE_HELPERS = (
     "_attach_graph_tags_for_documents",
     "_delete_doc_from_rag",
+    "_post_delete_hygiene",
     "_get_rag",
 )
 

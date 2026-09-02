@@ -12,8 +12,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
+from twindb_lightrag_memgraph.server.api_wiring import _iter_effective_routes
 from twindb_lightrag_memgraph.server.api_key_routes import router as api_key_router
 from twindb_lightrag_memgraph.server.chunk_routes import (
     create_chunk_routes,
@@ -67,16 +68,17 @@ def _fmt(routes: set[Route]) -> str:
 
 
 def _fastapi_routes_from_router(router, *, prefix: str = "") -> set[Route]:
-    app = FastAPI()
+    app = FastAPI(openapi_url=None)
     app.include_router(router, prefix=prefix)
-    paths = app.openapi().get("paths", {}) or {}
-    return {
-        Route(method.upper(), _normalize_path(path))
-        for path, operations in paths.items()
-        if isinstance(operations, dict)
-        for method in operations
-        if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
-    }
+    mounted: set[Route] = set()
+    for route in _iter_effective_routes(app.routes):
+        path = getattr(route, "path", None)
+        if not path:
+            continue
+        for method in getattr(route, "methods", ()) or ():
+            if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                mounted.add(Route(method, _normalize_path(path)))
+    return mounted
 
 
 def _backend_routes() -> set[Route]:
@@ -268,6 +270,10 @@ LIGHTRAG_NATIVE_PASSTHROUGH: set[Route] = {
 # Known Couche 3 gaps. If one of these starts passing, remove it from this set
 # (route parity is a test, not a document — docs/adr/009-webui-backend-contract.md).
 KNOWN_BACKEND_GAPS: set[Route] = set()
+
+
+def test_backend_route_harness_does_not_invent_framework_docs():
+    assert Route("GET", "/openapi.json") not in _fastapi_routes_from_router(APIRouter())
 
 
 def test_frontend_contract_paths_are_declared_in_resources_ts():

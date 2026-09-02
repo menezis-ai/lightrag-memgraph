@@ -665,6 +665,7 @@ describe('GraphTab — selection + detail', () => {
     );
 
     const filterInput = screen.getByLabelText('Filter by tag');
+    expect(filterInput).not.toHaveAttribute('aria-activedescendant');
     await userEvent.click(filterInput);
     expect(
       await screen.findByRole('listbox', { name: 'Filter by tag suggestions' }),

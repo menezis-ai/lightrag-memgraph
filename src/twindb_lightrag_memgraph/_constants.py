@@ -294,7 +294,7 @@ def validate_identifier(value: str, name: str = "identifier") -> str:
 
 
 # ---------------------------------------------------------------------------
-# KB portability (KB-PORTABILITY-PLAN.md §13). None of these is required; the
+# KB portability (docs/adr/010-kb-portability-contract.md). None is required; the
 # CLI is the only consumer in PR-P1. Malformed numeric values fail at boot
 # (register() calls validate_portability_env()) — same posture as the vector
 # capacity above.

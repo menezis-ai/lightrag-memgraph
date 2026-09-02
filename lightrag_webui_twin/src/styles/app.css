@@ -3663,6 +3663,8 @@ dialog::backdrop {
 .tag-card-name { font-family: var(--font-mono); font-size: 14px; font-weight: 500; color: var(--color-text-primary); flex: 1; }
 .domain-badge {
   font-size: 10px; font-weight: 500;
+  /* Domain colours are operator-supplied; keep text on the theme's AA-safe token. */
+  color: var(--color-text-primary);
   text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 7px;
   border: 0.5px solid;
@@ -10280,7 +10282,7 @@ header.topbar dialog.notif-popover {
 
 .retrieval .field-label,
 .retrieval .history-head {
-  color: var(--faint);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.11em;
@@ -10654,11 +10656,24 @@ header.topbar dialog.notif-popover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-items: start;
+  /* `stretch`, not `start`: the two cards carry the same workflow weight, and
+     a short export card floating beside a tall import card read as a layout
+     bug. */
+  align-items: stretch;
+}
+
+/* The cards match on the BORDER BOX, not on where their content ends. Pinning
+   the action row to the bottom (margin-top: auto) equalises the two cards but
+   opens a ~180px void above the shorter card's button, which reads worse than
+   the ragged heights it replaced. Content stays top-aligned; only the card
+   outline is equalised. */
+.portability-grid > .set-card {
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-portability .set-card > p {
-  margin: -5px 0 16px;
+  margin: 0 0 14px;
   color: var(--muted);
   font-size: 12.5px;
   line-height: 1.55;
@@ -10683,21 +10698,152 @@ header.topbar dialog.notif-popover {
   box-shadow: 0 0 0 2px var(--blue-soft);
 }
 
-.portability-check {
+/* Workflow rail. Same visual vocabulary as .demo-hud-step (bullet + label,
+   is-done/is-on states) so the two progress surfaces in the app read alike. */
+.portability-rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.portability-rail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.portability-rail-bullet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-border-tertiary);
+  color: #fff;
+  transition: background 220ms, transform 220ms;
+}
+
+.portability-rail-step.is-done .portability-rail-bullet {
+  background: var(--twin-green-700);
+}
+
+.portability-rail-step.is-done {
+  color: var(--color-text-secondary);
+}
+
+.portability-rail-step.is-active {
+  border-color: var(--twin-accent-soft-bg);
+  background: var(--twin-accent-soft-bg);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.portability-rail-step.is-active .portability-rail-bullet {
+  background: var(--twin-accent);
+  transform: scale(1.12);
+  box-shadow: 0 0 0 3px var(--twin-accent-soft-bg);
+}
+
+.portability-rail-step.is-failed {
+  border-color: var(--twin-red-border);
+  background: var(--twin-red-50);
+  color: var(--red);
+  font-weight: 600;
+}
+
+.portability-rail-step.is-failed .portability-rail-bullet {
+  background: var(--red);
+}
+
+.portability-rail-halted {
+  margin-left: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Bundle picker. The bare <input type="file"> it replaces rendered the
+   browser's own control, in the browser's own locale — French chrome inside an
+   English product. Same hidden-input + .dropzone idiom as AddSourceModal. */
+.portability-dropzone {
+  margin: 0 0 12px;
+  padding: 18px 14px;
+}
+
+.portability-dropzone .title {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portability-toggle-row {
+  margin: 0 0 10px;
+  padding: 11px 13px;
+}
+
+.portability-folder-field {
+  margin-bottom: 12px;
+}
+
+.portability-field-hint {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+/* The unverified-bundle opt-in is the one destructive control on this surface.
+   It gets the bounded red panel the blocking findings already use, not a bare
+   red label that reads as decoration. */
+.portability-danger {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 9px 0;
-  color: var(--ink-soft);
-  font-size: 12.5px;
-}
-
-.portability-check input {
-  accent-color: var(--blue);
-}
-
-.portability-check-warning {
+  gap: 10px;
+  margin: 0 0 4px;
+  padding: 11px 13px;
+  border: 1px solid var(--twin-red-border);
+  border-radius: 9px;
+  background: var(--twin-red-50);
   color: var(--red);
+}
+
+.portability-danger > svg {
+  flex: none;
+}
+
+.portability-danger-copy {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.portability-danger-title {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.portability-danger .muted {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* The visible track is ::before — .settings-switch itself is a transparent
+   44px hit target. Painting the element repainted the hit box red and left the
+   track on --twin-accent. */
+.portability-danger-switch.on::before {
+  background: var(--red);
 }
 
 .portability-actions,

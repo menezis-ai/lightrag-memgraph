@@ -1,8 +1,9 @@
 """source_id hygiene sweep (OVH audit 2026-07-28 §4) — unit + integration.
 
 LightRAG's post-delete rebuild leaves dead chunk refs in entity/relation
-``source_id`` forever; the Twin sweep purges them after every document
-delete. Unit tier: the pure partition and the fail-soft wiring (a sweep
+``source_id`` forever; the Twin sweep purges them after every single-document
+delete, and once at the end of a bulk batch that physically deleted at least
+one document. Unit tier: the pure partition and the fail-soft wiring (a sweep
 failure must never fail the user's delete). Integration tier (real
 Memgraph): rewrite / removal / untouched entities and relations, with the
 MG-2 vector-row cascade.

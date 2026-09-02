@@ -1,4 +1,4 @@
-import { expect, test, type Page } from './fixtures';
+import { allowRequestAbort, expect, test, type Page } from './fixtures';
 import { getMswStats } from './helpers';
 
 const runtimeUser = {
@@ -64,8 +64,23 @@ test.describe('Twin folders runtime config', () => {
   });
 
   test('@folders switching folder sends subsequent Twin requests with the new header', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    const folderSwitchReason =
+      'Switching folders cancels bootstrap queries scoped to the previous folder.';
+    allowBrowserIssues(
+      allowRequestAbort(/\/documents\?folder=default$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/notifications$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/tags\/categories$/, folderSwitchReason),
+      allowRequestAbort(
+        /\/twin\/api\/activity\?range=7d&limit=200$/,
+        folderSwitchReason,
+      ),
+      allowRequestAbort(/\/pipeline_status$/, folderSwitchReason),
+      allowRequestAbort(/\/twin\/api\/procedures$/, folderSwitchReason),
+    );
     await bootWithRuntimeConfig(page, {
       apiBaseUrl: '/twin/api',
       lightragBaseUrl: '',

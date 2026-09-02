@@ -1,4 +1,6 @@
-"""Canonical JSONL files of a bundle — KB-PORTABILITY-PLAN §3.3 / T0.2.
+"""Canonical JSONL files of a bundle — ADR 010, decision 2.
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 One record per line, keys sorted recursively (JCS, ``canonical.py``), NFC,
 UTF-8, ``\\n`` terminated. The writer hashes and counts as it streams, so a

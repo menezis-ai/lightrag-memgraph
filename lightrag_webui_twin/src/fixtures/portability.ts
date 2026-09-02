@@ -50,6 +50,14 @@ export function makePortabilityJob(
     created_at: now,
     updated_at: now,
     actor: 'operator.demo',
+    // The server initialises all four durable markers to None
+    // (portability_jobs.py:450-453) and writes them on the corresponding
+    // transition. The UI reads them to know which stages a terminal run
+    // actually reached, so the mock must carry the same shape.
+    approved_report_hash: null,
+    applied_by: null,
+    validated_by: null,
+    cancelled_by: null,
     options: {},
     result: null,
     report: null,

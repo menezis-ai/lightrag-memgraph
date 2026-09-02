@@ -404,7 +404,7 @@ export function TagsTab({
                 {cat && (
                   <span
                     className="domain-badge"
-                    style={{ borderColor: cat.color, color: cat.color }}
+                    style={{ borderColor: cat.color }}
                   >
                     {cat.label}
                   </span>

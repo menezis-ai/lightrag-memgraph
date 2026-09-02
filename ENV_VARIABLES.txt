@@ -1,5 +1,5 @@
 ================================================================================
-twindb-lightrag-memgraph 1.0.0 — Environment variables reference
+twindb-lightrag-memgraph 1.2.0 — Environment variables reference
 ================================================================================
 
 Every variable read by the package, grouped by concern. "Required" means the
@@ -509,6 +509,37 @@ LIGHTRAG_ENABLE_WEBUI_ROUTES true/false — mount the /twin/api overlay.
 LIGHTRAG_WEBUI_TAG_BACKEND            "memgraph" (persistent) or "memory".
 LIGHTRAG_WEBUI_ACTIVITY_BACKEND       idem.
 LIGHTRAG_WEBUI_NOTIFICATIONS_BACKEND  idem.
+
+--------------------------------------------------------------------------------
+6B. CENTRAL CATALOGUE DATABASE (separate services/twin_catalog distribution)
+--------------------------------------------------------------------------------
+These variables configure the standalone catalogue service, not the Twin KB
+data plane. LightRAG data and vectors remain in Memgraph; SQLite is never a
+fallback for them.
+
+TWIN_CATALOG_DB_BACKEND     Backend selection. Default: "auto" — PostgreSQL
+                             when TWIN_CATALOG_PG_DSN is set, otherwise SQLite.
+                             "postgres" is the production guard: a missing DSN
+                             refuses startup instead of silently opening a
+                             SQLite file. "sqlite" requires the PostgreSQL DSN
+                             to be unset.
+TWIN_CATALOG_PG_DSN         PostgreSQL DSN (postgresql://...); the asyncpg
+                             driver is selected internally. Required when
+                             TWIN_CATALOG_DB_BACKEND=postgres.
+TWIN_CATALOG_SQLITE_PATH    SQLite file used by the catalogue when its resolved
+                             backend is SQLite. Default:
+                             ./data/twin_catalog.sqlite3
+                             The catalogue image sets
+                             /data/twin_catalog.sqlite3. The parent directory
+                             is created automatically.
+
+SQLite is a staging/development, single-process fallback while PostgreSQL is
+unavailable: startup logs a warning, /ready reports database=sqlite, and
+`serve --workers > 1` is refused. An older SQLite schema is refused rather than
+migrated in place. Promote with `twin-catalog export` followed by
+`twin-catalog import ... --apply` into a freshly migrated, empty PostgreSQL
+target; never copy the SQLite file. See services/twin_catalog/README.md for the
+catalogue service's complete TWIN_CATALOG_* configuration.
 
 --------------------------------------------------------------------------------
 7. TRACING (optional)

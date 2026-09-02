@@ -7,11 +7,13 @@ at boot instead of requiring shell access to inspect ``app.routes``.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from twindb_lightrag_memgraph.server.api_wiring import (
+    ApiWiringProbe,
     api_wiring_probes,
     log_api_wiring_sanity,
 )
@@ -47,6 +49,54 @@ def test_static_twin_mount_does_not_pass_api_wiring_sanity(tmp_path, caplog):
     assert "🚨 API CHECK FAILED ❌ surface=static-only" in caplog.text
     assert "action=route_wiring_broken" in caplog.text
     assert "POST /twin/api/settings/api-keys" in caplog.text
+
+
+def test_hidden_included_route_passes_api_wiring_sanity(caplog):
+    router = APIRouter()
+
+    @router.get("/catalog-profile", include_in_schema=False)
+    async def catalog_profile():
+        return {}
+
+    parent = APIRouter()
+    parent.include_router(router, prefix="/api")
+    app = FastAPI()
+    app.include_router(parent, prefix="/twin")
+    probe = ApiWiringProbe("GET", "/twin/api/catalog-profile", "catalog-profile:read")
+    caplog.set_level(
+        logging.INFO,
+        logger="twindb_lightrag_memgraph.server.api_wiring",
+    )
+
+    missing = log_api_wiring_sanity(
+        app, probes=(probe,), surface="hidden-internal-route"
+    )
+
+    assert missing == []
+    assert "/twin/api/catalog-profile" not in app.openapi()["paths"]
+    assert "All API Check passes ✅☀️ surface=hidden-internal-route" in caplog.text
+
+
+def test_route_introspection_failure_logs_the_real_cause(caplog):
+    class BrokenIncludedRouter:
+        def effective_candidates(self):
+            raise RuntimeError("unsupported FastAPI route wrapper")
+
+    app = SimpleNamespace(router=SimpleNamespace(routes=[BrokenIncludedRouter()]))
+    probe = ApiWiringProbe("GET", "/twin/api/health", "health")
+    caplog.set_level(
+        logging.INFO,
+        logger="twindb_lightrag_memgraph.server.api_wiring",
+    )
+
+    missing = log_api_wiring_sanity(
+        app, probes=(probe,), surface="broken-introspection"
+    )
+
+    assert missing == [probe]
+    assert "action=route_introspection_failed" in caplog.text
+    assert "unsupported FastAPI route wrapper" in caplog.text
+    assert "action=route_wiring_broken" in caplog.text
 
 
 def test_standalone_app_logs_api_wiring_ok(caplog):

@@ -34,8 +34,15 @@ test.describe('Procedure review journey', () => {
   });
 
   test('@documents @procedure review modal shows PNG, informed description and divergence report', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures\/proc-1$/,
+        'The journey intentionally ends with the proc-1 review modal mounted; teardown cancels its stale detail refetch.',
+      ),
+    );
     await page.getByTestId('pending-proc-review-proc-1').click();
     const modal = page.getByTestId('procedure-review-modal');
     await expect(modal).toBeVisible();
@@ -190,10 +197,14 @@ test.describe('Procedure review journey', () => {
     page,
   }) => {
     const settingsNavigationReason =
-      'Opening Settings unmounts the active procedure list and detail queries.';
+      'The journey closes and remounts active procedure queries while switching through Settings.';
     allowBrowserIssues(
       allowRequestAbort(/\/twin\/api\/procedures$/, settingsNavigationReason),
-      allowRequestAbort(/\/twin\/api\/procedures\/proc-2$/, settingsNavigationReason),
+      allowRequestAbort(
+        /\/twin\/api\/procedures\/proc-2$/,
+        settingsNavigationReason,
+        2,
+      ),
     );
     // Procedure ingestion is OFF by default (MSW mirrors the server-surface
     // default): the failed bundle's retry affordance must be disarmed with
@@ -233,8 +244,15 @@ test.describe('Procedure review journey', () => {
   });
 
   test('@documents @procedure reroute-standard requires a folder for a folderless bundle, then lands a document', async ({
+    allowBrowserIssues,
     page,
   }) => {
+    allowBrowserIssues(
+      allowRequestAbort(
+        /\/twin\/api\/procedures\/proc-2$/,
+        'Rerouting invalidates the active procedure detail immediately before the modal closes.',
+      ),
+    );
     // proc-2 has no requesting folder (folder: null, no duplicate request):
     // "Treat as standard" must stay disarmed until a target folder is chosen
     // — mirrors the backend 422 instead of surfacing it.

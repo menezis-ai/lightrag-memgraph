@@ -274,6 +274,36 @@ class TestInMemoryActivityStore:
         items, _, _ = await store.list()
         assert items[0]["id"] == "evt_new"
 
+    async def test_append_many_matches_sequential_appends(self):
+        events = [
+            {
+                "id": f"evt_batch_{i}",
+                "ts": f"2026-05-13T00:0{i}:00Z",
+                "kind": "doc-retagged",
+                "sev": "info",
+                "actor": {"user": "bolt.batch", "role": "operator"},
+                "target": {"type": "document", "id": f"doc-{i}", "label": f"d{i}"},
+                "summary": f"batch {i}",
+                "meta": {"doc_id": f"doc-{i}"},
+            }
+            for i in range(3)
+        ]
+        batched = InMemoryActivityStore(events=[])
+        sequential = InMemoryActivityStore(events=[])
+        stored = await batched.append_many(events)
+        for event in events:
+            await sequential.append(event)
+
+        assert [e["id"] for e in stored] == [e["id"] for e in events]
+        batched_items, batched_total, _ = await batched.list()
+        sequential_items, sequential_total, _ = await sequential.list()
+        assert batched_items == sequential_items  # newest first, same order
+        assert batched_total == sequential_total == 3
+        # Returned copies are detached from the ledger, like ``append``.
+        stored[0]["summary"] = "mutated"
+        assert (await batched.list())[0][-1]["summary"] == "batch 0"
+        assert await batched.append_many([]) == []
+
     async def test_append_returns_deep_copy(self):
         store = InMemoryActivityStore(events=[])
         event = {
@@ -334,6 +364,21 @@ async def _seed_legacy_json_event(workspace: str, event: dict[str, object]) -> N
                 data=json.dumps(event, sort_keys=True),
             )
             await result.consume()
+
+
+def _batch_event(event_id: str, index: int) -> dict[str, object]:
+    return {
+        "id": event_id,
+        "ts": "2026-05-13T12:00:00Z",
+        "rel": "now",
+        "day": "Today",
+        "kind": "doc-retagged",
+        "sev": "info",
+        "actor": {"user": "bolt.batch", "role": "operator"},
+        "target": {"type": "document", "id": f"doc-{index}", "label": f"d{index}"},
+        "summary": f"batch {index}",
+        "meta": {"doc_id": f"doc-{index}"},
+    }
 
 
 @pytest.mark.integration
@@ -674,6 +719,118 @@ class TestMemgraphActivityStore:
             await store.append(new_event)
             items, _, _ = await store.list()
             assert items[0]["id"] == "evt_appended"
+        finally:
+            await _cleanup(_ws)
+
+    async def test_append_many_orders_and_stores_like_sequential_appends(self, _ws):
+        """ONE batched write must read back exactly like five sequential appends.
+
+        Ordering is the trap: Memgraph evaluates ``timestamp()`` once per
+        query, so a batch that relied on it would tie every row's
+        ``__created_at`` and come back in arbitrary order.
+        """
+        from twindb_lightrag_memgraph import _pool
+
+        seq_ws = f"{_ws}_seq"
+        events = [
+            {
+                "id": f"evt_batch_{i}",
+                "ts": f"2026-05-13T12:0{i}:00Z",
+                "rel": "now",
+                "day": "Today",
+                "kind": "doc-retagged",
+                "sev": "info",
+                "actor": {"user": "bolt.batch", "role": "operator"},
+                "target": {"type": "document", "id": f"doc-{i}", "label": f"d{i}"},
+                "summary": f"batch {i}",
+                "meta": {"doc_id": f"doc-{i}"},
+            }
+            for i in range(5)
+        ]
+        try:
+            batched = await make_memgraph_activity_store(workspace=_ws)
+            sequential = await make_memgraph_activity_store(workspace=seq_ws)
+            stored = await batched.append_many(events)
+            for event in events:
+                await sequential.append(event)
+            assert [e["id"] for e in stored] == [e["id"] for e in events]
+
+            batched_items, batched_total, _ = await batched.list(actor="bolt.batch")
+            sequential_items, sequential_total, _ = await sequential.list(
+                actor="bolt.batch"
+            )
+            assert batched_items == sequential_items
+            assert batched_total == sequential_total == 5
+            assert [e["id"] for e in batched_items] == [
+                f"evt_batch_{i}" for i in (4, 3, 2, 1, 0)
+            ]
+
+            # The scalars Memgraph filters on are written per row. The batch
+            # shares ONE real creation time (one write, one clock reading) and
+            # carries its insertion order in __seq — the clock is never faked.
+            async with _pool.get_read_session() as session:
+                result = await session.run(
+                    f"MATCH (n:`WebuiActivity_{_ws}`) WHERE n.actor_user = $actor "
+                    "RETURN n.id AS id, n.`__created_at` AS created_at, "
+                    "n.`__seq` AS seq, n.kind AS kind, n.target_id AS target_id, "
+                    "n.`__scalars_version` AS version "
+                    "ORDER BY created_at, seq",
+                    actor="bolt.batch",
+                )
+                rows = await result.data()
+                await result.consume()
+            assert [r["id"] for r in rows] == [f"evt_batch_{i}" for i in range(5)]
+            assert [r["seq"] for r in rows] == list(range(5))
+            assert len({r["created_at"] for r in rows}) == 1
+            assert all(r["kind"] == "doc-retagged" for r in rows)
+            assert [r["target_id"] for r in rows] == [f"doc-{i}" for i in range(5)]
+            assert all(r["version"] == SCALARS_VERSION for r in rows)
+
+            # MERGE on id: re-appending the batch neither duplicates nor reorders.
+            await batched.append_many(events)
+            again, again_total, _ = await batched.list(actor="bolt.batch")
+            assert again_total == 5 and again == batched_items
+        finally:
+            await _cleanup(_ws)
+            await _cleanup(seq_ws)
+
+    async def test_append_right_after_a_batch_lists_first(self, _ws):
+        """Review finding on PR #486: a synthetic per-row clock offset would let
+        a later single append sort behind older batch rows. The clock is real
+        and shared by the batch; the later append carries a later clock."""
+        try:
+            store = await make_memgraph_activity_store(workspace=_ws)
+            batch = [_batch_event(f"evt_b_{i}", i) for i in range(500)]
+            await store.append_many(batch)
+            await store.append(_batch_event("evt_after", 500))
+            items, total, _ = await store.list(actor="bolt.batch", limit=3)
+            assert total == 501
+            assert [e["id"] for e in items] == ["evt_after", "evt_b_499", "evt_b_498"]
+        finally:
+            await _cleanup(_ws)
+
+    async def test_consecutive_batches_do_not_interleave(self, _ws):
+        try:
+            store = await make_memgraph_activity_store(workspace=_ws)
+            await store.append_many([_batch_event(f"evt_a_{i}", i) for i in range(5)])
+            await store.append_many([_batch_event(f"evt_b_{i}", i) for i in range(5)])
+            items, total, _ = await store.list(actor="bolt.batch")
+            assert total == 10
+            assert [e["id"] for e in items] == [
+                f"evt_b_{i}" for i in (4, 3, 2, 1, 0)
+            ] + [f"evt_a_{i}" for i in (4, 3, 2, 1, 0)]
+        finally:
+            await _cleanup(_ws)
+
+    async def test_append_many_validates_every_id_before_writing(self, _ws):
+        try:
+            store = await make_memgraph_activity_store(workspace=_ws)
+            with pytest.raises(ValueError):
+                await store.append_many(
+                    [{"id": "evt_ok", "kind": "x"}, {"kind": "no-id"}]
+                )
+            items, _, _ = await store.list(q="evt_ok")
+            assert items == []  # nothing from the rejected batch landed
         finally:
             await _cleanup(_ws)
 

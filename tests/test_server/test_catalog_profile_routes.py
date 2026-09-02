@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
 
 from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph._constants import resolve_workspace
+from twindb_lightrag_memgraph._constants import (
+    DEFAULT_TWIN_MAX_FOLDERS,
+    resolve_workspace,
+)
 from twindb_lightrag_memgraph.server import (
     api_key_store,
     catalog_profile_routes,
@@ -18,11 +23,21 @@ from twindb_lightrag_memgraph.server import (
 )
 from twindb_lightrag_memgraph.server.auth import configure_auth, require_auth
 from twindb_lightrag_memgraph.server.catalog_profile_routes import (
+    CatalogProfile,
     build_catalog_profile_router,
 )
 from twindb_lightrag_memgraph.server.idp_jwt import configure_idp
 from twindb_lightrag_memgraph.server.webui import router as webui_router_impl
 from twindb_lightrag_memgraph.server.webui_seed import DOCUMENTS
+
+_PROFILE_V1_FIXTURE = (
+    Path(__file__).parents[2]
+    / "services"
+    / "twin_catalog"
+    / "tests"
+    / "fixtures"
+    / "catalog_profile_v1.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -286,9 +301,88 @@ async def test_memgraph_document_failure_is_not_reported_as_an_empty_kb(monkeypa
     assert response.json()["detail"] == "document storage unavailable"
 
 
-def test_catalog_profile_openapi_operation_has_a_description():
-    operation = _app().openapi()["paths"]["/twin/api/catalog-profile"]["get"]
-    assert operation["description"].startswith("Aggregate an authorised")
+async def test_catalog_profile_is_internal_but_remains_callable():
+    app = _app()
+    assert "/twin/api/catalog-profile" not in app.openapi()["paths"]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer profile-root-key"},
+    ) as client:
+        response = await client.get(
+            "/twin/api/catalog-profile", params={"max_items": 1}
+        )
+
+    assert response.status_code == 200, response.text
+
+
+def test_catalog_profile_v1_fixture_matches_producer_contract():
+    profile = CatalogProfile.model_validate_json(
+        _PROFILE_V1_FIXTURE.read_text(encoding="utf-8")
+    )
+    assert profile.schema_version == "1"
+
+
+def test_catalog_profile_v1_folder_limit_tracks_the_platform_limit():
+    assert catalog_profile_routes._MAX_PROFILE_FOLDERS == DEFAULT_TWIN_MAX_FOLDERS
+
+
+@pytest.mark.parametrize(
+    ("field", "limit"),
+    (("id", 128), ("label", 160), ("kind", 64)),
+)
+async def test_folder_profile_rejects_metadata_outside_v1_contract(
+    monkeypatch, field, limit
+):
+    async def no_documents(*, max_items: int):
+        assert max_items == 1
+        return [], 0
+
+    values = {"id": "default", "label": "Default", "kind": "primary"}
+    values[field] = "x" * (limit + 1)
+    monkeypatch.setattr(
+        catalog_profile_routes, "_documents_for_active_folder", no_documents
+    )
+    monkeypatch.setattr(
+        catalog_profile_routes, "list_graph_entities", _no_graph_entities
+    )
+    monkeypatch.setattr(
+        catalog_profile_routes, "scoped_folder", lambda _folder_id: nullcontext()
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await catalog_profile_routes._folder_profile(
+            SimpleNamespace(**values), max_items=1
+        )
+
+    assert caught.value.status_code == 503
+    assert f"folder {field} exceeds the v1 limit of {limit}" in caught.value.detail
+
+
+async def test_catalog_profile_rejects_more_than_five_folders(monkeypatch):
+    folders = tuple(
+        SimpleNamespace(id=f"folder_{index}", label=f"Folder {index}", kind="custom")
+        for index in range(6)
+    )
+    catalog = SimpleNamespace(folders=folders)
+    monkeypatch.setattr(catalog_profile_routes, "load_folder_catalog", lambda: catalog)
+    monkeypatch.setattr(
+        catalog_profile_routes,
+        "catalog_profile_folder_ids",
+        lambda _request: tuple(folder.id for folder in folders),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app()),
+        base_url="http://test",
+        headers={"Authorization": "Bearer profile-root-key"},
+    ) as client:
+        response = await client.get("/twin/api/catalog-profile")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Catalog profile exceeds the v1 limit of 5 folders"
+    )
 
 
 async def test_profile_credential_is_limited_to_its_folder_scope(monkeypatch):

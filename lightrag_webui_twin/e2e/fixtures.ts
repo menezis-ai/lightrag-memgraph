@@ -44,6 +44,30 @@ export function allowRequestAbort(
   };
 }
 
+/**
+ * The Documents pane owns three optional queries whose AbortSignals are
+ * cancelled when React unmounts/remounts that pane. Keep this lifecycle noise
+ * explicit and tightly bounded; every other transport failure still fails the
+ * owning journey.
+ */
+export const DOCUMENTS_LIFECYCLE_ABORT_ALLOWANCES = [
+  allowRequestAbort(
+    /\/twin\/api\/quota$/,
+    'Documents lifecycle cancellation of the optional quota query.',
+    3,
+  ),
+  allowRequestAbort(
+    /\/twin\/api\/procedures$/,
+    'Documents lifecycle cancellation of the optional procedure list query.',
+    3,
+  ),
+  allowRequestAbort(
+    /\/twin\/api\/settings\/vision$/,
+    'Documents lifecycle cancellation of the optional vision settings query.',
+    3,
+  ),
+] as const satisfies readonly BrowserIssueAllowance[];
+
 export function allowHttpConsoleError(
   url: RegExp,
   status: number,
@@ -73,7 +97,7 @@ function matches(pattern: RegExp, value: string): boolean {
 
 export function unexpectedIssues(
   issues: BrowserIssue[],
-  allowlist: BrowserIssueAllowance[],
+  allowlist: readonly BrowserIssueAllowance[],
 ): BrowserIssue[] {
   const allowanceCounts = allowlist.map(() => 0);
   return issues.filter((issue) => {
@@ -112,7 +136,7 @@ export function isNavigationRelatedAbort(
 export const test = base.extend<BrowserGuardFixtures>({
   browserIssueRegistry: async ({ context }, provide) => {
     void context;
-    await provide([]);
+    await provide([...DOCUMENTS_LIFECYCLE_ABORT_ALLOWANCES]);
   },
   allowBrowserIssues: async ({ browserIssueRegistry }, provide, testInfo) => {
     await provide((...allowances) => {

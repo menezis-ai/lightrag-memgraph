@@ -30,6 +30,13 @@ test = [
     "prometheus-client>=0.26.0,<0.27.0",
     # tests/test_portability/test_manifest.py validates the kb-bundle JSON Schema
     "jsonschema>=4.23",
+    # tests/test_coverage_floor.py drives scripts/coverage_floor.py, whose only
+    # I/O is `python -m coverage json`, and runs one real `coverage run` so a
+    # change in coverage.py's JSON shape fails there rather than turning the CI
+    # gate into a no-op. The gate's own tests must run in EVERY job that runs
+    # the suite — skipping them where coverage is absent is precisely the
+    # silently-green failure the gate exists to prevent.
+    "coverage>=7.6",
 ]
 intelligence = [
     "openai>=1.50",
@@ -56,7 +63,7 @@ server = [
     "PyJWT>=2.8.0",
     "python-multipart>=0.0.31",
     "httpx>=0.28.1",
-    "pypdf>=6.15.0",
+    "pypdf>=6.16.1",
     "aiofiles>=23.0.0",
     "bcrypt>=4.0.0",
     "prometheus-client>=0.26.0,<0.27.0",
@@ -93,7 +100,7 @@ procedure = [
     # rendered bitmaps to PNG. The vision LLM rides the [vision] tier's
     # endpoint configuration (same gemma-4-31b-it, decision 2026-07-20).
     "pypdfium2>=4.30",
-    "pypdf>=6.15.0",
+    "pypdf>=6.16.1",
     "pillow>=10.0",
     "twindb-lightrag-memgraph[vision]",
 ]

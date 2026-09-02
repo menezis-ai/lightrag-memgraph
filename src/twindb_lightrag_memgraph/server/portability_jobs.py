@@ -1,4 +1,6 @@
-"""Persistent admin jobs for KB portability (KB-PORTABILITY-PLAN T3.1/T3.3).
+"""Persistent admin jobs for KB portability (ADR 010, decision 5).
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
 
 The CLI remains the primitive for large/offline transfers.  This module adds a
 bounded operator surface without weakening the import contract: uploads are

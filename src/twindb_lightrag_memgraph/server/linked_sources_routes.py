@@ -235,6 +235,7 @@ def build_linked_sources_router(
     @router.get(
         "",
         summary="List RAG sources declared by this KB in the active folder",
+        include_in_schema=False,
     )
     async def list_linked_sources(
         folder_id: Annotated[str, Depends(bind_request_folder)],
@@ -249,6 +250,7 @@ def build_linked_sources_router(
     @router.post(
         "/preview",
         summary="Preview a linked-source mutation without writing",
+        include_in_schema=False,
     )
     async def preview_linked_source(
         body: LinkedSourcePreview,
@@ -266,6 +268,7 @@ def build_linked_sources_router(
         "",
         status_code=201,
         summary="Declare a RAG source for this KB",
+        include_in_schema=False,
     )
     async def create_linked_source(
         body: LinkedSourceCreate,
@@ -289,6 +292,7 @@ def build_linked_sources_router(
     @router.patch(
         "/{link_id}",
         summary="Update a RAG source with optimistic locking",
+        include_in_schema=False,
     )
     async def patch_linked_source(
         link_id: UUID,
@@ -313,6 +317,7 @@ def build_linked_sources_router(
     @router.post(
         "/{link_id}/disable",
         summary="Disable a RAG source without deleting its audit history",
+        include_in_schema=False,
     )
     async def disable_linked_source(
         link_id: UUID,

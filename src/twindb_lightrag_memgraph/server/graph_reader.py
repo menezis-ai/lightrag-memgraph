@@ -44,17 +44,18 @@ logger = logging.getLogger(__name__)
 # How many of ``read_graph_native``'s independent membership/override reads may
 # be in flight at once.
 #
-# They are mutually independent, so the tempting answer is "all five". The read
+# They are mutually independent, so the tempting answer is "all four". The read
 # pool is SHARED with every other route, though, and a Graph render fires
-# ``/graph/entities`` and ``/graph/relations`` together — an unbounded 5-way
-# fan-out is therefore ~10 connections per render, and two concurrent renders
-# ask for the whole default 20-slot pool. Measured with
+# ``/graph/entities`` and ``/graph/relations`` together — an unbounded fan-out
+# (5-way when this was measured, 4-way since the membership read was scoped)
+# is ~8-10 connections per render, and two concurrent renders ask for most of
+# the default 20-slot pool. Measured with
 # ``tests/benchmarks/shared_read_pool_interference.py``, unbounded fan-out kept
 # the graph's own gain but pushed concurrent chunk expansion to +51% p95 /
 # +65% p99 and raised pool acquire-wait from 0.01 ms to 12.09 ms p95: the
 # bottleneck moved onto the neighbouring routes.
 #
-# Bounding the burst keeps most of the serial-round-trip win (the five reads
+# Bounding the burst keeps most of the serial-round-trip win (the four reads
 # still overlap, in waves) while capping what one graph request can hold.
 # Override with ``TWIN_GRAPH_MEMBERSHIP_FANOUT`` if a deployment sizes its read
 # pool very differently.
@@ -575,6 +576,78 @@ async def _load_member_docs(workspace: str, folder: str) -> set[str]:
         return set()
 
 
+async def _load_folder_membership(
+    workspace: str, folder: str
+) -> tuple[set[str], dict[str, str]]:
+    """One read: ``(member_docs, chunk_to_doc)`` of the docs ``MEMBER_OF`` *folder*.
+
+    Replaces the pair ``_load_member_docs`` + ``_load_chunk_to_doc_index`` on
+    every folder-bound path. The full-workspace index those paths used to build
+    is only ever consulted through ``cd.get(chunk) in member_docs``
+    (``_resolve_entity_scope`` / ``_resolve_source_docs``), so every entry for a
+    non-member document was dead weight — yet building it streamed and
+    JSON-parsed every DocStatus row of the workspace on each graph render, label
+    search and gated mutation. Reading the member docs' rows once yields the
+    member-doc set, the index restricted to it, and (its keys) the member chunk
+    set the flat readers re-parse from the same payloads.
+
+    Same projection as the two loads it replaces, with one nuance made
+    deterministic: a chunk id listed by BOTH a member and a non-member document
+    (LightRAG hashes chunk ids from content, so identical text in two docs
+    shares one id) used to resolve to whichever row the full scan returned
+    last — scan-order dependent. It now resolves to the member document, the
+    only choice consistent with that document's own ``chunks_list``.
+
+    Fail-closed like both loaders it replaces: ``(set(), {})`` on any error
+    hides every chunk-backed record rather than leaking the global graph.
+    """
+    label = _sanitize_workspace(workspace)
+    query = (
+        f"MATCH (d:`DocStatus_{label}`)"
+        f"-[:MEMBER_OF]->(:`Folder_{label}` {{id: $folder}}) "
+        "RETURN d.id AS doc_id, d.chunks_list AS chunks_list"
+    )
+    member_docs: set[str] = set()
+    chunk_to_doc: dict[str, str] = {}
+    try:
+        async with get_read_session() as session:
+            result = await session.run(query, folder=folder)
+            async for record in result:
+                doc_id = str(record.get("doc_id") or "")
+                if not doc_id:
+                    continue
+                member_docs.add(doc_id)
+                parsed = _chunk_ids_from_record(record)
+                if parsed is None:
+                    continue  # member doc without chunks still counts as a member
+                for chunk_id in parsed[1]:
+                    if isinstance(chunk_id, str) and chunk_id:
+                        chunk_to_doc[chunk_id] = doc_id
+            await result.consume()
+    except Exception:
+        logger.exception(
+            "graph_reader: folder membership load failed (ws=%s, folder=%s) — "
+            "fail-closed (empty)",
+            workspace,
+            folder,
+        )
+        return set(), {}
+    return member_docs, chunk_to_doc
+
+
+async def _active_folder_membership(
+    workspace: str,
+) -> tuple[set[str], dict[str, str]] | None:
+    """``_load_folder_membership`` for the request's active folder, or ``None``
+    when no folder is bound (unscoped / native caller → legacy global read)."""
+    from .folder import active_folder_id
+
+    folder = active_folder_id()
+    if not folder:
+        return None
+    return await _load_folder_membership(workspace, folder)
+
+
 async def _active_member_docs(workspace: str) -> set[str] | None:
     """Member-doc set for the request's active folder, or ``None`` (global).
 
@@ -606,11 +679,10 @@ async def _member_context(
     hides every entity/relation, so a transient Memgraph error refuses the write
     rather than letting it touch an out-of-folder object.
     """
-    member_docs = await _active_member_docs(workspace)
-    if member_docs is None:
+    membership = await _active_folder_membership(workspace)
+    if membership is None:
         return None, None
-    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-    return member_docs, chunk_to_doc
+    return membership
 
 
 # Folder-scoped mutation gate verdicts (see _entity_mutation_gate /
@@ -1926,29 +1998,30 @@ async def read_graph_native(
     direct_rows: list[dict[str, Any]] = []
     direct_members: set[str] | None = None
     if folder:
-        # Five independent Memgraph reads: each opens its own read session,
+        # Four independent Memgraph reads: each opens its own read session,
         # takes nothing but (workspace, folder), and absorbs its own errors into
         # a default — none consumes another's result, so serializing them bought
-        # nothing but five round-trips on the request that renders the graph tab.
-        # Gather them and pay one. Fan-out is a fixed 5 read sessions (never
-        # per-node), bounded by the shared read pool.
+        # nothing but four round-trips on the request that renders the graph tab.
+        # Gather them and pay one. Fan-out is a fixed 4 read sessions (never
+        # per-node), bounded by the shared read pool. The membership read is
+        # scoped to the folder's member docs — the former full-workspace
+        # chunk→doc scan never contributed anything a folder read could use
+        # (see `_load_folder_membership`).
         #
         # Their error defaults are NOT uniformly fail-closed, and gathering does
         # not change that (each still fails independently, exactly as before):
-        # the membership loads hide records on failure (`{}` / `set()` / `[]` →
+        # the membership load hides records on failure (`set()` / `{}` / `[]` →
         # nothing proves member provenance), but the two override loaders return
         # `{}`, which drops the folder overlay and re-surfaces the BASE record —
         # including past a local `deleted` tombstone. That is fail-open, and it
         # predates this call site; see the loaders' own docstrings.
         (
-            chunk_to_doc,
-            member_docs,
+            (member_docs, chunk_to_doc),
             entity_overrides,
             rel_overrides,
             direct_rows,
         ) = await _gather_membership_reads(
-            partial(_load_chunk_to_doc_index, workspace),
-            partial(_load_member_docs, workspace, folder),
+            partial(_load_folder_membership, workspace, folder),
             partial(_load_folder_overrides, workspace, folder),
             partial(_load_folder_rel_overrides, workspace, folder),
             partial(_load_direct_member_entity_rows, workspace, folder),
@@ -2008,7 +2081,13 @@ async def read_graph_native(
 
 
 async def _search_labels_scoped(
-    workspace: str, q: str, member_chunks: set[str], limit: int
+    workspace: str,
+    q: str,
+    member_chunks: set[str],
+    limit: int,
+    *,
+    member_docs: set[str] | None = None,
+    chunk_to_doc: dict[str, str] | None = None,
 ) -> list[str]:
     """Folder-aware entity-label search: substring match constrained to entities
     with ≥1 member source chunk. Loses the native fuzzy ranking but never reveals
@@ -2056,6 +2135,8 @@ async def _search_labels_scoped(
         direct_members={
             str(row["entity_id"]) for row in direct_rows if row.get("entity_id")
         },
+        member_docs=member_docs,
+        chunk_to_doc=chunk_to_doc,
     )
     return out
 
@@ -2148,25 +2229,35 @@ async def _append_override_label_matches(
     out: list[str],
     overrides: dict[str, dict[str, Any]],
     direct_members: set[str],
+    member_docs: set[str] | None = None,
+    chunk_to_doc: dict[str, str] | None = None,
 ) -> None:
     # Overlay display names on chunk-backed entities may be the only text that
     # matches the query. Verify visibility through the same gate used by writes
     # so the overlay never grants cross-folder search visibility by itself.
-    chunk_to_doc = await _load_chunk_to_doc_index(workspace)
-    member_docs = await _load_member_docs(workspace, folder)
-    for eid, override in overrides.items():
+    needle = q.lower()
+    candidates = [
+        eid
+        for eid, override in overrides.items()
+        if eid not in direct_members
+        and not override.get("deleted")
+        and needle in str(override.get("display_name") or "").lower()
+    ]
+    if not candidates:
+        return  # nothing to gate → no membership read at all
+    if member_docs is None or chunk_to_doc is None:
+        # Direct callers only; `search_graph_labels` hands down the membership
+        # it already loaded for the pre-LIMIT predicate.
+        member_docs, chunk_to_doc = await _load_folder_membership(workspace, folder)
+    for eid in candidates:
         if len(out) >= limit:
             break
-        if eid in direct_members or override.get("deleted"):
-            continue
-        if q.lower() not in str(override.get("display_name") or "").lower():
-            continue
         verdict = await _entity_mutation_gate(workspace, eid, chunk_to_doc, member_docs)
         if verdict != _GATE_ABSENT:
             _append_label_match(
                 out,
                 eid=eid,
-                labels=(override.get("display_name"),),
+                labels=(overrides[eid].get("display_name"),),
                 q=q,
                 limit=limit,
             )
@@ -2183,9 +2274,17 @@ async def search_graph_labels(
     (``workspace`` None / unbound) it delegates to LightRAG's native fuzzy
     ``search_labels`` over the whole KB (legacy global behaviour).
     """
-    member_chunks = await _active_member_chunks(workspace) if workspace else None
-    if member_chunks is not None:
-        return await _search_labels_scoped(workspace, q, member_chunks, limit)
+    membership = await _active_folder_membership(workspace) if workspace else None
+    if membership is not None:
+        member_docs, chunk_to_doc = membership
+        return await _search_labels_scoped(
+            workspace,
+            q,
+            set(chunk_to_doc),
+            limit,
+            member_docs=member_docs,
+            chunk_to_doc=chunk_to_doc,
+        )
     try:
         graph = rag.chunk_entity_relation_graph
         return list(await graph.search_labels(q, limit))
@@ -3020,8 +3119,10 @@ async def sweep_stale_source_refs(workspace: str) -> dict[str, int]:
     deleted doc's chunks accumulate forever (measured 10.5% of refs on the
     OVH maquette), weaken grounding, and an all-dead entity becomes
     invisible to folder-scoped graph reads while its vector rows keep
-    grounding answers. This Twin hygiene sweep runs after every document
-    delete and self-heals the historical residue too:
+    grounding answers. This Twin hygiene sweep runs after every
+    single-document delete, and once at the end of a bulk batch that
+    physically deleted at least one document (``router._post_delete_hygiene``);
+    it self-heals the historical residue too:
 
     - refs whose chunk id no longer exists in ``KV_{ws}_text_chunks`` are
       removed from every entity node and relation edge ``source_id``;
@@ -3241,14 +3342,18 @@ _SWEEP_PENDING: set[str] = set()
 async def request_source_ref_sweep(workspace: str) -> dict[str, int] | None:
     """Coalescing front door: one sweep per workspace at a time.
 
-    The webui bulk-delete gathers up to 500 concurrent deletes, each of
-    which would otherwise run a full workspace-global sweep inline — N
-    concurrent triple scans racing each other on the write slots. A
-    caller arriving mid-sweep marks the workspace dirty and returns
-    immediately (its chunks may have died after the running sweep's
-    read); the lock holder re-runs once before releasing — a burst of N
-    deletes costs 2 sweeps, not N. The ``lock.locked()`` check and the
-    pending-add are atomic on the event loop (no await between them).
+    Concurrent physical deletes in one worker (several single-delete
+    requests, or a bulk request overlapping one) would otherwise each run
+    a full workspace-global sweep inline — concurrent triple scans racing
+    each other on the write slots. A caller arriving mid-sweep marks the
+    workspace dirty and returns immediately (its chunks may have died
+    after the running sweep's read); the lock holder re-runs once before
+    releasing — a burst of N concurrent deletes costs 2 sweeps, not N.
+    The webui bulk-delete itself deletes serially (write-conflict storms,
+    ``28afb6c``) and owes ONE sweep after its whole batch
+    (``router._post_delete_hygiene``); inside one request this door is
+    never contended. The ``lock.locked()`` check and the pending-add are
+    atomic on the event loop (no await between them).
 
     Per-process only; cross-worker overlap is exactly what the CAS
     guards inside :func:`sweep_stale_source_refs` cover. Honest residue:

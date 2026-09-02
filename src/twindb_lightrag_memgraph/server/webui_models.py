@@ -440,7 +440,7 @@ class FolderPatch(_Base):
 
 
 # ---------------------------------------------------------------------------
-# KB portability admin jobs (KB-PORTABILITY-PLAN T3.1)
+# KB portability admin jobs (docs/adr/010-kb-portability-contract.md)
 # ---------------------------------------------------------------------------
 
 

@@ -109,6 +109,16 @@ async def _load_member_docs(_workspace: str, _folder: str) -> set[str]:
     return {"doc-a"}
 
 
+async def _load_folder_membership(
+    _workspace: str, _folder: str
+) -> tuple[set[str], dict[str, str]]:
+    # The live search body loads membership in ONE member-scoped read
+    # (graph_folder_membership_scoped.py); the baseline body above still
+    # issues the two reads it used to.
+    await _read("membership")
+    return {"doc-a"}, {"chunk-a": "doc-a"}
+
+
 async def _entity_mutation_gate(
     _workspace: str,
     _entity_id: str,
@@ -244,6 +254,7 @@ def _patch_graph_reads() -> dict[str, Any]:
         "_load_direct_member_entity_rows": _load_direct_member_entity_rows,
         "_load_chunk_to_doc_index": _load_chunk_to_doc_index,
         "_load_member_docs": _load_member_docs,
+        "_load_folder_membership": _load_folder_membership,
         "_entity_mutation_gate": _entity_mutation_gate,
     }
     originals = {name: getattr(graph_reader, name) for name in replacements}
@@ -287,12 +298,13 @@ async def measure(iterations: int | None = None) -> list[dict[str, Any]]:
             "kind": "structural",
             "passed": (
                 live_state.reads.get("direct_members") == 1
-                and live_state.total_reads == 6
+                and live_state.total_reads == 5
                 and baseline_state.reads.get("direct_members") == 2
             ),
             "detail": (
-                "expected one direct-member read and six total reads with "
-                f"identical ordered labels; observed reads={live_state.reads}"
+                "expected one direct-member read and five total reads (the "
+                "chunk-index + member-docs pair is now one membership read) "
+                f"with identical ordered labels; observed reads={live_state.reads}"
             ),
         },
     ]

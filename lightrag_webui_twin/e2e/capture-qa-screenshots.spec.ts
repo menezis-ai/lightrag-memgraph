@@ -253,3 +253,31 @@ test('21 folder switcher', async ({ page }) => {
   });
   await shot(page, '21-folder-switcher');
 });
+
+test('22 settings portability', async ({ page }) => {
+  await boot(page);
+  await openTab(page, 'Settings');
+  await tryStep('open portability rail', async () => {
+    await page.getByTestId('settings-rail-portability').click();
+    await expect(page.getByTestId('settings-portability')).toBeVisible();
+    await page.waitForTimeout(500);
+  });
+  await shot(page, '22-settings-portability');
+});
+
+test('23 portability dry-run report', async ({ page }) => {
+  await boot(page);
+  await openTab(page, 'Settings');
+  await tryStep('run a dry-run', async () => {
+    await page.getByTestId('settings-rail-portability').click();
+    await page.getByTestId('portability-import-file').setInputFiles({
+      name: 'staging-kb.tar.gz',
+      mimeType: 'application/gzip',
+      buffer: Buffer.from('canonical twin-kb-bundle'),
+    });
+    await page.getByTestId('portability-import-start').click();
+    await expect(page.getByTestId('portability-report')).toBeVisible();
+    await page.waitForTimeout(500);
+  });
+  await shot(page, '23-portability-dry-run');
+});

@@ -299,6 +299,26 @@ class WebuiStore:
         await submit_activity_audit_event(stored)
         return stored
 
+    async def record_activities(
+        self, events: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """``record_activity`` for a batch: ONE ledger write, then the
+        regulatory projection per event, in order.
+
+        Same ledger and the same audit submissions as the per-event loop,
+        minus ``N - 1`` write-slot acquisitions and round-trips. The ledger
+        write is atomic (see ``MemgraphActivityStore.append_many``): on failure
+        nothing is recorded and nothing reaches the sink, where the loop would
+        have left a written-and-audited prefix.
+        """
+        stored = await self._activity_backend.append_many(events)
+
+        from ..audit import submit_activity_audit_event
+
+        for event in stored:
+            await submit_activity_audit_event(event)
+        return stored
+
     # -- OpenAPI -------------------------------------------------------
 
     def openapi(self) -> tuple[list[dict[str, Any]], str]:

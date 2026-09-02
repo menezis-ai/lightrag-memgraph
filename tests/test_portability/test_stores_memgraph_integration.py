@@ -164,6 +164,12 @@ async def seeded(monkeypatch):
                 "file_path": "a.txt",
                 "chunk_order_index": 0,
                 "tokens": 3,
+                "sidecar": {
+                    "type": "block",
+                    "id": "b1",
+                    "refs": [{"type": "block", "id": "b1"}],
+                },
+                "twin_block_boundaries": [{"block_id": "b1", "start": 0, "end": 11}],
             },
             "chunk-2": {
                 "content": "second chunk",
@@ -354,6 +360,14 @@ async def test_vectors_round_trip_without_embedding_calls(seeded):
         exported[0]["props"]["content"] == "plain chunk"
         and "embedding" not in exported[0]["props"]
     )
+    assert json.loads(exported[0]["props"]["sidecar"]) == {
+        "type": "block",
+        "id": "b1",
+        "refs": [{"type": "block", "id": "b1"}],
+    }
+    assert json.loads(exported[0]["props"]["twin_block_boundaries"]) == [
+        {"block_id": "b1", "start": 0, "end": 11}
+    ]
     assert again == exported
     assert await store.count(scope_b) == 2
     (row,) = [

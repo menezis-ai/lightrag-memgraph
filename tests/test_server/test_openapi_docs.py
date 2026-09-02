@@ -121,6 +121,27 @@ def test_portability_routes_are_admin_gated_and_documented(spec):
     assert report_hash["pattern"] == "^[0-9a-f]{64}$"
 
 
+def test_settings_api_spec_excludes_internal_catalogue_routes(monkeypatch):
+    monkeypatch.setenv("TWIN_CATALOG_URL", "https://catalogue.example.test")
+    monkeypatch.setenv("TWIN_CATALOG_INSTANCE_CREDENTIAL", "tck_test")
+    app = create_app()
+    documented = {
+        (method, path)
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
+        if method in _METHODS
+    }
+    internal = {
+        ("get", "/twin/api/catalog-profile"),
+        ("get", "/twin/api/linked-sources"),
+        ("post", "/twin/api/linked-sources"),
+        ("post", "/twin/api/linked-sources/preview"),
+        ("patch", "/twin/api/linked-sources/{link_id}"),
+        ("post", "/twin/api/linked-sources/{link_id}/disable"),
+    }
+    assert internal.isdisjoint(documented)
+
+
 def test_query_routes_advertise_the_folder_header(spec):
     # These handlers resolve the folder via resolve_folder_for_request()
     # instead of bind_request_folder — the documentary dependency must keep

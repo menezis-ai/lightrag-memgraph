@@ -6,4 +6,4 @@
 # the CI gate's one targeted transitive ignore is governed by
 # docs/security/python-jose-ecdsa-risk-acceptance.md.
 lightrag-hku==1.5.6
-pypdf==6.15.0
+pypdf==6.16.1

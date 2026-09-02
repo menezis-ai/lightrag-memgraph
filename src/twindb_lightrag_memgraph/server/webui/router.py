@@ -710,13 +710,28 @@ async def _purge_query_llm_cache(rag: Any) -> None:
         logger.warning("query-cache purge after document delete failed", exc_info=True)
 
 
-async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
+async def _delete_doc_from_rag(
+    rag: Any,
+    doc_id: str,
+    *,
+    hygiene: bool = True,
+    source_path: str | None = None,
+) -> None:
+    """Physically delete ``doc_id`` from LightRAG, then run the post-delete hygiene.
+
+    ``source_path`` is the doc's ``file_path`` when the caller already holds
+    the DocStatus record (the bulk path read it for its visibility check);
+    ``None`` resolves it here with one more read. ``hygiene=False`` defers the
+    workspace-level hygiene (query-cache purge + source_id sweep) to the
+    caller, which then owes ONE :func:`_post_delete_hygiene` after its last
+    physical delete — the bulk route's contract. Single deletes keep the
+    default and stay exactly as before.
+    """
     # Keep the source path before LightRAG removes the DocStatus row. Native
     # upload rejects a filename that is still present below INPUT_DIR, so a
     # successful last-folder delete must remove that source as well as vectors.
-    source_path: str | None = None
     get_doc = getattr(getattr(rag, "doc_status", None), "get_by_id", None)
-    if get_doc is not None:
+    if source_path is None and get_doc is not None:
         try:
             doc = await get_doc(doc_id)
             if isinstance(doc, dict) and doc.get("file_path"):
@@ -773,25 +788,39 @@ async def _delete_doc_from_rag(rag: Any, doc_id: str) -> None:
                 doc_id,
                 source_path,
             )
-    # A physically-deleted doc must stop being cited by cached answers.
+    if hygiene:
+        await _post_delete_hygiene(rag, doc_id=doc_id)
+
+
+async def _post_delete_hygiene(rag: Any, *, doc_id: str | None = None) -> None:
+    """The workspace-level hygiene every physical delete owes — ONCE per batch.
+
+    Two best-effort steps, neither may fail the delete that triggered them:
+    the query LLM cache is purged (a physically-deleted doc must stop being
+    cited by cached answers) and the source_id sweep runs (OVH audit §4:
+    LightRAG's rebuild leaves dead chunk refs in entity / relation
+    ``source_id`` forever; the next delete retries a failed sweep by
+    construction). Both are workspace-global and idempotent, so a batch of
+    physical deletes owes them once, after its last delete, not once per
+    document: the bulk route deletes serially (write-conflict storms,
+    ``28afb6c``), so per-document hygiene meant N full three-scan sweeps and
+    N cache drops per request, while the coalescing front door in
+    ``graph_reader.request_source_ref_sweep`` — written for a concurrent loop
+    — never engaged inside one request. It still protects concurrent requests
+    in one worker. ``doc_id`` is for logging only.
+    """
     await _purge_query_llm_cache(rag)
-    # OVH audit §4: LightRAG's rebuild leaves dead chunk refs in entity /
-    # relation source_id forever. Best-effort hygiene sweep — a sweep
-    # failure must never fail the user's delete (the next delete retries
-    # it by construction, the sweep is workspace-global and idempotent).
     try:
         from .. import graph_reader
         from ..._constants import resolve_workspace
 
         workspace = getattr(rag, "workspace", "") or resolve_workspace()
-        # Coalescing front door: bulk-delete gathers up to 500 concurrent
-        # deletes — a burst must cost 2 sweeps, not N.
         await graph_reader.request_source_ref_sweep(workspace)
     except Exception:
         logger.exception(
-            "webui: post-delete source_id hygiene sweep failed (doc %s); "
+            "webui: post-delete source_id hygiene sweep failed (%s); "
             "the delete itself succeeded",
-            doc_id,
+            f"doc {doc_id}" if doc_id else "bulk batch",
         )
 
 

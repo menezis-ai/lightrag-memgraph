@@ -66,6 +66,11 @@ PERF_BENCHMARKS = [
     "graph_native_membership_gather",
     "chunk_route_source_links_gather",
     "quota_snapshot_gather",
+    "graph_folder_membership_scoped",
+    "document_metadata_gather",
+    "bulk_retag_activity_batch",
+    "bulk_delete_hygiene_once",
+    "api_key_schema_initialize_once",
     # Structural-only: it measures cross-route contention on the SHARED read
     # pool, whose wall-clock is meaningless on a contended runner. It asserts
     # the two load-independent properties (read count unchanged, graph fan-out

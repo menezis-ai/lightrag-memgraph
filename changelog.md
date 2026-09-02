@@ -8,6 +8,52 @@
 
 ## Unreleased — 1.2.0
 
+### KB portability preserves chunk provenance (2026-09-02)
+- Allow the LightRAG `sidecar` block references and Twin
+  `twin_block_boundaries` structural-citation offsets in the closed
+  `vec.chunks` portability schema. The export still refuses every undeclared
+  property, but no longer rejects a workspace merely because it contains
+  chunks produced by the qualified LightRAG 1.5.x preconverted-parse path.
+- Cover the persisted JSON representation and a real Memgraph vector
+  export/import/export round trip so a promoted KB cannot silently lose its
+  structural citation fidelity.
+
+### KB portability v1 contract accepted (2026-09-02)
+- Record the final operator approval of the canonical `twin-kb-bundle` v1
+  contract in ADR 010 and retire the completed implementation plan. The
+  maintenance-window, empty-target and successful-validation requirements
+  remain binding; no real BNP promotion is claimed.
+- Move the non-blocking first overlay-store PostgreSQL proof to Forgejo issue
+  #491. It must preserve the `PortableStore` schema, fingerprint and normalized
+  state hash and does not move the LightRAG/Memgraph data plane.
+
+### Internal catalogue API contract hardening (2026-09-02)
+- Keep the six Twin-instance catalogue integration operations callable but
+  remove them from the OpenAPI document consumed by Settings → API. The two
+  internal routers exclude each operation explicitly, while their existing
+  `tcp_`/`tck_` authentication remains unchanged and direct route tests prove
+  the hidden handlers are still callable.
+- Align the metadata-only profile boundary with the platform's five-folder
+  maximum and the catalogue consumer's `128`/`160`/`64` character bounds for
+  folder id, label and kind. Oversized instance metadata now returns an
+  explicit 503 instead of producing a profile that the catalogue rejects
+  later as invalid; no field is silently truncated.
+- Pin one shared `catalog_profile_v1.json` fixture in both distributions so
+  producer and consumer validation exercise the same versioned wire shape.
+  Profile credential issuance remains on the single administrator-gated API
+  key route; no duplicate secret-minting path is introduced.
+
+### pypdf 6.16.1 — three advisories on the production pin (2026-09-02)
+- **`pypdf` raised from 6.15.0 to 6.16.1** in the production target
+  (`requirements/prod-target.txt`) and the compiled production constraints:
+  `pip-audit` reports CVE-2026-84309 (fixed in 6.16.0), CVE-2026-84310 and
+  CVE-2026-84311 (fixed in 6.16.1) against 6.15.0, which failed the
+  `python-audit` gate. The package floors move with it (`pypdf>=6.16.1` in
+  the `server` and `procedure` extras) and so does the dev security floor, so
+  an environment still holding 6.15.0 no longer satisfies the package
+  contract. PDF text extraction in `_procedure.py` is the only consumer; the
+  conversion, procedure and offline-vision suites pass unchanged on 6.16.1.
+
 ### Procedure review queue survives a malformed bundle (2026-08-31)
 - **One type-drifted record no longer 500s the whole review queue.**
   `GET /twin/api/procedures` projected `track_id`, `classification`,

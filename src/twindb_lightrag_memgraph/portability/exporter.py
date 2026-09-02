@@ -1,4 +1,7 @@
-"""Workspace export orchestrator (KB-PORTABILITY-PLAN §4 / T1.4)."""
+"""Workspace export orchestrator (ADR 010, decision 4).
+
+Design record: ``docs/adr/010-kb-portability-contract.md``.
+"""
 
 from __future__ import annotations
 
