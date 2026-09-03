@@ -27,9 +27,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import require_repo_path
+
 yaml = pytest.importorskip("yaml")
 
-WORKFLOW = Path(__file__).resolve().parents[1] / ".forgejo" / "workflows" / "ci.yml"
+WORKFLOW = require_repo_path(".forgejo/workflows/ci.yml")
 
 #: ``docker run ... sh -lc '`` … the payload … ``'`` — non-greedy up to the
 #: first line that is only whitespace plus a closing quote, which is how every
@@ -93,20 +95,42 @@ def test_every_shell_block_parses(job: str, run: str, tmp_path: Path):
         ), f"job {job} {label} is not valid shell:\n{result.stderr}"
 
 
-def test_the_coverage_floor_job_gates_on_a_source_root():
+def test_the_catalog_coverage_gate_keeps_its_source_root():
     """Without ``--source-root`` the gate judges only what the report happens
-    to contain, which is the no-op this whole job exists to prevent."""
+    to contain, which is the no-op the gate exists to prevent.
+
+    Scoped to ``catalog-tests`` since 2026-09-03: the root ``coverage-floor``
+    job was removed (it re-ran both full suites to compute a percentage — see
+    AGENTS.md). ``scripts/coverage_floor.py`` still gates services/twin_catalog,
+    so the inventory requirement still has a live caller to protect.
+    """
+    run = _workflow()["jobs"]["catalog-tests"]["steps"][-1]["run"]
+    assert "coverage_floor.py" in run, "catalog-tests no longer runs the gate"
+    assert "--source-root" in run, "catalog-tests runs the gate without an inventory"
+
+
+def test_ci_success_gates_on_every_job_it_names():
+    """``needs`` and the assertion list must not drift apart.
+
+    Replaces the coverage-floor-specific check. Two ways to silently lose a
+    gate: name a job in ``needs`` and forget to assert its result (it becomes
+    documentation), or drop a job and leave a dangling ``needs`` (the workflow
+    stops scheduling). Both are caught here rather than by a runner.
+    """
     jobs = _workflow()["jobs"]
-    for name in ("coverage-floor", "catalog-tests"):
-        run = jobs[name]["steps"][-1]["run"]
-        assert "coverage_floor.py" in run, f"{name} no longer runs the gate"
-        assert "--source-root" in run, f"{name} runs the gate without an inventory"
+    ci_success = jobs["ci-success"]
+    needs = ci_success["needs"]
+    assertions = ci_success["steps"][0]["run"]
 
+    dangling = [name for name in needs if name not in jobs]
+    assert not dangling, f"ci-success needs jobs that do not exist: {dangling}"
 
-def test_the_coverage_floor_job_blocks_ci_success():
-    """A gate outside ``ci-success`` is documentation, not a gate."""
-    ci_success = _workflow()["jobs"]["ci-success"]
-    assert "coverage-floor" in ci_success["needs"]
-    assert (
-        'needs.coverage-floor.result }}" = "success"' in ci_success["steps"][0]["run"]
+    unasserted = [
+        name
+        for name in needs
+        if f'needs.{name}.result }}}}" = "success"' not in assertions
+    ]
+    assert not unasserted, (
+        "ci-success names these jobs in `needs` but never asserts their result, "
+        f"so they gate nothing: {unasserted}"
     )

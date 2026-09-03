@@ -1,0 +1,3 @@
+{"entity_id":"Acme","labels":["Organization"],"props":{"created_at":1,"description":"Acme golden","entity_type":"Organization","file_path":"golden-one.txt","source_id":"chunk-1"}}
+{"entity_id":"Alice","labels":["Person"],"props":{"created_at":1,"description":"Alice golden","entity_type":"Person","file_path":"golden-one.txt","source_id":"chunk-1"}}
+{"entity_id":"Bob","labels":["Person"],"props":{"created_at":1,"description":"Bob golden","entity_type":"Person","file_path":"golden-one.txt","source_id":"chunk-1"}}

@@ -1,0 +1,1 @@
+{"embedding":[0.529411792755127,0.3490196168422699,0.05098039284348488,-0.8823529481887817],"id":"rel-alice-bob","props":{"content":"Alice knows Bob","description":"Alice knows Bob","file_path":"golden-one.txt","keywords":"knows","source_id":"chunk-1","src_id":"Alice","tgt_id":"Bob","weight":1}}

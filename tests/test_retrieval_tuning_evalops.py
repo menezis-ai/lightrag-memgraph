@@ -5,8 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts import retrieval_tuning_probe as probe
-from scripts import retrieval_tuning_summarize as summarize
+from tests._repo_only import require_repo_path
+
+require_repo_path("scripts")
+
+from scripts import retrieval_tuning_probe as probe  # noqa: E402
+from scripts import retrieval_tuning_summarize as summarize  # noqa: E402
 
 
 def _row(

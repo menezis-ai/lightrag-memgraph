@@ -1,0 +1,2 @@
+{"entity_id":"Alice","folder":"gf1","kind":"entity","props":{"deleted":true,"description":"curated"}}
+{"folder":"gf1","kind":"relation","props":{"deleted":false,"keywords":"curated"},"src":"Acme","tgt":"Alice"}

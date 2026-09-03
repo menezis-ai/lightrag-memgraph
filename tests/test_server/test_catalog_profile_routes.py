@@ -27,6 +27,7 @@ from twindb_lightrag_memgraph.server.catalog_profile_routes import (
     build_catalog_profile_router,
 )
 from twindb_lightrag_memgraph.server.idp_jwt import configure_idp
+from tests._repo_only import require_repo_path
 from twindb_lightrag_memgraph.server.webui import router as webui_router_impl
 from twindb_lightrag_memgraph.server.webui_seed import DOCUMENTS
 
@@ -317,6 +318,12 @@ async def test_catalog_profile_is_internal_but_remains_callable():
 
 
 def test_catalog_profile_v1_fixture_matches_producer_contract():
+    # The producer is a separate distribution: services/ is not in the BNP
+    # export, which ships tests/ but not the catalogue it cross-checks.
+    require_repo_path(
+        "services/twin_catalog/tests/fixtures/catalog_profile_v1.json",
+        module_level=False,
+    )
     profile = CatalogProfile.model_validate_json(
         _PROFILE_V1_FIXTURE.read_text(encoding="utf-8")
     )

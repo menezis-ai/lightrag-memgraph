@@ -8,6 +8,8 @@ import sys
 
 import pytest
 
+from tests._repo_only import require_repo_path  # noqa: E402
+
 _SCANNER_PATH = Path(__file__).with_name("export_hygiene.py")
 _SCANNER_SPEC = importlib.util.spec_from_file_location("export_hygiene", _SCANNER_PATH)
 assert _SCANNER_SPEC is not None and _SCANNER_SPEC.loader is not None
@@ -120,7 +122,7 @@ def test_scan_fails_closed_when_walk_cannot_enter_a_subdirectory(
 
 
 def test_export_procedure_runs_the_scan_on_its_current_tree() -> None:
-    procedure = Path("EXPORT_PROCEDURE.md").read_text()
+    procedure = require_repo_path("EXPORT_PROCEDURE.md", module_level=False).read_text()
 
     assert "python tests/export_hygiene.py ." in procedure
     assert "root `.git` control entry" in procedure

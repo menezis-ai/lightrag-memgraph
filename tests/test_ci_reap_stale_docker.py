@@ -25,6 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import require_repo_path
+
+# Drives the shipped CI reaper script, which the export excludes.
+require_repo_path("scripts/ci_reap_stale_docker.sh")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "ci_reap_stale_docker.sh"
 

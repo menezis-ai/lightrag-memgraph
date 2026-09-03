@@ -559,7 +559,6 @@ src/twindb_lightrag_memgraph/
 lightrag_webui_twin/          React operator WebUI.
 tests/                        Python unit/integration suites.
 tests/smoke/                  Stdlib deployed-runtime smoke runner.
-scripts/release_sbom.py       Deterministic CycloneDX merge/verify/archive helper.
 docs/operations/              Install/runbook material.
 docs/test-doctrine-*.md       Compatibility and graph test doctrine.
 services/twin_catalog/        Separate distribution: central KB catalogue + RAG 1.5

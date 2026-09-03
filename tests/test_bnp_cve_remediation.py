@@ -1,5 +1,10 @@
 from pathlib import Path
 
+from tests._repo_only import require_repo_path
+
+# Asserts on the private BNP pipeline and Dockerfile; the export ships neither.
+require_repo_path(".gitlab-ci.yml")
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

@@ -1,0 +1,2 @@
+{"created_at":"2026-09-03T01:37:24.818910+00:00","id":"doc-1","updated_at":"2026-09-03T01:37:24.818910+00:00","value":{"content":"golden document one","nested":{"é":[1,1.5]}}}
+{"created_at":"2026-09-03T01:37:24.818910+00:00","id":"doc-2","updated_at":"2026-09-03T01:37:24.818910+00:00","value":{"content":"golden document two"}}

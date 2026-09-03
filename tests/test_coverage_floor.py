@@ -18,7 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from scripts import coverage_floor
+from tests._repo_only import require_repo_path
+
+require_repo_path("scripts")
+
+from scripts import coverage_floor  # noqa: E402
 
 
 def _summary(pct: float, statements: int = 10, missing: int | None = None) -> dict:

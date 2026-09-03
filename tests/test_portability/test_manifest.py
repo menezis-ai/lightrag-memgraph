@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from functools import cache
 
 import jsonschema
 import pytest
@@ -23,19 +23,23 @@ from twindb_lightrag_memgraph.portability.manifest import (
     validate_bundle_path,
 )
 
+from tests._repo_only import require_repo_path
+
 from ._fixtures import SHA_A, manifest_dict, sealed_manifest_dict
 
-SCHEMA = json.loads(
-    (
-        Path(__file__).resolve().parents[2]
-        / "docs/templates/kb-bundle.manifest.schema.json"
-    ).read_text()
-)
-_VALIDATOR = jsonschema.Draft202012Validator(SCHEMA)
+
+@cache
+def _validator() -> jsonschema.Draft202012Validator:
+    """Loaded on first use: the published schema lives under docs/, which the
+    BNP export does not ship, so only the schema assertions skip there."""
+    path = require_repo_path(
+        "docs/templates/kb-bundle.manifest.schema.json", module_level=False
+    )
+    return jsonschema.Draft202012Validator(json.loads(path.read_text()))
 
 
 def _schema_errors(data: dict) -> list[str]:
-    return [e.message for e in _VALIDATOR.iter_errors(data)]
+    return [e.message for e in _validator().iter_errors(data)]
 
 
 def _reseal(data: dict) -> dict:

@@ -13,6 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import require_repo_path
+
+# The catalogue is a separate distribution and is not in the BNP export.
+require_repo_path("services/twin_catalog")
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "lightrag_webui_twin" / "src" / "styles"
 COPY = ROOT / "services" / "twin_catalog" / "admin-ui" / "src" / "twin"

@@ -1,0 +1,2 @@
+{"folder_id":"gf1","id":"event-gf1","origin":{"workspace":"golden_source"},"value":{"actor":{"user":"fixture-freeze"},"id":"event-gf1","kind":"document.updated","sev":"info","summary":"Updated One","target":{"id":"doc-gf1","label":"One"},"ts":"2026-09-03T10:00:05Z"}}
+{"folder_id":"gf2","id":"event-gf2","origin":{"workspace":"golden_source"},"value":{"actor":{"user":"fixture-freeze"},"id":"event-gf2","kind":"document.updated","sev":"info","summary":"Updated Two","target":{"id":"doc-gf2","label":"Two"},"ts":"2026-09-03T10:00:05Z"}}

@@ -1,0 +1,2 @@
+{"props":{"keywords":"employs","twin_folder_json":"[\"gf1\"]","twin_props_json":"{}","twin_relation_id":"kr_golden","weight":0.5},"src":"Acme","tgt":"Alice"}
+{"props":{"created_at":1,"description":"knows","file_path":"golden-one.txt","keywords":"knows","source_id":"chunk-1","weight":1},"src":"Alice","tgt":"Bob"}
