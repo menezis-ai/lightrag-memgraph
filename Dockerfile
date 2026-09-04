@@ -5,10 +5,9 @@
 # build is performed in the BNP runtime image.
 FROM fr2.icr.io/a100575-hprd/hkuds/lightrag:v1.5.6
 
-# Release builds pass --build-arg TWIN_RELEASE_COMMIT=<full SHA>. The private
-# SBOM gate rejects an image whose immutable digest does not carry the matching
-# OCI revision. "unversioned" keeps local development builds possible while
-# making them deliberately ineligible for release evidence.
+# Release builds pass --build-arg TWIN_RELEASE_COMMIT=<full SHA> so the image
+# carries the release commit as its OCI revision. "unversioned" keeps local
+# development builds possible while marking them as such.
 ARG TWIN_RELEASE_COMMIT=unversioned
 LABEL org.opencontainers.image.revision="${TWIN_RELEASE_COMMIT}"
 

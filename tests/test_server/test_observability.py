@@ -1,4 +1,4 @@
-"""Contracts for issues #119 (JSON/ECS logs) and #121 (Prometheus)."""
+"""Contracts for JSON/ECS logs and dependency-free runtime counters."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from prometheus_client.parser import text_string_to_metric_families
-
 from twindb_lightrag_memgraph import _pool
 from twindb_lightrag_memgraph.server.app import create_app
 from twindb_lightrag_memgraph.server.metrics import (
@@ -20,6 +18,7 @@ from twindb_lightrag_memgraph.server.metrics import (
     record_audit_event,
     reset_metrics,
 )
+from twindb_lightrag_memgraph.server.metrics_routes import build_metrics_router
 from twindb_lightrag_memgraph.server.observability import (
     TwinJsonFormatter,
     bind_request_context,
@@ -433,31 +432,24 @@ def test_json_logging_is_configuration_gated(monkeypatch):
         runtime_logger.removeHandler(handler)
 
 
-def test_prometheus_endpoint_is_authenticated_parseable_and_low_cardinality():
+def test_json_metrics_endpoint_is_authenticated_and_process_local():
     reset_metrics()
     client = TestClient(_app(api_key="metrics-secret"))
 
-    assert client.get("/twin/api/ops/metrics/prometheus").status_code == 401
+    assert client.get("/twin/api/ops/metrics").status_code == 401
     headers = {"Authorization": "Bearer metrics-secret"}
     assert client.get("/health", headers=headers).status_code == 200
     assert client.get("/twin/api/documents", headers=headers).status_code == 200
-    response = client.get("/twin/api/ops/metrics/prometheus", headers=headers)
+    response = client.get("/twin/api/ops/metrics", headers=headers)
 
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/plain")
-    families = list(text_string_to_metric_families(response.text))
-    samples = [sample for family in families for sample in family.samples]
-    request_samples = [s for s in samples if s.name == "twin_http_requests_total"]
-    assert request_samples
-    assert {s.labels["route_group"] for s in request_samples} >= {
-        "health",
-        "documents",
-    }
-    assert all(
-        set(s.labels) <= {"route_group", "method", "status_class"}
-        for s in request_samples
-    )
-    assert all("path" not in s.labels for s in samples)
+    snapshot = response.json()
+    assert snapshot["requests_total"] >= 2
+    assert snapshot["auth_rejects_total"] == 1
+    assert all(isinstance(value, int) for value in snapshot.values())
+
+    paths = {route.path for route in build_metrics_router().routes}
+    assert paths == {"/ops/metrics"}
 
 
 def test_metrics_reset_isolates_http_audit_and_storage_counters():

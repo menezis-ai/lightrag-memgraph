@@ -930,8 +930,8 @@ def build_health_shim(get_rag) -> APIRouter:
     """Build a separate router for ``/health`` shadow.
 
     Kept distinct so we can omit it (``shim_health=False``) when an
-    operator wants to keep LightRAG's rich health payload — e.g. for
-    Prometheus scraping that already parses the native shape.
+    operator wants to keep LightRAG's rich health payload — e.g. for an
+    existing monitoring probe that already parses the native shape.
     """
     router = APIRouter(tags=["twin-shim"])
 

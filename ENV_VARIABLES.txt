@@ -573,23 +573,16 @@ TWIN_SERVICE_VERSION         JSON `service.version`. Default: installed package
                              service-version convention.
 TWIN_ENV                     JSON `service.environment`; also controls the
                              fail-closed production auth switch in section 3.
-PROMETHEUS_MULTIPROC_DIR     Optional directory for official prometheus-client
-                             multi-worker aggregation. It MUST be configured
-                             before Python imports the server, writable by all
-                             workers, and emptied by the process manager before
-                             each start. Leave unset for the default mono-process
-                             runtime.
 
 Authenticated operator endpoints under LIGHTRAG_WEBUI_API_PREFIX:
-  GET /ops/metrics             stable JSON compatibility counters
-  GET /ops/metrics/prometheus  Prometheus text exposition
+  GET /ops/metrics           stable process-local JSON counters
 
-Prometheus labels use fixed route/method/status vocabularies; raw paths, folder
-ids, users and document ids are never labels. Request/auth/quota/storage counts
-and route-group latency are live. Activity events are validated against the
-shipped AuditEvent v1 contract, so audit_invalid_total is live now. Audit drops
-and queue depth become live only when the durable exporter (#122) installs its
-sink/queue. Technical logs never replace that business/regulatory contract.
+Request/auth/quota/storage counts are live. The snapshot is process-local and
+is not aggregated across gunicorn workers. Activity events are validated
+against the shipped AuditEvent v1 contract, so audit_invalid_total is live now.
+Audit drops and queue depth become live only when the durable exporter (#122)
+installs its sink/queue. Technical logs and counters never replace that
+business/regulatory contract.
 
 --------------------------------------------------------------------------------
 9. INTELLIGENCE LAYER (optional [intelligence] extra) — prefix TWIN_RAG_

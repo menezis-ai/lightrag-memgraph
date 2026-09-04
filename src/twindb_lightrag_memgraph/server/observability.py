@@ -213,7 +213,7 @@ def set_request_auth_method(method: str, actor: str | None = None) -> None:
 
 def route_group(path: str) -> str:
     """Map request paths to a fixed, low-cardinality route vocabulary."""
-    if path.endswith("/ops/metrics") or path.endswith("/ops/metrics/prometheus"):
+    if path.endswith("/ops/metrics"):
         return "metrics"
     if path in {"/health", "/ready"} or path.endswith("/health"):
         return "health"

@@ -321,7 +321,7 @@ Twin overlay routes live under `/twin/api`. Main groups:
 | Graph | `/graph/entities`, `/graph/relations`, `/graph/search` |
 | Activity/notifications | `/activity`, `/notifications` |
 | Settings | `/settings/api-keys` |
-| Ops | `/quota`, `/ops/metrics`, `/ops/metrics/prometheus`, `/health` |
+| Ops | `/quota`, `/ops/metrics`, `/health` |
 
 For route-level contracts, prefer the tests and generated OpenAPI over copying
 large tables into this README.
@@ -581,9 +581,9 @@ services/twin_catalog/        Separate distribution: central KB catalogue + RAG 
   dual-written as a rollback/migration safety net.
 - Hard-isolated folders with separate physical graph labels are not implemented;
   current folders are relational cloisonnement over one physical workspace.
-- JSON technical logs and Prometheus metrics do not constitute the durable
-  regulatory audit trail. Activity events are projected and validated against
-  the shipped `AuditEvent` v1 schema; invalid projections are counted now, but
-  drop counts and queue depth become live only when the #122 sink is installed.
-  No durable export or retention is implemented yet, so do not infer either
-  from `/ops/metrics/prometheus`.
+- JSON technical logs and process-local operational counters do not constitute
+  the durable regulatory audit trail. Activity events are projected and
+  validated against the shipped `AuditEvent` v1 schema; invalid projections
+  are counted now, but drop counts and queue depth become live only when the
+  #122 sink is installed. No durable export or retention is implemented yet,
+  so do not infer either from `/ops/metrics`.

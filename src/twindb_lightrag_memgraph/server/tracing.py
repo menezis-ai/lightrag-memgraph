@@ -58,11 +58,10 @@ except ImportError:
     pass
 
 
-# Keep the historical metric re-exports without making Prometheus a runtime
-# dependency of the dependency-light tracing context.  In particular, the
+# Keep the historical metric re-exports without eagerly loading the server
+# counters from the dependency-light tracing context. In particular, the
 # intelligence extra imports this module for L3 correlation on every provider
-# attempt; it must not load ``server.metrics`` unless a caller actually uses a
-# metric helper.
+# attempt; it need not load ``server.metrics`` unless a caller uses a helper.
 def increment_metric(name: str, amount: int = 1) -> None:
     from .metrics import increment_metric as _increment_metric
 

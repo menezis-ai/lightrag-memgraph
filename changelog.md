@@ -8,6 +8,16 @@
 
 ## Unreleased — 1.2.0
 
+### Remove Prometheus from the Twin runtime (2026-09-04)
+- Remove the `prometheus-client` dependency from every package extra and from
+  the production/development constraints. Mounting the server overlay now uses
+  standard-library counters only and no longer fails when the BNP base image
+  does not provide that external package.
+- Remove `/twin/api/ops/metrics/prometheus` and
+  `PROMETHEUS_MULTIPROC_DIR`. Keep the authenticated
+  `/twin/api/ops/metrics` JSON snapshot in both server topologies, explicitly
+  process-local and without cross-worker aggregation.
+
 ### KB portability preserves chunk provenance (2026-09-02)
 - Allow the LightRAG `sidecar` block references and Twin
   `twin_block_boundaries` structural-citation offsets in the closed

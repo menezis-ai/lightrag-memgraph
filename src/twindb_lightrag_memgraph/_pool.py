@@ -75,11 +75,10 @@ _storage_metric_recorder: Callable[[str], None] | None = None
 def set_storage_metric_recorder(
     recorder: Callable[[str], None] | None,
 ) -> None:
-    """Install the optional server metrics hook without adding a storage dep.
+    """Install the optional server counter hook without adding a storage dep.
 
-    Storage-only installs do not carry ``prometheus-client``.  The server extra
-    registers this callback when its metrics module is imported; otherwise the
-    write path remains behavior-identical.
+    The server registers this callback when its metrics module is imported;
+    otherwise the write path remains behavior-identical.
     """
     global _storage_metric_recorder
     _storage_metric_recorder = recorder

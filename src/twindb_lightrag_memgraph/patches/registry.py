@@ -3918,9 +3918,9 @@ def _mount_twin_subapp(
 
     app.include_router(system_info_router, prefix=prefix)
 
-    # Technical observability is a both-surfaces contract.  The standalone
-    # factory mounts the same JSON + Prometheus routes; production reaches this
-    # hand-maintained overlay list and must not silently lose them.
+    # Technical observability is a both-surfaces contract. The standalone
+    # factory mounts the same JSON counter route; production reaches this
+    # hand-maintained overlay list and must not silently lose it.
     from ..server.metrics_routes import build_metrics_router
 
     app.include_router(
