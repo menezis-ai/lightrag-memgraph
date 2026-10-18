@@ -12,7 +12,7 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 
 - Python `>= 3.10`
 - Memgraph `>= 3.2` with [MAGE](https://memgraph.com/docs/mage); **3.13.2 recommended**. Legacy native ANN limitations are documented below.
-- `lightrag-hku >= 1.4.9, < 1.5.0` (LightRAG 1.5 requires a separate adapter migration)
+- `lightrag-hku >= 1.4.9, < 1.6.0` (latest qualified stable release: **1.5.7**)
 - `neo4j >= 5.0.0, < 7.0.0` (Bolt driver, compatible with Memgraph)
 
 ## Installation
@@ -20,6 +20,36 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 ```bash
 pip install twindb-lightrag-memgraph
 ```
+
+### LightRAG 1.5 compatibility
+
+Version 0.6.0 supports the 1.5 document-status contracts while retaining 1.4.x
+compatibility and existing data. Scheduling uses bounded `(created_at, id)`
+keyset pages and a lightweight projection; full records are hydrated in batches.
+Creation timestamps are immutable on updates. Strict reads propagate database
+and decode failures, so failed reads cannot be mistaken for absent documents.
+Native partial updates support pipeline stage metadata without loading chunk lists.
+
+Filename/source resolution distinguishes absent, unique and conflicting primary
+documents, ignoring duplicate markers. Content-hash lookup selects the earliest
+holder and excludes both the requesting document and markers that point to it.
+`content_hash`, parsing/analyzing statuses and arbitrary stage metadata persist;
+multi-status listing uses the `status_filters=` keyword alongside the legacy
+`status_filter` argument. New methods import 1.5 types lazily to preserve 1.4 installs.
+
+The adapter writes immediately. Upstream deferred-index cleanup remains a no-op
+for these backends; graph writes retain upstream keyed locks and recovery anchors.
+LightRAG's optional source-conflict enumeration/repair tools are not implemented:
+the upstream base methods raise `StorageCapabilityError`. Conflicts remain explicit
+and are never resolved by choosing or deleting a primary automatically.
+
+Reviewed the stable release notes from
+[1.5.0](https://github.com/HKUDS/LightRAG/releases/tag/v1.5.0) through
+[1.5.7](https://github.com/HKUDS/LightRAG/releases/tag/v1.5.7), and the tagged
+[storage contracts](https://github.com/HKUDS/LightRAG/blob/v1.5.7/lightrag/base.py).
+Parser/chunker improvements, role-specific LLMs, cancellation, UI branding and
+the `/workspace` entry are upstream features; this package supplies storage and
+does not bundle or qualify those application features.
 
 For local development:
 
@@ -292,9 +322,17 @@ MEMGRAPH_IMAGE=memgraph/memgraph-mage:3.8.1 docker compose up -d
 
 Run integration tests only against an isolated test database: they create and
 delete test namespaces. `MEMGRAPH_URI` enables them; without it, integration
-tests are skipped. The CI matrix has twelve jobs: Memgraph **3.2.1, 3.8.1,
-3.9.0, 3.11.0, 3.12.0 and 3.13.2**, each with Python 3.10 / LightRAG 1.4.9 / Neo4j 5.x
-and Python 3.12 / current LightRAG 1.4.x / Neo4j 6.x. Each job checks source
+tests are skipped. The CI matrix has 24 jobs: Memgraph **3.2.1, 3.8.1,
+3.9.0, 3.11.0, 3.12.0 and 3.13.2**, each with these pinned dependency profiles:
+
+| Profile | Python | LightRAG | Neo4j driver |
+|---------|--------|----------|--------------|
+| Minimum | 3.10 | 1.4.9 | 5.x |
+| Legacy | 3.12 | 1.4.16 | 6.x |
+| First 1.5 | 3.10 | 1.5.0 | 5.x |
+| Current | 3.12 | 1.5.7 | 6.x |
+
+Each job checks source
 with Ruff, builds the sdist and wheel, installs the wheel, verifies the public import surface,
 and tests that installed package. JUnit reports are retained as CI artifacts.
 
@@ -313,9 +351,9 @@ known failure (`xfail`) on pre-3.4 engines, preventing a native crash from
 interrupting the remaining contract tests. The CI runs load checks on 3.8.1,
 3.9.0, 3.11.0, 3.12.0 and 3.13.2; use a current server for production load.
 
-The GitHub compatibility matrix tests installed public wheels on Python 3.10
-with LightRAG 1.4.9 / Neo4j 5.x, and Python 3.12 with LightRAG 1.4.x / Neo4j
-6.x. Its storage-only artifact is checked in an isolated Python environment.
+All four profiles test installed public wheels in isolated Python environments.
+The minimum profile runs storage contracts; the others run the full regression
+suite. Load checks run on the current profile and modern engines.
 
 ## License
 

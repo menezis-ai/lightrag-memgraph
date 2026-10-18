@@ -25,12 +25,17 @@ class TestRegister:
 
         original = object()
         monkeypatch.setattr(operate, "merge_nodes_and_edges", original)
-        monkeypatch.setattr(lr_module, "merge_nodes_and_edges", original)
+        # LightRAG 1.5.0 imports merge inside pipeline helpers; later releases
+        # and 1.4.x also expose a module-level import site.
+        module_entry_point = hasattr(lr_module, "merge_nodes_and_edges")
+        if module_entry_point:
+            monkeypatch.setattr(lr_module, "merge_nodes_and_edges", original)
         monkeypatch.setattr(twindb_lightrag_memgraph, "_registered", False)
         twindb_lightrag_memgraph.register()
 
         assert operate.merge_nodes_and_edges is original
-        assert lr_module.merge_nodes_and_edges is original
+        if module_entry_point:
+            assert lr_module.merge_nodes_and_edges is original
 
     def test_register_exposes_package_version_once(self, monkeypatch):
         import lightrag
