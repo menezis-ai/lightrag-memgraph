@@ -23,10 +23,29 @@ def _make_store():
     store.cosine_better_than_threshold = 0.2
     store.embedding_func = MagicMock()
     store.embedding_func.embedding_dim = 1024
+    store._vector_config = {"capacity": 100_000}
+    store.capabilities = None
     return store
 
 
 class TestQueryMissingIndex:
+    async def test_missing_index_retry_reuses_query_embedding(self):
+        store = _make_store()
+        embedding = [0.1, 0.2, 0.3, 0.4]
+        store.embedding_func.func = AsyncMock(return_value=[embedding])
+        store._query_vector_once = AsyncMock(
+            side_effect=[Exception("Vector index does not exist"), []]
+        )
+        store._create_vector_index = AsyncMock()
+
+        assert await store.query("test", 5) == []
+        store.embedding_func.func.assert_awaited_once_with(["test"])
+        assert store._query_vector_once.await_count == 2
+        assert all(
+            call.args[2] == embedding
+            for call in store._query_vector_once.await_args_list
+        )
+
     async def test_auto_creates_and_retries(self):
         """query() should auto-create the index and retry the search."""
         store = _make_store()

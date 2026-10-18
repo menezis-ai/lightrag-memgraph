@@ -1,6 +1,7 @@
 include README.md
 include LICENSE
 include pyproject.toml
+include CHANGELOG.md
 
 recursive-include src/twindb_lightrag_memgraph *.py
 recursive-exclude tests *

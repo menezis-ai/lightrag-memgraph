@@ -20,7 +20,7 @@ class ConsumeTracker:
     def __init__(self):
         self.count = 0
 
-    def make_session_factory(self):
+    def make_session_factory(self, *, vector_index=None, index_exists=False):
         tracker = self
 
         @asynccontextmanager
@@ -28,7 +28,14 @@ class ConsumeTracker:
             session = AsyncMock()
 
             async def tracking_run(query, **params):
+                nonlocal index_exists
                 result = AsyncMock()
+                if query.lstrip().startswith("CREATE VECTOR INDEX"):
+                    index_exists = True
+                if query == "SHOW VECTOR INDEX INFO":
+                    result.__aiter__.return_value = (
+                        [vector_index] if index_exists and vector_index else []
+                    )
                 original = result.consume
 
                 async def counting_consume():
@@ -101,7 +108,9 @@ class TestKVConsumeOnWrite:
             patch.object(pool, "get_session", tracker.make_session_factory()),
         ):
             await kv_store.initialize()
-        assert tracker.count == 1, f"Expected 1 consume() for CREATE INDEX, got {tracker.count}"
+        assert (
+            tracker.count == 1
+        ), f"Expected 1 consume() for CREATE INDEX, got {tracker.count}"
 
     async def test_drop_propagates_exception(self, kv_store):
         with (
@@ -139,17 +148,45 @@ class TestVectorConsumeOnWrite:
         store.embedding_func.embedding_dim = 384
         store.meta_fields = set()
         store.cosine_better_than_threshold = 0.2
+        store._vector_config = {"capacity": 100_000}
+        store._query_mode = "vector"
+        store._text_enabled = False
+        store._feature_policy = "fallback"
         return store
 
-    async def test_initialize_consumes_both_indexes(self, vec_store):
+    @pytest.fixture
+    def vector_index(self, vec_store):
+        return {
+            "index_name": vec_store._index_name(),
+            "label": vec_store._label(),
+            "property": "embedding",
+            "dimension": 384,
+            "metric": "cos",
+        }
+
+    async def test_initialize_consumes_both_indexes(self, vec_store, vector_index):
+        from twindb_lightrag_memgraph.capabilities import MemgraphCapabilities
+
         tracker = ConsumeTracker()
         with (
             patch.object(pool, "get_driver", _mock_driver()),
-            patch.object(pool, "get_session", tracker.make_session_factory()),
+            patch.object(
+                pool,
+                "get_session",
+                tracker.make_session_factory(vector_index=vector_index),
+            ),
+            patch(
+                "twindb_lightrag_memgraph.vector_impl.inspect_memgraph",
+                AsyncMock(
+                    return_value=MemgraphCapabilities(
+                        "3.13.2", (("vector_search.search", ""),)
+                    )
+                ),
+            ),
         ):
             await vec_store.initialize()
-        # 1 label index + 1 vector index = 2 consume() calls
-        assert tracker.count == 2, f"Expected 2 consume() calls, got {tracker.count}"
+        # Both metadata inspections and both index writes must be consumed.
+        assert tracker.count == 4
 
     async def test_drop_propagates_exception(self, vec_store):
         with (
@@ -159,16 +196,22 @@ class TestVectorConsumeOnWrite:
             with pytest.raises(RuntimeError, match="Bolt connection lost"):
                 await vec_store.drop()
 
-    async def test_drop_consumes_result(self, vec_store):
+    async def test_drop_consumes_result(self, vec_store, vector_index):
         tracker = ConsumeTracker()
         with (
             patch.object(pool, "acquire_write_slot", _noop_write_slot),
-            patch.object(pool, "get_session", tracker.make_session_factory()),
+            patch.object(
+                pool,
+                "get_session",
+                tracker.make_session_factory(
+                    vector_index=vector_index, index_exists=True
+                ),
+            ),
         ):
             result = await vec_store.drop()
         assert result["status"] == "success"
-        # 1 DETACH DELETE + 1 DROP VECTOR INDEX = 2 consume() calls
-        assert tracker.count == 2
+        # Both metadata inspections, DETACH DELETE and DROP VECTOR INDEX.
+        assert tracker.count == 4
 
 
 # ── DocStatus Storage ─────────────────────────────────────────────────

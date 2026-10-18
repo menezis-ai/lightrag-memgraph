@@ -8,7 +8,6 @@ on LightRAG's in-memory registries, no Memgraph connection needed.
 import importlib
 
 import lightrag.kg as kg_registry
-from lightrag.utils import lazy_external_import
 
 import twindb_lightrag_memgraph
 
@@ -19,6 +18,31 @@ def _reset_registration():
 
 
 class TestRegister:
+    def test_register_preserves_merge_entry_points(self, monkeypatch):
+        """Both upstream import sites must keep their lock-protected write path."""
+        from lightrag import lightrag as lr_module
+        from lightrag import operate
+
+        original = object()
+        monkeypatch.setattr(operate, "merge_nodes_and_edges", original)
+        monkeypatch.setattr(lr_module, "merge_nodes_and_edges", original)
+        monkeypatch.setattr(twindb_lightrag_memgraph, "_registered", False)
+        twindb_lightrag_memgraph.register()
+
+        assert operate.merge_nodes_and_edges is original
+        assert lr_module.merge_nodes_and_edges is original
+
+    def test_register_exposes_package_version_once(self, monkeypatch):
+        import lightrag
+
+        monkeypatch.setattr(twindb_lightrag_memgraph, "__version__", "0.6.0")
+        monkeypatch.setattr(twindb_lightrag_memgraph, "_registered", False)
+        monkeypatch.setattr(lightrag, "__version__", "1.4.16")
+        twindb_lightrag_memgraph.register()
+        twindb_lightrag_memgraph.register()
+
+        assert lightrag.__version__ == "1.4.16+memgraph-0.6.0"
+
     def test_register_idempotent(self):
         """Calling register() twice should not duplicate entries."""
         _reset_registration()

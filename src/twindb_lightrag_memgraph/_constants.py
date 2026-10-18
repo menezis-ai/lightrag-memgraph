@@ -55,7 +55,7 @@ def validate_identifier(value: str, name: str = "identifier") -> str:
     Raises:
         ValueError: If *value* contains characters outside ``[a-zA-Z0-9_]``.
     """
-    if not value or not _SAFE_IDENTIFIER_RE.match(value):
+    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value):
         raise ValueError(
             f"Invalid {name}: must be non-empty and contain only "
             f"alphanumeric characters or underscores, got {value!r}"
