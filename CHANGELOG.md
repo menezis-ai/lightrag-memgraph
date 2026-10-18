@@ -3,8 +3,14 @@
 ## 0.6.0 (unreleased)
 
 - Qualify Memgraph 3.13.2 while retaining legacy storage contracts. CI covers
-  3.2.1, 3.8.1, 3.9.0, 3.11.0, 3.12.0 and 3.13.2 with minimum and current
-  LightRAG/Neo4j dependency profiles.
+  3.2.1, 3.8.1, 3.9.0, 3.11.0, 3.12.0 and 3.13.2 with LightRAG 1.4.9,
+  1.4.16, 1.5.0 and 1.5.7 / Neo4j 5.x and 6.x dependency profiles.
+- Support LightRAG 1.5.7 and keep the 1.4.9 minimum. Implement bounded
+  scheduling pages, strict batch hydration/point reads, source conflict
+  resolution, deterministic content-hash deduplication, multi-status filters
+  and native partial updates. Preserve immutable creation times, content hashes,
+  stage metadata and legacy records. Optional source-conflict enumeration and
+  repair tools remain unsupported and raise the upstream capability error.
 - Discover server capabilities and procedure signatures before using vector
   quantization, text search, fuzzy search and hybrid retrieval. Preserve text
   query limits across the positional and config-map APIs.

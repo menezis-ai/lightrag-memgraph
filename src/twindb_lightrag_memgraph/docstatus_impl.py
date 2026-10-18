@@ -200,6 +200,10 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
                     if strict:
                         raise
                     pass
+            if strict and out.get(key) is not None:
+                expected = dict if key == "metadata" else list
+                if not isinstance(out[key], expected):
+                    raise ValueError(f"Invalid document status field: {key}")
         return out
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
@@ -268,7 +272,10 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
                 props.setdefault("updated_at", now)
                 props.setdefault("created_at", now)
             props = self._encode_status_fields(props)
-            created_at = props.pop("created_at")
+            created_at = props.pop("created_at") or now
+            if not isinstance(created_at, str):
+                raise ValueError("created_at must be a timestamp string")
+            props["updated_at"] = props.get("updated_at") or now
             entries.append({"id": doc_id, "created_at": created_at, "props": props})
 
         async with _pool.acquire_write_slot():

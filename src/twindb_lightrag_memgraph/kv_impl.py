@@ -71,6 +71,9 @@ class MemgraphKVStorage(BaseKVStorage):
         pass  # Memgraph persists automatically
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
+        return await self._get_by_id(id, strict=False)
+
+    async def _get_by_id(self, id: str, *, strict: bool) -> dict[str, Any] | None:
         label = self._label()
         async with _pool.get_read_session() as session:
             result = await session.run(
@@ -79,8 +82,14 @@ class MemgraphKVStorage(BaseKVStorage):
             )
             record = await result.single()
             await result.consume()
-            if record and record["data"]:
-                return json.loads(record["data"])
+            if record:
+                if strict:
+                    data = json.loads(record["data"])
+                    if not isinstance(data, dict):
+                        raise ValueError("Stored KV data must be an object")
+                    return data
+                if record["data"]:
+                    return json.loads(record["data"])
             return None
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
@@ -104,8 +113,7 @@ class MemgraphKVStorage(BaseKVStorage):
             return out
 
     async def get_by_id_strict(self, id: str) -> dict[str, Any] | None:
-        # The native query and JSON decoder already propagate every failure.
-        return await self.get_by_id(id)
+        return await self._get_by_id(id, strict=True)
 
     async def filter_keys(self, keys: set[str]) -> set[str]:
         """Return keys that do NOT exist in storage."""
