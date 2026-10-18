@@ -2,6 +2,13 @@
 
 ## 0.6.0 (unreleased)
 
+- Honor the explicit LightRAG workspace consistently across all four backends,
+  ahead of environment defaults, without mutating global environment state.
+  Qualify concurrent ingestion and complete deletion across two tenants sharing
+  document/chunk identifiers. Reject unreadable status JSON before deletion.
+- Consume graph initialization/probe results and propagate deferred connection
+  failures. Preserve upstream immediate graph writes and guard legacy entity-type
+  label interpolation against backticks/NUL. Read sessions explicitly use `READ`.
 - Add nightly/manual scale qualification for main and stable/0.5.x across modern
   Memgraph engines: 10K/100K document pagination and 10K-vector search, concurrent
   calls, enforced latency budgets and retained JUnit/JSON/Markdown evidence.

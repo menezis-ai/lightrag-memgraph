@@ -308,10 +308,12 @@ async def get_read_session():
     """
     driver, database = await _get_read_driver()
     if _uses_routing_protocol():
-        async with driver.session(database=database) as session:
+        async with driver.session(
+            database=database, default_access_mode="READ"
+        ) as session:
             yield session
     else:
-        async with driver.session() as session:
+        async with driver.session(default_access_mode="READ") as session:
             if database:
                 await _try_use_database(session, database)
             yield session

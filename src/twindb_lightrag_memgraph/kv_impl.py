@@ -24,8 +24,10 @@ from ._constants import resolve_workspace, validate_identifier
 class MemgraphKVStorage(BaseKVStorage):
     supports_strict_point_reads: ClassVar[bool] = True
 
-    def __init__(self, namespace, global_config, embedding_func, **kwargs):
-        workspace = resolve_workspace()
+    def __init__(
+        self, namespace, global_config, embedding_func, *, workspace=None, **kwargs
+    ):
+        workspace = resolve_workspace(workspace, global_config)
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,

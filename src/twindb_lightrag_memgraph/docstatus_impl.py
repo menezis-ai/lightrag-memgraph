@@ -26,8 +26,10 @@ from ._docstatus_v15 import DocStatusSchedulingMixin
 class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
     supports_strict_point_reads: ClassVar[bool] = True
 
-    def __init__(self, namespace, global_config, embedding_func, **kwargs):
-        workspace = resolve_workspace()
+    def __init__(
+        self, namespace, global_config, embedding_func, *, workspace=None, **kwargs
+    ):
+        workspace = resolve_workspace(workspace, global_config)
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,
@@ -190,7 +192,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
     # ── BaseKVStorage interface ────────────────────────────────────────
 
     @staticmethod
-    def _deserialize_props(props: dict, *, strict: bool = False) -> dict[str, Any]:
+    def _deserialize_props(props: dict, *, strict: bool = True) -> dict[str, Any]:
         """Deserialize JSON-encoded fields back to Python objects.
 
         Fields like chunks_list and metadata are stored as JSON strings
@@ -208,14 +210,16 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
                     if strict:
                         raise
                     pass
-            if strict and out.get(key) is not None:
+            if strict and val is not None:
                 expected = dict if key == "metadata" else list
                 if not isinstance(out[key], expected):
                     raise ValueError(f"Invalid document status field: {key}")
         return out
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
-        return await self._get_by_id(id, strict=False)
+        # LightRAG uses this ordinary point read during document deletion too.
+        # Corrupt chunk lists must fail before any destructive operation.
+        return await self._get_by_id(id, strict=True)
 
     async def get_by_id_strict(self, id: str) -> dict[str, Any] | None:
         return await self._get_by_id(id, strict=True)

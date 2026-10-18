@@ -25,6 +25,23 @@ def _clean_env(monkeypatch):
 
 
 class TestResolveWorkspace:
+    def test_explicit_workspace_has_priority_over_global_config_and_env(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv(MEMGRAPH_WORKSPACE_ENV, "environment")
+        assert resolve_workspace("alpha", {"workspace": "configured"}) == "alpha"
+
+    def test_global_config_used_before_environment(self, monkeypatch):
+        monkeypatch.setenv(MEMGRAPH_WORKSPACE_ENV, "environment")
+        assert (
+            resolve_workspace(global_config={"workspace": "configured"}) == "configured"
+        )
+
+    @pytest.mark.parametrize("value", ["unsafe`name", 123, True])
+    def test_invalid_explicit_workspace_is_not_silently_replaced(self, value):
+        with pytest.raises(ValueError):
+            resolve_workspace(value)
+
     def test_memgraph_workspace_wins_when_set(self, monkeypatch):
         monkeypatch.setenv(MEMGRAPH_WORKSPACE_ENV, "memgraph_one")
         monkeypatch.setenv(WORKSPACE_ENV, "core_two")
