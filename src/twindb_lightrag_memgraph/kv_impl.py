@@ -11,7 +11,7 @@ Index: CREATE INDEX ON :KV_{workspace}_{namespace}(id)
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from lightrag.base import BaseKVStorage
 from lightrag.utils import logger
@@ -22,6 +22,8 @@ from ._constants import resolve_workspace, validate_identifier
 
 @dataclass
 class MemgraphKVStorage(BaseKVStorage):
+    supports_strict_point_reads: ClassVar[bool] = True
+
     def __init__(self, namespace, global_config, embedding_func, **kwargs):
         workspace = resolve_workspace()
         validate_identifier(namespace, "namespace")
@@ -100,6 +102,10 @@ class MemgraphKVStorage(BaseKVStorage):
                 raw = records.get(key)
                 out.append(json.loads(raw) if raw else None)
             return out
+
+    async def get_by_id_strict(self, id: str) -> dict[str, Any] | None:
+        # The native query and JSON decoder already propagate every failure.
+        return await self.get_by_id(id)
 
     async def filter_keys(self, keys: set[str]) -> set[str]:
         """Return keys that do NOT exist in storage."""

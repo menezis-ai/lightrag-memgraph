@@ -12,17 +12,20 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from lightrag.base import DocProcessingStatus, DocStatus, DocStatusStorage
 from lightrag.utils import logger
 
 from . import _pool
 from ._constants import DEFAULT_PAGE_SIZE, resolve_workspace, validate_identifier
+from ._docstatus_v15 import DocStatusSchedulingMixin
 
 
 @dataclass
-class MemgraphDocStatusStorage(DocStatusStorage):
+class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
+    supports_strict_point_reads: ClassVar[bool] = True
+
     def __init__(self, namespace, global_config, embedding_func, **kwargs):
         workspace = resolve_workspace()
         validate_identifier(namespace, "namespace")
@@ -54,6 +57,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 "track_id",
                 "updated_at",
                 "created_at",
+                "content_hash",
             ]:
                 try:
                     result = await session.run(f"CREATE INDEX ON :`{label}`({prop})")
@@ -98,27 +102,32 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             "error_msg",
             "track_id",
             "file_path",
+            "content_hash",
         ):
             val = getattr(status, field_name, None)
             if val is not None:
                 d[field_name] = val
-        if status.metadata:
-            d["metadata"] = json.dumps(status.metadata, default=str)
-        if status.chunks_list:
-            d["chunks_list"] = json.dumps(status.chunks_list)
+        d["metadata"] = json.dumps(status.metadata or {}, default=str)
+        d["chunks_list"] = json.dumps(status.chunks_list or [])
         multimodal = getattr(status, "multimodal_processed", None)
         if multimodal is not None:
             d["multimodal_processed"] = multimodal
         return d
 
     @staticmethod
-    def _deserialize_status(props: dict) -> DocProcessingStatus:
+    def _deserialize_status(props: dict, *, strict: bool = False) -> DocProcessingStatus:
         """Convert Cypher node properties back to DocProcessingStatus."""
+        if strict:
+            for name in ("status", "created_at", "updated_at", "content_summary", "content_length"):
+                if name not in props:
+                    raise ValueError(f"Missing document status field: {name}")
         metadata = None
         if "metadata" in props and props["metadata"]:
             try:
                 metadata = json.loads(props["metadata"])
             except json.JSONDecodeError:
+                if strict:
+                    raise
                 metadata = {}
 
         chunks_list = None
@@ -126,7 +135,15 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             try:
                 chunks_list = json.loads(props["chunks_list"])
             except json.JSONDecodeError:
+                if strict:
+                    raise
                 chunks_list = []
+
+        if strict and (
+            (metadata is not None and not isinstance(metadata, dict))
+            or (chunks_list is not None and not isinstance(chunks_list, list))
+        ):
+            raise ValueError("Invalid document metadata or chunks_list")
 
         raw_status = props.get("status", "pending")
         # LightRAG's DocStatus enum values are lowercase ("pending",
@@ -136,6 +153,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         try:
             status = DocStatus(str(raw_status).lower())
         except ValueError:
+            if strict:
+                raise
             logger.warning(
                 f"Unknown doc status '{raw_status}', falling back to PENDING"
             )
@@ -156,12 +175,14 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         )
         if "multimodal_processed" in DocProcessingStatus.__dataclass_fields__:
             kwargs["multimodal_processed"] = props.get("multimodal_processed")
+        if "content_hash" in DocProcessingStatus.__dataclass_fields__:
+            kwargs["content_hash"] = props.get("content_hash")
         return DocProcessingStatus(**kwargs)
 
     # ── BaseKVStorage interface ────────────────────────────────────────
 
     @staticmethod
-    def _deserialize_props(props: dict) -> dict[str, Any]:
+    def _deserialize_props(props: dict, *, strict: bool = False) -> dict[str, Any]:
         """Deserialize JSON-encoded fields back to Python objects.
 
         Fields like chunks_list and metadata are stored as JSON strings
@@ -176,10 +197,18 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                 try:
                     out[key] = json.loads(val)
                 except json.JSONDecodeError:
+                    if strict:
+                        raise
                     pass
         return out
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
+        return await self._get_by_id(id, strict=False)
+
+    async def get_by_id_strict(self, id: str) -> dict[str, Any] | None:
+        return await self._get_by_id(id, strict=True)
+
+    async def _get_by_id(self, id: str, *, strict: bool) -> dict[str, Any] | None:
         label = self._label()
         async with _pool.get_read_session() as session:
             result = await session.run(
@@ -189,7 +218,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
-                return self._deserialize_props(record["props"])
+                return self._deserialize_props(record["props"], strict=strict)
             return None
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
@@ -235,15 +264,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             if isinstance(doc_data, DocProcessingStatus):
                 props = self._serialize_status(doc_id, doc_data)
             else:
-                props = {"id": doc_id, **doc_data}
+                props = {**doc_data, "id": doc_id}
                 props.setdefault("updated_at", now)
                 props.setdefault("created_at", now)
-                for k, v in props.items():
-                    if isinstance(v, (dict, list)):
-                        props[k] = json.dumps(v, default=str)
-                    elif hasattr(v, "value"):  # Enum
-                        props[k] = v.value
-            entries.append({"id": doc_id, "props": props})
+            props = self._encode_status_fields(props)
+            created_at = props.pop("created_at")
+            entries.append({"id": doc_id, "created_at": created_at, "props": props})
 
         async with _pool.acquire_write_slot():
             async with _pool.get_session() as session:
@@ -251,6 +277,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     f"""
                     UNWIND $entries AS e
                     MERGE (n:`{label}` {{id: e.id}})
+                    ON CREATE SET n.created_at = e.created_at
                     SET n += e.props
                     """,
                     entries=entries,
@@ -298,21 +325,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
     async def get_docs_by_status(
         self, status: DocStatus
     ) -> dict[str, DocProcessingStatus]:
-        label = self._label()
-        status_val = status.value
-        async with _pool.get_read_session() as session:
-            result = await session.run(
-                f"""
-                MATCH (n:`{label}` {{status: $status}})
-                RETURN n.id AS id, properties(n) AS props
-                """,
-                status=status_val,
-            )
-            docs = {}
-            async for record in result:
-                docs[record["id"]] = self._deserialize_status(record["props"])
-            await result.consume()
-            return docs
+        return await self.get_docs_by_statuses([status])
 
     async def get_docs_by_statuses(
         self, statuses: list[DocStatus], strict: bool = False
@@ -332,7 +345,12 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             )
             docs = {}
             async for record in result:
-                docs[record["id"]] = self._deserialize_status(record["props"])
+                try:
+                    docs[record["id"]] = self._deserialize_status(record["props"], strict=strict)
+                except (ValueError, TypeError, KeyError):
+                    if strict:
+                        raise
+                    logger.warning("Skipping unusable document status %s", record["id"])
             await result.consume()
             return docs
 
@@ -361,6 +379,8 @@ class MemgraphDocStatusStorage(DocStatusStorage):
         page_size: int = DEFAULT_PAGE_SIZE,
         sort_field: str = "updated_at",
         sort_direction: str = "desc",
+        *,
+        status_filters: list[DocStatus] | None = None,
     ) -> tuple[list[tuple[str, DocProcessingStatus]], int]:
         label = self._label()
         skip = (page - 1) * page_size
@@ -373,7 +393,10 @@ class MemgraphDocStatusStorage(DocStatusStorage):
 
         where_clause = ""
         params: dict[str, Any] = {}
-        if status_filter is not None:
+        if status_filters:
+            where_clause = "WHERE n.status IN $statuses"
+            params["statuses"] = [status.value for status in status_filters]
+        elif status_filter is not None:
             where_clause = "WHERE n.status = $status"
             params["status"] = status_filter.value
 
@@ -396,7 +419,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
                     f"""
                     MATCH (n:`{label}`) {where_clause}
                     RETURN n.id AS id, properties(n) AS props
-                    ORDER BY n.{sort_field} {order}
+                    ORDER BY n.{sort_field} {order}, n.id {order}
                     SKIP $skip LIMIT $limit
                     """,
                     **params,
@@ -430,7 +453,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             record = await result.single()
             await result.consume()
             if record:
-                return dict(record["props"])
+                return self._deserialize_props(record["props"])
             return None
 
     async def drop(self) -> dict[str, str]:

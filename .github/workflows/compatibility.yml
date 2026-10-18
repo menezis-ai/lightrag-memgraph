@@ -16,15 +16,23 @@ jobs:
       fail-fast: false
       matrix:
         memgraph: [3.2.1, 3.8.1, 3.9.0, 3.11.0, 3.12.0, 3.13.2]
-        dependencies: [minimum, current]
+        dependencies: [minimum, legacy, first-1.5, current]
         include:
           - dependencies: minimum
             python: "3.10"
             lightrag: "lightrag-hku==1.4.9"
             neo4j: "neo4j>=5,<6"
+          - dependencies: legacy
+            python: "3.12"
+            lightrag: "lightrag-hku==1.4.16"
+            neo4j: "neo4j>=6,<7"
+          - dependencies: first-1.5
+            python: "3.10"
+            lightrag: "lightrag-hku==1.5.0"
+            neo4j: "neo4j>=5,<6"
           - dependencies: current
             python: "3.12"
-            lightrag: "lightrag-hku>=1.4.9,<1.5"
+            lightrag: "lightrag-hku==1.5.7"
             neo4j: "neo4j>=6,<7"
     services:
       memgraph:
@@ -93,9 +101,10 @@ jobs:
           tests/test_vector_missing_index.py tests/test_record_to_entry.py
           tests/test_consume_and_drop.py tests/test_docstatus_deserialize.py
           tests/test_merge_concurrency.py tests/test_register.py
+          tests/test_lightrag15.py
           --junitxml=reports/storage.xml
       - name: Current LightRAG full regression suite
-        if: matrix.dependencies == 'current'
+        if: matrix.dependencies != 'minimum'
         run: python -m pytest -q --ignore=tests/test_bench.py --junitxml=reports/regressions.xml
       - name: Modern server load checks
         if: matrix.dependencies == 'current' && matrix.memgraph != '3.2.1'
