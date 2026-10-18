@@ -1,0 +1,115 @@
+name: Memgraph scale qualification
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/scale-nightly.yml
+      - tests/test_scale_e2e.py
+      - scripts/summarize_scale.py
+      - tests/conftest.py
+      - pyproject.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scale-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        memgraph: [3.8.1, 3.9.0, 3.11.0, 3.12.0, 3.13.2]
+        adapter: [main, stable-0.5]
+        include:
+          - adapter: main
+            adapter_ref: main
+            lightrag: "lightrag-hku==1.5.7"
+          - adapter: stable-0.5
+            adapter_ref: stable/0.5.x
+            lightrag: "lightrag-hku==1.4.9.11"
+    services:
+      memgraph:
+        image: memgraph/memgraph-mage:${{ matrix.memgraph }}
+        ports:
+          - 7687:7687
+    env:
+      MEMGRAPH_URI: bolt://localhost:7687
+      MEMGRAPH_VERSION: ${{ matrix.memgraph }}
+      SCALE_ADAPTER_REF: ${{ matrix.adapter_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: adapter
+          ref: ${{ matrix.adapter == 'main' && github.event_name == 'pull_request' && github.sha || matrix.adapter_ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the target adapter wheel
+        run: |
+          python -m pip install './adapter[test]' '${{ matrix.lightrag }}' 'neo4j>=6,<7'
+          echo "SCALE_ADAPTER_SHA=$(git -C adapter rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Verify the installed public adapter
+        working-directory: /tmp
+        run: |
+          python - <<'PY'
+          import sysconfig
+          from pathlib import Path
+          import twindb_lightrag_memgraph as package
+          import importlib.metadata
+
+          path = Path(package.__file__).resolve()
+          assert path.is_relative_to(Path(sysconfig.get_path("purelib")))
+          assert not any((path.parent / name).exists() for name in ("intelligence", "server", "webui_dist"))
+          print(f"Adapter {package.__version__}, LightRAG {importlib.metadata.version('lightrag-hku')}: {path}")
+          PY
+      - name: Wait for real Memgraph
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          from neo4j import GraphDatabase
+
+          for attempt in range(60):
+              try:
+                  with GraphDatabase.driver(os.environ["MEMGRAPH_URI"], auth=("", "")) as driver:
+                      with driver.session() as session:
+                          session.run("RETURN 1").consume()
+                  break
+              except Exception:
+                  if attempt == 59:
+                      raise
+                  time.sleep(1)
+          PY
+      - name: Enforce pagination and ANN latency budgets
+        working-directory: harness
+        run: python -m pytest -q tests/test_scale_e2e.py --run-scale --junitxml=reports/scale.xml
+      - name: Publish timing summary
+        if: always()
+        working-directory: harness
+        run: |
+          status=0
+          python scripts/summarize_scale.py reports/scale.xml --json reports/scale.json --markdown reports/scale.md || status=$?
+          cat reports/scale.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Preserve scale evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scale-${{ matrix.adapter }}-${{ matrix.memgraph }}
+          path: harness/reports/
+          retention-days: 30
+          if-no-files-found: error

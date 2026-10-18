@@ -2,6 +2,7 @@ include README.md
 include LICENSE
 include pyproject.toml
 include CHANGELOG.md
+include docs/ingestion-validation.md
 
 recursive-include src/twindb_lightrag_memgraph *.py
 recursive-exclude tests *

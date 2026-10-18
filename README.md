@@ -355,6 +355,53 @@ All four profiles test installed public wheels in isolated Python environments.
 The minimum profile runs storage contracts; the others run the full regression
 suite. Load checks run on the current profile and modern engines.
 
+### Nightly scale qualification
+
+The separate `Memgraph scale qualification` workflow runs daily at **03:17 UTC**
+and supports manual dispatch. It also runs when a PR changes its harness,
+workflow or dependency configuration, keeping ordinary PRs free of the large
+datasets. Scheduled runs use the harness from the default branch and explicitly
+check out both `main` (LightRAG 1.5.7) and `stable/0.5.x` (LightRAG 1.4.9.11,
+the deployed 0.5.3-era contract).
+Each job builds/installs its target adapter as a wheel, then runs the same harness
+against a real MAGE service on **3.8.1, 3.9.0, 3.11.0, 3.12.0 and 3.13.2**.
+Memgraph 3.2.1 remains excluded from load qualification for the native ANN issue
+documented above. The stable branch is observed without modifying it.
+
+| Workload | Entries | Concurrent calls | Samples | Maximum latency |
+|---|---:|---:|---:|---:|
+| Document pagination, including a deep page | 10,000 | 8 | 24 | < 2 seconds |
+| Document pagination, including a deep page | 100,000 | 8 | 24 | < 10 seconds |
+| Native vector search, top 10 | 10,000 | 8 | 24 | < 500 ms |
+
+Seeding and a warm-up request precede measurements. Tests verify result counts
+and retrieval of known vectors as well as latency. Any budget violation fails
+the job. JUnit, JSON and Markdown reports retain p50/p95/max timings and adapter
+commit provenance; GitHub's job summary shows the table even when budgets fail.
+No Slack connection or comment-publishing token is required. This is a separate
+workflow and does not change branch-protection requirements.
+
+The scale suite is **opt-in**, even when `MEMGRAPH_URI` is configured:
+
+```bash
+MEMGRAPH_URI=bolt://localhost:7687 python -m pytest -q \
+  tests/test_scale_e2e.py --run-scale --junitxml=reports/scale.xml
+python scripts/summarize_scale.py reports/scale.xml \
+  --json reports/scale.json --markdown reports/scale.md
+```
+
+Each test allocates a unique workspace and removes its own data and indexes.
+Use an isolated test database: the 100K workload consumes database resources.
+
+### PDF ingestion responsiveness
+
+The current LightRAG profile also runs the real upstream PDF parser against
+synthetic valid, duplicate-dictionary and invalid documents. HTTP probes must
+finish while synchronous extraction is held in its worker thread. A negative
+control verifies that the detector rejects inline blocking work. This qualifies
+the upstream/storage combination; production validation of the separate BNP
+pipeline follows [the ingestion validation procedure](docs/ingestion-validation.md).
+
 ## License
 
 MIT. See `LICENSE`.
