@@ -30,6 +30,14 @@ class MemgraphCapabilities:
             for proc, signature in self.procedures
         )
 
+    def accepts_limit(self, name: str) -> bool:
+        """Whether the procedure accepts the legacy positional integer limit."""
+        return any(
+            proc == name
+            and re.search(r"\blimit\b[^,)]*::\s*INTEGER", signature, re.IGNORECASE)
+            for proc, signature in self.procedures
+        )
+
     def returns_score(self, name: str) -> bool:
         return any(
             proc == name and re.search(r"\bscore\s*::", signature)

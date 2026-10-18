@@ -510,6 +510,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if accepts_config:
             arguments += ", $config"
             params["config"] = dict(config, limit=top_k)
+        elif self.capabilities.accepts_limit(procedure):
+            arguments += ", $top_k"
         has_score = self.capabilities.returns_score(procedure)
         output = "node, score" if has_score else "node"
         score = "score" if has_score else "1.0 AS score"

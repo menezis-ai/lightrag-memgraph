@@ -33,7 +33,7 @@ def make_store(monkeypatch):
 
 
 def capabilities(version="3.13.2", config=True, scores=True):
-    arguments = ", config = {} :: MAP" if config else ""
+    arguments = ", config = {} :: MAP" if config else ", limit = 1000 :: INTEGER"
     output = "node :: NODE, score :: FLOAT" if scores else "node :: NODE"
     return MemgraphCapabilities(
         version,
@@ -67,8 +67,10 @@ def test_procedure_signatures_are_authoritative():
     old = capabilities("3.8.1", config=False, scores=False)
     new = capabilities()
     assert not old.accepts_config("text_search.search_all")
+    assert old.accepts_limit("text_search.search_all")
     assert not old.returns_score("text_search.search_all")
     assert new.accepts_config("text_search.search_all")
+    assert not new.accepts_limit("text_search.search_all")
     assert new.returns_score("text_search.search_all")
     assert not new.has_procedure("text_search.fuzzy_phrase_search")
     assert not MemgraphCapabilities("3.13.2", ()).text_search
@@ -194,6 +196,35 @@ async def test_regex_rejects_fuzzy_configuration_before_database_access(
 
 @pytest.mark.integration
 class TestRealMemgraphCompatibility:
+    @pytest.mark.parametrize(
+        "mode,query",
+        [
+            ("search_all", "needle"),
+            ("search", "data.content:needle"),
+            ("regex_search", "need.*"),
+        ],
+    )
+    async def test_text_top_k_can_exceed_the_native_default(
+        self, make_store, mode, query
+    ):
+        store = make_store(namespace="text_limit", memgraph_text_search=True)
+        await store.initialize()
+        try:
+            if not store.capabilities.text_search:
+                pytest.skip("Stable text search is unavailable")
+            count = 1005
+            await store.upsert(
+                {
+                    f"doc_{i}": {"content": "needle", "embedding": [1, 0, 0, 0]}
+                    for i in range(count)
+                }
+            )
+            hits = await store.query_text(query, count, mode=mode)
+            assert len(hits) == count
+            assert len({hit["id"] for hit in hits}) == count
+        finally:
+            assert (await store.drop())["status"] == "success"
+
     @pytest.mark.parametrize(
         "mode,query", [("search", "data.content:needle"), ("regex_search", "need.*")]
     )

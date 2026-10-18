@@ -176,6 +176,9 @@ prefixes. Configuration accepts `fuzzy_distance` (0–2), `fuzzy_prefix` and
 uses `top_k` for its limit and rejects fuzzy options before connecting. Unsupported
 explicit search modes/configuration raise rather than changing search semantics.
 Older text procedures without scores return a constant lexical score of 1.
+When a legacy procedure exposes a positional integer limit, `top_k` is passed
+in that position; newer procedures receive it in their config map. This avoids
+the legacy server default silently truncating requests above 1,000 results.
 Text results include `id`, `score`, `embedding` and requested metadata fields.
 
 Hybrid retrieval fuses up to `4 * top_k` candidates from each search using
@@ -227,8 +230,9 @@ version alone does not imply that exact engine version was run in CI.
 
 The retrieval cases in
 [`tests/test_memgraph_compatibility.py`](tests/test_memgraph_compatibility.py)
-cover property-qualified/regex search, fuzzy term configuration, fuzzy phrases,
-hybrid unions, configured index recreation and deleted-hit filtering.
+cover property-qualified/regex search, limits above 1,000 results, fuzzy term
+configuration, fuzzy phrases, hybrid unions, configured index recreation and
+deleted-hit filtering.
 
 ### Upgrading an existing Memgraph deployment
 
