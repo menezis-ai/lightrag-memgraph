@@ -113,8 +113,9 @@ pre-3.4 servers also check for an empty namespace before calling native search.
 | 3.6+ | Stable text indexes, plain-term, property-qualified and regex searches, if the corresponding procedures are loaded |
 | 3.8+ | Single-store vectors supported; embeddings are read explicitly when retrieving stored vectors |
 | 3.11+ | Native text relevance scores and search configuration, discovered through procedure signatures |
+| 3.11+ | Fuzzy term, prefix and transposition settings when text procedures expose a `config` argument |
 | 3.12+ | Fuzzy phrase search when `text_search.fuzzy_phrase_search` is available |
-| 3.13.2 | Current pinned target, including omitted vector properties on returned nodes and permission-filtered search results |
+| 3.13.2 | Current pinned target; explicit embedding reads support omitted vector properties. Enterprise permission filtering is enforced by the server and is not qualified by this Community test matrix. |
 
 Pass options in LightRAG's `vector_db_storage_cls_kwargs`:
 
@@ -171,7 +172,8 @@ hits = await store.query_hybrid("memgraph", top_k=10)
 Text modes are `search_all`, `search`, `regex_search` and `fuzzy_phrase_search`.
 `search` and `fuzzy_phrase_search` use Tantivy expressions with `data.` property
 prefixes. Configuration accepts `fuzzy_distance` (0–2), `fuzzy_prefix` and
-`fuzzy_transpositions`, when the procedure accepts a config map. Unsupported
+`fuzzy_transpositions`, when the procedure accepts a config map. Regex mode
+uses `top_k` for its limit and rejects fuzzy options before connecting. Unsupported
 explicit search modes/configuration raise rather than changing search semantics.
 Older text procedures without scores return a constant lexical score of 1.
 Text results include `id`, `score`, `embedding` and requested metadata fields.
@@ -199,6 +201,34 @@ These features use node indexes because LightRAG stores both entity and
 relationship embeddings as nodes. Server-side edge indexes, imports,
 parallel execution, FIPS and Enterprise administration remain server-level
 features; the adapter does not enable them automatically.
+
+### Release review and feature evidence
+
+Engine release notes from 3.2.1 through 3.13.2 were reviewed on 2026-10-18,
+including intermediate minor releases and patch notes. The table records the
+adapter's response to changes affecting its storage/retrieval contract.
+Versions listed in the CI matrix are tested directly; a feature's introduction
+version alone does not imply that exact engine version was run in CI.
+
+| Engine notes | Storage impact and adapter response | Evidence or limit |
+|--------------|-------------------------------------|-------------------|
+| [3.2.1](https://github.com/memgraph/memgraph/releases/tag/v3.2.1) | Legacy vector storage and retrieval remain available. | Storage contracts run directly; native deletion churn is a known failure and legacy load is excluded. |
+| [3.3](https://github.com/memgraph/memgraph/releases/tag/v3.3.0) | Nested property indexes and Bolt scheduling do not change the adapter's flat, label-scoped schema. | Nested-map indexing is not exposed; this engine is not a CI entry. |
+| [3.4](https://github.com/memgraph/memgraph/releases/tag/v3.4.0) | Per-index `scalar_kind` quantization is exposed; vector metadata is read by named fields. | `test_advanced_options_fallback_or_strict` and index recovery validate f16 and reject mismatched schemas. Edge vector indexes are not exposed. |
+| [3.5](https://github.com/memgraph/memgraph/releases/tag/v3.5.0) | Property-specific text indexes were still experimental; the adapter enables text only from the stable 3.6 API. | Flat metadata serialization remains unchanged. User profiles, multi-role administration, TTL recovery and STRICT_SYNC are not qualified here. |
+| [3.6](https://github.com/memgraph/memgraph/releases/tag/v3.6.0) | Stable text indexing, changed index type names, edge text indexes and a native cosine helper. | Node text indexing, property-qualified/regex search, cleanup and hybrid cosine scores are tested. Hybrid computes cosine in Python for legacy portability. Edge text indexing is not exposed. |
+| [3.7](https://github.com/memgraph/memgraph/releases/tag/v3.7.0), [3.7.1](https://github.com/memgraph/memgraph/releases/tag/v3.7.1), [3.7.2](https://github.com/memgraph/memgraph/releases/tag/v3.7.2) | LBAC syntax changes and vector/text recovery fixes require deployment review. | The adapter never rewrites grants or durability files. Licensed LBAC and HA recovery need separate qualification. |
+| [3.8](https://github.com/memgraph/memgraph/releases/tag/v3.8.0), [3.8.1](https://github.com/memgraph/memgraph/releases/tag/v3.8.1) | Single-store vectors and stricter access to deleted objects. | Live-ID rebinding, deletion hygiene, candidate expansion and explicit vector reads are covered by deletion, reinitialization and storage/load tests. |
+| [3.9](https://github.com/memgraph/memgraph/releases/tag/v3.9.0) | Text search changes to GIDs and pinned searchers; vector GC is fixed. Function-generated index configs, global float precision and global parameters are introduced. | Both dependency profiles run text/vector/storage tests. The adapter binds query parameters explicitly and keeps static index configs. Nondefault global float precision and coordinator recovery are not qualified. |
+| [3.10](https://github.com/memgraph/memgraph/releases/tag/v3.10.0), [3.10.1](https://github.com/memgraph/memgraph/releases/tag/v3.10.1) | Parameterized configs, DESC indexes, new index syntax, edge single-store vectors and `DENY` semantics. | Literal config maps and label-scoped indexes remain valid. Metrics, edge indexes, remote embedding providers and permission migrations are not adapter APIs. This engine is not a CI entry. |
+| [3.11](https://github.com/memgraph/memgraph/releases/tag/v3.11.0) | Text limits move to `config`; term fuzzy/prefix/transposition options and multi-label vector indexes are introduced. | Procedure signatures select argument/output shapes. Real tests cover typo, prefix and transposition semantics. The adapter retains one node label per namespace and exposes no multi-label/wildcard index creation API. |
+| [3.12](https://github.com/memgraph/memgraph/releases/tag/v3.12.0) | Adds fuzzy phrase search, property permissions, lightweight edges and database suspension. | Phrase/hybrid retrieval is tested. Permission errors propagate. Property-level authorization, suspended tenants and nondefault lightweight-edge mode are not qualified by this matrix. |
+| [3.13](https://github.com/memgraph/memgraph/releases/tag/v3.13.0), [3.13.1](https://github.com/memgraph/memgraph/releases/tag/v3.13.1), [3.13.2](https://github.com/memgraph/memgraph/releases/tag/v3.13.2) | Optional omission of vector properties, permission-filtered search, global/range indexes, Cypher/APOC changes, OpenMetrics default, FIPS and coordinator SSO. | Explicit embedding reads are also tested locally with omission enabled. Queries keep label-scoped indexes and avoid changed APOC/subquery APIs. Global index creation, FIPS, SSO, PBAC and HA are not qualified here. |
+
+The retrieval cases in
+[`tests/test_memgraph_compatibility.py`](tests/test_memgraph_compatibility.py)
+cover property-qualified/regex search, fuzzy term configuration, fuzzy phrases,
+hybrid unions, configured index recreation and deleted-hit filtering.
 
 ### Upgrading an existing Memgraph deployment
 
@@ -230,6 +260,7 @@ Review these changes when crossing the corresponding versions:
 | 3.8 | Remove deprecated auth/inactivity/index-recovery flags; use `--auth-module-mappings` and `--storage-parallel-schema-recovery` where appropriate. Text indexes cannot be created in analytical mode |
 | 3.9 HA | Follow the coordinator migration guide; its coordinator-directory procedure does not apply to standalone data instances |
 | 3.10+ | Recheck fine-grained `DENY` permissions and renamed storage-info fields; remove init-file bootstrap flags from coordinators/HA data instances |
+| 3.11 | Text-search limits use a config map; update storage/schema metrics consumers, session tracing flags and TLS-reload privileges. Intra-cluster TLS is configured separately from Bolt TLS |
 | 3.12 | Replace removed HA timeout flags with coordinator settings |
 | 3.13 | Review coordinator SSO, removed `COORDINATOR` grants, APOC JSON aliases, subquery imports and the OpenMetrics default; verify that users can read both indexed labels and embedding properties |
 
@@ -245,8 +276,8 @@ MEMGRAPH_IMAGE=memgraph/memgraph-mage:3.8.1 docker compose up -d
 
 Run integration tests only against an isolated test database: they create and
 delete test namespaces. `MEMGRAPH_URI` enables them; without it, integration
-tests are skipped. The CI matrix has eight jobs: Memgraph **3.2.1, 3.8.1,
-3.12.0 and 3.13.2**, each with Python 3.10 / LightRAG 1.4.9 / Neo4j 5.x
+tests are skipped. The CI matrix has twelve jobs: Memgraph **3.2.1, 3.8.1,
+3.9.0, 3.11.0, 3.12.0 and 3.13.2**, each with Python 3.10 / LightRAG 1.4.9 / Neo4j 5.x
 and Python 3.12 / current LightRAG 1.4.x / Neo4j 6.x. Each job checks source
 with Ruff, builds the sdist and wheel, installs the wheel, verifies the public import surface,
 and tests that installed package. JUnit reports are retained as CI artifacts.
@@ -264,7 +295,7 @@ the adapter returned incorrect empty results in 692 of 1,000 cycles despite a
 live matching vector. The deletion-churn regression is therefore an explicit
 known failure (`xfail`) on pre-3.4 engines, preventing a native crash from
 interrupting the remaining contract tests. The CI runs load checks on 3.8.1,
-3.12.0 and 3.13.2; use a current server for production load.
+3.9.0, 3.11.0, 3.12.0 and 3.13.2; use a current server for production load.
 
 The GitHub compatibility matrix tests installed public wheels on Python 3.10
 with LightRAG 1.4.9 / Neo4j 5.x, and Python 3.12 with LightRAG 1.4.x / Neo4j

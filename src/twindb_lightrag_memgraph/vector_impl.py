@@ -488,6 +488,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             raise ValueError(
                 "Unsupported text search configuration (use top_k for the limit)"
             )
+        if mode == "regex_search" and config:
+            raise ValueError("Regex search does not support fuzzy configuration")
         fuzzy_distance = config.get("fuzzy_distance", 0)
         if type(fuzzy_distance) is not int or fuzzy_distance not in {0, 1, 2}:
             raise ValueError("fuzzy_distance must be 0, 1 or 2")

@@ -172,8 +172,77 @@ async def test_old_text_signature_uses_no_config_or_score(make_store, monkeypatc
         await store.query_text("hello", 3, config={"fuzzy_distance": 1})
 
 
+async def test_regex_rejects_fuzzy_configuration_before_database_access(
+    make_store, monkeypatch
+):
+    store = make_store()
+    store._text_index_ready = True
+    store.capabilities = MemgraphCapabilities(
+        "3.13.2",
+        (("text_search.regex_search", "regex_search(config = {} :: MAP)"),),
+    )
+
+    def forbidden_session():
+        raise AssertionError("Invalid regex configuration must not reach the database")
+
+    monkeypatch.setattr(_pool, "get_read_session", forbidden_session)
+    with pytest.raises(ValueError, match="Regex.*fuzzy"):
+        await store.query_text(
+            "need.*", 5, mode="regex_search", config={"fuzzy_distance": 1}
+        )
+
+
 @pytest.mark.integration
 class TestRealMemgraphCompatibility:
+    @pytest.mark.parametrize(
+        "mode,query", [("search", "data.content:needle"), ("regex_search", "need.*")]
+    )
+    async def test_property_qualified_and_regex_text_search(
+        self, make_store, mode, query
+    ):
+        store = make_store(namespace="text_modes", memgraph_text_search=True)
+        await store.initialize()
+        try:
+            if not store.capabilities.text_search:
+                pytest.skip("Stable text search is unavailable")
+            await store.upsert(
+                {
+                    "match": {"content": "needle in the graph"},
+                    "other": {"content": "unrelated words"},
+                }
+            )
+            hits = await store.query_text(query, 1, mode=mode)
+            assert [hit["id"] for hit in hits] == ["match"]
+            assert hits[0]["score"] > 0
+        finally:
+            assert (await store.drop())["status"] == "success"
+
+    async def test_fuzzy_terms_prefix_and_transposition_configuration(self, make_store):
+        store = make_store(namespace="fuzzy_terms", memgraph_text_search=True)
+        await store.initialize()
+        try:
+            if not store.capabilities.accepts_config("text_search.search_all"):
+                pytest.skip(
+                    "Fuzzy term configuration requires the newer text signature"
+                )
+            await store.upsert({"doc": {"content": "needle big bad wolf"}})
+            typo = await store.query_text("nedle", 1, config={"fuzzy_distance": 1})
+            prefix = await store.query_text(
+                "nee", 1, config={"fuzzy_distance": 1, "fuzzy_prefix": True}
+            )
+            swapped = await store.query_text(
+                "needel", 1, config={"fuzzy_distance": 1, "fuzzy_transpositions": True}
+            )
+            strict = await store.query_text(
+                "needel", 1, config={"fuzzy_distance": 1, "fuzzy_transpositions": False}
+            )
+            assert [hit["id"] for hit in typo] == ["doc"]
+            assert [hit["id"] for hit in prefix] == ["doc"]
+            assert [hit["id"] for hit in swapped] == ["doc"]
+            assert strict == []
+        finally:
+            assert (await store.drop())["status"] == "success"
+
     async def test_missing_vector_index_is_recreated_with_its_options(self, make_store):
         store = make_store(
             namespace="recovery",
