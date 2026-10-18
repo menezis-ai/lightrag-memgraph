@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 import inspect
+import os
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -20,6 +21,9 @@ from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
 
 @pytest.mark.parametrize("fallback", [None, "environment_workspace"])
 def test_all_backends_honor_the_explicit_workspace(monkeypatch, tmp_path, fallback):
+    monkeypatch.setenv(
+        "MEMGRAPH_URI", os.environ.get("MEMGRAPH_URI", "bolt://localhost:7687")
+    )
     if fallback is None:
         monkeypatch.delenv("MEMGRAPH_WORKSPACE", raising=False)
     else:
@@ -53,7 +57,7 @@ def test_all_backends_honor_the_explicit_workspace(monkeypatch, tmp_path, fallba
             "chunk_entity_relation_graph",
         ):
             assert getattr(rag, name).workspace == workspace, name
-    assert __import__("os").environ.get("MEMGRAPH_WORKSPACE") == fallback
+    assert os.environ.get("MEMGRAPH_WORKSPACE") == fallback
 
 
 @pytest.mark.parametrize(
