@@ -1,0 +1,105 @@
+name: Memgraph compatibility
+
+on:
+  push:
+    branches: [main, "stable/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        memgraph: [3.2.1, 3.8.1, 3.12.0, 3.13.2]
+        dependencies: [minimum, current]
+        include:
+          - dependencies: minimum
+            python: "3.10"
+            lightrag: "lightrag-hku==1.4.9"
+            neo4j: "neo4j>=5,<6"
+          - dependencies: current
+            python: "3.12"
+            lightrag: "lightrag-hku>=1.4.9,<1.5"
+            neo4j: "neo4j>=6,<7"
+    services:
+      memgraph:
+        image: memgraph/memgraph-mage:${{ matrix.memgraph }}
+        ports:
+          - 7687:7687
+    env:
+      MEMGRAPH_URI: bolt://localhost:7687
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install supported dependency set
+        run: python -m pip install -e '.[test,quality]' '${{ matrix.lightrag }}' '${{ matrix.neo4j }}'
+      - name: Static checks
+        run: python -m ruff check src
+      - name: Build distribution and install wheel
+        run: |
+          python -m build
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+      - name: Verify installed public package
+        working-directory: /tmp
+        run: |
+          python - <<'PY'
+          import sysconfig
+          from pathlib import Path
+          import twindb_lightrag_memgraph
+          from twindb_lightrag_memgraph import register, inspect_memgraph
+
+          installed = Path(twindb_lightrag_memgraph.__file__).resolve()
+          assert installed.is_relative_to(Path(sysconfig.get_path("purelib")))
+          package = installed.parent
+          assert not any((package / name).exists() for name in ("intelligence", "server", "webui_dist"))
+          register()
+          print(f"Testing installed wheel: {installed}")
+          PY
+      - name: Wait for Bolt
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          from neo4j import GraphDatabase
+
+          for attempt in range(60):
+              try:
+                  with GraphDatabase.driver(os.environ["MEMGRAPH_URI"], auth=("", "")) as driver:
+                      with driver.session() as session:
+                          session.run("RETURN 1").consume()
+                  break
+              except Exception:
+                  if attempt == 59:
+                      raise
+                  time.sleep(1)
+          PY
+      - name: Minimum LightRAG storage contract
+        if: matrix.dependencies == 'minimum'
+        run: >-
+          python -m pytest -q tests/test_memgraph_compatibility.py
+          tests/test_vector.py tests/test_kv.py tests/test_docstatus.py
+          tests/test_use_database.py tests/test_pool_tuning.py tests/test_read_pool.py
+          tests/test_quality_regressions.py
+          tests/test_vector_missing_index.py tests/test_record_to_entry.py
+          tests/test_consume_and_drop.py tests/test_docstatus_deserialize.py
+          --junitxml=reports/storage.xml
+      - name: Current LightRAG full regression suite
+        if: matrix.dependencies == 'current'
+        run: python -m pytest -q --ignore=tests/test_bench.py --junitxml=reports/regressions.xml
+      - name: Modern server load checks
+        if: matrix.dependencies == 'current' && matrix.memgraph != '3.2.1'
+        run: python -m pytest -q tests/test_bench.py --junitxml=reports/load.xml
+      - name: Preserve test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ matrix.memgraph }}-${{ matrix.dependencies }}
+          path: reports/*.xml
+          if-no-files-found: ignore

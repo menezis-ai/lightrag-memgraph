@@ -10,6 +10,7 @@ when the loop has changed and recreating the driver.
 
 import asyncio
 import logging
+import math
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -69,8 +70,8 @@ def _read_connection_acquire_timeout() -> float:
     raw = os.environ.get(MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT_ENV, "")
     try:
         val = float(raw)
-        if val <= 0:
-            raise ValueError("must be > 0")
+        if not math.isfinite(val) or val <= 0:
+            raise ValueError("must be finite and > 0")
         return val
     except (ValueError, TypeError):
         return DEFAULT_CONNECTION_ACQUIRE_TIMEOUT
@@ -109,9 +110,28 @@ def _read_connection_config(*, pool_size_override: int | None = None):
     validate_identifier(database, "database")
 
     _parsed_uri = urlparse(uri)
+    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").strip().lower()
+    if encrypted_env not in {"", "true", "false"}:
+        raise ValueError("MEMGRAPH_ENCRYPTED must be 'true' or 'false'")
+    uri_defines_tls = _parsed_uri.scheme in {
+        "bolt+s",
+        "bolt+ssc",
+        "neo4j+s",
+        "neo4j+ssc",
+    }
+    if uri_defines_tls:
+        if encrypted_env == "false":
+            raise ValueError("MEMGRAPH_ENCRYPTED=false conflicts with the TLS URI")
+        explicit_trust = os.environ.get("MEMGRAPH_TRUST", "").strip().upper()
+        uri_trust = (
+            "TRUST_ALL" if _parsed_uri.scheme.endswith("+ssc") else "TRUST_SYSTEM_CA"
+        )
+        if explicit_trust and explicit_trust != uri_trust:
+            raise ValueError("MEMGRAPH_TRUST conflicts with the TLS URI")
     _localhost = {"localhost", "127.0.0.1", "::1"}
     if (
         _parsed_uri.scheme in ("bolt", "neo4j")
+        and encrypted_env != "true"
         and _parsed_uri.hostname
         and _parsed_uri.hostname not in _localhost
     ):
@@ -121,8 +141,6 @@ def _read_connection_config(*, pool_size_override: int | None = None):
             "MEMGRAPH_ENCRYPTED=true for TLS.",
             _parsed_uri.hostname,
         )
-
-    encrypted_env = os.environ.get("MEMGRAPH_ENCRYPTED", "").lower()
 
     driver_kwargs = {
         "auth": (username, password),
@@ -143,6 +161,10 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         "liveness_check_timeout": 5,
     }
 
+    # TLS URI schemes configure encryption and trust in the driver itself;
+    # passing either option again causes a neo4j ConfigurationError.
+    if uri_defines_tls:
+        return uri, database, driver_kwargs
     if encrypted_env == "true":
         driver_kwargs["encrypted"] = True
         trust_env = os.environ.get("MEMGRAPH_TRUST", "TRUST_SYSTEM_CA").upper()
@@ -170,7 +192,7 @@ async def get_driver():
     Returns:
         tuple: (driver, database_name)
     """
-    global _driver, _database, _bound_loop_id
+    global _driver, _database, _bound_loop_id, _enterprise_supported
 
     current_loop_id = id(asyncio.get_running_loop())
 
@@ -183,16 +205,12 @@ async def get_driver():
         if _driver is not None and _bound_loop_id == current_loop_id:
             return _driver, _database
 
-        # Close stale driver from a previous event loop
-        if _driver is not None:
-            try:
-                await _driver.close()
-            except Exception as e:
-                logger.debug("Error closing stale driver: %s", e)
-            _driver = None
-
-        uri, _database, driver_kwargs = _read_connection_config()
-        _driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        uri, database, driver_kwargs = _read_connection_config()
+        selected_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        retired_driver = _driver
+        _driver = selected_driver
+        _database = database
+        _enterprise_supported = None
         _bound_loop_id = current_loop_id
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
@@ -201,7 +219,14 @@ async def get_driver():
             _safe_uri,
             _database,
         )
-        return _driver, _database
+    # Never await while holding a threading.Lock: another coroutine would
+    # block the event loop when it tried to acquire the same lock.
+    if retired_driver is not None:
+        try:
+            await retired_driver.close()
+        except Exception as e:
+            logger.debug("Error closing stale driver: %s", e)
+    return selected_driver, database
 
 
 @asynccontextmanager
@@ -249,18 +274,14 @@ async def _get_read_driver():
         if _read_driver is not None and _read_bound_loop_id == current_loop_id:
             return _read_driver, _read_database
 
-        if _read_driver is not None:
-            try:
-                await _read_driver.close()
-            except Exception as e:
-                logger.debug("Error closing stale read driver: %s", e)
-            _read_driver = None
-
         read_pool_size = _read_read_pool_size()
-        uri, _read_database, driver_kwargs = _read_connection_config(
+        uri, database, driver_kwargs = _read_connection_config(
             pool_size_override=read_pool_size,
         )
-        _read_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        selected_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
+        retired_driver = _read_driver
+        _read_driver = selected_driver
+        _read_database = database
         _read_bound_loop_id = current_loop_id
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
@@ -270,7 +291,12 @@ async def _get_read_driver():
             _read_database,
             read_pool_size,
         )
-        return _read_driver, _read_database
+    if retired_driver is not None:
+        try:
+            await retired_driver.close()
+        except Exception as e:
+            logger.debug("Error closing stale read driver: %s", e)
+    return selected_driver, database
 
 
 @asynccontextmanager
@@ -311,9 +337,12 @@ async def _try_use_database(session, database: str) -> None:
         return
 
     if _enterprise_supported is False:
+        if database != "memgraph":
+            raise RuntimeError(f"Database {database!r} requires Memgraph Enterprise")
         return  # Community edition — skip
 
     try:
+        validate_identifier(database, "database")
         result = await session.run(f"USE DATABASE {database}")
         await result.consume()
         if _enterprise_supported is None:
@@ -325,6 +354,10 @@ async def _try_use_database(session, database: str) -> None:
     except Neo4jClientError as exc:
         if "enterprise" in str(exc).lower() or "license" in str(exc).lower():
             _enterprise_supported = False
+            if database != "memgraph":
+                raise RuntimeError(
+                    f"Database {database!r} requires Memgraph Enterprise"
+                ) from exc
             logger.info(
                 "Memgraph Community detected — USE DATABASE not available, "
                 "using default database"
@@ -350,7 +383,7 @@ def _uses_routing_protocol() -> bool:
 
 
 def _read_write_concurrency() -> int:
-    """Read MEMGRAPH_WRITE_CONCURRENCY from env, default 10."""
+    """Read MEMGRAPH_WRITE_CONCURRENCY from env, default 8."""
     raw = os.environ.get(MEMGRAPH_WRITE_CONCURRENCY_ENV, "")
     try:
         val = int(raw)

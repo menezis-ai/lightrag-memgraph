@@ -154,7 +154,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             error_msg=props.get("error_msg"),
             metadata=metadata or {},
         )
-        if hasattr(DocProcessingStatus, "multimodal_processed"):
+        if "multimodal_processed" in DocProcessingStatus.__dataclass_fields__:
             kwargs["multimodal_processed"] = props.get("multimodal_processed")
         return DocProcessingStatus(**kwargs)
 
@@ -315,7 +315,7 @@ class MemgraphDocStatusStorage(DocStatusStorage):
             return docs
 
     async def get_docs_by_statuses(
-        self, statuses: list[DocStatus]
+        self, statuses: list[DocStatus], strict: bool = False
     ) -> dict[str, DocProcessingStatus]:
         label = self._label()
         status_values = [status.value for status in statuses]

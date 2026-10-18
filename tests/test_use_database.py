@@ -35,6 +35,7 @@ def _make_mock_session(*, enterprise=True):
     if enterprise:
         session.run = AsyncMock(return_value=AsyncMock())
     else:
+
         async def _run_side_effect(query, *args, **kwargs):
             if query.startswith("USE DATABASE"):
                 raise Neo4jClientError(
@@ -143,8 +144,9 @@ class TestPoolGetSessionCommunity:
         ):
             from twindb_lightrag_memgraph._pool import get_session
 
-            async with get_session():
-                pass
+            with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+                async with get_session():
+                    pass
 
         assert _pool_module._enterprise_supported is False
 
@@ -160,14 +162,16 @@ class TestPoolGetSessionCommunity:
             from twindb_lightrag_memgraph._pool import get_session
 
             # First session — probes and fails
-            async with get_session():
-                pass
+            with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+                async with get_session():
+                    pass
 
             mock_session.run.reset_mock()
 
             # Second session — should skip USE DATABASE entirely
-            async with get_session():
-                pass
+            with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+                async with get_session():
+                    pass
 
         mock_session.run.assert_not_called()
 
@@ -315,8 +319,9 @@ class TestSafeDriverWrapperCommunity:
 
         wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
 
-        async with wrapper.session(database="custom_db") as session:
-            pass
+        with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+            async with wrapper.session(database="custom_db"):
+                pass
 
         assert wrapper._enterprise_supported is False
 
@@ -329,13 +334,15 @@ class TestSafeDriverWrapperCommunity:
         wrapper = wrapper_cls(mock_real_driver, "custom_db", use_routing=False)
 
         # First session — probes and fails
-        async with wrapper.session(database="custom_db"):
-            pass
+        with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+            async with wrapper.session(database="custom_db"):
+                pass
 
         mock_session.run.reset_mock()
 
         # Second session — should skip
-        async with wrapper.session(database="custom_db"):
-            pass
+        with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
+            async with wrapper.session(database="custom_db"):
+                pass
 
         mock_session.run.assert_not_called()
