@@ -2,6 +2,14 @@
 
 ## 0.6.0 (unreleased)
 
+- Add nightly/manual scale qualification for main and stable/0.5.x across modern
+  Memgraph engines: 10K/100K document pagination and 10K-vector search, concurrent
+  calls, enforced latency budgets and retained JUnit/JSON/Markdown evidence.
+  Large datasets are opt-in during local/regular compatibility tests.
+- Qualify the real LightRAG 1.5.7 PDF parser's HTTP responsiveness, including
+  duplicate-dictionary input, parse failure and a watchdog-bounded blocking
+  negative control. Document the separate production validation for ingestion
+  502s; synthetic tests do not assert that the BNP incident is resolved.
 - Qualify Memgraph 3.13.2 while retaining legacy storage contracts. CI covers
   3.2.1, 3.8.1, 3.9.0, 3.11.0, 3.12.0 and 3.13.2 with LightRAG 1.4.9,
   1.4.16, 1.5.0 and 1.5.7 / Neo4j 5.x and 6.x dependency profiles.

@@ -20,6 +20,7 @@ test = [
     "pytest-asyncio>=1.2.0",
     "httpx>=0.24.0",
     "fastapi>=0.104.0",
+    "pypdf>=6.1.0",
 ]
 quality = [
     "build>=1.2.2",
