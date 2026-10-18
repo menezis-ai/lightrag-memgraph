@@ -91,10 +91,10 @@ def register() -> None:
     #    and avoid session(database=...) which breaks on Community/Coordinator
     _patch_builtin_memgraph_storage()
 
-    # 5. Buffer merge_nodes_and_edges writes (130+ RTT → 2 UNWIND queries)
-    _patch_merge_write_path()
+    # Keep upstream merge writes inside LightRAG's entity/relationship locks.
+    # Deferring persistence until the document finishes loses concurrent updates.
 
-    # 6. Post-indexation hook on LightRAG._insert_done
+    # 5. Post-indexation hook on LightRAG._insert_done
     _patch_insert_done()
 
     try:
@@ -654,64 +654,6 @@ def _patch_operate_hot_paths():
 
     operate._get_node_data = _fused_get_node_data
     operate._find_most_related_edges_from_entities = _fused_find_edges
-
-
-def _patch_merge_write_path():
-    """Replace merge_nodes_and_edges with a buffered version.
-
-    Instead of 130+ individual upsert_node/upsert_edge Bolt round-trips
-    per document, the buffered version accumulates all upserts in memory
-    and flushes them as 2-3 UNWIND queries at the end.
-
-    Double-patch required: operate.merge_nodes_and_edges is imported by
-    lightrag.lightrag via ``from ... import``, creating a local copy.
-    """
-    from lightrag import lightrag as _lr_mod
-    from lightrag import operate
-    from lightrag.kg.memgraph_impl import MemgraphStorage
-
-    from ._buffered_graph import _BufferedGraphProxy
-
-    _original_merge = operate.merge_nodes_and_edges
-
-    async def _buffered_merge_nodes_and_edges(*args, **kwargs):
-        # Extract knowledge_graph_inst from args or kwargs.
-        # Signature evolved across lightrag versions:
-        #   old: (entity_map, edge_map, knowledge_graph_inst, global_config)
-        #   new: (chunk_results, knowledge_graph_inst, entity_vdb, ...)
-        # We support both by checking kwargs first, then positional args.
-        graph_inst = kwargs.get("knowledge_graph_inst")
-        if graph_inst is None:
-            # Positional: index 2 (old) or index 1 (new).
-            # Detect by type: MemgraphStorage is always the graph instance.
-            for i, arg in enumerate(args):
-                if isinstance(arg, MemgraphStorage):
-                    graph_inst = arg
-                    break
-
-        if not isinstance(graph_inst, MemgraphStorage):
-            return await _original_merge(*args, **kwargs)
-
-        proxy = _BufferedGraphProxy(graph_inst)
-        # Replace the graph instance in args/kwargs
-        if "knowledge_graph_inst" in kwargs:
-            kwargs["knowledge_graph_inst"] = proxy
-        else:
-            args = list(args)
-            for i, arg in enumerate(args):
-                if arg is graph_inst:
-                    args[i] = proxy
-                    break
-            args = tuple(args)
-        await _original_merge(*args, **kwargs)
-        await proxy.flush()
-
-    _buffered_merge_nodes_and_edges.__name__ = "buffered_merge_nodes_and_edges"
-
-    # Double-patch: operate module + lightrag.lightrag module
-    operate.merge_nodes_and_edges = _buffered_merge_nodes_and_edges
-    _lr_mod.merge_nodes_and_edges = _buffered_merge_nodes_and_edges
-    logger.info("Patched merge_nodes_and_edges with buffered UNWIND writer")
 
 
 def _patch_insert_done():

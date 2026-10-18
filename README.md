@@ -68,6 +68,18 @@ rag = LightRAG(
 
 The graph backend (built into LightRAG) is also patched at registration time with batch read methods (`get_nodes_batch`, `node_degrees_batch`, `get_edges_batch`, …) replacing N sequential queries with single `UNWIND` queries during bulk ingestion.
 
+Graph merge writes use LightRAG's original path and complete before its keyed
+entity/relationship locks are released. Document-level write buffering is
+disabled because deferring persistence can overwrite another document's shared
+descriptions and source IDs. The real-server concurrency regressions in
+[`tests/test_merge_concurrency.py`](tests/test_merge_concurrency.py) exercise
+overlapping document merges for both entities and relationships in every CI
+dependency profile.
+
+The target release is **0.6.0**; see [CHANGELOG.md](CHANGELOG.md). Registration
+keeps the package version visible through LightRAG's `core_version`, with the
+suffix `+memgraph-0.6.0`.
+
 ## Testing
 
 Unit tests (no Memgraph required) — `tests/conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset:

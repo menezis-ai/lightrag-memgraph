@@ -55,11 +55,14 @@ jobs:
           import twindb_lightrag_memgraph
           from twindb_lightrag_memgraph import register, inspect_memgraph
 
+          assert twindb_lightrag_memgraph.__version__ == "0.6.0"
           installed = Path(twindb_lightrag_memgraph.__file__).resolve()
           assert installed.is_relative_to(Path(sysconfig.get_path("purelib")))
           package = installed.parent
           assert not any((package / name).exists() for name in ("intelligence", "server", "webui_dist"))
           register()
+          import lightrag
+          assert lightrag.__version__.endswith("+memgraph-0.6.0")
           print(f"Testing installed wheel: {installed}")
           PY
       - name: Wait for Bolt
@@ -89,6 +92,7 @@ jobs:
           tests/test_quality_regressions.py
           tests/test_vector_missing_index.py tests/test_record_to_entry.py
           tests/test_consume_and_drop.py tests/test_docstatus_deserialize.py
+          tests/test_merge_concurrency.py tests/test_register.py
           --junitxml=reports/storage.xml
       - name: Current LightRAG full regression suite
         if: matrix.dependencies == 'current'
