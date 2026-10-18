@@ -43,8 +43,9 @@ by LightRAG deletion fail on invalid JSON or a wrong decoded type, preserving th
 record for diagnosis instead of treating unreadable evidence as an empty chunk set.
 UI/status hydration has its separate documented relaxed-read semantics.
 
-The real integration regression exercises `ainsert`, `aquery` and
-`adelete_by_doc_id` with native Memgraph persistence. It verifies document/status
+The integration regression exercises actual `ainsert`, `aquery` and
+`adelete_by_doc_id` with native Memgraph persistence and deterministic LLM/embedding
+fixtures. It verifies document/status
 absence, missing KV chunks, missing chunk/entity/relationship vectors, empty graph
 data and absence of native chunk-search hits after deletion. A second tenant with
 identical IDs remains intact and searchable. Another test corrupts the stored
@@ -53,7 +54,7 @@ status record remain present.
 
 The native zero-hit assertion runs on Memgraph 3.4 and later. Memgraph 3.2 is
 checked for physical deletion but retains the documented ANN deletion/churn
-limitation described in [ingestion validation](ingestion-validation.md).
+limitation described in the [deployment notes](../README.md#upgrading-an-existing-memgraph-deployment).
 
 LightRAG 1.4.9 uses a process-wide ingestion busy flag. Concurrent `ainsert`
 calls for separate tenants can leave the second tenant pending; its queue must
@@ -96,7 +97,9 @@ Values in node properties are not rewritten. Graph workspace identifiers use the
 same stricter validation as the other stores.
 
 KV writes and graph initialization/probes explicitly consume their results.
-Deferred failures propagate instead of being left to best-effort session closure.
+Deferred KV/probe failures propagate instead of being left to best-effort session
+closure. Graph index-creation failures retain their existing warning behavior;
+they are now observed during result consumption too.
 Read-pool sessions request `READ`, including when using a routing URI. Routing
 parameters and failure paths are unit-tested; live Enterprise authorization,
 replica failover and HA behavior remain outside the Community matrix.
