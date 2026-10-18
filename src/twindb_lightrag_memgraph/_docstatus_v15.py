@@ -25,26 +25,37 @@ class DocStatusSchedulingMixin:
         if isinstance(position, CursorAfter):
             try:
                 key = json.loads(position.opaque)
-                if isinstance(key, list) and len(key) == 2 and all(isinstance(x, str) for x in key):
+                if (
+                    isinstance(key, list)
+                    and len(key) == 2
+                    and all(isinstance(x, str) for x in key)
+                ):
                     return key
             except (ValueError, TypeError):
                 pass
         raise StorageControlPlaneError("Malformed Memgraph scheduling cursor")
 
-    async def _ordered_status_rows(self, where, params, *, limit, after=None, projection="properties(n)"):
+    async def _ordered_status_rows(
+        self, where, params, *, limit, after=None, projection="properties(n)"
+    ):
         # A legacy NULL timestamp sorts first and remains reachable on resume.
         key = "coalesce(toString(n.created_at), '')"
         if after is not None:
-            where += f" AND ({key} > $created OR ({key} = $created AND n.id > $last_id))"
+            where += (
+                f" AND ({key} > $created OR ({key} = $created AND n.id > $last_id))"
+            )
             params = {**params, "created": after[0], "last_id": after[1]}
         async with _pool.get_read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{self._label()}`) WHERE {where} "
                 f"RETURN {projection} AS props, {key} AS created, n.id AS id "
                 f"ORDER BY created ASC, id ASC LIMIT $limit",
-                **params, limit=limit,
+                **params,
+                limit=limit,
             )
-            rows = [(r["id"], r["props"], [r["created"], r["id"]]) async for r in result]
+            rows = [
+                (r["id"], r["props"], [r["created"], r["id"]]) async for r in result
+            ]
             await result.consume()
             return rows
 
@@ -53,7 +64,11 @@ class DocStatusSchedulingMixin:
         from lightrag.base import DocSchedulingRecord
 
         raw_status = props["status"]
-        status = raw_status if isinstance(raw_status, DocStatus) else DocStatus(raw_status.lower())
+        status = (
+            raw_status
+            if isinstance(raw_status, DocStatus)
+            else DocStatus(raw_status.lower())
+        )
         created = props["created_at"]
         updated = props.get("updated_at", created)
         if not isinstance(created, str) or not isinstance(updated, str):
@@ -67,8 +82,12 @@ class DocStatusSchedulingMixin:
                 raise ValueError("Document metadata must be an object")
             journal = isinstance(metadata.get("custom_chunk_patch"), dict)
         return DocSchedulingRecord(
-            id=doc_id, status=status, created_at=created, updated_at=updated,
-            file_path=props.get("file_path"), track_id=props.get("track_id"),
+            id=doc_id,
+            status=status,
+            created_at=created,
+            updated_at=updated,
+            file_path=props.get("file_path"),
+            track_id=props.get("track_id"),
             has_custom_chunk_journal=bool(journal),
         )
 
@@ -80,7 +99,9 @@ class DocStatusSchedulingMixin:
         "metadata: CASE WHEN n._has_custom_chunk_journal IS NULL THEN n.metadata ELSE null END}"
     )
 
-    async def get_docs_by_statuses_page(self, statuses, *, limit, position=None, strict=False):
+    async def get_docs_by_statuses_page(
+        self, statuses, *, limit, position=None, strict=False
+    ):
         from lightrag.base import CURSOR_END, CursorAfter, DocStatusPage
 
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
@@ -89,8 +110,11 @@ class DocStatusSchedulingMixin:
             return DocStatusPage(docs={}, next_position=CURSOR_END)
         after = self._decode_position(position)
         rows = await self._ordered_status_rows(
-            "n.status IN $statuses", {"statuses": [s.value for s in statuses]},
-            limit=limit, after=after, projection=self._scheduling_projection,
+            "n.status IN $statuses",
+            {"statuses": [s.value for s in statuses]},
+            limit=limit,
+            after=after,
+            projection=self._scheduling_projection,
         )
         docs = {}
         for doc_id, props, _ in rows:
@@ -101,10 +125,14 @@ class DocStatusSchedulingMixin:
                     raise
                 logger.warning("Skipping unusable scheduling row %s", doc_id)
         # A skipped row is consumed too. Never terminate just because docs is empty.
-        next_position = CURSOR_END if len(rows) < limit else CursorAfter(json.dumps(rows[-1][2]))
+        next_position = (
+            CURSOR_END if len(rows) < limit else CursorAfter(json.dumps(rows[-1][2]))
+        )
         return DocStatusPage(docs=docs, next_position=next_position)
 
-    async def _batch_status_rows(self, doc_ids: Sequence[str], *, projection="properties(n)"):
+    async def _batch_status_rows(
+        self, doc_ids: Sequence[str], *, projection="properties(n)"
+    ):
         # Chunk caller-provided batches as well as server-side scheduling sweeps.
         ids = list(dict.fromkeys(doc_ids))
         for offset in range(0, len(ids), 256):
@@ -112,7 +140,7 @@ class DocStatusSchedulingMixin:
                 result = await session.run(
                     f"UNWIND $ids AS target_id MATCH (n:`{self._label()}` {{id: target_id}}) "
                     f"RETURN n.id AS id, {projection} AS props",
-                    ids=ids[offset:offset + 256],
+                    ids=ids[offset : offset + 256],
                 )
                 rows = [(r["id"], r["props"]) async for r in result]
                 await result.consume()
@@ -121,7 +149,9 @@ class DocStatusSchedulingMixin:
 
     async def get_docs_by_ids(self, doc_ids: Sequence[str], *, strict=False):
         docs = {}
-        async for doc_id, props in self._batch_status_rows(doc_ids, projection=self._scheduling_projection):
+        async for doc_id, props in self._batch_status_rows(
+            doc_ids, projection=self._scheduling_projection
+        ):
             try:
                 docs[doc_id] = self._scheduling_record(doc_id, props)
             except (ValueError, TypeError, KeyError, AttributeError):
@@ -153,7 +183,9 @@ class DocStatusSchedulingMixin:
             await result.consume()
             return record["count"]
 
-    async def update_doc_status_fields(self, doc_id: str, fields: dict[str, Any], *, missing_ok=False):
+    async def update_doc_status_fields(
+        self, doc_id: str, fields: dict[str, Any], *, missing_ok=False
+    ):
         from lightrag.exceptions import StorageRecordNotFoundError
 
         if "created_at" in fields:
@@ -165,7 +197,8 @@ class DocStatusSchedulingMixin:
             async with _pool.get_session() as session:
                 result = await session.run(
                     f"MATCH (n:`{self._label()}` {{id: $id}}) SET n += $props RETURN n.id AS id",
-                    id=doc_id, props=props,
+                    id=doc_id,
+                    props=props,
                 )
                 record = await result.single()
                 await result.consume()
@@ -179,9 +212,9 @@ class DocStatusSchedulingMixin:
             metadata = props["metadata"]
             if isinstance(metadata, str):
                 metadata = json.loads(metadata)
-            props["_has_custom_chunk_journal"] = isinstance(metadata, dict) and isinstance(
-                metadata.get("custom_chunk_patch"), dict
-            )
+            props["_has_custom_chunk_journal"] = isinstance(
+                metadata, dict
+            ) and isinstance(metadata.get("custom_chunk_patch"), dict)
         for key, value in props.items():
             if isinstance(value, (dict, list)):
                 props[key] = json.dumps(value, default=str)
@@ -192,7 +225,9 @@ class DocStatusSchedulingMixin:
     async def _source_candidates(self, where, params):
         after = None
         while True:
-            rows = await self._ordered_status_rows(where, params, limit=128, after=after)
+            rows = await self._ordered_status_rows(
+                where, params, limit=128, after=after
+            )
             for doc_id, props, _ in rows:
                 yield doc_id, self._deserialize_props(props, strict=True)
             if len(rows) < 128:
@@ -209,7 +244,9 @@ class DocStatusSchedulingMixin:
     async def get_doc_by_file_basename(self, basename: str):
         if not basename or basename == "unknown_source":
             return None
-        async for doc_id, props in self._source_candidates("n.file_path = $source", {"source": basename}):
+        async for doc_id, props in self._source_candidates(
+            "n.file_path = $source", {"source": basename}
+        ):
             if not self._is_duplicate(props):
                 return doc_id, props
         return None
@@ -225,7 +262,11 @@ class DocStatusSchedulingMixin:
             metadata = props.get("metadata") or {}
             if not isinstance(metadata, dict):
                 raise ValueError("Document metadata must be an object")
-            if exclude_doc_id is not None and metadata.get("is_duplicate") and metadata.get("original_doc_id") == exclude_doc_id:
+            if (
+                exclude_doc_id is not None
+                and metadata.get("is_duplicate")
+                and metadata.get("original_doc_id") == exclude_doc_id
+            ):
                 continue
             return doc_id, props
         return None
@@ -242,8 +283,13 @@ class DocStatusSchedulingMixin:
             if not self._is_duplicate(props):
                 candidates.append((doc_id, props))
                 if len(candidates) == 2:
-                    return SourceConflict(candidate_count=None, sample_doc_ids=tuple(sorted(x[0] for x in candidates)))
+                    return SourceConflict(
+                        candidate_count=None,
+                        sample_doc_ids=tuple(sorted(x[0] for x in candidates)),
+                    )
         if candidates:
             doc_id, props = candidates[0]
-            return SourceUnique(doc_id=doc_id, doc=self._scheduling_record(doc_id, props))
+            return SourceUnique(
+                doc_id=doc_id, doc=self._scheduling_record(doc_id, props)
+            )
         return SourceAbsent()

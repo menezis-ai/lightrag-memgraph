@@ -49,7 +49,9 @@ jobs:
       - name: Install supported dependency set
         run: python -m pip install -e '.[test,quality]' '${{ matrix.lightrag }}' '${{ matrix.neo4j }}'
       - name: Static checks
-        run: python -m ruff check src
+        run: |
+          python -m ruff check src
+          python -m ruff format --check src/twindb_lightrag_memgraph/_docstatus_v15.py tests/test_lightrag15.py
       - name: Build distribution and install wheel
         run: |
           python -m build
@@ -109,9 +111,6 @@ jobs:
       - name: Modern server load checks
         if: matrix.dependencies == 'current' && matrix.memgraph != '3.2.1'
         run: python -m pytest -q tests/test_bench.py --junitxml=reports/load.xml
-      - name: Check new scheduling code formatting
-        if: always()
-        run: python -m ruff format --diff src/twindb_lightrag_memgraph/_docstatus_v15.py tests/test_lightrag15.py
       - name: Preserve test reports
         if: always()
         uses: actions/upload-artifact@v4

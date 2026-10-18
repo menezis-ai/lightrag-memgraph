@@ -115,10 +115,18 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
         return d
 
     @staticmethod
-    def _deserialize_status(props: dict, *, strict: bool = False) -> DocProcessingStatus:
+    def _deserialize_status(
+        props: dict, *, strict: bool = False
+    ) -> DocProcessingStatus:
         """Convert Cypher node properties back to DocProcessingStatus."""
         if strict:
-            for name in ("status", "created_at", "updated_at", "content_summary", "content_length"):
+            for name in (
+                "status",
+                "created_at",
+                "updated_at",
+                "content_summary",
+                "content_length",
+            ):
                 if name not in props:
                     raise ValueError(f"Missing document status field: {name}")
         metadata = None
@@ -353,7 +361,9 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
             docs = {}
             async for record in result:
                 try:
-                    docs[record["id"]] = self._deserialize_status(record["props"], strict=strict)
+                    docs[record["id"]] = self._deserialize_status(
+                        record["props"], strict=strict
+                    )
                 except (ValueError, TypeError, KeyError):
                     if strict:
                         raise
