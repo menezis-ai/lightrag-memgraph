@@ -3,6 +3,7 @@ include LICENSE
 include pyproject.toml
 include CHANGELOG.md
 include docs/ingestion-validation.md
+include docs/data-integrity.md
 
 recursive-include src/twindb_lightrag_memgraph *.py
 recursive-exclude tests *

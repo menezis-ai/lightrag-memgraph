@@ -83,7 +83,11 @@ rag = LightRAG(
 
 - `MEMGRAPH_URI` — Bolt URL, e.g. `bolt://localhost:7687`. Defaults to `bolt://localhost:7687`.
 - `MEMGRAPH_USERNAME` / `MEMGRAPH_PASSWORD` — credentials when auth is enabled.
-- `WORKSPACE` (or `MEMGRAPH_WORKSPACE`) — backtick-safe identifier used as the Memgraph label prefix (`KV_{workspace}`, `Vec_{workspace}`, `DocStatus_{workspace}`). Defaults to `base`.
+- Workspace selection applies identically to graph, KV, vectors and document status:
+  explicit `workspace=` argument → `global_config["workspace"]` →
+  `MEMGRAPH_WORKSPACE` → `WORKSPACE` → `base`. Values must contain only letters,
+  digits and underscores. Per-instance arguments take priority over deployment
+  defaults, without changing process environment variables during construction.
 - `MEMGRAPH_WRITE_CONCURRENCY` — max concurrent writes (default `8`).
 - `MEMGRAPH_POOL_SIZE` / `MEMGRAPH_READ_POOL_SIZE` — Bolt pool sizing.
 - `MEMGRAPH_CONNECTION_ACQUIRE_TIMEOUT` — seconds before a connection acquire fails (default `5.0`).
@@ -95,6 +99,24 @@ rag = LightRAG(
 - **`MemgraphKVStorage`** — label `KV_{workspace}_{namespace}`, dict value serialised to a single `data` JSON string. Batch via `UNWIND` + `MERGE`.
 - **`MemgraphVectorDBStorage`** — label `Vec_{workspace}_{namespace}`, vector index `CREATE VECTOR INDEX ... WITH CONFIG {dimension, capacity, metric: "cos"}`. Auto-creates the index on first query if missing.
 - **`MemgraphDocStatusStorage`** — label `DocStatus_{workspace}` (no namespace suffix). Indexes on `id`, `status`, `file_path`, `track_id`, `updated_at`, `created_at`. Paginated listing runs count + fetch in parallel.
+
+The default environment variables remain supported when no workspace argument
+is supplied. Applications that previously used `MEMGRAPH_WORKSPACE` to override
+an explicit LightRAG workspace should pass their intended workspace explicitly.
+The integration suite runs two real LightRAG instances concurrently with the
+same document/chunk identifiers, then deletes one document and verifies all its
+chunks, vectors and graph data are gone while the other tenant remains searchable.
+Corrupt JSON in a document-status point read raises before deletion can proceed.
+The [integrity validation notes](docs/data-integrity.md) describe checks for older
+data and the limits of this qualification.
+
+The shared KV/vector/status pools isolate connection acquisition, while each
+initialized graph instance owns another driver. With the default sizes and `W`
+graph instances, the configured upper bound is approximately **70 + 50 × W
+connections per process**, rather than a fixed three-pool total. These settings
+do not isolate Memgraph CPU, memory or locks and do not guarantee HTTP latency.
+Read-pool sessions explicitly request Neo4j `READ` access mode; HA routing still
+requires qualification on an actual Enterprise cluster.
 
 The graph backend (built into LightRAG) is also patched at registration time with batch read methods (`get_nodes_batch`, `node_degrees_batch`, `get_edges_batch`, …) replacing N sequential queries with single `UNWIND` queries during bulk ingestion.
 

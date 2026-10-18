@@ -135,11 +135,12 @@ def _patch_builtin_memgraph_storage():
     """
     from contextlib import asynccontextmanager
 
+    from lightrag.base import BaseGraphStorage
     from lightrag.kg.memgraph_impl import MemgraphStorage
     from lightrag.kg.shared_storage import get_data_init_lock
     from neo4j import AsyncGraphDatabase
 
-    from ._constants import validate_identifier
+    from ._constants import resolve_workspace, validate_entity_type, validate_identifier
     from ._pool import _read_connection_config, _uses_routing_protocol
 
     _original_logger = None
@@ -147,6 +148,49 @@ def _patch_builtin_memgraph_storage():
         from lightrag.utils import logger as _original_logger
     except ImportError:
         pass
+
+    def _patched_init(self, namespace, global_config, embedding_func, workspace=None):
+        # Upstream constructors in supported LightRAG releases give the global
+        # MEMGRAPH_WORKSPACE variable priority. All four stores must instead
+        # honor the same per-instance workspace, without temporarily editing env.
+        BaseGraphStorage.__init__(
+            self,
+            namespace=namespace,
+            workspace=resolve_workspace(workspace, global_config),
+            global_config=global_config,
+            embedding_func=embedding_func,
+        )
+        self._driver = None
+
+    MemgraphStorage.__init__ = _patched_init
+
+    # Older LightRAG writers interpolate entity_type as a label. Keep their
+    # immediate transaction/retry path and reject unsafe delimiters before I/O.
+    if not getattr(MemgraphStorage.upsert_node, "_twindb_validates_entity_type", False):
+        original_upsert_node = MemgraphStorage.upsert_node
+
+        async def _safe_upsert_node(self, node_id, node_data):
+            if "entity_type" in node_data:
+                validate_entity_type(node_data["entity_type"])
+            return await original_upsert_node(self, node_id, node_data)
+
+        _safe_upsert_node._twindb_validates_entity_type = True
+        MemgraphStorage.upsert_node = _safe_upsert_node
+
+    batch_upsert = getattr(MemgraphStorage, "upsert_nodes_batch", None)
+    if batch_upsert is not None and not getattr(
+        batch_upsert, "_twindb_validates_entity_type", False
+    ):
+        original_upsert_nodes_batch = batch_upsert
+
+        async def _safe_upsert_nodes_batch(self, nodes):
+            for _, node_data in nodes:
+                if "entity_type" in node_data:
+                    validate_entity_type(node_data["entity_type"])
+            return await original_upsert_nodes_batch(self, nodes)
+
+        _safe_upsert_nodes_batch._twindb_validates_entity_type = True
+        MemgraphStorage.upsert_nodes_batch = _safe_upsert_nodes_batch
 
     class _SafeDriverWrapper:
         """Thin proxy around an AsyncDriver that intercepts session().
@@ -234,9 +278,10 @@ def _patch_builtin_memgraph_storage():
                 async with self._driver.session() as session:
                     try:
                         workspace_label = self._get_workspace_label()
-                        await session.run(
-                            f"CREATE INDEX ON :{workspace_label}(entity_id)"
+                        result = await session.run(
+                            f"CREATE INDEX ON :`{workspace_label}`(entity_id)"
                         )
+                        await result.consume()
                     except Exception as e:
                         if "already exists" in str(e).lower():
                             pass
@@ -247,7 +292,8 @@ def _patch_builtin_memgraph_storage():
                                 e,
                             )
 
-                    await session.run("RETURN 1")
+                    result = await session.run("RETURN 1")
+                    await result.consume()
                     if _original_logger:
                         _original_logger.info(
                             f"[MemgraphGraph:{self.workspace}] GRAPH storage "
@@ -273,11 +319,7 @@ def _patch_builtin_memgraph_storage():
                 "Memgraph driver is not initialized. Call 'await initialize()' first."
             )
         ws = self._get_workspace_label()
-        query = (
-            f"UNWIND $ids AS eid "
-            f"MATCH (n:`{ws}` {{entity_id: eid}}) "
-            f"RETURN eid, n"
-        )
+        query = f"UNWIND $ids AS eid MATCH (n:`{ws}` {{entity_id: eid}}) RETURN eid, n"
         result = {}
         async with self._driver.session(
             database=self._DATABASE, default_access_mode="READ"
@@ -565,9 +607,10 @@ def _patch_operate_hot_paths():
         node_ids = [r["entity_name"] for r in results]
 
         if hasattr(knowledge_graph_inst, "get_nodes_with_degrees_batch"):
-            nodes_dict, degrees_dict = (
-                await knowledge_graph_inst.get_nodes_with_degrees_batch(node_ids)
-            )
+            (
+                nodes_dict,
+                degrees_dict,
+            ) = await knowledge_graph_inst.get_nodes_with_degrees_batch(node_ids)
         else:
             nodes_dict, degrees_dict = await asyncio.gather(
                 knowledge_graph_inst.get_nodes_batch(node_ids),
@@ -619,10 +662,11 @@ def _patch_operate_hot_paths():
         edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
 
         if hasattr(knowledge_graph_inst, "get_edges_with_degrees_batch"):
-            edge_data_dict, edge_degrees_dict = (
-                await knowledge_graph_inst.get_edges_with_degrees_batch(
-                    edge_pairs_dicts
-                )
+            (
+                edge_data_dict,
+                edge_degrees_dict,
+            ) = await knowledge_graph_inst.get_edges_with_degrees_batch(
+                edge_pairs_dicts
             )
         else:
             edge_pairs_tuples = list(all_edges)

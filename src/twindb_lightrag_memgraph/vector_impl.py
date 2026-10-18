@@ -42,9 +42,10 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         embedding_func,
         meta_fields=None,
         cosine_better_than_threshold=None,
+        workspace=None,
         **kwargs,
     ):
-        workspace = resolve_workspace()
+        workspace = resolve_workspace(workspace, global_config)
         validate_identifier(namespace, "namespace")
         super().__init__(
             namespace=namespace,

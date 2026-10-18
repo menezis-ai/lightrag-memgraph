@@ -11,11 +11,12 @@ import re
 # Environment variable keys.
 #
 # Workspace resolution chain (``resolve_workspace()``):
-#   1. ``MEMGRAPH_WORKSPACE`` — historical alias kept for back-compat.
-#   2. ``WORKSPACE`` — the canonical LightRAG-core variable. Setting
+#   1. Explicit workspace argument, then global_config["workspace"].
+#   2. ``MEMGRAPH_WORKSPACE`` — historical alias kept for back-compat.
+#   3. ``WORKSPACE`` — the canonical LightRAG-core variable. Setting
 #      this single value is now enough for both LightRAG core *and*
 #      our Memgraph storage backends.
-#   3. ``DEFAULT_WORKSPACE`` (``"base"``) — the LightRAG-internal default.
+#   4. ``DEFAULT_WORKSPACE`` (``"base"``) — the LightRAG-internal default.
 MEMGRAPH_WORKSPACE_ENV = "MEMGRAPH_WORKSPACE"
 WORKSPACE_ENV = "WORKSPACE"
 
@@ -63,21 +64,50 @@ def validate_identifier(value: str, name: str = "identifier") -> str:
     return value
 
 
-def resolve_workspace() -> str:
-    """Resolve the active workspace (Memgraph label) from the environment.
+def resolve_workspace(
+    workspace: str | None = None, global_config: dict | None = None
+) -> str:
+    """Resolve a workspace without mutating process-wide environment variables.
 
     Falls through the alias chain in order, returning the first non-empty
     value:
 
-      1. ``MEMGRAPH_WORKSPACE``
-      2. ``WORKSPACE`` (LightRAG-core canonical)
-      3. :data:`DEFAULT_WORKSPACE` (``"base"``)
+      1. Explicit ``workspace``
+      2. ``global_config["workspace"]``
+      3. ``MEMGRAPH_WORKSPACE``
+      4. ``WORKSPACE`` (LightRAG-core canonical)
+      5. :data:`DEFAULT_WORKSPACE` (``"base"``)
 
     Raises:
         ValueError: If the resolved workspace contains unsafe characters.
     """
+    configured = global_config.get("workspace") if global_config is not None else None
+    for candidate in (workspace, configured):
+        if candidate is not None:
+            if not isinstance(candidate, str):
+                return validate_identifier(candidate, "workspace")
+            if candidate.strip():
+                return validate_identifier(candidate.strip(), "workspace")
     for env_key in (MEMGRAPH_WORKSPACE_ENV, WORKSPACE_ENV):
         candidate = os.environ.get(env_key, "").strip()
         if candidate:
             return validate_identifier(candidate, "workspace")
     return validate_identifier(DEFAULT_WORKSPACE, "workspace")
+
+
+def validate_entity_type(value: str) -> str:
+    """Reject label delimiters accepted unsafely by legacy upstream writers.
+
+    Spaces, punctuation and Unicode remain valid inside the quoted labels used
+    by LightRAG 1.4. Backticks and NUL must never reach their interpolation.
+    """
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or "`" in value
+        or "\x00" in value
+    ):
+        raise ValueError(
+            "Invalid entity type: expected a non-empty label without backticks or NUL"
+        )
+    return value

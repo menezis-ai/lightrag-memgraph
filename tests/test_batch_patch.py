@@ -824,7 +824,7 @@ class TestSafeDriverWrapper:
 
         wrapper = WrapperCls(mock_raw, database="mydb", use_routing=False)
 
-        async with wrapper.session() as session:
+        async with wrapper.session():
             pass
 
         mock_session.run.assert_any_call("USE DATABASE mydb")
@@ -838,7 +838,7 @@ class TestSafeDriverWrapper:
 
         wrapper = WrapperCls(mock_raw, database="mydb", use_routing=True)
 
-        async with wrapper.session() as session:
+        async with wrapper.session():
             pass
 
         mock_raw.session.assert_called_with(database="mydb")
@@ -924,6 +924,17 @@ class TestPatchedInitialize:
         calls = [str(c) for c in mock_session.run.call_args_list]
         assert any("CREATE INDEX" in c for c in calls)
         assert any("RETURN 1" in c for c in calls)
+
+    async def test_deferred_connection_probe_failure_is_not_hidden(self):
+        index_result = AsyncMock()
+        probe_result = AsyncMock()
+        probe_result.consume.side_effect = ConnectionError("deferred probe failure")
+        with pytest.raises(ConnectionError, match="deferred probe failure"):
+            await self._init_with_mocks(
+                session_run_side_effect=[index_result, probe_result]
+            )
+        index_result.consume.assert_awaited_once()
+        probe_result.consume.assert_awaited_once()
 
     async def test_index_already_exists_ignored(self):
         """'already exists' error during index creation is silently ignored."""

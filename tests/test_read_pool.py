@@ -184,6 +184,19 @@ class TestCloseDriver:
 
 
 class TestGetReadSession:
+    @pytest.mark.parametrize("routing", [False, True])
+    async def test_read_mode_is_explicit_for_direct_and_routing_sessions(self, routing):
+        driver = MagicMock()
+        driver.session.return_value = AsyncMock()
+        with (
+            patch.object(pool, "_get_read_driver", return_value=(driver, "memgraph")),
+            patch.object(pool, "_uses_routing_protocol", return_value=routing),
+        ):
+            async with pool.get_read_session():
+                pass
+        assert driver.session.call_args.kwargs["default_access_mode"] == "READ"
+        assert ("database" in driver.session.call_args.kwargs) is routing
+
     async def test_get_read_session_yields_session(self):
         """get_read_session() yields a usable session."""
         mock_session = AsyncMock()
@@ -274,7 +287,6 @@ class TestBackendReadPoolIntegration:
 
     async def test_kv_upsert_uses_write_pool(self, kv_store):
         read_calls = []
-        write_calls = []
 
         @asynccontextmanager
         async def mock_read():
