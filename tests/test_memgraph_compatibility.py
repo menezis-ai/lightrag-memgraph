@@ -1,4 +1,4 @@
-"""Version negotiation and real-server regressions for Memgraph 3.2–3.13."""
+"""Version negotiation and real-server regressions for Memgraph 3.2–3.14."""
 
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
@@ -32,7 +32,7 @@ def make_store(monkeypatch):
     return make
 
 
-def capabilities(version="3.13.2", config=True, scores=True):
+def capabilities(version="3.14.0", config=True, scores=True):
     arguments = ", config = {} :: MAP" if config else ", limit = 1000 :: INTEGER"
     output = "node :: NODE, score :: FLOAT" if scores else "node :: NODE"
     return MemgraphCapabilities(
@@ -55,6 +55,7 @@ def capabilities(version="3.13.2", config=True, scores=True):
         ("3.6.0", True, True),
         ("3.8.1", True, True),
         ("3.13.2", True, True),
+        ("3.14.0", True, True),
     ],
 )
 def test_capabilities_version_gates(version, quantization, text):
@@ -73,7 +74,7 @@ def test_procedure_signatures_are_authoritative():
     assert not new.accepts_limit("text_search.search_all")
     assert new.returns_score("text_search.search_all")
     assert not new.has_procedure("text_search.fuzzy_phrase_search")
-    assert not MemgraphCapabilities("3.13.2", ()).text_search
+    assert not MemgraphCapabilities("3.14.0", ()).text_search
 
 
 @pytest.mark.parametrize(
@@ -180,7 +181,7 @@ async def test_regex_rejects_fuzzy_configuration_before_database_access(
     store = make_store()
     store._text_index_ready = True
     store.capabilities = MemgraphCapabilities(
-        "3.13.2",
+        "3.14.0",
         (("text_search.regex_search", "regex_search(config = {} :: MAP)"),),
     )
 
@@ -196,6 +197,80 @@ async def test_regex_rejects_fuzzy_configuration_before_database_access(
 
 @pytest.mark.integration
 class TestRealMemgraphCompatibility:
+    @pytest.mark.parametrize(
+        "assignment,props",
+        [
+            (
+                "= $props",
+                {"id": "doc", "content": "uncommitted", "embedding": [0, 1, 0, 0]},
+            ),
+            ("= $props", {}),
+            ("+= $props", {"content": "uncommitted", "embedding": [0, 1, 0, 0]}),
+        ],
+        ids=["replace", "clear", "update"],
+    )
+    async def test_rolled_back_map_write_preserves_embedding(
+        self, make_store, assignment, props
+    ):
+        store = make_store(namespace="rollback")
+        await store.initialize()
+        try:
+            if store.capabilities.version_tuple < (3, 14, 0):
+                pytest.skip("Vector map-write rollback fix requires Memgraph 3.14")
+            embedding = [1, 0, 0, 0]
+            await store.upsert({"doc": {"content": "original", "embedding": embedding}})
+            async with _pool.get_session() as session:
+                async with await session.begin_transaction() as transaction:
+                    result = await transaction.run(
+                        f"MATCH (n:`{store._label()}` {{id: $id}}) SET n {assignment}",
+                        id="doc",
+                        props=props,
+                    )
+                    await result.consume()
+                    # A different session must still see the committed vector.
+                    assert (await store.get_vectors_by_ids(["doc"]))["doc"] == embedding
+                    await transaction.rollback()
+            assert (await store.get_by_id("doc"))["content"] == "original"
+            assert (await store.get_vectors_by_ids(["doc"]))["doc"] == embedding
+            assert [hit["id"] for hit in await store.query("", 1, embedding)] == ["doc"]
+        finally:
+            assert (await store.drop())["status"] == "success"
+
+    async def test_failed_vector_index_creation_preserves_embedding(self, make_store):
+        store = make_store(namespace="failed_index")
+        failed_index = store._index_name() + "_invalid"
+        await store.initialize()
+        try:
+            if store.capabilities.version_tuple < (3, 14, 0):
+                pytest.skip("Failed vector-index creation fix requires Memgraph 3.14")
+            embedding = [1, 0, 0, 0]
+            await store.upsert({"doc": {"content": "original", "embedding": embedding}})
+            async with _pool.get_session() as session:
+                await (
+                    await session.run(f"DROP VECTOR INDEX `{store._index_name()}`")
+                ).consume()
+                with pytest.raises(ClientError, match="(?i)dimension"):
+                    await MemgraphVectorDBStorage._create_index(
+                        session,
+                        f"CREATE VECTOR INDEX `{failed_index}` "
+                        f"ON :`{store._label()}`(embedding) "
+                        'WITH CONFIG {dimension: 8, capacity: 100, metric: "cos"}',
+                    )
+                rows = await (await session.run("SHOW VECTOR INDEX INFO")).data()
+                assert all(row["index_name"] != failed_index for row in rows)
+            assert (await store.get_by_id("doc"))["content"] == "original"
+            assert (await store.get_vectors_by_ids(["doc"]))["doc"] == embedding
+            # The adapter recreates its missing index from the original config.
+            assert [hit["id"] for hit in await store.query("", 1, embedding)] == ["doc"]
+        finally:
+            async with _pool.get_session() as session:
+                rows = await (await session.run("SHOW VECTOR INDEX INFO")).data()
+                if any(row["index_name"] == failed_index for row in rows):
+                    await (
+                        await session.run(f"DROP VECTOR INDEX `{failed_index}`")
+                    ).consume()
+            assert (await store.drop())["status"] == "success"
+
     @pytest.mark.parametrize(
         "mode,query",
         [

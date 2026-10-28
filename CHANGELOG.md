@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.6.1 (unreleased)
+
+- Target Memgraph 3.14.0 in the development image and add it to the compatibility
+  and nightly scale matrices while retaining previous engines. Add real-server
+  regressions for embedding/ANN preservation after rolled-back map writes and
+  failed vector-index creation. Document the Cypher and deployment changes;
+  disk storage and FIPS remain outside the adapter's qualification scope.
+- Compare nightly scale results against the published v0.6.0 adapter. The
+  previous stable/0.5.x reference is not available in the public repository.
+
+## 0.6.0 (2026-10-18)
 
 - Honor the explicit LightRAG workspace consistently across all four backends,
   ahead of environment defaults, without mutating global environment state.
