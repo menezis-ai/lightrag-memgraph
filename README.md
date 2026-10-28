@@ -1,85 +1,139 @@
-# lightrag-memgraph
+<a id="lightrag-memgraph"></a>
 
-Memgraph storage backends (KV, Vector, DocStatus) for [LightRAG](https://github.com/HKUDS/LightRAG) **without modifying LightRAG's source code**.
+# LightRAG Memgraph: Python storage backends for GraphRAG
 
-LightRAG already ships with a built-in `MemgraphStorage` for the **graph** layer. This package fills the remaining 3 slots (KV, Vector, DocStatus) so that an entire LightRAG instance can run on a single Memgraph database.
+Use **Memgraph with LightRAG** for native vector search, key-value storage and
+document status tracking alongside the knowledge graph.
 
-## Why this exists
+`twindb-lightrag-memgraph` is an open-source Python integration for graph-based
+retrieval-augmented generation (GraphRAG). It adds the three storage backends
+needed to complement LightRAG's built-in `MemgraphStorage`, so document text,
+LLM response caches, embeddings, processing status and graph data can use one
+Memgraph database.
 
-LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to module paths. The registry is hard-coded at import time and does not support third-party packages out of the box. This package works around that by monkey-patching the three registry dicts at runtime via a single `register()` call, before LightRAG is instantiated.
+Cosine vector search is the default. Full-text search and hybrid vector/text
+retrieval are optional. Your application supplies the LLM and embedding models.
 
-## Requirements
+[Quick start](#installation-and-quick-start) ·
+[Storage backends](#storage-backends-and-architecture) ·
+[Supported versions](#supported-lightrag-and-memgraph-versions) ·
+[Releases](https://github.com/menezis-ai/lightrag-memgraph/releases) ·
+[Report an issue](https://github.com/menezis-ai/lightrag-memgraph/issues)
 
-- Python `>= 3.10`
-- Memgraph `>= 3.2` with [MAGE](https://memgraph.com/docs/mage); **3.14.0 is the default development and CI target**. Legacy native ANN limitations are documented below.
-- `lightrag-hku >= 1.4.9, < 1.6.0` (latest qualified stable release: **1.5.7**)
-- `neo4j >= 5.0.0, < 7.0.0` (Bolt driver, compatible with Memgraph)
+## Contents
 
-## Installation
+- [Why use Memgraph with LightRAG?](#why-use-memgraph-with-lightrag)
+- [Installation and quick start](#installation-and-quick-start)
+- [Supported LightRAG and Memgraph versions](#supported-lightrag-and-memgraph-versions)
+- [Memgraph connection and workspace configuration](#memgraph-connection-and-workspace-configuration)
+- [Storage backends and architecture](#storage-backends-and-architecture)
+- [Vector, full-text and hybrid search](#vector-full-text-and-hybrid-search)
+- [Frequently asked questions](#frequently-asked-questions)
+- [Tests and performance qualification](#tests-and-performance-qualification)
+- [Documentation and support](#documentation-and-support)
+
+<a id="why-this-exists"></a>
+
+## Why use Memgraph with LightRAG?
+
+- **One storage engine:** keep graph data, embedding vectors, document records
+  and processing status in Memgraph rather than configuring separate storage
+  services for each backend.
+- **Native retrieval:** use Memgraph cosine vector search and opt into full-text
+  search or reciprocal-rank hybrid retrieval when the engine supports them.
+- **Python integration:** install the package and call `register()` before
+  constructing LightRAG; no LightRAG source fork is required.
+- **Version-aware storage:** discover server procedures and validate existing
+  index schemas before enabling optional retrieval features.
+
+<a id="installation"></a>
+
+## Installation and quick start
+
+### Install the Python package
 
 ```bash
 pip install twindb-lightrag-memgraph
 ```
 
-### LightRAG 1.5 compatibility
+The distribution name is `twindb-lightrag-memgraph`; the Python import is
+`twindb_lightrag_memgraph`. See [supported versions](#supported-lightrag-and-memgraph-versions)
+for the tested dependency profiles.
 
-Version 0.6.0 supports the 1.5 document-status contracts while retaining 1.4.x
-compatibility and existing data. Scheduling uses bounded `(created_at, id)`
-keyset pages and a lightweight projection; full records are hydrated in batches.
-Creation timestamps are immutable on updates. Strict reads propagate database
-and decode failures, so failed reads cannot be mistaken for absent documents.
-Native partial updates support pipeline stage metadata without loading chunk lists.
+### Start Memgraph for local development
 
-Filename/source resolution distinguishes absent, unique and conflicting primary
-documents, ignoring duplicate markers. Content-hash lookup selects the earliest
-holder and excludes both the requesting document and markers that point to it.
-`content_hash`, parsing/analyzing statuses and arbitrary stage metadata persist;
-multi-status listing uses the `status_filters=` keyword alongside the legacy
-`status_filter` argument. New methods import 1.5 types lazily to preserve 1.4 installs.
-
-The adapter writes immediately. Upstream deferred-index cleanup remains a no-op
-for these backends; graph writes retain upstream keyed locks and recovery anchors.
-LightRAG's optional source-conflict enumeration/repair tools are not implemented:
-the upstream base methods raise `StorageCapabilityError`. Conflicts remain explicit
-and are never resolved by choosing or deleting a primary automatically.
-
-Reviewed the stable release notes from
-[1.5.0](https://github.com/HKUDS/LightRAG/releases/tag/v1.5.0) through
-[1.5.7](https://github.com/HKUDS/LightRAG/releases/tag/v1.5.7), and the tagged
-[storage contracts](https://github.com/HKUDS/LightRAG/blob/v1.5.7/lightrag/base.py).
-Parser/chunker improvements, role-specific LLMs, cancellation, UI branding and
-the `/workspace` entry are upstream features; this package supplies storage and
-does not bundle or qualify those application features.
-
-For local development:
+If you already run Memgraph with MAGE, set `MEMGRAPH_URI` to its Bolt endpoint.
+For a local development instance using this repository's Compose file:
 
 ```bash
-pip install -e ".[test]"
+git clone https://github.com/menezis-ai/lightrag-memgraph.git
+cd lightrag-memgraph
+docker compose up -d memgraph
+export MEMGRAPH_URI=bolt://localhost:7687
 ```
 
-## Usage
+The Compose service defaults to Memgraph MAGE 3.14.0. It has no persistent data
+volume; use a deployment with a persistent data mount for data you need to keep.
+
+<a id="usage"></a>
+
+### Configure the four LightRAG storage backends
+
+Pass your LightRAG-compatible async LLM function and `EmbeddingFunc` instance
+into this helper. Set `MEMGRAPH_URI` before constructing LightRAG.
 
 ```python
 from lightrag import LightRAG
 from twindb_lightrag_memgraph import register
 
-# 1. Patch LightRAG's storage registry ONCE, before any LightRAG(...).
 register()
 
-# 2. Instantiate LightRAG with the four Memgraph backends.
-rag = LightRAG(
-    working_dir="./rag_storage",
-    kv_storage="MemgraphKVStorage",
-    vector_storage="MemgraphVectorDBStorage",
-    doc_status_storage="MemgraphDocStatusStorage",
-    graph_storage="MemgraphStorage",  # already built into LightRAG
-    # ... your llm_model_func, embedding_func, etc.
-)
+async def create_rag(llm_model_func, embedding_func):
+    rag = LightRAG(
+        working_dir="./rag_storage",
+        workspace="my_project",
+        llm_model_func=llm_model_func,
+        embedding_func=embedding_func,
+        kv_storage="MemgraphKVStorage",
+        vector_storage="MemgraphVectorDBStorage",
+        doc_status_storage="MemgraphDocStatusStorage",
+        graph_storage="MemgraphStorage",
+    )
+    await rag.initialize_storages()
+    return rag
 ```
 
-`register()` is idempotent — calling it more than once is a no-op.
+Use the returned instance with LightRAG's ingestion and query APIs and its
+normal pipeline lifecycle. `register()` is idempotent and must run before the
+instance is created. It installs process-wide patches; see
+[storage architecture](#storage-backends-and-architecture).
 
-## Environment
+<a id="requirements"></a>
+<a id="lightrag-15-compatibility"></a>
+<a id="release-review-and-feature-evidence"></a>
+<a id="upgrading-an-existing-memgraph-deployment"></a>
+
+## Supported LightRAG and Memgraph versions
+
+| Component | Compatibility |
+|---|---|
+| Python | 3.10 or newer |
+| LightRAG | `lightrag-hku >= 1.4.9, < 1.6.0`; latest qualified stable release: 1.5.7 |
+| Memgraph with MAGE | 3.2+ storage APIs; 3.14.0 is the default development and CI target |
+| Neo4j Python Bolt driver | 6.x in the current CI profile; published metadata allows `>= 5.0.0, < 7.0.0`, with minimum-version verification tracked in [issue #24](https://github.com/menezis-ai/lightrag-memgraph/issues/24) |
+
+LightRAG 1.5 support includes bounded document scheduling, immutable creation
+timestamps, content-hash lookup and partial status updates, while retaining
+1.4.x compatibility. Optional text retrieval and quantization depend on the
+server's version and procedure signatures.
+
+Read the [LightRAG storage contracts, Memgraph compatibility matrix and upgrade guide](docs/memgraph-compatibility.md)
+for exact CI profiles, engine changes and exclusions. Memgraph 3.2.1 has known
+native ANN failures under deletion churn and is excluded from load qualification.
+
+<a id="environment"></a>
+
+## Memgraph connection and workspace configuration
 
 - `MEMGRAPH_URI` — Bolt URL, e.g. `bolt://localhost:7687`. Defaults to `bolt://localhost:7687`.
 - `MEMGRAPH_USERNAME` / `MEMGRAPH_PASSWORD` — credentials when auth is enabled.
@@ -94,11 +148,27 @@ rag = LightRAG(
 - `MEMGRAPH_ENCRYPTED` — `true` / `false` for plain Bolt URIs. TLS URI schemes accept `true`; contradictory settings are rejected before connecting.
 - `MEMGRAPH_TRUST` — `TRUST_SYSTEM_CA` or `TRUST_ALL`, matching `+s` or `+ssc` when a TLS URI defines trust.
 
-## What the backends do
+<a id="what-the-backends-do"></a>
 
-- **`MemgraphKVStorage`** — label `KV_{workspace}_{namespace}`, dict value serialised to a single `data` JSON string. Batch via `UNWIND` + `MERGE`.
-- **`MemgraphVectorDBStorage`** — label `Vec_{workspace}_{namespace}`, vector index `CREATE VECTOR INDEX ... WITH CONFIG {dimension, capacity, metric: "cos"}`. Auto-creates the index on first query if missing.
-- **`MemgraphDocStatusStorage`** — label `DocStatus_{workspace}` (no namespace suffix). Indexes on `id`, `status`, `file_path`, `track_id`, `updated_at`, `created_at`. Paginated listing runs count + fetch in parallel.
+## Storage backends and architecture
+
+| LightRAG storage layer | Implementation | Data stored in Memgraph |
+|---|---|---|
+| Graph | Built-in `MemgraphStorage`, patched by this package | Entity and relationship graph |
+| Key-value | `MemgraphKVStorage` | Documents, text chunks and LLM response cache as JSON |
+| Vector | `MemgraphVectorDBStorage` | Embeddings and metadata with a native cosine vector index |
+| Document status | `MemgraphDocStatusStorage` | Processing status, source path, timestamps and chunk references |
+
+KV and vector labels use the workspace and namespace; document-status labels
+use the workspace. Writes use parameterized Cypher and batched `UNWIND` queries.
+See the [data integrity and workspace migration notes](docs/data-integrity.md)
+before changing an existing deployment's workspace configuration.
+
+LightRAG's storage registry is populated at import time. `register()` adds this
+package's three backends and patches the built-in graph backend for connection
+handling and batch reads. It also patches two internal retrieval functions and
+`LightRAG._insert_done` process-wide. The source files of LightRAG are unchanged,
+but this integration depends on the supported upstream contracts.
 
 The default environment variables remain supported when no workspace argument
 is supplied. Applications that previously used `MEMGRAPH_WORKSPACE` to override
@@ -132,28 +202,9 @@ The current release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
 keeps the package version visible through LightRAG's `core_version`, with the
 suffix `+memgraph-0.6.1`.
 
-## Testing
+<a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 
-Unit tests (no Memgraph required) — `tests/conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset:
-
-```bash
-pytest tests/ --ignore=tests/test_bench.py -v
-```
-
-Integration tests (real Memgraph required):
-
-```bash
-docker compose up -d memgraph
-MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
-```
-
-Benchmarks (latency / throughput at 100 / 1k / 10k):
-
-```bash
-MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_bench.py -v -s
-```
-
-## Memgraph capabilities and optional retrieval features
+## Vector, full-text and hybrid search
 
 Existing applications keep cosine vector retrieval, their labels, identifiers,
 metadata and index names. New retrieval features are opt-in. Initialization
@@ -218,8 +269,10 @@ namespace label, embedding property, embedding dimension, cosine metric and any
 explicit scalar kind. A mismatch raises an actionable error without dropping
 data. Capacity/resizing options apply when creating an index; they do not resize
 an existing index. Changing embedding models or quantization requires an
-explicit index rebuild or a new namespace. DDL, authorization, inspection and
-connectivity errors propagate; they are not treated as feature fallbacks.
+explicit index rebuild or a new namespace. Initialization errors propagate. A known exception during query-time recovery
+can turn a failed vector-index recreation into an empty result;
+[issue #23](https://github.com/menezis-ai/lightrag-memgraph/issues/23) tracks that
+error-reporting defect.
 
 On an initialized `MemgraphVectorDBStorage`:
 
@@ -270,119 +323,69 @@ relationship embeddings as nodes. Server-side edge indexes, imports,
 parallel execution, FIPS and Enterprise administration remain server-level
 features; the adapter does not enable them automatically.
 
-### Release review and feature evidence
+## Frequently asked questions
 
-Engine release notes from 3.2.1 through 3.14.0 were reviewed on 2026-10-28,
-including intermediate minor releases and patch notes. The table records the
-adapter's response to changes affecting its storage/retrieval contract.
-Versions listed in the CI matrix are tested directly; a feature's introduction
-version alone does not imply that exact engine version was run in CI.
+### Does LightRAG already support Memgraph?
 
-| Engine notes | Storage impact and adapter response | Evidence or limit |
-|--------------|-------------------------------------|-------------------|
-| [3.2.1](https://github.com/memgraph/memgraph/releases/tag/v3.2.1) | Legacy vector storage and retrieval remain available. | Storage contracts run directly; native deletion churn is a known failure and legacy load is excluded. |
-| [3.3](https://github.com/memgraph/memgraph/releases/tag/v3.3.0) | Nested property indexes and Bolt scheduling do not change the adapter's flat, label-scoped schema. | Nested-map indexing is not exposed; this engine is not a CI entry. |
-| [3.4](https://github.com/memgraph/memgraph/releases/tag/v3.4.0) | Per-index `scalar_kind` quantization is exposed; vector metadata is read by named fields. | `test_advanced_options_fallback_or_strict` and index recovery validate f16 and reject mismatched schemas. Edge vector indexes are not exposed. |
-| [3.5](https://github.com/memgraph/memgraph/releases/tag/v3.5.0) | Property-specific text indexes were still experimental; the adapter enables text only from the stable 3.6 API. | Flat metadata serialization remains unchanged. User profiles, multi-role administration, TTL recovery and STRICT_SYNC are not qualified here. |
-| [3.6](https://github.com/memgraph/memgraph/releases/tag/v3.6.0) | Stable text indexing, changed index type names, edge text indexes and a native cosine helper. | Node text indexing, property-qualified/regex search, cleanup and hybrid cosine scores are tested. Hybrid computes cosine in Python for legacy portability. Edge text indexing is not exposed. |
-| [3.7](https://github.com/memgraph/memgraph/releases/tag/v3.7.0), [3.7.1](https://github.com/memgraph/memgraph/releases/tag/v3.7.1), [3.7.2](https://github.com/memgraph/memgraph/releases/tag/v3.7.2) | LBAC syntax changes and vector/text recovery fixes require deployment review. | The adapter never rewrites grants or durability files. Licensed LBAC and HA recovery need separate qualification. |
-| [3.8](https://github.com/memgraph/memgraph/releases/tag/v3.8.0), [3.8.1](https://github.com/memgraph/memgraph/releases/tag/v3.8.1) | Single-store vectors and stricter access to deleted objects. | Live-ID rebinding, deletion hygiene, candidate expansion and explicit vector reads are covered by deletion, reinitialization and storage/load tests. |
-| [3.9](https://github.com/memgraph/memgraph/releases/tag/v3.9.0) | Text search changes to GIDs and pinned searchers; vector GC is fixed. Function-generated index configs, global float precision and global parameters are introduced. | Both dependency profiles run text/vector/storage tests. The adapter binds query parameters explicitly and keeps static index configs. Nondefault global float precision and coordinator recovery are not qualified. |
-| [3.10](https://github.com/memgraph/memgraph/releases/tag/v3.10.0), [3.10.1](https://github.com/memgraph/memgraph/releases/tag/v3.10.1) | Parameterized configs, DESC indexes, new index syntax, edge single-store vectors and `DENY` semantics. | Literal config maps and label-scoped indexes remain valid. Metrics, edge indexes, remote embedding providers and permission migrations are not adapter APIs. This engine is not a CI entry. |
-| [3.11](https://github.com/memgraph/memgraph/releases/tag/v3.11.0) | Text limits move to `config`; term fuzzy/prefix/transposition options and multi-label vector indexes are introduced. | Procedure signatures select argument/output shapes. Real tests cover typo, prefix and transposition semantics. The adapter retains one node label per namespace and exposes no multi-label/wildcard index creation API. |
-| [3.12](https://github.com/memgraph/memgraph/releases/tag/v3.12.0) | Adds fuzzy phrase search, property permissions, lightweight edges and database suspension. | Phrase/hybrid retrieval is tested. Permission errors propagate. Property-level authorization, suspended tenants and nondefault lightweight-edge mode are not qualified by this matrix. |
-| [3.13](https://github.com/memgraph/memgraph/releases/tag/v3.13.0), [3.13.1](https://github.com/memgraph/memgraph/releases/tag/v3.13.1), [3.13.2](https://github.com/memgraph/memgraph/releases/tag/v3.13.2) | Optional omission of vector properties, permission-filtered search, global/range indexes, Cypher/APOC changes, OpenMetrics default, FIPS and coordinator SSO. | Explicit embedding reads are also tested locally with omission enabled. Queries keep label-scoped indexes and avoid changed APOC/subquery APIs. Global index creation, FIPS, SSO, PBAC and HA are not qualified here. |
-| [3.14.0](https://github.com/memgraph/memgraph/releases/tag/v3.14.0) | Changes bound-node pattern and null/comparison semantics; fixes vector recovery, map-write rollback and failed index creation. Adds Cypher subqueries and Python to the FIPS image. | CI retains earlier engines and adds 3.14.0 to all dependency profiles and scale jobs. New real-server cases check that rolled-back map writes and failed index creation preserve stored embeddings and ANN retrieval. The adapter does not use the changed administration queries or collection functions. Disk storage, durability recovery, FIPS and Enterprise administration remain outside this matrix. |
+LightRAG includes `MemgraphStorage` for the graph layer. This package adds
+Memgraph key-value, vector and document-status backends so all four storage
+layers can use the same database.
 
-The retrieval cases in
-[`tests/test_memgraph_compatibility.py`](tests/test_memgraph_compatibility.py)
-cover property-qualified/regex search, limits above 1,000 results, fuzzy term
-configuration, fuzzy phrases, hybrid unions, configured index recreation,
-deleted-hit filtering and (on 3.14+) vector preservation after rollback or failed
-index creation. These real-server checks require `MEMGRAPH_URI`; adding a CI
-target does not substitute for a successful qualification run.
+### Do I need a Neo4j database to use this package?
 
-### Upgrading an existing Memgraph deployment
+No. The `neo4j` Python package is the Bolt client driver used to connect to
+Memgraph. A separate Neo4j database server is not required.
 
-The Compose file is a development service. It does **not** define a persistent
-data volume. Preserve your actual deployment's existing data mount before
-recreating any container; changing an image tag alone does not preserve an
-unmounted container data directory.
+### Can I use Memgraph as the vector database for LightRAG?
 
-1. Record the current image/version and configuration. Create a snapshot and
-   back up the durability directory, access configuration and custom modules.
-2. Restore a copy into an isolated instance and rehearse the upgrade using the
-   [official upgrade guide](https://memgraph.com/docs/database-management/upgrades)
-   and [version-specific migrations](https://memgraph.com/docs/database-management/upgrades/specific-versions).
-3. Stop the old instance gracefully. Start the target image with the existing
-   data mount and updated flags. Use matching MAGE packages/images and rebuild
-   any custom native query modules against the target server.
-4. Start the application with the original workspace/namespace and vector mode.
-   Verify stored documents, vectors, graph queries and document status before
-   opting into quantization or hybrid retrieval. Keep an untouched pre-upgrade
-   backup for rollback; an older binary is not a safe reader of newer durability
-   files. A rollback must restore the old image **and** its pre-upgrade data.
+Yes. Select `MemgraphVectorDBStorage` and provide your embedding function.
+Cosine vector retrieval is the default; full-text and hybrid search are opt-in
+and require the corresponding Memgraph procedures. See
+[vector and hybrid search configuration](#vector-full-text-and-hybrid-search).
 
-Review these changes when crossing the corresponding versions:
+### Can the GraphRAG pipeline run with local models?
 
-| Version | Deployment action |
-|---------|-------------------|
-| 3.6 | Remove `--experimental-enabled=text-search`; it prevents startup once text search is stable |
-| 3.7 | Recreate label/edge access rules following the official LBAC migration; previous rules are not retained |
-| 3.8 | Remove deprecated auth/inactivity/index-recovery flags; use `--auth-module-mappings` and `--storage-parallel-schema-recovery` where appropriate. Text indexes cannot be created in analytical mode |
-| 3.9 HA | Follow the coordinator migration guide; its coordinator-directory procedure does not apply to standalone data instances |
-| 3.10+ | Recheck fine-grained `DENY` permissions and renamed storage-info fields; remove init-file bootstrap flags from coordinators/HA data instances |
-| 3.11 | Text-search limits use a config map; update storage/schema metrics consumers, session tracing flags and TLS-reload privileges. Intra-cluster TLS is configured separately from Bolt TLS |
-| 3.12 | Replace removed HA timeout flags with coordinator settings |
-| 3.13 | Review coordinator SSO, removed `COORDINATOR` grants, APOC JSON aliases, subquery imports and the OpenMetrics default; verify that users can read both indexed labels and embedding properties |
-| 3.14 | Rebuild custom C++ modules. Review bound-variable patterns, null/NaN and mixed-type comparisons, temporal ranges and uniqueness constraints; update positional consumers of transaction/user metadata and renamed edge-index metrics. Run profile changes outside explicit transactions. Qualify disk storage and the FIPS image separately before using them with vector/text retrieval |
+The storage adapter does not select a model provider. Supply LightRAG-compatible
+LLM and embedding functions backed by your local or remote models. Storing data
+in Memgraph does not determine where model inference runs.
 
-Sources: [release notes](https://memgraph.com/docs/release-notes) and
-[3.14.0 notes](https://github.com/memgraph/memgraph/releases/tag/v3.14.0)
-(checked on 2026-10-28);
-[vector search](https://memgraph.com/docs/querying/vector-search) and
-[text search](https://memgraph.com/docs/querying/text-search) (checked on 2026-10-18).
+### What should I check before a multi-tenant or production deployment?
 
-To select an older development image explicitly:
+Workspace scoping is not an authorization boundary. Review the
+[data integrity notes](docs/data-integrity.md) and open audit findings for
+[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21),
+[embedding-wrapper compatibility](https://github.com/menezis-ai/lightrag-memgraph/issues/22)
+and [vector-index error reporting](https://github.com/menezis-ai/lightrag-memgraph/issues/23).
+The Community CI matrix does not qualify Enterprise authorization or HA failover.
+
+<a id="testing"></a>
+
+## Tests and performance qualification
+
+For local development and tests:
 
 ```bash
-MEMGRAPH_IMAGE=memgraph/memgraph-mage:3.8.1 docker compose up -d
+pip install -e ".[test]"
 ```
 
-Run integration tests only against an isolated test database: they create and
-delete test namespaces. `MEMGRAPH_URI` enables them; without it, integration
-tests are skipped. The CI matrix has 28 jobs: Memgraph **3.2.1, 3.8.1,
-3.9.0, 3.11.0, 3.12.0, 3.13.2 and 3.14.0**, each with these pinned dependency profiles:
+Unit tests (no Memgraph required) — `tests/conftest.py` auto-skips `@pytest.mark.integration` when `MEMGRAPH_URI` is unset:
 
-| Profile | Python | LightRAG | Neo4j driver |
-|---------|--------|----------|--------------|
-| Minimum | 3.10 | 1.4.9 | 5.x |
-| Legacy | 3.12 | 1.4.16 | 6.x |
-| First 1.5 | 3.10 | 1.5.0 | 5.x |
-| Current | 3.12 | 1.5.7 | 6.x |
+```bash
+pytest tests/ --ignore=tests/test_bench.py -v
+```
 
-Each job checks source
-with Ruff, builds the sdist and wheel, installs the wheel, verifies the public import surface,
-and tests that installed package. JUnit reports are retained as CI artifacts.
+Integration tests (real Memgraph required):
 
-The engine release is **3.12.0**; **3.12.1 is a Memgraph Lab release**, not
-a `memgraph/memgraph-mage:3.12.1` engine image.
+```bash
+docker compose up -d memgraph
+MEMGRAPH_URI=bolt://localhost:7687 pytest tests/ --ignore=tests/test_bench.py -v
+```
 
-**Legacy native ANN limitation:** Memgraph 3.2.1 crashed with exit code 139 during
-`TestVectorBenchmark.test_query_latency` after repeated index creation/deletion
-and bulk inserts. The same sequence also crashes with the unmodified 0.2.5
-adapter. Functional compatibility is tested on 3.2.1, but its native vector
-module is not qualified for this load scenario. Repeated insert/search/delete
-cycles also crashed during the functional suite. Direct Bolt queries without
-the adapter returned incorrect empty results in 692 of 1,000 cycles despite a
-live matching vector. The deletion-churn regression is therefore an explicit
-known failure (`xfail`) on pre-3.4 engines, preventing a native crash from
-interrupting the remaining contract tests. The CI runs load checks on 3.8.1,
-3.9.0, 3.11.0, 3.12.0, 3.13.2 and 3.14.0; use a current server for production load.
+Benchmarks (latency / throughput at 100 / 1k / 10k):
 
-All four profiles test installed public wheels in isolated Python environments.
-The minimum profile runs storage contracts; the others run the full regression
-suite. Load checks run on the current profile and modern engines.
+```bash
+MEMGRAPH_URI=bolt://localhost:7687 pytest tests/test_bench.py -v -s
+```
 
 ### Nightly scale qualification
 
@@ -431,6 +434,16 @@ control verifies that the detector rejects inline blocking work. This qualifies
 the upstream/storage combination; production validation of the separate BNP
 pipeline follows [the ingestion validation procedure](docs/ingestion-validation.md).
 
+## Documentation and support
+
+- [LightRAG and Memgraph compatibility, CI matrix and engine upgrades](docs/memgraph-compatibility.md)
+- [Storage integrity, workspace migration and deletion validation](docs/data-integrity.md)
+- [PDF ingestion responsiveness and deployment validation](docs/ingestion-validation.md)
+- [Package changelog](CHANGELOG.md) and [GitHub releases](https://github.com/menezis-ai/lightrag-memgraph/releases)
+- [Bug reports and feature requests](https://github.com/menezis-ai/lightrag-memgraph/issues)
+- [Upstream LightRAG documentation](https://github.com/HKUDS/LightRAG)
+- [Memgraph vector search documentation](https://memgraph.com/docs/querying/vector-search)
+
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
