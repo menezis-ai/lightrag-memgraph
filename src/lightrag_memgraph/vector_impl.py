@@ -332,9 +332,43 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 entry[field_name] = self._parse_meta_field(props.get(field_name))
         return entry
 
+    async def _embed_texts(
+        self, texts: list[str], *, context: str
+    ) -> list[list[float]]:
+        # Early 1.4 wrappers lack the asymmetric-context contract. Call every
+        # supported wrapper itself so dimension/token injection stays intact.
+        kwargs = (
+            {"context": context}
+            if getattr(self.embedding_func, "supports_asymmetric", False)
+            else {}
+        )
+        result = await self.embedding_func(texts, **kwargs)
+        rows = result.tolist() if hasattr(result, "tolist") else result
+        try:
+            if len(rows) != len(texts):
+                raise ValueError("Embedding provider returned the wrong vector count")
+            vectors = [list(row) for row in rows]
+        except TypeError as exc:
+            raise ValueError(
+                "Embedding provider must return a matrix of vectors"
+            ) from exc
+        dimension = self.embedding_func.embedding_dim
+        for vector in vectors:
+            if len(vector) != dimension:
+                raise ValueError(
+                    "Embedding provider returned the wrong vector dimension"
+                )
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(value)
+                for value in vector
+            ):
+                raise ValueError("Embedding coordinates must be finite numbers")
+        return [[float(value) for value in vector] for vector in vectors]
+
     async def _embed_query(self, query: str) -> list[float]:
-        embedding = (await self.embedding_func.func([query]))[0]
-        return embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
+        return (await self._embed_texts([query], context="query"))[0]
 
     async def query(
         self,
@@ -364,9 +398,11 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             )
             try:
                 await self._create_vector_index()
-            except Exception as create_error:
-                logger.error("Vector index recreation failed: %s", create_error)
-                return []
+            except Exception:
+                logger.exception(
+                    "Vector index %s recreation failed", self._index_name()
+                )
+                raise
             return await self._query_vector_once(query, top_k, query_embedding)
 
     async def _query_vector_once(
@@ -602,15 +638,8 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if not needs_embed:
             return {}
         contents = [data[eid]["content"] for eid in needs_embed]
-        emb_results = await self.embedding_func.func(contents)
-        return {
-            eid: (
-                emb_results[i].tolist()
-                if hasattr(emb_results[i], "tolist")
-                else list(emb_results[i])
-            )
-            for i, eid in enumerate(needs_embed)
-        }
+        emb_results = await self._embed_texts(contents, context="document")
+        return dict(zip(needs_embed, emb_results))
 
     @staticmethod
     def _build_entry(eid: str, item: dict, embedding: list[float] | None) -> dict:

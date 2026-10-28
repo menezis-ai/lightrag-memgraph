@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Call LightRAG's `EmbeddingFunc` wrapper for both query and document vectors,
+  preserving dimension/token injection, concurrency limiting and asymmetric
+  query/document context when supported upstream. Reject invalid counts,
+  dimensions and non-finite coordinates before database writes (#22).
+- Propagate vector-index recovery failures instead of returning an empty result.
+  Vector and hybrid callers can distinguish a failed search from no matches;
+  a successful recovery still retries once and reuses the query embedding (#23).
 - Use `lightrag-memgraph` as the distribution and project name and
   `lightrag_memgraph` as the Python namespace. Update imports, LightRAG storage
   registry paths, logging, tests and CI to the new namespace. Existing database

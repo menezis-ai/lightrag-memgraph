@@ -272,10 +272,10 @@ namespace label, embedding property, embedding dimension, cosine metric and any
 explicit scalar kind. A mismatch raises an actionable error without dropping
 data. Capacity/resizing options apply when creating an index; they do not resize
 an existing index. Changing embedding models or quantization requires an
-explicit index rebuild or a new namespace. Initialization errors propagate. A known exception during query-time recovery
-can turn a failed vector-index recreation into an empty result;
-[issue #23](https://github.com/menezis-ai/lightrag-memgraph/issues/23) tracks that
-error-reporting defect.
+explicit index rebuild or a new namespace. Initialization errors propagate.
+Query-time recovery recreates a missing vector index and retries once, reusing
+the query embedding. Failed recreation or a failed retry propagates to vector
+and hybrid callers; an empty result means the search completed without matches.
 
 On an initialized `MemgraphVectorDBStorage`:
 
@@ -356,9 +356,9 @@ in Memgraph does not determine where model inference runs.
 
 Workspace scoping is not an authorization boundary. Review the
 [data integrity notes](docs/data-integrity.md) and open audit findings for
-[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21),
-[embedding-wrapper compatibility](https://github.com/menezis-ai/lightrag-memgraph/issues/22)
-and [vector-index error reporting](https://github.com/menezis-ai/lightrag-memgraph/issues/23).
+[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21).
+Embedding-wrapper compatibility (#22) and vector-index error reporting (#23)
+are corrected in the next release.
 The Community CI matrix does not qualify Enterprise authorization or HA failover.
 
 <a id="testing"></a>
