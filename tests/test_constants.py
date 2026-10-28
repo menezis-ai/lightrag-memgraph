@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from twindb_lightrag_memgraph._constants import (
+from lightrag_memgraph._constants import (
     DEFAULT_WORKSPACE,
     MEMGRAPH_WORKSPACE_ENV,
     WORKSPACE_ENV,

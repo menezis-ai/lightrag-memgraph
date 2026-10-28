@@ -8,7 +8,7 @@ Community:  USE DATABASE fails with "enterprise feature" error → detected
 OFFLINE — no Memgraph needed. All driver calls are mocked.
 """
 
-import twindb_lightrag_memgraph._pool as _pool_module
+import lightrag_memgraph._pool as _pool_module
 from neo4j.exceptions import ClientError as Neo4jClientError
 from unittest.mock import AsyncMock, patch
 
@@ -69,10 +69,10 @@ class TestPoolGetSessionEnterprise:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "memgraph"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             async with get_session() as session:
                 pass
@@ -85,10 +85,10 @@ class TestPoolGetSessionEnterprise:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             async with get_session() as session:
                 pass
@@ -101,10 +101,10 @@ class TestPoolGetSessionEnterprise:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, ""),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             async with get_session() as session:
                 pass
@@ -121,10 +121,10 @@ class TestPoolGetSessionCommunity:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "memgraph"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             async with get_session() as session:
                 pass
@@ -139,10 +139,10 @@ class TestPoolGetSessionCommunity:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
                 async with get_session():
@@ -156,10 +156,10 @@ class TestPoolGetSessionCommunity:
         mock_driver = _make_mock_driver(mock_session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             # First session — probes and fails
             with pytest.raises(RuntimeError, match="requires Memgraph Enterprise"):
@@ -190,10 +190,10 @@ class TestPoolGetSessionCommunity:
         mock_driver = _make_mock_driver(session)
 
         with patch(
-            "twindb_lightrag_memgraph._pool.get_driver",
+            "lightrag_memgraph._pool.get_driver",
             return_value=(mock_driver, "custom_db"),
         ):
-            from twindb_lightrag_memgraph._pool import get_session
+            from lightrag_memgraph._pool import get_session
 
             with pytest.raises(Neo4jClientError, match="some other error"):
                 async with get_session():
@@ -209,10 +209,10 @@ def _get_wrapper_class():
     The class is defined inside _patch_builtin_memgraph_storage() so we
     trigger the patch, then inspect the initialize closure to find it.
     """
-    import twindb_lightrag_memgraph
+    import lightrag_memgraph
 
-    twindb_lightrag_memgraph._registered = False
-    twindb_lightrag_memgraph.register()
+    lightrag_memgraph._registered = False
+    lightrag_memgraph.register()
 
     from lightrag.kg.memgraph_impl import MemgraphStorage
 

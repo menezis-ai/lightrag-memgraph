@@ -12,11 +12,11 @@ import pytest
 from lightrag.base import DocProcessingStatus, DocStatus
 from lightrag.utils import EmbeddingFunc
 
-from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph._pool import get_driver
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph import register
+from lightrag_memgraph._pool import get_driver
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 register()
 
@@ -269,7 +269,7 @@ class TestSharedDriverPool:
     """Checklist item 7 (partial): all backends share the same pool driver."""
 
     async def test_all_backends_share_pool_driver(self, embedding_func_1024):
-        from twindb_lightrag_memgraph._pool import get_driver
+        from lightrag_memgraph._pool import get_driver
 
         kv = MemgraphKVStorage(
             namespace="pool_test", global_config={}, embedding_func=None

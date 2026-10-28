@@ -5,8 +5,8 @@ No Memgraph required — all DB interactions are mocked.
 
 import pytest
 
-import twindb_lightrag_memgraph._pool as pool
-from twindb_lightrag_memgraph._constants import (
+import lightrag_memgraph._pool as pool
+from lightrag_memgraph._constants import (
     CONNECTION_POOL_SIZE,
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     DEFAULT_READ_POOL_SIZE,

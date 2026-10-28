@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Use `lightrag-memgraph` as the distribution and project name and
+  `lightrag_memgraph` as the Python namespace. Update imports, LightRAG storage
+  registry paths, logging, tests and CI to the new namespace. Existing database
+  labels and vector index names are unchanged. Update application imports and
+  restart running processes when upgrading. Install this repository from GitHub;
+  the same-named PyPI distribution is a separate project.
+
 ## 0.6.1 (2026-10-28)
 
 - Target Memgraph 3.14.0 in the development image and add it to the compatibility

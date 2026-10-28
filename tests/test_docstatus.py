@@ -7,8 +7,8 @@ Requires a running Memgraph instance (set MEMGRAPH_URI).
 import pytest
 from lightrag.base import DocProcessingStatus, DocStatus
 
-from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph import register
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
 register()
 

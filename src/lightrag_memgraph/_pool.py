@@ -32,7 +32,7 @@ from ._constants import (
     validate_identifier,
 )
 
-logger = logging.getLogger("twindb_lightrag_memgraph")
+logger = logging.getLogger("lightrag_memgraph")
 
 _MUST_BE_POSITIVE = "must be >= 1"
 

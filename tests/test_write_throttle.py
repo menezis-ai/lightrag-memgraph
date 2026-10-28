@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import twindb_lightrag_memgraph._pool as pool
-from twindb_lightrag_memgraph._constants import DEFAULT_WRITE_CONCURRENCY
+import lightrag_memgraph._pool as pool
+from lightrag_memgraph._constants import DEFAULT_WRITE_CONCURRENCY
 
 
 @pytest.fixture(autouse=True)
@@ -134,7 +134,7 @@ class TestKVWriteSlotIntegration:
     @pytest.fixture
     def kv_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+        from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
         store = MemgraphKVStorage.__new__(MemgraphKVStorage)
         store.namespace = "test_kv"
@@ -214,7 +214,7 @@ class TestDocStatusWriteSlotIntegration:
     @pytest.fixture
     def doc_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+        from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
         store = MemgraphDocStatusStorage.__new__(MemgraphDocStatusStorage)
         store.namespace = "test_doc"
@@ -262,7 +262,7 @@ class TestVectorWriteSlotIntegration:
     @pytest.fixture
     def vec_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+        from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
         store = MemgraphVectorDBStorage.__new__(MemgraphVectorDBStorage)
         store.namespace = "test_vec"

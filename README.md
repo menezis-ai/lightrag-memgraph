@@ -1,11 +1,11 @@
 <a id="lightrag-memgraph"></a>
 
-# LightRAG Memgraph: Python storage backends for GraphRAG
+# lightrag-memgraph: Memgraph storage for LightRAG
 
 Use **Memgraph with LightRAG** for native vector search, key-value storage and
 document status tracking alongside the knowledge graph.
 
-`twindb-lightrag-memgraph` is an open-source Python integration for graph-based
+`lightrag-memgraph` is an open-source Python integration for graph-based
 retrieval-augmented generation (GraphRAG). It adds the three storage backends
 needed to complement LightRAG's built-in `MemgraphStorage`, so document text,
 LLM response caches, embeddings, processing status and graph data can use one
@@ -53,11 +53,14 @@ retrieval are optional. Your application supplies the LLM and embedding models.
 ### Install the Python package
 
 ```bash
-pip install twindb-lightrag-memgraph
+pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git"
 ```
 
-The distribution name is `twindb-lightrag-memgraph`; the Python import is
-`twindb_lightrag_memgraph`. See [supported versions](#supported-lightrag-and-memgraph-versions)
+The distribution name is `lightrag-memgraph`; the Python import is
+`lightrag_memgraph`. Install this repository with the GitHub command above:
+the [same-named PyPI project](https://pypi.org/project/lightrag-memgraph/)
+is a separate integration maintained in Memgraph's AI Toolkit. See
+[supported versions](#supported-lightrag-and-memgraph-versions)
 for the tested dependency profiles.
 
 ### Start Memgraph for local development
@@ -84,7 +87,7 @@ into this helper. Set `MEMGRAPH_URI` before constructing LightRAG.
 
 ```python
 from lightrag import LightRAG
-from twindb_lightrag_memgraph import register
+from lightrag_memgraph import register
 
 register()
 
@@ -311,7 +314,7 @@ default feature policy. No text errors during an active search are hidden.
 Discovery is also available independently and can be repeated after an upgrade:
 
 ```python
-from twindb_lightrag_memgraph import inspect_memgraph
+from lightrag_memgraph import inspect_memgraph
 
 capabilities = await inspect_memgraph()
 print(capabilities.version)

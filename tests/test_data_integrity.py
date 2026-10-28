@@ -14,9 +14,9 @@ from lightrag.kg.shared_storage import finalize_share_data, initialize_share_dat
 from lightrag.utils import EmbeddingFunc
 
 from tests.test_e2e import EMBEDDING_DIM, SAMPLE_DOC, _mock_embedding, _mock_llm
-from twindb_lightrag_memgraph import _pool, register
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph import _pool, register
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
 
 @pytest.mark.parametrize("fallback", [None, "environment_workspace"])

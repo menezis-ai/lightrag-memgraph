@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from lightrag.base import DocStatus
 
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
 
 def _deserialize(props: dict) -> DocStatus:

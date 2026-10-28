@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import twindb_lightrag_memgraph
-from twindb_lightrag_memgraph._hooks import (
+import lightrag_memgraph
+from lightrag_memgraph._hooks import (
     _post_index_hooks,
     _run_post_index_hooks,
     clear_post_index_hooks,
@@ -58,7 +58,7 @@ def _mock_lightrag(workspace="test_ws"):
 class TestHookExecution:
     async def test_hook_called_after_insert_done(self):
         """Registered hook should be called with the LightRAG instance."""
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         rag = _mock_lightrag()
         received = []
@@ -137,7 +137,7 @@ class TestRegistry:
 
     def test_register_post_index_hook_exported(self):
         """register_post_index_hook should be importable from top-level package."""
-        from twindb_lightrag_memgraph import register_post_index_hook as fn
+        from lightrag_memgraph import register_post_index_hook as fn
 
         assert callable(fn)
 
@@ -148,7 +148,7 @@ class TestRegistry:
 class TestPatchRegistration:
     def test_insert_done_patched(self):
         """_insert_done should be patched after register()."""
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.lightrag import LightRAG
 
         assert "hooked" in LightRAG._insert_done.__name__

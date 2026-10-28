@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import twindb_lightrag_memgraph
+import lightrag_memgraph
 
 
 def _reset():
-    twindb_lightrag_memgraph._registered = False
+    lightrag_memgraph._registered = False
 
 
 def _make_storage(workspace="test_ws"):
@@ -22,7 +22,7 @@ def _make_storage(workspace="test_ws"):
     from lightrag.kg.memgraph_impl import MemgraphStorage
 
     _reset()
-    twindb_lightrag_memgraph.register()
+    lightrag_memgraph.register()
 
     storage = MemgraphStorage.__new__(MemgraphStorage)
     storage.workspace = workspace
@@ -87,7 +87,7 @@ class TestBatchMethodsPatched:
         from lightrag.base import BaseGraphStorage
 
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         assert MemgraphStorage.get_nodes_batch is not BaseGraphStorage.get_nodes_batch
@@ -96,7 +96,7 @@ class TestBatchMethodsPatched:
         from lightrag.base import BaseGraphStorage
 
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         assert (
@@ -108,7 +108,7 @@ class TestBatchMethodsPatched:
         from lightrag.base import BaseGraphStorage
 
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         assert MemgraphStorage.get_edges_batch is not BaseGraphStorage.get_edges_batch
@@ -117,7 +117,7 @@ class TestBatchMethodsPatched:
         from lightrag.base import BaseGraphStorage
 
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         assert (
@@ -129,7 +129,7 @@ class TestBatchMethodsPatched:
         from lightrag.base import BaseGraphStorage
 
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         assert (
@@ -411,7 +411,7 @@ class TestOperatePatches:
 
     def test_get_node_data_patched(self):
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         # The patched version should NOT be the original
@@ -419,7 +419,7 @@ class TestOperatePatches:
 
     def test_find_edges_patched(self):
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         assert "fused" in operate._find_most_related_edges_from_entities.__name__
@@ -431,7 +431,7 @@ class TestFusedGetNodeData:
     async def test_fused_path_with_results(self):
         """Full pipeline: VDB query -> fused batch -> node enrichment."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         # Mock VDB returning 2 entity results
@@ -483,7 +483,7 @@ class TestFusedGetNodeData:
     async def test_empty_vdb_results(self):
         """Returns empty when VDB finds nothing."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         entities_vdb = AsyncMock()
@@ -504,7 +504,7 @@ class TestFusedGetNodeData:
     async def test_fallback_without_fused_method(self):
         """Falls back to gather() when graph has no fused method."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         entities_vdb = AsyncMock()
@@ -550,7 +550,7 @@ class TestFusedGetNodeData:
     async def test_missing_nodes_filtered(self):
         """Nodes not found in graph are excluded from results."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         entities_vdb = AsyncMock()
@@ -589,7 +589,7 @@ class TestFusedFindEdges:
     async def test_fused_path_with_edges(self):
         """Full pipeline: get edges -> fused props+degrees -> sorted output."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         graph = AsyncMock()
@@ -646,7 +646,7 @@ class TestFusedFindEdges:
     async def test_edge_deduplication(self):
         """Edges (a,b) and (b,a) are treated as the same edge."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         graph = AsyncMock()
@@ -680,7 +680,7 @@ class TestFusedFindEdges:
     async def test_fallback_without_fused_method(self):
         """Falls back to gather() when graph has no fused method."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         graph = AsyncMock(
@@ -719,7 +719,7 @@ class TestFusedFindEdges:
     async def test_missing_weight_gets_default(self):
         """Edges without 'weight' property get default 1.0."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         graph = AsyncMock()
@@ -750,7 +750,7 @@ class TestFusedFindEdges:
     async def test_no_edges(self):
         """Nodes with no connections return empty."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         import lightrag.operate as operate
 
         graph = AsyncMock()
@@ -793,7 +793,7 @@ class TestSafeDriverWrapper:
     def _get_wrapper_class():
         """Extract _SafeDriverWrapper from the patched initialize closure."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         # The class is stored in _patched_initialize's closure
@@ -878,7 +878,7 @@ class TestPatchedInitialize:
         self, session_run_side_effect=None, use_routing=False, database="memgraph"
     ):
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
         from lightrag.kg.shared_storage import initialize_share_data
 
@@ -903,11 +903,11 @@ class TestPatchedInitialize:
 
         with (
             patch(
-                "twindb_lightrag_memgraph._pool._read_connection_config",
+                "lightrag_memgraph._pool._read_connection_config",
                 return_value=(uri, database, {"auth": ("", "")}),
             ),
             patch(
-                "twindb_lightrag_memgraph._pool._uses_routing_protocol",
+                "lightrag_memgraph._pool._uses_routing_protocol",
                 return_value=use_routing,
             ),
             patch("neo4j.AsyncGraphDatabase.driver", return_value=mock_raw),
@@ -954,7 +954,7 @@ class TestPatchedInitialize:
     async def test_connection_failure_raises(self):
         """Connection failure propagates the exception."""
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
         from lightrag.kg.shared_storage import initialize_share_data
 
@@ -971,11 +971,11 @@ class TestPatchedInitialize:
 
         with (
             patch(
-                "twindb_lightrag_memgraph._pool._read_connection_config",
+                "lightrag_memgraph._pool._read_connection_config",
                 return_value=("bolt://localhost:7687", "memgraph", {"auth": ("", "")}),
             ),
             patch(
-                "twindb_lightrag_memgraph._pool._uses_routing_protocol",
+                "lightrag_memgraph._pool._uses_routing_protocol",
                 return_value=False,
             ),
             patch("neo4j.AsyncGraphDatabase.driver", return_value=mock_raw),
@@ -997,7 +997,7 @@ class TestDriverNoneGuards:
 
     def _make_uninit_storage(self):
         _reset()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
         from lightrag.kg.memgraph_impl import MemgraphStorage
 
         storage = MemgraphStorage.__new__(MemgraphStorage)

@@ -20,8 +20,8 @@ from packaging.version import Version
 import pytest
 
 from tests.test_http_e2e import _build_app
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph import _pool
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
 pytestmark = [
     pytest.mark.integration,

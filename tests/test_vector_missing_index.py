@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
 def _make_store():
@@ -83,7 +83,7 @@ class TestQueryMissingIndex:
         async def _create_ctx():
             yield create_session
 
-        with patch("twindb_lightrag_memgraph.vector_impl._pool") as mock_pool:
+        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
             mock_pool.get_read_session = MagicMock(return_value=read_ctx)
             mock_pool.get_session = MagicMock(return_value=_create_ctx())
 
@@ -119,7 +119,7 @@ class TestQueryMissingIndex:
         async def _create_ctx():
             yield create_session
 
-        with patch("twindb_lightrag_memgraph.vector_impl._pool") as mock_pool:
+        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
             mock_pool.get_read_session = MagicMock(return_value=read_ctx)
             mock_pool.get_session = MagicMock(return_value=_create_ctx())
 
@@ -142,7 +142,7 @@ class TestQueryMissingIndex:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("twindb_lightrag_memgraph.vector_impl._pool") as mock_pool:
+        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
             mock_pool.get_read_session = MagicMock(return_value=mock_ctx)
 
             with pytest.raises(Exception, match="Connection refused"):

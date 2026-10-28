@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from twindb_lightrag_memgraph import _pool as pool
+from lightrag_memgraph import _pool as pool
 
 # ── Shared helpers ────────────────────────────────────────────────────
 
@@ -83,7 +83,7 @@ class TestKVConsumeOnWrite:
     @pytest.fixture
     def kv_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+        from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
         store = MemgraphKVStorage.__new__(MemgraphKVStorage)
         store.namespace = "chunks"
@@ -138,7 +138,7 @@ class TestVectorConsumeOnWrite:
     @pytest.fixture
     def vec_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+        from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
         store = MemgraphVectorDBStorage.__new__(MemgraphVectorDBStorage)
         store.namespace = "entities"
@@ -165,7 +165,7 @@ class TestVectorConsumeOnWrite:
         }
 
     async def test_initialize_consumes_both_indexes(self, vec_store, vector_index):
-        from twindb_lightrag_memgraph.capabilities import MemgraphCapabilities
+        from lightrag_memgraph.capabilities import MemgraphCapabilities
 
         tracker = ConsumeTracker()
         with (
@@ -176,7 +176,7 @@ class TestVectorConsumeOnWrite:
                 tracker.make_session_factory(vector_index=vector_index),
             ),
             patch(
-                "twindb_lightrag_memgraph.vector_impl.inspect_memgraph",
+                "lightrag_memgraph.vector_impl.inspect_memgraph",
                 AsyncMock(
                     return_value=MemgraphCapabilities(
                         "3.13.2", (("vector_search.search", ""),)
@@ -221,7 +221,7 @@ class TestDocStatusConsumeOnWrite:
     @pytest.fixture
     def ds_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+        from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
         store = MemgraphDocStatusStorage.__new__(MemgraphDocStatusStorage)
         store.namespace = "doc_status"
@@ -267,7 +267,7 @@ class TestUseDatabaseConsume:
 
     async def test_try_use_database_consumes_result(self):
         """_try_use_database must consume the USE DATABASE result."""
-        from twindb_lightrag_memgraph._pool import _try_use_database
+        from lightrag_memgraph._pool import _try_use_database
 
         session = AsyncMock()
         consume_called = False
@@ -285,7 +285,7 @@ class TestUseDatabaseConsume:
         session.run = tracking_run
 
         # Reset enterprise detection so it actually runs
-        import twindb_lightrag_memgraph._pool as pool_mod
+        import lightrag_memgraph._pool as pool_mod
 
         old_val = pool_mod._enterprise_supported
         pool_mod._enterprise_supported = None

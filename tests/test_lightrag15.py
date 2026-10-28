@@ -6,9 +6,9 @@ import lightrag.base as base
 import pytest
 from lightrag.base import DocStatus
 
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph import _pool
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
 
 def row(**changes):
