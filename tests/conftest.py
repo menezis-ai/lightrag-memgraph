@@ -1,5 +1,5 @@
 """
-Shared fixtures for twindb-lightrag-memgraph tests.
+Shared fixtures for lightrag-memgraph tests.
 """
 
 import os

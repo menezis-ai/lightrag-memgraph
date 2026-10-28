@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import twindb_lightrag_memgraph._pool as pool
+import lightrag_memgraph._pool as pool
 
 
 class _AsyncEmpty:
@@ -67,7 +67,7 @@ class TestDualPool:
         """_get_read_driver creates a separate driver from get_driver."""
         drivers_created = []
 
-        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+        with patch("lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
 
             def make_driver(*args, **kwargs):
                 d = MagicMock()
@@ -87,7 +87,7 @@ class TestDualPool:
         monkeypatch.setenv("MEMGRAPH_READ_POOL_SIZE", "25")
         captured_kwargs = {}
 
-        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+        with patch("lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
 
             def make_driver(uri, **kwargs):
                 captured_kwargs.update(kwargs)
@@ -102,7 +102,7 @@ class TestDualPool:
         """Read driver is reused within the same event loop."""
         call_count = 0
 
-        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+        with patch("lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
 
             def make_driver(*args, **kwargs):
                 nonlocal call_count
@@ -124,7 +124,7 @@ class TestDualPool:
         mock_driver_2 = MagicMock()
         call_count = 0
 
-        with patch("twindb_lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
+        with patch("lightrag_memgraph._pool.AsyncGraphDatabase") as mock_agd:
 
             def make_driver(*args, **kwargs):
                 nonlocal call_count
@@ -222,7 +222,7 @@ class TestBackendReadPoolIntegration:
     @pytest.fixture
     def kv_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+        from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
         store = MemgraphKVStorage.__new__(MemgraphKVStorage)
         store.namespace = "test_kv"
@@ -234,7 +234,7 @@ class TestBackendReadPoolIntegration:
     @pytest.fixture
     def doc_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+        from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
         store = MemgraphDocStatusStorage.__new__(MemgraphDocStatusStorage)
         store.namespace = "test_doc"
@@ -246,7 +246,7 @@ class TestBackendReadPoolIntegration:
     @pytest.fixture
     def vec_store(self, monkeypatch):
         monkeypatch.setenv("MEMGRAPH_WORKSPACE", "test")
-        from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+        from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
         store = MemgraphVectorDBStorage.__new__(MemgraphVectorDBStorage)
         store.namespace = "test_vec"

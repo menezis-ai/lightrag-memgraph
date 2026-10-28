@@ -7,12 +7,12 @@ import pytest
 from lightrag.utils import EmbeddingFunc
 from neo4j import AsyncGraphDatabase
 
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph._constants import (
+from lightrag_memgraph import _pool
+from lightrag_memgraph._constants import (
     DEFAULT_CONNECTION_ACQUIRE_TIMEOUT,
     validate_identifier,
 )
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
 @pytest.mark.parametrize("read", [False, True])

@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 import pytest
 from lightrag.base import DocProcessingStatus, DocStatus
 
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph import _pool
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
 
 def _make_status(i: int, status: DocStatus = DocStatus.PROCESSED) -> DocProcessingStatus:

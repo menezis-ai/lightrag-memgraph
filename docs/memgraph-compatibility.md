@@ -1,7 +1,7 @@
 # LightRAG and Memgraph compatibility
 
 This guide records the storage contracts, engine release review, upgrade steps
-and CI coverage for `twindb-lightrag-memgraph`. For installation and configuration,
+and CI coverage for `lightrag-memgraph`. For installation and configuration,
 start with the [LightRAG Memgraph README](../README.md).
 
 - [LightRAG 1.5 compatibility](#lightrag-15-compatibility)

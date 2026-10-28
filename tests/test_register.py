@@ -9,12 +9,12 @@ import importlib
 
 import lightrag.kg as kg_registry
 
-import twindb_lightrag_memgraph
+import lightrag_memgraph
 
 
 def _reset_registration():
     """Force re-registration by clearing the flag."""
-    twindb_lightrag_memgraph._registered = False
+    lightrag_memgraph._registered = False
 
 
 class TestRegister:
@@ -30,8 +30,8 @@ class TestRegister:
         module_entry_point = hasattr(lr_module, "merge_nodes_and_edges")
         if module_entry_point:
             monkeypatch.setattr(lr_module, "merge_nodes_and_edges", original)
-        monkeypatch.setattr(twindb_lightrag_memgraph, "_registered", False)
-        twindb_lightrag_memgraph.register()
+        monkeypatch.setattr(lightrag_memgraph, "_registered", False)
+        lightrag_memgraph.register()
 
         assert operate.merge_nodes_and_edges is original
         if module_entry_point:
@@ -40,19 +40,19 @@ class TestRegister:
     def test_register_exposes_package_version_once(self, monkeypatch):
         import lightrag
 
-        monkeypatch.setattr(twindb_lightrag_memgraph, "__version__", "0.6.0")
-        monkeypatch.setattr(twindb_lightrag_memgraph, "_registered", False)
+        monkeypatch.setattr(lightrag_memgraph, "__version__", "0.6.0")
+        monkeypatch.setattr(lightrag_memgraph, "_registered", False)
         monkeypatch.setattr(lightrag, "__version__", "1.4.16")
-        twindb_lightrag_memgraph.register()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         assert lightrag.__version__ == "1.4.16+memgraph-0.6.0"
 
     def test_register_idempotent(self):
         """Calling register() twice should not duplicate entries."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         count = kg_registry.STORAGE_IMPLEMENTATIONS["KV_STORAGE"][
             "implementations"
@@ -62,7 +62,7 @@ class TestRegister:
     def test_kv_in_implementations(self):
         """MemgraphKVStorage must appear in KV_STORAGE implementations."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         impls = kg_registry.STORAGE_IMPLEMENTATIONS["KV_STORAGE"]["implementations"]
         assert "MemgraphKVStorage" in impls
@@ -70,7 +70,7 @@ class TestRegister:
     def test_vector_in_implementations(self):
         """MemgraphVectorDBStorage must appear in VECTOR_STORAGE implementations."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         impls = kg_registry.STORAGE_IMPLEMENTATIONS["VECTOR_STORAGE"]["implementations"]
         assert "MemgraphVectorDBStorage" in impls
@@ -78,7 +78,7 @@ class TestRegister:
     def test_docstatus_in_implementations(self):
         """MemgraphDocStatusStorage must appear in DOC_STATUS_STORAGE implementations."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         impls = kg_registry.STORAGE_IMPLEMENTATIONS["DOC_STATUS_STORAGE"][
             "implementations"
@@ -88,7 +88,7 @@ class TestRegister:
     def test_env_requirements(self):
         """All 3 backends must declare MEMGRAPH_URI as required."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         for name in (
             "MemgraphKVStorage",
@@ -101,12 +101,12 @@ class TestRegister:
     def test_storages_module_paths(self):
         """STORAGES dict must contain absolute paths for our 3 backends."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         expected = {
-            "MemgraphKVStorage": "twindb_lightrag_memgraph.kv_impl",
-            "MemgraphVectorDBStorage": "twindb_lightrag_memgraph.vector_impl",
-            "MemgraphDocStatusStorage": "twindb_lightrag_memgraph.docstatus_impl",
+            "MemgraphKVStorage": "lightrag_memgraph.kv_impl",
+            "MemgraphVectorDBStorage": "lightrag_memgraph.vector_impl",
+            "MemgraphDocStatusStorage": "lightrag_memgraph.docstatus_impl",
         }
         for class_name, module_path in expected.items():
             assert kg_registry.STORAGES[class_name] == module_path
@@ -114,9 +114,9 @@ class TestRegister:
     def test_absolute_import_resolution(self):
         """Absolute module paths must resolve even when package='lightrag'."""
         paths = {
-            "MemgraphKVStorage": "twindb_lightrag_memgraph.kv_impl",
-            "MemgraphVectorDBStorage": "twindb_lightrag_memgraph.vector_impl",
-            "MemgraphDocStatusStorage": "twindb_lightrag_memgraph.docstatus_impl",
+            "MemgraphKVStorage": "lightrag_memgraph.kv_impl",
+            "MemgraphVectorDBStorage": "lightrag_memgraph.vector_impl",
+            "MemgraphDocStatusStorage": "lightrag_memgraph.docstatus_impl",
         }
         for class_name, module_path in paths.items():
             # Simulate what lazy_external_import does with package="lightrag"
@@ -128,7 +128,7 @@ class TestRegister:
     def test_verify_storage_implementation_passes(self):
         """LightRAG's verify_storage_implementation must accept our backends."""
         _reset_registration()
-        twindb_lightrag_memgraph.register()
+        lightrag_memgraph.register()
 
         from lightrag.kg import verify_storage_implementation
 

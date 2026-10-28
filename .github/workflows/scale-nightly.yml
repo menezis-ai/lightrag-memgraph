@@ -62,14 +62,27 @@ jobs:
         run: |
           python -m pip install './adapter[test]' '${{ matrix.lightrag }}' 'neo4j>=6,<7'
           echo "SCALE_ADAPTER_SHA=$(git -C adapter rev-parse HEAD)" >> "$GITHUB_ENV"
+          python - <<'PY' >> "$GITHUB_ENV"
+          from pathlib import Path
+          import tomllib
+
+          project = tomllib.loads(Path("adapter/pyproject.toml").read_text())["project"]
+          print(f"SCALE_ADAPTER_DISTRIBUTION={project['name']}")
+          PY
       - name: Verify the installed public adapter
         working-directory: /tmp
         run: |
           python - <<'PY'
           import sysconfig
           from pathlib import Path
-          import twindb_lightrag_memgraph as package
+          import importlib
           import importlib.metadata
+          import os
+
+          distribution = importlib.metadata.distribution(os.environ["SCALE_ADAPTER_DISTRIBUTION"])
+          namespaces = (distribution.read_text("top_level.txt") or "").split()
+          assert len(namespaces) == 1 and namespaces[0].isidentifier()
+          package = importlib.import_module(namespaces[0])
 
           path = Path(package.__file__).resolve()
           assert path.is_relative_to(Path(sysconfig.get_path("purelib")))

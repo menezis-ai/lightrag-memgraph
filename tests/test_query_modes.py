@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock
 import pytest
 from lightrag.base import QueryParam
 
-import twindb_lightrag_memgraph
+import lightrag_memgraph
 
-twindb_lightrag_memgraph.register()
+lightrag_memgraph.register()
 
 from lightrag import operate
 

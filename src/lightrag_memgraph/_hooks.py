@@ -7,7 +7,7 @@ is fully indexed and all storage callbacks have run).
 
 import logging
 
-logger = logging.getLogger("twindb_lightrag_memgraph")
+logger = logging.getLogger("lightrag_memgraph")
 
 _post_index_hooks: list = []
 

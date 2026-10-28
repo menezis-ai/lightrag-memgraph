@@ -6,8 +6,8 @@ Requires a running Memgraph instance (set MEMGRAPH_URI).
 
 import pytest
 
-from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph import register
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
 register()
 

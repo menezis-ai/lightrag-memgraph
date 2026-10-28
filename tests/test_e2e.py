@@ -21,10 +21,10 @@ import pytest
 from lightrag import LightRAG
 from lightrag.base import DocStatus, QueryParam
 
-import twindb_lightrag_memgraph
-from twindb_lightrag_memgraph import _pool
+import lightrag_memgraph
+from lightrag_memgraph import _pool
 
-twindb_lightrag_memgraph.register()
+lightrag_memgraph.register()
 
 # ── Constants ────────────────────────────────────────────────────────
 

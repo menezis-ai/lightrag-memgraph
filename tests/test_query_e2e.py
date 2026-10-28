@@ -19,10 +19,10 @@ pytestmark = pytest.mark.skipif(
     reason="MEMGRAPH_URI not set",
 )
 
-import twindb_lightrag_memgraph
-import twindb_lightrag_memgraph._pool as _pool
+import lightrag_memgraph
+import lightrag_memgraph._pool as _pool
 
-twindb_lightrag_memgraph.register()
+lightrag_memgraph.register()
 
 from lightrag import operate
 from lightrag.base import QueryParam
@@ -30,8 +30,8 @@ from lightrag.kg.memgraph_impl import MemgraphStorage
 from lightrag.kg.shared_storage import initialize_share_data
 from lightrag.utils import EmbeddingFunc
 
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 initialize_share_data(workers=1)
 

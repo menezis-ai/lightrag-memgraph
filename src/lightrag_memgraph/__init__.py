@@ -1,11 +1,11 @@
 """
-twindb-lightrag-memgraph
+lightrag-memgraph
 ========================
 Extension package that registers 3 Memgraph storage backends
 into LightRAG's registry WITHOUT modifying LightRAG source code.
 
 Usage:
-    from twindb_lightrag_memgraph import register
+    from lightrag_memgraph import register
     register()  # Call ONCE before instantiating LightRAG
 
     rag = LightRAG(
@@ -26,10 +26,10 @@ from .capabilities import inspect_memgraph as inspect_memgraph
 from ._hooks import clear_post_index_hooks as clear_post_index_hooks
 from ._hooks import register_post_index_hook as register_post_index_hook
 
-logger = logging.getLogger("twindb_lightrag_memgraph")
+logger = logging.getLogger("lightrag_memgraph")
 
 try:
-    __version__ = _pkg_version("twindb-lightrag-memgraph")
+    __version__ = _pkg_version("lightrag-memgraph")
 except Exception:
     __version__ = "dev"
 
@@ -81,9 +81,9 @@ def register() -> None:
     # 3. STORAGES - absolute module paths (importlib ignores package= for these)
     kg_registry.STORAGES.update(
         {
-            "MemgraphKVStorage": "twindb_lightrag_memgraph.kv_impl",
-            "MemgraphVectorDBStorage": "twindb_lightrag_memgraph.vector_impl",
-            "MemgraphDocStatusStorage": "twindb_lightrag_memgraph.docstatus_impl",
+            "MemgraphKVStorage": "lightrag_memgraph.kv_impl",
+            "MemgraphVectorDBStorage": "lightrag_memgraph.vector_impl",
+            "MemgraphDocStatusStorage": "lightrag_memgraph.docstatus_impl",
         }
     )
 
@@ -108,7 +108,7 @@ def register() -> None:
 
     _registered = True
     msg = (
-        f"twindb-lightrag-memgraph v{__version__} — "
+        f"lightrag-memgraph v{__version__} — "
         "PATCH APPLIED SUCCESSFULLY\n"
         "  Graph DB ........ Memgraph (MemgraphStorage, patched for TLS + multi-db)\n"
         "  Vector DB ....... Memgraph native vector_search (MemgraphVectorDBStorage)\n"
@@ -166,7 +166,7 @@ def _patch_builtin_memgraph_storage():
 
     # Older LightRAG writers interpolate entity_type as a label. Keep their
     # immediate transaction/retry path and reject unsafe delimiters before I/O.
-    if not getattr(MemgraphStorage.upsert_node, "_twindb_validates_entity_type", False):
+    if not getattr(MemgraphStorage.upsert_node, "_lightrag_memgraph_validates_entity_type", False):
         original_upsert_node = MemgraphStorage.upsert_node
 
         async def _safe_upsert_node(self, node_id, node_data):
@@ -174,12 +174,12 @@ def _patch_builtin_memgraph_storage():
                 validate_entity_type(node_data["entity_type"])
             return await original_upsert_node(self, node_id, node_data)
 
-        _safe_upsert_node._twindb_validates_entity_type = True
+        _safe_upsert_node._lightrag_memgraph_validates_entity_type = True
         MemgraphStorage.upsert_node = _safe_upsert_node
 
     batch_upsert = getattr(MemgraphStorage, "upsert_nodes_batch", None)
     if batch_upsert is not None and not getattr(
-        batch_upsert, "_twindb_validates_entity_type", False
+        batch_upsert, "_lightrag_memgraph_validates_entity_type", False
     ):
         original_upsert_nodes_batch = batch_upsert
 
@@ -189,7 +189,7 @@ def _patch_builtin_memgraph_storage():
                     validate_entity_type(node_data["entity_type"])
             return await original_upsert_nodes_batch(self, nodes)
 
-        _safe_upsert_nodes_batch._twindb_validates_entity_type = True
+        _safe_upsert_nodes_batch._lightrag_memgraph_validates_entity_type = True
         MemgraphStorage.upsert_nodes_batch = _safe_upsert_nodes_batch
 
     class _SafeDriverWrapper:

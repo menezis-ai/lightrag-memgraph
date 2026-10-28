@@ -10,7 +10,7 @@ from lightrag import operate
 from lightrag.kg.memgraph_impl import MemgraphStorage
 from lightrag.kg.shared_storage import finalize_share_data, initialize_share_data
 
-from twindb_lightrag_memgraph import register
+from lightrag_memgraph import register
 
 
 class _WordTokenizer:

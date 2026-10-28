@@ -5,7 +5,10 @@ do not install graph/runtime patches from a legacy branch.
 """
 
 import asyncio
+import importlib
+import importlib.metadata
 import json
+import os
 import time
 from uuid import uuid4
 
@@ -13,9 +16,22 @@ import numpy as np
 import pytest
 from lightrag.utils import EmbeddingFunc
 
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+# Resolve historical wheels by their installed namespace without rewriting them.
+_namespace = "lightrag_memgraph"
+if _distribution_name := os.environ.get("SCALE_ADAPTER_DISTRIBUTION"):
+    _distribution = importlib.metadata.distribution(_distribution_name)
+    _namespaces = (_distribution.read_text("top_level.txt") or "").split()
+    if len(_namespaces) != 1 or not _namespaces[0].isidentifier():
+        raise RuntimeError("Scale adapter must expose exactly one Python package")
+    _namespace = _namespaces[0]
+
+_pool = importlib.import_module(f"{_namespace}._pool")
+MemgraphDocStatusStorage = importlib.import_module(
+    f"{_namespace}.docstatus_impl"
+).MemgraphDocStatusStorage
+MemgraphVectorDBStorage = importlib.import_module(
+    f"{_namespace}.vector_impl"
+).MemgraphVectorDBStorage
 
 pytestmark = [pytest.mark.integration, pytest.mark.scale]
 

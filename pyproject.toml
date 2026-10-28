@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "twindb-lightrag-memgraph"
+name = "lightrag-memgraph"
 version = "0.6.1"
 description = "Memgraph KV, Vector, and DocStatus storage backends for LightRAG"
 readme = "README.md"
@@ -13,6 +13,11 @@ dependencies = [
     "lightrag-hku>=1.4.9,<1.6.0",
     "neo4j>=5.0.0,<7.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/menezis-ai/lightrag-memgraph"
+Source = "https://github.com/menezis-ai/lightrag-memgraph"
+Issues = "https://github.com/menezis-ai/lightrag-memgraph/issues"
 
 [project.optional-dependencies]
 test = [

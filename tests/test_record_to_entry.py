@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
 def _make_store(meta_fields):

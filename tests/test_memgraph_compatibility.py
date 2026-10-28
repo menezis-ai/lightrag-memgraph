@@ -8,9 +8,9 @@ import pytest
 from lightrag.utils import EmbeddingFunc
 from neo4j.exceptions import ClientError
 
-from twindb_lightrag_memgraph import _pool
-from twindb_lightrag_memgraph.capabilities import MemgraphCapabilities, inspect_memgraph
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph import _pool
+from lightrag_memgraph.capabilities import MemgraphCapabilities, inspect_memgraph
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
 async def embed(texts):

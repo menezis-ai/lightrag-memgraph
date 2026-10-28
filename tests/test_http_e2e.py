@@ -38,10 +38,10 @@ from lightrag import LightRAG
 from lightrag.base import DocStatus
 from lightrag.utils import EmbeddingFunc
 
-import twindb_lightrag_memgraph
-from twindb_lightrag_memgraph import _pool
+import lightrag_memgraph
+from lightrag_memgraph import _pool
 
-twindb_lightrag_memgraph.register()
+lightrag_memgraph.register()
 
 
 EMBEDDING_DIM = 384
@@ -340,7 +340,7 @@ class TestErrorResponsesAreJson:
         self, http_client, monkeypatch
     ):
         """Force the storage layer to raise — handler must intercept and JSON-ify."""
-        from twindb_lightrag_memgraph.docstatus_impl import (
+        from lightrag_memgraph.docstatus_impl import (
             MemgraphDocStatusStorage,
         )
 
@@ -475,7 +475,7 @@ class TestStartupRace503:
         unreachable and Bolt timed out.
         """
         from neo4j.exceptions import ServiceUnavailable
-        from twindb_lightrag_memgraph.docstatus_impl import (
+        from lightrag_memgraph.docstatus_impl import (
             MemgraphDocStatusStorage,
         )
 

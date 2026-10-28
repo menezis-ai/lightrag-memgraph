@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from lightrag.utils import EmbeddingFunc
 
-from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph import register
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 register()
 

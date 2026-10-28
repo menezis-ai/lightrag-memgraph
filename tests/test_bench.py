@@ -1,5 +1,5 @@
 """
-Performance benchmarks for twindb-lightrag-memgraph backends.
+Performance benchmarks for lightrag-memgraph backends.
 
 Measures latency (p50/p95/p99), throughput (ops/sec), and
 scaling behavior at 100 / 1,000 / 10,000 items.
@@ -20,10 +20,10 @@ import pytest
 from lightrag.base import BaseGraphStorage, DocProcessingStatus, DocStatus
 from lightrag.utils import EmbeddingFunc
 
-from twindb_lightrag_memgraph import register
-from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
-from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
-from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+from lightrag_memgraph import register
+from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+from lightrag_memgraph.kv_impl import MemgraphKVStorage
+from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 register()
 

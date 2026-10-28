@@ -51,7 +51,7 @@ jobs:
       - name: Static checks
         run: |
           python -m ruff check src tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
-          python -m ruff format --check src/twindb_lightrag_memgraph/_docstatus_v15.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_lightrag15.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
+          python -m ruff format --check src/lightrag_memgraph/_docstatus_v15.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_lightrag15.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
       - name: Build distribution and install wheel
         run: |
           python -m build
@@ -62,11 +62,11 @@ jobs:
           python - <<'PY'
           import sysconfig
           from pathlib import Path
-          import twindb_lightrag_memgraph
-          from twindb_lightrag_memgraph import register, inspect_memgraph
+          import lightrag_memgraph
+          from lightrag_memgraph import register, inspect_memgraph
 
-          assert twindb_lightrag_memgraph.__version__ == "0.6.1"
-          installed = Path(twindb_lightrag_memgraph.__file__).resolve()
+          assert lightrag_memgraph.__version__ == "0.6.1"
+          installed = Path(lightrag_memgraph.__file__).resolve()
           assert installed.is_relative_to(Path(sysconfig.get_path("purelib")))
           package = installed.parent
           assert not any((package / name).exists() for name in ("intelligence", "server", "webui_dist"))

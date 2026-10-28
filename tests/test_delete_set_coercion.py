@@ -25,13 +25,13 @@ def _make_mock_session():
 def _patch_pool(mock_session):
     """Return a context manager that patches _pool.get_session."""
     return patch(
-        "twindb_lightrag_memgraph._pool.get_session",
+        "lightrag_memgraph._pool.get_session",
         return_value=mock_session,
     )
 
 
 def _make_kv_storage():
-    from twindb_lightrag_memgraph.kv_impl import MemgraphKVStorage
+    from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
     return MemgraphKVStorage(
         namespace="chunks",
@@ -41,7 +41,7 @@ def _make_kv_storage():
 
 
 def _make_vector_storage():
-    from twindb_lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
+    from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
     mock_embed = MagicMock()
     mock_embed.embedding_dim = 128
@@ -53,7 +53,7 @@ def _make_vector_storage():
 
 
 def _make_docstatus_storage():
-    from twindb_lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
+    from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
     return MemgraphDocStatusStorage(
         namespace="docstatus",
