@@ -16,6 +16,8 @@ retrieval are optional. Your application supplies the LLM and embedding models.
 
 [Quick start](#installation-and-quick-start) ·
 [Storage backends](#storage-backends-and-architecture) ·
+[Runnable tutorial](docs/tutorial.md) ·
+[Measured benchmarks](docs/benchmarks.md) ·
 [Supported versions](#supported-lightrag-and-memgraph-versions) ·
 [Releases](https://github.com/menezis-ai/lightrag-memgraph/releases) ·
 [Report an issue](https://github.com/menezis-ai/lightrag-memgraph/issues)
@@ -201,9 +203,10 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The current release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
-keeps the package version visible through LightRAG's `core_version`, with the
-suffix `+memgraph-0.6.1`.
+The latest published release is **0.6.1**. This branch prepares **0.6.2**; see
+[CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.6.2.md).
+Registration keeps the build version visible through LightRAG's `core_version`,
+with the suffix `+memgraph-0.6.2` for this candidate.
 
 <a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 
@@ -358,7 +361,7 @@ Workspace scoping is not an authorization boundary. Review the
 [data integrity notes](docs/data-integrity.md) and open audit findings for
 [label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21).
 Embedding-wrapper compatibility (#22) and vector-index error reporting (#23)
-are corrected in the next release.
+are corrected in the 0.6.2 candidate. Publication remains on hold for #21.
 The Community CI matrix does not qualify Enterprise authorization or HA failover.
 
 <a id="testing"></a>

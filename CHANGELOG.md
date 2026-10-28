@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 (unreleased candidate)
+
+Publication is held while P1 label collisions (#21) remain unresolved. See the
+[upgrade notes](docs/migration-0.6.2.md).
 
 - Call LightRAG's `EmbeddingFunc` wrapper for both query and document vectors,
   preserving dimension/token injection, concurrency limiting and asymmetric
@@ -15,6 +18,9 @@
   labels and vector index names are unchanged. Update application imports and
   restart running processes when upgrading. Install this repository from GitHub;
   the same-named PyPI distribution is a separate project.
+- Add a runnable fixture/live-provider lifecycle tutorial, requalify the open
+  isolation finding on Memgraph 3.14.0, and publish measured scale results with
+  raw JUnit/JSON evidence and environment details.
 
 ## 0.6.1 (2026-10-28)
 

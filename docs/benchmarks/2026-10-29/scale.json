@@ -1,0 +1,43 @@
+{
+  "adapter_ref": "b881ab0",
+  "adapter_sha": "b881ab071767a3fbb976563ff9d180e3a5dd4256",
+  "harness_sha": "b881ab071767a3fbb976563ff9d180e3a5dd4256",
+  "memgraph": "3.14.0",
+  "metrics": [
+    {
+      "operation": "paginated",
+      "dataset_size": 10000,
+      "samples": 24,
+      "concurrency": 8,
+      "p50_ms": 225.07132500004445,
+      "p95_ms": 292.8767772002175,
+      "max_ms": 292.8911929993774,
+      "budget_ms": 2000,
+      "passed": true
+    },
+    {
+      "operation": "paginated",
+      "dataset_size": 100000,
+      "samples": 24,
+      "concurrency": 8,
+      "p50_ms": 3700.861914000143,
+      "p95_ms": 3905.2551669999048,
+      "max_ms": 3916.1765939998077,
+      "budget_ms": 10000,
+      "passed": true
+    },
+    {
+      "operation": "vector-query",
+      "dataset_size": 10000,
+      "samples": 24,
+      "concurrency": 8,
+      "p50_ms": 8.611093999661534,
+      "p95_ms": 15.87949650033806,
+      "max_ms": 19.88156999959756,
+      "budget_ms": 500,
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "passed": true
+}

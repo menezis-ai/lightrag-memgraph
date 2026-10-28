@@ -5,6 +5,12 @@ include CHANGELOG.md
 include docs/ingestion-validation.md
 include docs/data-integrity.md
 include docs/memgraph-compatibility.md
+include docs/tutorial.md
+include docs/migration-0.6.2.md
+include docs/benchmarks.md
+recursive-include docs/benchmarks *
+include examples/lifecycle.py
+include scripts/summarize_scale.py
 
 recursive-include src/lightrag_memgraph *.py
 recursive-exclude tests *
