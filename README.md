@@ -128,7 +128,7 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The target release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
+The current release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
 keeps the package version visible through LightRAG's `core_version`, with the
 suffix `+memgraph-0.6.1`.
 

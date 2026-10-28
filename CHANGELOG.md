@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.1 (unreleased)
+## 0.6.1 (2026-10-28)
 
 - Target Memgraph 3.14.0 in the development image and add it to the compatibility
   and nightly scale matrices while retaining previous engines. Add real-server
