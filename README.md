@@ -11,7 +11,7 @@ LightRAG has a plugin registry (`lightrag.kg`) that maps storage class names to 
 ## Requirements
 
 - Python `>= 3.10`
-- Memgraph `>= 3.2` with [MAGE](https://memgraph.com/docs/mage); **3.13.2 recommended**. Legacy native ANN limitations are documented below.
+- Memgraph `>= 3.2` with [MAGE](https://memgraph.com/docs/mage); **3.14.0 is the default development and CI target**. Legacy native ANN limitations are documented below.
 - `lightrag-hku >= 1.4.9, < 1.6.0` (latest qualified stable release: **1.5.7**)
 - `neo4j >= 5.0.0, < 7.0.0` (Bolt driver, compatible with Memgraph)
 
@@ -128,9 +128,9 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The target release is **0.6.0**; see [CHANGELOG.md](CHANGELOG.md). Registration
+The target release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
 keeps the package version visible through LightRAG's `core_version`, with the
-suffix `+memgraph-0.6.0`.
+suffix `+memgraph-0.6.1`.
 
 ## Testing
 
@@ -179,7 +179,8 @@ pre-3.4 servers also check for an empty namespace before calling native search.
 | 3.11+ | Native text relevance scores and search configuration, discovered through procedure signatures |
 | 3.11+ | Fuzzy term, prefix and transposition settings when text procedures expose a `config` argument |
 | 3.12+ | Fuzzy phrase search when `text_search.fuzzy_phrase_search` is available |
-| 3.13.2 | Current pinned target; explicit embedding reads support omitted vector properties. Enterprise permission filtering is enforced by the server and is not qualified by this Community test matrix. |
+| 3.13+ | Explicit embedding reads support omitted vector properties. Enterprise permission filtering is enforced by the server and is not qualified by this Community test matrix. |
+| 3.14.0 | Current pinned target; regression coverage for map-write rollback and failed vector-index creation preserving embeddings. Existing storage/retrieval APIs remain in use. |
 
 Pass options in LightRAG's `vector_db_storage_cls_kwargs`:
 
@@ -271,7 +272,7 @@ features; the adapter does not enable them automatically.
 
 ### Release review and feature evidence
 
-Engine release notes from 3.2.1 through 3.13.2 were reviewed on 2026-10-18,
+Engine release notes from 3.2.1 through 3.14.0 were reviewed on 2026-10-28,
 including intermediate minor releases and patch notes. The table records the
 adapter's response to changes affecting its storage/retrieval contract.
 Versions listed in the CI matrix are tested directly; a feature's introduction
@@ -291,12 +292,15 @@ version alone does not imply that exact engine version was run in CI.
 | [3.11](https://github.com/memgraph/memgraph/releases/tag/v3.11.0) | Text limits move to `config`; term fuzzy/prefix/transposition options and multi-label vector indexes are introduced. | Procedure signatures select argument/output shapes. Real tests cover typo, prefix and transposition semantics. The adapter retains one node label per namespace and exposes no multi-label/wildcard index creation API. |
 | [3.12](https://github.com/memgraph/memgraph/releases/tag/v3.12.0) | Adds fuzzy phrase search, property permissions, lightweight edges and database suspension. | Phrase/hybrid retrieval is tested. Permission errors propagate. Property-level authorization, suspended tenants and nondefault lightweight-edge mode are not qualified by this matrix. |
 | [3.13](https://github.com/memgraph/memgraph/releases/tag/v3.13.0), [3.13.1](https://github.com/memgraph/memgraph/releases/tag/v3.13.1), [3.13.2](https://github.com/memgraph/memgraph/releases/tag/v3.13.2) | Optional omission of vector properties, permission-filtered search, global/range indexes, Cypher/APOC changes, OpenMetrics default, FIPS and coordinator SSO. | Explicit embedding reads are also tested locally with omission enabled. Queries keep label-scoped indexes and avoid changed APOC/subquery APIs. Global index creation, FIPS, SSO, PBAC and HA are not qualified here. |
+| [3.14.0](https://github.com/memgraph/memgraph/releases/tag/v3.14.0) | Changes bound-node pattern and null/comparison semantics; fixes vector recovery, map-write rollback and failed index creation. Adds Cypher subqueries and Python to the FIPS image. | CI retains earlier engines and adds 3.14.0 to all dependency profiles and scale jobs. New real-server cases check that rolled-back map writes and failed index creation preserve stored embeddings and ANN retrieval. The adapter does not use the changed administration queries or collection functions. Disk storage, durability recovery, FIPS and Enterprise administration remain outside this matrix. |
 
 The retrieval cases in
 [`tests/test_memgraph_compatibility.py`](tests/test_memgraph_compatibility.py)
 cover property-qualified/regex search, limits above 1,000 results, fuzzy term
-configuration, fuzzy phrases, hybrid unions, configured index recreation and
-deleted-hit filtering.
+configuration, fuzzy phrases, hybrid unions, configured index recreation,
+deleted-hit filtering and (on 3.14+) vector preservation after rollback or failed
+index creation. These real-server checks require `MEMGRAPH_URI`; adding a CI
+target does not substitute for a successful qualification run.
 
 ### Upgrading an existing Memgraph deployment
 
@@ -331,10 +335,13 @@ Review these changes when crossing the corresponding versions:
 | 3.11 | Text-search limits use a config map; update storage/schema metrics consumers, session tracing flags and TLS-reload privileges. Intra-cluster TLS is configured separately from Bolt TLS |
 | 3.12 | Replace removed HA timeout flags with coordinator settings |
 | 3.13 | Review coordinator SSO, removed `COORDINATOR` grants, APOC JSON aliases, subquery imports and the OpenMetrics default; verify that users can read both indexed labels and embedding properties |
+| 3.14 | Rebuild custom C++ modules. Review bound-variable patterns, null/NaN and mixed-type comparisons, temporal ranges and uniqueness constraints; update positional consumers of transaction/user metadata and renamed edge-index metrics. Run profile changes outside explicit transactions. Qualify disk storage and the FIPS image separately before using them with vector/text retrieval |
 
-Sources checked on 2026-10-18: [release notes](https://memgraph.com/docs/release-notes),
+Sources: [release notes](https://memgraph.com/docs/release-notes) and
+[3.14.0 notes](https://github.com/memgraph/memgraph/releases/tag/v3.14.0)
+(checked on 2026-10-28);
 [vector search](https://memgraph.com/docs/querying/vector-search) and
-[text search](https://memgraph.com/docs/querying/text-search).
+[text search](https://memgraph.com/docs/querying/text-search) (checked on 2026-10-18).
 
 To select an older development image explicitly:
 
@@ -344,8 +351,8 @@ MEMGRAPH_IMAGE=memgraph/memgraph-mage:3.8.1 docker compose up -d
 
 Run integration tests only against an isolated test database: they create and
 delete test namespaces. `MEMGRAPH_URI` enables them; without it, integration
-tests are skipped. The CI matrix has 24 jobs: Memgraph **3.2.1, 3.8.1,
-3.9.0, 3.11.0, 3.12.0 and 3.13.2**, each with these pinned dependency profiles:
+tests are skipped. The CI matrix has 28 jobs: Memgraph **3.2.1, 3.8.1,
+3.9.0, 3.11.0, 3.12.0, 3.13.2 and 3.14.0**, each with these pinned dependency profiles:
 
 | Profile | Python | LightRAG | Neo4j driver |
 |---------|--------|----------|--------------|
@@ -371,7 +378,7 @@ the adapter returned incorrect empty results in 692 of 1,000 cycles despite a
 live matching vector. The deletion-churn regression is therefore an explicit
 known failure (`xfail`) on pre-3.4 engines, preventing a native crash from
 interrupting the remaining contract tests. The CI runs load checks on 3.8.1,
-3.9.0, 3.11.0, 3.12.0 and 3.13.2; use a current server for production load.
+3.9.0, 3.11.0, 3.12.0, 3.13.2 and 3.14.0; use a current server for production load.
 
 All four profiles test installed public wheels in isolated Python environments.
 The minimum profile runs storage contracts; the others run the full regression
@@ -383,12 +390,12 @@ The separate `Memgraph scale qualification` workflow runs daily at **03:17 UTC**
 and supports manual dispatch. It also runs when a PR changes its harness,
 workflow or dependency configuration, keeping ordinary PRs free of the large
 datasets. Scheduled runs use the harness from the default branch and explicitly
-check out both `main` (LightRAG 1.5.7) and `stable/0.5.x` (LightRAG 1.4.9.11,
-the deployed 0.5.3-era contract).
+check out both `main` and the published `v0.6.0` adapter, each with LightRAG 1.5.7.
+The public repository does not contain the formerly referenced `stable/0.5.x` branch.
 Each job builds/installs its target adapter as a wheel, then runs the same harness
-against a real MAGE service on **3.8.1, 3.9.0, 3.11.0, 3.12.0 and 3.13.2**.
+against a real MAGE service on **3.8.1, 3.9.0, 3.11.0, 3.12.0, 3.13.2 and 3.14.0**.
 Memgraph 3.2.1 remains excluded from load qualification for the native ANN issue
-documented above. The stable branch is observed without modifying it.
+documented above. The released adapter is tested without modifying it.
 
 | Workload | Entries | Concurrent calls | Samples | Maximum latency |
 |---|---:|---:|---:|---:|

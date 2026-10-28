@@ -27,15 +27,15 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        memgraph: [3.8.1, 3.9.0, 3.11.0, 3.12.0, 3.13.2]
-        adapter: [main, stable-0.5]
+        memgraph: [3.8.1, 3.9.0, 3.11.0, 3.12.0, 3.13.2, 3.14.0]
+        adapter: [main, v0.6.0]
         include:
           - adapter: main
             adapter_ref: main
             lightrag: "lightrag-hku==1.5.7"
-          - adapter: stable-0.5
-            adapter_ref: stable/0.5.x
-            lightrag: "lightrag-hku==1.4.9.11"
+          - adapter: v0.6.0
+            adapter_ref: v0.6.0
+            lightrag: "lightrag-hku==1.5.7"
     services:
       memgraph:
         image: memgraph/memgraph-mage:${{ matrix.memgraph }}
