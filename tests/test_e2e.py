@@ -186,8 +186,8 @@ async def _cleanup_e2e_data():
     try:
         async with _pool.get_session() as session:
             # Find and delete all nodes with labels containing e2e_test
-            for prefix in ("KV_", "Vec_", "DocStatus_"):
-                label = f"{prefix}{E2E_WORKSPACE}"
+            for kind in ("KV", "VECTOR", "STATUS", "GRAPH"):
+                label = f"LRMG2_{kind}_w{len(E2E_WORKSPACE)}_{E2E_WORKSPACE}_n"
                 try:
                     result = await session.run(
                         f"MATCH (n) WHERE ANY(l IN labels(n) WHERE l STARTS WITH '{label}') "
@@ -196,11 +196,6 @@ async def _cleanup_e2e_data():
                     await result.consume()
                 except Exception:
                     pass
-            # Also clean graph nodes
-            result = await session.run(
-                f"MATCH (n:`{E2E_WORKSPACE}`) DETACH DELETE n"
-            )
-            await result.consume()
     except Exception:
         pass
 
@@ -258,11 +253,11 @@ class TestE2EPipeline:
         assert track_id is not None
 
         # Verify data was created in Memgraph
-        kv_count = await _count_nodes(f"KV_{E2E_WORKSPACE}")
-        vec_count = await _count_nodes(f"Vec_{E2E_WORKSPACE}")
-        graph_nodes = await _count_graph_nodes(E2E_WORKSPACE)
-        graph_edges = await _count_graph_edges(E2E_WORKSPACE)
-        docstatus_count = await _count_nodes(f"DocStatus_{E2E_WORKSPACE}")
+        kv_count = await _count_nodes(f"LRMG2_KV_w{len(E2E_WORKSPACE)}_{E2E_WORKSPACE}_n")
+        vec_count = await _count_nodes(f"LRMG2_VECTOR_w{len(E2E_WORKSPACE)}_{E2E_WORKSPACE}_n")
+        graph_nodes = await _count_graph_nodes(rag.chunk_entity_relation_graph._get_workspace_label())
+        graph_edges = await _count_graph_edges(rag.chunk_entity_relation_graph._get_workspace_label())
+        docstatus_count = await _count_nodes(f"LRMG2_STATUS_w{len(E2E_WORKSPACE)}_{E2E_WORKSPACE}_n")
 
         assert kv_count > 0, "KV storage should have entries after ingestion"
         assert vec_count > 0, "Vector storage should have entries after ingestion"
@@ -314,9 +309,9 @@ class TestE2EPipeline:
         # ════════════════════════════════════════════════════
         # PHASE 4: Verify cleanup
         # ════════════════════════════════════════════════════
-        post_graph_nodes = await _count_graph_nodes(E2E_WORKSPACE)
-        post_graph_edges = await _count_graph_edges(E2E_WORKSPACE)
-        post_docstatus = await _count_nodes(f"DocStatus_{E2E_WORKSPACE}")
+        post_graph_nodes = await _count_graph_nodes(rag.chunk_entity_relation_graph._get_workspace_label())
+        post_graph_edges = await _count_graph_edges(rag.chunk_entity_relation_graph._get_workspace_label())
+        post_docstatus = await _count_nodes(f"LRMG2_STATUS_w{len(E2E_WORKSPACE)}_{E2E_WORKSPACE}_n")
 
         # Graph should be cleaned (entities from this doc only)
         assert post_graph_nodes < pre_delete["graph_nodes"], (
@@ -378,7 +373,7 @@ class TestE2EPipeline:
         assert len(remaining) == len(all_docs) - 1
 
         # Graph should still have some data
-        graph_nodes = await _count_graph_nodes(E2E_WORKSPACE)
+        graph_nodes = await _count_graph_nodes(rag.chunk_entity_relation_graph._get_workspace_label())
         assert graph_nodes > 0, "Graph should still have nodes from remaining document"
 
         # Query should still work

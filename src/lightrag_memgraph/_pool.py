@@ -29,6 +29,7 @@ from ._constants import (
     MEMGRAPH_POOL_SIZE_ENV,
     MEMGRAPH_READ_POOL_SIZE_ENV,
     MEMGRAPH_WRITE_CONCURRENCY_ENV,
+    connection_fingerprint,
     validate_identifier,
 )
 
@@ -47,6 +48,20 @@ _semaphore_loop_id = None
 _read_driver = None
 _read_database = None
 _read_bound_loop_id = None
+_driver_scope = None
+_read_driver_scope = None
+_identity_epoch = 0
+
+
+def _check_connection_scope():
+    current = connection_fingerprint()
+    for driver, scope in ((_driver, _driver_scope), (_read_driver, _read_driver_scope)):
+        if driver is not None and scope is not None and scope != current:
+            raise RuntimeError(
+                "Memgraph connection settings changed with active pools; close drivers and reinitialize storages before reuse"
+            )
+    return current
+
 
 # Enterprise multi-database detection.
 # None = not yet probed, True = USE DATABASE succeeded, False = Community edition.
@@ -192,8 +207,9 @@ async def get_driver():
     Returns:
         tuple: (driver, database_name)
     """
-    global _driver, _database, _bound_loop_id, _enterprise_supported
+    global _driver, _database, _bound_loop_id, _enterprise_supported, _driver_scope
 
+    scope = _check_connection_scope()
     current_loop_id = id(asyncio.get_running_loop())
 
     # Fast path: driver exists and is bound to the current loop
@@ -209,6 +225,7 @@ async def get_driver():
         selected_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
         retired_driver = _driver
         _driver = selected_driver
+        _driver_scope = scope
         _database = database
         _enterprise_supported = None
         _bound_loop_id = current_loop_id
@@ -263,8 +280,9 @@ async def _get_read_driver():
     Returns:
         tuple: (driver, database_name)
     """
-    global _read_driver, _read_database, _read_bound_loop_id
+    global _read_driver, _read_database, _read_bound_loop_id, _read_driver_scope
 
+    scope = _check_connection_scope()
     current_loop_id = id(asyncio.get_running_loop())
 
     if _read_driver is not None and _read_bound_loop_id == current_loop_id:
@@ -281,6 +299,7 @@ async def _get_read_driver():
         selected_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
         retired_driver = _read_driver
         _read_driver = selected_driver
+        _read_driver_scope = scope
         _read_database = database
         _read_bound_loop_id = current_loop_id
         _parsed = urlparse(uri)
@@ -436,7 +455,8 @@ async def close_driver():
     """Close write and read drivers. Call on application shutdown."""
     global _driver, _bound_loop_id, _write_semaphore, _semaphore_loop_id
     global _read_driver, _read_database, _read_bound_loop_id
-    global _enterprise_supported
+    global _enterprise_supported, _driver_scope, _read_driver_scope, _identity_epoch
+    _identity_epoch += 1
     if _driver is not None:
         await _driver.close()
         _driver = None
@@ -449,3 +469,5 @@ async def close_driver():
         _read_driver = None
         _read_database = None
         _read_bound_loop_id = None
+    _driver_scope = None
+    _read_driver_scope = None

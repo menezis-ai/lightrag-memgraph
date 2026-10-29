@@ -5,6 +5,8 @@ Single source of truth for default values, environment variable keys,
 and workspace resolution logic.
 """
 
+import hashlib
+import json
 import os
 import re
 
@@ -43,6 +45,23 @@ DEFAULT_READ_POOL_SIZE = 20
 # Pagination — default page size for paginated document listings
 # (mirrors the LightRAG-native paginated route default).
 DEFAULT_PAGE_SIZE = 50
+STORAGE_LABEL_PREFIX = "LRMG2_"
+
+
+def connection_fingerprint() -> str:
+    """Compare connection settings without retaining/logging credentials in tokens."""
+    keys = (
+        "MEMGRAPH_URI",
+        "MEMGRAPH_DATABASE",
+        "MEMGRAPH_USERNAME",
+        "MEMGRAPH_PASSWORD",
+        "MEMGRAPH_ENCRYPTED",
+        "MEMGRAPH_TRUST",
+    )
+    return hashlib.sha256(
+        json.dumps([os.environ.get(key) for key in keys]).encode()
+    ).hexdigest()
+
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
@@ -110,4 +129,6 @@ def validate_entity_type(value: str) -> str:
         raise ValueError(
             "Invalid entity type: expected a non-empty label without backticks or NUL"
         )
+    if value.strip().casefold().startswith(STORAGE_LABEL_PREFIX.casefold()):
+        raise ValueError("Invalid entity type: reserved storage prefix LRMG2_")
     return value

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
+from tests.conftest import initialized_mock
 from lightrag.utils import EmbeddingFunc
 from neo4j.exceptions import ClientError
 
@@ -147,6 +148,7 @@ async def test_deferred_database_selection_error_is_checked(monkeypatch):
 async def test_old_text_signature_uses_no_config_or_score(make_store, monkeypatch):
     store = make_store()
     store.capabilities = capabilities("3.8.1", config=False, scores=False)
+    initialized_mock(store)
     store._text_index_ready = True
     result = AsyncMock()
     result.__aiter__.return_value = [
@@ -179,6 +181,7 @@ async def test_regex_rejects_fuzzy_configuration_before_database_access(
     make_store, monkeypatch
 ):
     store = make_store()
+    initialized_mock(store)
     store._text_index_ready = True
     store.capabilities = MemgraphCapabilities(
         "3.14.0",

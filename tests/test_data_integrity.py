@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from tests.conftest import initialized_mock
 from packaging.version import Version
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.memgraph_impl import MemgraphStorage
@@ -111,6 +112,7 @@ def test_all_backends_honor_the_explicit_workspace(monkeypatch, tmp_path, fallba
 )
 async def test_destructive_point_reads_reject_corrupt_json(monkeypatch, props):
     store = MemgraphDocStatusStorage("status", {}, None, workspace="integrity")
+    initialized_mock(store)
     result = AsyncMock()
     result.single.return_value = {"props": props}
 
@@ -133,9 +135,9 @@ async def test_kv_propagates_deferred_write_failure(monkeypatch):
 
     monkeypatch.setattr(_pool, "get_session", session)
     with pytest.raises(RuntimeError, match="deferred commit failure"):
-        await MemgraphKVStorage("chunks", {}, None, workspace="integrity").upsert(
-            {"id": {"content": "value"}}
-        )
+        await initialized_mock(
+            MemgraphKVStorage("chunks", {}, None, workspace="integrity")
+        ).upsert({"id": {"content": "value"}})
 
 
 @pytest.mark.parametrize("batch", [False, True])
@@ -217,16 +219,18 @@ async def tenants(monkeypatch, tmp_path):
                 rows = await (await session.run("SHOW INDEX INFO")).data()
                 for row in rows:
                     label, prop = row.get("label"), row.get("property")
-                    if not isinstance(label, str) or not (
-                        label == rag.workspace
-                        or label.startswith(
-                            (
-                                f"KV_{rag.workspace}_",
-                                f"Vec_{rag.workspace}_",
-                                f"DocStatus_{rag.workspace}",
-                            )
+                    owned_labels = {
+                        storage._get_workspace_label()
+                        if hasattr(storage, "_get_workspace_label")
+                        else storage._label()
+                        for storage in vars(rag).values()
+                        if not isinstance(storage, type)
+                        and (
+                            hasattr(storage, "_label")
+                            or hasattr(storage, "_get_workspace_label")
                         )
-                    ):
+                    }
+                    if label not in owned_labels:
                         continue
                     prop = (
                         prop[0] if isinstance(prop, list) and len(prop) == 1 else prop
@@ -280,7 +284,7 @@ async def test_concurrent_tenants_and_complete_document_deletion(tenants):
             alpha.chunks_vdb._label(),
             alpha.entities_vdb._label(),
             alpha.relationships_vdb._label(),
-            alpha.workspace,
+            alpha.chunk_entity_relation_graph._get_workspace_label(),
         ):
             result = await session.run(f"MATCH (n:`{label}`) RETURN count(n) AS count")
             assert (await result.single())["count"] == 0, label

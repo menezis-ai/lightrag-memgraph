@@ -8,8 +8,15 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.conftest import initialized_mock
 
 from lightrag_memgraph import _pool as pool
+
+@pytest.fixture(autouse=True)
+def mock_identity_bootstrap(monkeypatch):
+    for module in ("kv_impl", "vector_impl", "docstatus_impl"):
+        monkeypatch.setattr(f"lightrag_memgraph.{module}.initialize_identity", AsyncMock())
+
 
 # ── Shared helpers ────────────────────────────────────────────────────
 
@@ -90,7 +97,7 @@ class TestKVConsumeOnWrite:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     async def test_upsert_consumes_result(self, kv_store):
         tracker = ConsumeTracker()
@@ -152,7 +159,7 @@ class TestVectorConsumeOnWrite:
         store._query_mode = "vector"
         store._text_enabled = False
         store._feature_policy = "fallback"
-        return store
+        return initialized_mock(store)
 
     @pytest.fixture
     def vector_index(self, vec_store):
@@ -228,7 +235,7 @@ class TestDocStatusConsumeOnWrite:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     async def test_initialize_consumes_all_index_results(self, ds_store):
         tracker = ConsumeTracker()
