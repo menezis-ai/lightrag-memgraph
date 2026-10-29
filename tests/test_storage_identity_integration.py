@@ -216,7 +216,7 @@ async def test_legacy_data_or_even_empty_indexes_refuse_startup_without_mutation
         if kind == "vector":
             await _rows(
                 session,
-                f'CREATE VECTOR INDEX `{identity.legacy_indexes[0]}` ON :`{old}`(embedding) WITH CONFIG {{dimension: 4, capacity: 100, metric: "cos"}}',
+                f'CREATE VECTOR INDEX `{identity.legacy_indexes[0]}` ON :`{old}`(embedding) WITH CONFIG {{"dimension": 4, "capacity": 100, "metric": "cos"}}',
             )
         before = await _rows(
             session, f"MATCH (n:`{old}`) RETURN properties(n) AS props"
