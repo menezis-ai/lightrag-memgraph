@@ -144,7 +144,7 @@ def models(provider):
 
 async def counts(rag):
     labels = {
-        store._label() if hasattr(store, "_label") else store.workspace
+        store._label() if hasattr(store, "_label") else store._get_workspace_label()
         for name in STORES
         if (store := getattr(rag, name, None)) is not None
     }
@@ -163,8 +163,15 @@ async def cleanup(rag):
     labels = set()
     for name in (*STORES, "llm_response_cache"):
         store = getattr(rag, name, None)
-        if store is not None:
-            labels.add(store._label() if hasattr(store, "_label") else store.workspace)
+        if (
+            store is not None
+            and getattr(store, "_verified_storage_identity", None) is not None
+        ):
+            labels.add(
+                store._label()
+                if hasattr(store, "_label")
+                else store._get_workspace_label()
+            )
             await store.drop()
     # Remove only property indexes on the randomly allocated demo labels.
     async with _pool.get_session() as session:
@@ -223,11 +230,13 @@ async def run(provider):
             processed = await rag.doc_status.get_docs_by_status(DocStatus.PROCESSED)
             assert "demo-document" in processed, "Document ingestion did not complete"
             before = await counts(rag)
-            for prefix in ("KV_", "Vec_", "DocStatus_", workspace):
-                assert any(
-                    label.startswith(prefix) and count > 0
-                    for label, count in before.items()
-                ), prefix
+            for physical in (
+                rag.full_docs._label(),
+                rag.chunks_vdb._label(),
+                rag.doc_status._label(),
+                rag.chunk_entity_relation_graph._get_workspace_label(),
+            ):
+                assert before.get(physical, 0) > 0, physical
             print("INSERT:", json.dumps(before, sort_keys=True))
             context = await rag.aquery(
                 "What is Paris?",

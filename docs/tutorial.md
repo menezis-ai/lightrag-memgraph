@@ -45,7 +45,8 @@ backends, initializes the shared LightRAG state and pipeline, then:
 3. Calls `adelete_by_doc_id()` and checks that document data, chunk records,
    vectors, status and graph nodes are absent.
 4. Drops only the demo's stores and indexes, closes the drivers and releases the
-   temporary working directory, including on failure.
+   temporary working directory, including on failure. The ownership registry
+   keeps provenance records for emptied stores.
 
 The successful run ends with:
 
@@ -96,7 +97,8 @@ requires a reviewed rebuild or a new namespace.
 ## Before deploying
 
 Read the [compatibility guide](memgraph-compatibility.md) and
-[integrity notes](data-integrity.md). Workspace names are not an authorization
-boundary: [issue #21](https://github.com/menezis-ai/lightrag-memgraph/issues/21)
-remains open for label collisions. Keep independent tenants in separately
-controlled databases until the storage-identity and migration work is qualified.
+[integrity notes](data-integrity.md). Version 0.7 changes physical identities;
+existing databases require the explicit [migration procedure](migration-0.7.0.md).
+The [isolation qualification](storage-identity-qualification.md) covers issue #21.
+Workspace scoping does not enforce authorization: retain separately controlled
+databases/access credentials for independent tenants.
