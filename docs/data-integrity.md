@@ -12,50 +12,35 @@ environment alias, LightRAG environment variable, then `base`. No constructor
 temporarily changes process environment variables. Invalid explicit values raise
 instead of falling back to a shared namespace.
 
-This corrects a legacy inconsistency: LightRAG's standard `workspace=` could
-separate its graph while the extension's other three stores still wrote to
-`base` or an environment-selected namespace. It also removes the old graph
-constructor's priority for the global `MEMGRAPH_WORKSPACE` over an explicit
-argument. Check the intended workspace configuration before upgrading a deployment
-that relied on that override. Single-workspace environment-only setups retain
-their existing label names.
-
-The change does not move previously written data. Before an affected deployment
-resumes ingestion, inventory labels and indexes with read-only Cypher:
-
-```cypher
-MATCH (n) UNWIND labels(n) AS label RETURN label, count(*) AS count ORDER BY label;
-SHOW INDEX INFO;
-```
-
-Compare the graph's workspace labels with `KV_<workspace>_<namespace>`,
-`Vec_<workspace>_<namespace>` and `DocStatus_<workspace>`. Historical records in a
-shared `base` namespace cannot be attributed safely to tenants solely from their
-label or document ID: IDs may already have collided. Use original source manifests
-and backups to determine ownership. Migration or re-ingestion requires a separate,
-reviewed plan; changing constructor priority does not repair historical collisions.
+Version 0.7 additionally replaces physical identities for all four stores with
+length-framed workspace/namespace components and distinct role prefixes. Graph
+and document-status namespaces now participate in isolation. A persistent registry
+verifies ownership; initialization refuses legacy data/indexes and unclaimed v2
+targets before application I/O. Follow the [migration guide](migration-0.7.0.md)
+for the read-only inventory, backup, ownership review and explicit re-ingestion.
+There is no automatic in-place migration or legacy opt-out.
 
 ## Label collision requalification
 
-On 2026-10-29, the actual storage classes on main commit
-`22f1057e02cd21acc2cd0841abdd5ade1de74196` were requalified against Memgraph
-MAGE 3.14.0, LightRAG 1.5.7 and Neo4j driver 6.4.1 in a disposable database.
-The current retrieval fixes do not change this label encoding. Both failure
-paths from [issue #21](https://github.com/menezis-ai/lightrag-memgraph/issues/21)
-remain present:
+The historical main revision `22f1057e02cd21acc2cd0841abdd5ade1de74196` was
+requalified on 2026-10-29 against disposable Memgraph MAGE 3.14.0. KV
+`(a, b_c)` / `(a_b, c)` cross-read and overwrote records. A graph workspace
+matching `KV_<workspace>_text_chunks` could drop a KV record. That reproduction
+reopened [issue #21](https://github.com/menezis-ai/lightrag-memgraph/issues/21).
 
-- KV `(workspace="a", namespace="b_c")` and `(workspace="a_b", namespace="c")`
-  use the same label. A record written by the first can be read and overwritten
-  by the second. The qualification used a unique random prefix on these names.
-- A graph workspace equal to `KV_<workspace>_text_chunks` uses the KV store's
-  label. The graph's public `drop()` deleted a KV record from that label.
-
-The issue has been reopened with the real-server reproduction. Existing
-two-tenant tests cover distinct non-colliding names; they do not establish
-isolation for all accepted identifiers. Workspace scoping is not authorization.
-Use separately controlled databases for independent tenants. An eventual fix
-must define an unambiguous storage identity and an explicit migration or
-fail-closed strategy for existing labels; silently renaming them can hide data.
+See the pinned [0.7 qualification evidence](storage-identity-qualification.md).
+The regressions in `tests/test_storage_identity_integration.py` use actual
+storage classes and identical IDs on a real server. They cover underscore
+boundaries, namespaces in all four stores, graph workspaces matching legacy/new
+storage labels and the registry name, graph type aliases, cross-read/overwrite/
+delete/drop, vector retrieval after another scope is dropped, and 24 concurrent
+initializers retaining one owner. Legacy data and empty indexes refuse startup
+without mutation; legacy ANN remains searchable. Unknown v2 data/indexes and
+invalid registry records are refused. Explicit fresh-workspace re-ingestion and
+a read-only inventory are also exercised. Pure tests cover the reserved entity
+prefix, 400 distinct kind/workspace/namespace combinations and invalidation when
+configuration or pool lifetime changes. These checks do not provide authorization
+against other Cypher clients or concurrent legacy writers.
 
 ## Document deletion
 
@@ -113,7 +98,7 @@ shared-relationship regressions still exercise actual upstream merges. This does
 not provide a distributed lock spanning independent deployments sharing one DB.
 
 Legacy LightRAG versions interpolate `entity_type` into quoted Cypher labels.
-The adapter rejects empty values, backticks and NUL before that write path while
+The adapter rejects empty values, backticks, NUL and the reserved `LRMG2_` prefix before that write path while
 preserving spaces, punctuation and Unicode that are safe inside quoted labels.
 Values in node properties are not rewritten. Graph workspace identifiers use the
 same stricter validation as the other stores.

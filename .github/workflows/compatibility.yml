@@ -52,8 +52,8 @@ jobs:
         run: |
           python -m ruff check examples/lifecycle.py
           python -m ruff format --check examples/lifecycle.py
-          python -m ruff check src tests/test_embedding_contract.py tests/test_vector_missing_index.py tests/test_query_e2e.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
-          python -m ruff format --check src/lightrag_memgraph/_docstatus_v15.py src/lightrag_memgraph/vector_impl.py tests/test_embedding_contract.py tests/test_vector_missing_index.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_lightrag15.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
+          python -m ruff check src tests/test_storage_identity.py tests/test_storage_identity_integration.py tests/test_embedding_contract.py tests/test_vector_missing_index.py tests/test_query_e2e.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
+          python -m ruff format --check src/lightrag_memgraph/_identity.py src/lightrag_memgraph/migration.py tests/test_storage_identity.py tests/test_storage_identity_integration.py src/lightrag_memgraph/_docstatus_v15.py src/lightrag_memgraph/vector_impl.py tests/test_embedding_contract.py tests/test_vector_missing_index.py tests/test_memgraph_compatibility.py tests/test_data_integrity.py tests/test_lightrag15.py tests/test_scale_e2e.py tests/test_pdf_responsiveness.py tests/test_scale_report.py tests/conftest.py scripts/summarize_scale.py
       - name: Build distribution and install wheel
         run: |
           python -m build
@@ -67,14 +67,14 @@ jobs:
           import lightrag_memgraph
           from lightrag_memgraph import register, inspect_memgraph
 
-          assert lightrag_memgraph.__version__ == "0.6.2"
+          assert lightrag_memgraph.__version__ == "0.7.0"
           installed = Path(lightrag_memgraph.__file__).resolve()
           assert installed.is_relative_to(Path(sysconfig.get_path("purelib")))
           package = installed.parent
           assert not any((package / name).exists() for name in ("intelligence", "server", "webui_dist"))
           register()
           import lightrag
-          assert lightrag.__version__.endswith("+memgraph-0.6.2")
+          assert lightrag.__version__.endswith("+memgraph-0.7.0")
           print(f"Testing installed wheel: {installed}")
           PY
       - name: Wait for Bolt
@@ -107,7 +107,7 @@ jobs:
           tests/test_merge_concurrency.py tests/test_register.py
           tests/test_lightrag15.py
           tests/test_scale_report.py tests/test_pdf_responsiveness.py
-          tests/test_data_integrity.py
+          tests/test_data_integrity.py tests/test_storage_identity.py tests/test_storage_identity_integration.py
           --junitxml=reports/storage.xml
       - name: Current LightRAG full regression suite
         if: matrix.dependencies != 'minimum'
